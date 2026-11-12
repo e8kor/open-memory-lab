@@ -55,6 +55,7 @@ pub mod oauth;
 pub mod origin;
 pub mod signup;
 pub mod similar;
+pub mod usage;
 pub mod valid_time;
 pub mod vocab;
 pub mod vocab_edges;

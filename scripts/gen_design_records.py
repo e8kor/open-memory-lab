@@ -29,7 +29,7 @@ CATEGORIES = {
     "Writing and review": [11, 20, 21, 50, 56],
     "Sources and sync": [47, 57, 61, 62, 63],
     "Integrations and agents": [14, 22, 25, 28, 29, 31, 37, 38, 39, 40, 67, 76, 77],
-    "Operations and security": [15, 16, 23, 26, 33, 34, 41, 42, 43, 44, 45, 46, 58],
+    "Operations and security": [15, 16, 23, 26, 33, 34, 41, 42, 43, 44, 45, 46, 58, 71],
     "Architecture and platform": [6, 8, 18, 19, 24, 66, 70],
 }
 BLURB = {

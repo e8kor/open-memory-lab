@@ -6238,6 +6238,8 @@ async fn seal_onto(
             event,
             fold,
             idempotency: None,
+            ceiling: None,
+            written: None,
         })
         .await
         .expect("the fixture commit");
@@ -9833,6 +9835,8 @@ async fn ratify_in_store(
                 ratifier_key_id: ratifier,
             },
             idempotency: None,
+            ceiling: None,
+            written: None,
         })
         .await
         .expect("the ratification commits");
@@ -11318,6 +11322,8 @@ fn propose_before_next_head(store: &MemStore, edge: ClaimEdgeRecord) {
             event,
             fold: MetadataFold::ClaimEdgeProposed(edge),
             idempotency: None,
+            ceiling: None,
+            written: None,
         }
     });
 }
@@ -11967,6 +11973,8 @@ async fn commit_pending_edge(store: &MemStore, edge: ClaimEdgeRecord, event_id: 
             event,
             fold: MetadataFold::ClaimEdgeProposed(edge),
             idempotency: None,
+            ceiling: None,
+            written: None,
         })
         .await
         .expect("commit the pending edge");
@@ -14085,16 +14093,8 @@ async fn a_connections_whoami_costs_one_request_of_its_keys_rate() {
             requests_per_minute: 1,
             ..oml_app::domain::signup::Quotas::default()
         };
-        let app = probe.with_signup(oml_app::types::SignupPolicy {
-            mode: oml_app::domain::signup::SignupMode::Open,
-            tenant_id: boot.tenant_id,
-            issuer: name("root-admin"),
-            terms_version: "2026-11-06".to_owned(),
-            terms_url: "https://example.com/terms".to_owned(),
-            privacy_url: "https://example.com/privacy".to_owned(),
-            per_ip_per_hour: 100,
-            quotas,
-        });
+        // The limits an account is held to are its profile's (ADR-0071 d5).
+        let app = metered(probe, boot.tenant_id, quotas);
         let issued = app
             .issue_key(
                 boot.admin_key.value.as_str(),
@@ -14141,4 +14141,610 @@ async fn a_connections_whoami_costs_one_request_of_its_keys_rate() {
             "{ask:?}: {second:?}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Usage metering on the write path (ADR-0071 d2, d3)
+// ---------------------------------------------------------------------------
+
+/// `probe`'s store served with open sign-up into `tenant_id` and `quotas`
+/// as the one profile its accounts are on.
+fn metered(probe: TestApp, tenant_id: Uuid, quotas: oml_app::domain::signup::Quotas) -> TestApp {
+    probe
+        .with_signup(oml_app::types::SignupPolicy {
+            mode: oml_app::domain::signup::SignupMode::Open,
+            tenant_id,
+            issuer: name("root-admin"),
+            terms_version: "2026-11-06".to_owned(),
+            terms_url: "https://example.com/terms".to_owned(),
+            privacy_url: "https://example.com/privacy".to_owned(),
+            per_ip_per_hour: 100,
+            quotas,
+        })
+        .with_quota_profiles(oml_app::types::QuotaProfiles::only(quotas))
+}
+
+/// Ada's account: a writer key that also reads, and a dreamer key under
+/// another principal, both naming her and granted on her root alone.
+async fn account_keys(app: &TestApp, admin: &str) -> (IssuedKey, IssuedKey) {
+    let on_root = |role: Role| GrantRequest {
+        node: by_name("ada"),
+        role,
+        deny: Vec::new(),
+        covers: Covers::Subtree,
+    };
+    let writer = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: Some(name("ada")),
+                ..issue_req(
+                    Role::Writer,
+                    "ada-agent",
+                    vec![on_root(Role::Writer), on_root(Role::Reader)],
+                )
+            },
+        )
+        .await
+        .expect("ada's writer key");
+    let dreamer = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: Some(name("ada")),
+                ..issue_req(
+                    Role::Dreamer,
+                    "ada-reviewer",
+                    vec![on_root(Role::Dreamer), on_root(Role::Reader)],
+                )
+            },
+        )
+        .await
+        .expect("ada's reviewer key");
+    (writer, dreamer)
+}
+
+/// What the account `key` belongs to holds on its memories, text bytes and
+/// monthly writes meters.
+async fn metered_writes(app: &TestApp, key: &str) -> (u64, u64, u64) {
+    use oml_app::domain::usage::Meter;
+    let usage = app.account_usage(key).await.expect("the account's usage");
+    let used = |meter: Meter| {
+        usage
+            .meters
+            .iter()
+            .find(|m| m.meter == meter)
+            .expect("every meter is read")
+            .used
+    };
+    (
+        used(Meter::Memories),
+        used(Meter::TextBytes),
+        used(Meter::Writes),
+    )
+}
+
+/// A write sent again under its idempotency key answers its record and is
+/// one write on its account's meters, at the limit too: the quota check
+/// follows every replay, the one a supersede makes when its twin committed
+/// after its lookup included (ADR-0071 d2, d3; http-api.md idempotency).
+#[tokio::test]
+async fn a_replayed_write_answers_its_record_at_its_accounts_limit_and_is_counted_once() {
+    use oml_app::domain::signup::{Quota, Quotas};
+    let v1 = "the canary drains first";
+    let v2 = "the canary drains and settles first";
+    let store = MemStore::new();
+    let probe = app_over(store.clone());
+    let boot = bootstrap(&probe).await;
+    // One memory, two writes and exactly the bytes of the two versions.
+    let app = metered(
+        probe,
+        boot.tenant_id,
+        Quotas::default()
+            .with(Quota::Memories, 1)
+            .with(Quota::TextBytes, (v1.len() + v2.len()) as u64)
+            .with(Quota::WritesPerMonth, 2),
+    );
+    let (writer, dreamer) = account_keys(&app, &boot.admin_key.value).await;
+
+    let first = app
+        .submit_memory(&writer.value, &submit_req("i1", v1))
+        .await
+        .expect("the first write");
+    assert!(!first.replayed);
+    let once = (1, v1.len() as u64, 1);
+    assert_eq!(metered_writes(&app, &writer.value).await, once);
+    let again = app
+        .submit_memory(&writer.value, &submit_req("i1", v1))
+        .await
+        .expect("the replay at the memories limit");
+    assert!(again.replayed);
+    assert_eq!(again.receipt, first.receipt);
+    assert_eq!(metered_writes(&app, &writer.value).await, once);
+
+    app.post_verdict(
+        &dreamer.value,
+        first.receipt.memory_id,
+        Verdict::Approve,
+        None,
+    )
+    .await
+    .expect("approve");
+    let revise = supersede_req("sup-1", first.receipt.memory_id, v2);
+    let winner = app
+        .supersede(&writer.value, &revise)
+        .await
+        .expect("the revision");
+    let twice = (1, (v1.len() + v2.len()) as u64, 2);
+    assert_eq!(metered_writes(&app, &writer.value).await, twice);
+    let head = journal(&store, boot.tenant_id).await.len();
+    let replay = app
+        .supersede(&writer.value, &revise)
+        .await
+        .expect("the replay at the bytes and writes limits");
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, winner.receipt);
+    // The attempt that looked the key up before the winner committed finds
+    // the claim moved on, and the winner's record answers it, not the
+    // quota the winner reached.
+    store.miss_next_idempotency_lookup();
+    let loser = app
+        .supersede(&writer.value, &revise)
+        .await
+        .expect("the lost race replays");
+    assert!(loser.replayed);
+    assert_eq!(loser.receipt, winner.receipt);
+    assert_eq!(metered_writes(&app, &writer.value).await, twice);
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
+/// A write refused for any reason moves no meter, and at the limit a write
+/// under a live claim_key is the conflict it was: the quota is the last
+/// refusal before the similar check (ADR-0071 d2, d3).
+#[tokio::test]
+async fn a_refused_write_moves_no_meter_and_keeps_its_own_refusal_at_the_limit() {
+    use oml_app::domain::signup::{Quota, Quotas};
+    let store = MemStore::new();
+    let probe = app_over(store.clone());
+    let boot = bootstrap(&probe).await;
+    let app = metered(
+        probe,
+        boot.tenant_id,
+        Quotas::default().with(Quota::Memories, 2),
+    );
+    let (writer, dreamer) = account_keys(&app, &boot.admin_key.value).await;
+    let first = app
+        .submit_memory(&writer.value, &submit_req("i1", "the canary drains first"))
+        .await
+        .expect("the first write")
+        .receipt
+        .memory_id;
+    let counted = metered_writes(&app, &writer.value).await;
+    assert_eq!(counted.0, 1);
+    let head = journal(&store, boot.tenant_id).await.len();
+
+    let live_claim = SubmitRequest {
+        claim_key: Some("claim-i1".to_owned()),
+        ..submit_req("i2", "another body under the live claim")
+    };
+    let err = app
+        .submit_memory(&writer.value, &live_claim)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ClaimKeyConflict), "{err:?}");
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &submit_req("i1", "another body, the same key"),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::IdempotencyDigestMismatch),
+        "{err:?}"
+    );
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                derives_from: vec![Uuid::from_u128(0xDEAD)],
+                ..submit_req("i3", "derived from nothing readable")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::LineageUnknown(_)), "{err:?}");
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                claim_key: Some("key-----BEGIN-x".to_owned()),
+                ..submit_req("i4", "a clean body")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ScanVeto(_)), "{err:?}");
+    // A revision of a version that is not the served tip.
+    let err = app
+        .supersede(&writer.value, &supersede_req("sup-0", first, "too early"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::TipConflict { .. }), "{err:?}");
+    assert_eq!(metered_writes(&app, &writer.value).await, counted);
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+
+    // At the limit: the live claim_key is still the conflict, a revision
+    // adds no memory and is held, and a new claim is the quota.
+    app.submit_memory(&writer.value, &submit_req("i5", "the second memory"))
+        .await
+        .expect("the write that reaches the limit");
+    let err = app
+        .submit_memory(&writer.value, &live_claim)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ClaimKeyConflict), "{err:?}");
+    app.post_verdict(&dreamer.value, first, Verdict::Approve, None)
+        .await
+        .expect("approve");
+    app.supersede(
+        &writer.value,
+        &supersede_req("sup-1", first, "the canary drains and settles first"),
+    )
+    .await
+    .expect("a revision is no new memory");
+    let full = metered_writes(&app, &writer.value).await;
+    assert_eq!((full.0, full.2), (2, 3));
+    let head = journal(&store, boot.tenant_id).await.len();
+    let err = app
+        .submit_memory(&writer.value, &submit_req("i6", "one too many"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::QuotaReached(oml_app::domain::signup::QuotaReached {
+                quota: Quota::Memories,
+                limit: 2,
+                used: 2,
+            })
+        ),
+        "{err:?}"
+    );
+    assert_eq!(metered_writes(&app, &writer.value).await, full);
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
+/// A write past its account's memories, text bytes or monthly writes is
+/// refused naming that quota, its limit and what is used, journals nothing
+/// and moves no meter; a revision is held to the bytes and the writes and
+/// never to the memories (ADR-0071 d2, d3, d8).
+#[tokio::test]
+async fn a_write_over_quota_is_refused_naming_the_quota_its_limit_and_what_is_used() {
+    use oml_app::domain::signup::{Quota, QuotaReached, Quotas};
+    let v1 = "twenty bytes of text";
+    assert_eq!(v1.len(), 20);
+    for (quotas, reached, revision_too) in [
+        (
+            Quotas::default().with(Quota::Memories, 1),
+            QuotaReached {
+                quota: Quota::Memories,
+                limit: 1,
+                used: 1,
+            },
+            false,
+        ),
+        (
+            Quotas::default().with(Quota::TextBytes, 30),
+            QuotaReached {
+                quota: Quota::TextBytes,
+                limit: 30,
+                used: 20,
+            },
+            true,
+        ),
+        (
+            Quotas::default().with(Quota::WritesPerMonth, 1),
+            QuotaReached {
+                quota: Quota::WritesPerMonth,
+                limit: 1,
+                used: 1,
+            },
+            true,
+        ),
+    ] {
+        let store = MemStore::new();
+        let probe = app_over(store.clone());
+        let boot = bootstrap(&probe).await;
+        let app = metered(probe, boot.tenant_id, quotas);
+        let (writer, dreamer) = account_keys(&app, &boot.admin_key.value).await;
+        let first = promoted(&app, &writer.value, &dreamer.value, &submit_req("i1", v1)).await;
+        let counted = metered_writes(&app, &writer.value).await;
+        assert_eq!(counted, (1, 20, 1));
+        let head = journal(&store, boot.tenant_id).await.len();
+        let err = app
+            .submit_memory(&writer.value, &submit_req("i2", "eleven byte"))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, AppError::QuotaReached(r) if *r == reached),
+            "{reached:?}: {err:?}"
+        );
+        let revised = app
+            .supersede(&writer.value, &supersede_req("sup-1", first, "eleven byte"))
+            .await;
+        if revision_too {
+            let err = revised.unwrap_err();
+            assert!(
+                matches!(&err, AppError::QuotaReached(r) if *r == reached),
+                "{reached:?}: {err:?}"
+            );
+            assert_eq!(metered_writes(&app, &writer.value).await, counted);
+            assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+        } else {
+            revised.expect("a revision adds no memory");
+            assert_eq!(metered_writes(&app, &writer.value).await, (1, 31, 2));
+        }
+    }
+}
+
+/// A fresh store served under open sign-up into `tenant_id` with these
+/// profiles, on a clock the test moves; `tenant_id` of `None` is the
+/// bootstrapped tenant's.
+async fn metered_on_a_clock(
+    profiles: oml_app::types::QuotaProfiles,
+    tenant_id: Option<Uuid>,
+) -> (TestApp, MemStore, FixedClock, BootstrapResult) {
+    let store = MemStore::new();
+    let clock = FixedClock::new();
+    let probe = App::new(
+        store.clone(),
+        MemSigner::new(TEST_SEED),
+        clock.clone(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    );
+    let boot = bootstrap(&probe).await;
+    let quotas = profiles
+        .get(&profiles.signup_profile)
+        .expect("the sign-up profile is declared");
+    let app = probe
+        .with_signup(oml_app::types::SignupPolicy {
+            mode: oml_app::domain::signup::SignupMode::Open,
+            tenant_id: tenant_id.unwrap_or(boot.tenant_id),
+            issuer: name("root-admin"),
+            terms_version: "2026-11-06".to_owned(),
+            terms_url: "https://example.com/terms".to_owned(),
+            privacy_url: "https://example.com/privacy".to_owned(),
+            per_ip_per_hour: 100,
+            quotas,
+        })
+        .with_quota_profiles(profiles);
+    (app, store, clock, boot)
+}
+
+/// An account on a profile the configuration no longer declares is refused
+/// every write as `limit.quota` and still reads, in the minute the profile
+/// went and in every minute after: no quota refuses a read, and the
+/// refusal of d8 is `limit.quota`, never `limit.rate` (ADR-0071 d5, d8).
+#[tokio::test]
+async fn an_account_on_an_undeclared_profile_reads_in_every_minute_and_its_writes_are_limit_quota()
+{
+    use oml_app::domain::signup::{Quota, Quotas};
+    use oml_app::types::{ProfileAssignment, QuotaProfiles};
+    let declared = QuotaProfiles {
+        profiles: [
+            ("default".to_owned(), Quotas::default()),
+            (
+                "gold".to_owned(),
+                Quotas::default().with(Quota::Memories, 3),
+            ),
+        ]
+        .into(),
+        signup_profile: "default".to_owned(),
+    };
+    let (app, _store, clock, boot) = metered_on_a_clock(declared, None).await;
+    let (writer, _) = account_keys(&app, &boot.admin_key.value).await;
+    app.admin_set_profile(
+        &boot.admin_key.value,
+        "ada",
+        &ProfileAssignment {
+            profile: "gold".to_owned(),
+            overrides: Vec::new(),
+        },
+    )
+    .await
+    .expect("gold is declared");
+    app.submit_memory(&writer.value, &submit_req("i1", "the canary drains first"))
+        .await
+        .expect("a write on gold");
+    // The configuration stops declaring gold.
+    let app = app.with_quota_profiles(QuotaProfiles::only(Quotas::default()));
+    let refused_as_quota = |err: AppError| {
+        assert!(
+            matches!(
+                &err,
+                AppError::QuotaReached(r)
+                    if r.quota == Quota::Memories && r.limit == 0 && r.used == 1
+            ),
+            "{err:?}"
+        );
+    };
+    // In the minute the profile went, and in the two after it.
+    for minute in 0..3 {
+        if minute > 0 {
+            clock.advance(60);
+        }
+        let usage = app
+            .account_usage(&writer.value)
+            .await
+            .unwrap_or_else(|e| panic!("minute {minute}: reading its usage answers: {e:?}"));
+        assert!(!usage.profile_declared);
+        assert_eq!(usage.profile.as_deref(), Some("gold"));
+        app.recall(&writer.value, &recall_req("canary"))
+            .await
+            .unwrap_or_else(|e| panic!("minute {minute}: a recall answers: {e:?}"));
+        refused_as_quota(
+            app.submit_memory(
+                &writer.value,
+                &submit_req(&format!("again-{minute}"), "the fleet follows the canary"),
+            )
+            .await
+            .unwrap_err(),
+        );
+    }
+}
+
+/// A write reads its account's limits once: the check before the signature
+/// and the ceiling the commit carries are one read, made before the head,
+/// so nothing is looked up inside the window a conflicting commit reopens
+/// (ADR-0071 d3; #100).
+#[tokio::test]
+async fn a_write_reads_its_accounts_limits_once() {
+    use oml_app::domain::signup::Quotas;
+    let (app, store, _clock, boot) =
+        metered_on_a_clock(oml_app::types::QuotaProfiles::only(Quotas::default()), None).await;
+    let (writer, dreamer) = account_keys(&app, &boot.admin_key.value).await;
+    // The first request of the minute reads the rate; these follow it.
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    let before = store.account_profile_reads();
+    app.submit_memory(
+        &writer.value,
+        &submit_req("i2", "the fleet follows the canary"),
+    )
+    .await
+    .expect("a second memory");
+    assert_eq!(
+        store.account_profile_reads() - before,
+        1,
+        "a new memory reads its account's profile once"
+    );
+    let before = store.account_profile_reads();
+    app.supersede(
+        &writer.value,
+        &supersede_req("sup-1", first, "the canary drains and settles first"),
+    )
+    .await
+    .expect("a revision");
+    assert_eq!(
+        store.account_profile_reads() - before,
+        1,
+        "a revision reads its account's profile once"
+    );
+}
+
+/// With open sign-up, a key of an account under no limits, one outside the
+/// sign-up tenant with no profile assigned, has its limits looked up at the
+/// first request of each minute and not at the ones after it, as a key
+/// under limits has (ADR-0068 d5; ADR-0071 d5).
+#[tokio::test]
+async fn a_key_of_an_account_under_no_limits_has_its_limits_looked_up_once_a_minute() {
+    use oml_app::domain::signup::Quotas;
+    // Sign-up is open into another tenant, so ada's account is under none.
+    let (app, store, clock, boot) = metered_on_a_clock(
+        oml_app::types::QuotaProfiles::only(Quotas::default()),
+        Some(Uuid::from_u128(0x51_6e_00)),
+    )
+    .await;
+    let (writer, _) = account_keys(&app, &boot.admin_key.value).await;
+    let before = store.account_profile_reads();
+    for _ in 0..3 {
+        app.recall(&writer.value, &recall_req("canary"))
+            .await
+            .expect("a recall");
+    }
+    assert_eq!(
+        store.account_profile_reads() - before,
+        1,
+        "three requests in one minute look the limits up once"
+    );
+    clock.advance(60);
+    app.recall(&writer.value, &recall_req("canary"))
+        .await
+        .expect("a recall in the next minute");
+    assert_eq!(store.account_profile_reads() - before, 2);
+}
+
+/// An account outside the sign-up tenant is under no limits until an admin
+/// assigns it a profile, and under none again once the admin takes the
+/// profile away; a key that is no admin's may do neither (ADR-0071 d5).
+#[tokio::test]
+async fn an_account_outside_the_sign_up_tenant_returns_to_no_limits_when_its_profile_is_taken_away()
+{
+    use oml_app::domain::signup::{Quota, Quotas};
+    use oml_app::types::{ProfileAssignment, QuotaProfiles};
+    let (app, store, _clock, boot) = metered_on_a_clock(
+        QuotaProfiles::only(Quotas::default().with(Quota::Memories, 1)),
+        Some(Uuid::from_u128(0x51_6e_00)),
+    )
+    .await;
+    let admin = boot.admin_key.value.as_str();
+    let (writer, _) = account_keys(&app, admin).await;
+    let limit_of = |usage: &oml_app::types::AccountUsage| {
+        usage
+            .meters
+            .iter()
+            .find(|m| m.meter == oml_app::domain::usage::Meter::Memories)
+            .expect("the memories meter")
+            .limit
+    };
+    let usage = app.account_usage(&writer.value).await.expect("usage");
+    assert_eq!((usage.profile.as_deref(), limit_of(&usage)), (None, None));
+    let assigned = app
+        .admin_set_profile(
+            admin,
+            "ada",
+            &ProfileAssignment {
+                profile: "default".to_owned(),
+                overrides: vec![(Quota::Keys, 9)],
+            },
+        )
+        .await
+        .expect("assign");
+    assert_eq!(
+        (assigned.profile.as_deref(), limit_of(&assigned)),
+        (Some("default"), Some(1))
+    );
+    app.submit_memory(&writer.value, &submit_req("i1", "the canary drains first"))
+        .await
+        .expect("the one memory default admits");
+    let refused = app
+        .submit_memory(&writer.value, &submit_req("i2", "the fleet follows"))
+        .await
+        .unwrap_err();
+    assert!(matches!(refused, AppError::QuotaReached(_)), "{refused:?}");
+
+    let not_admin = app
+        .admin_clear_profile(&writer.value, "ada")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(not_admin, AppError::VerbCeiling { .. }),
+        "{not_admin:?}"
+    );
+    let head = journal(&store, boot.tenant_id).await.len();
+    let cleared = app
+        .admin_clear_profile(admin, "ada")
+        .await
+        .expect("an admin takes it away");
+    assert_eq!(
+        (cleared.profile.as_deref(), limit_of(&cleared)),
+        (None, None),
+        "no profile, no override, no limit"
+    );
+    let events = journal(&store, boot.tenant_id).await;
+    assert_eq!(events.len(), head + 1);
+    let last = &events.last().expect("an event").envelope;
+    assert_eq!(last.event_type, "account.profile_set");
+    assert_eq!(last.payload["profile"], Value::Null);
+    assert_eq!(last.payload["overrides"], json!({}));
+    app.submit_memory(&writer.value, &submit_req("i2", "the fleet follows"))
+        .await
+        .expect("under no limits again");
 }

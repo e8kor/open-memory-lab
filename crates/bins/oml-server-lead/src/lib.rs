@@ -98,6 +98,9 @@ pub struct Config {
     /// terms, and the per-person limits; `None` in allowlist mode
     /// (ADR-0068 d1).
     pub signup: Option<oml_app::types::SignupPolicy>,
+    /// `quota.*`: the `default` profile, each profile `quota.profiles`
+    /// names, and the profile a sign-up account starts on (ADR-0071 d5).
+    pub quota_profiles: oml_app::types::QuotaProfiles,
     /// `search.enabled` and `search.default`: the pipelines served and the
     /// default (ADR-0049 d4), with `search.rerank.depth` and
     /// `search.rerank.floor` (ADR-0053 d4, d6).
@@ -476,10 +479,8 @@ const KEY_SIGNUP_TERMS_VERSION: &str = "signup.terms_version";
 const KEY_SIGNUP_TERMS_URL: &str = "signup.terms_url";
 const KEY_SIGNUP_PRIVACY_URL: &str = "signup.privacy_url";
 const KEY_SIGNUP_PER_IP_PER_HOUR: &str = "signup.per_ip_per_hour";
-const KEY_QUOTA_MEMORIES: &str = "quota.memories";
-const KEY_QUOTA_KEYS: &str = "quota.keys";
-const KEY_QUOTA_CONNECTIONS: &str = "quota.connections";
-const KEY_QUOTA_REQUESTS_PER_MINUTE: &str = "quota.requests_per_minute";
+const KEY_QUOTA_PROFILES: &str = "quota.profiles";
+const KEY_QUOTA_SIGNUP_PROFILE: &str = "quota.signup_profile";
 const KEY_SEARCH_ENABLED: &str = "search.enabled";
 const KEY_SEARCH_DEFAULT: &str = "search.default";
 const KEY_RERANK_MODEL: &str = "search.rerank.model";
@@ -627,7 +628,7 @@ fn signup_policy(
     lookup: &dyn Fn(&str) -> Option<String>,
     issuer_set: bool,
 ) -> Result<Option<oml_app::types::SignupPolicy>, ConfigError> {
-    use oml_app::domain::signup::{QUOTA_LIMIT_MAX, Quotas, SignupMode};
+    use oml_app::domain::signup::{QUOTA_LIMIT_MAX, SignupMode};
     let mode = match lookup(KEY_SIGNUP_MODE) {
         None => SignupMode::Allowlist,
         Some(value) => SignupMode::parse(&value).ok_or_else(|| {
@@ -675,7 +676,10 @@ fn signup_policy(
                 }),
         }
     };
-    let defaults = Quotas::default();
+    let profiles = quota_profiles(lookup)?;
+    let quotas = profiles
+        .get(&profiles.signup_profile)
+        .expect("quota_profiles declares its signup profile");
     Ok(Some(oml_app::types::SignupPolicy {
         mode,
         tenant_id,
@@ -684,16 +688,77 @@ fn signup_policy(
         terms_url: required(KEY_SIGNUP_TERMS_URL)?,
         privacy_url: required(KEY_SIGNUP_PRIVACY_URL)?,
         per_ip_per_hour: number(KEY_SIGNUP_PER_IP_PER_HOUR, 5)?,
-        quotas: Quotas {
-            memories: number(KEY_QUOTA_MEMORIES, defaults.memories)?,
-            keys: number(KEY_QUOTA_KEYS, defaults.keys)?,
-            connections: number(KEY_QUOTA_CONNECTIONS, defaults.connections)?,
-            requests_per_minute: number(
-                KEY_QUOTA_REQUESTS_PER_MINUTE,
-                defaults.requests_per_minute,
-            )?,
-        },
+        quotas,
     }))
+}
+
+/// `quota.*` (ADR-0071 d5): `default` from `quota.<quota>`, with ADR-0068's
+/// limits and `text_bytes` and `writes_per_month` unlimited until set; each
+/// name `quota.profiles` lists, comma-separated, from
+/// `quota.profile.<name>.<quota>`, a limit it leaves unset being
+/// `default`'s; and `quota.signup_profile`, `default` unless set, which
+/// must be declared. A malformed value stops the start, naming the setting.
+pub fn quota_profiles(
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> Result<oml_app::types::QuotaProfiles, ConfigError> {
+    use oml_app::domain::signup::{Quota, Quotas};
+    use oml_app::types::DEFAULT_PROFILE;
+    let limit = |key: &str, quota: Quota| -> Result<Option<u64>, ConfigError> {
+        lookup(key)
+            .map(|v| {
+                v.trim()
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|n| *n <= quota.max_limit())
+                    .ok_or_else(|| {
+                        ConfigError::Invalid(format!(
+                            "{key} {v:?} is not a whole number from 0 to {} (ADR-0071 d5)",
+                            quota.max_limit()
+                        ))
+                    })
+            })
+            .transpose()
+    };
+    let read = |prefix: &str, base: Quotas| -> Result<Quotas, ConfigError> {
+        Quota::ALL.into_iter().try_fold(base, |quotas, quota| {
+            Ok(
+                match limit(&format!("{prefix}.{}", quota.as_str()), quota)? {
+                    Some(n) => quotas.with(quota, n),
+                    None => quotas,
+                },
+            )
+        })
+    };
+    let base = read("quota", Quotas::default())?;
+    let mut profiles = std::collections::BTreeMap::from([(DEFAULT_PROFILE.to_owned(), base)]);
+    for name in lookup(KEY_QUOTA_PROFILES)
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+    {
+        if oml_app::domain::name::Name::parse(name).is_err() || name == DEFAULT_PROFILE {
+            return Err(ConfigError::Invalid(format!(
+                "{KEY_QUOTA_PROFILES} names {name:?}: a profile is a name other than {DEFAULT_PROFILE} (ADR-0071 d5)"
+            )));
+        }
+        profiles.insert(
+            name.to_owned(),
+            read(&format!("quota.profile.{name}"), base)?,
+        );
+    }
+    let signup_profile = lookup(KEY_QUOTA_SIGNUP_PROFILE)
+        .map(|v| v.trim().to_owned())
+        .unwrap_or_else(|| DEFAULT_PROFILE.to_owned());
+    if !profiles.contains_key(&signup_profile) {
+        return Err(ConfigError::Invalid(format!(
+            "{KEY_QUOTA_SIGNUP_PROFILE} {signup_profile:?} is not a declared profile (ADR-0071 d5)"
+        )));
+    }
+    Ok(oml_app::types::QuotaProfiles {
+        profiles,
+        signup_profile,
+    })
 }
 
 impl Config {
@@ -866,6 +931,7 @@ impl Config {
                 )));
             }
         };
+        let quota_profiles = quota_profiles(&lookup)?;
         // Open sign-up reaches people through a provider's sign-in; with
         // none the pages are off and the policy would silently never apply
         // (ADR-0068 d1).
@@ -1060,6 +1126,7 @@ impl Config {
             web_client,
             brief_max_tokens,
             signup,
+            quota_profiles,
             search,
             rerank,
             sparse,
@@ -1721,6 +1788,86 @@ pub fn spawn_connection_sweep(store: PgStore) -> tokio::task::JoinHandle<()> {
     })
 }
 
+/// How often [`spawn_usage_rollup`] runs [`roll_up_usage`]: an hour, so a
+/// closed day's ledger rows land within the hour after midnight UTC
+/// (ADR-0071 d4).
+pub const USAGE_ROLLUP_SECONDS: u64 = 60 * 60;
+
+/// The `event` field of the log line each rollup writes (observability.md).
+pub const EVENT_USAGE_ROLLUP: &str = "usage_rollup";
+/// The `event` field of the log line a failed rollup writes.
+pub const EVENT_USAGE_ROLLUP_FAILED: &str = "usage_rollup_failed";
+/// The `event` field of the log line recall counts that could not be
+/// written leave (observability.md; ADR-0071 d8).
+pub const EVENT_RECALL_COUNTS_LOST: &str = "usage_recall_counts_lost";
+
+/// The profile an account with none assigned is on (ADR-0071 d5): the
+/// sign-up tenant's id and `quota.signup_profile`; `None` without sign-up,
+/// where such an account is under no limits. The ledger writes it beside
+/// each day's counts.
+pub type UnassignedProfile = Option<(uuid::Uuid, String)>;
+
+/// One usage rollup at `at` over every tenant (ADR-0071 d4): each
+/// tenant's closed days appended to the ledger, each row naming the
+/// profile its account is on, `unassigned`'s in its tenant where no admin
+/// assigned one, and its expired rows deleted. Returns the tenants and the
+/// rows appended. A failed tenant fails the pass with its reason; the next
+/// pass appends what it missed.
+pub async fn roll_up_usage(
+    store: &PgStore,
+    at: &EventTime,
+    unassigned: &UnassignedProfile,
+) -> Result<(usize, u64), String> {
+    let tenants = enumerate_tenants(store.pool())
+        .await
+        .map_err(|e| format!("tenant enumeration: {e}"))?;
+    let mut rows = 0;
+    for tenant_id in &tenants {
+        rows += store
+            .roll_up_usage(
+                *tenant_id,
+                at,
+                unassigned
+                    .as_ref()
+                    .filter(|(tenant, _)| tenant == tenant_id)
+                    .map(|(_, profile)| profile.as_str()),
+            )
+            .await
+            .map_err(|e| format!("tenant {tenant_id}: {e}"))?;
+    }
+    Ok((tenants.len(), rows))
+}
+
+/// Runs [`roll_up_usage`] at the lead's start and every
+/// [`USAGE_ROLLUP_SECONDS`] after, on the system clock, logging
+/// [`EVENT_USAGE_ROLLUP`] or [`EVENT_USAGE_ROLLUP_FAILED`] with its reason.
+/// A failed pass never stops the lead or the next pass.
+pub fn spawn_usage_rollup(
+    store: PgStore,
+    unassigned: UnassignedProfile,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticks = tokio::time::interval(std::time::Duration::from_secs(USAGE_ROLLUP_SECONDS));
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticks.tick().await;
+            match roll_up_usage(&store, &SystemClock.now(), &unassigned).await {
+                Ok((tenants, rows)) => tracing::info!(
+                    event = EVENT_USAGE_ROLLUP,
+                    tenants,
+                    rows,
+                    "usage rolled up (ADR-0071 d4)"
+                ),
+                Err(reason) => tracing::error!(
+                    event = EVENT_USAGE_ROLLUP_FAILED,
+                    %reason,
+                    "USAGE ROLLUP FAILED — the next pass appends what it missed"
+                ),
+            }
+        }
+    })
+}
+
 // ---------------------------------------------------------------------------
 // The composed state
 // ---------------------------------------------------------------------------
@@ -1889,6 +2036,7 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
         None,
         WebClient::default(),
         false,
+        None,
     )
     .await
 }
@@ -1917,6 +2065,7 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     sparse: Option<Arc<dyn oml_app::ports::SparseEncoder>>,
     web_client: WebClient,
     shared: bool,
+    profiles: Option<oml_app::types::QuotaProfiles>,
 ) -> Result<LeadStart, String> {
     // The retrievers the database can run decide which pipelines may be
     // served: a configuration naming one it cannot run stops the start,
@@ -1997,6 +2146,20 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     traffic.metrics().with_scan_counts(scan_counts);
     let (telemetry, _writer) = PgTelemetry::spawn(store.pool().clone(), meter);
     let app = app.with_telemetry(telemetry);
+    // A recall hands its count to this queue and never waits on its
+    // account's counter row (ADR-0071 d2, d8).
+    let (recall_meter, _counts) = oml_pg::recall_meter::PgRecallMeter::spawn(
+        store.clone(),
+        Arc::new(|count, reason| {
+            tracing::warn!(
+                event = EVENT_RECALL_COUNTS_LOST,
+                count,
+                %reason,
+                "RECALL COUNTS LOST — the month's recalls meter reads low by them (ADR-0071 d8)"
+            );
+        }),
+    );
+    let app = app.with_recall_meter(recall_meter);
     let app = match sparse {
         Some(sparse) => app.with_sparse_encoder(sparse),
         None => app,
@@ -2008,7 +2171,14 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     let app = app.with_shared(shared);
     // Open sign-up and the quotas of its tenant (ADR-0068 d1): an issuer
     // that is not a live admin key of that tenant stops the start.
-    let app = match web.as_ref().and_then(|w| w.signup_policy().cloned()) {
+    let signup = web.as_ref().and_then(|w| w.signup_policy().cloned());
+    // The quota profiles (ADR-0071 d5): the configuration's, or `default`
+    // alone with the sign-up policy's limits.
+    let profiles = profiles.unwrap_or_else(|| {
+        oml_app::types::QuotaProfiles::only(signup.as_ref().map(|p| p.quotas).unwrap_or_default())
+    });
+    let app = app.with_quota_profiles(profiles);
+    let app = match signup {
         Some(policy) => app.with_signup(policy),
         None => app,
     };

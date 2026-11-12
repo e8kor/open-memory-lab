@@ -4922,6 +4922,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
     let mut federation_settings: Option<Value> = None;
+    let mut usage_drift: Option<Result<Value, String>> = None;
     // The chat workarea's path and whether the server takes origin_kinds
     // (ADR-0063 d13).
     let mut chat_server: Vec<String> = Vec::new();
@@ -5007,6 +5008,13 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                 // One event's window, read for the counts it carries
                 // (ADR-0074 d28).
                 scan_backlog = client.get("/v2/admin/rescan?limit=1").ok().map(|(_, v)| v);
+                // The usage counters against their rows (ADR-0071 d3, d5).
+                usage_drift = Some(client.get("/v2/admin/usage/drift").map(|(_, v)| v).map_err(
+                    |e| match e {
+                        CliError::Refused { status, code, .. } => format!("{status} {code}"),
+                        CliError::Local(reason) | CliError::Unanswered(reason) => reason,
+                    },
+                ));
             }
         }
     }
@@ -5035,6 +5043,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     scan.extend(scan_backlog_doctor(scan_backlog.as_ref()));
     let scan_warn = scan.iter().any(|line| line.starts_with("warn"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
+    let usage = usage_doctor(usage_drift.as_ref());
+    let usage_warn = usage.iter().any(|line| line.starts_with("warn"));
     let handlers = handlers_doctor(scrape.as_ref());
     let handlers_warn = handlers.iter().any(|line| line.starts_with("warn"));
     // The sync failures of ADR-0057 d17 that the clone alone answers; the
@@ -5091,6 +5101,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || chat_warn
         || sources_warn
         || in_progress_warn
+        || usage_warn
     {
         "warn"
     } else {
@@ -5139,6 +5150,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "telemetry": telemetry,
             "handlers": handlers,
             "scan": scan,
+            "usage": usage,
             "sources": sources,
             "in_progress": in_progress,
             "client_version": env!("CARGO_PKG_VERSION"),
@@ -5259,6 +5271,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &scan {
             println!("scan        : {line}");
+        }
+        for line in &usage {
+            println!("usage       : {line}");
         }
         for line in &sync {
             println!("sync        : {line}");
@@ -6031,8 +6046,61 @@ fn web_doctor(
     lines
 }
 
+/// Usage metering's doctor lines (ADR-0071 d3, d5, d8), from
+/// `GET /v2/admin/usage/drift` read by an admin key: the accounts whose
+/// counters differ from their rows, and the accounts on a profile the
+/// configuration does not declare; nothing when neither holds, and
+/// nothing for a key that is no admin's, which does not read it. A read
+/// that fails is a line of its own: the counters are then unchecked.
+fn usage_doctor(report: Option<&Result<Value, String>>) -> Vec<String> {
+    let r = match report {
+        None => return Vec::new(),
+        Some(Err(reason)) => {
+            return vec![format!(
+                "warn usage: the drift report was not read ({reason}); the counters are unchecked against their rows"
+            )];
+        }
+        Some(Ok(r)) => r,
+    };
+    let mut lines = Vec::new();
+    let drift = r["drift"].as_array().map(Vec::as_slice).unwrap_or_default();
+    if !drift.is_empty() {
+        let accounts: std::collections::BTreeSet<&str> =
+            drift.iter().filter_map(|d| d["account"].as_str()).collect();
+        let each: Vec<String> = drift
+            .iter()
+            .map(|d| {
+                format!(
+                    "{} {} counter {} rows {}",
+                    d["user"].as_str().or(d["account"].as_str()).unwrap_or("?"),
+                    d["meter"].as_str().unwrap_or("?"),
+                    d["counter"],
+                    d["rows"]
+                )
+            })
+            .collect();
+        lines.push(format!(
+            "warn usage: {} accounts drift from their rows ({})",
+            accounts.len(),
+            each.join(", ")
+        ));
+    }
+    let mut undeclared: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for u in r["undeclared_profiles"].as_array().into_iter().flatten() {
+        *undeclared
+            .entry(u["profile"].as_str().unwrap_or("?"))
+            .or_default() += 1;
+    }
+    for (profile, n) in undeclared {
+        lines.push(format!(
+            "warn usage: {n} accounts on profile {profile}, which the configuration does not declare; their writes are refused limit.quota until an admin reassigns them or declares it"
+        ));
+    }
+    lines
+}
+
 /// Open sign-up's doctor lines (ADR-0068 d5, d6, d9, d11), from
-/// `GET /v2/web/users` read by an admin key: the people at or above 90% of
+/// `GET /v2/web/users` read by an admin key: the people at or above 80% of
 /// a quota, the pending deletion requests, and an open mode whose sign-ups
 /// share one address bucket because no proxy is trusted.
 fn signup_doctor(overview: Option<&Value>) -> Vec<String> {
@@ -6053,10 +6121,19 @@ fn signup_doctor(overview: Option<&Value>) -> Vec<String> {
             continue;
         }
         let mut hit = false;
-        for quota in ["memories", "keys", "connections"] {
-            let used = u["usage"][quota].as_u64().unwrap_or(0);
-            let limit = u["quotas"][quota].as_u64().unwrap_or(0);
-            if limit > 0 && used.saturating_mul(10) >= limit.saturating_mul(9) {
+        // A null limit is unlimited and never near (ADR-0071 d5).
+        for (quota, used) in [
+            ("memories", "memories"),
+            ("text_bytes", "text_bytes"),
+            ("writes_per_month", "writes"),
+            ("keys", "keys"),
+            ("connections", "connections"),
+        ] {
+            let used = u["usage"][used].as_u64().unwrap_or(0);
+            let Some(limit) = u["quotas"][quota].as_u64() else {
+                continue;
+            };
+            if limit > 0 && used.saturating_mul(10) >= limit.saturating_mul(8) {
                 *near.entry(quota).or_default() += 1;
                 hit = true;
             }
@@ -6066,7 +6143,7 @@ fn signup_doctor(overview: Option<&Value>) -> Vec<String> {
     if people > 0 {
         let by: Vec<String> = near.iter().map(|(q, n)| format!("{q}: {n}")).collect();
         lines.push(format!(
-            "warn quota: {people} users at or above 90% of a quota ({})",
+            "warn quota: {people} users at or above 80% of a quota ({})",
             by.join(", ")
         ));
     }
@@ -6583,7 +6660,7 @@ mod tests {
             "address_limit_shared": true,
             "users": [
                 {"user": "ua", "under_quotas": true, "disabled": false,
-                 "usage": {"memories": 950, "keys": 1, "connections": 0},
+                 "usage": {"memories": 850, "keys": 1, "connections": 0},
                  "quotas": {"memories": 1000, "keys": 5, "connections": 5}},
                 {"user": "ub", "under_quotas": true, "disabled": false,
                  "usage": {"memories": 10, "keys": 5, "connections": 0},
@@ -6599,7 +6676,7 @@ mod tests {
             lines,
             vec![
                 "warn signup: open with no server.trusted_proxies; every sign-up shares one address limit",
-                "warn quota: 2 users at or above 90% of a quota (keys: 1, memories: 1)",
+                "warn quota: 2 users at or above 80% of a quota (keys: 1, memories: 1)",
                 "warn signup: 1 deletion requests pending, oldest requested 2026-11-06T10:00:00.000000Z; close each on /web/admin/users",
             ]
         );
@@ -6628,6 +6705,41 @@ mod tests {
             signup_doctor(Some(&overview)),
             vec![
                 "warn keys: admin key stray-admin names the user root of alice, which no verb does; disabling alice is refused until the row's user_root_id is cleared"
+            ]
+        );
+    }
+
+    #[test]
+    fn doctor_names_drifted_counters_and_accounts_on_an_undeclared_profile_and_nothing_when_clean()
+    {
+        let report = serde_json::json!({
+            "drift": [
+                {"account": "a1", "user": "ua", "meter": "memories", "counter": 12, "rows": 11},
+                {"account": "a1", "user": "ua", "meter": "text_bytes", "counter": 40, "rows": 41}
+            ],
+            "undeclared_profiles": [
+                {"account": "a2", "user": "ub", "profile": "pro"},
+                {"account": "a3", "user": "uc", "profile": "pro"}
+            ]
+        });
+        assert_eq!(
+            usage_doctor(Some(&Ok(report))),
+            vec![
+                "warn usage: 1 accounts drift from their rows (ua memories counter 12 rows 11, ua text_bytes counter 40 rows 41)",
+                "warn usage: 2 accounts on profile pro, which the configuration does not declare; their writes are refused limit.quota until an admin reassigns them or declares it",
+            ]
+        );
+        let clean = serde_json::json!({"drift": [], "undeclared_profiles": []});
+        assert!(usage_doctor(Some(&Ok(clean))).is_empty());
+        assert!(usage_doctor(None).is_empty());
+    }
+
+    #[test]
+    fn doctor_says_so_when_the_drift_report_could_not_be_read() {
+        assert_eq!(
+            usage_doctor(Some(&Err("503 store.unavailable".to_owned()))),
+            vec![
+                "warn usage: the drift report was not read (503 store.unavailable); the counters are unchecked against their rows"
             ]
         );
     }

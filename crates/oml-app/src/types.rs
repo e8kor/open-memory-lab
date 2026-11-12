@@ -2655,27 +2655,150 @@ pub struct SignupPolicy {
     pub quotas: oml_domain::signup::Quotas,
 }
 
-/// What one person holds against their quotas (ADR-0068 d5).
+/// One account's six meters (ADR-0071 d2): the four stocks now and the
+/// two flows of one UTC month.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UserUsage {
-    /// Distinct memories in the root or below it, every state.
+    /// Live chains the account started.
     pub memories: u64,
-    /// The root's live bearer and connector keys.
+    /// Claim-text bytes of every version the account's keys wrote.
+    pub text_bytes: u64,
+    /// Versions the account's keys submitted in the month.
+    pub writes: u64,
+    /// Recalls the account's keys made in the month.
+    pub recalls: u64,
+    /// The account's live bearer and connector keys.
     pub keys: u64,
-    /// Open connections of the root's connector keys.
+    /// Open connections of those keys.
     pub connections: u64,
 }
 
 impl UserUsage {
+    /// What counts against `quota`; the request rate is no meter.
     #[must_use]
     pub fn get(&self, quota: oml_domain::signup::Quota) -> u64 {
         use oml_domain::signup::Quota;
         match quota {
             Quota::Memories => self.memories,
+            Quota::TextBytes => self.text_bytes,
+            Quota::WritesPerMonth => self.writes,
             Quota::Keys => self.keys,
             Quota::Connections => self.connections,
             Quota::RequestsPerMinute => 0,
         }
+    }
+
+    #[must_use]
+    pub fn meter(&self, meter: oml_domain::usage::Meter) -> u64 {
+        use oml_domain::usage::Meter;
+        match meter {
+            Meter::Memories => self.memories,
+            Meter::TextBytes => self.text_bytes,
+            Meter::Writes => self.writes,
+            Meter::Recalls => self.recalls,
+            Meter::Keys => self.keys,
+            Meter::Connections => self.connections,
+        }
+    }
+}
+
+/// One account's counters, as the admin list reads them (ADR-0071 d6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountCounters {
+    pub user_root: Uuid,
+    pub profile: Option<String>,
+    pub usage: UserUsage,
+}
+
+/// One ledger row: an account's meters for one closed UTC day (ADR-0071
+/// d4). Counts only (d7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedgerRow {
+    pub user_root: Uuid,
+    pub day: String,
+    pub profile: Option<String>,
+    pub usage: UserUsage,
+}
+
+/// One meter of one account whose counter differs from its rows
+/// (ADR-0071 d3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MeterDrift {
+    pub user_root: Uuid,
+    pub meter: oml_domain::usage::Meter,
+    pub counter: i64,
+    pub rows: i64,
+}
+
+/// One meter of an account's usage as the endpoints answer it (ADR-0071
+/// d5, d6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MeterReading {
+    pub meter: oml_domain::usage::Meter,
+    pub used: u64,
+    /// `None` where the meter has no limit.
+    pub limit: Option<u64>,
+    pub percent: Option<u64>,
+    pub state: oml_domain::usage::MeterState,
+}
+
+/// An account's usage: its meters against its limits in one month
+/// (ADR-0071 d6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountUsage {
+    pub user_root: Uuid,
+    /// The user the root is named for, when it has a name.
+    pub user: Option<Name>,
+    /// The profile the limits come from: `None` for an account under no
+    /// limits.
+    pub profile: Option<String>,
+    /// Whether that profile is one the configuration declares; an
+    /// undeclared one holds every limit at zero (ADR-0071 d5).
+    pub profile_declared: bool,
+    pub month: oml_domain::usage::Month,
+    pub meters: Vec<MeterReading>,
+}
+
+/// An admin's `PUT …/profile` (ADR-0071 d5): the profile and every
+/// override, replacing the account's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileAssignment {
+    pub profile: String,
+    pub overrides: Vec<(oml_domain::signup::Quota, u64)>,
+}
+
+/// The deployment's quota profiles (ADR-0071 d5): `default` from the
+/// `quota.*` settings, each other declared name with its limits, and the
+/// profile a sign-up account starts on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuotaProfiles {
+    pub profiles: std::collections::BTreeMap<String, oml_domain::signup::Quotas>,
+    pub signup_profile: String,
+}
+
+/// The name of the profile the `quota.*` settings make (ADR-0071 d5).
+pub const DEFAULT_PROFILE: &str = "default";
+
+impl Default for QuotaProfiles {
+    fn default() -> Self {
+        Self::only(oml_domain::signup::Quotas::default())
+    }
+}
+
+impl QuotaProfiles {
+    /// `default` alone, with these limits, and sign-ups on it.
+    #[must_use]
+    pub fn only(quotas: oml_domain::signup::Quotas) -> Self {
+        Self {
+            profiles: [(DEFAULT_PROFILE.to_owned(), quotas)].into(),
+            signup_profile: DEFAULT_PROFILE.to_owned(),
+        }
+    }
+
+    /// A declared profile's limits.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<oml_domain::signup::Quotas> {
+        self.profiles.get(name).copied()
     }
 }
 
@@ -3201,6 +3324,7 @@ pub enum AppError {
 impl From<StoreError> for AppError {
     fn from(error: StoreError) -> Self {
         match error {
+            StoreError::QuotaReached(reached) => AppError::QuotaReached(reached),
             StoreError::NameTaken { kind, name } => AppError::NameTaken { kind, name },
             StoreError::EmailTaken => AppError::WebEmailTaken,
             StoreError::LastAdminEntry => AppError::WebField {

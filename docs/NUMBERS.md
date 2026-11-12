@@ -92,6 +92,7 @@ branch that reserved later renumbers.
 | adr | 0068 | `feat/open-signup` |  | anyone signs in and gets a private root under quotas when the operator opens sign-up | reserved |
 | adr | 0069 | `feat/design-system` |  | OML's design system is the source of truth for every surface | reserved |
 | adr | 0070 | `design/web-api-client` |  | the web console is a client of the public HTTP API in a crate that cannot reach the application core | reserved |
+| adr | 0071 | `feat/usage-metering-main` |  | every account is metered by counter rows updated in the write's own transaction, and named quota profiles set its limits | reserved |
 | adr | 0072 | `design/federated-recall` |  | recall searches trusted and advertised workareas the key can already read, chosen per query by their reviewed descriptors | reserved |
 | adr | 0073 | `design/distributed-nodes` |  | a leader signs every write and nodes serve the workareas placed on them, each read routed to the closest less busy replica fresh enough for it | reserved |
 | adr | 0074 | `design/scan-expansion` |  | the scan names a threat class for every finding, refuses only what can never be safe, holds or annotates the rest, and recall serves every hit as data with its findings | reserved |
@@ -281,3 +282,4 @@ branch that reserved later renumbers.
 | migration | 0042 | `fix/idempotency-atomic` | #233 | idempotency claims | reserved |
 | migration | 0043 | `feat/scan-phase1` |  | scan findings | reserved |
 | migration | 0044 | `recall72/recall-approver` |  | memory approval | reserved |
+| migration | 0045 | `feat/usage-metering-main` |  | usage metering | reserved |

@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-06
-answers: "the steps to take for each operational alert: a failed fork check, no available reviewer, a stalled review queue, a lagging lake, repeated lead takeovers, repeated 429 answers and key compromise"
+answers: "the steps to take for each operational alert: a failed fork check, no available reviewer, a stalled review queue, a lagging lake, repeated lead takeovers, repeated 429 answers, a usage counter that drifts from its rows and key compromise"
 ---
 
 # Operational alerts
@@ -155,6 +155,43 @@ Use this when a person's resubmitted web console form answers `409 idempotency.i
    ```
 
 No sweeper removes held claims yet. Each holds one form's key, so leaving them costs nothing but the row.
+
+## A usage counter drifts from its rows
+
+Use this when `oml doctor` under an admin key prints `warn usage: <n> accounts drift from their rows (…)`. An account's counter in `account_meters` or `account_activity` differs from what its stored rows count ([ADR-0071](../adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d3). Only a bug or a hand edit causes it. No code repairs a counter, because a silent repair would hide the bug. While it stands, an account whose counter reads high is refused `limit.quota` before its real limit, one whose counter reads low may pass it by the difference, and the ledger records the counter as it reads.
+
+1. Read the report and keep it: each account, meter, counter and row count. They are ids and counts.
+
+   ```bash
+   curl -fsS -H "Authorization: Bearer $OML_API_KEY" "$OML_URL/v2/admin/usage/drift"
+   ```
+
+2. Read it again a minute later. A difference that grows names a fold that still miscounts. A difference that stays is one past event or a hand edit.
+3. Report it as an issue with both reads and the server's version, before you change anything. The cause is the finding.
+4. If an account is refused before its real limit, give it room with an override, which is journalled. Take it away with `DELETE` on the same route once the counter is right.
+
+   ```bash
+   curl -fsS -X PUT -H "Authorization: Bearer $OML_API_KEY" -H 'Content-Type: application/json' \
+     -d '{"profile": "<its profile>", "overrides": {"<quota>": <limit>}}' \
+     "$OML_URL/v2/admin/accounts/<account>/profile"
+   ```
+
+5. Set the drifted stocks to what the rows count, as the database owner, once the cause is recorded. The lock makes every commit that moves a meter wait for this transaction, so none is lost.
+
+   ```sql
+   BEGIN;
+   SET LOCAL oml.tenant_id = '<tenant id>';
+   LOCK TABLE account_meters IN SHARE ROW EXCLUSIVE MODE;
+   UPDATE account_meters m
+      SET memories = s.memories, text_bytes = s.text_bytes, keys = s.keys, connections = s.connections
+     FROM oml_account_source('<tenant id>') s
+    WHERE m.tenant_id = '<tenant id>' AND m.user_root = s.user_root AND m.user_root = '<account>';
+   COMMIT;
+   ```
+
+6. Read the report once more. It lists nothing for that account's stocks.
+
+A drift on `writes` is the month's alone and ends with the month. `recalls` has no rows to compare with: a count the queue dropped or the store refused is logged as `usage_recall_counts_lost` and stays lost.
 
 ## Rotate a signing key or a keyring
 
