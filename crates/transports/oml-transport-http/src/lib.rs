@@ -4274,8 +4274,9 @@ fn whoami_person_ask(pairs: &[(String, String)]) -> Result<PersonAsk, ApiError> 
 
 /// openapi.yaml `Whoami`: the calling key's own record, each reference
 /// `{id, name}` and the default workarea with its `path`, its stored grants
-/// without their deny masks, and never its denials (ADR-0039 d15); a session
-/// key's record carries `denied`, whether it holds any (#343).
+/// without their deny masks, and never its denials (ADR-0039 d15); the
+/// record of a person's `<user>-web` session key alone carries `denied`,
+/// whether it holds any (#343).
 fn whoami_json(whoami: &Whoami) -> Value {
     let key = &whoami.key;
     let named = |r: &oml_app::types::NamedRef| json!({ "id": r.id, "name": r.name.as_str() });
@@ -4304,9 +4305,9 @@ fn whoami_json(whoami: &Whoami) -> Value {
         "expiry": key.expiry.as_ref().map(|at| at.as_str()),
         "requests_per_minute": key.requests_per_minute,
     });
-    // A session key alone is told whether it carries a denial, so the web
-    // console draws no form for the key acts that key is refused for good
-    // (ADR-0070 d2; #343). No other key's record names a denial.
+    // A person's `<user>-web` alone is told whether it carries a denial, so
+    // the web console draws no form for the key acts that key is refused for
+    // good (ADR-0070 d2, d5; #343). No other key's record has the member.
     if let (Some(denied), Some(obj)) = (whoami.denied, out.as_object_mut()) {
         obj.insert("denied".to_owned(), Value::Bool(denied));
     }

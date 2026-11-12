@@ -270,7 +270,7 @@ async fn a_session_keys_read_resolves_its_caller_on_the_gates_access_once_and_a_
     );
 }
 
-/// A session key's `whoami` says whether the key carries a denial, from the
+/// A `<user>-web` session key's `whoami` says whether the key carries a denial, from the
 /// access the gate already read: the calls the Keys page and the Start page
 /// make cost the store calls they cost before the field, and a denial on
 /// the key changes none of them (ADR-0070 d2, d8; #343).
@@ -289,7 +289,14 @@ async fn whoami_names_a_denied_session_key_in_the_store_calls_it_already_makes()
         let answer = get(&rig.router, path, &web(&rig.alice, capacity), true).await;
         assert_eq!(answer.status, StatusCode::OK, "{path}: {}", answer.body);
         if path.starts_with("/v2/whoami") {
-            assert_eq!(answer.body["denied"], false, "{path}: {}", answer.body);
+            // `alice-web` alone carries the member: `alice-admin` has none.
+            let told = (capacity == "web").then_some(false);
+            assert_eq!(
+                answer.body.get("denied").and_then(Value::as_bool),
+                told,
+                "{path} as {capacity}: {}",
+                answer.body
+            );
         }
         before.push(answer.store_calls());
     }
@@ -307,10 +314,10 @@ async fn whoami_names_a_denied_session_key_in_the_store_calls_it_already_makes()
         let answer = get(&rig.router, path, &web(&rig.alice, capacity), true).await;
         assert_eq!(answer.status, StatusCode::OK, "{path}: {}", answer.body);
         if path.starts_with("/v2/whoami") {
-            // Only the denied key is told: `alice-admin` carries none.
+            let told = (capacity == "web").then_some(true);
             assert_eq!(
-                answer.body["denied"],
-                capacity == "web",
+                answer.body.get("denied").and_then(Value::as_bool),
+                told,
                 "{path} as {capacity}: {}",
                 answer.body
             );

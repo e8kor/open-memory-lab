@@ -7,7 +7,7 @@ answers: why the agent and HTTP surfaces are rewritten for v0.4.0 while OML is p
 
 # ADR-0039 — The API is rewritten for v0.4.0 while OML is pre-release: three task-shaped MCP tools, a contract that declares only what is served, one URL and one key to start, and nothing lost
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) (d5: each tool also carries a `title`), [ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) · amended by [ADR-0076](ADR-0076-releases-ship-no-default-server-and-setup-asks-for-the-server-or-reads-it-from-the-key-or-the-environment.md) (d15)
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) (d5: each tool also carries a `title`), [ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) · amended by [ADR-0076](ADR-0076-releases-ship-no-default-server-and-setup-asks-for-the-server-or-reads-it-from-the-key-or-the-environment.md) (d15) · amended by [ADR-0070](ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core.md) (d15: `whoami` tells a `<user>-web` session key whether it carries a denial; accepted 2026-11-12)
 
 **Release:** introduced in v0.4.0 ([releases](../changelog.md))
 
@@ -308,6 +308,12 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
       `path`, and each grant as `{grant_id, workarea_node_id, role, epoch}`. It omits denials and
       the grants' per-grant deny masks, both of which name subtrees the key may not read, logs no
       read, since it reads no claim, and gains the guardrail scope when ADR-0037's is built.
+      Amended by [ADR-0070](ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core.md)
+      (2026-11-12, #343; accepted by the operator the same day): a `<user>-web` session key's
+      record also carries `denied`, a boolean: whether the key holds a denial in force on any
+      workarea. It names no workarea, no count, no author and no time. Every other key's record
+      has no such member, so an agent key or an admin key still learns nothing of its denials.
+      The flag tells a person nothing the refusal of a key act does not already tell them.
     - **`oml doctor` checks the pair alone**: each value's source, never the key; `/readyz`; and
       `whoami`, printing role, tenant and default workarea.
     - **Admin extras stay off the start path**: the enrollment secret and `--signing-key` are read

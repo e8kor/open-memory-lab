@@ -86,8 +86,8 @@ pub(crate) fn denied_notice() -> String {
 }
 
 /// Whether the session's key carries a denial, as `GET /v2/whoami` says of
-/// a session key; the admin's page is never drawn for one, since an admin key
-/// takes no denial.
+/// a person's `<user>-web` and of no other key; the admin's page is never
+/// drawn for one, since an admin key takes no denial.
 pub(crate) fn denied(session: &Session) -> bool {
     session.whoami.denied == Some(true)
 }

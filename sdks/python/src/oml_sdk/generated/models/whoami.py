@@ -27,8 +27,8 @@ T = TypeVar("T", bound="Whoami")
 @_attrs_define
 class Whoami:
     """The calling key's own record (GET /v2/whoami): everything a client derives from its URL and key alone. Never the
-    key's value, its denials or its grants' deny masks (ADR-0039 d15); a session key's record carries denied, whether it
-    holds a denial.
+    key's value, its denials or its grants' deny masks (ADR-0039 d15); the record of a person's <user>-web session key
+    alone carries denied, whether it holds a denial.
 
         Attributes:
             key_id (str):
@@ -53,10 +53,11 @@ class Whoami:
                 that does not expire (ADR-0079 d3; since v0.7.3).
             requests_per_minute (int | None | Unset): This key's own requests per UTC minute; null for none of its own
                 (ADR-0079 d4; since v0.7.3).
-            denied (bool | Unset): A session key's alone, absent on every other key: whether the key carries a denial on any
-                workarea, which refuses it the three key acts (issue a key, mint a connect code, cut off a key) for good, as
-                access.verb_ceiling with details.reason session_key_denied. The web console draws no form for those acts when it
-                is true (ADR-0070 d2; since v0.7.3).
+            denied (bool | Unset): On the record of a person's <user>-web session key alone, absent on every other key's,
+                the other session keys' included: whether the key carries a denial in force on any workarea, which refuses it
+                the three key acts (issue a key, mint a connect code, cut off a key) for good, as access.verb_ceiling with
+                details.reason session_key_denied. It names no workarea, count, author or time. The web console draws no form
+                for those acts when it is true (ADR-0070 d2, d5; ADR-0039 d15; since v0.7.3).
             person (None | Unset | WhoamiPerson): The person the key's user root names; null for a tenant key (ADR-0070 d5).
                 Absent with person=false (#286).
             shared (bool | Unset): Whether the server's admins are not the caller's: true when the operator sets
