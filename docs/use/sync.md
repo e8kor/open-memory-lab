@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-12
 answers: "how oml sync keeps a workarea in step with a repository's documents and code, reviewed in bulk"
 ---
 
@@ -10,6 +10,10 @@ answers: "how oml sync keeps a workarea in step with a repository's documents an
 commit and extracts memories through an adapter. It diffs them against what the workarea holds and
 writes the difference. Each memory is anchored to the repository, commit, path, fragment and
 fingerprint of the span it came from.
+
+Requirements: git 2.7 or later on the `PATH`, since `oml sync` runs `git remote get-url` to derive
+the repository name (the other commands it runs are older). We run it against current git, and
+against a stand-in that refuses the options git 2.30 added; we have not run it against git 2.7.
 
 1. **Pick the source and the adapter.** `adr` yields one memory per decision bullet, plus a summary
    and a rejected-alternatives memory. `headings` yields one per heading of level 2 to 4. `lines`

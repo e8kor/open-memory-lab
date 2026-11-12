@@ -67,19 +67,21 @@ impl Git {
     /// # Errors
     /// `rev` names no commit.
     pub fn commit(&self, rev: &str) -> Result<String, String> {
-        self.run(&[
-            "rev-parse",
-            "--verify",
-            "--end-of-options",
-            &format!("{rev}^{{commit}}"),
-        ])
-        .map(|s| s.trim().to_owned())
-        .map_err(|_| {
+        let not_a_commit = || {
             format!(
                 "--rev {rev:?} is not a commit in {}; fetch it or choose another revision",
                 self.dir.display()
             )
-        })
+        };
+        // No revision starts with `-`, and git could read one as an option.
+        // `--end-of-options` would say so to git, but git before 2.30 does
+        // not know it, so the refusal is here instead.
+        if rev.starts_with('-') {
+            return Err(not_a_commit());
+        }
+        self.run(&["rev-parse", "--verify", &format!("{rev}^{{commit}}")])
+            .map(|s| s.trim().to_owned())
+            .map_err(|_| not_a_commit())
     }
 
     /// Whether this clone holds the commit `rev`.
@@ -194,19 +196,16 @@ impl Git {
     /// Removes every value of a multi-valued local git config entry of this
     /// clone that equals `value`; no such value is not an error.
     ///
+    /// The value goes to git as an anchored pattern, not through
+    /// `--fixed-value`, which git before 2.30 does not know.
+    ///
     /// # Errors
     /// git cannot run, or fails for a reason other than there being no such
     /// value (exit status 5).
     pub fn unset_value(&self, name: &str, value: &str) -> Result<(), String> {
+        let pattern = format!("^{}$", escape_pattern(value));
         let out = self
-            .command(&[
-                "config",
-                "--local",
-                "--fixed-value",
-                "--unset-all",
-                name,
-                value,
-            ])
+            .command(&["config", "--local", "--unset-all", name, &pattern])
             .output()
             .map_err(|e| format!("cannot run git: {e}"))?;
         match out.status.code() {
@@ -268,6 +267,19 @@ impl Git {
             .collect::<Vec<_>>()
             .join("/"))
     }
+}
+
+/// `text` as a pattern that matches only itself: the characters of
+/// POSIX extended regular expressions are backslash-escaped.
+fn escape_pattern(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if "\\.[]{}()*+?^$|".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 fn normalise(path: &Path) -> PathBuf {
