@@ -747,6 +747,212 @@ fn an_opt_in_beside_a_recorded_origin_and_a_legacy_true_drops_the_true() {
     assert_eq!(recorded(&dir), [server]);
 }
 
+/// A `git` ahead of the real one on PATH that refuses what git before 2.30
+/// does not know, with git's own words and exit status, and otherwise runs
+/// the real git: `config --fixed-value` and `rev-parse --end-of-options`
+/// arrived in 2.30. Returns the directory to put first on PATH.
+#[cfg(unix)]
+fn git_before_2_30(test: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let real = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|d| d.join("git"))
+        .find(|p| p.is_file())
+        .expect("a git on PATH");
+    let bin = scratch(&format!("{test}-bin"));
+    let script = bin.join("git");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do\n  case \"$a\" in\n    --fixed-value|--end-of-options)\n      echo \"error: unknown option \\`${{a#--}}'\" >&2\n      exit 129;;\n  esac\ndone\nexec {} \"$@\"\n",
+            real.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bin
+}
+
+/// `oml sync docs` with `--allow-public-server` against `server`, with `bin`
+/// first on PATH.
+#[cfg(unix)]
+fn opt_in_with_path(dir: &Path, server: &str, bin: &Path) -> (i32, String, String) {
+    let path = std::env::join_paths(
+        std::iter::once(bin.to_path_buf())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_oml"))
+        .args([
+            "--url",
+            server,
+            "--api-key",
+            "k",
+            "sync",
+            "docs",
+            "--workarea",
+            "w",
+            "--allow-public-server",
+        ])
+        .current_dir(dir)
+        .env("PATH", path)
+        .env("OML_CLI_CREDENTIALS", dir.join("no-credentials.toml"))
+        .env_remove("OML_URL")
+        .env_remove("OML_API_KEY")
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// The wrapper is the honest stand-in for git 2.25: it must refuse the two
+/// options, or the tests below prove nothing.
+#[cfg(unix)]
+#[test]
+fn the_stand_in_for_an_old_git_refuses_what_git_before_2_30_does_not_know() {
+    let dir = docs_clone("old-git-stand-in");
+    let bin = git_before_2_30("old-git-stand-in");
+    for args in [
+        [
+            "config",
+            "--local",
+            "--fixed-value",
+            "--unset-all",
+            "a.b",
+            "c",
+        ],
+        [
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            "HEAD",
+            "x",
+            "y",
+        ],
+    ] {
+        let out = Command::new(bin.join("git"))
+            .arg("-C")
+            .arg(&dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(129), "{args:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_first_opt_in_on_a_git_before_2_30_records_the_origin_and_drops_only_the_literal_true() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, Some(true));
+    let dir = docs_clone("old-git-opt-in");
+    let bin = git_before_2_30("old-git-opt-in");
+    let kept = [
+        "https://true",
+        "TRUE",
+        "true ",
+        "https://untrue.example",
+        "truer",
+    ];
+    git(
+        &dir,
+        &["config", "--local", "oml.allowPublicServer", "true"],
+    );
+    for value in kept {
+        git(
+            &dir,
+            &["config", "--local", "--add", "oml.allowPublicServer", value],
+        );
+    }
+    let (_, _, err) = opt_in_with_path(&dir, &server, &bin);
+    runtime.shutdown_background();
+    assert!(!err.contains("could not drop"), "{err}");
+    assert!(!err.contains("could not record"), "{err}");
+    assert!(!err.contains("unknown option"), "{err}");
+    assert!(!err.contains("is not a commit"), "{err}");
+    let mut want: Vec<String> = kept.iter().map(|v| (*v).to_owned()).collect();
+    want.push(server);
+    assert_eq!(recorded(&dir), want);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_first_opt_in_on_a_git_before_2_30_with_no_legacy_value_records_the_origin_without_error() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, Some(true));
+    let dir = docs_clone("old-git-no-legacy");
+    let bin = git_before_2_30("old-git-no-legacy");
+    let (_, _, err) = opt_in_with_path(&dir, &server, &bin);
+    runtime.shutdown_background();
+    assert!(!err.contains("could not drop"), "{err}");
+    assert!(!err.contains("could not record"), "{err}");
+    assert!(!err.contains("is not a commit"), "{err}");
+    assert_eq!(recorded(&dir), [server]);
+}
+
+#[test]
+fn only_the_literal_true_is_removed_and_a_clone_with_none_records_the_origin() {
+    let url = "https://oml.example.com";
+    let dir = clone_with("unset-literal-true", "git@github.com:e8kor/docs.git");
+    record_shared_server_consent(&dir, url).unwrap();
+    assert_eq!(recorded(&dir), [url], "no legacy value: no error");
+
+    let kept = [
+        "https://true",
+        "TRUE",
+        "true ",
+        "https://untrue.example",
+        "truer",
+        "xtrue",
+    ];
+    let add = |value: &str| {
+        git(
+            &dir,
+            &["config", "--local", "--add", "oml.allowPublicServer", value],
+        );
+    };
+    add("true");
+    for value in kept {
+        add(value);
+    }
+    add("true");
+    record_shared_server_consent(&dir, url).unwrap();
+    let mut want = vec![url.to_owned()];
+    want.extend(kept.iter().map(|v| (*v).to_owned()));
+    assert_eq!(
+        recorded(&dir),
+        want,
+        "every literal true goes, nothing else"
+    );
+}
+
+#[test]
+fn unsetting_a_value_matches_it_literally_and_not_as_a_pattern() {
+    let dir = clone_with("unset-literal", "git@github.com:e8kor/docs.git");
+    let source = oml_cli::sync::source::Git::at(&dir).unwrap();
+    for value in ["a.b", "axb", "a.b.c", "(a|b)", "a"] {
+        source.add_config("oml.sample", value).unwrap();
+    }
+    source.unset_value("oml.sample", "a.b").unwrap();
+    source.unset_value("oml.sample", "(a|b)").unwrap();
+    source.unset_value("oml.sample", "absent").unwrap();
+    assert_eq!(source.config_all("oml.sample"), ["axb", "a.b.c", "a"]);
+}
+
+#[test]
+fn a_rev_that_looks_like_an_option_is_refused_before_git_sees_it() {
+    let dir = docs_clone("rev-option");
+    let git = oml_cli::sync::source::Git::at(&dir).unwrap();
+    assert!(git.commit("HEAD").is_ok());
+    for rev in ["--abbrev-ref", "-n1", "--output=x"] {
+        let err = git.commit(rev).unwrap_err();
+        assert!(err.contains("is not a commit"), "{rev}: {err}");
+    }
+    assert!(!dir.join("x").exists());
+}
+
 #[test]
 fn doctor_names_sync_shared_server_when_consent_for_that_origin_is_missing() {
     let runtime = tokio::runtime::Runtime::new().unwrap();

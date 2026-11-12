@@ -14,6 +14,8 @@ from .admin_search_memories_response_200 import AdminSearchMemoriesResponse200
 from .allow_web_email_body import AllowWebEmailBody
 from .anchor import Anchor
 from .anchor_hasher import AnchorHasher
+from .approver import Approver
+from .approver_held_by import ApproverHeldBy
 from .attachment_descriptor import AttachmentDescriptor
 from .authorization_server_metadata import AuthorizationServerMetadata
 from .authorization_server_metadata_code_challenge_methods_supported_item import (
@@ -373,6 +375,8 @@ __all__ = (
     "AllowWebEmailBody",
     "Anchor",
     "AnchorHasher",
+    "Approver",
+    "ApproverHeldBy",
     "AttachmentDescriptor",
     "AuthorizationServerMetadata",
     "AuthorizationServerMetadataCodeChallengeMethodsSupportedItem",

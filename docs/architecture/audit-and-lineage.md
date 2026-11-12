@@ -36,9 +36,12 @@ The chain carries the actor's name and key id, because attribution is the point.
 | You want | Run | What you get |
 |---|---|---|
 | The memory's author, version, promotion time and sources | `oml read <artifact_id> --json` | `principal`, `version`, `promoted_at`, `derives_from`, `replaces` |
+| When it was approved, and by what kind of reviewer | `oml read <artifact_id> --json` | `approved_at`, and `approver` with `held_by` and `same_user` |
 | The approval event and its link to the verdict | `oml events --workarea <workarea>` | `lifecycle.promote` with `ratification_event_id` |
-| The author's attribution, as an admin | `oml admin read <artifact_id>` (admin key) | The memory with its attribution |
+| Who reviewed it, as an admin | `oml admin read <artifact_id>` (admin key) | The memory with its attribution and each verdict with its reviewing key and principal; the read is journaled |
 | Proof the record was not edited | `oml audit verify-chain` | Not available yet: the server serves no chain export |
+
+A memory names its author and never its reviewer: who reviewed it is readable on the admin read, which is journaled as `memory.admin_read`. `approver.held_by` says whether the reviewing key is held by an `agent`, as a crew's reviewer is, or by a `human`. `approver.same_user` is `true` when a person approved their own agent's write. Both are `null` on a memory served before review, and on a `universe` memory served to anyone but its author. Recall hits and the `oml_read` tool carry the same two fields.
 
 `oml events` is a feed, not a verification surface. A key sees events inside its read access. When the actor is not one of the reader's own keys, the event shows `principal` and `api_key_id` as `null`. So a reader learns that and when a memory was approved. Only the actor's own keys see the reviewer's identity in the feed. Each admin read of a memory's text is itself journaled as `memory.admin_read`.
 

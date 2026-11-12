@@ -86,6 +86,8 @@ describe("the agent loop", live, () => {
       own.hits.map((hit) => [hit.memory.artifact_id, hit.memory.state]),
       [[held.artifact_id, "held"]],
     );
+    // Nobody has approved a held memory (ADR-0077 d5).
+    assert.deepEqual([own.hits[0]?.memory.approver, own.hits[0]?.memory.approved_at], [null, null]);
     assert.deepEqual((await agent.read({ query: word, workarea })).hits, []);
 
     const serve = await reviewer.reviewNext();
@@ -99,7 +101,16 @@ describe("the agent loop", live, () => {
       recalled.hits.map((hit) => [hit.memory.artifact_id, hit.memory.state]),
       [[held.artifact_id, "promoted"]],
     );
-    assert.equal((await agent.read({ artifact_id: held.artifact_id })).state, "promoted");
+    // The hit says a person approved it, and when; the read by id says the
+    // same (ADR-0077 d1, d2). The fixture's reviewer key is held by a human
+    // and acts for no user.
+    const approved = recalled.hits[0]?.memory;
+    assert.deepEqual(approved?.approver, { held_by: "human", same_user: false });
+    assert.ok(approved?.approved_at && approved.promoted_at);
+    assert.ok(approved.approved_at <= approved.promoted_at);
+    const fetched = await agent.read({ artifact_id: held.artifact_id });
+    assert.deepEqual([fetched.approver, fetched.approved_at], [approved.approver, approved.approved_at]);
+    assert.equal(fetched.state, "promoted");
     assert.equal(await reviewer.reviewNext(), null);
   });
 

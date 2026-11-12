@@ -1579,6 +1579,13 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             promoted_at: string | null;
+            /**
+             * Format: date-time
+             * @description When the approving verdict that ratified the version was given: the verdict's own time, at or just before promoted_at. Null on a version that is not promoted, wherever principal is null (ADR-0044 d9), and on a version ratified before the journal named its verdict (ADR-0077 d1, d3, d4). Since v0.7.2.
+             */
+            approved_at?: string | null;
+            /** @description What kind of reviewer gave the approving verdict that ratified the version, never who; null wherever approved_at is (ADR-0077 d2, d4). Since v0.7.2. */
+            approver?: components["schemas"]["Approver"] | null;
             /** @description The version's anchor, as its author declared it, or null (ADR-0057 d1, d2). */
             anchor: components["schemas"]["Anchor"] | null;
             /** @description What kind of source the version's text came from, as signed; null on versions written before ADR-0063 (d1-d3). */
@@ -1599,6 +1606,16 @@ export interface components {
             search_text?: string;
             /** @description On a held successor alone: the instant approving it ends the version it replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when approving ends nothing (ADR-0059 d4). */
             replaces_valid_until?: string;
+        };
+        /** @description The reviewer behind a version's approving verdict, by kind (ADR-0077 d2). It carries no key id, key name, principal or crew: who reviewed is in the journal's review events, which no reader of a memory is served (ADR-0025 d15; ADR-0037 d5). A crew's reviewer reads held_by agent; a person reads held_by human; a person approving their own agents' writes reads same_user true. */
+        Approver: {
+            /**
+             * @description The reviewing key's attestation, who holds it, when it gave the verdict (docs/architecture/roles-and-keys.md), as a served guardrail's verdicts carry it (ADR-0037 d5).
+             * @enum {string}
+             */
+            held_by: "agent" | "human" | "service";
+            /** @description True when the reviewing key and the authoring key act for one person, as the promotion's event marks it (ADR-0055 d7); the reviewing key and principal still differ from the author's (ADR-0044 d8). Null on a version ratified before the mark. */
+            same_user: boolean | null;
         };
         /** @description YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (ADR-0059 d2). */
         ValidEnd: string;
