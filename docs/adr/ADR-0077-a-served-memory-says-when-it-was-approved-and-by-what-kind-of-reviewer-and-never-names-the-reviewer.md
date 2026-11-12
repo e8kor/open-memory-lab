@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0077-a-served-memory-says-when-it-was-approved-and-by-what-kind-of-reviewer-and-never-names-the-reviewer
 tier: engineering
-status: proposed
-answers: what a served memory says about its approval over HTTP, MCP and the SDKs; why it says the kind of reviewer and never who; which verdict is "the approver" when a policy needs more than one; what an unreviewed hit, an anonymous universe hit and a federated hit carry; where the approval is stored and how rows promoted before it are filled; what erasing or pseudonymising attribution must cover; and which readings wait for the operator
+status: accepted design · 2026-11-12
+answers: what a served memory says about its approval over HTTP, MCP and the SDKs; why it says the kind of reviewer and never who; which verdict is "the approver" when a policy needs more than one; what an unreviewed hit, an anonymous universe hit and a federated hit carry; where the approval is stored and how rows promoted before it are filled; what erasing or pseudonymising attribution must cover; and the one open point
 -->
 
 # ADR-0077 — A served memory says when it was approved and by what kind of reviewer, and never names the reviewer
 
-**Status:** proposed · 2026-11-12, with #175
+**Status:** accepted design · 2026-11-12, by the operator, with its three open questions closed as the Decision records them (1: the reviewer is not named to readers, and an admin reads who through the journalled admin read; 2: `approver` is the verdict whose arrival met the policy, and a build with k > 1 adds a list of approving verdicts beside it without changing its meaning; 3: `held_by` is served to every reader of the memory, with the residuals d2 states) · proposed the same day with #175
 
-**Release:** v0.7.2, the release `openapi.yaml` names for the two new members; the operator accepts this record before it is cut
+**Release:** v0.7.2, the release `openapi.yaml` names for the two new members
 
 **Amends:** ADR-0025 (d12: the claim item gains `approved_at` and `approver`)
 
@@ -48,8 +48,8 @@ and, on `GET /v2/events`, the `lifecycle.promote` payload with its `same_user` m
 ([ADR-0055](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)
 d7). The MCP claim item carries no author either (ADR-0025 d12).
 
-So this record builds what those decisions allow, and names the wider reading #175's outcome
-sentence asks for as a question for the operator (Open questions, 1). It is held against R2,
+So this record builds what those decisions allow. The wider reading #175's outcome sentence asks
+for, the reviewer named to every reader, the operator declined on 2026-11-12 (Closed questions, 1). It is held against R2,
 the reviewer is never the author, and R3, the gate changes visibility and not ranking
 ([ADR-0001](ADR-0001-the-constitution.md) d2, d3): nothing here is read by any ranking.
 
@@ -90,9 +90,9 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   ([admission](../architecture/admission.md)), that is the version's only approving verdict.
   `approved_at` is that verdict's own `at`, which is at or just before `promoted_at`: the two
   events are sealed in one commit. ADR-0012 d3 lets a policy require more than one verdict, and
-  no record says which of them a reader is shown. This record's reading is the last, whose
-  arrival met the policy. No such policy is built, and the reading waits for the operator
-  (Open questions, 2). At k > 1 a later build adds a list of the approving verdicts beside
+  no record said which of them a reader is shown. The reading is the last, whose arrival met
+  the policy, decided by the operator on 2026-11-12 (Closed questions, 2). No such policy is
+  built. At k > 1 a later build adds a list of the approving verdicts beside
   `approver` and leaves `approver`'s meaning as it is, so the contract is additive.
 
 - **d4 — An anonymous `universe` row carries neither, and a federated hit carries its own
@@ -135,30 +135,29 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   serves one (d2). The reviewer's identity is where it was, in the envelope of the
   `review.approve` event, which #146 has to cover with every other journalled actor whatever
   this record does.
-  `held_by` and `same_user` name no one. If a later record serves a reviewer's identity (Open
+  `held_by` and `same_user` name no one. If a later record serves a reviewer's identity (Closed
   questions, 1), it names the field it reads, and that field joins #146's inventory with it.
 
-## Open questions
+## Closed questions and one open point
 
-1. **Should a reader who is shown the author be shown the reviewer's principal too?** #175's
+The operator closed three questions on 2026-11-12, accepting the record as built.
+
+1. **Should a reader who is shown the author be shown the reviewer's principal too?** No. #175's
    outcome says "the reviewer identity … so a reader sees who approved a memory". ADR-0025 d15
-   and ADR-0037 d5 withhold it from every reader, and this record keeps to them. Serving it
-   would amend both, and needs its own rule for MCP, whose claim
-   item names no author. It would be one more member of `approver` and a stored field for it
-   to read, which d6 leaves out.
-2. **Which verdict is the approver under a policy with k > 1?** d3 reads it as the last, whose
-   arrival met the policy. The alternative is every approving verdict, as ADR-0037 d5 serves a
-   guardrail's. Decided with the build of such a policy.
-3. **Is `held_by` on every memory acceptable?** d2 extends ADR-0037 d5's disclosure from
-   guardrails to memories. Without it, `approver` is `{same_user}` and a crew's reviewer cannot
-   be told from a person.
+   and ADR-0037 d5 withhold it from every reader, and this record keeps to them. An admin reads
+   who approved a memory through the admin read, which is journalled. Serving it to every reader
+   would amend both records, and needs its own rule for MCP, whose claim item names no author.
+2. **Which verdict is the approver under a policy with k > 1?** The verdict whose arrival met the
+   policy, as d3 reads it. A build with k > 1 adds a list of the approving verdicts beside
+   `approver`, as ADR-0037 d5 serves a guardrail's, and does not change what `approver` means.
+3. **Is `held_by` on every memory acceptable?** Yes. d2 extends ADR-0037 d5's disclosure from
+   guardrails to memories, and states the three residuals that go with it.
 
-4. **Should the events tail stop serving `same_user` on a `universe` promotion?** The read of a
-   memory hides the whole `approver` on an anonymous `universe` row (d4), but
-   `GET /v2/events` still serves the `lifecycle.promote` payload's `same_user` for a
-   `universe` promotion, since ADR-0044 d9's rule for the tail removes key ids and the
-   principal and `same_user` is neither. This record changes no behaviour; it records the
-   inconsistency for the operator.
+Open point: **should the events tail stop serving `same_user` on a `universe` promotion?** The
+read of a memory hides the whole `approver` on an anonymous `universe` row (d4), but
+`GET /v2/events` still serves the `lifecycle.promote` payload's `same_user` for a `universe`
+promotion, since ADR-0044 d9's rule for the tail removes key ids and the principal and
+`same_user` is neither. This record changes no behaviour; it records the inconsistency.
 
 ## Consequences
 
@@ -193,7 +192,7 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
 
 | Alternative | Why not |
 |---|---|
-| **Serve the reviewer's principal and key id in the form the author's are served** | It reverses ADR-0025 d15's rejected alternative and ADR-0037 d5 inside a build change. It is Open question 1, for the operator. |
+| **Serve the reviewer's principal and key id in the form the author's are served** | It reverses ADR-0025 d15's rejected alternative and ADR-0037 d5 inside a build change. The operator declined it on 2026-11-12 (Closed questions, 1). |
 | **Serve the reviewing key's crew** | A crew's name is not served on any read of a memory, and it narrows who the reviewer is. |
 | **One `kind` member: `person`, `crew` or `self_review`** | A third vocabulary for two marks the API already has; a self-review by an agent's key and by a person's key would read alike. |
 | **Read the approval from the journal at each read** | One pass over the tenant's chain per recall, as the guardrail read pays for a handful of rules. |
