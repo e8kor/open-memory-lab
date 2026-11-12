@@ -1,1 +1,0 @@
-Fixed the "A write" sequence diagram on the [architecture overview](architecture/overview.md), which the docs site drew as "Syntax error in text": a semicolon in a message ends the statement in a Mermaid sequence diagram, so the last arrow's text now reads `acknowledged: held, visible to the author only`. All 22 diagrams in the docs parse under Mermaid 11.17.2.

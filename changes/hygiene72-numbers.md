@@ -1,1 +1,0 @@
-The number registry sees reservations on every unmerged remote branch, with or without a pull request: `reserve_number.py` and `check_numbers.py` fetch every remote head first, refuse with a named reason when they cannot, and a reservation is released when its branch is deleted or merged or when `main` uses its number (#178).
