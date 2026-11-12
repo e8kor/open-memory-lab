@@ -2,7 +2,12 @@
 """Fail when this branch introduces an ADR or migration number that docs/NUMBERS.md
 assigns to another branch, does not list, or that another remote branch also introduces.
 
-    python scripts/check_numbers.py [--base origin/main] [--branch NAME]
+    python scripts/check_numbers.py [--base origin/main] [--branch NAME] [--no-fetch]
+
+It also fails when another unmerged remote branch, with or without a pull request, has reserved
+a number this branch uses or reserves. Every remote head is fetched first; when that fails the
+check fails with the reason rather than pass against refs it could not refresh (--no-fetch uses
+the refs already here).
 """
 from __future__ import annotations
 
@@ -31,6 +36,22 @@ def check(root: Path, base: str, branch: str, remote: str = "origin", prs: dict[
                 if mine.get(key) != title:  # a branch stacked on this one repeats its numbers
                     others.setdefault(key, []).append(name)
     problems = []
+    on_main = N.numbers_on(root, base)
+    held = {(r["kind"], r["number"]) for r in rows if r["branch"] == branch and r["state"] == "reserved"}
+    reserved_elsewhere: dict[tuple[str, int], list[str]] = {}
+    for name, b in N.live_branches(root, remote, base.split("/")[-1]).items():
+        if name != branch:
+            try:
+                reserved = N.reservations_on(root, b, name)
+            except N.RegistryUnreadable as e:
+                problems.append(f"{e}: its reservations are unknown, fix or delete {name}")
+                continue
+            for r in reserved:
+                if (r["kind"], r["number"]) not in on_main:
+                    reserved_elsewhere.setdefault((r["kind"], r["number"]), []).append(name)
+    for key in sorted((mine.keys() | held) & reserved_elsewhere.keys()):
+        problems.append(f"{N.fmt(*key)} is also reserved on {', '.join(reserved_elsewhere[key])}: "
+                        f"one of the two renumbers")
     for (kind, n) in sorted(mine):
         owners = [r["branch"] for r in rows if r["kind"] == kind and r["number"] == n]
         label = N.fmt(kind, n)
@@ -50,13 +71,24 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--branch")
     ap.add_argument("--root", default=".")
+    ap.add_argument("--remote", default="origin")
+    ap.add_argument("--no-fetch", action="store_true")
     a = ap.parse_args(argv)
     root = Path(a.root).resolve()
+    if a.no_fetch:
+        print("numbers: --no-fetch, using the remote refs already here", file=sys.stderr)
+    else:
+        err = N.fetch_heads(root, a.remote)
+        if err:
+            print(f"numbers: FAIL: cannot read the remote branches: {err} "
+                  f"(--no-fetch checks against the refs already here)")
+            return 1
     branch = a.branch or os.environ.get("GITHUB_HEAD_REF") or N.git(root, "rev-parse", "--abbrev-ref", "HEAD").strip()
-    problems = check(root, a.base, branch)
+    problems = check(root, a.base, branch, a.remote)
     for p in problems:
         print(f"numbers: {p}")
-    print(f"numbers: {'FAIL' if problems else 'ok'} ({branch})")
+    stale = ", remote refs not refreshed" if a.no_fetch else ""
+    print(f"numbers: {'FAIL' if problems else 'ok'} ({branch}{stale})")
     return 1 if problems else 0
 
 
