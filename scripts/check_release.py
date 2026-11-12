@@ -249,18 +249,30 @@ def check_release_markers(errors: list[str], jobs: dict) -> None:
     creators = {name: job for name, job in jobs.items() if step_matching(job, RELEASE_CREATE) is not None}
     for name, job in creators.items():
         create = step_matching(job, RELEASE_CREATE)
+        found = {}
         for action in ("append", "check"):
-            at = step_index(job, f"scripts/release_markers.py {action}")
-            if at is None:
+            found[action] = marker_command(job, action)
+            if found[action] is None:
                 errors.append(f"job {name}: does not run scripts/release_markers.py {action} on the release notes")
-            elif at > create:
-                errors.append(f"job {name}: runs scripts/release_markers.py {action} after it creates the release, not before it creates the release")
-        append, check = step_index(job, "scripts/release_markers.py append"), step_index(job, "scripts/release_markers.py check")
-        if append is not None and check is not None and check < append:
+            elif found[action][0] >= create:
+                errors.append(f"job {name}: runs scripts/release_markers.py {action} at or after the step that creates the release, not before it")
+        if None not in found.values() and found["check"] < found["append"]:
             errors.append(f"job {name}: checks the release markers before it appends them")
         deep = [s for s in steps(job) if str(s.get("uses", "")).startswith("actions/checkout@")]
         if not any(str(s.get("with", {}).get("fetch-depth")) == "0" for s in deep):
             errors.append(f"job {name}: checks out without fetch-depth: 0, so there are no tags to compare the scanner's rule set with")
+
+
+def marker_command(job: dict, action: str) -> tuple[int, int] | None:
+    """Where a step's script runs `python3 scripts/release_markers.py <action>` as a command line,
+    as (step index, line index), or None. A line that only mentions the script, as an `echo` or a
+    comment does, is not a run of it."""
+    command = re.compile(rf"^python3\s+scripts/release_markers\.py\s+{action}\b")
+    for i, run in enumerate(runs(job)):
+        for j, line in enumerate(run.splitlines()):
+            if command.match(line.strip()):
+                return (i, j)
+    return None
 
 
 def check_no_test_double(errors: list[str], workflow: str, dockerfile: str) -> None:

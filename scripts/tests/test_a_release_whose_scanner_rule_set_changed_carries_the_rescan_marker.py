@@ -169,7 +169,34 @@ class Workflow(unittest.TestCase):
         moved = [s for s in job["steps"] if "release_markers.py" in str(s.get("run", ""))]
         job["steps"] = [s for s in job["steps"] if s not in moved] + moved
         got = self.errors(jobs)
-        self.assertTrue(any("before it creates the release" in e for e in got), got)
+        self.assertTrue(any("not before it" in e for e in got), got)
+
+    def release_job(self):
+        jobs = copy.deepcopy(self.jobs)
+        job = next(j for j in jobs.values() if R.step_index(j, "gh release create") is not None)
+        step = next(s for s in job["steps"] if "release_markers.py append" in str(s.get("run", "")))
+        return jobs, job, step
+
+    def test_a_release_job_that_checks_the_markers_before_it_appends_them_is_refused(self):
+        for split in (False, True):
+            jobs, job, step = self.release_job()
+            append, check = step["run"].strip().splitlines()
+            if split:
+                step["run"] = check
+                job["steps"].insert(job["steps"].index(step) + 1, {"name": "append", "run": append})
+            else:
+                step["run"] = check + "\n" + append
+            got = self.errors(jobs)
+            self.assertTrue(any("before it appends" in e for e in got), (split, got))
+
+    def test_a_release_job_that_only_echoes_the_commands_is_refused(self):
+        jobs, _, step = self.release_job()
+        step["run"] = ('echo python3 scripts/release_markers.py append --tag x notes.md\n'
+                       'echo scripts/release_markers.py check --tag x notes.md\n'
+                       '# python3 scripts/release_markers.py check --tag x notes.md\n')
+        got = self.errors(jobs)
+        self.assertTrue(any("does not run scripts/release_markers.py append" in e for e in got), got)
+        self.assertTrue(any("does not run scripts/release_markers.py check" in e for e in got), got)
 
     def test_a_shallow_checkout_is_refused_since_it_holds_no_tags(self):
         jobs = copy.deepcopy(self.jobs)
