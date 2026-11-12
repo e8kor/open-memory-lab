@@ -1,4 +1,4 @@
-//! The `oml-scan/1.1` rule set (ADR-0065): a true positive per rule, built at
+//! The `oml-scan/1.2` rule set (ADR-0065): a true positive per rule, built at
 //! run time from obviously fake material so no key-shaped literal sits in
 //! the repository; the false-positive corpus; findings that never carry
 //! what they matched; and the time budget.
