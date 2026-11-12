@@ -76,8 +76,10 @@ fn page(session: &Session, title: &str, active: &str, note: Option<&str>, body: 
     )
 }
 
-/// The whole allowlist, or a refusal past the pages the overview reads,
-/// so a list too long to read is never shown cut short.
+/// The whole allowlist, or a refusal, so the list is never shown cut
+/// short: `limit.list_too_long` past the pages the overview reads, and at
+/// a cursor the API repeats, the API's fault, `unavailable` with 502, as
+/// the key list answers (#293).
 async fn entries(
     web: &Web,
     session: &Session,
@@ -86,6 +88,7 @@ async fn entries(
     let credential = session.credential(Capacity::Admin);
     let mut out = Vec::new();
     let mut cursor: Option<String> = None;
+    let mut seen = std::collections::HashSet::new();
     for _ in 0..EMAIL_PAGES_MAX {
         let ids = calls.next_ids();
         let page = web
@@ -95,8 +98,16 @@ async fn entries(
             .map_err(|e| Box::new(outcome::page(&e, calls.page_id(), PEOPLE_PATH)))?;
         out.extend(page.items);
         match page.next_cursor {
-            Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
-            _ => return Ok(out),
+            None => return Ok(out),
+            Some(next) if !seen.insert(next.clone()) => {
+                return Err(Box::new(refused(
+                    StatusCode::BAD_GATEWAY,
+                    "unavailable",
+                    "the server repeated a cursor of the allowlist, so the list cannot be read whole; try again",
+                    calls,
+                )));
+            }
+            Some(next) => cursor = Some(next),
         }
     }
     Err(Box::new(refused(
