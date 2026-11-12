@@ -57,8 +57,8 @@ use oml_pg::{
 use oml_port_contracts::{
     ChainRig, KeywordAllReads as _, auth_code_hash, authorization_request, connect_code,
     connect_grant, connector_key, handle_hash, held_memory, key_record, name, pending_transition,
-    run_connection_store_suite, run_journal_store_suite, run_retriever_suite, test_signing_key,
-    token_pair, workarea_record,
+    reject, run_connection_store_suite, run_journal_store_suite, run_retriever_suite,
+    test_signing_key, token_pair, workarea_record,
 };
 use serde_json::{Value, json};
 use sqlx::migrate::Migrate as _;
@@ -10637,5 +10637,271 @@ async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_re
         after, want,
         "no finding twice; the placeless one stands for one place, and the second is listed"
     );
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// Usage metering's fill (migration 0044; ADR-0071)
+// ---------------------------------------------------------------------------
+
+/// 0044 fills each account's counters from the rows a database at 0043
+/// stored, by ADR-0071 d2's definitions: live chains it started, a rejected
+/// one left out; the bytes of every version it wrote, the rejected one's
+/// included; its live keys, a revoked one left out; its open connections;
+/// and its writes on the day each version was stored. A tenant key's rows
+/// make no account. The drift report is then empty, the next commit moves
+/// the filled counters, and a commit past a limit the stored rows already
+/// reach is refused (ADR-0071 d3, Consequences).
+#[tokio::test]
+async fn migration_0044_fills_each_accounts_meters_from_the_rows_stored_before_it_and_leaves_no_drift()
+ {
+    use oml_app::domain::signup::{Quota, QuotaReached, Quotas};
+    use oml_app::domain::usage::Month;
+    use oml_app::ports::Ceiling;
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, conn) = schema_through(&created, 43).await;
+    drop(conn);
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(440);
+    rig.seed_chain(&store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0x4400), None, "universe");
+    let root = oml_app::types::WorkareaRecord {
+        user_root: true,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(0x4401),
+            Some(universe.workarea_id),
+            "ada",
+        )
+    };
+    let crew = workarea_record(
+        t,
+        Uuid::from_u128(0x4402),
+        Some(universe.workarea_id),
+        "crew",
+    );
+    for w in [universe, root.clone(), crew.clone()] {
+        rig.create_workarea(&store, w).await;
+    }
+    let account = root.workarea_id;
+    let (ada_key, old_key, tenant_key) = (
+        Uuid::from_u128(0x4410),
+        Uuid::from_u128(0x4411),
+        Uuid::from_u128(0x4412),
+    );
+    for (key_id, user) in [
+        (ada_key, Some(account)),
+        (old_key, Some(account)),
+        (tenant_key, None),
+    ] {
+        rig.issue_key(
+            &store,
+            KeyRecord {
+                user,
+                ..key_record(t, key_id, Role::Writer, None)
+            },
+        )
+        .await;
+    }
+    rig.revoke_key(&store, old_key).await.expect("revoke");
+    // The versions are stored now, so the fill's 62 days and this month
+    // hold them whenever the suite runs.
+    let now = EventTime::from_unix_micros(
+        i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("after the epoch")
+                .as_micros(),
+        )
+        .expect("fits"),
+    )
+    .expect("a time");
+    let version = |n: u128, wa: Uuid, key: Uuid, body: &str| MemoryRecord {
+        claim_key: format!("claim-{n}"),
+        created_at: now.clone(),
+        ..held_memory(t, wa, Uuid::from_u128(0x4420 + n), "ada", key, body)
+    };
+    let (kept, rejected, approved, crews) = (
+        version(1, account, ada_key, "first fact"),
+        version(2, account, ada_key, "second fact"),
+        version(3, account, ada_key, "third"),
+        version(4, crew.workarea_id, tenant_key, "a crew's fact"),
+    );
+    for memory in [&kept, &rejected, &approved, &crews] {
+        rig.commit(
+            &store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": memory.memory_id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: memory.clone(),
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+        )
+        .await
+        .expect("a version stored at 0043");
+    }
+    reject(&mut rig, &store, rejected.memory_id)
+        .await
+        .expect("reject");
+    rig.commit(
+        &store,
+        event_types::LIFECYCLE_PROMOTE,
+        json!({ "artifact_id": approved.memory_id.to_string() }),
+        MetadataFold::MemoryPromoted {
+            memory_id: approved.memory_id,
+        },
+        None,
+    )
+    .await
+    .expect("promote");
+    // An open connection of a connector key of the account.
+    let connector = KeyRecord {
+        user: Some(account),
+        ..connector_key(t, Uuid::from_u128(0x4413))
+    };
+    rig.issue_key(&store, connector.clone()).await;
+    let (code, connection) = (Uuid::from_u128(0x4430), Uuid::from_u128(0x4431));
+    rig.mint_code(&store, connect_code(code, connector.key_id), None)
+        .await
+        .expect("mint");
+    let spent_at = EventTime::parse("2026-10-29T13:00:20.000000Z").expect("fixture time");
+    assert!(store.spend_code(t, code, &spent_at).await.expect("redeem"));
+    store
+        .authorization_insert(authorization_request(t, connector.key_id, code, connection))
+        .await
+        .expect("request");
+    store
+        .connection_connect(&handle_hash(connection), connect_grant(connection))
+        .await
+        .expect("connect");
+    rig.commit(
+        &store,
+        event_types::CONNECTION_OPENED,
+        json!({
+            "connection_id": connection.to_string(),
+            "replaces_connection_id": Value::Null,
+        }),
+        MetadataFold::ConnectionOpened {
+            connection_id: connection,
+            replaces: None,
+            auth_code_hash: auth_code_hash(connection),
+            tokens: token_pair(connection),
+        },
+        None,
+    )
+    .await
+    .expect("the connection opens at 0043");
+
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0044 applies over a database at 0043");
+
+    let usage = store.user_usage(t, account, &now).await.expect("usage");
+    assert_eq!(
+        usage,
+        oml_app::types::UserUsage {
+            memories: 2,
+            text_bytes: ("first fact".len() + "second fact".len() + "third".len()) as u64,
+            writes: 3,
+            recalls: 0,
+            keys: 2,
+            connections: 1,
+        },
+        "the held and the promoted chain, every version's bytes, three writes, the live key and the connector key, its open connection"
+    );
+    let accounts = store
+        .usage_accounts(t, Month::of(&now))
+        .await
+        .expect("accounts");
+    assert_eq!(
+        accounts.iter().map(|a| a.user_root).collect::<Vec<_>>(),
+        vec![account],
+        "a tenant key's rows make no account"
+    );
+    assert_eq!(
+        store.usage_drift(t, Month::of(&now)).await.expect("drift"),
+        Vec::new()
+    );
+
+    // The next commits move the filled counters and are held to them.
+    let ceiling = Ceiling {
+        user_root: account,
+        quotas: Quotas::default().with(Quota::Memories, 2),
+    };
+    // Stored at the rig's event time, as a served write's row is at its
+    // event's, so its day's write and its row fall in one month.
+    let more = MemoryRecord {
+        claim_key: "claim-5".to_owned(),
+        ..held_memory(
+            t,
+            account,
+            Uuid::from_u128(0x4425),
+            "ada",
+            ada_key,
+            "one too many",
+        )
+    };
+    assert_eq!(
+        rig.commit_charged(
+            &store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": more.memory_id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: more.clone(),
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+            Some(ceiling),
+        )
+        .await,
+        Err(StoreError::QuotaReached(QuotaReached {
+            quota: Quota::Memories,
+            limit: 2,
+            used: 2,
+        })),
+        "the stored rows already reach the limit"
+    );
+    reject(&mut rig, &store, kept.memory_id)
+        .await
+        .expect("reject");
+    rig.commit_charged(
+        &store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": more.memory_id.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory: more.clone(),
+            enqueue: true,
+            findings: Box::default(),
+        },
+        None,
+        Some(ceiling),
+    )
+    .await
+    .expect("the rejection freed a memory");
+    assert_eq!(
+        store
+            .user_usage(t, account, &now)
+            .await
+            .expect("usage")
+            .memories,
+        2
+    );
+    for month in [Month::of(&now), Month::of(&more.created_at)] {
+        assert_eq!(
+            store.usage_drift(t, month).await.expect("drift"),
+            Vec::new()
+        );
+    }
     drop_dbs(&created).await;
 }

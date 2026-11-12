@@ -403,6 +403,21 @@ async fn own_usage(rig: &Rig, key: &str) -> Value {
     body
 }
 
+/// What the account's key reads of its six meters, in the order memories,
+/// text bytes, writes, recalls, keys, connections.
+async fn used(rig: &Rig, key: &str) -> [u64; 6] {
+    let usage = own_usage(rig, key).await;
+    [
+        "memories",
+        "text_bytes",
+        "writes",
+        "recalls",
+        "keys",
+        "connections",
+    ]
+    .map(|name| meter(&usage, name)["used"].as_u64().expect("a count"))
+}
+
 /// The person reviews the next item their reviewer key is served with
 /// `verdict`, as the Review page does through the API (ADR-0070 d7 (b)).
 async fn review_next(rig: &Rig, cookie: &str, verdict: &str) {
@@ -440,6 +455,32 @@ async fn drift(rig: &Rig) -> Value {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     body
+}
+
+/// Sets the account's profile and overrides as the tenant's admin.
+async fn set_profile(rig: &Rig, account: &str, body: Value) {
+    let (status, _, answer) = json(
+        rig,
+        Request::put(format!("/v2/admin/accounts/{account}/profile"))
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", rig.boot.admin_key.value),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("a request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+}
+
+/// How many submissions the chain holds.
+async fn submissions(rig: &Rig) -> usize {
+    events(rig)
+        .await
+        .into_iter()
+        .filter(|(t, _)| t.starts_with("submission."))
+        .count()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -941,5 +982,293 @@ async fn the_drift_report_is_empty_after_metered_writes_and_names_a_counter_edit
     assert_eq!(usage["profile_declared"], false);
     let (status, body) = remember(&rig, &key, "k9", "Fact.").await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    drop_db(&rig.db).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_write_replayed_under_its_idempotency_key_is_counted_once_and_answers_its_record_at_the_limit()
+ {
+    let Some(rig) = rig().await else { return };
+    let ada = sign_up(&rig, 9, "ada@example.com").await;
+    let key = agent_key(&rig, &ada).await;
+    let account = own_usage(&rig, &key).await["account"]
+        .as_str()
+        .expect("an account")
+        .to_owned();
+    // One memory, two writes and exactly the bytes of its two versions: the
+    // first write reaches the memories limit and its revision the others.
+    let v1 = "The canary drains first.";
+    let v2 = "The canary drains and settles first.";
+    set_profile(
+        &rig,
+        &account,
+        json!({"profile": "free", "overrides": {
+            "memories": 1, "text_bytes": v1.len() + v2.len(), "writes_per_month": 2}}),
+    )
+    .await;
+    let first = || {
+        keyed(
+            "POST",
+            "/v1/memories",
+            &key,
+            "first",
+            Some(remember_body("canary", v1)),
+        )
+    };
+    // Two sends at once, as a client that timed out and retried: one write.
+    let ((s1, _, a1), (s2, _, a2)) =
+        tokio::join!(send(&rig.router, first()), send(&rig.router, first()));
+    assert!(
+        s1 == StatusCode::ACCEPTED || s2 == StatusCode::ACCEPTED,
+        "{a1} {a2}"
+    );
+    let once = [1, v1.len() as u64, 1, 0, 1, 0];
+    assert_eq!(used(&rig, &key).await, once);
+    assert_eq!(submissions(&rig).await, 1);
+    // Sent again at the memories limit: the record answers, not limit.quota.
+    let (status, _, held) = json(&rig, first()).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{held}");
+    let (status, _, again) = json(&rig, first()).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{again}");
+    assert_eq!(again["artifact_id"], held["artifact_id"]);
+    assert_eq!(used(&rig, &key).await, once);
+    assert_eq!(submissions(&rig).await, 1);
+
+    // The revision, which reaches the bytes and the monthly writes, and its
+    // replays, alone and two at once.
+    review_next(&rig, &ada, "approve").await;
+    let artifact = held["artifact_id"].as_str().expect("an id").to_owned();
+    let revise = || {
+        keyed(
+            "POST",
+            &format!("/v1/memories/{artifact}/supersede"),
+            &key,
+            "revise",
+            Some(json!({"expected_version": 1, "body": v2})),
+        )
+    };
+    let (status, _, successor) = json(&rig, revise()).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{successor}");
+    let twice = [1, (v1.len() + v2.len()) as u64, 2, 0, 1, 0];
+    assert_eq!(used(&rig, &key).await, twice);
+    let ((s1, _, a1), (s2, _, a2)) =
+        tokio::join!(send(&rig.router, revise()), send(&rig.router, revise()));
+    assert_eq!(
+        (s1, s2),
+        (StatusCode::ACCEPTED, StatusCode::ACCEPTED),
+        "{a1} {a2}"
+    );
+    for answer in [a1, a2] {
+        let answer: Value = serde_json::from_str(&answer).expect("JSON");
+        assert_eq!(answer["artifact_id"], successor["artifact_id"]);
+    }
+    assert_eq!(used(&rig, &key).await, twice);
+    assert_eq!(submissions(&rig).await, 2);
+    assert_eq!(drift(&rig).await["drift"], json!([]));
+    drop_db(&rig.db).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_write_is_not_counted_and_at_the_limit_a_live_claim_key_is_the_conflict_it_was() {
+    let Some(rig) = rig().await else { return };
+    let ada = sign_up(&rig, 10, "ada@example.com").await;
+    let key = agent_key(&rig, &ada).await;
+    let (status, _, held) = json(
+        &rig,
+        keyed(
+            "POST",
+            "/v1/memories",
+            &key,
+            "first",
+            Some(remember_body("k0", "A fact.")),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{held}");
+    let counted = used(&rig, &key).await;
+    assert_eq!(counted, [1, "A fact.".len() as u64, 1, 0, 1, 0]);
+    let artifact = held["artifact_id"].as_str().expect("an id");
+    // Each refusal names its own rule and moves no meter: a live claim_key,
+    // the first write's idempotency key under another body, a lineage the
+    // key cannot read, a body the scan refuses, and a revision of a version
+    // that is not the served tip.
+    let refused: [(Request<Body>, StatusCode, &str); 5] = [
+        (
+            api(
+                "POST",
+                "/v1/memories",
+                &key,
+                Some(remember_body("k0", "Another fact under the live claim.")),
+            ),
+            StatusCode::CONFLICT,
+            "submission.claim_key_conflict",
+        ),
+        (
+            keyed(
+                "POST",
+                "/v1/memories",
+                &key,
+                "first",
+                Some(remember_body("k0", "Another body under the first key.")),
+            ),
+            StatusCode::CONFLICT,
+            "idempotency.digest_mismatch",
+        ),
+        (
+            api(
+                "POST",
+                "/v1/memories",
+                &key,
+                Some(
+                    json!({"verb": "learn", "claim_key": "k1", "kind": "derived_fact",
+                            "body": "Derived from nothing readable.",
+                            "derives_from": ["00000000-0000-4000-8000-00000000dead"]}),
+                ),
+            ),
+            StatusCode::NOT_FOUND,
+            "access.not_found",
+        ),
+        (
+            api(
+                "POST",
+                "/v1/memories",
+                &key,
+                Some(remember_body(
+                    "k2",
+                    "The deploy key is -----BEGIN OPENSSH PRIVATE KEY----- and more.",
+                )),
+            ),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "submission.scan_veto",
+        ),
+        (
+            api(
+                "POST",
+                &format!("/v1/memories/{artifact}/supersede"),
+                &key,
+                Some(json!({"expected_version": 1, "body": "A revision of a held version."})),
+            ),
+            StatusCode::CONFLICT,
+            "submission.tip_conflict",
+        ),
+    ];
+    for (request, expected, code) in refused {
+        let (status, _, body) = json(&rig, request).await;
+        assert_eq!(status, expected, "{code}: {body}");
+        assert_eq!(body["error"]["code"], code, "{body}");
+        assert_eq!(used(&rig, &key).await, counted, "{code}");
+    }
+    assert_eq!(submissions(&rig).await, 1);
+    // At the memories limit of `free`, five, a write under a live claim_key
+    // is still the conflict it was, and a new claim is the quota, which is
+    // not counted either.
+    for n in 1..5 {
+        let (status, body) = remember(&rig, &key, &format!("k{n}"), "A fact.").await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    }
+    let full = used(&rig, &key).await;
+    assert_eq!(full[0], 5);
+    let (status, body) = remember(&rig, &key, "k0", "Under the live claim.").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "submission.claim_key_conflict");
+    let (status, body) = remember(&rig, &key, "k5", "One too many.").await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(body["error"]["code"], "limit.quota");
+    assert_eq!(used(&rig, &key).await, full);
+    assert_eq!(submissions(&rig).await, 5);
+    assert_eq!(drift(&rig).await["drift"], json!([]));
+    drop_db(&rig.db).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_write_over_any_quota_is_refused_as_limit_quota_naming_it_and_journals_and_counts_nothing()
+ {
+    let Some(rig) = rig().await else { return };
+    let ada = sign_up(&rig, 11, "ada@example.com").await;
+    let key = agent_key(&rig, &ada).await;
+    let account = own_usage(&rig, &key).await["account"]
+        .as_str()
+        .expect("an account")
+        .to_owned();
+    let v1 = "Twenty bytes of text";
+    assert_eq!(v1.len(), 20);
+    let (status, _, held) = json(
+        &rig,
+        keyed(
+            "POST",
+            "/v1/memories",
+            &key,
+            "first",
+            Some(remember_body("k0", v1)),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{held}");
+    review_next(&rig, &ada, "approve").await;
+    let artifact = held["artifact_id"].as_str().expect("an id").to_owned();
+    let counted = used(&rig, &key).await;
+    assert_eq!(counted, [1, 20, 1, 0, 1, 0]);
+    let journalled = events(&rig).await.len();
+    // Each quota in turn is the one the next write would pass: a new memory
+    // and a revision are refused naming it, its limit and what is used.
+    for (overrides, quota, limit, used_now, revision_too) in [
+        (json!({"memories": 1}), "memories", 1, 1, false),
+        (json!({"text_bytes": 30}), "text_bytes", 30, 20, true),
+        (
+            json!({"writes_per_month": 1}),
+            "writes_per_month",
+            1,
+            1,
+            true,
+        ),
+    ] {
+        set_profile(
+            &rig,
+            &account,
+            json!({"profile": "free", "overrides": overrides}),
+        )
+        .await;
+        let mut writes = vec![api(
+            "POST",
+            "/v1/memories",
+            &key,
+            Some(remember_body("k1", "Eleven byte")),
+        )];
+        if revision_too {
+            writes.push(api(
+                "POST",
+                &format!("/v1/memories/{artifact}/supersede"),
+                &key,
+                Some(json!({"expected_version": 1, "body": "Eleven byte"})),
+            ));
+        }
+        for request in writes {
+            let (status, _, body) = json(&rig, request).await;
+            assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{quota}: {body}");
+            assert_eq!(body["error"]["code"], "limit.quota", "{body}");
+            assert_eq!(
+                body["error"]["details"],
+                json!({"quota": quota, "limit": limit, "used": used_now}),
+                "{body}"
+            );
+        }
+        assert_eq!(used(&rig, &key).await, counted, "{quota}");
+    }
+    // Three account.profile_set events and no submission since.
+    assert_eq!(events(&rig).await.len(), journalled + 3);
+    assert_eq!(submissions(&rig).await, 1);
+    // A sixth key is refused the same way, and the keys meter stays.
+    for n in 0..4 {
+        let (status, body) = issue_key(&rig, &ada, &format!("agent-{n}")).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+    let (status, body) = issue_key(&rig, &ada, "agent-4").await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        body["error"]["details"],
+        json!({"quota": "keys", "limit": 5, "used": 5})
+    );
+    assert_eq!(used(&rig, &key).await[4], 5);
+    assert_eq!(drift(&rig).await["drift"], json!([]));
     drop_db(&rig.db).await;
 }
