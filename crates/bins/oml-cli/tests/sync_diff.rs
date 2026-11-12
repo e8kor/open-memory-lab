@@ -1226,6 +1226,40 @@ fn a_run_from_an_older_checkout_is_refused_before_any_write() {
     let _ = std::fs::remove_dir_all(&other);
 }
 
+/// A rev the server answers with is text: one that is not hex, and has a
+/// multi-byte character across byte 12, must be refused by name and never
+/// panic the client.
+#[test]
+fn a_server_rev_with_multibyte_characters_is_refused_without_a_panic() {
+    let dir = scratch_git("multibyte-rev");
+    let first = commit_guide(&dir, GUIDE_V1);
+    let fake = Fake::new();
+    let at_first = oml_cli::sync::run::load(
+        &dir,
+        &Options {
+            rev: first.clone(),
+            adapter: Some(Kind::Headings),
+            ..opts()
+        },
+    )
+    .unwrap();
+    run(&fake, &at_first, &opts());
+    fake.promote_all();
+    // Byte 12 of this rev falls inside a three-byte character.
+    let odd = format!("x{}", "\u{65e5}".repeat(5));
+    assert!(!odd.is_char_boundary(12));
+    for v in fake.versions.borrow_mut().iter_mut() {
+        v.anchor["rev"] = json!(odd);
+    }
+    let err = try_run(&fake, &at_first, &opts()).unwrap_err();
+    assert!(
+        err.contains("missing from this clone") && err.contains(&odd),
+        "{err}"
+    );
+    assert!(fake.checks().is_empty(), "nothing is sent");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn check_reports_another_keys_anchored_memory_as_foreign_and_never_marks_it() {
     let fake = Fake::new();
