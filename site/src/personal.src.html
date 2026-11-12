@@ -41,7 +41,7 @@
     <h2 id="why-h">Tell it once</h2>
     <div class="vals">
       <div><span class="v-prom">{{GLYPH:promoted}}</span><h3>One memory, many tools</h3><p class="caption">What Claude Code saves in the morning, claude.ai and your phone recall once you approve it.</p></div>
-      <div><span class="v-held">{{GLYPH:person}}</span><h3>You decide what sticks</h3><p class="caption">Until you approve a memory, your other tools never see it, so a wrong guess doesn't spread. Your account page, <code>/web</code>, shows them one at a time; on a server you run, <code>oml review list</code> lets you approve a batch in one act.</p></div>
+      <div><span class="v-held">{{GLYPH:person}}</span><h3>You decide what sticks</h3><p class="caption">Until you approve a memory, your other tools never see it, so a wrong guess doesn't spread. The Review page, <code>/web/review</code>, shows them one at a time, with anything the scan flagged; on a server you run, <code>oml review list</code> lets you approve a batch in one act.</p></div>
       <div><span class="v-gate">{{GLYPH:gate}}</span><h3>Kept to your workarea</h3><p class="caption">Your memories live in a workarea of your own, which other people's keys read only if granted. On the hosted server its operator can read them; on a server you run, they stay with you. A pasted API key or private key is refused, not saved.</p></div>
     </div>
   </section>
@@ -51,7 +51,7 @@
       <div class="hero-copy">
         <h2 id="connect-h">Connect claude.ai and your phone in three steps</h2>
         <ol>
-          <li><b>Get a code.</b> Sign in to your account page at <code>/web</code> and, under Connect Claude on the web or a phone, issue a connector key and copy its code. It works for ten minutes.</li>
+          <li><b>Get a code.</b> Sign in at <code>/web</code>, open Keys, issue a connector key and copy its connect code. It works once, for ten minutes.</li>
           <li><b>Add the connector.</b> On claude.ai, open Customize &gt; Connectors and add a custom connector at <code>https://memory.doublegate.io/mcp</code>.</li>
           <li><b>Paste and confirm.</b> Paste the code on the page that opens. Every Claude app on that account, your phone included, can then use it.</li>
         </ol>
