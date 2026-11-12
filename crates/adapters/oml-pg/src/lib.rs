@@ -7750,7 +7750,8 @@ impl JournalStore for PgStore {
         // list by its primary key for the held versions that carry a
         // finding. The unapproved count is of served tips: a version a
         // ratified successor took the tip from is not counted, so
-        // superseding one is a remedy that ends (ADR-0077 d6; #311).
+        // superseding one is a remedy that ends, and a retirement tip is
+        // not counted, since recall serves none (ADR-0077 d6; #311, #332).
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         let (held, all, unlisted, unapproved): (i64, i64, i64, i64) = sqlx::query_as(
@@ -7762,7 +7763,7 @@ impl JournalStore for PgStore {
                                                         WHERE f.tenant_id = m.tenant_id \
                                                           AND f.memory_id = m.id)), \
                     count(*) FILTER (WHERE status = 'promoted' AND is_tip \
-                                       AND approved_at IS NULL) \
+                                       AND NOT retirement AND approved_at IS NULL) \
              FROM memories m \
              WHERE tenant_id = $1 AND status <> 'erased'",
         )

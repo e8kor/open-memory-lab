@@ -2175,7 +2175,8 @@ pub struct ScanBacklog {
     pub findings_unlisted: u64,
     /// Served tips whose `approved_at` is null: migration 0044's fill could
     /// not match their promotion's verdict. A version a ratified successor
-    /// took the tip from is not counted.
+    /// took the tip from is not counted, and neither is a retirement tip,
+    /// which recall does not serve.
     pub promoted_unapproved: u64,
 }
 
