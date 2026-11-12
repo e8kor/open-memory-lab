@@ -34,7 +34,7 @@ use oml_app::ed25519_dalek::Signature;
 use oml_app::ports::{
     CommitReceipt, CommitRequest, ConnectionStore, IdempotencyClaim, IdempotencyPut,
     IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold, Retriever, ScanBacklog,
-    StoreError, SubjectRow, TailEvent, TailScan, WebStore, claim_subject,
+    SessionKeyName, StoreError, SubjectRow, TailEvent, TailScan, WebStore, claim_subject,
 };
 use oml_app::search::{
     Access, Candidate, CandidateScope, MatchMode, MatchedToken, OwnHeldScope, PostingsHealth,
@@ -48,8 +48,8 @@ use oml_app::types::{
     HeldFilter, HeldRow, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition,
     ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome,
     QueueDepth, RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair,
-    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, VersionFinding, WebEntry,
-    WebSessionRecord, WorkareaRecord, WorkareaRef,
+    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, VersionFinding, WebCredentialKey,
+    WebCredentialRows, WebEntry, WebSessionRecord, WorkareaRecord, WorkareaRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -2035,6 +2035,108 @@ async fn set_tenant(tx: &mut Transaction<'_, Postgres>, tenant_id: Uuid) -> Resu
         .await
         .map_err(backend)?;
     Ok(())
+}
+
+/// One snapshot for the reads of this transaction, so the epochs they
+/// return label one journalled state (ADR-0025 d14). SET TRANSACTION must
+/// precede every other statement of the transaction.
+async fn one_snapshot(tx: &mut Transaction<'_, Postgres>) -> Result<(), StoreError> {
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    Ok(())
+}
+
+/// The reads of [`JournalStore::key_access`], in a transaction that holds
+/// [`one_snapshot`] and the tenant's fence.
+async fn key_access_in(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    key_id: Uuid,
+) -> Result<Option<KeyAccess>, StoreError> {
+    let key = sqlx::query("SELECT issued_seq FROM api_keys WHERE tenant_id = $1 AND id = $2")
+        .bind(tenant_id)
+        .bind(key_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(backend)?;
+    let Some(key) = key else {
+        return Ok(None);
+    };
+    let grants = sqlx::query(
+        "SELECT id, role, workarea_node_id, deny, epoch, covers FROM grants \
+         WHERE tenant_id = $1 AND key_id = $2 ORDER BY epoch ASC, id ASC",
+    )
+    .bind(tenant_id)
+    .bind(key_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(backend)?;
+    // A lifted denial masks nothing; its lift still moves the epoch.
+    let denials = sqlx::query(
+        "SELECT id, workarea_node_id, created_by, epoch FROM key_denials \
+         WHERE tenant_id = $1 AND key_id = $2 AND lifted_epoch IS NULL \
+         ORDER BY epoch ASC, id ASC",
+    )
+    .bind(tenant_id)
+    .bind(key_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(backend)?;
+    let lifts = sqlx::query(
+        "SELECT lifted_epoch FROM key_denials \
+         WHERE tenant_id = $1 AND key_id = $2 AND lifted_epoch IS NOT NULL \
+         ORDER BY lifted_epoch ASC",
+    )
+    .bind(tenant_id)
+    .bind(key_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(backend)?;
+
+    let grants = grants
+        .iter()
+        .map(|row| {
+            let role: String = row.try_get("role").map_err(backend)?;
+            let deny: Value = row.try_get("deny").map_err(backend)?;
+            let covers: String = row.try_get("covers").map_err(backend)?;
+            Ok(GrantRecord {
+                grant: Grant {
+                    grant_id: row.try_get("id").map_err(backend)?,
+                    node: row.try_get("workarea_node_id").map_err(backend)?,
+                    role: role_from_str(&role)?,
+                    deny: deny_from_json(&deny)?,
+                    covers: Covers::parse(&covers).ok_or_else(|| {
+                        StoreError::Backend(format!("grants.covers {covers:?} is not a coverage"))
+                    })?,
+                },
+                epoch: seq_from_column(row, "epoch")?,
+            })
+        })
+        .collect::<Result<_, StoreError>>()?;
+    let denials = denials
+        .iter()
+        .map(|row| {
+            Ok(DenialRecord {
+                denial: KeyDenial {
+                    denial_id: row.try_get("id").map_err(backend)?,
+                    node: row.try_get("workarea_node_id").map_err(backend)?,
+                },
+                created_by: row.try_get("created_by").map_err(backend)?,
+                epoch: seq_from_column(row, "epoch")?,
+            })
+        })
+        .collect::<Result<_, StoreError>>()?;
+    Ok(Some(KeyAccess {
+        issued_seq: seq_from_column(&key, "issued_seq")?,
+        grants,
+        denials,
+        lift_epochs: lifts
+            .iter()
+            .map(|row| seq_from_column(row, "lifted_epoch"))
+            .collect::<Result<_, StoreError>>()?,
+    }))
 }
 
 /// The 0001 idempotency PK is `(tenant_id, key)`; the port scope's
@@ -7169,100 +7271,11 @@ impl JournalStore for PgStore {
         key_id: Uuid,
     ) -> Result<Option<KeyAccess>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
-        // One snapshot for the three reads, so the epochs they return label
-        // one journalled state (ADR-0025 d14). SET TRANSACTION must precede
-        // every other statement of the transaction.
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(backend)?;
+        one_snapshot(&mut tx).await?;
         set_tenant(&mut tx, tenant_id).await?;
-        let key = sqlx::query("SELECT issued_seq FROM api_keys WHERE tenant_id = $1 AND id = $2")
-            .bind(tenant_id)
-            .bind(key_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(backend)?;
-        let Some(key) = key else {
-            tx.commit().await.map_err(backend)?;
-            return Ok(None);
-        };
-        let grants = sqlx::query(
-            "SELECT id, role, workarea_node_id, deny, epoch, covers FROM grants \
-             WHERE tenant_id = $1 AND key_id = $2 ORDER BY epoch ASC, id ASC",
-        )
-        .bind(tenant_id)
-        .bind(key_id)
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(backend)?;
-        // A lifted denial masks nothing; its lift still moves the epoch.
-        let denials = sqlx::query(
-            "SELECT id, workarea_node_id, created_by, epoch FROM key_denials \
-             WHERE tenant_id = $1 AND key_id = $2 AND lifted_epoch IS NULL \
-             ORDER BY epoch ASC, id ASC",
-        )
-        .bind(tenant_id)
-        .bind(key_id)
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(backend)?;
-        let lifts = sqlx::query(
-            "SELECT lifted_epoch FROM key_denials \
-             WHERE tenant_id = $1 AND key_id = $2 AND lifted_epoch IS NOT NULL \
-             ORDER BY lifted_epoch ASC",
-        )
-        .bind(tenant_id)
-        .bind(key_id)
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(backend)?;
+        let access = key_access_in(&mut tx, tenant_id, key_id).await?;
         tx.commit().await.map_err(backend)?;
-
-        let grants = grants
-            .iter()
-            .map(|row| {
-                let role: String = row.try_get("role").map_err(backend)?;
-                let deny: Value = row.try_get("deny").map_err(backend)?;
-                let covers: String = row.try_get("covers").map_err(backend)?;
-                Ok(GrantRecord {
-                    grant: Grant {
-                        grant_id: row.try_get("id").map_err(backend)?,
-                        node: row.try_get("workarea_node_id").map_err(backend)?,
-                        role: role_from_str(&role)?,
-                        deny: deny_from_json(&deny)?,
-                        covers: Covers::parse(&covers).ok_or_else(|| {
-                            StoreError::Backend(format!(
-                                "grants.covers {covers:?} is not a coverage"
-                            ))
-                        })?,
-                    },
-                    epoch: seq_from_column(row, "epoch")?,
-                })
-            })
-            .collect::<Result<_, StoreError>>()?;
-        let denials = denials
-            .iter()
-            .map(|row| {
-                Ok(DenialRecord {
-                    denial: KeyDenial {
-                        denial_id: row.try_get("id").map_err(backend)?,
-                        node: row.try_get("workarea_node_id").map_err(backend)?,
-                    },
-                    created_by: row.try_get("created_by").map_err(backend)?,
-                    epoch: seq_from_column(row, "epoch")?,
-                })
-            })
-            .collect::<Result<_, StoreError>>()?;
-        Ok(Some(KeyAccess {
-            issued_seq: seq_from_column(&key, "issued_seq")?,
-            grants,
-            denials,
-            lift_epochs: lifts
-                .iter()
-                .map(|row| seq_from_column(row, "lifted_epoch"))
-                .collect::<Result<_, StoreError>>()?,
-        }))
+        Ok(access)
     }
 
     async fn resolve_name(
@@ -8476,6 +8489,114 @@ impl WebStore for PgStore {
             .map(web_session_from_row)
             .transpose()
             .map(|s| s.map(|s| (s, capacity)))
+    }
+
+    /// The session gate's rows in one transaction under one snapshot
+    /// (ADR-0070 d8, #297): each statement is the one its separate read
+    /// runs, under the same fences, so the rows are those the separate
+    /// reads return when nothing changes between them.
+    async fn web_credential_rows(
+        &self,
+        credential_hash: &Sha256Hash,
+        key_name: SessionKeyName,
+    ) -> Result<Option<WebCredentialRows>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        one_snapshot(&mut tx).await?;
+        // As `web_session_credential`: the digest's row, then the session
+        // under the matched row's tenant.
+        set_lookup_digest(&mut tx, credential_hash).await?;
+        let found = sqlx::query(
+            "SELECT tenant_id, token_hash, capacity FROM web_session_credentials \
+             WHERE credential_hash = $1",
+        )
+        .bind(credential_hash.0.to_vec())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let Some(found) = found else {
+            tx.commit().await.map_err(backend)?;
+            return Ok(None);
+        };
+        let tenant_id: Uuid = found.try_get("tenant_id").map_err(backend)?;
+        let token_hash: Vec<u8> = found.try_get("token_hash").map_err(backend)?;
+        let capacity: String = found.try_get("capacity").map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let session = sqlx::query(&format!(
+            "SELECT {WEB_SESSION_COLUMNS} FROM web_sessions WHERE tenant_id = $1 AND token_hash = $2"
+        ))
+        .bind(tenant_id)
+        .bind(token_hash)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let Some(session) = session.as_ref().map(web_session_from_row).transpose()? else {
+            tx.commit().await.map_err(backend)?;
+            return Ok(None);
+        };
+        // As `resolve_name` then `key`: the row holding the name, a revoked
+        // key's included, on the unique name index.
+        let key = match key_name(&session.user, &capacity) {
+            Some(name) => sqlx::query(&format!(
+                "SELECT {KEY_COLUMNS} FROM api_keys WHERE tenant_id = $1 AND name = $2"
+            ))
+            .bind(tenant_id)
+            .bind(name.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(backend)?
+            .as_ref()
+            .map(key_from_row)
+            .transpose()?,
+            None => None,
+        };
+        let key = match key {
+            Some(key) => {
+                let access = key_access_in(&mut tx, tenant_id, key.key_id).await?;
+                let (user_root, own_keys) = match key.user {
+                    Some(root) => {
+                        // As `workarea` and `web_user_keys`.
+                        let node = sqlx::query(&format!(
+                            "SELECT {WORKAREA_COLUMNS} FROM workareas \
+                             WHERE tenant_id = $1 AND id = $2"
+                        ))
+                        .bind(tenant_id)
+                        .bind(root)
+                        .fetch_optional(&mut *tx)
+                        .await
+                        .map_err(backend)?;
+                        let keys = sqlx::query(&format!(
+                            "SELECT {KEY_COLUMNS} FROM api_keys \
+                             WHERE tenant_id = $1 AND user_root_id = $2 ORDER BY name"
+                        ))
+                        .bind(tenant_id)
+                        .bind(root)
+                        .fetch_all(&mut *tx)
+                        .await
+                        .map_err(backend)?;
+                        (
+                            node.as_ref().map(workarea_from_row).transpose()?,
+                            keys.iter()
+                                .map(key_from_row)
+                                .collect::<Result<Vec<_>, StoreError>>()?,
+                        )
+                    }
+                    None => (None, Vec::new()),
+                };
+                Some(WebCredentialKey {
+                    key,
+                    access,
+                    user_root,
+                    own_keys,
+                })
+            }
+            None => None,
+        };
+        tx.commit().await.map_err(backend)?;
+        Ok(Some(WebCredentialRows {
+            session,
+            capacity,
+            key,
+        }))
     }
 
     async fn web_session(
