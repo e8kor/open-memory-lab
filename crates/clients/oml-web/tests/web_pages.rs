@@ -4281,6 +4281,149 @@ async fn a_cut_off_confirmation_sent_twice_cuts_the_key_off_once() {
     assert_eq!(denied, 1, "the second send replayed");
 }
 
+/// A call to the API as `oml-web` makes it for the session `cookie` names,
+/// sent to the lead through the router: the `web` credential, the web
+/// client's identity, a fresh key.
+async fn api_as_web(rig: &Rig, cookie: &str, path: &str, body: Value) -> (StatusCode, Value) {
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let credential = oml_app::domain::web::capacity_credential(token, "web");
+    let request = Request::post(path)
+        .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+        .header("oml-web-client", WEB_CLIENT_SECRET)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("idempotency-key", format!("k-{path}-{body}"))
+        .body(Body::from(body.to_string()))
+        .expect("a request");
+    let (status, _, answer) = send(&rig.router, request).await;
+    (status, serde_json::from_str(&answer).unwrap_or(Value::Null))
+}
+
+/// A person whose `<user>-web` key an admin cut off issues no key, mints
+/// no connect code and cuts off no key from the Keys page or the Start
+/// page: each act answers the API's own refusal, its status, its code and
+/// its message, and journals nothing (ADR-0070 d2, d3 layer 7; #325).
+#[tokio::test]
+async fn a_cut_off_persons_key_acts_are_refused_on_the_page_as_the_api_refuses_them() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    laptop_key(&rig, &cookie).await;
+    let (status, _, _) = act(
+        &rig,
+        &cookie,
+        "/web/keys",
+        &[
+            ("action", "connect_key"),
+            ("name", "phone"),
+            ("role", "writer"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
+    rig.app
+        .deny_key(
+            &rig.boot.admin_key.value,
+            name("alice-web"),
+            name("universe"),
+        )
+        .await
+        .expect("the admin cuts alice-web off");
+    let head = rig.head().await;
+    // The page still opens, so the person can read their keys and sign out.
+    let (status, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    type Fields<'a> = &'a [(&'a str, &'a str)];
+    let cases: [(&str, Value, Fields<'_>); 4] = [
+        (
+            "/v2/keys",
+            json!({"name": "alice-tablet", "role": "writer", "connect_code": false}),
+            &[
+                ("action", "issue_key"),
+                ("name", "tablet"),
+                ("role", "writer"),
+            ],
+        ),
+        (
+            "/v2/keys",
+            json!({"name": "alice-watch", "role": "writer", "connect_code": true}),
+            &[
+                ("action", "connect_key"),
+                ("name", "watch"),
+                ("role", "writer"),
+            ],
+        ),
+        (
+            "/v2/keys/alice-phone/connect-codes",
+            json!({}),
+            &[("action", "connect_code"), ("key", "alice-phone")],
+        ),
+        (
+            "/v2/keys/alice-laptop/denials",
+            json!({"workarea": "universe"}),
+            &[
+                ("action", "cut_off"),
+                ("key", "alice-laptop"),
+                ("confirm", "yes"),
+            ],
+        ),
+    ];
+    for (api_path, body, fields) in cases {
+        let (api_status, refusal) = api_as_web(&rig, &cookie, api_path, body).await;
+        assert_eq!(api_status, StatusCode::FORBIDDEN, "{api_path}: {refusal}");
+        assert_eq!(refusal["error"]["code"], "access.verb_ceiling", "{refusal}");
+        assert_eq!(
+            refusal["error"]["details"]["reason"], "session_key_denied",
+            "{refusal}"
+        );
+        let message = refusal["error"]["message"].as_str().expect("a message");
+        let (status, _, page) = act(&rig, &cookie, "/web/keys", fields).await;
+        assert_eq!(status, api_status, "{fields:?}: {page}");
+        assert!(
+            page.contains(&format!("access.verb_ceiling: {message}")),
+            "{fields:?}: the page names the API's code and message: {page}"
+        );
+    }
+    // The Start page issues through the same operation.
+    let (_, _, start) = send(
+        &rig.router,
+        get("/web/start?client=claude-code", Some(&cookie)),
+    )
+    .await;
+    let (csrf, nonce) = (csrf_of(&start), field_of(&start, "nonce"));
+    let (status, _, page) = send(
+        &rig.router,
+        post(
+            "/web/start",
+            &[
+                ("action", "issue_claude_code"),
+                ("csrf_token", csrf.as_str()),
+                ("nonce", nonce.as_str()),
+            ],
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
+    assert!(page.contains("access.verb_ceiling: "), "{page}");
+    assert_eq!(rig.head().await, head, "nothing journalled");
+    // The denial ends no session and refuses no sign-in.
+    let again = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, page) = send(&rig.router, get("/web/keys", Some(&again))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    for key in ["alice-tablet", "alice-watch"] {
+        let named = rig
+            .store
+            .resolve_name(
+                rig.boot.tenant_id,
+                oml_app::domain::name::NamedKind::Key,
+                &Name::parse(key).expect("a name"),
+            )
+            .await
+            .expect("a lookup");
+        assert_eq!(named, None, "no key {key}");
+    }
+}
+
 #[tokio::test]
 async fn the_old_review_and_keys_urls_are_not_found_and_their_acts_run_nothing() {
     // The lead's 303s from the old URLs are deleted in v0.7.1 (ADR-0070,

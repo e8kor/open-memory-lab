@@ -2878,6 +2878,13 @@ pub enum AppError {
         "universe holds only claims its curators write; a user key never writes there (ADR-0044 d7, submission.universe_refused)"
     )]
     UniverseRefused,
+    /// A person's session key that carries a denial runs none of its key
+    /// acts: it issues no key, mints no connect code and cuts off no key
+    /// (ADR-0070 d2; #325; access.verb_ceiling, reason session_key_denied).
+    #[error(
+        "{verb} is refused: this session key carries a denial (ADR-0070 d2, access.verb_ceiling)"
+    )]
+    SessionKeyDenied { role: Role, verb: &'static str },
     /// The key names a user root that is not one: the lead serves it
     /// nothing (ADR-0044 d14; auth.invalid, reason user_root).
     #[error("the key's user root is not a user root (ADR-0044 d14, auth.invalid)")]

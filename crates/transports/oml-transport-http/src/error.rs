@@ -298,6 +298,21 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             format!("{verb} is outside the {} verb ceiling", role.as_str()),
         )
         .with_details(json!({ "verb": verb, "role": role.as_str() })),
+        // A denial wins over every grant, so a session key that carries
+        // one hands on no access (ADR-0070 d2; #325).
+        AppError::SessionKeyDenied { role, verb } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "A session key an admin denied runs none of its key acts: it issues no key, mints no connect code and cuts off no key (ADR-0070 d2).",
+            format!(
+                "{verb} is refused: an admin denied this session key, so it issues no key, mints no connect code and cuts off no key; signing out still works"
+            ),
+        )
+        .with_details(json!({
+            "verb": verb,
+            "role": role.as_str(),
+            "reason": "session_key_denied",
+        })),
         AppError::IssuerCeiling {
             role,
             admissible,
