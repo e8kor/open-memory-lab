@@ -89,7 +89,12 @@ def main(argv: list[str] | None = None) -> int:
     fcntl.flock(lock, fcntl.LOCK_EX)
     try:
         local = N.parse_registry(reg.read_text()) if reg.exists() else []
-        scanned = N.scan_rows(root, a.remote)
+        try:
+            scanned = N.scan_rows(root, a.remote)
+        except N.RegistryUnreadable as e:
+            print(f"{e}\nnothing was reserved: its reservations are unknown, so a number could collide. "
+                  f"Fix or delete {e.branch}.", file=sys.stderr)
+            return 1
         main_numbers = N.numbers_on(root, f"{a.remote}/main")
         # a branch of this clone that is not pushed yet still holds the numbers it reserved
         keep = set(N.git(root, "for-each-ref", "--format=%(refname:short)", "refs/heads/").split()) | {a.branch or ""}

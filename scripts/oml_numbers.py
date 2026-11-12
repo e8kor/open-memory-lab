@@ -77,7 +77,9 @@ def fetch_heads(root: Path, remote: str = "origin", timeout: int = 120) -> str |
     except OSError as e:
         return f"git fetch {remote}: {e}"
     if r.returncode != 0:
-        return f"git fetch {remote} failed: {(r.stderr.strip().splitlines() or ['no output'])[-1]}"
+        lines = [ln.strip() for ln in r.stderr.splitlines() if ln.strip()]
+        cause = next((ln for ln in lines if ln.startswith(("fatal:", "error:"))), lines[-1] if lines else "no output")
+        return f"git fetch {remote} failed: {cause}"
     return None
 
 
@@ -128,9 +130,28 @@ def render_rows(rows: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+class RegistryUnreadable(Exception):
+    """A branch's docs/NUMBERS.md could not be read as a registry, so its reservations are unknown."""
+
+    def __init__(self, branch: str, reason: str):
+        super().__init__(f"cannot read {REGISTRY} on {branch}: {reason}")
+        self.branch = branch
+
+
+ROWLIKE = re.compile(r"^\|\s*(adr|migration)\s*\|")
+MARKER = re.compile(r"^(<<<<<<<|=======$|>>>>>>>)")
+
+
 def reservations_on(root: Path, ref: str, name: str) -> list[dict]:
-    """The reservations a branch's own registry holds for itself."""
-    return [r for r in registry_at(root, ref) if r["state"] == "reserved" and r["branch"] == name]
+    """The reservations a branch's own registry holds for itself. A registry with conflict markers or
+    a row that is not a row raises RegistryUnreadable: skipping it would hand out a number it holds."""
+    text = git(root, "show", f"{ref}:{REGISTRY}", check=False)
+    for i, line in enumerate(text.splitlines(), 1):
+        if MARKER.match(line):
+            raise RegistryUnreadable(name, f"conflict marker on line {i}")
+        if ROWLIKE.match(line) and not ROW.match(line):
+            raise RegistryUnreadable(name, f"malformed row on line {i}")
+    return [r for r in parse_registry(text) if r["state"] == "reserved" and r["branch"] == name]
 
 
 def live_branches(root: Path, remote: str = "origin", main: str = "main") -> dict[str, str]:

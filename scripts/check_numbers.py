@@ -41,7 +41,12 @@ def check(root: Path, base: str, branch: str, remote: str = "origin", prs: dict[
     reserved_elsewhere: dict[tuple[str, int], list[str]] = {}
     for name, b in N.live_branches(root, remote, base.split("/")[-1]).items():
         if name != branch:
-            for r in N.reservations_on(root, b, name):
+            try:
+                reserved = N.reservations_on(root, b, name)
+            except N.RegistryUnreadable as e:
+                problems.append(f"{e}: its reservations are unknown, fix or delete {name}")
+                continue
+            for r in reserved:
                 if (r["kind"], r["number"]) not in on_main:
                     reserved_elsewhere.setdefault((r["kind"], r["number"]), []).append(name)
     for key in sorted((mine.keys() | held) & reserved_elsewhere.keys()):
@@ -70,7 +75,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-fetch", action="store_true")
     a = ap.parse_args(argv)
     root = Path(a.root).resolve()
-    if not a.no_fetch:
+    if a.no_fetch:
+        print("numbers: --no-fetch, using the remote refs already here", file=sys.stderr)
+    else:
         err = N.fetch_heads(root, a.remote)
         if err:
             print(f"numbers: FAIL: cannot read the remote branches: {err} "
@@ -80,7 +87,8 @@ def main(argv: list[str] | None = None) -> int:
     problems = check(root, a.base, branch, a.remote)
     for p in problems:
         print(f"numbers: {p}")
-    print(f"numbers: {'FAIL' if problems else 'ok'} ({branch})")
+    stale = ", remote refs not refreshed" if a.no_fetch else ""
+    print(f"numbers: {'FAIL' if problems else 'ok'} ({branch}{stale})")
     return 1 if problems else 0
 
 
