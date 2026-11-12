@@ -17,7 +17,7 @@ import type { components, operations, paths } from "./generated/schema.ts";
  * a browser keeps its own): the server's request log names the client by it (ADR-0042 d9).
  * The version is package.json's, which a unit test holds it to.
  */
-export const USER_AGENT = "oml-sdk-typescript/0.7.1";
+export const USER_AGENT = "oml-sdk-typescript/0.7.2";
 
 type Schemas = components["schemas"];
 export type SubmitRequest = Schemas["SubmitRequest"];

@@ -28,14 +28,14 @@ You get a server, a workarea `crew`, an agent key, a second agent key called `co
       -c "CREATE DATABASE oml OWNER oml_owner"
     ```
 
-    Download the server and the CLI, verify both with cosign and unpack them, as in [install the server archive](../operations/deployment.md#install-the-server-archive) (`oml-server-lead-0.7.1-x86_64-unknown-linux-gnu` and `oml-cli-0.7.1-x86_64-unknown-linux-musl`). Then start the server. It prints a single-use enrollment token in its log.
+    Download the server and the CLI, verify both with cosign and unpack them, as in [install the server archive](../operations/deployment.md#install-the-server-archive) (`oml-server-lead-0.7.2-x86_64-unknown-linux-gnu` and `oml-cli-0.7.2-x86_64-unknown-linux-musl`). Then start the server. It prints a single-use enrollment token in its log.
 
     ```sh
     mkdir -p oml/srv oml/keys && chmod 700 oml/keys && umask 077
     cd oml/srv
     OML_POSTGRES__OWNER_URL=postgres://oml_owner:${OWNER_PW}@127.0.0.1:54329/oml \
       OML_POSTGRES__URL=postgres://oml_server:${SERVER_PW}@127.0.0.1:54329/oml \
-      ../../oml-server-lead-0.7.1-x86_64-unknown-linux-gnu/oml-server-lead > ../server.log 2>&1 &
+      ../../oml-server-lead-0.7.2-x86_64-unknown-linux-gnu/oml-server-lead > ../server.log 2>&1 &
     echo $! > ../server.pid; cd ../..
     ```
 
