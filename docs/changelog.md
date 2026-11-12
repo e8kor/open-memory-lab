@@ -8,6 +8,31 @@ answers: "what each OML release changed for users and operators, newest first"
 
 Newest first. Each release is a signed tag on the [releases page](https://github.com/e8kor/open-memory-lab/releases).
 
+## 0.7.1
+
+Released 2026-11-12.
+
+**The web console still misses its latency budget on some pages.** ADR-0070 allows the web console 5 ms p95 over the API it calls. In this release 7 of 21 pages miss it with 6 workareas and 11 of 21 with 48, by +5.1 to +35.7 ms p95, down from 16 and 15 in v0.7.0 ([Web console overhead](benchmarks/web.md)). The rest is tracked in [#297](https://github.com/e8kor/open-memory-lab/issues/297).
+
+- Changed the web console's pages to spend fewer API calls and rounds ([#286](https://github.com/e8kor/open-memory-lab/issues/286)). `GET /v2/whoami` resolves its credential once, so a key value or a connection spends one request of its rate, and takes `person=false`, which leaves out the person block and its reads; `oml-web`'s session check asks for it, so a session key's `whoami` reads 9 store rows where it read 15. `GET /v2/workareas/{workarea}/tree?counts=true` takes `offers=true` and carries the scope's offers, so the admin Atlas reads them with its counts. Who may read what is unchanged.
+- Removed the redirects v0.7.0 kept for the web console's v0.6 addresses ([#283](https://github.com/e8kor/open-memory-lab/issues/283)). The server's web routes are now sign-in's alone: `GET /web` (the sign-in page, and for a signed-in browser the way on to the Keys view), sign-out at `POST /web`, `/web/sign-in`, the provider callback and `POST /web/sign-up`. `GET` and `POST /web/admin` are gone. The user page's Administration tab links the overview at `/web/admin/people`.
+- Changed a person's disable to refuse by name while an admin key names their root ([#277](https://github.com/e8kor/open-memory-lab/issues/277)). No verb issues such a key, so the row is corrupt: `disable_user`, and the deletion close that runs it, answer 409 `workarea.admin_key_under_root` and journal nothing, where before the disable skipped the key in silence. `GET /v2/web/users` names each such key per person in `admin_keys`, and `oml doctor` under an admin key prints `warn keys` for each.
+- Fixed the widen hint's builds to take turns by tenant, so one tenant can no longer queue many builds ahead of another's first, and the lead to stay within its 8,000,000-pair bound by evicting the oldest signals of a tenant over its share ([#268](https://github.com/e8kor/open-memory-lab/issues/268)). ADR-0072 now says the 25 s database limit applies to each statement.
+- Fixed the web console's review nits from #279, #282 and #284 ([#281](https://github.com/e8kor/open-memory-lab/issues/281)): a key list whose cursor the API repeats is refused as the API's fault, `unavailable` with 502, instead of `limit.list_too_long`; the memories JSON no longer carries `base`; a connect code minted through `POST /v2/keys/{key}/connect-codes` with a bearer key runs as the caller the request resolved, as the other console acts do.
+- Added a research note on map-reduce recall ([`eval/recall/MAPREDUCE.md`](https://github.com/e8kor/open-memory-lab/blob/main/eval/recall/MAPREDUCE.md)), nothing built: a workarea's `bm25-sparse` scores merge into the global answer byte for byte when the reducer, not the workarea, fuses, and on one PostgreSQL a split scope cut the sparse leg's p95 from about 95 ms to 19 to 56 ms with 1 to 4 clients and served 7 to 14% fewer recalls with 8.
+- Changed internals only: the gating suite no longer fails on wall-clock timing, since ADR-0072's test 7 asserts its deterministic half and the p50/p95 comparison runs weekly ([#278](https://github.com/e8kor/open-memory-lab/issues/278)); the lead's route wall refuses an API-table route that `openapi.yaml` does not serve; tests show that a proposal, a ratification and a mode change each cost one request of a person's rate.
+
+Upgrade notes:
+
+- No migrations run at upgrade; the schema is v0.7.0's (0043).
+- Old bookmarks now 404. `GET /web?view=...` with a session, `GET /web/admin` and a path below it that `oml-web` does not serve answer not found, and a form cached from a v0.6 page that posts an act other than sign-out is refused and runs nothing. Use the pages' own paths in [Run the web console](operations/web-console.md). No proxy change is needed: `/web` and `/web/admin` already fall through to the server.
+- `docs/api/openapi.yaml` and the generated SDKs drop `GET` and `POST /web/admin`: the Python SDK loses `admin_page`, `admin_page_act` and their models (`AdminPageView`, `AdminPageActBody`, `AdminPageActBodyAction`), `user_page()` loses its `view` parameter, `UserPageView` is gone and `UserPageActBodyAction` is `SIGN_OUT` alone; the TypeScript schema drops the same types and `/web`'s query parameters.
+- `GET /v2/whoami` takes `person`: `false` leaves out the `person` field, which a client must then treat as absent, and `person=false` with `start=true` is `request.validation` naming `person`. The default answers as before. The Python and TypeScript SDKs carry the parameter; the Rust SDK's `whoami()` now always asks `person=false`, since its `Whoami` reads no person block, and an API before v0.7.1 ignores the flag.
+- `GET /v2/workareas/{workarea}/tree` takes `offers`, only beside `counts=true`; `offers` without `counts=true` is `request.validation` naming `offers`. The answer's `WorkareaCounts` gains an optional `offers`. In the Rust SDK, `workarea_counts()` takes a third argument, `offers: bool`, so a call with two no longer compiles.
+- `ErrorCode` has a new value, `workarea.admin_key_under_root` (409, with `details.user` and `details.key`), which a client matching codes exhaustively must accept. `WebUser` gains `admin_keys`, a list of key names.
+- `AdminMemory.key` is now nullable in `openapi.yaml`, as the server already answered for a key with no name (`key_id` names it); a typed client that required a string must accept null.
+- In the Rust SDK, `KeyIssued::new` and `ConnectCode::new` build either struct outside the crate, which v0.7.0's private `replayed` field made impossible; both start with `replayed()` false.
+
 ## 0.7.0
 
 Released 2026-11-11.
