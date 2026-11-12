@@ -704,8 +704,10 @@ pub struct CountedNode {
 pub struct WorkareaCounts {
     pub items: Vec<CountedNode>,
     pub truncated: bool,
-    /// The scope's offers, asked with `offers=true` (#286); absent from
-    /// an API before v0.7.1 and when not asked.
+    /// The scope's offers, asked with `offers=true` (#286); absent when not
+    /// asked. An API before v0.7.1 refuses `offers=true` as
+    /// `request.validation`, so a caller that must work one release behind
+    /// reads the offers apart on that refusal (ADR-0070 d4).
     #[serde(default)]
     pub offers: Option<WorkareaOffers>,
 }

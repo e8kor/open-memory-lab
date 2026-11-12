@@ -31,7 +31,9 @@ use serde_json::{Value, json};
 use crate::atlas::{Counts, Tile, legend, lifebar, svg};
 use crate::pages::{Fields, refused};
 use crate::session::{PageCalls, Session, call, cookie};
-use crate::workareas::{Credentials, NodeOffers, Side as ActSide, mode_offers, offers_of};
+use crate::workareas::{
+    Credentials, NodeOffers, Side as ActSide, mode_offers, offers_of, transitions_offers,
+};
 use crate::{Capacity, SESSION_COOKIE, Web, outcome};
 
 /// A page's rows when the query names no size (ADR-0045 d22).
@@ -781,20 +783,43 @@ async fn regions(
         web.api.workarea_counts(&counts_call, scope, true),
         mode_offers(&web.api, &credentials, calls, scope),
     );
-    let offers = match &counts {
-        Ok(counted) => match &counted.offers {
-            Some(transitions) => Ok(NodeOffers::of(transitions.clone(), mode)),
-            None => Err((
+    match counts {
+        Ok(oml_sdk::WorkareaCounts {
+            offers: Some(transitions),
+            items,
+            truncated,
+        }) => (
+            Ok(oml_sdk::WorkareaCounts {
+                items,
+                truncated,
+                offers: None,
+            }),
+            Ok(NodeOffers::of(transitions, mode)),
+        ),
+        // An API one release behind refuses `offers` as a parameter it does
+        // not know (ADR-0070 d4): the counts and the transitions' offers are
+        // read apart, a round more, as before #286.
+        Err(oml_sdk::Error::Api(e)) if e.code == "request.validation" => {
+            let ids = calls.next_ids();
+            let counts_call = call(&credential, &ids);
+            let (counts, transitions) = tokio::join!(
+                web.api.workarea_counts(&counts_call, scope, false),
+                transitions_offers(&web.api, &credentials, calls, scope),
+            );
+            (counts, transitions.map(|t| NodeOffers::of(t, mode)))
+        }
+        Ok(counted) => (
+            Ok(counted),
+            Err((
                 request_id,
                 oml_sdk::Error::Decode {
                     status: 200,
                     why: "the counted tree carried no offers".to_owned(),
                 },
             )),
-        },
-        Err(e) => Err((request_id, e.clone())),
-    };
-    (counts, offers)
+        ),
+        Err(e) => (Err(e.clone()), Err((request_id, e))),
+    }
 }
 
 /// The Atlas of `nodes`: the map, the table twin and the scope's panel with
