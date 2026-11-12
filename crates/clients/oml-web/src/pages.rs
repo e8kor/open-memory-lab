@@ -260,6 +260,7 @@ async fn guardrails(
         shell(
             "Your page",
             &session.who(),
+            Some(&session.csrf()),
             &user_tabs(session.admin),
             crate::GUARDRAILS_PATH,
             fields.get("done"),

@@ -397,6 +397,25 @@ where
 
     // -- the user page's keys ---------------------------------------------
 
+    /// The session key the gate resolved, its access read now, when the act
+    /// runs: the gate read it before the request's body arrived (ADR-0070
+    /// d8). A key that carries a denial runs none of its key acts, since
+    /// each hands on access the key no longer holds whole: a key it issues
+    /// is granted the person's whole root, a connect code opens a
+    /// connection, and a cut-off is journalled under it
+    /// ([`AppError::SessionKeyDenied`]; ADR-0070 d2; #325).
+    async fn undenied(&self, gate: &Caller, verb: &'static str) -> Result<Caller, AppError> {
+        let now = self.authenticate_bearer(Bearer::Session(gate)).await?;
+        if now.denials.is_empty() {
+            Ok(now)
+        } else {
+            Err(AppError::SessionKeyDenied {
+                role: now.key.role,
+                verb,
+            })
+        }
+    }
+
     /// `GET /v2/keys` for a session user key (ADR-0070 d5 #1; ADR-0045 d9):
     /// every key naming the person's user, with its grants and whether a denial
     /// on `universe` cuts it off.
@@ -437,7 +456,8 @@ where
     /// `<user>-<name>` with the session suffixes reserved, issued by
     /// `<user>-web`; with `connector`, a connector key and its connect code.
     /// Issuance never amplifies authority: `<user>-web` holds writer there, and
-    /// the key it issues holds no more.
+    /// the key it issues holds no more, so a `<user>-web` that carries a
+    /// denial issues none (#325).
     pub async fn issue_own_key(
         &self,
         web: &Caller,
@@ -445,6 +465,7 @@ where
         role: Role,
         connector: bool,
     ) -> Result<IssuedKey, AppError> {
+        let web = &self.undenied(web, "issue_key").await?;
         let user_name = self.web_user_of(web).await?;
         // A person of the sign-up tenant holds at most their keys quota
         // (ADR-0068 d5).
@@ -495,12 +516,13 @@ where
 
     /// `POST /v2/keys/{key}/connect-codes` as `<user>-web` (ADR-0070 d5;
     /// ADR-0045 d9): a fresh code for one of the person's connector keys,
-    /// minted by `<user>-web`.
+    /// minted by `<user>-web`, and by none that carries a denial (#325).
     pub async fn mint_own_connect_code(
         &self,
         web: &Caller,
         key: &Name,
     ) -> Result<ConnectCodeIssued, AppError> {
+        let web = &self.undenied(web, "mint_connect_code").await?;
         let target = self.own_key(web, key).await?;
         self.mint_connect_code_by(&web.key, Reference::Id(target.key_id))
             .await
@@ -510,8 +532,10 @@ where
     /// (ADR-0070 d5; ADR-0045 d9, d13): one of the person's keys denied on
     /// `universe`, journalled as `key.denied`, by `<user>-web` on the user page
     /// or `<user>-admin` on the admin page; the only cut-off while revocation
-    /// is not built. A session key is never cut off here.
+    /// is not built. A session key is never cut off here, and one that
+    /// carries a denial cuts nothing off (#325).
     pub async fn cut_off_key(&self, acting: &Caller, key: &Name) -> Result<DenialRecord, AppError> {
+        let acting = &self.undenied(acting, "deny_key").await?;
         let target = match acting.key.role {
             Role::Admin => self.named_key(acting.key.tenant_id, key).await?,
             _ => self.own_key(acting, key).await?,

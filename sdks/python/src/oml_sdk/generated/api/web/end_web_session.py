@@ -72,8 +72,9 @@ def sync_detailed(
 
      Requires: a capacity credential (omls_), which oml-web presents with its client identity; any other
     credential answers access.verb_ceiling with details.reason session_key_only. The session row ends,
-    and every capacity credential derived from it with it (ADR-0045 d5; ADR-0070 d2, d5). Journals
-    nothing: a session is operational state. Since v0.6.4.
+    and every capacity credential derived from it with it (ADR-0045 d5; ADR-0070 d2, d5). The session
+    key's grants and denials play no part, so a session key an admin denied still ends its session.
+    Journals nothing: a session is operational state. Since v0.6.4.
 
     Args:
         x_request_id (str | Unset):
@@ -112,8 +113,9 @@ def sync(
 
      Requires: a capacity credential (omls_), which oml-web presents with its client identity; any other
     credential answers access.verb_ceiling with details.reason session_key_only. The session row ends,
-    and every capacity credential derived from it with it (ADR-0045 d5; ADR-0070 d2, d5). Journals
-    nothing: a session is operational state. Since v0.6.4.
+    and every capacity credential derived from it with it (ADR-0045 d5; ADR-0070 d2, d5). The session
+    key's grants and denials play no part, so a session key an admin denied still ends its session.
+    Journals nothing: a session is operational state. Since v0.6.4.
 
     Args:
         x_request_id (str | Unset):
@@ -147,8 +149,9 @@ async def asyncio_detailed(
 
      Requires: a capacity credential (omls_), which oml-web presents with its client identity; any other
     credential answers access.verb_ceiling with details.reason session_key_only. The session row ends,
-    and every capacity credential derived from it with it (ADR-0045 d5; ADR-0070 d2, d5). Journals
-    nothing: a session is operational state. Since v0.6.4.
+    and every capacity credential derived from it with it (ADR-0045 d5; ADR-0070 d2, d5). The session
+    key's grants and denials play no part, so a session key an admin denied still ends its session.
+    Journals nothing: a session is operational state. Since v0.6.4.
 
     Args:
         x_request_id (str | Unset):
@@ -185,8 +188,9 @@ async def asyncio(
 
      Requires: a capacity credential (omls_), which oml-web presents with its client identity; any other
     credential answers access.verb_ceiling with details.reason session_key_only. The session row ends,
-    and every capacity credential derived from it with it (ADR-0045 d5; ADR-0070 d2, d5). Journals
-    nothing: a session is operational state. Since v0.6.4.
+    and every capacity credential derived from it with it (ADR-0045 d5; ADR-0070 d2, d5). The session
+    key's grants and denials play no part, so a session key an admin denied still ends its session.
+    Journals nothing: a session is operational state. Since v0.6.4.
 
     Args:
         x_request_id (str | Unset):

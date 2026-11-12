@@ -152,6 +152,8 @@ A **session key** has the credential `session`: no value, no connection. It acts
 
 `<user>-web` and `<user>-review` are created at first sign-in. Each session key's principal is its own name. `<user>-admin` reads memory text through the journaled admin read and gives no verdicts.
 
+A session key that carries a denial, on any workarea, runs none of its key acts: a denied `<user>-web` issues no key, mints no connect code and cuts no key off. Each act answers `access.verb_ceiling` with `details.reason: session_key_denied` and journals nothing. The key it would issue holds the person's whole root, which a denied key no longer does. The session still opens the pages, lists the person's keys and ends by sign-out.
+
 ## Connections
 
 A **connection** is one OAuth client's standing authority to act as one connector key at `/mcp`, so Claude's hosted apps use the [agent plugin](../api/mcp-plugin.md) without a pasted key. Connections need `oauth.issuer` set on the server.

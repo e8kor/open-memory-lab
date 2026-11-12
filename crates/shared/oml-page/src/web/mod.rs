@@ -294,12 +294,29 @@ pub fn hidden(name: &str, value: &str) -> String {
     )
 }
 
-/// A page's chrome: the brand, who is signed in, the tabs of `tabs`
+/// Where the header's sign-out control posts: the lead's `POST /web`, whose
+/// one act is `sign_out` (ADR-0070 d6).
+const SIGN_OUT_PATH: &str = "/web";
+
+/// The header's sign-out control (ADR-0045 d5, d8; #327): a form that posts
+/// `sign_out` with the session's CSRF token to the lead, which ends the
+/// session, clears the cookie it set and answers a `303` to the console's
+/// address. A `POST` and never a link, so no `GET` signs anyone out.
+fn sign_out(csrf: &str) -> String {
+    format!(
+        r#"<form method="post" action="{SIGN_OUT_PATH}"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="{}"><button type="submit" class="linkish">Sign out</button></form>"#,
+        escape(csrf)
+    )
+}
+
+/// A page's chrome: the brand, who is signed in, the sign-out control where
+/// `csrf` is a signed-in session's CSRF token, the tabs of `tabs`
 /// (`(href, text)`, the active one marked), a notice, and `body`.
 #[must_use]
 pub fn shell(
     title: &str,
     who: &str,
+    csrf: Option<&str>,
     tabs: &[(&str, &str)],
     active: &str,
     notice: Option<&str>,
@@ -321,10 +338,11 @@ pub fn shell(
     document(
         title,
         &format!(
-            r#"<header class="top">{}{nav}<span class="end"><span class="who">{}{}</span></span></header><main class="wrap">{notice}{body}</main>"#,
+            r#"<header class="top">{}{nav}<span class="end"><span class="who">{}{}</span>{}</span></header><main class="wrap">{notice}{body}</main>"#,
             brand(true),
             glyph_svg("person"),
-            short(who)
+            short(who),
+            csrf.map_or_else(String::new, sign_out)
         ),
     )
 }
@@ -393,6 +411,7 @@ mod tests {
         let html = shell(
             "t",
             "<script>",
+            Some("\"x"),
             &[("/web", "Keys")],
             "/web",
             None,
@@ -401,7 +420,22 @@ mod tests {
         assert!(!html.contains("<script>"));
         assert!(!html.contains('\u{202E}'));
         assert!(!html.contains("<img>"));
-        let f = form("/web", "sign_out", "\"x", "", "Sign out", false);
+        assert!(html.contains(r#"name="csrf_token" value="&quot;x">"#));
+        let f = form("/web", "cut_off", "\"x", "", "Cut off", false);
         assert!(f.contains("&quot;x"));
+    }
+
+    /// The header carries the sign-out control exactly where a session's
+    /// CSRF token is given: a `POST` form to the lead's sign-out, never a
+    /// link (#327).
+    #[test]
+    fn the_header_draws_the_sign_out_control_only_for_a_signed_in_session() {
+        let signed_in = shell("t", "alice", Some("c5"), &[], "", None, "");
+        assert!(signed_in.contains(
+            r#"<form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="c5"><button type="submit" class="linkish">Sign out</button></form></span></header>"#
+        ), "{signed_in}");
+        assert!(!signed_in.contains(r#"href="/web?action=sign_out"#));
+        let no_one = shell("t", "", None, &[], "", None, "");
+        assert!(!no_one.contains("sign_out"), "{no_one}");
     }
 }

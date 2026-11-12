@@ -1540,6 +1540,322 @@ async fn a_signed_out_session_cookie_goes_to_sign_in_from_a_moved_page() {
     );
 }
 
+// -- sign-out (#327): the header's control posts to the lead's POST /web ------
+
+/// The sign-out control in a page's header, as the page draws it.
+#[derive(Debug, PartialEq, Eq)]
+struct SignOutForm {
+    method: String,
+    action: String,
+    /// Its hidden fields, `(name, value)`, in the order drawn.
+    fields: Vec<(String, String)>,
+}
+
+/// The sign-out control in a page's header; `None` where the header draws
+/// none.
+fn sign_out_form(page: &str) -> Option<SignOutForm> {
+    let header = header_of(page);
+    let start = header.find("<form ")?;
+    let form = &header[start..start + header[start..].find("</form>")?];
+    let attribute = |tag: &str, name: &str| {
+        let marker = format!(r#"{name}=""#);
+        let at = tag.find(&marker)? + marker.len();
+        Some(tag[at..at + tag[at..].find('"')?].to_owned())
+    };
+    let fields = form
+        .split("<input ")
+        .skip(1)
+        .filter_map(|input| {
+            let input = &input[..input.find('>')?];
+            (attribute(input, "type")? == "hidden")
+                .then(|| Some((attribute(input, "name")?, attribute(input, "value")?)))?
+        })
+        .collect();
+    Some(SignOutForm {
+        method: attribute(form, "method")?,
+        action: attribute(form, "action")?,
+        fields,
+    })
+}
+
+/// The sign-out control's post, sent as a browser sends the form the page
+/// drew: its own action and its own fields, nothing added.
+async fn sign_out_from(rig: &Rig, cookie: &str, page: &str) -> (StatusCode, HeaderMap, String) {
+    let form = sign_out_form(page).expect("a sign-out control");
+    assert_eq!(form.method, "post", "sign-out is a POST");
+    let fields: Vec<(&str, &str)> = form
+        .fields
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    send(&rig.router, post(&form.action, &fields, Some(cookie))).await
+}
+
+/// The status `GET /v2/whoami` answers the session's `capacity` credential,
+/// sent as `oml-web` sends it: whether the credential still names a session.
+async fn credential_status(rig: &Rig, cookie: &str, capacity: &str) -> StatusCode {
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let credential = oml_app::domain::web::capacity_credential(token, capacity);
+    let request = Request::get("/v2/whoami")
+        .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+        .header("oml-web-client", WEB_CLIENT_SECRET)
+        .body(Body::empty())
+        .expect("a request");
+    send(&rig.router, request).await.0
+}
+
+/// Every page `oml-web` draws for a signed-in person carries the sign-out
+/// control in its header: a form that posts `sign_out` with the session's
+/// CSRF token to the lead's `POST /web`. A page for no one draws none
+/// (ADR-0070 d2, d6; ADR-0045 d5, d8; #327).
+#[tokio::test]
+async fn every_signed_in_page_draws_the_sign_out_control_in_its_header() {
+    let rig = rig().await;
+    rig.allow("bob@example.com", "bob", true).await;
+    let (cookie, value) = person_with_agent(&rig, "sub-2", "bob@example.com").await;
+    let memory = agent_writes(&rig, &value, "Sign-out is drawn on every page.").await;
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let expected = SignOutForm {
+        method: "post".to_owned(),
+        action: "/web".to_owned(),
+        fields: vec![
+            ("action".to_owned(), "sign_out".to_owned()),
+            (
+                "csrf_token".to_owned(),
+                oml_web_credential::csrf_token(token),
+            ),
+        ],
+    };
+    // The routes that answer data to a script draw no page.
+    let data = [
+        oml_web::memories::USER_DATA_PATH,
+        oml_web::memories::ADMIN_DATA_PATH,
+        oml_web::start::STATUS_PATH,
+        oml_web::start::EXPORT_PATH,
+    ];
+    let mut drawn = 0;
+    for (_, path) in oml_web::PAGES
+        .iter()
+        .filter(|(method, path)| *method == "GET" && !data.contains(path))
+    {
+        let url = match *path {
+            oml_web::USER_MEMORY_PATH | oml_web::ADMIN_MEMORY_PATH => {
+                format!("{path}?id={memory}")
+            }
+            oml_web::ADMIN_KEYS_PATH => format!("{path}?user=bob"),
+            _ => (*path).to_owned(),
+        };
+        let (status, _, page) = send(&rig.router, get(&url, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{url}: {page}");
+        assert_eq!(sign_out_form(&page).as_ref(), Some(&expected), "{url}");
+        assert!(
+            header_of(&page).contains(r#"<button type="submit" class="linkish">Sign out</button>"#),
+            "{url}"
+        );
+        drawn += 1;
+    }
+    assert_eq!(drawn, 18, "every page route of oml_web::PAGES was read");
+    // A page an act answers is drawn by the same chrome.
+    let (status, _, page) = act(
+        &rig,
+        &cookie,
+        "/web/keys",
+        &[("action", "cut_off"), ("key", "bob-laptop")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Cut off bob-laptop?"), "{page}");
+    assert_eq!(sign_out_form(&page).as_ref(), Some(&expected));
+    // No one is signed in on the lead's sign-in page.
+    let (status, _, page) = send(&rig.router, get("/web", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("Sign in with Google"), "{page}");
+    assert!(!page.contains("sign_out"), "{page}");
+}
+
+/// The control ends the session on the server: after its post no capacity
+/// credential of the session resolves at the API, the cookie opens no page,
+/// and a second post finds no session (ADR-0045 d5; ADR-0070 d2; #327).
+#[tokio::test]
+async fn the_sign_out_control_ends_the_session_and_no_credential_of_it_works_afterwards() {
+    let rig = rig().await;
+    rig.allow("bob@example.com", "bob", true).await;
+    let cookie = signed_in(&rig, "sub-2", "bob@example.com").await;
+    let other = signed_in(&rig, "sub-1", EMAIL).await;
+    let capacities = ["web", "review", "admin"];
+    for capacity in capacities {
+        assert_eq!(
+            credential_status(&rig, &cookie, capacity).await,
+            StatusCode::OK,
+            "{capacity}: live before the sign-out"
+        );
+    }
+    let (_, _, page) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
+    let (status, headers, body) = sign_out_from(&rig, &cookie, &page).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(headers[header::LOCATION], "/web");
+    for capacity in capacities {
+        assert_eq!(
+            credential_status(&rig, &cookie, capacity).await,
+            StatusCode::UNAUTHORIZED,
+            "{capacity}: the credential ended with the session"
+        );
+    }
+    // The cookie a browser failed to drop opens nothing.
+    let (status, headers, _) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/web/sign-in?next=%2Fweb%2Fkeys");
+    let (status, _, body) = sign_out_from(&rig, &cookie, &page).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    // Another person's session is untouched.
+    assert_eq!(credential_status(&rig, &other, "web").await, StatusCode::OK);
+}
+
+/// The attributes of a `Set-Cookie` header, its name, value and `Max-Age`
+/// aside.
+fn cookie_attributes(whole: &str) -> Vec<&str> {
+    whole
+        .split("; ")
+        .skip(1)
+        .filter(|a| !a.starts_with("Max-Age="))
+        .collect()
+}
+
+/// Signing out clears the session cookie with the attributes the sign-in
+/// set it with, so the browser drops that cookie and no other, and lands on
+/// the console's address, which is the sign-in page for no one (ADR-0045 d5;
+/// #327).
+#[tokio::test]
+async fn signing_out_clears_the_cookie_as_it_was_set_and_lands_on_the_sign_in_page() {
+    let rig = rig().await;
+    let (location, sealed) = start(&rig, Provider::Google).await;
+    let state = query_param(&location, "state").expect("a state");
+    let nonce = query_param(&location, "nonce").expect("a nonce");
+    rig.providers.answer(
+        Provider::Google,
+        Ok(ProviderAnswer::GoogleIdToken(google_token(
+            &nonce, "sub-1", EMAIL, true,
+        ))),
+    );
+    let (status, headers, body) = callback(
+        &rig,
+        Provider::Google,
+        "the-code-4711",
+        &state,
+        &format!("{SIGN_IN_COOKIE}={sealed}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let (token, set) = set_cookie(&headers, SESSION_COOKIE).expect("the session cookie");
+    let cookie = format!("{SESSION_COOKIE}={token}");
+    let (_, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    let (status, headers, body) = sign_out_from(&rig, &cookie, &page).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let (value, cleared) = set_cookie(&headers, SESSION_COOKIE).expect("the cookie cleared");
+    assert_eq!(value, "", "{cleared}");
+    assert!(cleared.split("; ").any(|a| a == "Max-Age=0"), "{cleared}");
+    assert_eq!(cookie_attributes(&cleared), cookie_attributes(&set));
+    assert_eq!(
+        cookie_attributes(&set),
+        ["Path=/", "Secure", "HttpOnly", "SameSite=Lax"]
+    );
+    // The browser follows the redirect with no cookie.
+    let landing = headers[header::LOCATION]
+        .to_str()
+        .expect("ASCII")
+        .to_owned();
+    assert_eq!(landing, "/web");
+    let (status, _, page) = send(&rig.router, get(&landing, None)).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Sign in with Google"), "{page}");
+    assert_eq!(sign_out_form(&page), None, "no one is signed in");
+}
+
+/// Sign-out is the form's `POST` alone: a `GET` naming it ends nothing, on
+/// the lead's address or on a page's, and neither does a `POST` without the
+/// session's CSRF token or from another origin (ADR-0045 d8; #327).
+#[tokio::test]
+async fn sign_out_is_a_same_origin_post_with_the_sessions_csrf_token_and_never_a_get() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (_, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    let SignOutForm { action, fields, .. } = sign_out_form(&page).expect("a sign-out control");
+    let query = form(
+        &fields
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.as_str()))
+            .collect::<Vec<_>>(),
+    );
+    for url in [format!("{action}?{query}"), format!("/web/keys?{query}")] {
+        let (_, headers, _) = send(&rig.router, get(&url, Some(&cookie))).await;
+        assert!(set_cookie(&headers, SESSION_COOKIE).is_none(), "{url}");
+        assert_eq!(
+            credential_status(&rig, &cookie, "web").await,
+            StatusCode::OK,
+            "{url}: the session is live"
+        );
+    }
+    // Without the token, and with another session's.
+    let other = signed_in(&rig, "sub-1", EMAIL).await;
+    let other_token = other.split_once('=').expect("a session cookie").1;
+    let other_csrf = oml_web_credential::csrf_token(other_token);
+    for fields in [
+        vec![("action", "sign_out")],
+        vec![("action", "sign_out"), ("csrf_token", other_csrf.as_str())],
+    ] {
+        let (status, _, body) = send(&rig.router, post(&action, &fields, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body.contains("csrf_token"), "{body}");
+    }
+    // From another origin, with the right token.
+    let request = Request::post(action.as_str())
+        .header(header::CONTENT_TYPE, FORM)
+        .header("sec-fetch-site", "cross-site")
+        .header(header::ORIGIN, "https://evil.example")
+        .header(header::COOKIE, &cookie)
+        .body(Body::from(query.clone()))
+        .expect("a request");
+    let (status, _, body) = send(&rig.router, request).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(
+        credential_status(&rig, &cookie, "web").await,
+        StatusCode::OK,
+        "the session is live"
+    );
+    // The form as drawn, from the page's own origin, ends it.
+    let (status, _, body) = sign_out_from(&rig, &cookie, &page).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(
+        credential_status(&rig, &cookie, "web").await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+/// A person whose `<user>-web` key an admin cut off still signs out from
+/// the page: sign-out reads the session and nothing of the key (#325, #327).
+#[tokio::test]
+async fn a_cut_off_person_signs_out_from_the_page() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
+    rig.app
+        .deny_key(
+            &rig.boot.admin_key.value,
+            name("alice-web"),
+            name("universe"),
+        )
+        .await
+        .expect("the admin cuts alice-web off");
+    let (status, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let (status, _, body) = sign_out_from(&rig, &cookie, &page).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(
+        credential_status(&rig, &cookie, "web").await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
 /// The Mermaid source alice's agent writes in the diagram tests.
 const DIAGRAM: &str = "flowchart LR\n  A[Checkout] -->|calls| B[Payments]\n";
 
@@ -4279,6 +4595,149 @@ async fn a_cut_off_confirmation_sent_twice_cuts_the_key_off_once() {
         .filter(|e| e.envelope.event_type == "key.denied")
         .count();
     assert_eq!(denied, 1, "the second send replayed");
+}
+
+/// A call to the API as `oml-web` makes it for the session `cookie` names,
+/// sent to the lead through the router: the `web` credential, the web
+/// client's identity, a fresh key.
+async fn api_as_web(rig: &Rig, cookie: &str, path: &str, body: Value) -> (StatusCode, Value) {
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let credential = oml_app::domain::web::capacity_credential(token, "web");
+    let request = Request::post(path)
+        .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+        .header("oml-web-client", WEB_CLIENT_SECRET)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("idempotency-key", format!("k-{path}-{body}"))
+        .body(Body::from(body.to_string()))
+        .expect("a request");
+    let (status, _, answer) = send(&rig.router, request).await;
+    (status, serde_json::from_str(&answer).unwrap_or(Value::Null))
+}
+
+/// A person whose `<user>-web` key an admin cut off issues no key, mints
+/// no connect code and cuts off no key from the Keys page or the Start
+/// page: each act answers the API's own refusal, its status, its code and
+/// its message, and journals nothing (ADR-0070 d2, d3 layer 7; #325).
+#[tokio::test]
+async fn a_cut_off_persons_key_acts_are_refused_on_the_page_as_the_api_refuses_them() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    laptop_key(&rig, &cookie).await;
+    let (status, _, _) = act(
+        &rig,
+        &cookie,
+        "/web/keys",
+        &[
+            ("action", "connect_key"),
+            ("name", "phone"),
+            ("role", "writer"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
+    rig.app
+        .deny_key(
+            &rig.boot.admin_key.value,
+            name("alice-web"),
+            name("universe"),
+        )
+        .await
+        .expect("the admin cuts alice-web off");
+    let head = rig.head().await;
+    // The page still opens, so the person can read their keys and sign out.
+    let (status, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    type Fields<'a> = &'a [(&'a str, &'a str)];
+    let cases: [(&str, Value, Fields<'_>); 4] = [
+        (
+            "/v2/keys",
+            json!({"name": "alice-tablet", "role": "writer", "connect_code": false}),
+            &[
+                ("action", "issue_key"),
+                ("name", "tablet"),
+                ("role", "writer"),
+            ],
+        ),
+        (
+            "/v2/keys",
+            json!({"name": "alice-watch", "role": "writer", "connect_code": true}),
+            &[
+                ("action", "connect_key"),
+                ("name", "watch"),
+                ("role", "writer"),
+            ],
+        ),
+        (
+            "/v2/keys/alice-phone/connect-codes",
+            json!({}),
+            &[("action", "connect_code"), ("key", "alice-phone")],
+        ),
+        (
+            "/v2/keys/alice-laptop/denials",
+            json!({"workarea": "universe"}),
+            &[
+                ("action", "cut_off"),
+                ("key", "alice-laptop"),
+                ("confirm", "yes"),
+            ],
+        ),
+    ];
+    for (api_path, body, fields) in cases {
+        let (api_status, refusal) = api_as_web(&rig, &cookie, api_path, body).await;
+        assert_eq!(api_status, StatusCode::FORBIDDEN, "{api_path}: {refusal}");
+        assert_eq!(refusal["error"]["code"], "access.verb_ceiling", "{refusal}");
+        assert_eq!(
+            refusal["error"]["details"]["reason"], "session_key_denied",
+            "{refusal}"
+        );
+        let message = refusal["error"]["message"].as_str().expect("a message");
+        let (status, _, page) = act(&rig, &cookie, "/web/keys", fields).await;
+        assert_eq!(status, api_status, "{fields:?}: {page}");
+        assert!(
+            page.contains(&format!("access.verb_ceiling: {message}")),
+            "{fields:?}: the page names the API's code and message: {page}"
+        );
+    }
+    // The Start page issues through the same operation.
+    let (_, _, start) = send(
+        &rig.router,
+        get("/web/start?client=claude-code", Some(&cookie)),
+    )
+    .await;
+    let (csrf, nonce) = (csrf_of(&start), field_of(&start, "nonce"));
+    let (status, _, page) = send(
+        &rig.router,
+        post(
+            "/web/start",
+            &[
+                ("action", "issue_claude_code"),
+                ("csrf_token", csrf.as_str()),
+                ("nonce", nonce.as_str()),
+            ],
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
+    assert!(page.contains("access.verb_ceiling: "), "{page}");
+    assert_eq!(rig.head().await, head, "nothing journalled");
+    // The denial ends no session and refuses no sign-in.
+    let again = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, page) = send(&rig.router, get("/web/keys", Some(&again))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    for key in ["alice-tablet", "alice-watch"] {
+        let named = rig
+            .store
+            .resolve_name(
+                rig.boot.tenant_id,
+                oml_app::domain::name::NamedKind::Key,
+                &Name::parse(key).expect("a name"),
+            )
+            .await
+            .expect("a lookup");
+        assert_eq!(named, None, "no key {key}");
+    }
 }
 
 #[tokio::test]

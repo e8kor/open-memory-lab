@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core
 tier: engineering
-status: accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11 and 2026-11-12; two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate were accepted on 2026-11-12
+status: accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11 and 2026-11-12; two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate were accepted on 2026-11-12; the two rows on a denied session key's acts (#325) and the three on sign-out (#327) are proposed amendments of 2026-11-12 and await it too
 answers: why the web pages stop calling oml-app's use cases and call the public HTTP API instead; which crate serves the pages and what it may depend on; how a signed-in person's session becomes an API credential without a key value at rest or in the browser; which middleware layer owns the request id, the session, CSRF, CSP, rate limits, audit and error mapping; how oml-web, always its own process, reaches the API; which existing operation serves each web call and which operations are new; what stays in the auth context; the bounded contexts; the migration phases and the test that proves parity; the overhead budget; what it amends in ADR-0042 and ADR-0045
 -->
 
 # ADR-0070 — The web console is a client of the public HTTP API, in a crate that cannot reach the application core
 
-**Status:** accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11 and 2026-11-12; two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate were accepted on 2026-11-12
+**Status:** accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11 and 2026-11-12; two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate were accepted on 2026-11-12; the two rows on a denied session key's acts (#325) and the three on sign-out (#327) are proposed amendments of 2026-11-12 and await it too
 
 **Amends:** ADR-0045 (d1: the page routes move to `oml-web` and the sign-in routes to the auth
 context; d6: a session key gains a per-session credential; d7: that credential, never the
@@ -49,7 +49,11 @@ of 2026-11-11 (#170; d2, d3 layer 6 and d8 revised): see
 re-measurement (#286; d8 revised): see
 [The re-measurement of 2026-11-12](#the-re-measurement-of-2026-11-12-286), and by the session gate's
 reads (#297; d2 and d8 revised): see
-[The session gate's reads](#the-session-gates-reads-2026-11-12-297).
+[The session gate's reads](#the-session-gates-reads-2026-11-12-297). Proposed on 2026-11-12 and
+awaiting the operator's acceptance: a denied session key's acts (#325; d2 and d8 revised): see
+[A denied session key's acts](#a-denied-session-keys-acts-2026-11-12-325); and sign-out on every
+page (#327; d2, d3 layer 4 and d5 revised): see
+[Sign-out on every page](#sign-out-on-every-page-2026-11-12-327).
 
 ## Context
 
@@ -135,8 +139,8 @@ Built in phases (a) to (d), 2026-11-10 to 2026-11-11; the records below say how.
   the same commit that opens it. `oml-web` holds no state: it reads the session token from the
   `__Host-oml_session` cookie and derives the credential of the capacity an action needs. The
   API resolves `Authorization: Bearer omls_…` by digest to the session row and the capacity,
-  then checks on every request: the session row is live and unexpired, the capacity is one of the row's, and the `admin` capacity is served only where the row's admin flag is set. The gate reads no allowlist entry: the row carries the entry's user and admin flag as they were at sign-in, and every change to an entry (its user, its admin flag, its removal, the person's disabling) deletes that entry's sessions in the commit that makes it, so a live row's entry stands as the row says. The caller is then that session key, with credential `session`, under its own grants and verb ceiling; every act lands in the journal under it, as today. Four acts are the exception until #325 is fixed (v0.7.3): `POST /v2/keys` as `<user>-web`, the two key acts of a session key and `POST /v2/web/session/end` act on the key record alone and consult none of its grants or denials. The credential lives exactly as long as the session and ends with it (sign-out,
-  expiry, an entry change), so no revocation is needed; nothing at rest can be decrypted into it. No page of the console draws a sign-out control today, so in the console a session ends by expiry, an entry change or a new sign-in in the same browser, which replaces it; the lead still serves the sign-out act (`POST /web`) to a client that posts it; a sign-out control is added in v0.7.3 (#327). Two gates keep [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
+  then checks on every request: the session row is live and unexpired, the capacity is one of the row's, and the `admin` capacity is served only where the row's admin flag is set. The gate reads no allowlist entry: the row carries the entry's user and admin flag as they were at sign-in, and every change to an entry (its user, its admin flag, its removal, the person's disabling) deletes that entry's sessions in the commit that makes it, so a live row's entry stands as the row says. The caller is then that session key, with credential `session`, under its own grants and verb ceiling; every act lands in the journal under it, as today. Three key acts read the session key's access again when they run and refuse a key that carries a denial, on any workarea: `POST /v2/keys` as `<user>-web` and the two key acts of a session key, `POST /v2/keys/{key}/connect-codes` and `POST /v2/keys/{key}/denials` (`access.verb_ceiling`, `details.reason: session_key_denied`; proposed amendment, [A denied session key's acts](#a-denied-session-keys-acts-2026-11-12-325)). `POST /v2/web/session/end` acts on the session alone and consults none of the key's grants or denials, so a denied key still ends its session. The credential lives exactly as long as the session and ends with it (sign-out,
+  expiry, an entry change), so no revocation is needed; nothing at rest can be decrypted into it. Every page `oml-web` draws for a signed-in person carries a sign-out control in its header, a form that posts `sign_out` to the lead's `POST /web` (proposed amendment, [Sign-out on every page](#sign-out-on-every-page-2026-11-12-327)); a session also ends by expiry, an entry change or a new sign-in in the same browser, which replaces it. Two gates keep [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
   d7: an `omls_` credential is refused on `/mcp` always, and on `/v1` and `/v2` unless the
   request proves `oml-web`'s client identity (`auth.invalid`, `details.reason:
   session_outside_web`). The identity is one of two, and the lead accepts the one it is
@@ -295,7 +299,7 @@ Built in phases (a) to (d), 2026-11-10 to 2026-11-11; the records below say how.
     | 2 | `GET /v2/review/queue` | none | `{items: [{workarea_id, path, held, oldest_at}]}`, no content | `web_queue` (main) | ADR-0045 d10, the designed `reviewQueue` | admin |
     | 3 | `POST /v2/web/users/{user}/capacities` | `{capacity: review \| curate, workareas: [id or name]}`, 1 to 50 workareas | `{key: {id, name}, grants_added: [...], journal_seq}` | `web_grant_review`, `web_grant_curation` (main) | ADR-0045 d10, ADR-0044 d7 | admin |
     | 4 | `GET /v2/workareas/{workarea}/offers` | none | `{workarea_id, status, mode, transitions: [{op, to, transition_id?, from?}], mode_change: {to} \| null, commit: {offered, held}}`, each offered only where the verb's own check admits the caller now; an unreadable workarea `access.not_found` | `workarea_offers`, `workarea_offer_check` (#163) | ADR-0045 d28 | no |
-    | 5 | `POST /v2/web/session/end` | none | `204` | no page: sign-out stays the lead's `POST /web` (the seventh table), and no page draws its form | ADR-0045 d5 | an `omls_` credential only; it ends the session it derives from |
+    | 5 | `POST /v2/web/session/end` | none | `204` | no page: sign-out stays the lead's `POST /web` (the seventh table), which the sign-out control in every page's header posts to (#327) | ADR-0045 d5 | an `omls_` credential only; it ends the session it derives from |
     | 6 | `GET /v2/web/export` | none | `application/json` attachment of what the person holds, at most 100000 memories | `web_export` (#167) | ADR-0068 d6 | session user key only |
     | 7 | `POST /v2/web/deletion-requests` | none | `{requested_at, journal_seq}` | `web_request_deletion` (#167) | ADR-0068 d6 | session user key only |
     | 8 | `POST /v2/web/users/{user}/quota` | `{memories?, keys?, connections?, requests_per_minute?}`, each a limit or `null` | the user's row as `GET /v2/web/users` serves it | `web_set_quota` (#167) | ADR-0068 d5 | admin |
@@ -881,13 +885,72 @@ The two rows on the gate are as built, and the operator accepted both on 2026-11
 | Decision | Was | Is | Why |
 |---|---|---|---|
 | d2, d8 | the gate resolved a capacity credential in four store calls, and six for `<user>-web`: the credential's session, the key by its name, the key, its access, and for the web key its root and the person's keys, each a transaction of its own, 22 and 30 statements | one store call, `web_credential_rows`: the same rows in one `REPEATABLE READ, READ ONLY` transaction, the key read by its name in one statement where two read it; 12 and 14 statements counting the transaction's own, by reading the code, held by no test. The store returns rows and decides nothing. The gate makes every check it made, on those rows and in the same order: the session unexpired, and ended when it is past; the capacity a capacity; the admin capacity only for an admin's entry; the key the row holding the capacity's name, a session key serving the session's user, not revoked; its access held by its tenant; a user key's root a user root; the web key's own set the keys naming its root; and the request rate last | one snapshot is what the separate reads return when nothing changes between them, and a change landing between two of them was seen by the later read alone. `the_session_gates_rows_read_in_one_transaction_are_the_rows_its_separate_reads_return` holds Postgres's read equal to the separate reads, which stay every other store's |
-| d8 | a session key's verb read the key's access, and a user key's root, again straight after the gate read them | on a `GET` or `HEAD` request the request's first resolution of the caller decides on the access the gate read; one such request journals, the admin read of one memory (`memory.admin_read`). Every later resolution in that request, and every resolution of a request of any other method, reads the access when it runs. Which acts resolve is unchanged: creating a workarea, a transition, a ratification, a mode change and the two allowlist acts resolve at the verb and again after the wait on their idempotency claim; granting capacities, a deletion request, a quota, disabling a person and closing a deletion request resolve at the verb and not after the wait; four resolve nothing and act as the caller the gate built: `POST /v2/keys` as `<user>-web`, `POST /v2/keys/{key}/denials` and `POST /v2/keys/{key}/connect-codes` as a session key, and `POST /v2/web/session/end`. No verb of those four consults the key's grants or denials, so a `<user>-web` key denied on `universe` still issues a key (#325, fixed in v0.7.3). | the two reads were of the same rows in one request with only the handler's dispatch between them. A body can arrive slowly between the gate and the verb, so a request of another method keeps whatever read its verb makes. Nothing outlives the request: a cache of resolved sessions stays refused |
+| d8 | a session key's verb read the key's access, and a user key's root, again straight after the gate read them | on a `GET` or `HEAD` request the request's first resolution of the caller decides on the access the gate read; one such request journals, the admin read of one memory (`memory.admin_read`). Every later resolution in that request, and every resolution of a request of any other method, reads the access when it runs. Which acts resolve is unchanged: creating a workarea, a transition, a ratification, a mode change and the two allowlist acts resolve at the verb and again after the wait on their idempotency claim; granting capacities, a deletion request, a quota, disabling a person and closing a deletion request resolve at the verb and not after the wait; four resolve nothing and act as the caller the gate built: `POST /v2/keys` as `<user>-web`, `POST /v2/keys/{key}/denials` and `POST /v2/keys/{key}/connect-codes` as a session key, and `POST /v2/web/session/end`. No verb of those four consults the key's grants or denials, so a `<user>-web` key denied on `universe` still issues a key (#325; fixed in v0.7.3 by the proposed amendment below, A denied session key's acts). | the two reads were of the same rows in one request with only the handler's dispatch between them. A body can arrive slowly between the gate and the verb, so a request of another method keeps whatever read its verb makes. Nothing outlives the request: a cache of resolved sessions stays refused |
 | d8 | `whoami` without the person block read 9 store calls for a `web` session key and 6 for an `admin` one | 2 each: the gate's one and the record's references. A page's own `GET` spends the gate's one where the gate and the verb's read spent 5 (8 for the web key); a `POST` spends the gate's one and its verb's read where the gate spent 4 (6) | `crates/bins/oml-server-lead/tests/web_console_reads.rs` holds the 2 |
 | d8 | missed on 7 of 21 pages at 6 workareas and 11 at 48 | measured at each size with the change, at `9a2f4bd2`, and without it, the lead built at `e80efde6`, which no source the lead links separates from `47ef9ffa`, by `bench/web/run.py` on 2026-11-12. `9a2f4bd2` is not this change's head: the shared walker (#308) and later merges are not in the measured build. Other jobs shared the host, so a run started only below a one-minute load of 2.0, by hand (the harness records the load before and after and enforces nothing), and the load was 1.6 to 2.2 at each run's start and end. The 48-workarea runs stayed under 3 throughout; the 6-workarea runs passed it in 23 of 151 samples with the change (highest 3.64) and in 5 of 170 without it (3.23). At 6 workareas main misses on 8 of 21 pages and the change on 1: the admin Workareas view, by +6.2 ms p95 where it missed by +27.9. At 48 workareas main misses on 10 and the change on 1: the admin Memories list, by +5.8 where it missed by +10.5; at 6 workareas that page is within the budget (-3.9). The six pages the re-measurement named at both sizes are within the budget at both: the admin Atlas (+0.6, +1.5), the memory page (-0.9, -0.2), Keys (+1.2, +1.9), Start (+3.5, +3.9), People (+2.3, +2.7) and Users (+3.8, +4.8) | the session check's `whoami` takes 1.5 to 3.3 ms p50 at the lead where it took 3.3 to 7.0, and a page's own call runs 3 to 7 store calls fewer. The admin Workareas view's miss is its 3 + 3N fan-out, 24 calls in 6 to 7 rounds at 6 workareas. The admin Memories list is one search of 119 ms p50 at the lead, and at 48 workareas it is 0.8 ms over the line; Users at 48 is 0.2 ms inside it, so one more run could move either across. Four more 6-workarea runs with the change, three at loads that reached 5.7 to 9.8 and one at 2.35 falling to 1.73, each put the admin Workareas view over the budget (+7.1 to +18.9) and no other page but the admin Memories list in the run at 9.8. The committed results and [Web console overhead](../benchmarks/web.md) are the runs with the change; each run's load and the findings are in `bench/web/README.md` |
 
 Not decided here: the offers of every node of a subtree in one call. The admin Workareas view
 still makes 3 + 3N calls, each now 4 store calls lighter; at 6 workareas it misses by +6.2 ms p95
 (96.3 against 90.0 in process), and at 48 it is within the budget (-226.6).
+
+## A denied session key's acts (2026-11-12, #325)
+
+**Proposed amendment, awaiting the operator's acceptance.** The operator decided on 2026-11-12
+that [#325](https://github.com/e8kor/open-memory-lab/issues/325) is fixed in v0.7.3; the two rows
+below are how it is built, and neither is accepted yet.
+
+The audit of this record found four acts of a session key that acted as the caller the gate built
+and consulted none of the key's grants or denials (the table of #297 above). A `<user>-web` key an
+admin had denied on `universe` therefore still issued a key, and the key it issued held writer and
+reader on the person's whole root with no denial: a cut-off session minted a credential that was
+not cut off. Three of the four now refuse a denied key, and the fourth, the end of the session,
+stays open to it. No operation, field or page call changed, and no key does more than it did.
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d2 | `POST /v2/keys` as `<user>-web`, `POST /v2/keys/{key}/connect-codes` and `POST /v2/keys/{key}/denials` as a session key, and `POST /v2/web/session/end` acted on the key record alone and consulted none of its grants or denials | the three key acts refuse a session key that carries a denial, on any workarea: `access.verb_ceiling`, `details.reason: session_key_denied`, `details.verb` naming the act, nothing journalled and the act's idempotency claim released; the Keys page and the Start page show that refusal by its code and message under its status, as layer 7 shows any other. `POST /v2/web/session/end` still consults nothing of the key, and neither does the lead's sign-out, so a denied key's session ends when the person signs out. An admin key takes no denial, so of the session keys only `<user>-web` meets the refusal while the rows are written by the verbs | a key `<user>-web` issues is granted the person's whole root, so an issuer denied on `universe`, on the root or on any workarea inside it would hand on access it no longer holds; a connect code opens a connection for a key of the same root; and a cut-off is an act journalled under a key the admin stopped. Any denial refuses, not only one on `universe`: a user key's every grant lies in its root, so a denial outside the root changes nothing the key does and the stricter rule costs nothing, while a rule that read only `universe` would let a key denied on part of its root issue a key that reads that part. Refusing the sign-out would keep a session an admin wanted stopped. The refusal says that the key is denied and never where: `GET /v2/keys` already serves `cut_off` on the person's own session key for a denial on `universe`, and no answer names a denied workarea |
+| d8 | those four acts resolved nothing | the three key acts resolve at the verb, after the wait on their idempotency claim and again on each retry of a chain conflict: one resolution, which is the key's access and, for `<user>-web`, its root, two store calls, and one for `<user>-admin`, by reading the code, held by no test. `POST /v2/web/session/end` resolves nothing. Every one of them is a `POST`: no `GET` or `HEAD` gained a read, so the gate's one store call and the pages the benchmark measures are as #297 left them | the gate reads the access before the body arrives, so an act that mints a credential decides on a read made when it runs, as every other act of another method does |
+
+Tests, each over the lead's router: `a_cut_off_session_key_issues_no_key`, which also denies the
+key on the person's root and on a workarea inside it, `a_cut_off_session_key_mints_no_connect_code`,
+`a_cut_off_session_key_cuts_off_no_key` and `a_cut_off_session_key_still_ends_its_session` in
+`crates/transports/oml-transport-http/tests/web_pages.rs`; and through `oml-web`,
+`a_cut_off_persons_key_acts_are_refused_on_the_page_as_the_api_refuses_them`, which holds each
+page's status, code and message equal to the API's.
+
+Not decided here: a denied `<user>-web` still asks for the person's deletion
+(`POST /v2/web/deletion-requests`) and reads their export (`GET /v2/web/export`), by reading the
+code; #325 names neither.
+
+## Sign-out on every page (2026-11-12, #327)
+
+**Proposed amendment, awaiting the operator's acceptance.** The operator decided on 2026-11-12
+that [#327](https://github.com/e8kor/open-memory-lab/issues/327) adds sign-out in v0.7.3; the
+three rows below are how it is built, and none is accepted yet.
+
+The audit of this record found that no page drew a sign-out control: `oml_page::web::shell` had
+none, so a session ended only by expiry, an entry change or a new sign-in. The header of every
+page `shell` draws for a signed-in person now carries one. No operation, route or setting changed:
+the control is a form, and the act it posts existed.
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d2 | no page of the console draws a sign-out control | `oml_page::web::shell` takes the session's CSRF token and draws, after who is signed in, a form with `method="post"` and `action="/web"` holding `action=sign_out`, `csrf_token` and one button, Sign out; every page `oml-web` serves passes its session's token, and the lead's sign-up terms page and its refusal, drawn for no one, pass none. Below 600px the header drops who and keeps the control. The lead's act ends the session row, so every capacity credential derived from it is `auth.invalid` from the next request; it clears `__Host-oml_session` with the attributes the sign-in set (`Path=/; Secure; HttpOnly; SameSite=Lax`, `Max-Age=0`) and answers a `303` to `/web`, which is the sign-in page for no one | a person on a shared machine had no way to end their session |
+| d5 | #5, `POST /v2/web/session/end`, serves no page, and no page draws the sign-out form | the control posts to the lead's `POST /web`; #5 still serves no page | the lead set the cookie and is the one process that can clear it under the same attributes without a second copy of them; opening and ending a session is the auth context's, which `oml-web` never does (d6); and a route in `oml-web` would add a path to the proxy's, the compose router's and the Ingress's lists, where a missing entry strands the control. The cost: #5 has no caller in the console; whether it stays served is not decided here |
+| d3 layer 4 | every `POST` passes `oml-web`'s same-origin and CSRF check | the sign-out post never reaches `oml-web`: the proxy sends `POST /web` to the lead, whose act makes the same checks itself, the same-origin rule of `oml-page` and the session's `csrf_token` compared in constant time, and refuses a form that carries any other field. It is a `POST` alone: a `GET` naming `sign_out` ends nothing | one rule in `oml-page` for both processes (#230); a link would let any page a person opens sign them out |
+
+Tests: `the_header_draws_the_sign_out_control_only_for_a_signed_in_session` in `oml-page`; in
+`crates/clients/oml-web/tests/web_pages.rs`, over the lead and `oml-web` behind the path router,
+`every_signed_in_page_draws_the_sign_out_control_in_its_header` (the 18 page routes of
+`oml_web::PAGES` and a page an act answers),
+`the_sign_out_control_ends_the_session_and_no_credential_of_it_works_afterwards`,
+`signing_out_clears_the_cookie_as_it_was_set_and_lands_on_the_sign_in_page`,
+`sign_out_is_a_same_origin_post_with_the_sessions_csrf_token_and_never_a_get` and
+`a_cut_off_person_signs_out_from_the_page`; and over the lead's router alone,
+`sign_out_ends_the_session_and_clears_the_cookie` in
+`crates/transports/oml-transport-http/tests/web_pages.rs`. The header was looked at in Chromium
+as a static render of `shell` under the stylesheet, at 1100px and 390px in both colour schemes;
+the running console was not.
 
 ## Consequences
 

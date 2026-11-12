@@ -410,6 +410,7 @@ pub async fn page(
     let html = shell(
         "Start",
         &session.who(),
+        Some(&session.csrf()),
         &user_tabs(session.admin),
         START_PATH,
         None,
@@ -685,6 +686,7 @@ pub async fn setup(State(web): State<Web>, Extension(session): Extension<Session
         shell(
             "Your page",
             &session.who(),
+            Some(&session.csrf()),
             &user_tabs(session.admin),
             SETUP_PATH,
             None,

@@ -734,6 +734,7 @@ async fn view(
         shell(
             title,
             &session.who(),
+            Some(&session.csrf()),
             &tabs,
             page,
             notice(fields.get("done")),

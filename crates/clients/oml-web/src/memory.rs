@@ -128,6 +128,7 @@ pub async fn user_page(
         shell(
             "Your page",
             &session.who(),
+            Some(&session.csrf()),
             &user_tabs(session.admin),
             USER_MEMORIES_PATH,
             None,
@@ -331,6 +332,7 @@ pub async fn admin_page(
         shell(
             "Administration",
             &session.who(),
+            Some(&session.csrf()),
             &ADMIN_TABS,
             ADMIN_MEMORIES_PATH,
             notice(&fields),
@@ -500,6 +502,7 @@ pub async fn curate_page(
         shell(
             "Administration",
             &session.who(),
+            Some(&session.csrf()),
             &ADMIN_TABS,
             ADMIN_CURATE_PATH,
             notice(&fields),
