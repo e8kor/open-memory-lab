@@ -1547,6 +1547,61 @@ fn unchanged_needs_an_equal_text_as_well_as_an_equal_hash() {
     );
 }
 
+/// A claim key the server lists is text: one with a multi-byte character
+/// where an ADR's number would be is no ADR's key, and never panics (#320).
+#[test]
+fn a_claim_key_with_a_multibyte_character_in_its_number_is_no_adrs_and_does_not_panic() {
+    // `é` is two bytes, so byte 4 of `123é` falls inside it.
+    assert_eq!(Kind::of_key("adr-123é"), None);
+    assert_eq!(Kind::of_key("adr-123é-x"), None);
+    assert_eq!(Kind::of_key("adr-12é-"), None);
+    assert_eq!(Kind::of_key("adr-0071-usage"), Some(Kind::Adr));
+    assert_eq!(Kind::of_key("adr-0071"), None);
+}
+
+/// A digest the server supplies is cut at a character, never inside one
+/// (#320).
+#[test]
+fn a_digest_with_a_multibyte_character_across_byte_16_is_cut_at_a_character() {
+    use oml_cli::sync::hash::short;
+    let odd = format!("sha256:{}é{}", "a".repeat(15), "b".repeat(8));
+    assert!(!odd["sha256:".len()..].is_char_boundary(16));
+    assert_eq!(short(&odd), "a".repeat(15));
+    assert_eq!(short("sha256:ab"), "ab");
+    assert_eq!(short(""), "");
+    assert_eq!(
+        short(&format!("sha256:{}", "0123456789abcdef".repeat(4))),
+        "0123456789abcdef"
+    );
+}
+
+/// A tip's stored hash is the server's text: a short one, an empty one and
+/// one that is not hex are each a changed claim with a note, never a panic
+/// (#320).
+#[test]
+fn a_tip_whose_stored_hash_is_short_empty_or_not_hex_is_changed_without_a_panic() {
+    for stored in ["sha256:ab", "", "sha256:日本語日本語"] {
+        let fake = Fake::new();
+        let src = loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Headings, &rev(1));
+        let x = Kind::Headings
+            .adapter()
+            .extract("docs/guide.md", &src.files[0].1)
+            .unwrap();
+        let a = &x.items[0];
+        fake.seed(SYNC_KEY, "wa-design", &a.claim_key, "An older extraction.", json!({"repo": REPO, "rev": rev(1), "path": "docs/guide.md", "fragment": "alpha", "hash": stored, "hasher": "oml-md/1"}));
+        let report = run(&fake, &src, &opts());
+        let item = report.json["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["claim_key"] == a.claim_key.as_str())
+            .unwrap_or_else(|| panic!("{stored:?}: {}", report.json));
+        assert_eq!(item["outcome"], "changed", "{stored:?}: {item}");
+        let note = item["note"].as_str().unwrap_or_default();
+        assert!(note.contains("…→"), "{stored:?}: {item}");
+    }
+}
+
 #[test]
 fn check_exits_1_on_untracked_alone() {
     let fake = Fake::new();

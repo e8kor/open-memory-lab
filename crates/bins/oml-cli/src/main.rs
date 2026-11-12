@@ -3008,9 +3008,11 @@ fn anchor_line(anchor: &Value) -> String {
     match anchor["repo"].as_str() {
         Some(repo) => {
             let rev = anchor["rev"].as_str().unwrap_or("");
+            // The rev is the server's text: twelve characters, never a
+            // slice at byte 12, which may fall inside one.
             format!(
                 "{repo} @ {} {}{fragment}",
-                &rev[..rev.len().min(12)],
+                rev.chars().take(12).collect::<String>(),
                 anchor["path"].as_str().unwrap_or("")
             )
         }
@@ -6708,6 +6710,22 @@ mod tests {
                 )],
             );
         }
+    }
+
+    #[test]
+    fn an_anchor_whose_rev_has_a_multibyte_character_across_byte_12_is_one_line_and_no_panic() {
+        // The server's rev is text: `é` is two bytes, at bytes 11 and 12.
+        let odd = "0123456789aébcdef";
+        assert!(!odd.is_char_boundary(12));
+        assert_eq!(
+            anchor_line(&json!({"repo": "r", "rev": odd, "path": "docs/a.md", "fragment": "x"})),
+            "r @ 0123456789aé docs/a.md#x"
+        );
+        assert_eq!(
+            anchor_line(&json!({"repo": "r", "rev": "0123456789abcdef0123", "path": "docs/a.md"})),
+            "r @ 0123456789ab docs/a.md"
+        );
+        assert_eq!(anchor_line(&Value::Null), "none");
     }
 
     #[test]
