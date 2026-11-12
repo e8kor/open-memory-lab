@@ -20,7 +20,8 @@ import sys
 import tomllib
 from pathlib import Path
 
-import sdk_names
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import sdk_names  # noqa: E402
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 

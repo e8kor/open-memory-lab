@@ -36,7 +36,8 @@ import tomllib
 import zipfile
 from pathlib import Path
 
-import sdk_names
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import sdk_names  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 PY = ROOT / "sdks" / "python"
