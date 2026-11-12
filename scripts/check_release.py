@@ -87,6 +87,10 @@ disagreement found:
   scanner rule set differs from the previous tag's carries the admin-rescan marker line
   (docs/contributing/releasing.md, "Markers in the release notes");
 
+- the version job also runs `python3 scripts/release_markers.py list --tag "$GITHUB_REF_NAME"` on a
+  checkout with every tag, so a scanner source whose rule set that script cannot read stops the
+  release before anything is built, pushed or signed (#334);
+
 - no release build turns on oml-server-lead's e2e-sign-in feature, CI's
   sign-in double: release.yml names neither it nor OML_CARGO_FEATURES, and
   the Dockerfile's OML_CARGO_FEATURES defaults to empty (ADR-0070, phase (b)
@@ -237,6 +241,7 @@ def main() -> int:
     check_installers(errors, jobs)
     check_installer_lines(errors)
     check_release_markers(errors, jobs)
+    check_early_markers(errors, jobs)
     check_no_test_double(errors, WORKFLOW.read_text(), (ROOT / "Dockerfile").read_text())
     return report(errors)
 
@@ -261,6 +266,20 @@ def check_release_markers(errors: list[str], jobs: dict) -> None:
         deep = [s for s in steps(job) if str(s.get("uses", "")).startswith("actions/checkout@")]
         if not any(str(s.get("with", {}).get("fetch-depth")) == "0" for s in deep):
             errors.append(f"job {name}: checks out without fetch-depth: 0, so there are no tags to compare the scanner's rule set with")
+
+
+def check_early_markers(errors: list[str], jobs: dict) -> None:
+    """The version job, which every other job needs, runs `python3 scripts/release_markers.py list`
+    on a checkout that holds every tag, so a scanner source the script cannot read fails the release
+    before anything is built, pushed or signed rather than in the publish job after."""
+    version = jobs.get("version")
+    if version is None:
+        return  # check_release_hold names the missing job
+    if marker_command(version, "list") is None:
+        errors.append("the version job does not run scripts/release_markers.py list, so an unparsable scanner rule-set constant would fail the release only after the images are pushed")
+    deep = [s for s in steps(version) if str(s.get("uses", "")).startswith("actions/checkout@")]
+    if not any(str(s.get("with", {}).get("fetch-depth")) == "0" for s in deep):
+        errors.append("the version job checks out without fetch-depth: 0, so scripts/release_markers.py list has no tags to read")
 
 
 def marker_command(job: dict, action: str) -> tuple[int, int] | None:

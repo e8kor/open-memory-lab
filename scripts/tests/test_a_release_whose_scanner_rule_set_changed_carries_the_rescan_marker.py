@@ -115,6 +115,12 @@ class Markers(unittest.TestCase):
         with d:
             self.assertEqual(run(root, "list", "--tag", "v0.7.2")[1].strip(), MARKER)
 
+    def test_the_real_scanner_source_declares_a_rule_set(self):
+        # A rename, a wrapped declaration or a changed visibility of the constant fails here,
+        # in the pull request, and not in the release's publish job after the images are pushed.
+        real = Path(__file__).resolve().parents[2] / M.SCANNER_SOURCE
+        self.assertIsNotNone(M.ruleset_of(real.read_text(encoding="utf-8")), f"{M.SCANNER_SOURCE}: no `pub const RULESET` this script reads")
+
     def test_a_file_or_constant_absent_at_a_tag_is_not_declared_and_a_git_failure_is_an_error(self):
         d, root = repo([("v0.7.1", ""), ("v0.7.2", "oml-scan/1.2")])
         with d:
@@ -197,6 +203,30 @@ class Workflow(unittest.TestCase):
         got = self.errors(jobs)
         self.assertTrue(any("does not run scripts/release_markers.py append" in e for e in got), got)
         self.assertTrue(any("does not run scripts/release_markers.py check" in e for e in got), got)
+
+    @staticmethod
+    def early_errors(jobs):
+        found = []
+        R.check_early_markers(found, jobs)
+        return found
+
+    def test_release_yml_computes_the_markers_in_the_version_job_before_anything_is_built(self):
+        self.assertEqual(self.early_errors(self.jobs), [])
+        self.assertIsNotNone(R.marker_command(self.jobs["version"], "list"))
+
+    def test_a_version_job_that_does_not_run_the_markers_list_is_refused(self):
+        jobs = copy.deepcopy(self.jobs)
+        for step in jobs["version"]["steps"]:
+            if "release_markers.py" in str(step.get("run", "")):
+                step["run"] = 'echo python3 scripts/release_markers.py list --tag "$GITHUB_REF_NAME"'
+        self.assertTrue(any("does not run scripts/release_markers.py list" in e for e in self.early_errors(jobs)))
+
+    def test_a_version_job_with_a_shallow_checkout_is_refused(self):
+        jobs = copy.deepcopy(self.jobs)
+        for step in jobs["version"]["steps"]:
+            if str(step.get("uses", "")).startswith("actions/checkout@"):
+                step.pop("with", None)
+        self.assertTrue(any("fetch-depth: 0" in e for e in self.early_errors(jobs)))
 
     def test_a_shallow_checkout_is_refused_since_it_holds_no_tags(self):
         jobs = copy.deepcopy(self.jobs)
