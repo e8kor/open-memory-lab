@@ -37,6 +37,9 @@ class RescanReport:
             a version stored without one: the denominators of the dry run's rates (ADR-0074 d18).
         findings_unlisted (int | Unset): After this call, held versions whose stored scan finding has no row in the
             findings list, written by a server older than migration 0043: doctor's scan_findings_unlisted (ADR-0074 d23).
+        promoted_unapproved (int | Unset): After this call, promoted versions with no approval: their approved_at is
+            null because migration 0044's fill could not match the verdict their promotion names. Doctor's
+            approval_unmatched (ADR-0077 d6). A count, never a list.
     """
 
     scanner_version: None | str
@@ -49,6 +52,7 @@ class RescanReport:
     rescan_due: int
     scanned_by_origin: RescanReportScannedByOrigin | Unset = UNSET
     findings_unlisted: int | Unset = UNSET
+    promoted_unapproved: int | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         scanner_version: None | str
@@ -81,6 +85,8 @@ class RescanReport:
 
         findings_unlisted = self.findings_unlisted
 
+        promoted_unapproved = self.promoted_unapproved
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -99,6 +105,8 @@ class RescanReport:
             field_dict["scanned_by_origin"] = scanned_by_origin
         if findings_unlisted is not UNSET:
             field_dict["findings_unlisted"] = findings_unlisted
+        if promoted_unapproved is not UNSET:
+            field_dict["promoted_unapproved"] = promoted_unapproved
 
         return field_dict
 
@@ -157,6 +165,8 @@ class RescanReport:
 
         findings_unlisted = d.pop("findings_unlisted", UNSET)
 
+        promoted_unapproved = d.pop("promoted_unapproved", UNSET)
+
         rescan_report = cls(
             scanner_version=scanner_version,
             scanned=scanned,
@@ -168,6 +178,7 @@ class RescanReport:
             rescan_due=rescan_due,
             scanned_by_origin=scanned_by_origin,
             findings_unlisted=findings_unlisted,
+            promoted_unapproved=promoted_unapproved,
         )
 
         return rescan_report

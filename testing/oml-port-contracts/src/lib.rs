@@ -1943,6 +1943,7 @@ pub async fn a_recording_rescan_adds_only_the_findings_a_held_versions_list_lack
             held_unrescanned: 2,
             rescan_due: 2,
             findings_unlisted: 1,
+            promoted_unapproved: 0,
         }
     );
     let again = finding(

@@ -3252,10 +3252,16 @@ impl JournalStore for MemStore {
                     && !state.findings.iter().any(|(id, _)| *id == m.memory_id)
             })
             .count();
+        let unapproved = state
+            .memories
+            .values()
+            .filter(|m| m.status == MemoryStatus::Promoted && m.approval.is_none())
+            .count();
         Ok(crate::ports::ScanBacklog {
             held_unrescanned: held as u64,
             rescan_due: older.len() as u64,
             findings_unlisted: unlisted as u64,
+            promoted_unapproved: unapproved as u64,
         })
     }
 

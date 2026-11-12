@@ -6842,14 +6842,15 @@ impl JournalStore for PgStore {
         // finding.
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        let (held, all, unlisted): (i64, i64, i64) = sqlx::query_as(
+        let (held, all, unlisted, unapproved): (i64, i64, i64, i64) = sqlx::query_as(
             "SELECT count(*) FILTER (WHERE status = 'held' \
                                        AND scanned_under IS DISTINCT FROM $2::text), \
                     count(*) FILTER (WHERE scanned_under IS DISTINCT FROM $2::text), \
                     count(*) FILTER (WHERE status = 'held' AND scan_finding IS NOT NULL \
                                        AND NOT EXISTS (SELECT 1 FROM scan_findings f \
                                                         WHERE f.tenant_id = m.tenant_id \
-                                                          AND f.memory_id = m.id)) \
+                                                          AND f.memory_id = m.id)), \
+                    count(*) FILTER (WHERE status = 'promoted' AND approved_at IS NULL) \
              FROM memories m \
              WHERE tenant_id = $1 AND status <> 'erased'",
         )
@@ -6863,6 +6864,7 @@ impl JournalStore for PgStore {
             held_unrescanned: u64::try_from(held).map_err(backend)?,
             rescan_due: u64::try_from(all).map_err(backend)?,
             findings_unlisted: u64::try_from(unlisted).map_err(backend)?,
+            promoted_unapproved: u64::try_from(unapproved).map_err(backend)?,
         })
     }
 
