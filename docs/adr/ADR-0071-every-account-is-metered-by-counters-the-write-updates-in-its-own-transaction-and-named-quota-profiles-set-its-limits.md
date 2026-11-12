@@ -94,12 +94,16 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
   that on 2026-11-12, for a tenant key that wrote in a person's root: a tenant writer key that
   revived a person's released `claim_key` there raised that person's `memories` with no check
   against their ceiling, and a person who claims a key a tenant key first used there is charged
-  no memory; their bytes and their write are counted. From v0.7.3 a tenant key's claim write in
-  a person's root is refused `submission.user_root_refused`
+  no memory; their bytes and their write are counted. From v0.7.3 a new memory in a person's root
+  by a key that is not theirs is refused `submission.user_root_refused`
   ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
   d16, proposed; #329), so no new write produces the first outcome, and the second arises only
   over a version 1 a tenant key wrote there before. The versions written before keep the
-  accounting this paragraph states, and the drift report recomputes it the same way.
+  accounting this paragraph states, and the drift report recomputes it the same way. A successor
+  never starts a chain or changes its account. One raises `memories` when it is ratified, the
+  successor of a ratified retirement, which makes the chain live again: in a person's root d16
+  refuses it from any key but theirs, and from their own keys it is held to no ceiling, since a
+  ratification's commit carries none (#340).
 
     Counters can drift from their rows only through a bug or a hand edit. `GET
     /v2/admin/usage/drift` recomputes every account's stocks from the rows, by the definitions

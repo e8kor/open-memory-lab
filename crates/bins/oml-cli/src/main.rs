@@ -4945,11 +4945,11 @@ fn user_root_holding(client: &Client, node: &Value) -> Option<String> {
     (qualified["id"] == node["id"]).then(|| user.to_owned())
 }
 
-/// A user's root takes memories from that user's keys only (ADR-0044 d16):
-/// a tenant writer key whose default workarea lies in `user`'s root is
-/// refused every write it does not address elsewhere, so the line warns and
-/// names the fix. Nothing for a user key, whose default lies in its own
-/// root, or for a key that writes nothing.
+/// A memory is started in a user's root by that user's keys only (ADR-0044
+/// d16): a tenant writer key whose default workarea lies in `user`'s root
+/// is refused every new memory it does not address elsewhere, so the line
+/// warns and names the fix. Nothing for a user key, whose default lies in
+/// its own root, or for a key that writes nothing.
 fn user_root_writes_doctor(
     me: Option<&Value>,
     default_node: Option<&Value>,
@@ -4959,7 +4959,7 @@ fn user_root_writes_doctor(
     (me["user"].is_null() && me["role"] == "writer").then(|| {
         format!(
             "warn: the default workarea {} lies in the root of user {user}, where only \
-             {user}'s keys write memories; this tenant key's writes there are refused \
+             {user}'s keys start memories; this tenant key's new memories there are refused \
              (submission.user_root_refused); issue the agent a key with --user {user}",
             node["path"].as_str().unwrap_or("of this key"),
         )
@@ -7101,7 +7101,7 @@ mod tests {
         assert_eq!(
             user_root_writes_doctor(Some(&tenant_writer), Some(&node), Some("alice")).as_deref(),
             Some(
-                "warn: the default workarea universe.alice.project lies in the root of user alice, where only alice's keys write memories; this tenant key's writes there are refused (submission.user_root_refused); issue the agent a key with --user alice"
+                "warn: the default workarea universe.alice.project lies in the root of user alice, where only alice's keys start memories; this tenant key's new memories there are refused (submission.user_root_refused); issue the agent a key with --user alice"
             )
         );
         // A shared default, a user key in its own root and a key that

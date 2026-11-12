@@ -2,12 +2,12 @@
 id: adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source
 tier: engineering
 status: accepted design · 2026-11-04 · an amendment of 2026-11-12 (d16) is proposed
-answers: what a user is and where their root workarea sits; how a key is tied to its person and when the person's root is created; how a user key addresses, reads and creates workareas; which grants a user key may carry and how a universe read stops short of other users' roots; what a node grant is; who places claims in universe and how curation counts toward review under R1 and R2; whether the reviewer exclusion covers the person behind a key; what a reader of a universe claim is served and what stays in the journal; how recall, steering and guardrails reach universe from a user's scope; how names stay unique when two users both want the same one; what crews and existing tenants do; which fields, flags and doctor lines change; who may write a claim in a user root (the proposed amendment of 2026-11-12); what it amends in ADR-0001, ADR-0008, ADR-0010, ADR-0018, ADR-0025, ADR-0026, ADR-0028 and ADR-0039
+answers: what a user is and where their root workarea sits; how a key is tied to its person and when the person's root is created; how a user key addresses, reads and creates workareas; which grants a user key may carry and how a universe read stops short of other users' roots; what a node grant is; who places claims in universe and how curation counts toward review under R1 and R2; whether the reviewer exclusion covers the person behind a key; what a reader of a universe claim is served and what stays in the journal; how recall, steering and guardrails reach universe from a user's scope; how names stay unique when two users both want the same one; what crews and existing tenants do; which fields, flags and doctor lines change; who may start a memory in a user root (the proposed amendment of 2026-11-12); what it amends in ADR-0001, ADR-0008, ADR-0010, ADR-0018, ADR-0025, ADR-0026, ADR-0028 and ADR-0039
 -->
 
 # ADR-0044 — Every user works under a root of their own beneath `universe`, and `universe` serves only curated claims, without their source
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · an amendment of 2026-11-12 is **proposed** and awaits the operator's acceptance ([the amendment](#the-amendment-of-2026-11-12-a-user-root-takes-claim-writes-from-its-own-users-keys-only), d16; #329)
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · an amendment of 2026-11-12 is **proposed** and awaits the operator's acceptance ([the amendment](#the-amendment-of-2026-11-12-a-memory-is-started-in-a-user-root-by-its-own-users-keys-only), d16; #329)
 
 **Release:** introduced in v0.5.0 ([releases](../changelog.md))
 
@@ -437,7 +437,7 @@ Decided; introduced in v0.5.0.
 | **Migrating the live tenant: re-parent `universe.crew.oml` under the maintainer's user root at upgrade** | Re-parenting is not built, every existing path, log line and key default would change at once, and d13 keeps crew work shared; grandfathering moves nothing and loses nothing (R4). |
 | **User keys reading crew workareas by grant** | A user key would then reach shared subtrees where other people's crews work, by name or id, and "never another user's root" would rest on which shared workareas hold user content; one boundary, the user's own root plus `universe`, is checkable by construction. |
 
-## The amendment of 2026-11-12: a user root takes claim writes from its own user's keys only
+## The amendment of 2026-11-12: a memory is started in a user root by its own user's keys only
 
 **Status of this amendment:** proposed · 2026-11-12 · built in v0.7.3, as #329 asked, and not
 accepted: the operator accepts d16 or declines it. Until then d1–d15 above are the accepted
@@ -450,85 +450,117 @@ may grant it anything, a user's root included", so a tenant writer key holding a
 meters an account by its person's keys (d1) and a chain by the author of its earliest version 1
 (d3), so such a key could raise a person's `memories` with no check against their ceiling, and a
 person could be charged nothing for a claim in their own root. On 2026-11-12 the operator
-answered the question "Who may write in a person's root?" with "Only that person's keys". This
-amendment records that answer and the readings the build took.
+answered the question "Who may write in a person's root?" with "Only that person's keys". The
+build of that answer refused every claim write there, and the web console's tests showed what it
+took away: an admin grants another person review on someone's root, and that person's review key
+edits by proposal there. Asked "Which rule do you want?" the same day, the operator answered
+"Refuse new memories only". This amendment records that answer and the readings the build took.
 
-- **d16 — A claim write into a user root, or into a workarea beneath one, is admitted from that
-  user's keys only; any other key is refused `submission.user_root_refused`.** This narrows d3's
-  "a tenant key is unchanged" for claim writes and for nothing else.
-    - **What a claim write is.** The acts that add a version: a new memory (`POST /v1/memories`,
-      `oml_write`), and a successor or a retirement proposal
-      (`POST /v1/memories/{artifact_id}/supersede`, `oml_write` with `replaces`). They are the two
-      use cases that fold a held version, `submit_memory` and `supersede`, and every surface
-      reaches the store through them.
-    - **The test.** The write's workarea, a successor's being its target's, lies in a user root
-      when that root is the workarea or one of its ancestors. The write is admitted when the
-      key's `user` is that root. A tenant key names no user and is refused. A user key of
-      another person holds no grant there (d3) and never reaches the test; it is refused by the
-      same rule if it ever did.
+- **d16 — A memory is started in a user root, or in a workarea beneath one, by that user's keys
+  only; any other key is refused `submission.user_root_refused`. A successor or a retirement of a
+  served memory there stays under the grants.** This narrows d3's "a tenant key is unchanged"
+  for starting a memory and for nothing else.
+    - **What starting a memory is.** A new memory: `POST /v1/memories` and `oml_write` without
+      `replaces`, with a `claim_key` or without one, under a `claim_key` a rejected write
+      released included (ADR-0025 d18). It is the use case `submit_memory`, the one that writes a
+      version 1, and a version 1 is what begins a chain and names its account (ADR-0071 d2, d3).
+    - **The test.** The workarea lies in a user root when that root is the workarea or one of
+      its ancestors. The write is admitted when the key's `user` is that root. A tenant key
+      names no user and is refused. Another person's key is refused the same way. d3 keeps a
+      user key's grants inside its own root at issuance, but an admin's review designation gives
+      a person's review key dreamer and reader on another person's root (ADR-0045 d10), so the
+      rule compares the key's `user` with the root and does not rest on d3.
+    - **A successor or a retirement of a served memory is unchanged.**
+      `POST /v1/memories/{artifact_id}/supersede` and `oml_write` with `replaces` are admitted as
+      ADR-0025 d10 and d11 have them: from a writer on a version it wrote, and from a dreamer
+      holding dreamer and reader there, by edit as proposal, whoever the key's user is. A
+      reviewer granted in a user's root, a tenant key or another person's, still proposes edits
+      and retirements there, as the admin page does. Neither starts a chain or changes its
+      account: a successor moves no `memories`, and a ratified retirement takes the claim off
+      its account's.
+    - **The guard: a successor of a ratified retirement is the user's keys' alone.** A successor
+      whose target is the claim's served retirement puts the claim back in service when it is
+      ratified, and the chain is live again on its account's `memories` (ADR-0071 d2). In a user
+      root that is a memory started, so any key but the user's is refused
+      `submission.user_root_refused` for it, with `retirement` or without. The operator's words
+      of 2026-11-12 do not name this case. It is the build's finding and the reading taken of
+      "Refuse new memories only": without it a reviewer granted there could raise the user's
+      `memories` by a write that is not a new memory, the effect that answer keeps closed. A
+      successor proposed while a retirement of the same memory is still held is admitted, since
+      its target is the served memory. The two are rivals for one tip: once the retirement is
+      ratified, approving the other is `submission.tip_conflict`, so it never puts the claim
+      back.
     - **The refusal confirms nothing to a key that reads nothing.** `submission.user_root_refused`
       is `409` and journals nothing. For a new memory it is answered where the
       [refusal order](../architecture/roles-and-keys.md) would allow the write or answer
       `access.grant_refused`, both of which mean the key reads the workarea; a key that reads
       nothing of it keeps `access.not_found`, the answer for a workarea that does not exist, and
-      a reader-role key keeps `access.verb_ceiling`. For a successor it is answered once the
-      target is readable to the key, ahead of `access.author_only` and `access.grant_refused`;
-      an unreadable target keeps `access.not_found`. This is the pattern d14 set for
-      `submission.universe_refused`.
-    - **Where the check sits.** In the write check of those two use cases, after the grant
-      computation, and not in the grant model. `effective_roles` stays the one formula of
-      ADR-0008 d4, an admin may still grant a tenant key anything, and no grant is revoked. The
-      cost: `my_effective_verbs` lists what a key's grants confer, so for a tenant key on a node
-      inside a user root it still lists `remember`, `learn` and `supersede`, and the write
-      answers the refusal.
-    - **What is unchanged.** Reads, recall, the listings and the events tail under reader
-      access. Review by a tenant key granted dreamer there: verdicts, the bulk verdict,
-      transitions, claim-edge and brief-edge proposals and ratifications, as d3 and d7 have
-      them. A source check, which journals a check on an existing version and adds none.
-      Curation, which writes on `universe` and not in a root (d7). Workarea creation.
-    - **A tenant reviewer no longer edits by proposal in a user root.** A dreamer's successor
-      of another author's memory is a claim write, so a tenant reviewer's is refused there. It
-      rejects with a reason, and the user's own keys write the correction. A user's own
-      reviewer key edits by proposal in its root as before.
+      a reader-role key keeps `access.verb_ceiling`. For a successor of a ratified retirement it
+      is answered once the target is readable to the key, ahead of `access.author_only` and
+      `access.grant_refused`; an unreadable target keeps `access.not_found`. This is the pattern
+      d14 set for `submission.universe_refused`.
+    - **Where the check sits.** In `submit_memory`, after the grant computation, and in
+      `supersede`, once the target is known readable and only where it is a served retirement.
+      It is not in the grant model: `effective_roles` stays the one formula of ADR-0008 d4, an
+      admin may still grant a tenant key anything, and no grant is revoked.
+    - **What else is unchanged.** Reads, recall, the listings and the events tail under reader
+      access. Review by a key granted dreamer there: verdicts, the bulk verdict, transitions,
+      claim-edge and brief-edge proposals and ratifications, as d3 and d7 have them. A source
+      check, which journals a check on an existing version and adds none. Curation, which writes
+      on `universe` and not in a root (d7). Workarea creation.
     - **Nothing already written is touched (R4).** The versions tenant keys wrote in user roots
       before the build stay as journalled: served, reviewable, attributed to their authors,
       and under the accounting ADR-0071 d3 states for them. No migration, fold or backfill
-      reads them. Their author can no longer supersede or retire them; the user's reviewer key
-      can.
+      reads them. Their author still proposes a successor or a retirement of one, as a writer
+      does of a version it wrote.
     - **Replays.** A retried new memory answers this refusal, since the access step precedes
       the idempotency lookup there, as it does for a revoked grant. A retried successor answers
       its record, since that verb's lookup precedes every target check.
+    - **Costs.** `my_effective_verbs` lists what a key's grants confer, so for a tenant key on a
+      node inside a user root it still lists `remember` and `learn`, and the new memory answers
+      the refusal. An in-progress workarea inside a user's root
+      ([ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md))
+      collects new memories from that user's keys only; another author's row there is a
+      successor it proposed. The user's own keys can still end one over their `memories` limit by
+      retiring a claim, writing another and putting the first back, since a ratification's commit
+      carries no ceiling; that is as it was before this amendment and is tracked as #340.
     - **Doctor.** `oml doctor` under a tenant writer key whose default workarea lies in a user's
       root prints `user root   : warn: the default workarea <path> lies in the root of user
-      <user>, where only <user>'s keys write memories; this tenant key's writes there are refused
-      (submission.user_root_refused); issue the agent a key with --user <user>`, and its verdict
-      is `warn`.
+      <user>, where only <user>'s keys start memories; this tenant key's new memories there are
+      refused (submission.user_root_refused); issue the agent a key with --user <user>`, and its
+      verdict is `warn`.
 
     d14 gains one row:
 
     | Failure | Refusal | Doctor line |
     |---|---|---|
-    | a key that is not the user's writes a claim in a user root or beneath it | `submission.user_root_refused`, answered where the key reads the workarea or the target; `access.not_found` otherwise | `oml doctor` under a tenant writer key whose default workarea lies in a user's root: `user root   : warn: …` |
+    | a key that is not the user's starts a memory in a user root or beneath it, or proposes a successor of a ratified retirement there | `submission.user_root_refused`, answered where the key reads the workarea or the target; `access.not_found` otherwise | `oml doctor` under a tenant writer key whose default workarea lies in a user's root: `user root   : warn: …` |
 
     The tests, named after the sentence each proves, run over the in-memory double and
     PostgreSQL (`testing/oml-port-contracts/src/user_roots.rs`):
-    `a_tenant_keys_new_memory_in_a_users_root_or_below_it_is_refused_and_journals_nothing`,
+    `a_key_that_is_not_the_users_starts_no_memory_in_a_users_root_or_below_it`,
     `a_key_that_reads_nothing_of_a_users_root_is_told_not_found_as_for_no_workarea`,
-    `a_users_own_keys_still_write_supersede_and_retire_in_their_root`,
-    `a_tenant_keys_successor_or_retirement_of_a_memory_in_a_users_root_is_refused`,
+    `a_users_own_keys_still_write_supersede_retire_and_put_a_retired_claim_back`,
+    `a_reviewer_granted_in_a_users_root_proposes_a_successor_and_a_retirement_there`,
+    `a_successor_of_a_ratified_retirement_in_a_users_root_is_the_users_keys_alone`,
+    `a_successor_proposed_while_a_retirement_is_held_is_never_ratified_after_it`,
     `a_tenant_key_reads_recalls_and_reviews_in_a_users_root_as_before` and
-    `a_memory_a_tenant_key_wrote_in_a_users_root_before_the_rule_stays_served_and_takes_no_successor_from_it`;
+    `a_memory_a_tenant_key_wrote_in_a_users_root_before_the_rule_stays_served_and_its_author_still_revises_it`;
     over HTTP and `/mcp`,
     `a_tenant_keys_write_into_a_users_root_is_user_root_refused_and_her_own_key_still_writes`
-    and `oml_write_into_a_users_root_by_a_tenant_key_is_user_root_refused_in_every_mode`.
+    and
+    `oml_write_by_a_tenant_key_starts_no_memory_in_a_users_root_and_its_reviewer_still_edits_by_proposal`.
 
 ### Rejected alternatives of the amendment
 
 | Alternative | Why not |
 |---|---|
-| **Keep it and document it: a tenant key granted writer above or inside a user root writes there** | The operator ruled it out on 2026-11-12. A person's `memories` would keep moving by keys that are not theirs, with no check against their ceiling, and ADR-0071 d1's "what their keys write" and "what lies in their root" would name different rows. |
+| **Keep it and document it: a tenant key granted writer above or inside a user root starts memories there** | The operator ruled it out on 2026-11-12. A person's `memories` would keep moving by keys that are not theirs, with no check against their ceiling, and ADR-0071 d1's "what their keys write" and "what lies in their root" would name different chains. |
+| **The strict rule: every claim write there, a successor and a retirement included, from the user's keys only** | Built first, and rejected by the operator on 2026-11-12: it removes edit by proposal and the retirement proposal for a reviewer an admin granted review there, which the admin page relies on. Neither act starts a chain or changes its account. |
+| **No guard: a reviewer granted there also proposes the successor of a ratified retirement** | Once ratified it raises the user's `memories` by a key that is not theirs, with no check against their ceiling: the first effect of #329 by another write. |
+| **Hold the ratification that puts a claim back to the account's ceiling, in place of the guard** | It changes the verdict path for every key, a reviewer's approval answering `limit.quota` for the author's account, and is a decision of its own (#340). The guard is one condition and only restricts. |
 | **Refuse it in the grant model: no writer grant reaches a user root for a tenant key** | A subtree grant on `universe` reaches every root without naming one, so the refusal would have to live in `effective_roles`, a second formula beside ADR-0008 d4's, and every existing grant would have to be revoked, which is not built. The write check is two call sites. |
 | **Answer `access.grant_refused`** | It names a missing role, and granting that role would change nothing. |
 | **Refuse it in the store's commit** | The store does not know what the calling key reads, so it could not keep `access.not_found` for a key that reads nothing of the root. |
-| **Drop the write verbs from `my_effective_verbs` for such a key** | The field lists what grants confer (ADR-0025 d14) and stays silent on a `validated` workarea too; changing what it means is a decision of its own. |
+| **Drop `remember` and `learn` from `my_effective_verbs` for such a key** | The field lists what grants confer (ADR-0025 d14) and stays silent on a `validated` workarea too; changing what it means is a decision of its own. |
 | **Demote, reassign or delete what tenant keys already wrote in user roots** | R4: nothing is deleted silently, no verb reassigns a version, and each row is attributed truthfully to the key that wrote it. |

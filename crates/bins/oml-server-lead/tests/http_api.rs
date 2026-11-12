@@ -8390,11 +8390,13 @@ async fn issue_raw(router: &Router, admin: &str, idem: &str, body: Value) -> (St
 
 /// ADR-0044 d16 over the wire: a tenant writer key holding a subtree grant
 /// on `universe` is refused a new memory in a user's root and beneath it,
-/// and a tenant reviewer a successor or a retirement there, each
-/// `409 submission.user_root_refused`; a key that reads nothing of the root
-/// gets the `404 access.not_found` of a workarea that does not exist; the
-/// tenant key still reads there, the user's own key still writes, and the
-/// tenant reviewer's verdict still promotes.
+/// `409 submission.user_root_refused`; a tenant reviewer granted there
+/// proposes a successor and a retirement of a served memory, each held,
+/// and is refused a successor of the ratified retirement with the same
+/// code; a key that reads nothing of the root gets the `404
+/// access.not_found` of a workarea or a row that does not exist; the tenant
+/// key still reads there, the user's own keys still write and put the
+/// retired claim back, and the tenant reviewer's verdict still promotes.
 #[tokio::test]
 async fn a_tenant_keys_write_into_a_users_root_is_user_root_refused_and_her_own_key_still_writes() {
     let Some(rig) = fresh_rig().await else {
@@ -8427,7 +8429,10 @@ async fn a_tenant_keys_write_into_a_users_root_is_user_root_refused_and_her_own_
         json!({
             "role": "dreamer", "name": "alice-review", "principal": "alice/review",
             "user": "alice", "held_by": "human",
-            "grants": [{ "workarea": "alice", "role": "dreamer" }],
+            "grants": [
+                { "workarea": "alice", "role": "dreamer" },
+                { "workarea": "alice", "role": "reader" },
+            ],
         }),
     )
     .await["value"]
@@ -8479,17 +8484,58 @@ async fn a_tenant_keys_write_into_a_users_root_is_user_root_refused_and_her_own_
     .await;
     assert_eq!(status, StatusCode::CREATED, "{project}");
 
-    // Alice's own write, promoted by her reviewer key.
-    let (status, _, source) = send(
-        router,
-        "POST",
-        "/v1/memories",
-        submit_into(&alice_key, "alice-source", "alice", "source"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{source}");
-    let source_id = source["artifact_id"].as_str().expect("id").to_owned();
-    approve_over_http(router, &alice_review, &source_id).await;
+    // Alice's own writes, each promoted by her reviewer key.
+    let mut own = Vec::new();
+    for (idem, claim_key) in [("alice-source", "source"), ("alice-lapsed", "lapsed")] {
+        let (status, _, held) = send(
+            router,
+            "POST",
+            "/v1/memories",
+            submit_into(&alice_key, idem, "alice", claim_key),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{held}");
+        let id = held["artifact_id"].as_str().expect("id").to_owned();
+        approve_over_http(router, &alice_review, &id).await;
+        own.push(id);
+    }
+    let (source_id, lapsed_id) = (own[0].clone(), own[1].clone());
+    // A verdict on the held version `id`, named by its serve id.
+    let approve = |reviewer: &str, id: &str| {
+        let reviewer = reviewer.to_owned();
+        let serve = format!("srv_{}", id.replace('-', ""));
+        let idem = format!("approve-{id}");
+        async move {
+            let (status, _, verdict) = send(
+                router,
+                "POST",
+                "/v2/review/verdicts",
+                Call::auth(&reviewer)
+                    .idem(&idem)
+                    .body(json!({ "serve_id": serve, "verdict": "approve" })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{verdict}");
+            assert_eq!(verdict["state"], "promoted", "{verdict}");
+        }
+    };
+    let supersede =
+        |key: &str, idem: &'static str, target: &str, expected: u32, retirement: bool| {
+            let (key, target) = (key.to_owned(), target.to_owned());
+            async move {
+                send(
+                    router,
+                    "POST",
+                    &format!("/v1/memories/{target}/supersede"),
+                    Call::auth(&key).idem(idem).body(json!({
+                        "expected_version": expected,
+                        "body": "Supplier quote, said again.",
+                        "retirement": retirement,
+                    })),
+                )
+                .await
+            }
+        };
 
     // A new memory in the root and beneath it, by the tenant key of #329.
     for (idem, workarea) in [
@@ -8507,27 +8553,39 @@ async fn a_tenant_keys_write_into_a_users_root_is_user_root_refused_and_her_own_
         assert_eq!(status, StatusCode::CONFLICT, "{workarea}: {refused}");
         assert_envelope(&refused, "submission.user_root_refused");
     }
-    // A successor and a retirement of alice's row, by a tenant reviewer's
-    // edit by proposal and by the tenant writer that reads the row.
-    for (idem, key, retirement) in [
-        ("crew-edit", &crew_reviewer, false),
-        ("crew-retire", &crew_reviewer, true),
-        ("crew-writer-edit", &crew_writer, false),
-    ] {
-        let (status, _, refused) = send(
-            router,
-            "POST",
-            &format!("/v1/memories/{source_id}/supersede"),
-            Call::auth(key).idem(idem).body(json!({
-                "expected_version": 1,
-                "body": "Supplier quote source, revised.",
-                "retirement": retirement,
-            })),
-        )
-        .await;
+    // A tenant reviewer granted there edits by proposal and proposes a
+    // retirement, each held like any write; a tenant writer that reads the
+    // row and did not write it supersedes nothing.
+    let (status, _, edit) = supersede(&crew_reviewer, "crew-edit", &source_id, 1, false).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{edit}");
+    assert_eq!(edit["state"], "held", "{edit}");
+    let (status, _, retirement) =
+        supersede(&crew_reviewer, "crew-retire", &lapsed_id, 1, true).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{retirement}");
+    assert_eq!(retirement["retirement"], true, "{retirement}");
+    let retirement_id = retirement["artifact_id"].as_str().expect("id").to_owned();
+    let (status, _, refused) =
+        supersede(&crew_writer, "crew-writer-edit", &source_id, 1, false).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert_envelope(&refused, "access.author_only");
+
+    // Once the retirement is ratified, its successor would put the claim
+    // back in service: that is alice's keys' alone.
+    approve(&alice_review, &retirement_id).await;
+    for (idem, retire_again) in [("crew-unretire", false), ("crew-reretire", true)] {
+        let (status, _, refused) =
+            supersede(&crew_reviewer, idem, &retirement_id, 2, retire_again).await;
         assert_eq!(status, StatusCode::CONFLICT, "{idem}: {refused}");
         assert_envelope(&refused, "submission.user_root_refused");
     }
+    let (status, _, refused) =
+        supersede(&stranger, "stranger-unretire", &retirement_id, 2, false).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+    assert_envelope(&refused, "access.not_found");
+    let (status, _, back) =
+        supersede(&alice_review, "alice-unretire", &retirement_id, 2, false).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{back}");
+    assert_eq!(back["state"], "held", "{back}");
 
     // A key that reads nothing of the root learns nothing of it: the
     // answer for the root is the answer for an id no workarea holds.
@@ -8565,24 +8623,15 @@ async fn a_tenant_keys_write_into_a_users_root_is_user_root_refused_and_her_own_
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{read}");
-    let (status, _, successor) = send(
+    let (status, _, later) = send(
         router,
         "POST",
-        &format!("/v1/memories/{source_id}/supersede"),
-        Call::auth(&alice_key).idem("alice-edit").body(json!({
-            "expected_version": 1,
-            "body": "Supplier quote source, revised by alice.",
-        })),
+        "/v1/memories",
+        submit_into(&alice_key, "alice-later", "alice.project", "later"),
     )
     .await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{successor}");
-    let verdict = approve_over_http(
-        router,
-        &crew_reviewer,
-        successor["artifact_id"].as_str().expect("id"),
-    )
-    .await;
-    assert_eq!(verdict["state"], "promoted", "{verdict}");
+    assert_eq!(status, StatusCode::ACCEPTED, "{later}");
+    approve(&crew_reviewer, later["artifact_id"].as_str().expect("id")).await;
 
     // The same key writes in a shared workarea, as before.
     let (status, _, held) = send(

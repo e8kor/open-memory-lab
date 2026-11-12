@@ -1901,15 +1901,17 @@ where
         }
     }
 
-    /// A user root takes claim writes from its own user's keys only
+    /// A memory is started in a user root by its own user's keys only
     /// (ADR-0044 d16): `submission.user_root_refused` when `node` is a user
     /// root or lies beneath one and `key` does not name that root, so a
     /// tenant key and another user's key are refused alike, whatever
-    /// writer or dreamer grant reaches the node. It reads the node's
-    /// ancestry and nothing of the key's grants. A caller runs it only once
-    /// the key is known to read the node or the row it writes against, so
-    /// the answer confirms no root to a key that reads nothing of it; that
-    /// key keeps `access.not_found`.
+    /// writer or dreamer grant reaches the node. The two acts that start
+    /// one call it: a new memory, and a successor of a ratified
+    /// retirement. It reads the node's ancestry and nothing of the key's
+    /// grants. A caller runs it only once the key is known to read the
+    /// node or the row it writes against, so the answer confirms no root
+    /// to a key that reads nothing of it; that key keeps
+    /// `access.not_found`.
     async fn refuse_another_users_root(&self, key: &KeyRecord, node: Uuid) -> Result<(), AppError> {
         let root = self
             .journal
@@ -5092,8 +5094,8 @@ where
         let access = self
             .require_access(&caller, workarea_id, Role::Writer, "submit")
             .await;
-        // A user root is written by its own user's keys only. The rule is
-        // answered where step 2 allows or step 3 would answer
+        // A memory is started in a user root by its own user's keys only.
+        // The rule is answered where step 2 allows or step 3 would answer
         // `access.grant_refused`, which a key that reads the node gets; a
         // key that reads nothing of it keeps step 4's `access.not_found`
         // (ADR-0044 d16).
@@ -7591,9 +7593,9 @@ where
     /// runs in its order: a key role admitting writer or dreamer (step 1);
     /// the idempotency record, scoped to the key with a nil workarea, looked
     /// up next and replayed whatever the target's state now; the target
-    /// readable (step 2), and in a user root the key that user's own, else
-    /// `submission.user_root_refused` (ADR-0044 d16); a writer's own target
-    /// and writer on its workarea
+    /// readable (step 2), and, where it is a ratified retirement in a user
+    /// root, the key that user's own, else `submission.user_root_refused`
+    /// (ADR-0044 d16); a writer's own target and writer on its workarea
     /// (step 3), or a dreamer's dreamer and reader there, whoever authored
     /// it (step 4, edit-as-proposal); then the target-dependent refusals —
     /// `X-OML-Workarea`, the served tip, the kind and retirement checks,
@@ -7665,12 +7667,17 @@ where
         if !self.readable(&caller, &target).await? {
             return Err(AppError::NotFound);
         }
-        // A successor is a claim write on the target's workarea: in a user
-        // root it is that user's keys' alone, whoever wrote the target and
-        // whatever grant the key holds there. The key reads the target, so
-        // the rule is named ahead of steps 3 and 4 (ADR-0044 d16).
-        self.refuse_another_users_root(key, target.workarea_id)
-            .await?;
+        // A successor of a ratified retirement puts the claim back in
+        // service, and on its account's `memories`, when it is ratified: in
+        // a user root that is a memory started, which is that user's keys'
+        // alone, whatever grant the key holds there. The key reads the
+        // target, so the rule is named ahead of steps 3 and 4. Any other
+        // successor there is governed by those steps, as before (ADR-0044
+        // d16; ADR-0071 d2).
+        if target.retirement && target.status == MemoryStatus::Promoted && target.is_tip {
+            self.refuse_another_users_root(key, target.workarea_id)
+                .await?;
+        }
         // A curator retires or rewrites inside an in-progress subtree only,
         // and never what it authored or derived from (ADR-0030 d9).
         self.curator_may_act(key, "supersede", target.workarea_id, Some(&target))

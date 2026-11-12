@@ -1,19 +1,23 @@
-//! Who writes in a user root (ADR-0044 d16, the amendment of 2026-11-12):
-//! a claim write into `universe.<user>` or below it is that user's keys'
-//! alone. A tenant key that reads the node or the target is refused
+//! Who starts a memory in a user root (ADR-0044 d16, the amendment of
+//! 2026-11-12): a new memory in `universe.<user>` or below it is that
+//! user's keys' alone, and so is the successor of a ratified retirement
+//! there, which would put the claim back in service. Any other key that
+//! reads the workarea or the target is refused
 //! `submission.user_root_refused`, and one that reads neither keeps
-//! `access.not_found`; reads, recall and review there are what they were,
-//! and a row a tenant key wrote there before the rule stays as it is.
-//! Stated over the application and run identically over every store: the
-//! in-memory double and PostgreSQL. Each law takes a fresh store, builds
-//! its own tenant through the app's verbs and panics on violation.
+//! `access.not_found`. A successor or a retirement of a served memory
+//! there is admitted as before, from its author or from a reviewer granted
+//! there; reads, recall and review are what they were, and a row a tenant
+//! key wrote there before the rule stays as it is. Stated over the
+//! application and run identically over every store: the in-memory double
+//! and PostgreSQL. Each law takes a fresh store, builds its own tenant
+//! through the app's verbs and panics on violation.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use oml_app::App;
-use oml_app::domain::access::Covers;
+use oml_app::domain::access::{Covers, Grant};
 use oml_app::domain::name::{Name, Reference};
-use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role};
+use oml_app::domain::{EventTime, HeldBy, MemoryKind, MemoryStatus, Role};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::ports::JournalStore;
 use oml_app::types::{
@@ -199,11 +203,22 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
         format!("roots-{}", self.idem.fetch_add(1, Ordering::Relaxed))
     }
 
-    /// `key` submits a new memory on `workarea`.
+    /// `key` submits a new memory on `workarea`, its `claim_key` derived.
     pub async fn submit(
         &self,
         key: &IssuedKey,
         workarea: impl Into<Reference>,
+        body: &str,
+    ) -> Result<Uuid, AppError> {
+        self.submit_claim(key, workarea, None, body).await
+    }
+
+    /// `key` submits a new memory on `workarea` under `claim_key`.
+    pub async fn submit_claim(
+        &self,
+        key: &IssuedKey,
+        workarea: impl Into<Reference>,
+        claim_key: Option<&str>,
         body: &str,
     ) -> Result<Uuid, AppError> {
         self.app
@@ -216,7 +231,7 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
                     valid_until: None,
                     anchor: None,
                     idempotency_key: self.next_idem(),
-                    claim_key: None,
+                    claim_key: claim_key.map(ToOwned::to_owned),
                     verb: None,
                     kind: MemoryKind::Memory,
                     body: body.to_owned(),
@@ -291,6 +306,79 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
             MemoryStatus::Promoted
         );
         id
+    }
+
+    /// A key of bo, another person, under `role`, holding `roles` on ada's
+    /// root: what an admin's review designation gives a person's review key
+    /// there (ADR-0045 d10). Issuance refuses a user key a grant outside
+    /// its root (ADR-0044 d3), so the key is issued in bo's root and the
+    /// store takes the grants on ada's as the designation's `grant.issued`
+    /// folds them.
+    pub async fn bos_key_granted_on_adas_root(&self, role: Role, roles: &[Role]) -> IssuedKey {
+        let n = NAMES.fetch_add(1, Ordering::Relaxed);
+        let bo = Reference::parse("bo").expect("a reference");
+        let key = self
+            .app
+            .issue_key(
+                self.admin.as_str(),
+                &IssueKeyRequest {
+                    profile: None,
+                    role,
+                    name: fresh("roots-key"),
+                    principal: format!("bo/{n}"),
+                    held_by: Some(if role == Role::Dreamer {
+                        HeldBy::Human
+                    } else {
+                        HeldBy::Agent
+                    }),
+                    default_workarea: None,
+                    crew: None,
+                    grants: vec![GrantRequest {
+                        node: bo,
+                        role,
+                        deny: Vec::new(),
+                        covers: Covers::Subtree,
+                    }],
+                    connect_code: false,
+                    user: Some(Name::parse("bo").expect("a user name")),
+                    guardrail_scope: None,
+                    expiry: None,
+                    requests_per_minute: None,
+                },
+            )
+            .await
+            .expect("bo's key");
+        let mut rig = ChainRig::new(0);
+        rig.tenant_id = self.tenant;
+        let mut rig = rig.lane(330 + n);
+        rig.follow(&self.store).await;
+        for (i, &role) in roles.iter().enumerate() {
+            rig.issue_grant(
+                &self.store,
+                key.key_id,
+                Grant {
+                    grant_id: Uuid::from_u128(0x0329_1000 + u128::from(n) * 16 + i as u128),
+                    node: self.root,
+                    role,
+                    deny: Vec::new(),
+                    covers: Covers::Subtree,
+                },
+            )
+            .await
+            .expect("the store folds the grant");
+        }
+        key
+    }
+
+    /// Ada's `memories` meter: the live chains her keys started (ADR-0071
+    /// d2).
+    pub async fn adas_memories(&self) -> u64 {
+        let at = EventTime::parse("2026-10-29T12:30:00.000000Z").expect("a time");
+        self.store
+            .user_usage(self.tenant, self.root, &at)
+            .await
+            .expect("usage")
+            .memories
     }
 
     /// The tenant chain's head seq: what a refusal that journals nothing
@@ -384,9 +472,12 @@ fn not_found(result: Result<Uuid, AppError>, what: &str) {
 
 /// A tenant writer key that holds a subtree grant on `universe` writes a
 /// new memory in a shared workarea and is refused one in a user's root and
-/// in a workarea beneath it; so is a tenant key that only reads the root,
-/// in place of `access.grant_refused`. Nothing is journalled.
-pub async fn a_tenant_keys_new_memory_in_a_users_root_or_below_it_is_refused_and_journals_nothing<
+/// in a workarea beneath it, with a `claim_key` of its own, with none, and
+/// under a `claim_key` the user's rejected write released; so is a tenant
+/// key that only reads the root, in place of `access.grant_refused`, and a
+/// key of another person holding writer there. Nothing is journalled and
+/// the user's `memories` does not move.
+pub async fn a_key_that_is_not_the_users_starts_no_memory_in_a_users_root_or_below_it<
     S: JournalStore + Clone,
 >(
     store: S,
@@ -401,7 +492,25 @@ pub async fn a_tenant_keys_new_memory_in_a_users_root_or_below_it_is_refused_and
             vec![grant(w.root, Role::Reader), grant(w.shared, Role::Writer)],
         )
         .await;
-    let head = w.head().await;
+    let bos_writer = w
+        .bos_key_granted_on_adas_root(Role::Writer, &[Role::Writer, Role::Reader])
+        .await;
+    // A claim_key every version of which was rejected is released
+    // (ADR-0025 d18): the next claim under it is a version 1 again.
+    let released = w
+        .submit_claim(&w.ada, w.root, Some("released"), "a first try")
+        .await
+        .expect("held");
+    w.app
+        .post_verdict(
+            w.ada_reviewer.value.as_str(),
+            released,
+            Verdict::Reject,
+            Some("not so"),
+        )
+        .await
+        .expect("rejected");
+    let (head, memories) = (w.head().await, w.adas_memories().await);
     refused(
         w.submit(&w.tenant_writer, w.root, "a fact for ada").await,
         "the root, by a subtree writer grant on universe",
@@ -421,16 +530,32 @@ pub async fn a_tenant_keys_new_memory_in_a_users_root_or_below_it_is_refused_and
         "a workarea beneath the root, by its qualified name",
     );
     refused(
+        w.submit_claim(&w.tenant_writer, w.root, Some("named"), "a fact for ada")
+            .await,
+        "a new memory under a claim_key of the key's choosing",
+    );
+    refused(
+        w.submit_claim(&w.tenant_writer, w.root, Some("released"), "a second try")
+            .await,
+        "a new memory under a claim_key ada's rejected write released",
+    );
+    refused(
         w.submit(&reads_only, w.project, "a fact for ada").await,
         "a key that reads the root and holds no writer grant in it",
     );
+    refused(
+        w.submit(&bos_writer, w.project, "a fact for ada").await,
+        "another person's key holding writer in the root",
+    );
     assert_eq!(w.head().await, head, "a refused write journals nothing");
+    assert_eq!(w.adas_memories().await, memories);
 }
 
 /// A key that reads nothing of a user's root is answered for a write there
 /// exactly as for a workarea that does not exist, by id and by qualified
-/// name, and for a successor of a row there as for a row that does not
-/// exist: the refusal confirms no root.
+/// name, and for a successor of a row there, a ratified retirement
+/// included, as for a row that does not exist: the refusal confirms no
+/// root.
 pub async fn a_key_that_reads_nothing_of_a_users_root_is_told_not_found_as_for_no_workarea<
     S: JournalStore + Clone,
 >(
@@ -438,6 +563,15 @@ pub async fn a_key_that_reads_nothing_of_a_users_root_is_told_not_found_as_for_n
 ) {
     let w = RootsWorld::new(store).await;
     let row = w.adas_promoted(w.project, "the relay closes at noon").await;
+    let retired = w.adas_promoted(w.project, "the pump runs at night").await;
+    let retirement = w
+        .supersede(&w.ada, retired, 1, true)
+        .await
+        .expect("ada retires her claim");
+    assert_eq!(
+        w.approve(&w.ada_reviewer, retirement).await,
+        MemoryStatus::Promoted
+    );
     let head = w.head().await;
     not_found(w.submit(&w.stranger, w.root, "x").await, "the root by id");
     not_found(
@@ -468,6 +602,10 @@ pub async fn a_key_that_reads_nothing_of_a_users_root_is_told_not_found_as_for_n
         "a successor of a row in the root",
     );
     not_found(
+        w.supersede(&w.stranger, retirement, 2, false).await,
+        "a successor of a ratified retirement in the root",
+    );
+    not_found(
         w.supersede(&w.stranger, Uuid::from_u128(0x0329_beef), 1, false)
             .await,
         "a successor of a row that does not exist",
@@ -476,9 +614,10 @@ pub async fn a_key_that_reads_nothing_of_a_users_root_is_told_not_found_as_for_n
 }
 
 /// The user's own keys write as before: a new memory in the root and
-/// beneath it, a successor of their own row and its retirement, each held
-/// and each promoted by the user's reviewer key.
-pub async fn a_users_own_keys_still_write_supersede_and_retire_in_their_root<
+/// beneath it, a successor of their own row, its retirement, and a
+/// successor of that retirement once it is ratified, which puts the claim
+/// back in service and on the user's `memories`.
+pub async fn a_users_own_keys_still_write_supersede_retire_and_put_a_retired_claim_back<
     S: JournalStore + Clone,
 >(
     store: S,
@@ -486,6 +625,7 @@ pub async fn a_users_own_keys_still_write_supersede_and_retire_in_their_root<
     let w = RootsWorld::new(store).await;
     let in_root = w.adas_promoted(w.root, "the relay closes at noon").await;
     w.adas_promoted(w.project, "the pump runs at night").await;
+    assert_eq!(w.adas_memories().await, 2);
     let successor = w
         .supersede(&w.ada, in_root, 1, false)
         .await
@@ -494,53 +634,196 @@ pub async fn a_users_own_keys_still_write_supersede_and_retire_in_their_root<
         w.approve(&w.ada_reviewer, successor).await,
         MemoryStatus::Promoted
     );
-    // Ada's reviewer key edits by proposal in her root, as any dreamer
-    // there did.
     let retirement = w
-        .supersede(&w.ada_reviewer, successor, 2, true)
+        .supersede(&w.ada, successor, 2, true)
         .await
-        .expect("ada's reviewer key proposes the retirement");
+        .expect("ada proposes the retirement");
+    assert_eq!(
+        w.approve(&w.ada_reviewer, retirement).await,
+        MemoryStatus::Promoted
+    );
+    assert_eq!(w.adas_memories().await, 1, "a retired claim is not counted");
+    let back = w
+        .supersede(&w.ada, retirement, 3, false)
+        .await
+        .expect("ada's own key proposes a successor of her ratified retirement");
+    assert_eq!(
+        w.approve(&w.ada_reviewer, back).await,
+        MemoryStatus::Promoted
+    );
+    assert_eq!(w.adas_memories().await, 2, "the claim is back in service");
+    // Ada's reviewer key edits by proposal in her root, as any dreamer
+    // there does.
+    let edit = w
+        .supersede(&w.ada_reviewer, back, 4, false)
+        .await
+        .expect("ada's reviewer key edits by proposal");
     let held = w
         .app
-        .get_memory(w.ada_reviewer.value.as_str(), retirement)
+        .get_memory(w.ada_reviewer.value.as_str(), edit)
         .await
-        .expect("its author reads the held retirement");
+        .expect("its author reads the held successor");
     assert_eq!(held.memory.status, MemoryStatus::Held);
-    assert!(held.memory.retirement);
 }
 
-/// A tenant key's successor of a memory in a user's root, and its
-/// retirement, is refused: a tenant reviewer's edit by proposal, and a
-/// tenant writer that reads the row, ahead of `access.author_only`.
-/// Nothing is journalled and the row stays the served tip.
-pub async fn a_tenant_keys_successor_or_retirement_of_a_memory_in_a_users_root_is_refused<
+/// A reviewer granted in a user's root, a tenant key or another person's,
+/// proposes a successor and a retirement of a served memory there, as it
+/// did before the rule, and each is held and ratified like any write. A
+/// successor moves no meter and a ratified retirement takes the claim off
+/// the user's `memories`. A tenant writer that reads a row there and did
+/// not write it keeps `access.author_only`.
+pub async fn a_reviewer_granted_in_a_users_root_proposes_a_successor_and_a_retirement_there<
     S: JournalStore + Clone,
 >(
     store: S,
 ) {
     let w = RootsWorld::new(store).await;
+    let bos_reviewer = w
+        .bos_key_granted_on_adas_root(Role::Dreamer, &[Role::Dreamer, Role::Reader])
+        .await;
+    let mut rows = Vec::new();
+    for body in [
+        "the relay closes at noon",
+        "the pump runs at night",
+        "the valve is green",
+        "the gauge reads low in winter",
+    ] {
+        rows.push(w.adas_promoted(w.project, body).await);
+    }
+    assert_eq!(w.adas_memories().await, 4);
+    for (reviewer, edited, retired, who) in [
+        (&w.tenant_reviewer, rows[0], rows[1], "a tenant reviewer"),
+        (&bos_reviewer, rows[2], rows[3], "another person's reviewer"),
+    ] {
+        let successor = w
+            .supersede(reviewer, edited, 1, false)
+            .await
+            .unwrap_or_else(|e| panic!("{who} edits by proposal: {e:?}"));
+        assert_eq!(
+            w.approve(&w.ada_reviewer, successor).await,
+            MemoryStatus::Promoted,
+            "{who}'s successor is ratified like any write"
+        );
+        let retirement = w
+            .supersede(reviewer, retired, 1, true)
+            .await
+            .unwrap_or_else(|e| panic!("{who} proposes a retirement: {e:?}"));
+        assert_eq!(
+            w.approve(&w.ada_reviewer, retirement).await,
+            MemoryStatus::Promoted,
+            "{who}'s retirement is ratified like any write"
+        );
+    }
+    assert_eq!(
+        w.adas_memories().await,
+        2,
+        "the two edited claims stay ada's and the two retired ones are not counted"
+    );
+    match w.supersede(&w.tenant_writer, rows[0], 2, false).await {
+        Err(AppError::AuthorOnly) => {}
+        other => panic!("a writer supersedes its own rows only, got {other:?}"),
+    }
+}
+
+/// A successor of a ratified retirement in a user's root would put the
+/// claim back in service and on the user's `memories`, so it is that
+/// user's keys' alone: a tenant reviewer and another person's reviewer,
+/// each granted there, are refused `submission.user_root_refused`, nothing
+/// is journalled and the meter stays. The user's own key proposes it as
+/// before, and a granted reviewer's verdict still ratifies it.
+pub async fn a_successor_of_a_ratified_retirement_in_a_users_root_is_the_users_keys_alone<
+    S: JournalStore + Clone,
+>(
+    store: S,
+) {
+    let w = RootsWorld::new(store).await;
+    let bos_reviewer = w
+        .bos_key_granted_on_adas_root(Role::Dreamer, &[Role::Dreamer, Role::Reader])
+        .await;
     let row = w.adas_promoted(w.project, "the relay closes at noon").await;
-    let head = w.head().await;
-    refused(
-        w.supersede(&w.tenant_reviewer, row, 1, false).await,
-        "a tenant reviewer's edit by proposal",
-    );
-    refused(
-        w.supersede(&w.tenant_reviewer, row, 1, true).await,
-        "a tenant reviewer's retirement proposal",
-    );
-    refused(
-        w.supersede(&w.tenant_writer, row, 1, false).await,
-        "a tenant writer that reads the row and did not write it",
-    );
-    assert_eq!(w.head().await, head, "a refused write journals nothing");
-    let served = w
-        .app
-        .get_memory(w.ada.value.as_str(), row)
+    let retirement = w
+        .supersede(&w.tenant_reviewer, row, 1, true)
         .await
-        .expect("ada reads her row");
-    assert_eq!(served.memory.status, MemoryStatus::Promoted);
-    assert!(served.memory.is_tip);
+        .expect("a tenant reviewer proposes the retirement");
+    assert_eq!(
+        w.approve(&w.ada_reviewer, retirement).await,
+        MemoryStatus::Promoted
+    );
+    assert_eq!(w.adas_memories().await, 0);
+    let head = w.head().await;
+    for (reviewer, who) in [
+        (&w.tenant_reviewer, "a tenant reviewer"),
+        (&bos_reviewer, "another person's reviewer"),
+    ] {
+        refused(
+            w.supersede(reviewer, retirement, 2, false).await,
+            &format!("{who}'s successor of the ratified retirement"),
+        );
+        refused(
+            w.supersede(reviewer, retirement, 2, true).await,
+            &format!("{who}'s retirement of the ratified retirement"),
+        );
+    }
+    assert_eq!(w.head().await, head, "a refused write journals nothing");
+    assert_eq!(w.adas_memories().await, 0);
+    let back = w
+        .supersede(&w.ada_reviewer, retirement, 2, false)
+        .await
+        .expect("ada's own key proposes the successor of the retirement");
+    assert_eq!(
+        w.approve(&bos_reviewer, back).await,
+        MemoryStatus::Promoted,
+        "a granted reviewer's verdict ratifies what ada's key proposed"
+    );
+    assert_eq!(w.adas_memories().await, 1);
+}
+
+/// A successor proposed while a retirement of the same memory is still
+/// held never puts the claim back: both replace the served tip, the
+/// retirement's ratification takes the tip, and the successor's approval
+/// is then `submission.tip_conflict`, journals nothing and leaves it held.
+/// A successor of the retirement itself is the only way back, and that is
+/// the user's keys' alone.
+pub async fn a_successor_proposed_while_a_retirement_is_held_is_never_ratified_after_it<
+    S: JournalStore + Clone,
+>(
+    store: S,
+) {
+    let w = RootsWorld::new(store).await;
+    let bos_reviewer = w
+        .bos_key_granted_on_adas_root(Role::Dreamer, &[Role::Dreamer, Role::Reader])
+        .await;
+    let row = w.adas_promoted(w.project, "the relay closes at noon").await;
+    let retirement = w
+        .supersede(&w.tenant_reviewer, row, 1, true)
+        .await
+        .expect("a held retirement");
+    let rival = w
+        .supersede(&bos_reviewer, row, 1, false)
+        .await
+        .expect("a successor of the served tip, proposed while the retirement is held");
+    assert_eq!(
+        w.approve(&w.ada_reviewer, retirement).await,
+        MemoryStatus::Promoted
+    );
+    assert_eq!(w.adas_memories().await, 0);
+    let head = w.head().await;
+    match w
+        .app
+        .post_verdict(w.ada_reviewer.value.as_str(), rival, Verdict::Approve, None)
+        .await
+    {
+        Err(AppError::TipConflict { .. }) => {}
+        other => panic!("the rival's target lost the tip, got {other:?}"),
+    }
+    assert_eq!(w.head().await, head);
+    assert_eq!(w.adas_memories().await, 0, "the claim stays retired");
+    let held = w
+        .app
+        .get_memory(bos_reviewer.value.as_str(), rival)
+        .await
+        .expect("its author reads the rival");
+    assert_eq!(held.memory.status, MemoryStatus::Held);
 }
 
 /// Reading, recall and review in a user's root are what they were for a
@@ -592,9 +875,9 @@ pub async fn a_tenant_key_reads_recalls_and_reviews_in_a_users_root_as_before<
 /// A memory a tenant key wrote in a user's root before the rule is kept as
 /// it is: its author still reads it, ada's reviewer key still judges it,
 /// every reader of the root is served it once it is promoted, and nothing
-/// demotes or removes it. Its author is refused a successor of it, as of
-/// any row there.
-pub async fn a_memory_a_tenant_key_wrote_in_a_users_root_before_the_rule_stays_served_and_takes_no_successor_from_it<
+/// demotes or removes it. Its author still proposes its successor, as a
+/// writer does of its own row, and starts no new memory beside it.
+pub async fn a_memory_a_tenant_key_wrote_in_a_users_root_before_the_rule_stays_served_and_its_author_still_revises_it<
     S: JournalStore + Clone,
 >(
     store: S,
@@ -647,16 +930,6 @@ pub async fn a_memory_a_tenant_key_wrote_in_a_users_root_before_the_rule_stays_s
         w.hits(&w.ada, w.project, "gauge winter").await,
         vec![earlier]
     );
-    let head = w.head().await;
-    refused(
-        w.supersede(&w.tenant_writer, earlier, 1, false).await,
-        "the author's successor of its own earlier row",
-    );
-    refused(
-        w.supersede(&w.tenant_writer, earlier, 1, true).await,
-        "the author's retirement of its own earlier row",
-    );
-    assert_eq!(w.head().await, head);
     let kept = w
         .app
         .get_memory(w.ada.value.as_str(), earlier)
@@ -665,26 +938,48 @@ pub async fn a_memory_a_tenant_key_wrote_in_a_users_root_before_the_rule_stays_s
     assert_eq!(kept.memory.status, MemoryStatus::Promoted);
     assert!(kept.memory.is_tip);
     assert_eq!(kept.memory.author_key_id, w.tenant_writer.key_id);
+    let successor = w
+        .supersede(&w.tenant_writer, earlier, 1, false)
+        .await
+        .expect("the author's successor of its own earlier row");
+    assert_eq!(
+        w.approve(&w.ada_reviewer, successor).await,
+        MemoryStatus::Promoted
+    );
+    refused(
+        w.submit(
+            &w.tenant_writer,
+            w.project,
+            "the gauge reads high in summer",
+        )
+        .await,
+        "a new memory beside it",
+    );
+    assert_eq!(
+        w.adas_memories().await,
+        0,
+        "a chain a tenant key started is no account's (ADR-0071 d3)"
+    );
 }
 
-/// Every law of who writes in a user root.
+/// Every law of who starts a memory in a user root.
 pub async fn run_user_root_write_suite<S, F, Fut>(make: F)
 where
     S: JournalStore + Clone,
     F: Fn() -> Fut,
     Fut: core::future::Future<Output = S>,
 {
-    a_tenant_keys_new_memory_in_a_users_root_or_below_it_is_refused_and_journals_nothing(
-        make().await,
-    )
-    .await;
+    a_key_that_is_not_the_users_starts_no_memory_in_a_users_root_or_below_it(make().await).await;
     a_key_that_reads_nothing_of_a_users_root_is_told_not_found_as_for_no_workarea(make().await)
         .await;
-    a_users_own_keys_still_write_supersede_and_retire_in_their_root(make().await).await;
-    a_tenant_keys_successor_or_retirement_of_a_memory_in_a_users_root_is_refused(make().await)
+    a_users_own_keys_still_write_supersede_retire_and_put_a_retired_claim_back(make().await).await;
+    a_reviewer_granted_in_a_users_root_proposes_a_successor_and_a_retirement_there(make().await)
         .await;
+    a_successor_of_a_ratified_retirement_in_a_users_root_is_the_users_keys_alone(make().await)
+        .await;
+    a_successor_proposed_while_a_retirement_is_held_is_never_ratified_after_it(make().await).await;
     a_tenant_key_reads_recalls_and_reviews_in_a_users_root_as_before(make().await).await;
-    a_memory_a_tenant_key_wrote_in_a_users_root_before_the_rule_stays_served_and_takes_no_successor_from_it(
+    a_memory_a_tenant_key_wrote_in_a_users_root_before_the_rule_stays_served_and_its_author_still_revises_it(
         make().await,
     )
     .await;
