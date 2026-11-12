@@ -276,3 +276,57 @@ async fn the_session_check_asks_whoami_for_no_person_block() {
         assert!(check.starts_with("GET /v2/whoami?person=false "), "{check}");
     }
 }
+
+/// Against an API one release behind, which refuses `offers` on the
+/// counted tree as a parameter it does not know, the admin Atlas reads the
+/// counts and the transitions' offers apart, as it did before #286, and
+/// still draws both (ADR-0070 d4).
+#[tokio::test]
+async fn the_admin_atlas_reads_its_offers_apart_from_an_api_that_refuses_the_parameter() {
+    let script: Script = |record| {
+        if let Some(answer) = session(record) {
+            return answer;
+        }
+        match record {
+            "GET /v2/workareas/universe/tree?counts=true&offers=true admin" => {
+                (400, envelope("request.validation"), None)
+            }
+            "GET /v2/workareas/universe/tree?counts=true admin" => {
+                (200, counts(UNIVERSE, "universe"), None)
+            }
+            "GET /v2/workareas/universe/offers admin"
+            | "GET /v2/workareas/universe/offers review" => (200, offers(UNIVERSE), None),
+            "POST /v2/admin/memories/search admin" => {
+                (200, json!({"items": [], "next_cursor": null}), None)
+            }
+            _ => (500, envelope("internal.error"), None),
+        }
+    };
+    let answered = page(script, "/web/admin/atlas").await;
+    assert_eq!(answered.status, StatusCode::OK, "{}", answered.body);
+    assert!(answered.body.contains("universe"), "{}", answered.body);
+    assert!(
+        !answered.body.contains("The acts are unavailable"),
+        "{}",
+        answered.body
+    );
+    assert!(
+        answered.body.contains("propose committed"),
+        "{}",
+        answered.body
+    );
+    assert!(
+        answered
+            .calls
+            .contains(&"GET /v2/workareas/universe/offers admin".to_owned()),
+        "{:?}",
+        answered.calls
+    );
+    // The JSON route reads the regions the same way.
+    let json = page(script, "/web/admin/data/memories").await;
+    assert_eq!(json.status, StatusCode::OK, "{}", json.body);
+    let value: Value = serde_json::from_str(&json.body).unwrap();
+    let scope = &value["workareas"]["items"][0];
+    assert_eq!(scope["path"], "universe", "{value}");
+    assert!(scope.get("offers_unavailable").is_none(), "{value}");
+}

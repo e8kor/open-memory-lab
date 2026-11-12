@@ -14068,3 +14068,77 @@ async fn a_claim_key_or_a_verdict_reason_carrying_a_finding_is_refused() {
     .await
     .expect("a hold finding in a reason passes");
 }
+
+/// A connection's `whoami` costs one request of its key's rate, however
+/// much the answer names: at one request a minute under the sign-up
+/// quotas, the first `whoami` of a person's connector key answers, with or
+/// without the person block, and the next in that minute is `limit.rate`
+/// (ADR-0068 d5; #286, where it was charged twice and refused at once).
+#[tokio::test]
+async fn a_connections_whoami_costs_one_request_of_its_keys_rate() {
+    use oml_app::app::PersonAsk;
+    use oml_app::types::Bearer;
+    for ask in [PersonAsk::Omit, PersonAsk::Person] {
+        let probe = oauth_app_over(MemStore::new());
+        let boot = bootstrap(&probe).await;
+        let quotas = oml_app::domain::signup::Quotas {
+            requests_per_minute: 1,
+            ..oml_app::domain::signup::Quotas::default()
+        };
+        let app = probe.with_signup(oml_app::types::SignupPolicy {
+            mode: oml_app::domain::signup::SignupMode::Open,
+            tenant_id: boot.tenant_id,
+            issuer: name("root-admin"),
+            terms_version: "2026-11-06".to_owned(),
+            terms_url: "https://example.com/terms".to_owned(),
+            privacy_url: "https://example.com/privacy".to_owned(),
+            per_ip_per_hour: 100,
+            quotas,
+        });
+        let issued = app
+            .issue_key(
+                boot.admin_key.value.as_str(),
+                &IssueKeyRequest {
+                    user: Some(name("ada")),
+                    ..connector_req(
+                        "ada/claude-mobile",
+                        vec![GrantRequest {
+                            node: by_name("ada"),
+                            role: Role::Writer,
+                            deny: Vec::new(),
+                            covers: Covers::Subtree,
+                        }],
+                    )
+                },
+            )
+            .await
+            .expect("a connector key of ada's");
+        let code = issued
+            .connect_code
+            .as_ref()
+            .and_then(|c| c.code.clone())
+            .expect("a fresh answer carries the code");
+        let tokens = app
+            .exchange(exchange_form(&connect_with(&app, &code).await))
+            .await
+            .expect("the exchange");
+        let caller = app
+            .resolve_access_token(tokens.access_token.as_str())
+            .await
+            .expect("the connection's caller");
+        let (me, _) = app
+            .whoami_served(Bearer::Connection(&caller), ask)
+            .await
+            .expect("the minute's one request");
+        assert_eq!(me.key.key_id, issued.key_id);
+        let second = app
+            .whoami_served(Bearer::Connection(&caller), ask)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            matches!(second, AppError::KeyRateLimited { .. }),
+            "{ask:?}: {second:?}"
+        );
+    }
+}

@@ -410,3 +410,77 @@ async fn the_tree_refuses_offers_it_cannot_serve() {
         );
     }
 }
+
+/// Across every caller and scope of the rig, the counted tree with
+/// `offers=true` serves exactly where both the counted tree and the offers
+/// operation serve that caller, and then what each serves; wherever either
+/// refuses, it is refused with the refusal of the one that refused (the
+/// tree's first) and serves neither counts nor offers. An admin key on a
+/// person's root is served by both, the admin key role reading every
+/// workarea's structure and offers (#286: the field widens nothing).
+#[tokio::test]
+async fn the_counted_trees_offers_serve_only_where_the_tree_and_the_offers_operation_both_serve() {
+    let rig = rig().await;
+    let callers = [
+        (rig.admin.clone(), false),
+        (web(&rig.alice, "web"), true),
+        (web(&rig.alice, "review"), true),
+        (web(&rig.alice, "admin"), true),
+        (web(&rig.bob, "web"), true),
+        (web(&rig.bob, "review"), true),
+    ];
+    let (mut served, mut refused) = (0, 0);
+    for (bearer, web_client) in &callers {
+        for scope in ["universe", "alice", "bob", "nowhere"] {
+            let at = |q: &str| format!("/v2/workareas/{scope}/{q}");
+            let tree = get(&rig.router, &at("tree?counts=true"), bearer, *web_client).await;
+            let offers = get(&rig.router, &at("offers"), bearer, *web_client).await;
+            let both = get(
+                &rig.router,
+                &at("tree?counts=true&offers=true"),
+                bearer,
+                *web_client,
+            )
+            .await;
+            if tree.status == StatusCode::OK && offers.status == StatusCode::OK {
+                served += 1;
+                assert_eq!(both.status, StatusCode::OK, "{scope}: {}", both.body);
+                assert_eq!(both.body["items"], tree.body["items"], "{scope}");
+                assert_eq!(both.body["offers"], offers.body, "{scope}");
+                continue;
+            }
+            refused += 1;
+            let first = if tree.status == StatusCode::OK {
+                &offers
+            } else {
+                &tree
+            };
+            assert_eq!(both.status, first.status, "{scope}: {}", both.body);
+            assert_eq!(
+                both.body["error"]["code"], first.body["error"]["code"],
+                "{scope}: {}",
+                both.body
+            );
+            assert!(both.body.get("items").is_none(), "{}", both.body);
+            assert!(both.body.get("offers").is_none(), "{}", both.body);
+        }
+    }
+    assert!(
+        served > 0 && refused > 0,
+        "{served} served, {refused} refused"
+    );
+    // The case the review named: an admin key on a person's root.
+    let admin_on_root = get(
+        &rig.router,
+        "/v2/workareas/alice/tree?counts=true&offers=true",
+        &rig.admin,
+        false,
+    )
+    .await;
+    assert_eq!(
+        admin_on_root.status,
+        StatusCode::OK,
+        "{}",
+        admin_on_root.body
+    );
+}
