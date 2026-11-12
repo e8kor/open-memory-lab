@@ -142,6 +142,30 @@ An advisory with no fixed release is triaged, not auto-ignored: an ignore entry 
 requires a comment naming the advisory, the reason, and the revisit condition — the same
 named-trigger discipline the ADRs use.
 
+## Pinned actions
+
+Every `uses:` in `.github/` names a commit, not a tag, and the tag it was resolved from follows in
+a comment: `uses: actions/checkout@<40 hex> # v4.4.0`. A tag is a pointer its owner can move to
+other code after the pin is reviewed; a commit cannot move. One action is one commit in every
+workflow, so a version bump is one change that every job takes together.
+`python scripts/lint_practices.py actions`, in the practices workflow's lints job, fails a pull
+request that adds a `uses:` without a 40-hex SHA, a pin without its `# v<tag>` comment, or a second
+commit for an action already pinned.
+
+To add or change a pin, resolve the tag to a commit and write both:
+
+```sh
+gh api repos/<owner>/<repo>/git/ref/tags/<tag> --jq .object        # type "commit": that sha is the pin
+gh api repos/<owner>/<repo>/git/tags/<sha> --jq .object.sha        # type "tag" (annotated): dereference once
+```
+
+The weekly dependency pass runs `scripts/check_action_updates.py`, which lists every pinned action
+with a newer `vN.M.P` tag. A newer tag of the pinned major is a finding in the weekly issue: take it
+by changing every use of that action in one pull request, with the same resolve step. A newer major
+is printed in the job log and is not a finding, because a major can change inputs, the runner's Node
+version or defaults, and gets its own reviewed pull request. No bot opens these pull requests; the
+weekly issue is the reminder.
+
 ## Release artifacts: SBOM, signing, provenance
 
 A release is not a tag; it is a set of verifiable artifacts. Per release:

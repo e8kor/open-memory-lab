@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Three repository lints (docs/contributing/review-checklist.md).
+"""Four repository lints (docs/contributing/review-checklist.md).
 
-    python scripts/lint_practices.py migrations|ports|like [--root DIR] [--no-allowlist]
+    python scripts/lint_practices.py migrations|ports|like|actions [--root DIR] [--no-allowlist]
 
 migrations  every migration not in lint_allow/migrations.txt sets lock_timeout, adds CHECK and
             FOREIGN KEY constraints NOT VALID (an inline CHECK on an added column too) and validates them (in that or a later
@@ -10,6 +10,8 @@ migrations  every migration not in lint_allow/migrations.txt sets lock_timeout, 
 ports       no localhost:5432, 127.0.0.1:5432 or PGPORT:-5432 default in tests or scripts.
 like        no LIKE or ILIKE operator in the SQL of crates/adapters/oml-pg/src; row security
             runs a non-leakproof operator before its policy (ADR-0052).
+actions     every `uses:` under .github/ is `owner/repo@<40 hex> # v<tag>`, and one action is one
+            commit in every workflow (docs/contributing/ci-and-toolchain.md "Pinned actions").
 
 An escape is a reasoned line comment: `-- lint:allow <rule> <why>` in SQL,
 `// lint:allow-like <why>` in Rust, `lint:allow-5432 <why>` anywhere on the line.
@@ -148,7 +150,42 @@ def lint_like(root: Path, use_allow: bool = True) -> list[str]:
     return problems
 
 
-LINTS = {"migrations": lint_migrations, "ports": lint_ports, "like": lint_like}
+# ---- actions ----------------------------------------------------------------------------
+
+USES = re.compile(r"^\s*(?:-\s+)?uses:\s*[\"']?([^\s\"'#]+)[\"']?\s*(#.*)?$")
+PIN = re.compile(r"^(?P<action>[\w.-]+/[\w./-]+)@(?P<sha>[0-9a-f]{40})$")
+TAG_COMMENT = re.compile(r"^#\s*v\d\S*(\s|$)")
+
+
+def lint_actions(root: Path, use_allow: bool = True) -> list[str]:
+    """A tag can be moved to other code; a commit cannot, so a pin names the commit and the comment names the tag a reader can check it against."""
+    problems = []
+    seen: dict[str, dict[str, str]] = {}
+    files = sorted((root / ".github").rglob("*.yml")) + sorted((root / ".github").rglob("*.yaml"))
+    for f in files:
+        rel = f.relative_to(root)
+        for i, line in enumerate(f.read_text().splitlines(), 1):
+            m = USES.match(line)
+            if not m:
+                continue
+            target, comment = m.group(1), m.group(2) or ""
+            if target.startswith("./"):
+                continue
+            pin = PIN.match(target)
+            if not pin:
+                problems.append(f"{rel}:{i}: {target} is not pinned to a 40-hex commit SHA")
+                continue
+            if not TAG_COMMENT.match(comment):
+                problems.append(f"{rel}:{i}: {target} has no trailing `# v<tag>` comment naming the tag it was resolved from")
+            seen.setdefault(pin["action"].lower(), {}).setdefault(pin["sha"], f"{rel}:{i}")
+    for action, shas in sorted(seen.items()):
+        if len(shas) > 1:
+            where = ", ".join(f"{sha[:12]} at {at}" for sha, at in sorted(shas.items()))
+            problems.append(f".github: {action} is pinned to {len(shas)} different commits ({where}); use one")
+    return problems
+
+
+LINTS = {"migrations": lint_migrations, "ports": lint_ports, "like": lint_like, "actions": lint_actions}
 
 
 def main(argv: list[str] | None = None) -> int:
