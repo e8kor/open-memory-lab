@@ -4509,15 +4509,16 @@ async fn connection_account(
 
 /// After the fold: the chain's liveness again, every charge on its
 /// account's counter, and the ceiling the commit carries held against each
-/// meter it raised. A meter past its limit refuses the commit, which rolls
-/// back with the journal row (ADR-0071 d3).
+/// meter it raised. A meter past its limit is returned, and the caller
+/// refuses the commit with it, which rolls back with the journal row
+/// (ADR-0071 d3).
 async fn apply_meters(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
     at: &EventTime,
     mut plan: MeterPlan,
     ceiling: Option<&Ceiling>,
-) -> Result<(), StoreError> {
+) -> Result<Option<QuotaReached>, StoreError> {
     if let Some((workarea_id, claim_key, before)) = plan.chain.take() {
         let after = chain_live(tx, tenant_id, workarea_id, &claim_key).await?;
         if after != before {
@@ -4590,7 +4591,7 @@ async fn apply_meters(
             let limit = ceiling.quotas.get(quota);
             let used = u64::try_from(used).unwrap_or(0);
             if used > limit {
-                return Err(StoreError::QuotaReached(QuotaReached {
+                return Ok(Some(QuotaReached {
                     quota,
                     limit,
                     used: used.saturating_sub(delta.unsigned_abs()),
@@ -4598,7 +4599,7 @@ async fn apply_meters(
             }
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Appends one event inside the commit's transaction if it extends
@@ -4678,9 +4679,13 @@ async fn append_event(
         None
     };
     apply_fold(tx, tenant_id, env.event_id, seq, &env.at, req.fold).await?;
-    if let Some(plan) = plan {
-        apply_meters(tx, tenant_id, &env.at, plan, req.ceiling.as_ref()).await?;
-    }
+    // A meter past its ceiling refuses the commit below, after the
+    // idempotency record: an attempt whose key is already recorded is the
+    // replay it is, at the limit too (ADR-0071 d3).
+    let over_ceiling = match plan {
+        Some(plan) => apply_meters(tx, tenant_id, &env.at, plan, req.ceiling.as_ref()).await?,
+        None => None,
+    };
 
     // Outbox: kind 'bronze-event' (0001's drain-kind set); the port
     // row's event id, topic and digest-only payload ride in the jsonb
@@ -4722,6 +4727,10 @@ async fn append_event(
         if inserted == 0 {
             return Err(StoreError::IdempotencyRecorded);
         }
+    }
+    // Returning before COMMIT rolls back the counters with the journal row.
+    if let Some(reached) = over_ceiling {
+        return Err(StoreError::QuotaReached(reached));
     }
 
     Ok(CommitReceipt {

@@ -5148,10 +5148,7 @@ where
             key,
             &[
                 (oml_domain::signup::Quota::Memories, 1),
-                (
-                    oml_domain::signup::Quota::TextBytes,
-                    nfc(&req.body).len() as u64,
-                ),
+                (oml_domain::signup::Quota::TextBytes, body.len() as u64),
                 (oml_domain::signup::Quota::WritesPerMonth, 1),
             ],
         )
@@ -7545,20 +7542,6 @@ where
             self.require_access(&caller, target.workarea_id, Role::Writer, "supersede")
                 .await?;
         }
-        // A new version charges the account's bytes and monthly writes and
-        // never its memories (ADR-0071 d2, d3).
-        self.require_charge(
-            key,
-            &[
-                (
-                    oml_domain::signup::Quota::TextBytes,
-                    nfc(&req.body).len() as u64,
-                ),
-                (oml_domain::signup::Quota::WritesPerMonth, 1),
-            ],
-        )
-        .await?;
-
         // Step 5, in its order: the scope is the target's workarea, the
         // target is the served tip, the kind stays in its class and a
         // retirement keeps the target's kind and never retires a term, and
@@ -7718,6 +7701,23 @@ where
                     target.claim_key
                 ))
             })?;
+
+        // A new version charges the account's bytes and monthly writes and
+        // never its memories; nothing is journalled past them. As a
+        // submit's, the check follows every other refusal and the replay
+        // step 5 makes when an attempt under the same key committed since
+        // the lookup, so a retry at the limit gets its stored receipt and a
+        // revision refused for its target is the refusal it was. This check
+        // spares the signature; the commit's ceiling is the one that holds
+        // (ADR-0071 d2, d3).
+        self.require_charge(
+            key,
+            &[
+                (oml_domain::signup::Quota::TextBytes, body.len() as u64),
+                (oml_domain::signup::Quota::WritesPerMonth, 1),
+            ],
+        )
+        .await?;
 
         // The similar check, as a submit's, never naming a version of the
         // claim this replaces; a retirement states why and is not checked
