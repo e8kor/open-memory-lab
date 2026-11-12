@@ -111,8 +111,9 @@ rest is.
 7. **Cut a release.** Tag `vX.Y.Z` as usual. Watch jobs `publish-sdk-pypi` and `publish-sdk-npm`;
    approve each if step 5 put a reviewer on it.
 8. **After the first publish.** In the next release pull request, add the registry install lines to
-   `docs/engineering/sdks.md` and both SDK READMEs, replace their "Neither package is on PyPI or npm"
-   and "chosen when it is first published" sentences, and check the install from a clean environment.
+   `docs/engineering/sdks.md` and both SDK READMEs, replace the "Neither package is on PyPI or npm"
+   sentence of `sdks.md` and the "It is not published there yet" sentence of each README, and check
+   the install from a clean environment.
 
 ## What a shared server needs before a release that contains X
 
