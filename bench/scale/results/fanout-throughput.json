@@ -1,0 +1,81 @@
+{
+ "size": 100000,
+ "workareas": 50,
+ "runs": [
+  {
+   "clients": 1,
+   "mode": "single",
+   "recalls_per_s": 23.4,
+   "p50": 39.84,
+   "p95": 95.25,
+   "load_avg": 2.1171875
+  },
+  {
+   "clients": 1,
+   "mode": "fanout-groups-4",
+   "recalls_per_s": 60.2,
+   "p50": 13.92,
+   "p95": 40.23,
+   "load_avg": 2.02734375
+  },
+  {
+   "clients": 1,
+   "mode": "fanout-groups-8",
+   "recalls_per_s": 104.8,
+   "p50": 9.14,
+   "p95": 16.6,
+   "load_avg": 2.666015625
+  },
+  {
+   "clients": 4,
+   "mode": "single",
+   "recalls_per_s": 89.9,
+   "p50": 41.78,
+   "p95": 95.73,
+   "load_avg": 2.5322265625
+  },
+  {
+   "clients": 4,
+   "mode": "fanout-groups-4",
+   "recalls_per_s": 146.3,
+   "p50": 25.98,
+   "p95": 53.34,
+   "load_avg": 2.64990234375
+  },
+  {
+   "clients": 4,
+   "mode": "fanout-groups-8",
+   "recalls_per_s": 138.1,
+   "p50": 26.0,
+   "p95": 54.99,
+   "load_avg": 3.23876953125
+  },
+  {
+   "clients": 8,
+   "mode": "single",
+   "recalls_per_s": 172.5,
+   "p50": 42.83,
+   "p95": 100.2,
+   "load_avg": 3.13916015625
+  },
+  {
+   "clients": 8,
+   "mode": "fanout-groups-4",
+   "recalls_per_s": 158.5,
+   "p50": 46.39,
+   "p95": 102.96,
+   "load_avg": 3.60888671875
+  },
+  {
+   "clients": 8,
+   "mode": "fanout-groups-8",
+   "recalls_per_s": 147.9,
+   "p50": 48.55,
+   "p95": 104.85,
+   "load_avg": 4.7138671875
+  }
+ ],
+ "k": 100,
+ "queries": 100,
+ "cpus": 8
+}
