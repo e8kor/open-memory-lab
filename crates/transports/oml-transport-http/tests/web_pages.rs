@@ -5,6 +5,7 @@
 
 mod support;
 
+use std::future::Future;
 use std::sync::Arc;
 
 use axum::Router;
@@ -2344,6 +2345,121 @@ async fn a_denied_session_key_is_still_refused_after_its_entry_is_removed_added_
     assert_eq!(rig.head().await, head, "nothing journalled");
     let laptop = key_named(&rig, "alice-laptop").await;
     assert!(!denied(&rig, laptop.key_id).await, "no key was cut off");
+}
+
+/// alice signed in, with a writer key and a connector key of her own.
+async fn alice_with_a_connector(rig: &Rig) -> String {
+    let cookie = signed_in(rig, "sub-1", EMAIL).await;
+    let _ = issued(rig, &cookie, "laptop").await;
+    let (status, phone) = as_web(
+        rig,
+        &cookie,
+        "web",
+        "/v2/keys",
+        json!({"name": "alice-phone", "role": "writer", "connect_code": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{phone}");
+    cookie
+}
+
+/// The three key acts of a session key: path, body and verb.
+fn session_key_acts() -> [(&'static str, Value, &'static str); 3] {
+    [
+        (
+            "/v2/keys",
+            json!({"name": "alice-tablet", "role": "writer", "connect_code": false}),
+            "issue_key",
+        ),
+        (
+            "/v2/keys/alice-phone/connect-codes",
+            json!({}),
+            "mint_connect_code",
+        ),
+        (
+            "/v2/keys/alice-laptop/denials",
+            json!({"workarea": "universe"}),
+            "deny_key",
+        ),
+    ]
+}
+
+/// The admin's denial of `alice-web` on `universe`, as a concurrent
+/// request commits it.
+fn denying_alice_web(rig: &Rig) -> impl Future<Output = ()> + Send + 'static {
+    let (app, admin) = (rig.app.clone(), rig.boot.admin_key.value.clone());
+    async move {
+        let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
+        app.deny_key(admin.as_str(), name("alice-web"), name("universe"))
+            .await
+            .expect("the admin denies alice-web");
+    }
+}
+
+/// The types of the tenant's events after `seq`, oldest first.
+async fn journalled_after(rig: &Rig, seq: u64) -> Vec<String> {
+    rig.store
+        .events_range(rig.boot.tenant_id, seq + 1, 1000)
+        .await
+        .expect("the chain")
+        .into_iter()
+        .map(|e| e.envelope.event_type)
+        .collect()
+}
+
+/// A denial that commits while a session key's act runs is never followed
+/// in the journal by that key's act. Each of the three reads the chain head
+/// before the key's access and seals its commit on that head: a denial
+/// committed before the head read is in the access the act reads, so the
+/// act is refused, and one committed after it moves the head, so the
+/// commit conflicts and the retry reads the denial (ADR-0070 d2, d8; #325).
+#[tokio::test]
+async fn a_denial_committed_before_a_session_keys_act_reads_the_chain_head_refuses_the_act() {
+    for (path, body, verb) in session_key_acts() {
+        let rig = rig().await;
+        let cookie = alice_with_a_connector(&rig).await;
+        let head = rig.head().await;
+        rig.store.before_next_head_read(denying_alice_web(&rig));
+        let (status, answer) = as_web(&rig, &cookie, "web", path, body).await;
+        assert_session_key_denied(status, &answer, verb);
+        assert_eq!(
+            journalled_after(&rig, head).await,
+            ["key.denied"],
+            "{verb}: the denial alone, and nothing by the denied key after it"
+        );
+    }
+}
+
+/// The head a session key's act seals on is the one it read before the
+/// key's access: the act reads the head once, so nothing commits between
+/// the access it decided on and a later head read. A denial armed for a
+/// second head read lands only after the act (ADR-0070 d2, d8; #325).
+#[tokio::test]
+async fn a_session_keys_act_reads_the_chain_head_once_before_its_access() {
+    for (path, body, verb) in session_key_acts() {
+        let rig = rig().await;
+        let cookie = alice_with_a_connector(&rig).await;
+        let web = key_named(&rig, "alice-web").await.key_id;
+        let head = rig.head().await;
+        let (store, denial) = (rig.store.clone(), denying_alice_web(&rig));
+        rig.store
+            .before_next_head_read(async move { store.before_next_head_read(denial) });
+        let (status, answer) = as_web(&rig, &cookie, "web", path, body).await;
+        assert_eq!(status, StatusCode::CREATED, "{verb}: {answer}");
+        let acted = rig
+            .store
+            .events_range(rig.boot.tenant_id, head + 1, 1000)
+            .await
+            .expect("the chain");
+        assert!(!acted.is_empty(), "{verb}: the act is journalled");
+        assert!(
+            !denied(&rig, web).await,
+            "{verb}: no denial of alice-web landed inside the act"
+        );
+        // The next head read is the one the denial was armed for.
+        let _ = rig.head().await;
+        assert!(denied(&rig, web).await, "{verb}: the denial was armed");
+    }
 }
 
 /// A cut-off session key still ends its session, and every credential of

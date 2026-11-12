@@ -14,7 +14,7 @@ use oml_domain::name::{Name, NamedKind, Reference, UNIVERSE};
 use oml_domain::signup::{QUOTA_LIMIT_MAX, Quota, Quotas};
 use oml_domain::{Role, event_types};
 
-use super::{App, Caller, require_role};
+use super::{App, Caller, Head, require_role};
 use crate::ports::{
     Clock, ConnectionStore, IdGen, MetadataFold, Scanner, Signer, StoreError, WebStore,
 };
@@ -405,7 +405,12 @@ where
                 // and kept in `keys_skipped`, which the HTTP answer does not
                 // carry; `oml doctor` names the second (#277).
                 match later_step(|| {
-                    self.deny_key_by(&admin.key, Reference::Id(key.key_id), universe.clone())
+                    self.deny_key_by(
+                        &admin.key,
+                        Reference::Id(key.key_id),
+                        universe.clone(),
+                        Head::AtSeal,
+                    )
                 })
                 .await
                 {

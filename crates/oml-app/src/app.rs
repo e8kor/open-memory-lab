@@ -482,8 +482,20 @@ pub(crate) enum Issuance<'a> {
     Plain,
     /// A session key for the allowlist user named: no value.
     Session(&'a Name),
-    /// A person's `<user>-web` issuing a key in its own root.
-    PersonsOwn,
+    /// A person's `<user>-web` issuing a key in its own root, sealed on the
+    /// chain head read before that key's access ([`Head::BeforeAccess`]).
+    PersonsOwn(&'a Option<SignedEnvelope>),
+}
+
+/// The chain head an act seals its commit on.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Head<'a> {
+    /// Read where the act seals, after its lookups.
+    AtSeal,
+    /// Read by the caller before it read the acting key's access: a denial
+    /// of that key committed after the read moves the head, so the commit
+    /// conflicts and the retry reads the denial (ADR-0070 d2, d8; #325).
+    BeforeAccess(&'a Option<SignedEnvelope>),
 }
 
 /// The user root an issuance names: its id, found or minted, its name, the
@@ -2289,6 +2301,18 @@ where
         Ok(nodes.into_iter().collect())
     }
 
+    /// The head an act seals on: the one its caller read, else the head now.
+    async fn head_at(
+        &self,
+        tenant_id: Uuid,
+        head: Head<'_>,
+    ) -> Result<Option<SignedEnvelope>, AppError> {
+        match head {
+            Head::AtSeal => self.head_event(tenant_id).await,
+            Head::BeforeAccess(read) => Ok(read.clone()),
+        }
+    }
+
     async fn head_event(&self, tenant_id: Uuid) -> Result<Option<SignedEnvelope>, AppError> {
         match self.journal.chain_head(tenant_id).await? {
             None => Ok(None),
@@ -2980,7 +3004,7 @@ where
             .await?;
         // Steps 1–3: the two-key rule, the issuer ceiling, admissibility.
         let ceiling = match how {
-            Issuance::PersonsOwn => Role::Admin,
+            Issuance::PersonsOwn(_) => Role::Admin,
             Issuance::Plain | Issuance::Session(_) => issuer.role,
         };
         // A curator is a dreamer key held by an agent, whose writer grants
@@ -3141,7 +3165,10 @@ where
         }
         let key_id = record.key_id;
         let guardrail_scope = record.guardrail_scope;
-        let prev = self.head_event(tenant_id).await?;
+        let prev = match how {
+            Issuance::PersonsOwn(head) => head.clone(),
+            Issuance::Plain | Issuance::Session(_) => self.head_event(tenant_id).await?,
+        };
         let event = self.seal(
             prev.as_ref(),
             tenant_id,
@@ -3266,7 +3293,7 @@ where
     ) -> Result<DenialRecord, AppError> {
         let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "deny")?;
-        self.deny_key_by(&admin, key, node).await
+        self.deny_key_by(&admin, key, node, Head::AtSeal).await
     }
 
     /// [`App::deny_key`] once the issuer is known: an admin key, or a
@@ -3277,6 +3304,7 @@ where
         admin: &KeyRecord,
         key: Reference,
         node: Reference,
+        head: Head<'_>,
     ) -> Result<DenialRecord, AppError> {
         let admin = admin.clone();
         let tenant_id = admin.tenant_id;
@@ -3295,7 +3323,7 @@ where
             denial_id: self.ids.new_id(),
             node,
         };
-        let prev = self.head_event(tenant_id).await?;
+        let prev = self.head_at(tenant_id, head).await?;
         let epoch = prev.as_ref().map_or(1, |p| p.envelope.seq + 1);
         let event = self.seal(
             prev.as_ref(),
@@ -9080,7 +9108,7 @@ where
         // against its rate (#253, #281).
         let admin = self.authenticate_bearer(api_key.into()).await?.key;
         require_role(&admin, Role::Admin, "mint_connect_code")?;
-        self.mint_connect_code_by_with_ttl(&admin, key, ttl_secs)
+        self.mint_connect_code_by_with_ttl(&admin, key, ttl_secs, Head::AtSeal)
             .await
     }
 
@@ -9091,8 +9119,10 @@ where
         &self,
         admin: &KeyRecord,
         key: Reference,
+        head: Head<'_>,
     ) -> Result<ConnectCodeIssued, AppError> {
-        self.mint_connect_code_by_with_ttl(admin, key, None).await
+        self.mint_connect_code_by_with_ttl(admin, key, None, head)
+            .await
     }
 
     async fn mint_connect_code_by_with_ttl(
@@ -9100,6 +9130,7 @@ where
         admin: &KeyRecord,
         key: Reference,
         ttl_secs: Option<i64>,
+        head: Head<'_>,
     ) -> Result<ConnectCodeIssued, AppError> {
         let ttl_secs = match ttl_secs {
             None => CONNECT_CODE_TTL_SECS,
@@ -9146,7 +9177,7 @@ where
             .find(|c| c.redeemed_at.is_none() && c.voided_seq.is_none())
             .map(|c| c.code_id);
         let (code, shown) = self.new_connect_code(oauth, key_id, ttl_secs);
-        let prev = self.head_event(tenant_id).await?;
+        let prev = self.head_at(tenant_id, head).await?;
         let event = self.seal(
             prev.as_ref(),
             tenant_id,
