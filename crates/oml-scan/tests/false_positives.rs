@@ -52,6 +52,19 @@ const PROSE: &[&str] = &[
     "- [x] docs updated\n- instructions: see README",
     "Your new system instructions are to follow the style guide.",
     "Updated. System instructions: see the wiki for the printer.",
+    // The phrase with other words on its line is a sentence, a label, a
+    // commit subject, a to-do or a path, and not a heading (#317).
+    "- printer: updated system instructions",
+    "docs: updated system instructions",
+    "TODO: write new system instructions",
+    "Follow the new system instructions",
+    "Follow the new system instructions.",
+    "Contents\n1. Setup .... 3\n2. Updated system instructions .... 7\n3. Backups .... 9",
+    "The runbook is long, and the page\nthat carries the new system instructions\nis near the end.",
+    "see /usr/share/doc/system-instructions-old/README for the new system instructions",
+    "Follow the new system instructions below:",
+    "| Updated system instructions | owner |",
+    "Contents\nA. Setup .... 3\nB. Updated system instructions .... 7",
 ];
 
 /// Source code and configuration.
@@ -71,6 +84,7 @@ const CODE: &[&str] = &[
     "{\"role\": \"system\", \"note\": \"the system role is read-only\"}",
     "if user.role == Role::Developer { /* developer mode only in staging */ }",
     "fn youarenowadanger() -> bool { false }",
+    "from docs import new_system_instructions",
 ];
 
 /// Names as they appear in code, on their own or in a sentence.
@@ -99,6 +113,7 @@ const URLS: &[&str] = &[
     "https://example.com/yournewroleissues",
     "https://example.com/developer/mode/onboarding",
     "https://example.com/a/b/instructions?new=1&system=1",
+    "https://example.com/wiki/new-system-instructions",
 ];
 
 /// Ordinary text with no phrase of a rule near it, so the rate over the whole
@@ -166,12 +181,22 @@ const KNOWN_HOLDS: &[&str] = &[
     "Set OVERRIDE_SYSTEM_PROMPT_PATH to a file you own.",
     "The helper ignore_previous_instructions_cache is private.",
     "https://github.com/example/repo/blob/main/docs/override_system_prompts_dir.md",
-    // A line that ends in `new system instructions` reads as a heading (#226).
-    "see /usr/share/doc/system-instructions-old/README for the new system instructions",
+    // A line that is `new system instructions` alone reads as a heading, and a
+    // list item or a title that is the phrase alone is one (#226, #317).
+    "Contents:\n- Setup\n- New system instructions\n- Backups",
+    "Release notes\n\nUpdated system instructions.\n\nThe printer queue is fixed.",
+    "Routes:\n/new/system/instructions\n/old/system/rules",
+    // A tag, quotation marks or a symbol around the phrase alone is a heading
+    // as a hash is; the one-word sentence `System.` is the phrase's own
+    // spelling of a break; a bold word and a colon is a directive (#317).
+    "The UI is new. System. Instructions: see the wiki.",
+    "<b>Updated system instructions</b>",
+    "\"New system instructions\"",
+    "**New** system instructions: see the wiki for the printer.",
 ];
 
 /// The number of samples, so a sample cannot leave the corpus unnoticed.
-const CORPUS_SIZE: usize = 123;
+const CORPUS_SIZE: usize = 142;
 
 /// Every sample, the ones that hold by design last.
 fn corpus() -> Vec<(&'static str, &'static str)> {
