@@ -74,7 +74,9 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
   with the journal row. The client gets `429 limit.quota`
   `{quota, limit, used}` and nothing is journalled. The application checks the same counters
   before it signs, so most refusals cost no signature. The check inside the commit is the one
-  that holds. Of two writers racing at the last free memory, exactly one commits.
+  that holds. Of two writers racing at the last free memory, exactly one commits. Both checks
+  follow every idempotency replay: a write retried under its key answers its record at the limit,
+  and a commit under a recorded key is refused as recorded before its ceiling.
 
     Counters can drift from their rows only through a bug or a hand edit. `GET
     /v2/admin/usage/drift` recomputes every account's stocks from the rows, by the definitions
@@ -150,6 +152,14 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
     billing code is in this one. A stock meter is the value at the rollup (d4), so a consumer that
     totals a month sums the flows (`writes`, `recalls`) and reads the stocks as they stand on
     each day. (`crates/transports/oml-transport-http/src/metering.rs`, `admin_usage_route`.)
+
+    **As landed on main, after ADR-0070 (2026-11-12).** The pages are `oml-web`'s and read over
+    `/v2`, so the lead serves none of the three named above. `GET /v2/whoami`'s `person` and each
+    row of `GET /v2/web/users` carry the `text_bytes` and `writes` counts beside the ones they had.
+    They also carry the `text_bytes` and `writes_per_month` limits, null when unlimited. The
+    onboarding and users pages show memories, keys and connections as before. The meters card with
+    its two states, and the profile and meter columns of the users page, are not built in `oml-web`.
+    The five routes above take a key and no session credential (ADR-0070 d2).
 
 - **d7 — Meters are counts. They never hold text, a query or an address.** `account_meters`,
   `account_activity` and `usage_daily` hold ids, a profile name, dates and integers. A recall
