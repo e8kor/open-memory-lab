@@ -842,6 +842,77 @@ async fn sign_out_ends_the_session_and_clears_the_cookie() {
     assert!(body.contains("session has ended"), "{body}");
 }
 
+/// The lead's own refusal page carries the sign-out control wherever the
+/// cookie names a live session: an old `?view=` URL, and a form the act
+/// refuses once it has read the session, one without the session's CSRF
+/// token included, since the cookie names the session and the control's
+/// token is that session's. A refusal answered before the session is read,
+/// and the sign-in page a dead cookie gets, carry none (ADR-0070 d2;
+/// ADR-0045 d5, d8; #327).
+#[tokio::test]
+async fn the_leads_refusal_page_draws_the_sign_out_control_for_a_live_session_and_for_no_one_else()
+{
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let csrf = csrf_for(&cookie);
+    let control = format!(
+        r#"<form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="{csrf}"><button type="submit" class="linkish">Sign out</button></form></span></header>"#
+    );
+    let (status, _, page) = send(&rig.router, get("/web?view=keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
+    assert!(page.contains(&control), "{page}");
+    for fields in [
+        vec![("action", "sign_out")],
+        vec![("action", "sign_out"), ("csrf_token", "0000")],
+        vec![("action", "issue_key"), ("csrf_token", csrf.as_str())],
+        vec![
+            ("action", "sign_out"),
+            ("csrf_token", csrf.as_str()),
+            ("next", "/web"),
+        ],
+    ] {
+        let (status, _, page) = send(&rig.router, post("/web", &fields, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{fields:?}: {page}");
+        assert!(page.contains(&control), "{fields:?}: {page}");
+    }
+    // Before the session is read: another origin's form, and an unknown
+    // provider's callback.
+    let request = Request::post("/web")
+        .header(header::CONTENT_TYPE, FORM)
+        .header("sec-fetch-site", "cross-site")
+        .header(header::COOKIE, &cookie)
+        .body(Body::from(form(&[
+            ("action", "sign_out"),
+            ("csrf_token", csrf.as_str()),
+        ])))
+        .expect("a request");
+    let (status, _, page) = send(&rig.router, request).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
+    assert!(!page.contains("sign_out"), "{page}");
+    let (status, _, page) = send(&rig.router, get("/web/callback/nowhere", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
+    assert!(!page.contains("sign_out"), "{page}");
+    // The control as drawn ends the session, and a cookie that names none
+    // gets the sign-in page, which draws no control.
+    let (status, _, _) = send(
+        &rig.router,
+        post(
+            "/web",
+            &[("action", "sign_out"), ("csrf_token", &csrf)],
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (status, _, page) = send(
+        &rig.router,
+        post("/web", &[("action", "issue_key")], Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{page}");
+    assert!(!page.contains("sign_out"), "{page}");
+}
+
 #[tokio::test]
 async fn the_old_page_urls_and_acts_answer_not_found_or_refused_and_run_nothing() {
     // The 303s from the page URLs and acts of v0.6 are deleted in v0.7.1

@@ -7,6 +7,8 @@ use axum::response::{IntoResponse, Response};
 use http::{HeaderValue, StatusCode, header};
 use oml_sdk::{Error, TransportError};
 
+use crate::session::PageCalls;
+
 /// What a page shows for an API refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageOutcome {
@@ -82,11 +84,16 @@ pub fn html(status: StatusCode, body: String) -> Response {
 }
 
 /// The page for a call that has no usable answer, naming the page's
-/// request id: an API refusal as its outcome, a timeout as `504`, and an
+/// request id and carrying the sign-out control of the session `calls`
+/// records: an API refusal as its outcome, a timeout as `504`, and an
 /// unreachable API or an answer not in the operation's shape as `502`
-/// (ADR-0070 d3 layer 7, d8). `next` is the page, for the sign-in outcome.
+/// (ADR-0070 d3 layer 7, d8; #327). `next` is the page, for the sign-in
+/// outcome.
 #[must_use]
-pub fn page(error: &Error, request_id: &str, next: &str) -> Response {
+pub fn page(error: &Error, calls: &PageCalls, next: &str) -> Response {
+    let refusal = |code: &str, message: &str| {
+        oml_page::web::refusal_page(code, message, Some(calls.page_id()), calls.csrf())
+    };
     match error {
         Error::Api(e) => {
             let outcome = PageOutcome::of_code(&e.code);
@@ -94,10 +101,7 @@ pub fn page(error: &Error, request_id: &str, next: &str) -> Response {
                 return sign_in(next);
             }
             let status = StatusCode::from_u16(e.status).unwrap_or(StatusCode::BAD_GATEWAY);
-            let mut response = html(
-                outcome.status(status),
-                oml_page::web::refusal_page(&e.code, &e.message, Some(request_id)),
-            );
+            let mut response = html(outcome.status(status), refusal(&e.code, &e.message));
             if outcome == PageOutcome::Retry
                 && let Some(after) = e
                     .retry_after
@@ -110,18 +114,16 @@ pub fn page(error: &Error, request_id: &str, next: &str) -> Response {
         }
         Error::Transport(TransportError::Timeout) => html(
             StatusCode::GATEWAY_TIMEOUT,
-            oml_page::web::refusal_page(
+            refusal(
                 "unavailable",
                 "the server did not answer this page in time; try again",
-                Some(request_id),
             ),
         ),
         Error::Transport(TransportError::Unreachable(_)) | Error::Decode { .. } => html(
             StatusCode::BAD_GATEWAY,
-            oml_page::web::refusal_page(
+            refusal(
                 "unavailable",
                 "the server could not answer this page; try again",
-                Some(request_id),
             ),
         ),
     }
@@ -193,24 +195,56 @@ mod tests {
 
     #[test]
     fn each_failure_answers_its_page_status() {
-        let response = page(&api(404, "access.not_found"), "page-7", "/web");
+        let calls = PageCalls::new("page-7");
+        let response = page(&api(404, "access.not_found"), &calls, "/web");
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        let response = page(&api(429, "limit.rate"), "page-7", "/web");
+        let response = page(&api(429, "limit.rate"), &calls, "/web");
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(response.headers()[header::RETRY_AFTER], "30");
-        let response = page(&api(401, "auth.invalid"), "page-7", "/web/guardrails");
+        let response = page(&api(401, "auth.invalid"), &calls, "/web/guardrails");
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert_eq!(
             response.headers()[header::LOCATION],
             "/web/sign-in?next=%2Fweb%2Fguardrails"
         );
-        let response = page(&Error::Transport(TransportError::Timeout), "page-7", "/web");
+        let response = page(&Error::Transport(TransportError::Timeout), &calls, "/web");
         assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
         let response = page(
             &Error::Transport(TransportError::Unreachable("refused".to_owned())),
-            "page-7",
+            &calls,
             "/web",
         );
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    /// Every failure's page carries the sign-out control once the request
+    /// carried a session cookie, a session check that had no answer
+    /// included, and none before (#327).
+    #[tokio::test]
+    async fn a_failure_page_draws_the_sign_out_control_once_the_request_carries_a_session() {
+        let failures = [
+            api(404, "access.not_found"),
+            api(429, "limit.rate"),
+            Error::Transport(TransportError::Timeout),
+            Error::Transport(TransportError::Unreachable("refused".to_owned())),
+        ];
+        let body = |response: Response| async {
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("a body");
+            String::from_utf8(bytes.to_vec()).expect("UTF-8")
+        };
+        let control = format!(
+            r#"name="action" value="sign_out"><input type="hidden" name="csrf_token" value="{}">"#,
+            oml_web_credential::csrf_token("the-session-token")
+        );
+        for failure in &failures {
+            let calls = PageCalls::new("page-7");
+            let no_one = body(page(failure, &calls, "/web")).await;
+            assert!(!no_one.contains("sign_out"), "{failure:?}");
+            calls.carries_session("the-session-token");
+            let signed_in = body(page(failure, &calls, "/web")).await;
+            assert!(signed_in.contains(&control), "{failure:?}");
+        }
     }
 }

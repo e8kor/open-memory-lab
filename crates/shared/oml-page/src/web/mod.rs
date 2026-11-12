@@ -347,23 +347,34 @@ pub fn shell(
     )
 }
 
-/// A refusal answered on a page, never a redirect: its code and message.
+/// A refusal answered on a page, never a redirect: its code and message,
+/// drawn for no one, so its header carries the brand alone.
 #[must_use]
 pub fn refusal(code: &str, message: &str) -> String {
-    refusal_page(code, message, None)
+    refusal_page(code, message, None, None)
 }
 
 /// [`refusal`], naming the request id a person can quote, as `oml-web`'s
-/// error pages do (ADR-0070 d3 layer 7).
+/// error pages do (ADR-0070 d3 layer 7), and carrying the header's
+/// sign-out control where `csrf` is a session's CSRF token, as [`shell`]
+/// draws it: a person a page refuses still ends their session (#327).
 #[must_use]
-pub fn refusal_page(code: &str, message: &str, request_id: Option<&str>) -> String {
+pub fn refusal_page(
+    code: &str,
+    message: &str,
+    request_id: Option<&str>,
+    csrf: Option<&str>,
+) -> String {
     let request = request_id.map_or_else(String::new, |id| {
         format!(r#"<p class="desc">Request <code>{}</code></p>"#, escape(id))
+    });
+    let end = csrf.map_or_else(String::new, |csrf| {
+        format!(r#"<span class="end">{}</span>"#, sign_out(csrf))
     });
     document(
         "Not available",
         &format!(
-            r#"<header class="top">{}</header><main class="wrap"><h1>This cannot continue</h1><p class="error" role="alert">{}: {}</p>{request}<p><a href="/web">Back</a></p></main>"#,
+            r#"<header class="top">{}{end}</header><main class="wrap"><h1>This cannot continue</h1><p class="error" role="alert">{}: {}</p>{request}<p><a href="/web">Back</a></p></main>"#,
             brand(true),
             escape(code),
             escape(message)
@@ -437,5 +448,25 @@ mod tests {
         assert!(!signed_in.contains(r#"href="/web?action=sign_out"#));
         let no_one = shell("t", "", None, &[], "", None, "");
         assert!(!no_one.contains("sign_out"), "{no_one}");
+    }
+
+    /// A refusal page carries the same control where a session's CSRF
+    /// token is given, and none for no one (#327).
+    #[test]
+    fn a_refusal_page_draws_the_sign_out_control_only_for_a_signed_in_session() {
+        let control = r#"<span class="end"><form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="c5"><button type="submit" class="linkish">Sign out</button></form></span></header>"#;
+        let signed_in = refusal_page("access.not_found", "not found", Some("req-1"), Some("c5"));
+        assert!(signed_in.contains(control), "{signed_in}");
+        assert!(
+            shell("t", "alice", Some("c5"), &[], "", None, "").contains(&control[18..]),
+            "the control is the one shell draws"
+        );
+        for no_one in [
+            refusal("access.not_found", "not found"),
+            refusal_page("access.not_found", "not found", Some("req-1"), None),
+        ] {
+            assert!(!no_one.contains("sign_out"), "{no_one}");
+            assert!(!no_one.contains(r#"class="end""#), "{no_one}");
+        }
     }
 }
