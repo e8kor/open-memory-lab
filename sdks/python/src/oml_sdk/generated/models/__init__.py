@@ -146,6 +146,8 @@ from .key_issue_request import KeyIssueRequest
 from .key_issue_request_held_by import KeyIssueRequestHeldBy
 from .key_issue_request_profile import KeyIssueRequestProfile
 from .key_issued import KeyIssued
+from .key_limits import KeyLimits
+from .key_limits_request import KeyLimitsRequest
 from .key_live_connect_code_type_1 import KeyLiveConnectCodeType1
 from .key_profile_type_1 import KeyProfileType1
 from .key_profile_type_2_type_1 import KeyProfileType2Type1
@@ -500,6 +502,8 @@ __all__ = (
     "KeyIssueRequestHeldBy",
     "KeyIssueRequestProfile",
     "KeyIssued",
+    "KeyLimits",
+    "KeyLimitsRequest",
     "KeyLiveConnectCodeType1",
     "KeyProfileType1",
     "KeyProfileType2Type1",

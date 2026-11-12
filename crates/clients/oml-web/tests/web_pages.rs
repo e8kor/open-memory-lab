@@ -842,6 +842,84 @@ async fn agent_writes_in(rig: &Rig, value: &str, body: &str, workarea: &str) -> 
         .memory_id
 }
 
+/// A tenant reviewer an admin granted into alice's root, dreamer and
+/// reader on its subtree: the key that puts another author's row there. A
+/// key that is not alice's starts no memory in her root (ADR-0044 d16), so
+/// what it holds there is a successor it proposed.
+async fn reviewer_in_alices_root(rig: &Rig) -> oml_app::types::IssuedKey {
+    tenant_reviewer_in(rig, "helper", "alice").await
+}
+
+/// The tenant reviewer `name`, dreamer and reader on `user`'s root.
+async fn tenant_reviewer_in(rig: &Rig, name: &str, user: &str) -> oml_app::types::IssuedKey {
+    rig.app
+        .issue_key(
+            &rig.boot.admin_key.value,
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Dreamer,
+                name: Name::parse(name).expect("a name"),
+                principal: name.to_owned(),
+                held_by: Some(HeldBy::Agent),
+                default_workarea: None,
+                crew: None,
+                grants: [Role::Dreamer, Role::Reader]
+                    .into_iter()
+                    .map(|role| GrantRequest {
+                        node: Name::parse(user).expect("a name").into(),
+                        role,
+                        deny: Vec::new(),
+                        covers: oml_app::domain::access::Covers::Subtree,
+                    })
+                    .collect(),
+                connect_code: false,
+                user: None,
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("a tenant reviewer on the root")
+}
+
+/// The reviewer approves `target`, a row alice's agent wrote, and proposes
+/// `body` as its successor: a held row in the target's workarea that
+/// another author wrote.
+async fn reviewer_holds_a_successor(rig: &Rig, reviewer: &str, target: uuid::Uuid, body: &str) {
+    rig.app
+        .post_verdict(reviewer, target, oml_app::types::Verdict::Approve, None)
+        .await
+        .expect("the reviewer approves alice's row");
+    rig.app
+        .supersede(
+            reviewer,
+            &oml_app::types::SupersedeRequest {
+                idempotency_key: format!("k-{body}"),
+                on_similar: Default::default(),
+                target_id: target,
+                body: body.to_owned(),
+                kind: None,
+                retirement: false,
+                derives_from: Vec::new(),
+                reason: None,
+                workarea: None,
+                refuse_vocabulary_target: false,
+                severity: None,
+                rule: None,
+                valid_from: None,
+                valid_until: None,
+                anchor: None,
+                format: None,
+                title: None,
+                origin: None,
+                expected_version: 1,
+            },
+        )
+        .await
+        .expect("the reviewer edits by proposal");
+}
+
 async fn person_with_agent(rig: &Rig, subject: &str, email: &str) -> (String, String) {
     let cookie = signed_in(rig, subject, email).await;
     let (_, _, page) = act_and_follow(
@@ -1540,6 +1618,471 @@ async fn a_signed_out_session_cookie_goes_to_sign_in_from_a_moved_page() {
     );
 }
 
+// -- sign-out (#327): the header's control posts to the lead's POST /web ------
+
+/// The sign-out control in a page's header, as the page draws it.
+#[derive(Debug, PartialEq, Eq)]
+struct SignOutForm {
+    method: String,
+    action: String,
+    /// Its hidden fields, `(name, value)`, in the order drawn.
+    fields: Vec<(String, String)>,
+}
+
+/// The sign-out control in a page's header; `None` where the header draws
+/// none.
+fn sign_out_form(page: &str) -> Option<SignOutForm> {
+    let header = header_of(page);
+    let start = header.find("<form ")?;
+    let form = &header[start..start + header[start..].find("</form>")?];
+    let attribute = |tag: &str, name: &str| {
+        let marker = format!(r#"{name}=""#);
+        let at = tag.find(&marker)? + marker.len();
+        Some(tag[at..at + tag[at..].find('"')?].to_owned())
+    };
+    let fields = form
+        .split("<input ")
+        .skip(1)
+        .filter_map(|input| {
+            let input = &input[..input.find('>')?];
+            (attribute(input, "type")? == "hidden")
+                .then(|| Some((attribute(input, "name")?, attribute(input, "value")?)))?
+        })
+        .collect();
+    Some(SignOutForm {
+        method: attribute(form, "method")?,
+        action: attribute(form, "action")?,
+        fields,
+    })
+}
+
+/// The sign-out control's post, sent as a browser sends the form the page
+/// drew: its own action and its own fields, nothing added.
+async fn sign_out_from(rig: &Rig, cookie: &str, page: &str) -> (StatusCode, HeaderMap, String) {
+    let form = sign_out_form(page).expect("a sign-out control");
+    assert_eq!(form.method, "post", "sign-out is a POST");
+    let fields: Vec<(&str, &str)> = form
+        .fields
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    send(&rig.router, post(&form.action, &fields, Some(cookie))).await
+}
+
+/// The status `GET /v2/whoami` answers the session's `capacity` credential,
+/// sent as `oml-web` sends it: whether the credential still names a session.
+async fn credential_status(rig: &Rig, cookie: &str, capacity: &str) -> StatusCode {
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let credential = oml_app::domain::web::capacity_credential(token, capacity);
+    let request = Request::get("/v2/whoami")
+        .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+        .header("oml-web-client", WEB_CLIENT_SECRET)
+        .body(Body::empty())
+        .expect("a request");
+    send(&rig.router, request).await.0
+}
+
+/// Every page `oml-web` draws for a signed-in person carries the sign-out
+/// control in its header: a form that posts `sign_out` with the session's
+/// CSRF token to the lead's `POST /web`. A page for no one draws none
+/// (ADR-0070 d2, d6; ADR-0045 d5, d8; #327).
+#[tokio::test]
+async fn every_signed_in_page_draws_the_sign_out_control_in_its_header() {
+    let rig = rig().await;
+    rig.allow("bob@example.com", "bob", true).await;
+    let (cookie, value) = person_with_agent(&rig, "sub-2", "bob@example.com").await;
+    let memory = agent_writes(&rig, &value, "Sign-out is drawn on every page.").await;
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let expected = SignOutForm {
+        method: "post".to_owned(),
+        action: "/web".to_owned(),
+        fields: vec![
+            ("action".to_owned(), "sign_out".to_owned()),
+            (
+                "csrf_token".to_owned(),
+                oml_web_credential::csrf_token(token),
+            ),
+        ],
+    };
+    // The routes that answer data to a script draw no page.
+    let data = [
+        oml_web::memories::USER_DATA_PATH,
+        oml_web::memories::ADMIN_DATA_PATH,
+        oml_web::start::STATUS_PATH,
+        oml_web::start::EXPORT_PATH,
+    ];
+    let mut drawn = 0;
+    for (_, path) in oml_web::PAGES
+        .iter()
+        .filter(|(method, path)| *method == "GET" && !data.contains(path))
+    {
+        let url = match *path {
+            oml_web::USER_MEMORY_PATH | oml_web::ADMIN_MEMORY_PATH => {
+                format!("{path}?id={memory}")
+            }
+            oml_web::ADMIN_KEYS_PATH => format!("{path}?user=bob"),
+            _ => (*path).to_owned(),
+        };
+        let (status, _, page) = send(&rig.router, get(&url, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{url}: {page}");
+        assert_eq!(sign_out_form(&page).as_ref(), Some(&expected), "{url}");
+        assert!(
+            header_of(&page).contains(r#"<button type="submit" class="linkish">Sign out</button>"#),
+            "{url}"
+        );
+        drawn += 1;
+    }
+    assert_eq!(drawn, 18, "every page route of oml_web::PAGES was read");
+    // A page an act answers is drawn by the same chrome.
+    let (status, _, page) = act(
+        &rig,
+        &cookie,
+        "/web/keys",
+        &[("action", "cut_off"), ("key", "bob-laptop")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Cut off bob-laptop?"), "{page}");
+    assert_eq!(sign_out_form(&page).as_ref(), Some(&expected));
+    // No one is signed in on the lead's sign-in page.
+    let (status, _, page) = send(&rig.router, get("/web", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("Sign in with Google"), "{page}");
+    assert!(!page.contains("sign_out"), "{page}");
+}
+
+/// A refusal page drawn for a signed-in person carries the same sign-out
+/// control: a page not found, a query or a form refused, a conflict, the
+/// refusal of a cut-off key's act and every page a cut-off person is
+/// refused, from `oml-web` and from the lead, and the control on it ends
+/// the session. A refusal answered before the session is read, or for no
+/// one, draws none (ADR-0070 d2; ADR-0045 d5, d8; #325, #327).
+#[tokio::test]
+async fn every_refusal_page_of_a_signed_in_person_draws_the_sign_out_control_in_its_header() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    laptop_key(&rig, &cookie).await;
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let csrf = oml_web_credential::csrf_token(token);
+    let expected = SignOutForm {
+        method: "post".to_owned(),
+        action: "/web".to_owned(),
+        fields: vec![
+            ("action".to_owned(), "sign_out".to_owned()),
+            ("csrf_token".to_owned(), csrf.clone()),
+        ],
+    };
+    let drawn =
+        |what: &str, want: StatusCode, (status, _, page): (StatusCode, HeaderMap, String)| {
+            assert_eq!(status, want, "{what}: {page}");
+            assert!(page.contains("This cannot continue"), "{what}: {page}");
+            assert_eq!(sign_out_form(&page).as_ref(), Some(&expected), "{what}");
+            page
+        };
+    // Not found: an admin page for a person who is not an admin, on
+    // `oml-web`, and an old URL, on the lead.
+    for url in ["/web/admin/keys?user=alice", "/web?view=guardrails"] {
+        drawn(
+            url,
+            StatusCode::NOT_FOUND,
+            send(&rig.router, get(url, Some(&cookie))).await,
+        );
+    }
+    // Refused as sent: a query that names a field twice, a form naming no
+    // action of its page, on `oml-web` and on the lead, and on the lead a
+    // form without the session's CSRF token, since the cookie names a live
+    // session there.
+    drawn(
+        "a repeated field",
+        StatusCode::BAD_REQUEST,
+        send(
+            &rig.router,
+            get("/web/guardrails?workarea=a&workarea=b", Some(&cookie)),
+        )
+        .await,
+    );
+    for path in ["/web/keys", "/web"] {
+        drawn(
+            path,
+            StatusCode::BAD_REQUEST,
+            act(&rig, &cookie, path, &[("action", "no_such_act")]).await,
+        );
+    }
+    drawn(
+        "the lead's form without the token",
+        StatusCode::BAD_REQUEST,
+        send(
+            &rig.router,
+            post("/web", &[("action", "sign_out")], Some(&cookie)),
+        )
+        .await,
+    );
+    // A conflict: a workarea name the namespace already holds.
+    let create = [("action", "create_workarea"), ("name", "once")];
+    let (status, _, page) = act(&rig, &cookie, "/web/workareas", &create).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+    drawn(
+        "a name taken",
+        StatusCode::CONFLICT,
+        act(&rig, &cookie, "/web/workareas", &create).await,
+    );
+    // Cut off: the key acts are refused on the Keys page, and so is every
+    // page that reads under the key's grants.
+    let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
+    rig.app
+        .deny_key(
+            &rig.boot.admin_key.value,
+            name("alice-web"),
+            name("universe"),
+        )
+        .await
+        .expect("the admin cuts alice-web off");
+    let page = drawn(
+        "a cut-off key's act",
+        StatusCode::FORBIDDEN,
+        act(
+            &rig,
+            &cookie,
+            "/web/keys",
+            &[
+                ("action", "issue_key"),
+                ("name", "tablet"),
+                ("role", "writer"),
+            ],
+        )
+        .await,
+    );
+    assert!(page.contains("signing out still works"), "{page}");
+    for path in [
+        "/web/guardrails",
+        "/web/workareas",
+        "/web/memories",
+        "/web/atlas",
+    ] {
+        drawn(
+            path,
+            StatusCode::NOT_FOUND,
+            send(&rig.router, get(path, Some(&cookie))).await,
+        );
+    }
+    // Before the session is read, and for no one, there is no control: the
+    // lead's refusal of another origin's form and of an unknown provider,
+    // and `oml-web`'s refusal of a form without the token, which is no page.
+    let request = Request::post("/web")
+        .header(header::CONTENT_TYPE, FORM)
+        .header("sec-fetch-site", "cross-site")
+        .header(header::ORIGIN, "https://evil.example")
+        .header(header::COOKIE, &cookie)
+        .body(Body::from(form(&[
+            ("action", "sign_out"),
+            ("csrf_token", csrf.as_str()),
+        ])))
+        .expect("a request");
+    let (status, _, refused) = send(&rig.router, request).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert_eq!(sign_out_form(&refused), None, "{refused}");
+    let (status, _, refused) = send(&rig.router, get("/web/callback/nowhere", None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+    assert_eq!(sign_out_form(&refused), None, "{refused}");
+    let (status, _, refused) = send(
+        &rig.router,
+        post("/web/keys", &[("action", "issue_key")], Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert!(!refused.contains("<header"), "no page: {refused}");
+    // The control on a refusal page ends the session.
+    let (status, _, body) = sign_out_from(&rig, &cookie, &page).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(
+        credential_status(&rig, &cookie, "web").await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+/// The control ends the session on the server: after its post no capacity
+/// credential of the session resolves at the API, the cookie opens no page,
+/// and a second post finds no session (ADR-0045 d5; ADR-0070 d2; #327).
+#[tokio::test]
+async fn the_sign_out_control_ends_the_session_and_no_credential_of_it_works_afterwards() {
+    let rig = rig().await;
+    rig.allow("bob@example.com", "bob", true).await;
+    let cookie = signed_in(&rig, "sub-2", "bob@example.com").await;
+    let other = signed_in(&rig, "sub-1", EMAIL).await;
+    let capacities = ["web", "review", "admin"];
+    for capacity in capacities {
+        assert_eq!(
+            credential_status(&rig, &cookie, capacity).await,
+            StatusCode::OK,
+            "{capacity}: live before the sign-out"
+        );
+    }
+    let (_, _, page) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
+    let (status, headers, body) = sign_out_from(&rig, &cookie, &page).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(headers[header::LOCATION], "/web");
+    for capacity in capacities {
+        assert_eq!(
+            credential_status(&rig, &cookie, capacity).await,
+            StatusCode::UNAUTHORIZED,
+            "{capacity}: the credential ended with the session"
+        );
+    }
+    // The cookie a browser failed to drop opens nothing.
+    let (status, headers, _) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/web/sign-in?next=%2Fweb%2Fkeys");
+    let (status, _, body) = sign_out_from(&rig, &cookie, &page).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    // Another person's session is untouched.
+    assert_eq!(credential_status(&rig, &other, "web").await, StatusCode::OK);
+}
+
+/// The attributes of a `Set-Cookie` header, its name, value and `Max-Age`
+/// aside.
+fn cookie_attributes(whole: &str) -> Vec<&str> {
+    whole
+        .split("; ")
+        .skip(1)
+        .filter(|a| !a.starts_with("Max-Age="))
+        .collect()
+}
+
+/// Signing out clears the session cookie with the attributes the sign-in
+/// set it with, so the browser drops that cookie and no other, and lands on
+/// the console's address, which is the sign-in page for no one (ADR-0045 d5;
+/// #327).
+#[tokio::test]
+async fn signing_out_clears_the_cookie_as_it_was_set_and_lands_on_the_sign_in_page() {
+    let rig = rig().await;
+    let (location, sealed) = start(&rig, Provider::Google).await;
+    let state = query_param(&location, "state").expect("a state");
+    let nonce = query_param(&location, "nonce").expect("a nonce");
+    rig.providers.answer(
+        Provider::Google,
+        Ok(ProviderAnswer::GoogleIdToken(google_token(
+            &nonce, "sub-1", EMAIL, true,
+        ))),
+    );
+    let (status, headers, body) = callback(
+        &rig,
+        Provider::Google,
+        "the-code-4711",
+        &state,
+        &format!("{SIGN_IN_COOKIE}={sealed}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let (token, set) = set_cookie(&headers, SESSION_COOKIE).expect("the session cookie");
+    let cookie = format!("{SESSION_COOKIE}={token}");
+    let (_, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    let (status, headers, body) = sign_out_from(&rig, &cookie, &page).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let (value, cleared) = set_cookie(&headers, SESSION_COOKIE).expect("the cookie cleared");
+    assert_eq!(value, "", "{cleared}");
+    assert!(cleared.split("; ").any(|a| a == "Max-Age=0"), "{cleared}");
+    assert_eq!(cookie_attributes(&cleared), cookie_attributes(&set));
+    assert_eq!(
+        cookie_attributes(&set),
+        ["Path=/", "Secure", "HttpOnly", "SameSite=Lax"]
+    );
+    // The browser follows the redirect with no cookie.
+    let landing = headers[header::LOCATION]
+        .to_str()
+        .expect("ASCII")
+        .to_owned();
+    assert_eq!(landing, "/web");
+    let (status, _, page) = send(&rig.router, get(&landing, None)).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Sign in with Google"), "{page}");
+    assert_eq!(sign_out_form(&page), None, "no one is signed in");
+}
+
+/// Sign-out is the form's `POST` alone: a `GET` naming it ends nothing, on
+/// the lead's address or on a page's, and neither does a `POST` without the
+/// session's CSRF token or from another origin (ADR-0045 d8; #327).
+#[tokio::test]
+async fn sign_out_is_a_same_origin_post_with_the_sessions_csrf_token_and_never_a_get() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (_, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    let SignOutForm { action, fields, .. } = sign_out_form(&page).expect("a sign-out control");
+    let query = form(
+        &fields
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.as_str()))
+            .collect::<Vec<_>>(),
+    );
+    for url in [format!("{action}?{query}"), format!("/web/keys?{query}")] {
+        let (_, headers, _) = send(&rig.router, get(&url, Some(&cookie))).await;
+        assert!(set_cookie(&headers, SESSION_COOKIE).is_none(), "{url}");
+        assert_eq!(
+            credential_status(&rig, &cookie, "web").await,
+            StatusCode::OK,
+            "{url}: the session is live"
+        );
+    }
+    // Without the token, and with another session's.
+    let other = signed_in(&rig, "sub-1", EMAIL).await;
+    let other_token = other.split_once('=').expect("a session cookie").1;
+    let other_csrf = oml_web_credential::csrf_token(other_token);
+    for fields in [
+        vec![("action", "sign_out")],
+        vec![("action", "sign_out"), ("csrf_token", other_csrf.as_str())],
+    ] {
+        let (status, _, body) = send(&rig.router, post(&action, &fields, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body.contains("csrf_token"), "{body}");
+    }
+    // From another origin, with the right token.
+    let request = Request::post(action.as_str())
+        .header(header::CONTENT_TYPE, FORM)
+        .header("sec-fetch-site", "cross-site")
+        .header(header::ORIGIN, "https://evil.example")
+        .header(header::COOKIE, &cookie)
+        .body(Body::from(query.clone()))
+        .expect("a request");
+    let (status, _, body) = send(&rig.router, request).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(
+        credential_status(&rig, &cookie, "web").await,
+        StatusCode::OK,
+        "the session is live"
+    );
+    // The form as drawn, from the page's own origin, ends it.
+    let (status, _, body) = sign_out_from(&rig, &cookie, &page).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(
+        credential_status(&rig, &cookie, "web").await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+/// A person whose `<user>-web` key an admin cut off still signs out from
+/// the page: sign-out reads the session and nothing of the key (#325, #327).
+#[tokio::test]
+async fn a_cut_off_person_signs_out_from_the_page() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
+    rig.app
+        .deny_key(
+            &rig.boot.admin_key.value,
+            name("alice-web"),
+            name("universe"),
+        )
+        .await
+        .expect("the admin cuts alice-web off");
+    let (status, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let (status, _, body) = sign_out_from(&rig, &cookie, &page).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(
+        credential_status(&rig, &cookie, "web").await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
 /// The Mermaid source alice's agent writes in the diagram tests.
 const DIAGRAM: &str = "flowchart LR\n  A[Checkout] -->|calls| B[Payments]\n";
 
@@ -1950,6 +2493,172 @@ async fn a_supersession_runs_as_the_curator_on_its_own_claim_and_as_the_reviewer
     assert_ne!(
         author_of(&rig, "the release train leaves on thursdays").await,
         curate
+    );
+}
+
+/// Every memory whose text is `text`, by the admin read.
+async fn memories_reading(rig: &Rig, text: &str) -> Vec<uuid::Uuid> {
+    rig.app
+        .admin_search(
+            rig.boot.admin_key.value.as_str(),
+            Some(text),
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .expect("the admin reads")
+        .items
+        .iter()
+        .filter(|m| m.memory.body == text)
+        .map(|m| m.memory.memory_id)
+        .collect()
+}
+
+/// The admin retires `target`, a served version 1, on the admin memory
+/// page, and `reviewer` ratifies the retirement: the retirement's id.
+async fn retired_on_the_admin_page(
+    rig: &Rig,
+    admin: &str,
+    target: uuid::Uuid,
+    text: &str,
+    reviewer: &str,
+) -> uuid::Uuid {
+    let (status, _, body) = act(
+        rig,
+        admin,
+        "/web/admin/memory",
+        &[
+            ("action", "supersede"),
+            ("memory", &target.to_string()),
+            ("expected_version", "1"),
+            ("text", text),
+            ("retirement", "yes"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let [retirement] = memories_reading(rig, text).await[..] else {
+        panic!("one memory reading {text}");
+    };
+    let verdict = rig
+        .app
+        .post_verdict(reviewer, retirement, oml_app::types::Verdict::Approve, None)
+        .await
+        .expect("a reviewer ratifies the retirement");
+    assert_eq!(verdict.state, oml_app::domain::MemoryStatus::Promoted);
+    retirement
+}
+
+/// An admin retires a memory of his own on the admin memory page, a
+/// reviewer ratifies the retirement, and he puts the claim back on the
+/// same page. Both acts run as his `<user>-review`, a session key that is
+/// his though it carries no user root, so the successor of the ratified
+/// retirement in his own root is proposed and the act lands on the memory
+/// (ADR-0044 d16; ADR-0045 d6, d12).
+#[tokio::test]
+async fn an_admin_retires_his_own_memory_and_puts_it_back_on_the_admin_memory_page() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let (boss, agent) = person_with_agent(&rig, "sub-boss", "boss@example.com").await;
+    let own = agent_writes(&rig, &agent, "the pump runs at night").await;
+    let ratifier = tenant_reviewer_in(&rig, "ratifier", "boss").await;
+    rig.app
+        .post_verdict(&ratifier.value, own, oml_app::types::Verdict::Approve, None)
+        .await
+        .expect("a reviewer approves his agent's write");
+    let retirement =
+        retired_on_the_admin_page(&rig, &boss, own, "the pump was removed", &ratifier.value).await;
+
+    let (status, headers, body) = act(
+        &rig,
+        &boss,
+        "/web/admin/memory",
+        &[
+            ("action", "supersede"),
+            ("memory", &retirement.to_string()),
+            ("expected_version", "2"),
+            ("text", "the pump runs at night again"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let location = headers[header::LOCATION].to_str().expect("ASCII");
+    assert_eq!(
+        location,
+        format!("/web/admin/memory?id={retirement}&done=proposed")
+    );
+    let (status, _, _) = send(&rig.router, get(location, Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        author_of(&rig, "the pump runs at night again").await,
+        key_named(&rig, "boss-review").await.key_id
+    );
+}
+
+/// An admin designated for review on another person's root retires a
+/// memory of theirs on the admin memory page, and once the retirement is
+/// ratified his put-back is refused by its code: his `<user>-review` is his
+/// key, never read as theirs, and only their keys put their claim back in
+/// service (ADR-0044 d16; ADR-0045 d10). Nothing is written.
+#[tokio::test]
+async fn the_admin_memory_page_refuses_putting_another_persons_retired_memory_back() {
+    let rig = rig().await;
+    let (_, agent) = person_with_agent(&rig, "sub-1", EMAIL).await;
+    let alices = agent_writes(&rig, &agent, "the relay closes at noon").await;
+    let ratifier = tenant_reviewer_in(&rig, "ratifier", "alice").await;
+    rig.app
+        .post_verdict(
+            &ratifier.value,
+            alices,
+            oml_app::types::Verdict::Approve,
+            None,
+        )
+        .await
+        .expect("a reviewer approves alice's agent's write");
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, body) = act(
+        &rig,
+        &boss,
+        "/web/admin/people",
+        &[
+            ("action", "grant_review"),
+            ("user", "boss"),
+            ("workarea", "alice"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let retirement = retired_on_the_admin_page(
+        &rig,
+        &boss,
+        alices,
+        "the relay was removed",
+        &ratifier.value,
+    )
+    .await;
+
+    let (status, _, body) = act(
+        &rig,
+        &boss,
+        "/web/admin/memory",
+        &[
+            ("action", "supersede"),
+            ("memory", &retirement.to_string()),
+            ("expected_version", "2"),
+            ("text", "the relay closes at noon again"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(body.contains("submission.user_root_refused"));
+    assert!(
+        memories_reading(&rig, "the relay closes at noon again")
+            .await
+            .is_empty(),
+        "a refused put-back writes no version"
     );
 }
 
@@ -4281,6 +4990,149 @@ async fn a_cut_off_confirmation_sent_twice_cuts_the_key_off_once() {
     assert_eq!(denied, 1, "the second send replayed");
 }
 
+/// A call to the API as `oml-web` makes it for the session `cookie` names,
+/// sent to the lead through the router: the `web` credential, the web
+/// client's identity, a fresh key.
+async fn api_as_web(rig: &Rig, cookie: &str, path: &str, body: Value) -> (StatusCode, Value) {
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let credential = oml_app::domain::web::capacity_credential(token, "web");
+    let request = Request::post(path)
+        .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+        .header("oml-web-client", WEB_CLIENT_SECRET)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("idempotency-key", format!("k-{path}-{body}"))
+        .body(Body::from(body.to_string()))
+        .expect("a request");
+    let (status, _, answer) = send(&rig.router, request).await;
+    (status, serde_json::from_str(&answer).unwrap_or(Value::Null))
+}
+
+/// A person whose `<user>-web` key an admin cut off issues no key, mints
+/// no connect code and cuts off no key from the Keys page or the Start
+/// page: each act answers the API's own refusal, its status, its code and
+/// its message, and journals nothing (ADR-0070 d2, d3 layer 7; #325).
+#[tokio::test]
+async fn a_cut_off_persons_key_acts_are_refused_on_the_page_as_the_api_refuses_them() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    laptop_key(&rig, &cookie).await;
+    let (status, _, _) = act(
+        &rig,
+        &cookie,
+        "/web/keys",
+        &[
+            ("action", "connect_key"),
+            ("name", "phone"),
+            ("role", "writer"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
+    rig.app
+        .deny_key(
+            &rig.boot.admin_key.value,
+            name("alice-web"),
+            name("universe"),
+        )
+        .await
+        .expect("the admin cuts alice-web off");
+    let head = rig.head().await;
+    // The page still opens, so the person can read their keys and sign out.
+    let (status, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    type Fields<'a> = &'a [(&'a str, &'a str)];
+    let cases: [(&str, Value, Fields<'_>); 4] = [
+        (
+            "/v2/keys",
+            json!({"name": "alice-tablet", "role": "writer", "connect_code": false}),
+            &[
+                ("action", "issue_key"),
+                ("name", "tablet"),
+                ("role", "writer"),
+            ],
+        ),
+        (
+            "/v2/keys",
+            json!({"name": "alice-watch", "role": "writer", "connect_code": true}),
+            &[
+                ("action", "connect_key"),
+                ("name", "watch"),
+                ("role", "writer"),
+            ],
+        ),
+        (
+            "/v2/keys/alice-phone/connect-codes",
+            json!({}),
+            &[("action", "connect_code"), ("key", "alice-phone")],
+        ),
+        (
+            "/v2/keys/alice-laptop/denials",
+            json!({"workarea": "universe"}),
+            &[
+                ("action", "cut_off"),
+                ("key", "alice-laptop"),
+                ("confirm", "yes"),
+            ],
+        ),
+    ];
+    for (api_path, body, fields) in cases {
+        let (api_status, refusal) = api_as_web(&rig, &cookie, api_path, body).await;
+        assert_eq!(api_status, StatusCode::FORBIDDEN, "{api_path}: {refusal}");
+        assert_eq!(refusal["error"]["code"], "access.verb_ceiling", "{refusal}");
+        assert_eq!(
+            refusal["error"]["details"]["reason"], "session_key_denied",
+            "{refusal}"
+        );
+        let message = refusal["error"]["message"].as_str().expect("a message");
+        let (status, _, page) = act(&rig, &cookie, "/web/keys", fields).await;
+        assert_eq!(status, api_status, "{fields:?}: {page}");
+        assert!(
+            page.contains(&format!("access.verb_ceiling: {message}")),
+            "{fields:?}: the page names the API's code and message: {page}"
+        );
+    }
+    // The Start page issues through the same operation.
+    let (_, _, start) = send(
+        &rig.router,
+        get("/web/start?client=claude-code", Some(&cookie)),
+    )
+    .await;
+    let (csrf, nonce) = (csrf_of(&start), field_of(&start, "nonce"));
+    let (status, _, page) = send(
+        &rig.router,
+        post(
+            "/web/start",
+            &[
+                ("action", "issue_claude_code"),
+                ("csrf_token", csrf.as_str()),
+                ("nonce", nonce.as_str()),
+            ],
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
+    assert!(page.contains("access.verb_ceiling: "), "{page}");
+    assert_eq!(rig.head().await, head, "nothing journalled");
+    // The denial ends no session and refuses no sign-in.
+    let again = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, page) = send(&rig.router, get("/web/keys", Some(&again))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    for key in ["alice-tablet", "alice-watch"] {
+        let named = rig
+            .store
+            .resolve_name(
+                rig.boot.tenant_id,
+                oml_app::domain::name::NamedKind::Key,
+                &Name::parse(key).expect("a name"),
+            )
+            .await
+            .expect("a lookup");
+        assert_eq!(named, None, "no key {key}");
+    }
+}
+
 #[tokio::test]
 async fn the_old_review_and_keys_urls_are_not_found_and_their_acts_run_nothing() {
     // The lead's 303s from the old URLs are deleted in v0.7.1 (ADR-0070,
@@ -4507,6 +5359,8 @@ async fn other_tenant_writes(rig: &Rig, body: &str) {
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
             },
         )
         .await
@@ -4524,34 +5378,12 @@ async fn the_user_page_never_lists_another_authors_held_row_outside_in_progress_
     agent_writes(&rig, &alice_agent, "alice keeps this note").await;
     agent_writes(&rig, &bob_agent, "bob held secret").await;
     other_tenant_writes(&rig, "rival tenant secret").await;
-    // A tenant agent an admin granted into alice's root writes there; its
-    // held row is another author's.
-    let helper = rig
-        .app
-        .issue_key(
-            &rig.boot.admin_key.value,
-            &IssueKeyRequest {
-                profile: None,
-                role: Role::Writer,
-                name: Name::parse("helper").expect("a name"),
-                principal: "helper".to_owned(),
-                held_by: Some(HeldBy::Agent),
-                default_workarea: None,
-                crew: None,
-                grants: vec![GrantRequest {
-                    node: Name::parse("alice").expect("a name").into(),
-                    role: Role::Writer,
-                    deny: Vec::new(),
-                    covers: oml_app::domain::access::Covers::Subtree,
-                }],
-                connect_code: false,
-                user: None,
-                guardrail_scope: None,
-            },
-        )
-        .await
-        .expect("a tenant agent on alice's root");
-    agent_writes(&rig, &helper.value, "helper held outside").await;
+    // A tenant reviewer an admin granted into alice's root proposes a
+    // successor of her agent's served row; the held successor is another
+    // author's.
+    let helper = reviewer_in_alices_root(&rig).await;
+    let settled = agent_writes(&rig, &alice_agent, "alice settled this").await;
+    reviewer_holds_a_successor(&rig, &helper.value, settled, "helper held outside").await;
     for path in ["/web/memories", "/web/memories?state=held"] {
         let (status, _, page) = send(&rig.router, get(path, Some(&alice))).await;
         assert_eq!(status, StatusCode::OK, "{page}");
@@ -4584,33 +5416,9 @@ async fn the_user_page_never_lists_another_authors_held_row_outside_in_progress_
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+    let inside = agent_writes_in(&rig, &alice_agent, "alice settled inside", "alice.proj").await;
     put_in_progress(&rig, &alice, "alice.proj").await;
-    rig.app
-        .submit_memory(
-            helper.value.as_str(),
-            &oml_app::types::SubmitRequest {
-                on_similar: Default::default(),
-                anchor: None,
-                origin: None,
-                idempotency_key: "k-inside".to_owned(),
-                claim_key: None,
-                verb: Some(oml_app::types::SubmitVerb::Remember),
-                kind: oml_app::domain::MemoryKind::Memory,
-                body: "helper held inside".to_owned(),
-                workarea: Some(
-                    oml_app::domain::name::Reference::parse("alice.proj").expect("a reference"),
-                ),
-                derives_from: Vec::new(),
-                severity: None,
-                rule: None,
-                valid_from: None,
-                valid_until: None,
-                format: None,
-                title: None,
-            },
-        )
-        .await
-        .expect("the helper writes inside");
+    reviewer_holds_a_successor(&rig, &helper.value, inside, "helper held inside").await;
     let (_, _, page) = send(
         &rig.router,
         get("/web/memories?workarea=alice.proj", Some(&alice)),
@@ -5028,34 +5836,15 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    let helper = rig
-        .app
-        .issue_key(
-            &rig.boot.admin_key.value,
-            &IssueKeyRequest {
-                profile: None,
-                role: Role::Writer,
-                name: Name::parse("helper").expect("a name"),
-                principal: "helper".to_owned(),
-                held_by: Some(HeldBy::Agent),
-                default_workarea: None,
-                crew: None,
-                grants: vec![GrantRequest {
-                    node: Name::parse("alice").expect("a name").into(),
-                    role: Role::Writer,
-                    deny: Vec::new(),
-                    covers: oml_app::domain::access::Covers::Subtree,
-                }],
-                connect_code: false,
-                user: None,
-                guardrail_scope: None,
-            },
-        )
-        .await
-        .expect("a tenant agent on alice's root");
-    agent_writes(&rig, &helper.value, "helper held outside").await;
+    // Another author's rows in alice's root: a tenant reviewer granted
+    // there holds a successor of a served row of hers, outside the
+    // in-progress child and inside it (ADR-0044 d16).
+    let helper = reviewer_in_alices_root(&rig).await;
+    let settled = agent_writes(&rig, &agent, "alice settled this").await;
+    reviewer_holds_a_successor(&rig, &helper.value, settled, "helper held outside").await;
+    let inside = agent_writes_in(&rig, &agent, "alice settled inside", "alice.proj").await;
     put_in_progress(&rig, &alice, "alice.proj").await;
-    agent_writes_in(&rig, &helper.value, "helper held inside", "alice.proj").await;
+    reviewer_holds_a_successor(&rig, &helper.value, inside, "helper held inside").await;
 
     let (status, _, value) = json_of(&rig, "/web/data/memories", &alice).await;
     assert_eq!(status, StatusCode::OK, "{value}");
@@ -5068,7 +5857,10 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
         root["counts"]["held"], 2,
         "her agent's two, never the helper's: {root}"
     );
-    assert_eq!(root["counts"]["total"], 2);
+    assert_eq!(
+        root["counts"]["total"], 3,
+        "and the served row the helper proposed to replace: {root}"
+    );
     let proj = region(&value, "universe.alice.proj").expect("the in-progress child");
     assert_eq!(proj["in_progress"], true);
     assert_eq!(
@@ -5133,7 +5925,10 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
     // The page draws what the route counts: no region of bob's.
     let (_, _, atlas) = send(&rig.router, get("/web/atlas", Some(&alice))).await;
     assert!(!atlas.contains("bob"), "{atlas}");
-    assert!(atlas.contains("aria-label=\"proj, 1 readable"), "{atlas}");
+    assert!(
+        atlas.contains("aria-label=\"proj, 2 readable: 1 promoted, 1 unreviewed in progress"),
+        "the served row and the helper's held successor of it: {atlas}"
+    );
     let (status, _, _) = send(
         &rig.router,
         get(&format!("/web/atlas?workarea={bob_root}"), Some(&alice)),

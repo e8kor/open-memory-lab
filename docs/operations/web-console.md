@@ -36,7 +36,11 @@ names a server, ADR-0076 d6); the admin overview (the allowlist and
 the review and curation grants) at `/web/admin/people`; and the users and quotas page at
 `/web/admin/users`. Removing an address, disabling a person and closing a deletion request each show a
 confirmation first. The server's only web pages are now sign-in, the sign-up terms page and
-sign-out. A Mermaid diagram is drawn beside its source on every page that shows
+sign-out. The header of every page a signed-in person is shown, a refusal page included, carries
+**Sign out**: its form posts to the server's `POST /web`, which ends the session, so no credential
+`oml-web` derives from it works afterwards, clears the session cookie and returns to the sign-in
+page. The sign-in page, the sign-up terms page and a refusal the server answers before it reads
+the session carry none. A Mermaid diagram is drawn beside its source on every page that shows
 one, the Review card included, in a sandboxed frame `oml-web` serves at `/web/render/` with its
 pinned bundle at `/web/assets/`; route both prefixes to `oml-web`.
 

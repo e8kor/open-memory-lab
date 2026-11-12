@@ -86,7 +86,7 @@ pub(crate) fn refused(
 ) -> Response {
     outcome::html(
         status,
-        oml_page::web::refusal_page(code, message, Some(calls.page_id())),
+        oml_page::web::refusal_page(code, message, Some(calls.page_id()), calls.csrf()),
     )
 }
 
@@ -212,7 +212,7 @@ async fn guardrails(
     );
     let set = match set {
         Ok(set) => set,
-        Err(e) => return outcome::page(&e, calls.page_id(), next),
+        Err(e) => return outcome::page(&e, calls, next),
     };
     let scope = match set.guardrail_scope.as_str() {
         "workarea" => "This workarea only.".to_owned(),
@@ -260,6 +260,7 @@ async fn guardrails(
         shell(
             "Your page",
             &session.who(),
+            Some(&session.csrf()),
             &user_tabs(session.admin),
             crate::GUARDRAILS_PATH,
             fields.get("done"),

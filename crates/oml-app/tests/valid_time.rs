@@ -80,6 +80,8 @@ async fn issue(app: &TestApp, admin: &str, role: Role, grants: Vec<GrantRequest>
             connect_code: false,
             user: None,
             guardrail_scope: None,
+            expiry: None,
+            requests_per_minute: None,
         },
     )
     .await

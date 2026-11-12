@@ -82,6 +82,15 @@ disagreement found:
   the installer at that tag, `oml login` and `oml setup claude-code`
   (ADR-0041 d4, d6, d7; docs/engineering/docs-upgrade-v0.4.0.md).
 
+- the job that creates the GitHub release runs scripts/release_markers.py append and then check on
+  the notes it wrote, before `gh release create`, on a checkout with every tag, so a release whose
+  scanner rule set differs from the previous tag's carries the admin-rescan marker line
+  (docs/contributing/releasing.md, "Markers in the release notes");
+
+- the version job also runs `python3 scripts/release_markers.py list --tag "$GITHUB_REF_NAME"` on a
+  checkout with every tag, so a scanner source whose rule set that script cannot read stops the
+  release before anything is built, pushed or signed (#334);
+
 - no release build turns on oml-server-lead's e2e-sign-in feature, CI's
   sign-in double: release.yml names neither it nor OML_CARGO_FEATURES, and
   the Dockerfile's OML_CARGO_FEATURES defaults to empty (ADR-0070, phase (b)
@@ -231,8 +240,58 @@ def main() -> int:
     check_cli_matrix(errors, jobs)
     check_installers(errors, jobs)
     check_installer_lines(errors)
+    check_release_markers(errors, jobs)
+    check_early_markers(errors, jobs)
     check_no_test_double(errors, WORKFLOW.read_text(), (ROOT / "Dockerfile").read_text())
     return report(errors)
+
+
+def check_release_markers(errors: list[str], jobs: dict) -> None:
+    """The job that creates the GitHub release appends the markers an installer may read to the
+    notes it wrote, and checks them, before `gh release create`, on a checkout that holds every tag
+    (scripts/release_markers.py): a release whose scanner rule set differs from the previous tag's
+    carries the admin-rescan marker, and a release without it does not go out."""
+    creators = {name: job for name, job in jobs.items() if step_matching(job, RELEASE_CREATE) is not None}
+    for name, job in creators.items():
+        create = step_matching(job, RELEASE_CREATE)
+        found = {}
+        for action in ("append", "check"):
+            found[action] = marker_command(job, action)
+            if found[action] is None:
+                errors.append(f"job {name}: does not run scripts/release_markers.py {action} on the release notes")
+            elif found[action][0] >= create:
+                errors.append(f"job {name}: runs scripts/release_markers.py {action} at or after the step that creates the release, not before it")
+        if None not in found.values() and found["check"] < found["append"]:
+            errors.append(f"job {name}: checks the release markers before it appends them")
+        deep = [s for s in steps(job) if str(s.get("uses", "")).startswith("actions/checkout@")]
+        if not any(str(s.get("with", {}).get("fetch-depth")) == "0" for s in deep):
+            errors.append(f"job {name}: checks out without fetch-depth: 0, so there are no tags to compare the scanner's rule set with")
+
+
+def check_early_markers(errors: list[str], jobs: dict) -> None:
+    """The version job, which every other job needs, runs `python3 scripts/release_markers.py list`
+    on a checkout that holds every tag, so a scanner source the script cannot read fails the release
+    before anything is built, pushed or signed rather than in the publish job after."""
+    version = jobs.get("version")
+    if version is None:
+        return  # check_release_hold names the missing job
+    if marker_command(version, "list") is None:
+        errors.append("the version job does not run scripts/release_markers.py list, so an unparsable scanner rule-set constant would fail the release only after the images are pushed")
+    deep = [s for s in steps(version) if str(s.get("uses", "")).startswith("actions/checkout@")]
+    if not any(str(s.get("with", {}).get("fetch-depth")) == "0" for s in deep):
+        errors.append("the version job checks out without fetch-depth: 0, so scripts/release_markers.py list has no tags to read")
+
+
+def marker_command(job: dict, action: str) -> tuple[int, int] | None:
+    """Where a step's script runs `python3 scripts/release_markers.py <action>` as a command line,
+    as (step index, line index), or None. A line that only mentions the script, as an `echo` or a
+    comment does, is not a run of it."""
+    command = re.compile(rf"^python3\s+scripts/release_markers\.py\s+{action}\b")
+    for i, run in enumerate(runs(job)):
+        for j, line in enumerate(run.splitlines()):
+            if command.match(line.strip()):
+                return (i, j)
+    return None
 
 
 def check_no_test_double(errors: list[str], workflow: str, dockerfile: str) -> None:

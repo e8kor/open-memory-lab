@@ -294,12 +294,29 @@ pub fn hidden(name: &str, value: &str) -> String {
     )
 }
 
-/// A page's chrome: the brand, who is signed in, the tabs of `tabs`
+/// Where the header's sign-out control posts: the lead's `POST /web`, whose
+/// one act is `sign_out` (ADR-0070 d6).
+const SIGN_OUT_PATH: &str = "/web";
+
+/// The header's sign-out control (ADR-0045 d5, d8; #327): a form that posts
+/// `sign_out` with the session's CSRF token to the lead, which ends the
+/// session, clears the cookie it set and answers a `303` to the console's
+/// address. A `POST` and never a link, so no `GET` signs anyone out.
+fn sign_out(csrf: &str) -> String {
+    format!(
+        r#"<form method="post" action="{SIGN_OUT_PATH}"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="{}"><button type="submit" class="linkish">Sign out</button></form>"#,
+        escape(csrf)
+    )
+}
+
+/// A page's chrome: the brand, who is signed in, the sign-out control where
+/// `csrf` is a signed-in session's CSRF token, the tabs of `tabs`
 /// (`(href, text)`, the active one marked), a notice, and `body`.
 #[must_use]
 pub fn shell(
     title: &str,
     who: &str,
+    csrf: Option<&str>,
     tabs: &[(&str, &str)],
     active: &str,
     notice: Option<&str>,
@@ -321,31 +338,43 @@ pub fn shell(
     document(
         title,
         &format!(
-            r#"<header class="top">{}{nav}<span class="end"><span class="who">{}{}</span></span></header><main class="wrap">{notice}{body}</main>"#,
+            r#"<header class="top">{}{nav}<div class="end"><span class="who">{}{}</span>{}</div></header><main class="wrap">{notice}{body}</main>"#,
             brand(true),
             glyph_svg("person"),
-            short(who)
+            short(who),
+            csrf.map_or_else(String::new, sign_out)
         ),
     )
 }
 
-/// A refusal answered on a page, never a redirect: its code and message.
+/// A refusal answered on a page, never a redirect: its code and message,
+/// drawn for no one, so its header carries the brand alone.
 #[must_use]
 pub fn refusal(code: &str, message: &str) -> String {
-    refusal_page(code, message, None)
+    refusal_page(code, message, None, None)
 }
 
 /// [`refusal`], naming the request id a person can quote, as `oml-web`'s
-/// error pages do (ADR-0070 d3 layer 7).
+/// error pages do (ADR-0070 d3 layer 7), and carrying the header's
+/// sign-out control where `csrf` is a session's CSRF token, as [`shell`]
+/// draws it: a person a page refuses still ends their session (#327).
 #[must_use]
-pub fn refusal_page(code: &str, message: &str, request_id: Option<&str>) -> String {
+pub fn refusal_page(
+    code: &str,
+    message: &str,
+    request_id: Option<&str>,
+    csrf: Option<&str>,
+) -> String {
     let request = request_id.map_or_else(String::new, |id| {
         format!(r#"<p class="desc">Request <code>{}</code></p>"#, escape(id))
+    });
+    let end = csrf.map_or_else(String::new, |csrf| {
+        format!(r#"<div class="end">{}</div>"#, sign_out(csrf))
     });
     document(
         "Not available",
         &format!(
-            r#"<header class="top">{}</header><main class="wrap"><h1>This cannot continue</h1><p class="error" role="alert">{}: {}</p>{request}<p><a href="/web">Back</a></p></main>"#,
+            r#"<header class="top">{}{end}</header><main class="wrap"><h1>This cannot continue</h1><p class="error" role="alert">{}: {}</p>{request}<p><a href="/web">Back</a></p></main>"#,
             brand(true),
             escape(code),
             escape(message)
@@ -393,6 +422,7 @@ mod tests {
         let html = shell(
             "t",
             "<script>",
+            Some("\"x"),
             &[("/web", "Keys")],
             "/web",
             None,
@@ -401,7 +431,42 @@ mod tests {
         assert!(!html.contains("<script>"));
         assert!(!html.contains('\u{202E}'));
         assert!(!html.contains("<img>"));
-        let f = form("/web", "sign_out", "\"x", "", "Sign out", false);
+        assert!(html.contains(r#"name="csrf_token" value="&quot;x">"#));
+        let f = form("/web", "cut_off", "\"x", "", "Cut off", false);
         assert!(f.contains("&quot;x"));
+    }
+
+    /// The header carries the sign-out control exactly where a session's
+    /// CSRF token is given: a `POST` form to the lead's sign-out, never a
+    /// link (#327).
+    #[test]
+    fn the_header_draws_the_sign_out_control_only_for_a_signed_in_session() {
+        let signed_in = shell("t", "alice", Some("c5"), &[], "", None, "");
+        assert!(signed_in.contains(
+            r#"<form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="c5"><button type="submit" class="linkish">Sign out</button></form></div></header>"#
+        ), "{signed_in}");
+        assert!(!signed_in.contains(r#"href="/web?action=sign_out"#));
+        let no_one = shell("t", "", None, &[], "", None, "");
+        assert!(!no_one.contains("sign_out"), "{no_one}");
+    }
+
+    /// A refusal page carries the same control where a session's CSRF
+    /// token is given, and none for no one (#327).
+    #[test]
+    fn a_refusal_page_draws_the_sign_out_control_only_for_a_signed_in_session() {
+        let control = r#"<div class="end"><form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="c5"><button type="submit" class="linkish">Sign out</button></form></div></header>"#;
+        let signed_in = refusal_page("access.not_found", "not found", Some("req-1"), Some("c5"));
+        assert!(signed_in.contains(control), "{signed_in}");
+        assert!(
+            shell("t", "alice", Some("c5"), &[], "", None, "").contains(&control[17..]),
+            "the control is the one shell draws"
+        );
+        for no_one in [
+            refusal("access.not_found", "not found"),
+            refusal_page("access.not_found", "not found", Some("req-1"), None),
+        ] {
+            assert!(!no_one.contains("sign_out"), "{no_one}");
+            assert!(!no_one.contains(r#"class="end""#), "{no_one}");
+        }
     }
 }

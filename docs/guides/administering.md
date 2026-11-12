@@ -78,6 +78,8 @@ A key's role fixes its grants: `writer` takes `reader` and `writer`, `dreamer` t
 
 **A reviewer.** `oml keys issue --role dreamer --grant <workarea>:dreamer` with a principal no writer there uses, plus `--grant <workarea>:reader`, or the reviewer sees a held memory without its sources ([reviewing](reviewing.md)).
 
+**A key for someone outside your team**, such as a reviewer of a demo workarea. Add `--expires <instant>` and `--requests-per-minute <n>` to either issuing verb: from that instant the key, and the connection of a connector key, authenticates nothing, and the request past the rate answers `429` until the next minute. The instant is RFC 3339 with its offset, such as `2026-12-01T17:00:00Z`. Both are for reader, writer and dreamer keys: an admin key issued with either is refused, so no admin key is temporary.
+
 **Another admin.** `--role admin --held-by human`, no `--grant`; a dreamer grant is refused as `access.role_exclusive`. **A reader or service:** `--role reader --held-by service --grant <workarea>:reader`.
 
 ## Deny, cut off, replace, disconnect
@@ -92,10 +94,15 @@ It is journaled as `key.denied`; on an admin key it is refused.
 
 - **Cut off or end every connection:** `oml deny set <key> universe`.
 - **Rotate:** issue a successor under a new name, move the holder, deny the old key `universe`.
-- **Read one key:** `oml keys show <key>` shows grants, denials, crew, epoch and connections, never the value.
+- **Read one key:** `oml keys show <key>` shows grants, denials, crew, epoch, expiry, rate and connections, never the value.
+- **Move or clear a key's expiry or rate:** `oml keys limit <key> --expires <instant>` or `--no-expiry`, `--requests-per-minute <n>` or `--no-rate-limit`, with an admin key other than the key itself. An admin key takes neither limit, so naming one is refused. An expired key whose date is moved later works again.
 - **End one connection:** `oml keys disconnect <key> <connection-id> [--reason <text>]`.
 
-An admin key cannot be cut off today: keep the admin credentials file on one machine. Deny a key whose value you lost and replace it.
+An admin key cannot be cut off today, by a denial or by an expiry: keep the admin credentials file on one machine. Deny a key whose value you lost and replace it.
+
+A denial on a person's `<user>-web` session key also stops their console issuing a key, minting a connect code and cutting a key off, each refused as `access.verb_ceiling` with `details.reason: session_key_denied`. It ends no session and denies none of the person's agent keys: the person still signs in, sees their keys and signs out, and their agents keep working. To stop the person and their agents together, disable them on the admin page's Quotas view.
+
+There is no way back from that denial. Any denial on `<user>-web` has this effect, on `universe`, inside the person's root or on a workarea outside it where the key holds nothing; no verb lifts a denial; and removing the person's address and adding it back changes nothing, since their next sign-in opens on the same `<user>-web`. From then on an administrator issues the person's keys (`oml keys issue-agent <name> --principal <principal> --user <user>`), mints their connect codes (`oml keys connect-code <key>`) and cuts their keys off (`oml deny set <key> universe`). So deny `<user>-web` only when the person's console is to stop issuing, connecting and cutting off keys for good. To keep one of their agents out of one workarea, deny that agent's key there: `oml deny set <key> <workarea>`. A workarea outside the person's root, `universe` aside, needs no denial on `<user>-web` or on their agents' keys: a key naming their user holds no grant there.
 
 ## Read the journal
 

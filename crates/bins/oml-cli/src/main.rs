@@ -22,8 +22,8 @@ use oml_cli::creds::{self, Credentials};
 use oml_cli::discovery;
 use oml_cli::hook;
 use oml_cli::issue::{
-    KeyFile, configure_line, connect_code_printed, minted_code_printed, parse_ttl, setup_line,
-    sh_quote, with_reader_beside_writers,
+    KeyFile, configure_line, connect_code_printed, key_limit_lines, minted_code_printed, parse_ttl,
+    setup_line, sh_quote, with_reader_beside_writers,
 };
 use oml_cli::verify::parse_verifying_key;
 
@@ -368,6 +368,27 @@ enum KeysCommand {
         #[arg(long, value_name = "DURATION")]
         ttl: Option<String>,
     },
+    /// Set or clear a key's expiry and its requests per minute; needs an admin
+    /// key other than the key itself, and journals key.limits_set. An admin key
+    /// takes neither limit.
+    Limit {
+        /// Key id or name.
+        #[arg(value_name = "KEY")]
+        key_ref: String,
+        /// Instant the key stops authenticating, RFC 3339 with its offset, such
+        /// as 2026-12-01T17:00:00Z; must be later than now.
+        #[arg(long, value_name = "INSTANT", conflicts_with = "no_expiry")]
+        expires: Option<String>,
+        /// Clear the expiry, so the key does not expire.
+        #[arg(long)]
+        no_expiry: bool,
+        /// Requests the key may make in one UTC minute, from 1 to 1000000.
+        #[arg(long, value_name = "N", conflicts_with = "no_rate_limit")]
+        requests_per_minute: Option<u32>,
+        /// Clear the key's own rate, leaving any quota of its account.
+        #[arg(long)]
+        no_rate_limit: bool,
+    },
     /// Revoke one connector-key connection and journal connection.revoked.
     Disconnect {
         /// Connector key id or name.
@@ -423,6 +444,34 @@ struct KeysIssueArgs {
     /// in-progress workarea and never promotes.
     #[arg(long, value_parser = ["curator"])]
     profile: Option<String>,
+    #[command(flatten)]
+    limits: KeyLimitArgs,
+}
+
+/// The limits an issuing verb may set on the key it issues.
+#[derive(Args)]
+struct KeyLimitArgs {
+    /// Instant the key stops authenticating, RFC 3339 with its offset, such as
+    /// 2026-12-01T17:00:00Z; must be later than now. Omitted, the key does not
+    /// expire. Refused for an admin key.
+    #[arg(long, value_name = "INSTANT")]
+    expires: Option<String>,
+    /// Requests the key may make in one UTC minute, from 1 to 1000000. Omitted,
+    /// the key has no rate of its own. Refused for an admin key.
+    #[arg(long, value_name = "N")]
+    requests_per_minute: Option<u32>,
+}
+
+impl KeyLimitArgs {
+    /// Adds the limits the verb was given to an issuance body.
+    fn add_to(&self, body: &mut Value) {
+        if let Some(expires) = &self.expires {
+            body["expiry"] = json!(expires);
+        }
+        if let Some(rate) = self.requests_per_minute {
+            body["requests_per_minute"] = json!(rate);
+        }
+    }
 }
 
 #[derive(Args)]
@@ -461,6 +510,8 @@ struct IssueAgentArgs {
     /// ancestors also loads every readable ancestor. Defaults to ancestors.
     #[arg(long, value_parser = ["workarea", "ancestors"])]
     guardrail_scope: Option<String>,
+    #[command(flatten)]
+    limits: KeyLimitArgs,
 }
 
 #[derive(Subcommand)]
@@ -1510,6 +1561,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             if let Some(scope) = &args.guardrail_scope {
                 body["guardrail_scope"] = json!(scope);
             }
+            args.limits.add_to(&mut body);
             let (_, response) = client.post("/v2/keys", &body, &write_opts())?;
             if cli.json {
                 print_json(&response);
@@ -1523,6 +1575,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 println!("    default: {}", field(&response, "default_workarea_id"));
                 if response["user"].is_object() {
                     println!("    user   : {}", field(&response["user"], "name"));
+                }
+                for line in key_limit_lines(&response) {
+                    println!("    {line}");
                 }
                 if let Some(grants) = response["grants"].as_array() {
                     for g in grants {
@@ -1580,10 +1635,19 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 }
                 println!("    epoch    : {}", response["epoch"]);
                 // A revoked key's name still resolves, so the read says
-                // whether the key is history (ADR-0026 d10).
+                // whether the key is history (ADR-0026 d10); a key past its
+                // expiry is not revoked and not live either (ADR-0079 d3).
                 match response["revoked_at"].as_str() {
                     Some(at) => println!("    revoked  : {at}"),
+                    None if response["expired"] == true => {
+                        println!("    revoked  : no (expired)");
+                    }
                     None => println!("    revoked  : no (live)"),
+                }
+                // The key's end date, saying when it has passed, and its
+                // own rate (ADR-0079 d3, d4).
+                for line in key_limit_lines(&response) {
+                    println!("    {line}");
                 }
                 println!("    credential: {}", field(&response, "credential"));
                 // The one connect code that can still open a connection,
@@ -1635,6 +1699,50 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 eprintln!("{line}");
             }
             Ok(ExitCode::from(printed.exit))
+        }
+
+        Command::Keys {
+            command:
+                KeysCommand::Limit {
+                    key_ref,
+                    expires,
+                    no_expiry,
+                    requests_per_minute,
+                    no_rate_limit,
+                },
+        } => {
+            let body = key_limits_body(
+                expires.as_deref(),
+                *no_expiry,
+                *requests_per_minute,
+                *no_rate_limit,
+            )
+            .map_err(CliError::Local)?;
+            let client = resolve(cli, &stored)?;
+            let (_, response) = client.post(
+                &format!("/v2/keys/{}/limits", segment(key_ref)?),
+                &body,
+                &write_opts(),
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "limits journalled — key {} ({})",
+                    field(&response, "name"),
+                    field(&response, "key_id")
+                );
+                for line in key_limit_lines(&response) {
+                    println!("    {line}");
+                }
+                if response["expiry"].is_null() {
+                    println!("    expiry   : none (the key does not expire)");
+                }
+                if response["requests_per_minute"].is_null() {
+                    println!("    rate     : none of its own");
+                }
+            }
+            Ok(ExitCode::SUCCESS)
         }
 
         Command::Keys {
@@ -3229,6 +3337,7 @@ fn run_issue_agent(
     if let Some(scope) = &args.guardrail_scope {
         body["guardrail_scope"] = json!(scope);
     }
+    args.limits.add_to(&mut body);
     let (response, replayed) = match client.post_replayable("/v2/keys", &body, &write_opts()) {
         Ok(answer) => answer,
         Err(failure) => {
@@ -3328,6 +3437,11 @@ fn run_issue_agent(
         granted.join(", "),
         field(&response, "default_workarea_id"),
     );
+    // The limits the key was issued with (ADR-0079 d7); stdout stays the
+    // lines a shell evaluates.
+    for line in key_limit_lines(&response) {
+        eprintln!("    {line}");
+    }
     match &args.out {
         Some(_) => eprintln!(
             "the value is only in the key file (0600); delete it once `claude plugin \
@@ -4823,6 +4937,127 @@ fn run_claude(args: &[String], stdin: Option<&str>) -> Result<(), CliError> {
 // oml doctor
 // ---------------------------------------------------------------------------
 
+/// The user whose root holds `node`, a workarea read: the node's own name
+/// when it is a user root, else the first label under `universe` when the
+/// qualified name `<user>.<name>` reads back as the same node, which it
+/// does only inside a user root and which a tenant key resolves (ADR-0044
+/// d5). `None` for a shared workarea.
+fn user_root_holding(client: &Client, node: &Value) -> Option<String> {
+    let name = node["name"].as_str()?;
+    if node["user_root"] == true {
+        return Some(name.to_owned());
+    }
+    let mut labels = node["path"].as_str()?.split('.');
+    let (Some(_), Some(user), Some(_)) = (labels.next(), labels.next(), labels.next()) else {
+        return None;
+    };
+    let (_, qualified) = client.get(&format!("/v2/workareas/{user}.{name}")).ok()?;
+    (qualified["id"] == node["id"]).then(|| user.to_owned())
+}
+
+/// A memory is started in a user's root by that user's keys only (ADR-0044
+/// d16): a tenant writer key whose default workarea lies in `user`'s root
+/// is refused every new memory it does not address elsewhere, so the line
+/// warns and names the fix. Nothing for a user key, whose default lies in
+/// its own root, or for a key that writes nothing.
+fn user_root_writes_doctor(
+    me: Option<&Value>,
+    default_node: Option<&Value>,
+    user: Option<&str>,
+) -> Option<String> {
+    let (me, node, user) = (me?, default_node?, user?);
+    (me["user"].is_null() && me["role"] == "writer").then(|| {
+        format!(
+            "warn: the default workarea {} lies in the root of user {user}, where only \
+             {user}'s keys start memories; this tenant key's new memories there are refused \
+             (submission.user_root_refused); issue the agent a key with --user {user}",
+            node["path"].as_str().unwrap_or("of this key"),
+        )
+    })
+}
+
+/// The body `oml keys limit` sends: each limit it was told to set or to
+/// clear, and nothing for one it was not told about, which the server then
+/// keeps (ADR-0079 d5). No flag at all is refused here, before anything is
+/// sent.
+fn key_limits_body(
+    expires: Option<&str>,
+    no_expiry: bool,
+    requests_per_minute: Option<u32>,
+    no_rate_limit: bool,
+) -> Result<Value, String> {
+    let mut body = serde_json::Map::new();
+    match (expires, no_expiry) {
+        (Some(instant), _) => {
+            body.insert("expiry".to_owned(), json!(instant));
+        }
+        (None, true) => {
+            body.insert("expiry".to_owned(), Value::Null);
+        }
+        (None, false) => {}
+    }
+    match (requests_per_minute, no_rate_limit) {
+        (Some(rate), _) => {
+            body.insert("requests_per_minute".to_owned(), json!(rate));
+        }
+        (None, true) => {
+            body.insert("requests_per_minute".to_owned(), Value::Null);
+        }
+        (None, false) => {}
+    }
+    if body.is_empty() {
+        return Err(
+            "refused: name a limit to set or clear with --expires, --no-expiry, \
+             --requests-per-minute or --no-rate-limit; nothing was sent"
+                .to_owned(),
+        );
+    }
+    Ok(Value::Object(body))
+}
+
+/// The key lines (ADR-0079 d7), for the key doctor runs under: that the
+/// server refused it as expired or past its rate; else, from `whoami`, the
+/// instant it ends and the rate it is held to. A key with neither limit,
+/// and a refusal for any other reason, print nothing here.
+fn key_doctor(me: Option<&Result<Value, CliError>>) -> Vec<String> {
+    let mut lines = Vec::new();
+    match me {
+        Some(Err(CliError::Refused { envelope, .. })) => {
+            let error = &envelope["error"];
+            if error["code"] == "auth.invalid" && error["details"]["reason"] == "expired" {
+                lines.push(format!(
+                    "fail expired: this key ended at {}; an admin moves its date with `oml keys \
+                     limit <key> --expires <instant>`, or issues another key",
+                    error["details"]["expiry"].as_str().unwrap_or("its expiry")
+                ));
+            }
+            if error["code"] == "limit.rate" {
+                lines.push(format!(
+                    "warn rate: this key reached its {} requests per minute; the next minute \
+                     admits it again",
+                    error["details"]["limit"]
+                ));
+            }
+        }
+        Some(Ok(me)) => {
+            if let Some(expiry) = me["expiry"].as_str() {
+                lines.push(format!(
+                    "ok expiry: this key ends at {expiry}; an admin moves its date with `oml \
+                     keys limit <key> --expires <instant>`"
+                ));
+            }
+            if let Some(rate) = me["requests_per_minute"].as_u64() {
+                lines.push(format!(
+                    "ok rate: this key is held to {rate} requests per minute, counted by each \
+                     server process alone"
+                ));
+            }
+        }
+        _ => {}
+    }
+    lines
+}
+
 /// Whether this key may review in bulk, for a dreamer key only (ADR-0055
 /// d1, d13): a key a person holds may; one held by an agent or a service is
 /// refused, which a person holding such a key otherwise learns mid-import,
@@ -4923,6 +5158,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     // the reason where an admin's read failed.
     let mut rescan_read: Option<Result<Value, String>> = None;
     let mut default_node: Option<Value> = None;
+    // The user whose root holds a tenant writer key's default workarea
+    // (ADR-0044 d16).
+    let mut default_in_root_of: Option<String> = None;
     let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
     let mut federation_settings: Option<Value> = None;
@@ -4958,6 +5196,12 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                     .get(&format!("/v2/workareas/{segment}"))
                     .ok()
                     .map(|(_, n)| n);
+                if v["user"].is_null()
+                    && v["role"] == "writer"
+                    && let Some(node) = &default_node
+                {
+                    default_in_root_of = user_root_holding(&client, node);
+                }
                 // What a person's reviewer key sees held under the
                 // in-progress root, one page (ADR-0030 d14).
                 if v["role"] == "dreamer"
@@ -5041,6 +5285,11 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     search.extend(federation_doctor(federation_settings.as_ref()));
     let search_warn = search.iter().any(|line| line.starts_with("warn"));
     let review = review_doctor(me.as_ref().and_then(|m| m.as_ref().ok()));
+    let user_root_writes = user_root_writes_doctor(
+        me.as_ref().and_then(|m| m.as_ref().ok()),
+        default_node.as_ref(),
+        default_in_root_of.as_deref(),
+    );
     let in_progress = in_progress_doctor(
         me.as_ref().and_then(|m| m.as_ref().ok()),
         default_node.as_ref(),
@@ -5049,14 +5298,17 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let in_progress_warn = in_progress.iter().any(|line| line.starts_with("warn"));
     let telemetry = telemetry_doctor(scrape.as_ref());
     let mut scan = scan_doctor(ready.as_ref(), scrape.as_ref());
-    let scan_backlog = rescan_read.as_ref().and_then(|read| read.as_ref().ok());
-    scan.extend(scan_backlog_doctor(scan_backlog));
+    scan.extend(scan_backlog_doctor(rescan_read.as_ref()));
     let scan_warn = scan.iter().any(|line| line.starts_with("warn"));
     let approvals = approval_doctor(rescan_read.as_ref());
     let approvals_warn = approvals.iter().any(|line| line.starts_with("warn"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
     let usage = usage_doctor(usage_drift.as_ref());
     let usage_warn = usage.iter().any(|line| line.starts_with("warn"));
+    // The calling key's expiry and rate; an expired key already fails the
+    // whoami line (ADR-0079 d7).
+    let key_limits = key_doctor(me.as_ref());
+    let key_limits_warn = key_limits.iter().any(|line| line.starts_with("warn"));
     let handlers = handlers_doctor(scrape.as_ref());
     let handlers_warn = handlers.iter().any(|line| line.starts_with("warn"));
     // The sync failures of ADR-0057 d17 that the clone alone answers; the
@@ -5103,6 +5355,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || server_origin.is_some()
         || plugin.is_some()
         || reads_universe == Some(false)
+        || user_root_writes.is_some()
         || web_warn
         || search_warn
         || review_warn
@@ -5115,6 +5368,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || sources_warn
         || in_progress_warn
         || usage_warn
+        || key_limits_warn
     {
         "warn"
     } else {
@@ -5146,6 +5400,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "whoami": whoami,
             "chain_head_seq": head_seq,
             "reads_universe": reads_universe,
+            "user_root_writes": user_root_writes,
             "default_workarea": default_node.as_ref().map(|n| json!({
                 "path": n["path"],
                 "brief_items": n["brief"]["items"].as_array().map_or(0, Vec::len),
@@ -5164,6 +5419,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "handlers": handlers,
             "scan": scan,
             "usage": usage,
+            "key_limits": key_limits,
             "approvals": approvals,
             "sources": sources,
             "in_progress": in_progress,
@@ -5206,6 +5462,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             Some(Err(e)) => println!("whoami      : fail ({})", refusal(e)),
             None => println!("whoami      : not called (no key with this URL)"),
         }
+        for line in &key_limits {
+            println!("key         : {line}");
+        }
         if let Some(Ok(v)) = &me {
             match v["user"]["name"].as_str() {
                 Some(user) => println!("user        : {user} (root universe.{user})"),
@@ -5216,6 +5475,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         if reads_universe == Some(false) {
             println!("universe    : warn: this key does not read universe's claims");
+        }
+        if let Some(line) = &user_root_writes {
+            println!("user root   : {line}");
         }
         if let Some(n) = &default_node {
             let items = n["brief"]["items"].as_array().map_or(0, Vec::len);
@@ -5625,12 +5887,23 @@ fn telemetry_doctor(scrape: Option<&Scrape>) -> Vec<String> {
 /// The rescan backlog lines (ADR-0074 d28), from an admin key's one-event
 /// rescan window: held versions an older rule set scanned, which stay their
 /// authors' alone in in-progress workareas until `--record-held` reads
-/// them, and every stored version an older rule set scanned.
-fn scan_backlog_doctor(report: Option<&Value>) -> Vec<String> {
-    let Some(r) = report else {
-        return vec![
-            "scan_held_unrescanned, scan_rescan_due: not read; an admin key reads them".to_owned(),
-        ];
+/// them, and every stored version an older rule set scanned. A key that is
+/// no admin's is told an admin key reads them; an admin key whose read
+/// failed is told the reason, as the usage and approval lines are.
+fn scan_backlog_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
+    let r = match read {
+        None => {
+            return vec![
+                "scan_held_unrescanned, scan_rescan_due: not read; an admin key reads them"
+                    .to_owned(),
+            ];
+        }
+        Some(Err(reason)) => {
+            return vec![format!(
+                "warn scan_held_unrescanned, scan_rescan_due: not read ({reason})"
+            )];
+        }
+        Some(Ok(report)) => report,
     };
     let version = r["scanner_version"]
         .as_str()
@@ -6569,7 +6842,7 @@ mod tests {
             "findings_unlisted": 2,
         });
         assert_eq!(
-            scan_backlog_doctor(Some(&report))[2],
+            scan_backlog_doctor(Some(&Ok(report)))[2],
             "warn scan_findings_unlisted: 2 held version(s) carry a scan finding the findings list lacks, written by a server older than migration 0043; the review card shows only the stored summary for them; run oml admin rescan --record-held"
         );
         let clear = json!({
@@ -6577,7 +6850,7 @@ mod tests {
             "findings_unlisted": 0,
         });
         assert_eq!(
-            scan_backlog_doctor(Some(&clear))[2],
+            scan_backlog_doctor(Some(&Ok(clear)))[2],
             "scan_findings_unlisted: 0"
         );
     }
@@ -6644,7 +6917,7 @@ mod tests {
             "scanner_version": "oml-scan/1.2", "held_unrescanned": 4, "rescan_due": 9,
         });
         assert_eq!(
-            scan_backlog_doctor(Some(&due)),
+            scan_backlog_doctor(Some(&Ok(due))),
             vec![
                 "warn scan_held_unrescanned: 4 held version(s) were scanned under an older rule set than oml-scan/1.2, and stay their authors' alone in in-progress workareas; run oml admin rescan --record-held".to_owned(),
                 "warn scan_rescan_due: 9 stored version(s) were scanned under an older rule set than oml-scan/1.2; oml admin rescan reports what it finds in them".to_owned(),
@@ -6654,7 +6927,7 @@ mod tests {
             "scanner_version": "oml-scan/1.2", "held_unrescanned": 0, "rescan_due": 0,
         });
         assert_eq!(
-            scan_backlog_doctor(Some(&clear)),
+            scan_backlog_doctor(Some(&Ok(clear))),
             vec![
                 "scan_held_unrescanned: 0".to_owned(),
                 "scan_rescan_due: 0".to_owned(),
@@ -6664,6 +6937,19 @@ mod tests {
             scan_backlog_doctor(None),
             vec![
                 "scan_held_unrescanned, scan_rescan_due: not read; an admin key reads them"
+                    .to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn the_scan_doctor_names_why_an_admins_failed_read_is_not_read() {
+        // The admin's read failed: a warn naming why, not "an admin key
+        // reads them", which this key is.
+        assert_eq!(
+            scan_backlog_doctor(Some(&Err("503 unavailable".to_owned()))),
+            vec![
+                "warn scan_held_unrescanned, scan_rescan_due: not read (503 unavailable)"
                     .to_owned()
             ]
         );
@@ -6801,6 +7087,34 @@ mod tests {
     }
 
     #[test]
+    fn doctor_warns_when_a_tenant_writer_keys_default_workarea_lies_in_a_users_root() {
+        let node = serde_json::json!({ "path": "universe.alice.project" });
+        let tenant_writer = serde_json::json!({ "role": "writer", "user": null });
+        assert_eq!(
+            user_root_writes_doctor(Some(&tenant_writer), Some(&node), Some("alice")).as_deref(),
+            Some(
+                "warn: the default workarea universe.alice.project lies in the root of user alice, where only alice's keys start memories; this tenant key's new memories there are refused (submission.user_root_refused); issue the agent a key with --user alice"
+            )
+        );
+        // A shared default, a user key in its own root and a key that
+        // writes nothing are told nothing.
+        assert_eq!(
+            user_root_writes_doctor(Some(&tenant_writer), Some(&node), None),
+            None
+        );
+        let alices = serde_json::json!({ "role": "writer", "user": { "name": "alice" } });
+        assert_eq!(
+            user_root_writes_doctor(Some(&alices), Some(&node), Some("alice")),
+            None
+        );
+        let reviewer = serde_json::json!({ "role": "dreamer", "user": null });
+        assert_eq!(
+            user_root_writes_doctor(Some(&reviewer), Some(&node), Some("alice")),
+            None
+        );
+    }
+
+    #[test]
     fn doctor_warns_for_an_admin_key_whose_row_names_a_persons_root() {
         let overview = serde_json::json!({
             "mode": "allowlist",
@@ -6847,6 +7161,109 @@ mod tests {
         let clean = serde_json::json!({"drift": [], "undeclared_profiles": []});
         assert!(usage_doctor(Some(&Ok(clean))).is_empty());
         assert!(usage_doctor(None).is_empty());
+    }
+
+    /// The server's refusal of a key as doctor's whoami reads it.
+    fn refused(status: u16, code: &str, details: Value) -> CliError {
+        CliError::Refused {
+            status,
+            code: code.to_owned(),
+            message: String::new(),
+            rule: String::new(),
+            envelope: serde_json::json!({ "error": { "code": code, "details": details } }),
+        }
+    }
+
+    #[test]
+    fn doctor_fails_an_expired_key_with_its_date_and_warns_of_a_key_past_its_rate() {
+        let expired = refused(
+            401,
+            "auth.invalid",
+            serde_json::json!({ "reason": "expired", "expiry": "2026-12-01T17:00:00.000000Z" }),
+        );
+        assert_eq!(
+            key_doctor(Some(&Err(expired))),
+            vec![
+                "fail expired: this key ended at 2026-12-01T17:00:00.000000Z; an admin moves its date with `oml keys limit <key> --expires <instant>`, or issues another key"
+            ]
+        );
+        let limited = refused(
+            429,
+            "limit.rate",
+            serde_json::json!({ "quota": "requests_per_minute", "limit": 60 }),
+        );
+        assert_eq!(
+            key_doctor(Some(&Err(limited))),
+            vec![
+                "warn rate: this key reached its 60 requests per minute; the next minute admits it again"
+            ]
+        );
+        // A key the server does not know is the whoami line's alone.
+        let unknown = refused(
+            401,
+            "auth.invalid",
+            serde_json::json!({ "reason": "unknown" }),
+        );
+        assert!(key_doctor(Some(&Err(unknown))).is_empty());
+    }
+
+    #[test]
+    fn doctor_names_the_instant_a_key_ends_and_its_rate_and_nothing_for_a_key_with_neither() {
+        let limited = serde_json::json!({
+            "expiry": "2026-12-01T17:00:00.000000Z",
+            "requests_per_minute": 60,
+        });
+        assert_eq!(
+            key_doctor(Some(&Ok(limited))),
+            vec![
+                "ok expiry: this key ends at 2026-12-01T17:00:00.000000Z; an admin moves its date with `oml keys limit <key> --expires <instant>`",
+                "ok rate: this key is held to 60 requests per minute, counted by each server process alone",
+            ]
+        );
+        let plain = serde_json::json!({ "expiry": null, "requests_per_minute": null });
+        assert!(key_doctor(Some(&Ok(plain))).is_empty());
+        assert!(key_doctor(None).is_empty());
+    }
+
+    #[test]
+    fn keys_limit_sends_only_the_limits_it_was_told_to_set_or_clear_and_refuses_none() {
+        assert_eq!(
+            key_limits_body(Some("2026-12-01T17:00:00Z"), false, None, false),
+            Ok(serde_json::json!({ "expiry": "2026-12-01T17:00:00Z" }))
+        );
+        assert_eq!(
+            key_limits_body(None, true, Some(60), false),
+            Ok(serde_json::json!({ "expiry": null, "requests_per_minute": 60 }))
+        );
+        assert_eq!(
+            key_limits_body(None, false, None, true),
+            Ok(serde_json::json!({ "requests_per_minute": null }))
+        );
+        let refused = key_limits_body(None, false, None, false).expect_err("no limit named");
+        assert!(refused.contains("nothing was sent"), "{refused}");
+    }
+
+    #[test]
+    fn a_key_read_prints_its_expiry_marked_once_it_has_passed_and_its_rate() {
+        let live = serde_json::json!({
+            "expiry": "2026-12-01T17:00:00.000000Z", "expired": false, "requests_per_minute": 60,
+        });
+        assert_eq!(
+            key_limit_lines(&live),
+            vec![
+                "expiry   : 2026-12-01T17:00:00.000000Z",
+                "rate     : 60 requests per minute",
+            ]
+        );
+        let ended = serde_json::json!({
+            "expiry": "2026-12-01T17:00:00.000000Z", "expired": true, "requests_per_minute": null,
+        });
+        assert_eq!(
+            key_limit_lines(&ended),
+            vec!["expiry   : 2026-12-01T17:00:00.000000Z (expired: the key authenticates nothing)"]
+        );
+        let plain = serde_json::json!({ "expiry": null, "requests_per_minute": null });
+        assert!(key_limit_lines(&plain).is_empty());
     }
 
     #[test]

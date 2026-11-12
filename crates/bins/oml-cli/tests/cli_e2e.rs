@@ -956,6 +956,151 @@ async fn issue_agent_prints_exactly_the_oml_url_and_oml_api_key_lines() {
     lab.stop().await;
 }
 
+/// `oml keys issue-agent --expires --requests-per-minute` sends both limits
+/// and prints both beside the key it names, on stderr, so stdout stays the
+/// two export lines; the key then carries them (cli/reference.md `oml
+/// keys`; ADR-0079 d7).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_issue_agent_with_an_expiry_and_a_rate_prints_both_limits_and_the_key_carries_them() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workarea("metals");
+
+    let (code, stdout, stderr) = lab.text(&[
+        "keys",
+        "issue-agent",
+        "agent-7",
+        "--principal",
+        "crew/agent-7",
+        "--workarea",
+        &wa,
+        "--expires",
+        "2999-01-01T00:00:00Z",
+        "--requests-per-minute",
+        "600",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let exports: Vec<&str> = stdout.lines().collect();
+    assert_eq!(exports.len(), 2, "the two export lines alone: {stdout}");
+    assert!(exports[0].starts_with("export OML_URL="), "{stdout}");
+    assert!(exports[1].starts_with("export OML_API_KEY="), "{stdout}");
+    let limit_lines = |text: &str| -> Vec<String> {
+        text.lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("expiry") || l.starts_with("rate"))
+            .map(ToOwned::to_owned)
+            .collect()
+    };
+    let limits = [
+        "expiry   : 2999-01-01T00:00:00.000000Z",
+        "rate     : 600 requests per minute",
+    ];
+    assert_eq!(limit_lines(&stderr), limits, "{stderr}");
+
+    let (code, shown, log) = lab.text(&["keys", "show", "agent-7"]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(limit_lines(&shown), limits, "{shown}");
+
+    // A key issued with neither limit prints neither line.
+    let (code, _, stderr) = lab.text(&[
+        "keys",
+        "issue-agent",
+        "agent-8",
+        "--principal",
+        "crew/agent-8",
+        "--workarea",
+        &wa,
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(limit_lines(&stderr).is_empty(), "{stderr}");
+    lab.stop().await;
+}
+
+/// `oml keys issue-agent --connect-code --expires --requests-per-minute`
+/// sends both limits in its one `POST /v2/keys` and prints both beside the
+/// connector key it names, on stderr; stdout stays the connector URL and
+/// the code. The lead is a stub that answers the `201` openapi.yaml shapes,
+/// since the lab's lead sets no `oauth.issuer` (ADR-0079 d7; ADR-0031 d7).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_issue_agent_connect_code_with_an_expiry_and_a_rate_prints_both_limits() {
+    let seen: Recorder = Arc::new(Mutex::new(Vec::new()));
+    let router = axum::Router::new()
+        .route(
+            "/v2/keys",
+            axum::routing::post(|| async {
+                (
+                    axum::http::StatusCode::CREATED,
+                    axum::Json(json!({
+                        "key_id": "00000000-0000-4000-8000-0000000000c7",
+                        "name": "claude-mobile",
+                        "role": "writer",
+                        "principal": "crew/claude-mobile",
+                        "default_workarea_id": "00000000-0000-4000-8000-000000000007",
+                        "expiry": "2999-01-01T00:00:00.000000Z",
+                        "requests_per_minute": 600,
+                        "grants": [],
+                        "connect_code": {
+                            "code_id": "00000000-0000-4000-8000-0000000000cc",
+                            "code": "7KQ2-M9XD-4TPA",
+                            "expires_at": "2026-11-04T10:10:00Z",
+                            "connector_url": "https://oml.example.com/mcp",
+                        },
+                    })),
+                )
+            }),
+        )
+        .layer(middleware::from_fn_with_state(seen.clone(), record));
+    let (server, task) = serve_stub(router).await;
+    let (dir, _) = stub_paths("connect-code-limits");
+
+    let (code, stdout, stderr) = stub_text(
+        &server,
+        &dir,
+        &[
+            "keys",
+            "issue-agent",
+            "claude-mobile",
+            "--principal",
+            "crew/claude-mobile",
+            "--workarea",
+            "00000000-0000-4000-8000-000000000007",
+            "--connect-code",
+            "--expires",
+            "2999-01-01T00:00:00Z",
+            "--requests-per-minute",
+            "600",
+        ],
+    );
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    assert_eq!(
+        stdout, "https://oml.example.com/mcp\n7KQ2-M9XD-4TPA\n",
+        "the connector URL and the code alone"
+    );
+    let limits: Vec<&str> = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("expiry") || l.starts_with("rate"))
+        .collect();
+    assert_eq!(
+        limits,
+        [
+            "expiry   : 2999-01-01T00:00:00.000000Z",
+            "rate     : 600 requests per minute"
+        ],
+        "{stderr}"
+    );
+    let sent = seen.lock().expect("recorder").clone();
+    let posts: Vec<&Seen> = sent.iter().filter(|s| s.path == "/v2/keys").collect();
+    assert_eq!(posts.len(), 1, "one POST /v2/keys");
+    assert_eq!(posts[0].body["connect_code"], true);
+    assert_eq!(posts[0].body["expiry"], "2999-01-01T00:00:00Z");
+    assert_eq!(posts[0].body["requests_per_minute"], 600);
+
+    task.abort();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn write_reads_a_diagram_from_standard_input_and_signs_its_format() {
     let Some(lab) = Lab::start().await else {
@@ -1689,6 +1834,191 @@ async fn keys_show_names_a_revoked_key_as_revoked_in_its_human_layout() {
     let (code, json, log) = lab.json(None, &["keys", "show", "agent-7-laptop"]);
     assert_eq!(code, 0, "{log}");
     assert_eq!(json["revoked_at"], at.as_str(), "{log}");
+    lab.stop().await;
+}
+
+/// `oml keys issue --expires --requests-per-minute` sets both limits,
+/// `oml keys show` prints them, and `oml keys limit` moves and clears them
+/// under the admin credentials. The key's own holder is refused the verb.
+/// `oml doctor` under the key names the instant it ends; once that has
+/// come, doctor fails naming the date, and `oml keys show` marks the key
+/// expired and no longer calls it live (cli/reference.md `oml keys`;
+/// ADR-0079 d3, d5, d7).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_limit_moves_a_keys_expiry_and_rate_and_doctor_names_an_expired_key() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workarea("metals");
+    let issued = lab.issue(
+        "reviewer",
+        &[
+            "--role",
+            "reader",
+            "--principal",
+            "directory/reviewer",
+            "--grant",
+            &format!("{wa}:reader"),
+            "--expires",
+            "2999-01-01T00:00:00Z",
+            "--requests-per-minute",
+            "600",
+        ],
+    );
+    assert_eq!(issued["expiry"], "2999-01-01T00:00:00.000000Z");
+    assert_eq!(issued["requests_per_minute"], 600);
+    let reviewer = issued["value"].as_str().expect("a value").to_owned();
+    let limit_lines = |stdout: &str| -> Vec<String> {
+        stdout
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("expiry") || l.starts_with("rate"))
+            .map(ToOwned::to_owned)
+            .collect()
+    };
+    let (code, shown, stderr) = lab.text(&["keys", "show", "reviewer"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        limit_lines(&shown),
+        [
+            "expiry   : 2999-01-01T00:00:00.000000Z",
+            "rate     : 600 requests per minute"
+        ],
+        "{shown}"
+    );
+
+    // The key's holder cannot move its own date (R1).
+    let (code, refused, log) = lab.json(
+        Some(&reviewer),
+        &["keys", "limit", "reviewer", "--no-expiry"],
+    );
+    assert_ne!(code, 0, "{log}");
+    assert!(
+        format!("{refused}{log}").contains("access.verb_ceiling"),
+        "{refused} {log}"
+    );
+
+    // Two seconds from now on the server's clock, and no rate.
+    let soon = oml_transport_http::time::system_event_time_plus(2);
+    let (code, set, log) = lab.json(
+        None,
+        &[
+            "keys",
+            "limit",
+            "reviewer",
+            "--expires",
+            soon.as_str(),
+            "--no-rate-limit",
+        ],
+    );
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(set["expiry"], soon.as_str(), "{log}");
+    assert_eq!(set["requests_per_minute"], Value::Null, "{log}");
+    let (code, doctor, log) = lab.json(Some(&reviewer), &["doctor"]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(
+        doctor["key_limits"],
+        json!([format!(
+            "ok expiry: this key ends at {soon}; an admin moves its date with `oml keys limit \
+             <key> --expires <instant>`"
+        )]),
+        "{log}"
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(2_200)).await;
+
+    let (code, doctor, log) = lab.json(Some(&reviewer), &["doctor"]);
+    assert_ne!(code, 0, "an expired key fails doctor: {log}");
+    assert_eq!(doctor["verdict"], "fail", "{log}");
+    let key_lines = doctor["key_limits"].as_array().expect("key lines");
+    assert_eq!(key_lines.len(), 1, "{doctor}");
+    assert!(
+        key_lines[0].as_str().is_some_and(
+            |l| l.starts_with("fail expired: this key ended at ") && l.contains(soon.as_str())
+        ),
+        "{doctor}"
+    );
+    let (code, shown, stderr) = lab.text(&["keys", "show", "reviewer"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        limit_lines(&shown),
+        [format!(
+            "expiry   : {soon} (expired: the key authenticates nothing)"
+        )],
+        "{shown}"
+    );
+    assert!(shown.contains("revoked  : no (expired)"), "{shown}");
+    assert!(
+        !shown.contains("(live)"),
+        "an expired key is not live: {shown}"
+    );
+    lab.stop().await;
+}
+
+/// An admin key carries no limit: `oml keys issue --role admin` with
+/// `--expires` or `--requests-per-minute` is refused by the server naming
+/// `admin_key` and issues nothing, and `oml keys limit` naming an admin
+/// key is refused the same way, by another admin key too (cli/reference.md
+/// `oml keys`; ADR-0079 d1, d5).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_issue_and_keys_limit_refuse_a_limit_on_an_admin_key() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    for limit in [
+        ["--expires", "2999-01-01T00:00:00Z"],
+        ["--requests-per-minute", "600"],
+    ] {
+        let (code, refused, log) = lab.json(
+            None,
+            &[
+                "keys",
+                "issue",
+                "limited-admin",
+                "--role",
+                "admin",
+                limit[0],
+                limit[1],
+            ],
+        );
+        assert_ne!(code, 0, "{limit:?}: {log}");
+        let answer = format!("{refused}{log}");
+        assert!(
+            answer.contains("request.validation") && answer.contains("admin_key"),
+            "{limit:?}: {answer}"
+        );
+    }
+    let (code, _, log) = lab.json(None, &["keys", "show", "limited-admin"]);
+    assert_ne!(code, 0, "no such key was issued: {log}");
+
+    let second = lab.issue("second-admin", &["--role", "admin"]);
+    assert_eq!(second["expiry"], Value::Null);
+    assert_eq!(second["requests_per_minute"], Value::Null);
+    let second_value = second["value"].as_str().expect("a value").to_owned();
+    // The claim's first admin key, which the stored credentials hold.
+    let first = "root-admin";
+    for (key, target, flags) in [
+        (None, "second-admin", ["--expires", "2999-01-01T00:00:00Z"]),
+        (
+            Some(second_value.as_str()),
+            first,
+            ["--requests-per-minute", "1"],
+        ),
+    ] {
+        let (code, refused, log) = lab.json(key, &["keys", "limit", target, flags[0], flags[1]]);
+        assert_ne!(code, 0, "{target}: {log}");
+        let answer = format!("{refused}{log}");
+        assert!(
+            answer.contains("request.validation") && answer.contains("admin_key"),
+            "{target}: {answer}"
+        );
+    }
+    let (code, refused, log) = lab.json(
+        Some(second_value.as_str()),
+        &["keys", "limit", first, "--no-expiry"],
+    );
+    assert_ne!(code, 0, "a clear on an admin key is refused too: {log}");
+    assert!(format!("{refused}{log}").contains("admin_key"), "{log}");
     lab.stop().await;
 }
 
@@ -4606,6 +4936,71 @@ async fn doctor_warns_when_a_user_key_does_not_read_universe() {
     server_task.abort();
     let _ = std::fs::remove_dir_all(&creds_dir);
     drop_db(&db_name).await;
+}
+
+/// ADR-0044 d16 through the real lead: a tenant writer key whose default
+/// workarea lies in a user's root is told by `oml doctor` that its new
+/// memories there are refused and which key to issue instead, and the
+/// write it was warned about answers `submission.user_root_refused`; the
+/// user's own key is told nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doctor_warns_when_a_tenant_writer_keys_default_workarea_lies_in_a_users_root() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let (code, alice, log) = lab.json(
+        None,
+        &[
+            "keys",
+            "issue-agent",
+            "alice-laptop",
+            "--principal",
+            "alice/laptop",
+            "--user",
+            "alice",
+        ],
+    );
+    assert_eq!(code, 0, "issue-agent --user: {log}");
+    let alice_key = alice["value"].as_str().expect("value").to_owned();
+    let (code, _, log) = lab.json(
+        Some(&alice_key),
+        &["workareas", "create", "alice", "project"],
+    );
+    assert_eq!(code, 0, "a user key creates under its root: {log}");
+    let (code, doctor, log) = lab.json(Some(&alice_key), &["doctor"]);
+    assert_eq!(code, 0, "doctor: {log}");
+    assert_eq!(doctor["user_root_writes"], Value::Null, "{log}");
+
+    let (code, loader, log) = lab.json(
+        None,
+        &[
+            "keys",
+            "issue-agent",
+            "crew-loader",
+            "--principal",
+            "crew/loader",
+            "--workarea",
+            "alice.project",
+        ],
+    );
+    assert_eq!(code, 0, "issue-agent on a workarea in alice's root: {log}");
+    assert_eq!(loader["user"], Value::Null, "{log}");
+    let loader_key = loader["value"].as_str().expect("value").to_owned();
+    let (code, doctor, log) = lab.json(Some(&loader_key), &["doctor"]);
+    assert_eq!(code, 0, "a warning is not a failure: {log}");
+    assert_eq!(doctor["verdict"], "warn", "{log}");
+    assert_eq!(
+        doctor["user_root_writes"],
+        "warn: the default workarea universe.alice.project lies in the root of user alice, where only alice's keys start memories; this tenant key's new memories there are refused (submission.user_root_refused); issue the agent a key with --user alice",
+        "{log}"
+    );
+    let (code, refused, log) = lab.json(Some(&loader_key), &["write", "The loader ran at noon."]);
+    assert_eq!(code, 1, "{log}");
+    assert_eq!(
+        refused["error"]["code"], "submission.user_root_refused",
+        "{log}"
+    );
+    lab.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

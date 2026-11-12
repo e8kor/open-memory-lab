@@ -47,7 +47,12 @@ class KeyIssued:
             (ADR-0026 d8).
         user (None | Unset | WhoamiRef): The key's user root, by id and name; null for a tenant key (ADR-0044 d11).
         label (str | Unset):
-        expiry (datetime.datetime | None | Unset):
+        expiry (datetime.datetime | None | Unset): The instant from which the key authenticates nothing; null for a key
+            that does not expire. The key's row, grants and name stay past it (ADR-0079 d1, d3).
+        expired (bool | Unset): Whether the expiry has come on the server's clock; the key read serves it, the issuance
+            answer does not (ADR-0079 d3; since v0.7.3).
+        requests_per_minute (int | None | Unset): The key's own requests per UTC minute; null for none of its own
+            (ADR-0079 d4; since v0.7.3).
         revoked_at (datetime.datetime | None | Unset):
         rotated_from (None | str | Unset): The key_id this key succeeded by rotation, if any (key.rotated links the
             two).
@@ -83,6 +88,8 @@ class KeyIssued:
     user: None | Unset | WhoamiRef = UNSET
     label: str | Unset = UNSET
     expiry: datetime.datetime | None | Unset = UNSET
+    expired: bool | Unset = UNSET
+    requests_per_minute: int | None | Unset = UNSET
     revoked_at: datetime.datetime | None | Unset = UNSET
     rotated_from: None | str | Unset = UNSET
     grants: list[Grant] | Unset = UNSET
@@ -147,6 +154,14 @@ class KeyIssued:
             expiry = self.expiry.isoformat()
         else:
             expiry = self.expiry
+
+        expired = self.expired
+
+        requests_per_minute: int | None | Unset
+        if isinstance(self.requests_per_minute, Unset):
+            requests_per_minute = UNSET
+        else:
+            requests_per_minute = self.requests_per_minute
 
         revoked_at: None | str | Unset
         if isinstance(self.revoked_at, Unset):
@@ -240,6 +255,10 @@ class KeyIssued:
             field_dict["label"] = label
         if expiry is not UNSET:
             field_dict["expiry"] = expiry
+        if expired is not UNSET:
+            field_dict["expired"] = expired
+        if requests_per_minute is not UNSET:
+            field_dict["requests_per_minute"] = requests_per_minute
         if revoked_at is not UNSET:
             field_dict["revoked_at"] = revoked_at
         if rotated_from is not UNSET:
@@ -371,6 +390,19 @@ class KeyIssued:
             return cast(datetime.datetime | None | Unset, data)
 
         expiry = _parse_expiry(d.pop("expiry", UNSET))
+
+        expired = d.pop("expired", UNSET)
+
+        def _parse_requests_per_minute(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        requests_per_minute = _parse_requests_per_minute(
+            d.pop("requests_per_minute", UNSET)
+        )
 
         def _parse_revoked_at(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -524,6 +556,8 @@ class KeyIssued:
             user=user,
             label=label,
             expiry=expiry,
+            expired=expired,
+            requests_per_minute=requests_per_minute,
             revoked_at=revoked_at,
             rotated_from=rotated_from,
             grants=grants,

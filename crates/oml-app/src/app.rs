@@ -8,6 +8,7 @@
 mod auth;
 mod emails;
 mod federation;
+mod key_limits;
 mod metering;
 mod pages;
 mod rescan;
@@ -237,6 +238,10 @@ pub struct App<J, S, C, I, Sc> {
     /// Each key's feedback members checked today, by UTC day: the per-key
     /// cap, held before any lookup (ADR-0054 d6, as amended).
     feedback_counts: std::sync::Mutex<BTreeMap<Uuid, (i64, u64)>>,
+    /// Each key's requests in its UTC minute under the key's own rate, for
+    /// the keys that carry one: counted in this process alone, forgotten at
+    /// a restart (ADR-0079 d4, d6).
+    key_windows: std::sync::Mutex<BTreeMap<Uuid, (i64, u64)>>,
     /// The learned sparse encoder the sparse pipelines read the query with
     /// and the encoder task writes kind 2 with; `None` where the deployment
     /// serves no sparse pipeline (ADR-0052 d14, d16).
@@ -477,8 +482,20 @@ pub(crate) enum Issuance<'a> {
     Plain,
     /// A session key for the allowlist user named: no value.
     Session(&'a Name),
-    /// A person's `<user>-web` issuing a key in its own root.
-    PersonsOwn,
+    /// A person's `<user>-web` issuing a key in its own root, sealed on the
+    /// chain head read before that key's access ([`Head::BeforeAccess`]).
+    PersonsOwn(&'a Option<SignedEnvelope>),
+}
+
+/// The chain head an act seals its commit on.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Head<'a> {
+    /// Read where the act seals, after its lookups.
+    AtSeal,
+    /// Read by the caller before it read the acting key's access: a denial
+    /// of that key committed after the read moves the head, so the commit
+    /// conflicts and the retry reads the denial (ADR-0070 d2, d8; #325).
+    BeforeAccess(&'a Option<SignedEnvelope>),
 }
 
 /// The user root an issuance names: its id, found or minted, its name, the
@@ -1454,6 +1471,7 @@ where
             telemetry: None,
             recall_meter: None,
             feedback_counts: std::sync::Mutex::default(),
+            key_windows: std::sync::Mutex::default(),
             sparse: None,
             formats: Arc::new(crate::ports::ProseFormats),
             signup: None,
@@ -1669,14 +1687,17 @@ where
     }
 
     /// The live key the value names; a value that names no live key is
-    /// `Unauthorized`.
+    /// `Unauthorized`, and one that names a key past its expiry is told so
+    /// (ADR-0079 d2).
     async fn key_of_value(&self, api_key: &str) -> Result<KeyRecord, AppError> {
         let hash = sha256_digest_string(api_key.as_bytes());
         let key = self.journal.key_by_hash(&hash).await;
         if let Ok(found) = &key {
             self.observer.credential(found.as_ref(), None);
         }
-        key?.ok_or(AppError::Unauthorized)
+        let key = key?.ok_or(AppError::Unauthorized)?;
+        self.require_unexpired(&key)?;
+        Ok(key)
     }
 
     /// `key`'s access as stored, `None` for a provider-level key.
@@ -1889,6 +1910,36 @@ where
                 op,
             }),
             _ => Ok(()),
+        }
+    }
+
+    /// A memory is started in a user root by its own user's keys only
+    /// (ADR-0044 d16): `submission.user_root_refused` when `node` is a user
+    /// root or lies beneath one and `key` does not act for that root's
+    /// user, so a tenant key and another person's key are refused alike,
+    /// whatever writer or dreamer grant reaches the node. The person a key
+    /// acts for is read as `same_user` reads it, by [`Self::person_of`]: a
+    /// user key's root, or a session key's `session_user`, which is how
+    /// `<user>-review` names its person (ADR-0045 d6). The two acts that
+    /// start a memory call it: a new memory, and a successor of a ratified
+    /// retirement. It reads the node's ancestry and nothing of the key's
+    /// grants. A caller runs it only once the key is known to read the
+    /// node or the row it writes against, so the answer confirms no root
+    /// to a key that reads nothing of it; that key keeps
+    /// `access.not_found`.
+    async fn refuse_another_users_root(&self, key: &KeyRecord, node: Uuid) -> Result<(), AppError> {
+        let root = self
+            .journal
+            .workarea_ancestry(key.tenant_id, node)
+            .await?
+            .unwrap_or_default()
+            .into_iter()
+            .find(|w| w.user_root);
+        let Some(root) = root else { return Ok(()) };
+        if same_user(self.person_of(key).await?.as_ref(), Some(&root.name)) {
+            Ok(())
+        } else {
+            Err(AppError::UserRootRefused)
         }
     }
 
@@ -2256,6 +2307,18 @@ where
         Ok(nodes.into_iter().collect())
     }
 
+    /// The head an act seals on: the one its caller read, else the head now.
+    async fn head_at(
+        &self,
+        tenant_id: Uuid,
+        head: Head<'_>,
+    ) -> Result<Option<SignedEnvelope>, AppError> {
+        match head {
+            Head::AtSeal => self.head_event(tenant_id).await,
+            Head::BeforeAccess(read) => Ok(read.clone()),
+        }
+    }
+
     async fn head_event(&self, tenant_id: Uuid) -> Result<Option<SignedEnvelope>, AppError> {
         match self.journal.chain_head(tenant_id).await? {
             None => Ok(None),
@@ -2411,6 +2474,8 @@ where
             guardrail_scope: req
                 .guardrail_scope
                 .unwrap_or(GuardrailScope::ISSUANCE_DEFAULT),
+            expiry: req.expiry.clone(),
+            requests_per_minute: req.requests_per_minute,
         };
         (record, value)
     }
@@ -2423,7 +2488,7 @@ where
             "role": record.role.as_str(),
             "principal": record.principal,
             "issued_by_key_id": record.issued_by.map(|k| k.to_string()),
-            "expiry": Value::Null,
+            "expiry": record.expiry.as_ref().map(EventTime::as_str),
             "value_disclosed": false,
             "held_by": held_by.map(HeldBy::as_str),
             "default_workarea_id": record.default_workarea.map(|w| w.to_string()),
@@ -2442,6 +2507,10 @@ where
         // The profile, absent for a key with none (ADR-0030 d8).
         if let (Some(profile), Some(obj)) = (record.profile, payload.as_object_mut()) {
             obj.insert("profile".to_owned(), json!(profile.as_str()));
+        }
+        // The key's own rate, absent for a key with none (ADR-0079 d4).
+        if let (Some(rate), Some(obj)) = (record.requests_per_minute, payload.as_object_mut()) {
+            obj.insert("requests_per_minute".to_owned(), json!(rate));
         }
         payload
     }
@@ -2809,6 +2878,8 @@ where
             user: None,
             connect_code: false,
             guardrail_scope: None,
+            expiry: None,
+            requests_per_minute: None,
         };
         let (record, value) =
             self.mint_key(tenant_id, &issue, Some(root_workarea_id), None, None, None);
@@ -2840,6 +2911,8 @@ where
                 crew_id: None,
                 user: None,
                 guardrail_scope,
+                expiry: None,
+                requests_per_minute: None,
                 access: KeyAccess {
                     issued_seq: receipt.seq,
                     grants: Vec::new(),
@@ -2902,6 +2975,10 @@ where
         req: &IssueKeyRequest,
         how: Issuance<'_>,
     ) -> Result<IssuedKey, AppError> {
+        // No limit for an admin key; for any other, an expiry later than
+        // now and a rate within its bound, checked with the rest of the
+        // body, before any lookup (ADR-0079 d1, d4).
+        self.check_issued_limits(req)?;
         let issuer = issuer.clone();
         let tenant_id = issuer.tenant_id;
         // The person the key acts for, and the root its references resolve
@@ -2934,7 +3011,7 @@ where
             .await?;
         // Steps 1–3: the two-key rule, the issuer ceiling, admissibility.
         let ceiling = match how {
-            Issuance::PersonsOwn => Role::Admin,
+            Issuance::PersonsOwn(_) => Role::Admin,
             Issuance::Plain | Issuance::Session(_) => issuer.role,
         };
         // A curator is a dreamer key held by an agent, whose writer grants
@@ -3095,7 +3172,10 @@ where
         }
         let key_id = record.key_id;
         let guardrail_scope = record.guardrail_scope;
-        let prev = self.head_event(tenant_id).await?;
+        let prev = match how {
+            Issuance::PersonsOwn(head) => head.clone(),
+            Issuance::Plain | Issuance::Session(_) => self.head_event(tenant_id).await?,
+        };
         let event = self.seal(
             prev.as_ref(),
             tenant_id,
@@ -3153,6 +3233,8 @@ where
                 crew_id,
                 user: user_ref.clone(),
                 guardrail_scope,
+                expiry: req.expiry.clone(),
+                requests_per_minute: req.requests_per_minute,
                 access: KeyAccess {
                     issued_seq,
                     grants: stored,
@@ -3192,6 +3274,8 @@ where
             crew_id,
             user: user_ref.clone(),
             guardrail_scope,
+            expiry: req.expiry.clone(),
+            requests_per_minute: req.requests_per_minute,
             access: KeyAccess {
                 issued_seq: receipt.seq,
                 grants: stored,
@@ -3216,7 +3300,7 @@ where
     ) -> Result<DenialRecord, AppError> {
         let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "deny")?;
-        self.deny_key_by(&admin, key, node).await
+        self.deny_key_by(&admin, key, node, Head::AtSeal).await
     }
 
     /// [`App::deny_key`] once the issuer is known: an admin key, or a
@@ -3227,6 +3311,7 @@ where
         admin: &KeyRecord,
         key: Reference,
         node: Reference,
+        head: Head<'_>,
     ) -> Result<DenialRecord, AppError> {
         let admin = admin.clone();
         let tenant_id = admin.tenant_id;
@@ -3245,7 +3330,7 @@ where
             denial_id: self.ids.new_id(),
             node,
         };
-        let prev = self.head_event(tenant_id).await?;
+        let prev = self.head_at(tenant_id, head).await?;
         let epoch = prev.as_ref().map_or(1, |p| p.envelope.seq + 1);
         let event = self.seal(
             prev.as_ref(),
@@ -5013,7 +5098,9 @@ where
     }
 
     /// Submit a memory: writer on the resolved node, which must exist, by
-    /// the refusal order (ADR-0025 d1); every `derives_from` target readable
+    /// the refusal order (ADR-0025 d1), and in a user root the key that
+    /// user's own, else `submission.user_root_refused` where the key reads
+    /// the node (ADR-0044 d16); every `derives_from` target readable
     /// (ADR-0025 d3); the claim text normalized to NFC before the digest,
     /// the scan and the byte count (admission.md capture; ADR-0025 d6);
     /// same-call deterministic scan, whose veto is a refusal that journals
@@ -5037,10 +5124,18 @@ where
         // before the record is looked up, so either spelling is one request
         // (ADR-0026 d4).
         let workarea_id = self.target_workarea(key, req.workarea.as_ref()).await?;
-        if let Err(refusal) = self
+        let access = self
             .require_access(&caller, workarea_id, Role::Writer, "submit")
-            .await
-        {
+            .await;
+        // A memory is started in a user root by its own user's keys only.
+        // The rule is answered where step 2 allows or step 3 would answer
+        // `access.grant_refused`, which a key that reads the node gets; a
+        // key that reads nothing of it keeps step 4's `access.not_found`
+        // (ADR-0044 d16).
+        if matches!(access, Ok(()) | Err(AppError::GrantRefused { .. })) {
+            self.refuse_another_users_root(key, workarea_id).await?;
+        }
+        if let Err(refusal) = access {
             // A user key reads `universe` and never writes it: it is told
             // universe is curated, `submission.universe_refused`, in place
             // of step 3's `access.grant_refused` (ADR-0044 d7, d14).
@@ -7531,7 +7626,9 @@ where
     /// runs in its order: a key role admitting writer or dreamer (step 1);
     /// the idempotency record, scoped to the key with a nil workarea, looked
     /// up next and replayed whatever the target's state now; the target
-    /// readable (step 2); a writer's own target and writer on its workarea
+    /// readable (step 2), and, where it is a ratified retirement in a user
+    /// root, the key that user's own, else `submission.user_root_refused`
+    /// (ADR-0044 d16); a writer's own target and writer on its workarea
     /// (step 3), or a dreamer's dreamer and reader there, whoever authored
     /// it (step 4, edit-as-proposal); then the target-dependent refusals —
     /// `X-OML-Workarea`, the served tip, the kind and retirement checks,
@@ -7602,6 +7699,17 @@ where
             .ok_or(AppError::NotFound)?;
         if !self.readable(&caller, &target).await? {
             return Err(AppError::NotFound);
+        }
+        // A successor of a ratified retirement puts the claim back in
+        // service, and on its account's `memories`, when it is ratified: in
+        // a user root that is a memory started, which is that user's keys'
+        // alone, whatever grant the key holds there. The key reads the
+        // target, so the rule is named ahead of steps 3 and 4. Any other
+        // successor there is governed by those steps, as before (ADR-0044
+        // d16; ADR-0071 d2).
+        if target.retirement && target.status == MemoryStatus::Promoted && target.is_tip {
+            self.refuse_another_users_root(key, target.workarea_id)
+                .await?;
         }
         // A curator retires or rewrites inside an in-progress subtree only,
         // and never what it authored or derived from (ADR-0030 d9).
@@ -8987,8 +9095,7 @@ where
     /// one live code; the code is returned once, after that commit (http-api.md
     /// `POST /v2/keys/{key_id}/connect-codes`; ADR-0031 d7, d8).
     ///
-    /// Keys carry no expiry in this build (`key.issued.expiry` is null), so
-    /// `expired` is never the answer here.
+    /// A key past its expiry is refused as `expired` (ADR-0079 d2).
     pub async fn mint_connect_code(
         &self,
         api_key: &str,
@@ -9013,7 +9120,7 @@ where
         // against its rate (#253, #281).
         let admin = self.authenticate_bearer(api_key.into()).await?.key;
         require_role(&admin, Role::Admin, "mint_connect_code")?;
-        self.mint_connect_code_by_with_ttl(&admin, key, ttl_secs)
+        self.mint_connect_code_by_with_ttl(&admin, key, ttl_secs, Head::AtSeal)
             .await
     }
 
@@ -9024,8 +9131,10 @@ where
         &self,
         admin: &KeyRecord,
         key: Reference,
+        head: Head<'_>,
     ) -> Result<ConnectCodeIssued, AppError> {
-        self.mint_connect_code_by_with_ttl(admin, key, None).await
+        self.mint_connect_code_by_with_ttl(admin, key, None, head)
+            .await
     }
 
     async fn mint_connect_code_by_with_ttl(
@@ -9033,6 +9142,7 @@ where
         admin: &KeyRecord,
         key: Reference,
         ttl_secs: Option<i64>,
+        head: Head<'_>,
     ) -> Result<ConnectCodeIssued, AppError> {
         let ttl_secs = match ttl_secs {
             None => CONNECT_CODE_TTL_SECS,
@@ -9061,6 +9171,9 @@ where
         if target.revoked_at.is_some() {
             return Err(connect_refused(ConnectRefused::Revoked));
         }
+        if target.expired_at(&self.clock.now()) {
+            return Err(connect_refused(ConnectRefused::Expired));
+        }
         let oauth = self
             .oauth_issuer
             .as_ref()
@@ -9076,7 +9189,7 @@ where
             .find(|c| c.redeemed_at.is_none() && c.voided_seq.is_none())
             .map(|c| c.code_id);
         let (code, shown) = self.new_connect_code(oauth, key_id, ttl_secs);
-        let prev = self.head_event(tenant_id).await?;
+        let prev = self.head_at(tenant_id, head).await?;
         let event = self.seal(
             prev.as_ref(),
             tenant_id,
@@ -9415,8 +9528,7 @@ where
     /// A code entry spent: the code's tenant, row and key, or `None` for
     /// every entry that is not a correct code of a live key — malformed,
     /// unknown, expired, voided, spent, a revoked key's, or one a racing
-    /// entry spent first (ADR-0031 d8). Keys carry no expiry in this build
-    /// (`key.issued.expiry` is null), so a key is active or revoked.
+    /// entry spent first, or an expired key's (ADR-0031 d8; ADR-0079 d2).
     async fn spend_entry(
         &self,
         entry: &str,
@@ -9432,20 +9544,15 @@ where
         else {
             return Ok(None);
         };
-        let key = self
-            .journal
-            .key(found.tenant_id, found.row.key_id)
-            .await?
-            .filter(|key| key.revoked_at.is_none());
+        let key = self.journal.key(found.tenant_id, found.row.key_id).await?;
         let row = CodeRow {
             redeemed: found.row.redeemed_at.is_some(),
             voided: found.row.voided_seq.is_some(),
             expired: now.unix_micros() >= found.row.expires_at.unix_micros(),
-            key: if key.is_some() {
-                KeyState::Active
-            } else {
-                KeyState::Revoked
-            },
+            // A key its tenant no longer holds reads as revoked.
+            key: key
+                .as_ref()
+                .map_or(KeyState::Revoked, |key| key.state_at(now)),
         };
         let Some(key) = key.filter(|_| check_code_entry(Some(&row)).is_ok()) else {
             return Ok(None);
@@ -9743,7 +9850,9 @@ where
     /// its connection open and bound to the current `<issuer>/mcp`, and its
     /// key neither revoked nor expired; the caller is then exactly the one
     /// the key's own authentication builds (roles-and-keys.md connections;
-    /// ADR-0031 d10, d11). Anything else is [`AppError::Unauthorized`].
+    /// ADR-0031 d10, d11). A key past its expiry is
+    /// [`AppError::KeyExpired`] (ADR-0079 d2); anything else is
+    /// [`AppError::Unauthorized`].
     pub async fn resolve_access_token(&self, token: &str) -> Result<Caller, AppError> {
         let issuer = self.oauth_issuer.as_ref().ok_or(AppError::Unauthorized)?;
         if token_kind(token) != Some(TokenKind::Access) {
@@ -9770,7 +9879,11 @@ where
             .filter(|k| k.revoked_at.is_none());
         self.observer
             .credential(key.as_ref(), Some(connection.connection_id));
-        self.caller_of(key.ok_or(AppError::Unauthorized)?).await
+        let key = key.ok_or(AppError::Unauthorized)?;
+        // The token is the key's own credential, so its holder is told the
+        // key expired (ADR-0079 d2).
+        self.require_unexpired(&key)?;
+        self.caller_of(key).await
     }
 
     /// `POST /oauth/register` (http-api.md; RFC 7591; ADR-0031 d5): the body
@@ -9824,10 +9937,9 @@ where
             .is_none_or(|c| c.voided_seq.is_some());
         let facts = ExchangeFacts {
             connection: connection.clone(),
-            key: match &key {
-                Some(k) if k.revoked_at.is_none() => KeyState::Active,
-                _ => KeyState::Revoked,
-            },
+            key: key
+                .as_ref()
+                .map_or(KeyState::Revoked, |key| key.state_at(now)),
             code_expired: connection
                 .auth_code_expires_at
                 .as_ref()

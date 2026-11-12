@@ -2347,7 +2347,10 @@ async fn get_v2_keys_by_name_answers_the_key() {
             "user": null,
             "default_workarea_id": quarter,
             "held_by": "agent",
+            // Issued with neither limit (ADR-0079 d1, d3, d4).
             "expiry": null,
+            "expired": false,
+            "requests_per_minute": null,
             "revoked_at": null,
             "rotated_from": null,
             "grants": issued["grants"],
@@ -3103,35 +3106,87 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
     drop_db(&rig.db_name).await;
 }
 
+/// A key's expiry and its own rate are stored with `key.issued` and served
+/// by the key read; from the expiry on the key's request is `auth.invalid`
+/// with `reason: expired` and the read says `expired`, the row and its
+/// grants still there; an admin key then moves the date and the key
+/// authenticates again (ADR-0079 d1, d2, d3, d5).
 #[tokio::test]
-async fn an_issuance_expiry_is_refused_by_name_while_unbuilt() {
+async fn a_key_issued_with_an_expiry_is_refused_as_expired_from_that_instant_until_an_admin_moves_it()
+ {
     let Some(rig) = fresh_rig().await else {
         return;
     };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
-    let head = head_seq(&rig, tenant).await;
+    // Two seconds from now on the server's clock.
+    let expiry = oml_transport_http::time::system_event_time_plus(2);
 
-    // Issued keys do not expire yet, so a requested expiry is refused by
-    // name: a key minted without the expiry its issuer set would hold its
-    // access longer than meant (ADR-0025 d2, d16).
-    let (status, _, refused) = send(
+    let (status, _, issued) = send(
         router,
         "POST",
         "/v2/keys",
         Call::auth(&admin).idem("expiring").body(json!({
-            "role": "writer",
+            "role": "reader",
             "name": "expiring",
-            "grants": [{ "workarea": crew, "role": "writer" }],
-            "expiry": "2027-01-01T00:00:00Z",
+            "grants": [{ "workarea": crew, "role": "reader" }],
+            "expiry": expiry.as_str(),
+            "requests_per_minute": 600,
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
-    assert_envelope(&refused, "request.validation");
-    let message = refused["error"]["message"].as_str().expect("message");
-    assert!(message.contains("expiry"), "{refused}");
-    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+    assert_eq!(status, StatusCode::CREATED, "{issued}");
+    assert_eq!(issued["expiry"], expiry.as_str());
+    assert_eq!(issued["requests_per_minute"], 600);
+    let key = issued["value"].as_str().expect("a value").to_owned();
+    let events = rig
+        .store
+        .events_range(tenant, 1, 100)
+        .await
+        .expect("journal");
+    let journalled = events
+        .iter()
+        .find(|e| e.envelope.payload["key_id"] == issued["key_id"])
+        .expect("key.issued");
+    assert_eq!(journalled.envelope.payload["expiry"], expiry.as_str());
+    assert_eq!(journalled.envelope.payload["requests_per_minute"], 600);
+    let (status, _, me) = send(router, "GET", "/v2/whoami", Call::auth(&key)).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert_eq!(me["expiry"], expiry.as_str());
+
+    tokio::time::sleep(std::time::Duration::from_millis(2_100)).await;
+
+    let (status, _, refused) = send(router, "GET", "/v2/whoami", Call::auth(&key)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{refused}");
+    assert_envelope(&refused, "auth.invalid");
+    assert_eq!(
+        refused["error"]["details"],
+        json!({ "reason": "expired", "expiry": expiry.as_str() })
+    );
+    let (status, _, read) = send(router, "GET", "/v2/keys/expiring", Call::auth(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(read["expired"], true);
+    assert_eq!(read["revoked_at"], Value::Null);
+    assert_eq!(read["grants"].as_array().map(Vec::len), Some(1));
+    let head = head_seq(&rig, tenant).await;
+
+    let (status, _, set) = send(
+        router,
+        "POST",
+        "/v2/keys/expiring/limits",
+        Call::auth(&admin)
+            .idem("move-the-date")
+            .body(json!({ "expiry": "2999-01-01T00:00:00Z", "requests_per_minute": null })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{set}");
+    assert_eq!(set["expiry"], "2999-01-01T00:00:00.000000Z");
+    assert_eq!(set["expired"], false);
+    assert_eq!(set["requests_per_minute"], Value::Null);
+    assert_eq!(head_seq(&rig, tenant).await, head + 1, "one key.limits_set");
+    let (status, _, me) = send(router, "GET", "/v2/whoami", Call::auth(&key)).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert_eq!(me["requests_per_minute"], Value::Null);
 
     drop_db(&rig.db_name).await;
 }
@@ -7494,6 +7549,9 @@ async fn whoami_answers_any_live_key_with_its_tenant_role_name_and_default_worka
             // Sent none, the issuance default (proposed ADR-0037 d4, d5).
             "guardrail_scope": "ancestors",
             "profile": null,
+            // Issued with neither limit (ADR-0079 d3, d4).
+            "expiry": null,
+            "requests_per_minute": null,
             // A tenant key names no person (ADR-0070 d5).
             "person": null,
             // No server.shared and no open sign-up (ADR-0076 d9).
@@ -7816,8 +7874,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        80,
-        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5) and usage metering's six (ADR-0071 d5, d6)"
+        81,
+        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6) and a key's limits (ADR-0079 d5)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -7979,22 +8037,18 @@ async fn a_designed_field_sent_to_a_served_operation_answers_its_v0_3_0_code() {
     assert_envelope(&revised, "submission.tip_conflict");
 }
 
-/// `expiry` and `tenant` on key issuance and `workarea` on the review
-/// serve are designed fields: openapi-designed.yaml declares them for
-/// issueKey and reviewNext under `x-oml-designed-fields`, the served
-/// openapi.yaml declares them on neither request, and each sent still
-/// answers its v0.3.0 `request.validation`, where the same call without it
-/// passes that check: the issuance is created, and the serve finds an
-/// empty queue (ADR-0039 d9).
+/// `tenant` on key issuance and `workarea` on the review serve are designed
+/// fields: openapi-designed.yaml declares them for issueKey and reviewNext
+/// under `x-oml-designed-fields`, the served openapi.yaml declares them on
+/// neither request, and each sent still answers its v0.3.0
+/// `request.validation`, where the same call without it passes that check:
+/// the issuance is created, and the serve finds an empty queue (ADR-0039
+/// d9). `expiry` left that list when it was built (ADR-0079 d1).
 #[tokio::test]
 async fn an_unbuilt_issuance_or_review_field_is_designed_and_answers_request_validation() {
     let designed = designed_openapi();
     let fields = block(&designed, 0, "x-oml-designed-fields").join("\n");
-    for (operation, field) in [
-        ("issueKey", "expiry"),
-        ("issueKey", "tenant"),
-        ("reviewNext", "workarea"),
-    ] {
+    for (operation, field) in [("issueKey", "tenant"), ("reviewNext", "workarea")] {
         let request = block(&fields, 2, operation).join("\n");
         assert!(
             block(&request, 4, "request")
@@ -8004,14 +8058,12 @@ async fn an_unbuilt_issuance_or_review_field_is_designed_and_answers_request_val
         );
     }
     let served = served_openapi();
-    for field in ["expiry", "tenant"] {
-        assert!(
-            !block(&served, 4, "KeyIssueRequest")
-                .iter()
-                .any(|l| l.trim_start().starts_with(&format!("{field}:"))),
-            "openapi.yaml KeyIssueRequest serves no {field}"
-        );
-    }
+    assert!(
+        !block(&served, 4, "KeyIssueRequest")
+            .iter()
+            .any(|l| l.trim_start().starts_with("tenant:")),
+        "openapi.yaml KeyIssueRequest serves no tenant"
+    );
     assert!(
         !block(&served, 2, "/v2/review/next")
             .iter()
@@ -8021,29 +8073,20 @@ async fn an_unbuilt_issuance_or_review_field_is_designed_and_answers_request_val
 
     let router = &doubles_router();
     let (admin, _, root) = bootstrap(router).await;
-    for (n, (field, value)) in [
-        ("expiry", json!("2027-01-01T00:00:00Z")),
-        ("tenant", json!("test-tenant")),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let mut body = json!({
+    let (status, _, refused) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&admin).idem("designed-tenant").body(json!({
             "role": "reader",
-            "name": format!("designed-{n}"),
+            "name": "designed-tenant",
             "grants": [{ "workarea": root, "role": "reader" }],
-        });
-        body[field] = value;
-        let (status, _, refused) = send(
-            router,
-            "POST",
-            "/v2/keys",
-            Call::auth(&admin).idem(&format!("designed-{n}")).body(body),
-        )
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{field}: {refused}");
-        assert_envelope(&refused, "request.validation");
-    }
+            "tenant": "test-tenant",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "tenant: {refused}");
+    assert_envelope(&refused, "request.validation");
     let dreamer = issue_key(router, &admin, "dreamer", "agent/designed", root).await;
     let (status, _, refused) = send(
         router,
@@ -8343,6 +8386,264 @@ async fn issue_raw(router: &Router, admin: &str, idem: &str, body: Value) -> (St
     )
     .await;
     (status, body)
+}
+
+/// ADR-0044 d16 over the wire: a tenant writer key holding a subtree grant
+/// on `universe` is refused a new memory in a user's root and beneath it,
+/// `409 submission.user_root_refused`; a tenant reviewer granted there
+/// proposes a successor and a retirement of a served memory, each held,
+/// and is refused a successor of the ratified retirement with the same
+/// code; a key that reads nothing of the root gets the `404
+/// access.not_found` of a workarea or a row that does not exist; the tenant
+/// key still reads there, the user's own keys still write and put the
+/// retired claim back, and the tenant reviewer's verdict still promotes.
+#[tokio::test]
+async fn a_tenant_keys_write_into_a_users_root_is_user_root_refused_and_her_own_key_still_writes() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _, root) = bootstrap(router).await;
+    let admin = admin.as_str();
+    let issue = |idem: &'static str, body: Value| async move {
+        let (status, key) = issue_raw(router, admin, idem, body).await;
+        assert_eq!(status, StatusCode::CREATED, "{key}");
+        key
+    };
+    let alice = issue(
+        "alice",
+        json!({
+            "role": "writer", "name": "alice-laptop", "principal": "alice/laptop",
+            "user": "alice",
+            "grants": [
+                { "workarea": "alice", "role": "writer" },
+                { "workarea": "alice", "role": "reader" },
+            ],
+        }),
+    )
+    .await;
+    let alice_root = alice["user"]["id"].as_str().expect("root").to_owned();
+    let alice_key = alice["value"].as_str().expect("value").to_owned();
+    let alice_review = issue(
+        "alice-review",
+        json!({
+            "role": "dreamer", "name": "alice-review", "principal": "alice/review",
+            "user": "alice", "held_by": "human",
+            "grants": [
+                { "workarea": "alice", "role": "dreamer" },
+                { "workarea": "alice", "role": "reader" },
+            ],
+        }),
+    )
+    .await["value"]
+        .as_str()
+        .expect("value")
+        .to_owned();
+    let tenant_key = |name: &'static str, role: &'static str, workarea: String| async move {
+        issue(
+            name,
+            json!({
+                "role": role, "name": name, "principal": format!("crew/{name}"),
+                "grants": [
+                    { "workarea": workarea, "role": role },
+                    { "workarea": workarea, "role": "reader" },
+                ],
+            }),
+        )
+        .await["value"]
+            .as_str()
+            .expect("value")
+            .to_owned()
+    };
+    let crew_writer = tenant_key("crew-writer", "writer", root.to_string()).await;
+    let crew_reviewer = tenant_key("crew-reviewer", "dreamer", root.to_string()).await;
+    let (status, _, shared) = send(
+        router,
+        "POST",
+        "/v2/workareas",
+        Call::auth(admin)
+            .idem("wa-shared")
+            .body(json!({ "name": "shared", "parent": root })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{shared}");
+    let stranger = tenant_key(
+        "stranger",
+        "writer",
+        shared["id"].as_str().expect("id").to_owned(),
+    )
+    .await;
+    let (status, _, project) = send(
+        router,
+        "POST",
+        "/v2/workareas",
+        Call::auth(&alice_key)
+            .idem("wa-project")
+            .body(json!({ "name": "project" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{project}");
+
+    // Alice's own writes, each promoted by her reviewer key.
+    let mut own = Vec::new();
+    for (idem, claim_key) in [("alice-source", "source"), ("alice-lapsed", "lapsed")] {
+        let (status, _, held) = send(
+            router,
+            "POST",
+            "/v1/memories",
+            submit_into(&alice_key, idem, "alice", claim_key),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{held}");
+        let id = held["artifact_id"].as_str().expect("id").to_owned();
+        approve_over_http(router, &alice_review, &id).await;
+        own.push(id);
+    }
+    let (source_id, lapsed_id) = (own[0].clone(), own[1].clone());
+    // A verdict on the held version `id`, named by its serve id.
+    let approve = |reviewer: &str, id: &str| {
+        let reviewer = reviewer.to_owned();
+        let serve = format!("srv_{}", id.replace('-', ""));
+        let idem = format!("approve-{id}");
+        async move {
+            let (status, _, verdict) = send(
+                router,
+                "POST",
+                "/v2/review/verdicts",
+                Call::auth(&reviewer)
+                    .idem(&idem)
+                    .body(json!({ "serve_id": serve, "verdict": "approve" })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{verdict}");
+            assert_eq!(verdict["state"], "promoted", "{verdict}");
+        }
+    };
+    let supersede =
+        |key: &str, idem: &'static str, target: &str, expected: u32, retirement: bool| {
+            let (key, target) = (key.to_owned(), target.to_owned());
+            async move {
+                send(
+                    router,
+                    "POST",
+                    &format!("/v1/memories/{target}/supersede"),
+                    Call::auth(&key).idem(idem).body(json!({
+                        "expected_version": expected,
+                        "body": "Supplier quote, said again.",
+                        "retirement": retirement,
+                    })),
+                )
+                .await
+            }
+        };
+
+    // A new memory in the root and beneath it, by the tenant key of #329.
+    for (idem, workarea) in [
+        ("crew-into-root", "alice"),
+        ("crew-into-root-id", alice_root.as_str()),
+        ("crew-into-project", "alice.project"),
+    ] {
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            "/v1/memories",
+            submit_into(&crew_writer, idem, workarea, idem),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{workarea}: {refused}");
+        assert_envelope(&refused, "submission.user_root_refused");
+    }
+    // A tenant reviewer granted there edits by proposal and proposes a
+    // retirement, each held like any write; a tenant writer that reads the
+    // row and did not write it supersedes nothing.
+    let (status, _, edit) = supersede(&crew_reviewer, "crew-edit", &source_id, 1, false).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{edit}");
+    assert_eq!(edit["state"], "held", "{edit}");
+    let (status, _, retirement) =
+        supersede(&crew_reviewer, "crew-retire", &lapsed_id, 1, true).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{retirement}");
+    assert_eq!(retirement["retirement"], true, "{retirement}");
+    let retirement_id = retirement["artifact_id"].as_str().expect("id").to_owned();
+    let (status, _, refused) =
+        supersede(&crew_writer, "crew-writer-edit", &source_id, 1, false).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert_envelope(&refused, "access.author_only");
+
+    // Once the retirement is ratified, its successor would put the claim
+    // back in service: that is alice's keys' alone.
+    approve(&alice_review, &retirement_id).await;
+    for (idem, retire_again) in [("crew-unretire", false), ("crew-reretire", true)] {
+        let (status, _, refused) =
+            supersede(&crew_reviewer, idem, &retirement_id, 2, retire_again).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{idem}: {refused}");
+        assert_envelope(&refused, "submission.user_root_refused");
+    }
+    let (status, _, refused) =
+        supersede(&stranger, "stranger-unretire", &retirement_id, 2, false).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+    assert_envelope(&refused, "access.not_found");
+    let (status, _, back) =
+        supersede(&alice_review, "alice-unretire", &retirement_id, 2, false).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{back}");
+    assert_eq!(back["state"], "held", "{back}");
+
+    // A key that reads nothing of the root learns nothing of it: the
+    // answer for the root is the answer for an id no workarea holds.
+    let unknown = Uuid::from_u128(0x0329_dead).to_string();
+    let mut answers = Vec::new();
+    for (idem, workarea) in [
+        ("stranger-root", alice_root.as_str()),
+        ("stranger-unknown", unknown.as_str()),
+        ("stranger-qualified", "alice.project"),
+        ("stranger-no-user", "nobody.project"),
+    ] {
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            "/v1/memories",
+            submit_into(&stranger, idem, workarea, idem),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{workarea}: {refused}");
+        assert_envelope(&refused, "access.not_found");
+        answers.push(refused["error"].clone());
+    }
+    assert!(
+        answers.iter().all(|a| a == &answers[0]),
+        "one answer whether or not the root exists: {answers:?}"
+    );
+
+    // Reads are unchanged, alice's own key still writes, and the tenant
+    // reviewer's verdict still promotes in her root.
+    let (status, _, read) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{source_id}"),
+        Call::auth(&crew_writer),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    let (status, _, later) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        submit_into(&alice_key, "alice-later", "alice.project", "later"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{later}");
+    approve(&crew_reviewer, later["artifact_id"].as_str().expect("id")).await;
+
+    // The same key writes in a shared workarea, as before.
+    let (status, _, held) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        submit_into(&crew_writer, "crew-into-shared", "shared", "shared-fact"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{held}");
+
+    drop_db(&rig.db_name).await;
 }
 
 /// ADR-0044 d2–d11 over the wire: `user` and `covers` at issuance, `user`

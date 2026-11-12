@@ -351,6 +351,9 @@ fn decide(ctx: &Context, claim: &Claim, i: &LakeItem) -> Entry {
             ..bare(Outcome::Unchanged, key, &i.rel)
         };
     }
-    let note = tip_hash.map(|h| format!("{}…→{}…", &short(h)[..4], &short(&i.hash)[..4]));
+    // The tip's hash is the server's text: its first four characters, or
+    // as many as it has.
+    let head = |digest: &str| short(digest).chars().take(4).collect::<String>();
+    let note = tip_hash.map(|h| format!("{}…→{}…", head(h), head(&i.hash)));
     changed(note)
 }

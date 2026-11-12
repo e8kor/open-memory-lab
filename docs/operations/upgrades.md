@@ -63,9 +63,9 @@ versions. Rehearse on a copy (step 3) to time it on your data.
 
 A version whose promotion event names no verdict the journal holds keeps `approved_at` null. It stays served,
 with `approver` and `approved_at` null. After the upgrade, `oml doctor` run with an admin key names the count
-as `approval_unmatched`: the served versions with no approval. Doctor reads it from `promoted_unapproved` on
-`GET /v2/admin/rescan`, which counts it in the pass that already counts the scan backlog. It is a count; no command lists which versions
-they are. To clear one, supersede it with `oml write --replaces`. Once a reviewer approves the successor, it
+as `approval_unmatched`: the served versions with no approval. A retirement tip is not served, so it is not counted.
+Doctor reads it from `promoted_unapproved` on `GET /v2/admin/rescan`, which counts it in the pass that already counts the
+scan backlog. It is a count; no command lists which versions they are. To clear one, supersede it with `oml write --replaces`. Once a reviewer approves the successor, it
 carries its own approval and the version it replaced is no longer counted. Leaving one as it is changes
 nothing else.
 

@@ -479,6 +479,11 @@ where
             .map_err(|e| map_app_error(AppError::Store(e), ErrorContext::Write))?;
         crate::traffic::credential(key.as_ref(), None);
         let key = key.ok_or_else(|| ApiError::auth_invalid("unknown"))?;
+        // A key past its expiry is told so here, as every ring call would
+        // tell it (ADR-0079 d2).
+        st.app
+            .require_unexpired(&key)
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok((token, key, None))
     }
 

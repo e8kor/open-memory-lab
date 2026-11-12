@@ -78,7 +78,18 @@ Checks run in this order, first failure answers: role exclusivity, issuer ceilin
 
 `oml keys issue` and `oml keys issue-agent` print the key value once. OML stores a SHA-256 hash only, so there is no "show me the key again". `oml keys show` displays grants, denials, crew and connections, never the value.
 
-Not available: revoking, rotating or expiring a key. To cut a key off today, add a global denial with `oml deny set`.
+Not available: revoking or rotating a key. To cut a key off today, add a global denial with `oml deny set`.
+
+### Expiry and rate
+
+A reader, writer or dreamer key can carry two limits, each set when it is issued (`--expires`, `--requests-per-minute`) and neither required:
+
+- **An expiry**, an instant. From it on the key authenticates nothing: its request answers `auth.invalid` with `details.reason: expired`, where an unknown or revoked key answers `unknown`. Only the holder of the key's own credential is told. The key's row, grants and name stay, and `oml keys show` says it has expired. A connector key's expiry is its connection's: the access token is refused the same way, a refresh answers `invalid_grant`, and no connect code is minted for it.
+- **A rate**, in requests per UTC minute. The request past it answers `429 limit.rate` with `Retry-After`. A key of an account under a quota is held to both rates. Each server process counts alone, so n processes admit up to n times the rate ([settings](../operations/configuration.md#limits-counted-per-process)).
+
+`oml keys limit <key>` changes or clears either, journalled as `key.limits_set`. It takes an admin key that is not the key itself: no agent key reaches the route, and an admin key naming itself is refused, so no key extends its own date or raises its own rate. Moving an expired key's date later makes it work again. A session key takes neither limit, and a revoked key none.
+
+An admin key carries neither limit: issuing one with an expiry or a rate is refused, and so is `oml keys limit` naming one, each as `request.validation` with `details.reason: admin_key`. The admin key role is the one that changes limits, so no key that can change a limit carries one: a limited key cannot lift its own through a second admin key, and no admin key ends another by a date. The cost is that no admin key is temporary ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md)).
 
 ### Names, principals and labels
 
@@ -138,6 +149,7 @@ A key with the field `user` (the person an admin attests it acts for) is a **use
 - **Grants stay inside the user's root.** Any other grant is refused with `access.issuer_ceiling`. Issuance adds one reader grant on the `universe` node only.
 - A user key's bare workarea names resolve in its root; tenant keys use `<user>.<name>`.
 - **Writes into `universe` are refused** (`submission.universe_refused`). Only a curator writes there: a tenant writer key granted writer on `universe`, reviewed by a dreamer outside the memory's lineage.
+- **A memory is started in a user's root by that user's keys only.** Any other key's new memory in `universe.<user>` or below it is refused with `submission.user_root_refused`, whatever grant it holds there. So is its successor of a ratified retirement, which would put the claim back in service. A person's keys are their user keys and the [session keys](#session-keys) that serve them: `<user>-review` and `<user>-curate` carry no `user` field and are read as that person's by their session, in that person's root and in no one else's. A reviewer granted there still proposes a successor or a retirement of a served memory, and its reads, recall and verdicts are unchanged. `my_effective_verbs` still lists what its grants confer. A key that cannot read the workarea gets `access.not_found`.
 
 ## Session keys
 
@@ -152,6 +164,8 @@ A **session key** has the credential `session`: no value, no connection. It acts
 
 `<user>-web` and `<user>-review` are created at first sign-in. Each session key's principal is its own name. `<user>-admin` reads memory text through the journaled admin read and gives no verdicts.
 
+A session key that carries a denial, on any workarea, runs none of its key acts: a denied `<user>-web` issues no key, mints no connect code and cuts no key off. Each act answers `access.verb_ceiling` with `details.reason: session_key_denied` and journals nothing. The key it would issue holds the person's whole root, which a key denied inside that root or on `universe` no longer does; a denial on any other workarea masks nothing the key reads and refuses the three acts all the same. The refusal is permanent: no route lifts a denial, and every sign-in finds the same `<user>-web`, also after the person's entry is removed and added back. The session still opens the pages, lists the person's keys and ends by sign-out.
+
 ## Connections
 
 A **connection** is one OAuth client's standing authority to act as one connector key at `/mcp`, so Claude's hosted apps use the [agent plugin](../api/mcp-plugin.md) without a pasted key. Connections need `oauth.issuer` set on the server.
@@ -163,4 +177,4 @@ A **connection** is one OAuth client's standing authority to act as one connecto
 
 A revoked connection never reopens. `oml keys disconnect <key> <connection-id>` ends one; `oml keys show` lists them.
 
-Design record: [ADR-0010](../adr/ADR-0010-roles-and-keys.md), [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md), [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md).
+Design record: [ADR-0010](../adr/ADR-0010-roles-and-keys.md), [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md), [ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md), [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md).

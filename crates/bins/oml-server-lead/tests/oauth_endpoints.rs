@@ -593,6 +593,8 @@ async fn issue_connector(rig: &Rig) -> String {
                 connect_code: true,
                 user: None,
                 guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
             },
         )
         .await
@@ -1409,6 +1411,8 @@ async fn a_reviewer_code_is_minted_for_a_confined_key_and_named_on_the_key() {
         connect_code: true,
         user: None,
         guardrail_scope: None,
+        expiry: None,
+        requests_per_minute: None,
     };
     rig.app
         .issue_key(&admin, &connector("reviewer", demo.into()))
