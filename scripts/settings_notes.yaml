@@ -86,7 +86,7 @@ server:
     note: The privacy page the terms checkbox links.
   signup.per_ip_per_hour:
     default: "`5`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
-    note: New accounts from one client address in a rolling hour, counted per process; an IPv6 address counts by its /64 and an IPv4 address by itself. The address is the request line's, so behind a proxy set `server.trusted_proxies`, or every sign-up shares one bucket (`oml doctor` warns).
+    note: New accounts from one client address in a rolling hour, counted in each process's memory and not shared (see [limits counted per process](#limits-counted-per-process)); an IPv6 address counts by its /64 and an IPv4 address by itself. The address is the request line's, so behind a proxy set `server.trusted_proxies`, or every sign-up shares one bucket (`oml doctor` warns).
   quota.memories:
     default: "`1000`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
     note: Live memories in a person's root, counted as chains, so a new version of a memory is not a new memory. Past it, `limit.quota`. An admin overrides one person's limit on `/web/admin/users`, journaled as `web.quota_set`. A value above 1,000,000 stops the start.
@@ -98,7 +98,7 @@ server:
     note: Open connections of a person. Past it, `limit.quota`.
   quota.requests_per_minute:
     default: "`120`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
-    note: Requests per key per UTC minute, counted per process. Past it, `limit.rate`.
+    note: Requests per key per UTC minute, counted in each process's memory and not shared (see [limits counted per process](#limits-counted-per-process)). Past it, `limit.rate`.
   brief.max_tokens:
     default: "`400`"
     note: The token budget a workarea's brief is cut to when an agent reads the workarea. The first member that does not fit ends the brief.
