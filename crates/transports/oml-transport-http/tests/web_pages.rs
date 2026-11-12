@@ -744,11 +744,53 @@ async fn a_post_from_another_origin_is_refused_before_the_session_is_read() {
     }
 }
 
+/// The status `GET /v2/whoami` answers the session's `capacity` credential
+/// as `oml-web` presents it: whether the credential still names a session.
+async fn credential_status(rig: &Rig, cookie: &str, capacity: &str) -> StatusCode {
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let credential = oml_app::domain::web::capacity_credential(token, capacity);
+    let request = Request::get("/v2/whoami")
+        .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+        .header("oml-web-client", WEB_CLIENT_SECRET)
+        .body(Body::empty())
+        .expect("a request");
+    send(&rig.router, request).await.0
+}
+
+/// The post the console's header sends (#327): the session row ends, so
+/// its capacity credentials resolve to nothing at the API, and the cookie
+/// is cleared with the attributes the sign-in set it with (ADR-0045 d5;
+/// ADR-0070 d2).
 #[tokio::test]
 async fn sign_out_ends_the_session_and_clears_the_cookie() {
     let rig = rig().await;
-    let (_, token, _) = sign_in_google(&rig, "sub-1", EMAIL).await;
-    let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
+    let (location, sealed) = start(&rig, Provider::Google).await;
+    let state = query_param(&location, "state").expect("a state");
+    let nonce = query_param(&location, "nonce").expect("a nonce");
+    rig.providers.answer(
+        Provider::Google,
+        Ok(ProviderAnswer::GoogleIdToken(google_token(
+            &nonce, "sub-1", EMAIL, true,
+        ))),
+    );
+    let (status, headers, body) = callback(
+        &rig,
+        Provider::Google,
+        "the-code-4711",
+        &state,
+        &format!("{SIGN_IN_COOKIE}={sealed}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let (token, set) = set_cookie(&headers, SESSION_COOKIE).expect("the session cookie");
+    let cookie = format!("{SESSION_COOKIE}={token}");
+    for capacity in ["web", "review"] {
+        assert_eq!(
+            credential_status(&rig, &cookie, capacity).await,
+            StatusCode::OK,
+            "{capacity}: live before the sign-out"
+        );
+    }
     let csrf = csrf_for(&cookie);
     let (status, headers, _) = send(
         &rig.router,
@@ -761,8 +803,29 @@ async fn sign_out_ends_the_session_and_clears_the_cookie() {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(headers[header::LOCATION], "/web");
-    let (_, cleared) = set_cookie(&headers, SESSION_COOKIE).expect("cleared");
-    assert!(cleared.contains("Max-Age=0"));
+    let (value, cleared) = set_cookie(&headers, SESSION_COOKIE).expect("cleared");
+    assert_eq!(value, "", "{cleared}");
+    let attributes = |whole: &str| -> Vec<String> {
+        whole
+            .split("; ")
+            .skip(1)
+            .filter(|a| !a.starts_with("Max-Age="))
+            .map(str::to_owned)
+            .collect()
+    };
+    assert!(cleared.split("; ").any(|a| a == "Max-Age=0"), "{cleared}");
+    assert_eq!(attributes(&cleared), attributes(&set));
+    assert_eq!(
+        attributes(&set),
+        ["Path=/", "Secure", "HttpOnly", "SameSite=Lax"]
+    );
+    for capacity in ["web", "review"] {
+        assert_eq!(
+            credential_status(&rig, &cookie, capacity).await,
+            StatusCode::UNAUTHORIZED,
+            "{capacity}: the credential ended with the session"
+        );
+    }
     let (_, _, page) = send(&rig.router, get("/web", Some(&cookie))).await;
     assert!(page.contains("Sign in with Google"));
     // A POST after the session ended is session_expired on the sign-in page.

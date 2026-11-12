@@ -387,6 +387,7 @@ async fn view(
         shell(
             title(side),
             &session.who(),
+            Some(&session.csrf()),
             &tabs(&session, side),
             page,
             notice(&fields).as_deref(),
@@ -719,6 +720,7 @@ async fn bulk_confirm(
         shell(
             "Bulk review",
             &session.who(),
+            Some(&session.csrf()),
             &tabs(session, side),
             page,
             None,

@@ -1039,7 +1039,15 @@ fn page(side: Side, session: &Session, active: &str, body: &str) -> Response {
     };
     outcome::html(
         StatusCode::OK,
-        shell(title, &session.who(), &tabs, active, None, body),
+        shell(
+            title,
+            &session.who(),
+            Some(&session.csrf()),
+            &tabs,
+            active,
+            None,
+            body,
+        ),
     )
 }
 

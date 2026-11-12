@@ -74,7 +74,15 @@ fn admin_only(session: &Session, calls: &PageCalls) -> Option<Response> {
 fn page(session: &Session, title: &str, active: &str, note: Option<&str>, body: &str) -> Response {
     outcome::html(
         StatusCode::OK,
-        shell(title, &session.who(), &ADMIN_TABS, active, note, body),
+        shell(
+            title,
+            &session.who(),
+            Some(&session.csrf()),
+            &ADMIN_TABS,
+            active,
+            note,
+            body,
+        ),
     )
 }
 

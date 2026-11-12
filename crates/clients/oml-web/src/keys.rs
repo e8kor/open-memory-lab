@@ -349,6 +349,7 @@ pub async fn user_page(
                 shell(
                     title,
                     &session.who(),
+                    Some(&session.csrf()),
                     &user_tabs(session.admin),
                     USER_KEYS_PATH,
                     None,
@@ -437,6 +438,7 @@ async fn user_view(
         shell(
             "Your page",
             &session.who(),
+            Some(&session.csrf()),
             &user_tabs(session.admin),
             USER_KEYS_PATH,
             notice(fields.get("done")),
@@ -488,6 +490,7 @@ pub async fn admin_page(
         shell(
             "Administration",
             &session.who(),
+            Some(&session.csrf()),
             &ADMIN_TABS,
             ADMIN_KEYS_PATH,
             notice(fields.get("done")),
@@ -540,7 +543,15 @@ fn cut_off_confirmation(session: &Session, side: Side, key: &str, user: Option<&
     };
     outcome::html(
         StatusCode::OK,
-        shell(title, &session.who(), &tabs, page, None, &body),
+        shell(
+            title,
+            &session.who(),
+            Some(&session.csrf()),
+            &tabs,
+            page,
+            None,
+            &body,
+        ),
     )
 }
 

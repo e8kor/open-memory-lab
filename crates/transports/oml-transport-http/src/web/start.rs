@@ -89,7 +89,7 @@ fn document(
     active: &str,
     body: &str,
 ) -> String {
-    shell(title, who.unwrap_or(""), tabs, active, None, body)
+    shell(title, who.unwrap_or(""), None, tabs, active, None, body)
 }
 
 /// The pending sign-up the cookie seals (ADR-0068 d2).
