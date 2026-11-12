@@ -97,7 +97,7 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
   no memory; their bytes and their write are counted. From v0.7.3 a new memory in a person's root
   by a key that is not theirs is refused `submission.user_root_refused`
   ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
-  d16, proposed; #329), so no new write produces the first outcome, and the second arises only
+  d16; #329), so no new write produces the first outcome, and the second arises only
   over a version 1 a tenant key wrote there before. The versions written before keep the
   accounting this paragraph states, and the drift report recomputes it the same way. A successor
   never starts a chain or changes its account. One raises `memories` when it is ratified, the

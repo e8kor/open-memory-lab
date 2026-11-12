@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself
 tier: engineering
-status: proposed
-answers: how a key is given an end date and a request rate; what a request under an expired key is answered and how that differs from a revoked key; what an expired key's connection does; who may change a key's date or rate and why the key itself never may; why an admin key carries neither; where the rate is counted and what that means with more than one server process; what stays of an expired key; and the open questions
+status: accepted design · 2026-11-12
+answers: how a key is given an end date and a request rate; what a request under an expired key is answered and how that differs from a revoked key; what an expired key's connection does; who may change a key's date or rate and why the key itself never may; why an admin key carries neither; where the rate is counted and what that means with more than one server process; what stays of an expired key; and the operator's answers to its five open questions
 -->
 
 # ADR-0079 — A key ends on a date and is held to a request rate, both set at issuance and changed only by an admin key that is not the key itself
 
-**Status:** proposed · 2026-11-12, with #323
+**Status:** accepted design · 2026-11-12, by the operator, as built, with its five open questions decided at their recommendations (1: a connection has no date apart from its key's; 2: a rate every server process shares is decided with ADR-0073's nodes; 3: a person sets a date on their own keys from the web console when the keys page is next changed, and changing it afterwards stays with the admin key role; 4: an expired key stays on its account's `keys` meter; 5: when the operator path is built, a date and a rate are refused on every role that can issue an admin key, before the first such key is issued) · proposed the same day with #323
 
 **Release:** v0.7.3 (#323)
 
@@ -135,7 +135,8 @@ deleted silently ([ADR-0001](ADR-0001-the-constitution.md)).
   up to n times a key's rate. One lead serves a tenant today;
   [configuration](../operations/configuration.md#limits-counted-per-process) states the bound
   beside `quota.requests_per_minute`. A count every process shares is a row written on every
-  request, which this record does not buy for a reviewer's key; it is open question 2.
+  request, which this record does not buy for a reviewer's key; it is decided with ADR-0073's nodes (The
+  operator's answers, 2).
 
 - **d7 — The CLI sets both, and doctor names their failures.** `oml keys issue` and `oml keys
   issue-agent` take `--expires <instant>` and `--requests-per-minute <n>`; `oml keys issue --role
@@ -161,33 +162,38 @@ deleted silently ([ADR-0001](ADR-0001-the-constitution.md)).
   limit 7 and [limits](../reference/limits.md) say what is built.
 - The events tail shows `key.limits_set` to no key, as it shows no `key.*` event (ADR-0025 d15).
 - The web console's keys page does not yet mark an expired key; its listing carries `expired`,
-  and the page is a follow-up (open question 3).
+  and the page is a follow-up (The operator's answers, 3).
 - #185's reviewer key is issued with `--expires` and `--requests-per-minute` in the ops
   repository's seed script; that change is the operator's.
 
-## Open questions
+## The operator's answers of 2026-11-12
 
-1. **A date for a connection apart from its key's.** Not built. Recommended: none. A connector
-   key has no value and at most one open connection, so the key's date is the connection's, and
-   one date is one thing to list and to move.
-2. **A rate every server process shares.** Not built. Recommended: decide it with
+The operator accepted this record as built on 2026-11-12 and decided each of its five open
+questions at the recommendation it carried.
+
+1. **A date for a connection apart from its key's.** Not built. Decided, at the recommendation:
+   none. A connector key has no value and at most one open connection, so the key's date is the
+   connection's, and one date is one thing to list and to move.
+2. **A rate every server process shares.** Not built. Decided, at the recommendation: it is
+   decided with
    [ADR-0073](ADR-0073-a-leader-signs-every-write-and-nodes-serve-the-workareas-placed-on-them-each-read-routed-to-the-closest-less-busy-replica-fresh-enough-for-it.md)'s
    nodes, when a second process serves requests; until then the bound is n times the rate.
 3. **A person setting a date or a rate on their own keys from the web console.** Not built: the
-   route takes the admin key role. Recommended: add `expiry` to a person's own issuance when the
-   keys page is next changed, and leave changing it afterwards to the admin key role.
-4. **Whether an expired key leaves its account's `keys` meter.** It stays (d3). Recommended:
-   keep it, since the key can be given a later date and would then pass a quota it never
-   counted against.
+   route takes the admin key role. Decided, at the recommendation: `expiry` is added to a
+   person's own issuance when the keys page is next changed, and changing it afterwards stays
+   with the admin key role.
+4. **Whether an expired key leaves its account's `keys` meter.** It stays (d3). Decided, at the
+   recommendation: it stays, since the key can be given a later date and would then pass a
+   quota it never counted against.
 5. **The operator role.** The rule and migration 0046's check name the `admin` role alone. No
    path in this build creates the first operator key (an admin asking for one is
    `access.issuer_ceiling`); an operator key could issue another, and the rule would let it
    carry a date and a rate. An operator key could not reach the limits route, which takes the
    admin role exactly, but an admin key could set a date on an operator key, since the route
    refuses an admin target only. Neither scenario of the review applies while no operator key
-   exists. Recommended: when the
-   operator path is built, refuse a date and a rate on every role that can issue an admin key,
-   in the use case, both stores and the check, before the first such key is issued.
+   exists. Decided, at the recommendation: when the
+   operator path is built, a date and a rate are refused on every role that can issue an admin
+   key, in the use case, both stores and the check, before the first such key is issued.
 
 ## Rejected alternatives
 
@@ -199,7 +205,7 @@ deleted silently ([ADR-0001](ADR-0001-the-constitution.md)).
 | **Read a bare date such as `2026-12-01`** | It names no instant: start or end of the day, in whose zone. The server refuses it instead of choosing (ADR-0025 d16). |
 | **Apply `quota.requests_per_minute` to every key** | It would put a rate on every tenant key of every deployment on upgrade, and a demo key needs a much lower one than a person's agents. A rate on the key is set where it is wanted. |
 | **A token bucket, a burst, or limits per operation** | #185 needs one sentence an operator can say to a reviewer: this key makes n requests a minute. The fixed UTC minute is the window ADR-0068 d5 already counts and explains. |
-| **Count requests in PostgreSQL so every process shares the count** | One row write per request on the read path, for a bound that one lead already gives. Reopened by open question 2. |
+| **Count requests in PostgreSQL so every process shares the count** | One row write per request on the read path, for a bound that one lead already gives. Decided with ADR-0073's nodes (The operator's answers, 2). |
 | **Limits bind admin keys too**, as this record first proposed | Declined: the operator decided "No limits on admin keys" on 2026-11-12, after an independent review found two scenarios. One: a limited admin key sheds its limits in two calls. Admin key A, issued with an expiry and a rate, issues admin key A2 with neither, and A2 posts `{expiry: null, requests_per_minute: null}` to A's limits. Two: any admin key ends any other by setting a near expiry on it, which nothing could do before: a denial on an admin key is refused, and the administering guide says an admin key cannot be cut off. |
 | **Keep limits on admin keys and document both scenarios** | Declined by the same decision of 2026-11-12. This record's reasons: a limit its holder lifts in two calls limits nothing, and writing down that one admin key can end another would make a new power a rule without deciding it. Refusing both limits on an admin key is the smallest change that closes both. |
 | **Let a key shorten its own date or lower its own rate** | Harmless in itself, but the rule "a key never sets its own limits" is one sentence with no direction to get wrong, and an admin who wants less holds another admin key or fences the key. |

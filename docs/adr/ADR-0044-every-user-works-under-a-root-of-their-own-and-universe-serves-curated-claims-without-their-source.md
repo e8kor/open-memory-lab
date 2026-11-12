@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source
 tier: engineering
-status: accepted design · 2026-11-04 · an amendment of 2026-11-12 (d16) is proposed
-answers: what a user is and where their root workarea sits; how a key is tied to its person and when the person's root is created; how a user key addresses, reads and creates workareas; which grants a user key may carry and how a universe read stops short of other users' roots; what a node grant is; who places claims in universe and how curation counts toward review under R1 and R2; whether the reviewer exclusion covers the person behind a key; what a reader of a universe claim is served and what stays in the journal; how recall, steering and guardrails reach universe from a user's scope; how names stay unique when two users both want the same one; what crews and existing tenants do; which fields, flags and doctor lines change; who may start a memory in a user root (the proposed amendment of 2026-11-12); what it amends in ADR-0001, ADR-0008, ADR-0010, ADR-0018, ADR-0025, ADR-0026, ADR-0028 and ADR-0039
+status: accepted design · 2026-11-04 · amended 2026-11-12 (d16), accepted by the operator the same day
+answers: what a user is and where their root workarea sits; how a key is tied to its person and when the person's root is created; how a user key addresses, reads and creates workareas; which grants a user key may carry and how a universe read stops short of other users' roots; what a node grant is; who places claims in universe and how curation counts toward review under R1 and R2; whether the reviewer exclusion covers the person behind a key; what a reader of a universe claim is served and what stays in the journal; how recall, steering and guardrails reach universe from a user's scope; how names stay unique when two users both want the same one; what crews and existing tenants do; which fields, flags and doctor lines change; who may start a memory in a user root (the amendment of 2026-11-12, d16); what it amends in ADR-0001, ADR-0008, ADR-0010, ADR-0018, ADR-0025, ADR-0026, ADR-0028 and ADR-0039
 -->
 
 # ADR-0044 — Every user works under a root of their own beneath `universe`, and `universe` serves only curated claims, without their source
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · an amendment of 2026-11-12 is **proposed** and awaits the operator's acceptance ([the amendment](#the-amendment-of-2026-11-12-a-memory-is-started-in-a-user-root-by-its-own-users-keys-only), d16; #329)
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-12 by [the amendment](#the-amendment-of-2026-11-12-a-memory-is-started-in-a-user-root-by-its-own-users-keys-only) (d16: a memory is started in a user root by that user's keys only; #329), which the operator accepted the same day
 
 **Release:** introduced in v0.5.0 ([releases](../changelog.md))
 
@@ -439,9 +439,8 @@ Decided; introduced in v0.5.0.
 
 ## The amendment of 2026-11-12: a memory is started in a user root by its own user's keys only
 
-**Status of this amendment:** proposed · 2026-11-12 · built in v0.7.3, as #329 asked, and not
-accepted: the operator accepts d16 or declines it. Until then d1–d15 above are the accepted
-record.
+**Status of this amendment:** accepted design · 2026-11-12, by the operator, as built, the guard
+on a put-back included · built in v0.7.3, as #329 asked · proposed the same day.
 
 Issue #329 came from the metering review of v0.7.3. d3 leaves a tenant key unchanged, "an admin
 may grant it anything, a user's root included", so a tenant writer key holding a subtree grant on
@@ -503,7 +502,10 @@ edits by proposal there. Asked "Which rule do you want?" the same day, the opera
       `submission.user_root_refused` for it, with `retirement` or without. The operator's words
       of 2026-11-12 do not name this case. It is the build's finding and the reading taken of
       "Refuse new memories only": without it a reviewer granted there could raise the user's
-      `memories` by a write that is not a new memory, the effect that answer keeps closed. A
+      `memories` by a write that is not a new memory, the effect that answer keeps closed. The
+      operator accepted d16 with this guard on 2026-11-12, on a question that said the guard was
+      a reading of that answer and stated the rule's cost, an in-progress workarea inside a
+      person's root collecting new memories from that person only (Costs). A
       successor proposed while a retirement of the same memory is still held is admitted, since
       its target is the served memory. The two are rivals for one tip: once the retirement is
       ratified, approving the other is `submission.tip_conflict`, so it never puts the claim
