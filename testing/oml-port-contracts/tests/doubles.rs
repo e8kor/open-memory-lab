@@ -64,9 +64,38 @@ async fn federated_recall_double_passes_the_leakage_suite() {
     .await;
 }
 
-/// Test 7 over the double: an unreadable workarea of 100,000 matching rows
-/// moves neither p50 nor p95 of a wide recall (ADR-0072 d6, d13).
+/// Test 7 over the double, its deterministic half: an unreadable
+/// workarea of 100,000 matching rows changes no `wide` answer, byte for
+/// byte, and no recall's work: the rows its reads visit are the same count
+/// with the copies as without, so its time cannot depend on them
+/// (ADR-0072 d6, d13; #278).
 #[tokio::test]
+async fn federated_recall_double_answers_and_rows_read_do_not_depend_on_an_unreadable_workarea() {
+    use contracts::federation::{answer_sample, timing_world};
+    let t = timing_world(MemStore::new().answering_bm25_with_any_word()).await;
+    let read = t.world.store.rows_read();
+    let without = answer_sample(&t, "bm25").await;
+    let work_without = t.world.store.rows_read() - read;
+    assert!(work_without > 0, "the recalls read rows");
+    for template in t.templates {
+        t.world.store.seed_copies(t.world.tenant, template, 100_000);
+    }
+    let read = t.world.store.rows_read();
+    assert_eq!(answer_sample(&t, "bm25").await, without);
+    assert_eq!(
+        t.world.store.rows_read() - read,
+        work_without,
+        "a wide recall visited rows of an unreadable workarea"
+    );
+}
+
+/// Test 7 over the double, its timing half, a measurement run by hand or
+/// by the weekly bench (`--ignored`): an unreadable workarea of 100,000
+/// matching rows moves neither p50 nor p95 of a wide recall (ADR-0072 d6,
+/// d13). Wall-clock quantiles move with the host's load, so it gates no
+/// change (#278).
+#[tokio::test]
+#[ignore = "a measurement: wall-clock quantiles, run by the weekly bench"]
 async fn federated_recall_double_timing_does_not_depend_on_an_unreadable_workarea() {
     use contracts::federation::{assert_within_noise, timing_sample, timing_world};
     let t = timing_world(MemStore::new().answering_bm25_with_any_word()).await;
