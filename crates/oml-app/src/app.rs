@@ -3930,8 +3930,13 @@ where
                 crew: None,
                 user: None,
                 grants: Vec::new(),
+                denied: None,
             });
         };
+        // The person's `<user>-web` alone is told, and only whether: the
+        // key acts it is refused name the same fact (ADR-0039 d15 as
+        // amended by ADR-0070; #343).
+        let denied = auth::is_web_session_key(&key).then_some(!access.denials.is_empty());
         // The key read above holds the row: a tenant whose references read
         // nothing for it has lost it since, so fail closed.
         let references = self
@@ -3946,6 +3951,7 @@ where
             crew: references.crew,
             user: references.user,
             grants: access.grants,
+            denied,
         })
     }
 

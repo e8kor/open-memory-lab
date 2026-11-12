@@ -69,6 +69,62 @@ impl Side {
     }
 }
 
+/// What the Keys page and the Start page say to a person whose session key
+/// carries a denial, in place of the forms for the three acts that key is
+/// refused for good: issuing a key, minting a connect code and cutting off a
+/// key (`access.verb_ceiling`, reason `session_key_denied`; ADR-0070 d2).
+/// Only an admin key denies a session key, and an admin key still does the
+/// three for the person.
+pub(crate) const DENIED_SESSION: &str = "Your web session is restricted: you cannot issue keys, get connect codes or cut off keys. An administrator can do these for you.";
+
+/// The muted line under it: the export, the deletion request and sign-out
+/// read nothing of the key, so they still work (#335).
+const DENIED_STILL_WORKS: &str =
+    "Exporting your memories, requesting deletion and signing out still work.";
+
+/// The word [`DENIED_SESSION`] uses, which marks the session's own key in
+/// the table.
+const RESTRICTED: &str = "restricted";
+
+/// The sentence and its muted line as the pages draw them.
+pub(crate) fn denied_notice() -> String {
+    format!(
+        r#"<p class="notice" role="status">{}</p><p class="desc">{}</p>"#,
+        text(DENIED_SESSION),
+        text(DENIED_STILL_WORKS)
+    )
+}
+
+/// A served instant to the second, in UTC by name, inside a `<time>` whose
+/// `datetime` is the instant as served: `2026-10-29 12:30:00 UTC`. An
+/// instant in any other shape is shown as served.
+fn instant(at: &str) -> String {
+    let shown = match unix_of(at) {
+        Some(_) => format!("{} {} UTC", &at[..10], &at[11..19]),
+        None => at.to_owned(),
+    };
+    format!(r#"<time datetime="{}">{}</time>"#, attr(at), short(&shown))
+}
+
+/// Whether the session's key carries a denial, as `GET /v2/whoami` says of
+/// a person's `<user>-web` and of no other key; the admin's page is never
+/// drawn for one, since an admin key takes no denial.
+pub(crate) fn denied(session: &Session) -> bool {
+    session.whoami.denied == Some(true)
+}
+
+/// The one optional input of a person's issue form: the day the key ends,
+/// which a browser sends as `YYYY-MM-DD` with no script. The label names
+/// the instant, so no zone is left to guess (ADR-0079 d1, the operator's
+/// answer 3).
+const EXPIRES_INPUT: &str = r#"<label>Key expires (optional; end of that day, UTC)<input type="date" name="expires"></label>"#;
+
+/// What the form's day becomes: its last second in UTC.
+const END_OF_DAY: &str = "T23:59:59Z";
+
+/// The line beside the input: a person sets the date once (ADR-0079 d5).
+const EXPIRES_NOTE: &str = "A key's expiry date is optional; only an admin can change it later.";
+
 /// The notice a `done` the view's own acts name shows; any other is none.
 fn notice(done: Option<&str>) -> Option<&'static str> {
     match done? {
@@ -120,35 +176,85 @@ pub(crate) async fn keys(
     })
 }
 
-/// One key's row, with the acts the page allows on it: a live key that is
-/// not a session key can be cut off, and on the user page a live connector
-/// key gets a new connect code. On the admin page the cut-off carries the
-/// listed `user`, so the act lands back on the same list.
-fn row(key: &ListedKey, side: Side, csrf: &str, user: &str) -> String {
+/// One key's row, with the acts the page allows on it: a key that is not a
+/// session key and is neither revoked nor cut off can be cut off, and on the
+/// user page such a connector key gets a new connect code unless it has
+/// expired. On the admin page the cut-off carries the
+/// listed `user`, so the act lands back on the same list. `denied` is the id
+/// of the session's own key where that key carries a denial: no row then
+/// offers an act, and that key's row is marked.
+fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: Option<&str>) -> String {
     let name = key.name.as_deref().unwrap_or("");
     let access: Vec<String> = key
         .grants
         .iter()
         .map(|g| format!("{} on {}", g.role, short(&g.path)))
         .collect();
-    let state = if key.revoked {
-        "revoked"
+    // The marks a key carries, in the place and style of `revoked` and `cut
+    // off`; a key with none is live. An expired key stays cut-off-able (a
+    // denial is not refused on it) and takes no new connect code, which the
+    // API refuses with `oauth.connect_refused` and reason `expired`
+    // (ADR-0079 d2, d3).
+    let mut marks = Vec::new();
+    if key.revoked {
+        marks.push("revoked");
     } else if key.cut_off {
-        "cut off"
-    } else {
-        "live"
-    };
+        marks.push("cut off");
+    }
+    if key.expired {
+        marks.push("expired");
+    }
+    // The session's own key, where it carries a denial, in the word the
+    // page's sentence uses: `GET /v2/keys` says `cut_off` for a denial on
+    // `universe` alone, so the row would read live under that sentence
+    // (#343). The page knows it of this one key and marks no other.
+    if denied == Some(key.id.as_str()) {
+        marks.push(RESTRICTED);
+    }
+    let working = !key.revoked && !key.cut_off;
+    if marks.is_empty() {
+        marks.push("live");
+    }
+    // Apart in the markup and to a reader that speaks it: "cut off,
+    // expired", never one word.
+    let marks = marks
+        .into_iter()
+        .map(state_tag)
+        .collect::<Vec<_>>()
+        .join(r#"<span class="sr-only">,</span> "#);
+    let mut limits = String::new();
+    if let Some(at) = &key.expiry {
+        let verb = if key.expired { "expired" } else { "expires" };
+        let _ = write!(
+            limits,
+            r#"<br><span class="dim">{verb} {}</span>"#,
+            instant(at)
+        );
+    }
+    if let Some(n) = key.requests_per_minute {
+        let _ = write!(
+            limits,
+            r#"<br><span class="dim">{n} {} a minute</span>"#,
+            if n == 1 { "request" } else { "requests" }
+        );
+    }
     let mut acts = String::new();
-    if key.credential != "session" && state == "live" {
+    if key.credential != "session" && working && denied.is_none() {
         if key.credential == "connection" && side == Side::User {
-            acts.push_str(&form(
-                side.path(),
-                "connect_code",
-                csrf,
-                &format!("{}{}", hidden("key", name), acts::nonce_field()),
-                "New connect code",
-                false,
-            ));
+            if key.expired {
+                acts.push_str(
+                    r#"<p class="dim">Expired: no new connect code until an admin sets a later date.</p>"#,
+                );
+            } else {
+                acts.push_str(&form(
+                    side.path(),
+                    "connect_code",
+                    csrf,
+                    &format!("{}{}", hidden("key", name), acts::nonce_field()),
+                    "New connect code",
+                    false,
+                ));
+            }
         }
         let listed = if side == Side::Admin {
             hidden("user", user)
@@ -165,23 +271,31 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str) -> String {
         ));
     }
     format!(
-        r#"<tr><td class="mono">{}</td><td>{}<br><span class="dim">{} · {}</span></td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
+        r#"<tr><td class="mono">{}</td><td>{}<br><span class="dim">{} · {}</span>{limits}</td><td>{}</td><td>{marks}</td><td>{}</td></tr>"#,
         short(name),
         attr(&key.role),
         attr(&key.credential),
         attr(&key.held_by),
         access.join("<br>"),
-        state_tag(state),
         acts
     )
 }
 
-pub(crate) fn table(keys: &[ListedKey], side: Side, csrf: &str, user: &str) -> String {
+/// The keys as a table. `denied`: the id of the session's own key where it
+/// carries a denial, so no row offers an act that key is refused and its
+/// own row says so.
+pub(crate) fn table(
+    keys: &[ListedKey],
+    side: Side,
+    csrf: &str,
+    user: &str,
+    denied: Option<&str>,
+) -> String {
     let mut out = String::from(
         "<table><tr><th>Key</th><th>Role</th><th>Access</th><th>State</th><th></th></tr>",
     );
     for key in keys {
-        out.push_str(&row(key, side, csrf, user));
+        out.push_str(&row(key, side, csrf, user, denied));
     }
     out.push_str("</table>");
     out
@@ -401,12 +515,20 @@ async fn user_view(
         )),
     };
     let csrf = session.csrf();
+    // For a session whose key carries a denial the page opens on the
+    // sentence, above the table, and draws none of the three forms: the API
+    // refuses each one for this session's key, now and for good.
+    let denied = denied(session).then_some(session.whoami.key_id.as_str());
     let mut body = format!(
-        r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}{}"#,
+        r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}{}{}"#,
         short(&user),
+        denied.map(|_| denied_notice()).unwrap_or_default(),
         card.unwrap_or_default(),
-        table(&listed, Side::User, &csrf, "")
+        table(&listed, Side::User, &csrf, "", denied)
     );
+    if denied.is_some() {
+        return outcome::html(StatusCode::OK, user_shell(session, fields, &body));
+    }
     let prefix = format!("{user}-");
     let issue = |action: &str, button: &str, primary: bool| {
         form(
@@ -414,7 +536,7 @@ async fn user_view(
             action,
             &csrf,
             &format!(
-                "{}{}{}",
+                "{}{}{EXPIRES_INPUT}{}",
                 input("name", &format!("name, after {prefix}"), "", true),
                 select(
                     "role",
@@ -429,21 +551,23 @@ async fn user_view(
     };
     let _ = write!(
         body,
-        "<h2>Agent key</h2><p class=\"desc\">Your workarea only. The value is shown once.</p>{}<h2>Connector key</h2><p class=\"desc\">For Claude on the web or a phone; its connect code is shown once.</p>{}",
+        "<h2>Agent key</h2><p class=\"desc\">Your workarea only. The value is shown once. {EXPIRES_NOTE}</p>{}<h2>Connector key</h2><p class=\"desc\">For Claude on the web or a phone; its connect code is shown once. {EXPIRES_NOTE}</p>{}",
         issue("issue_key", "Issue key", true),
         issue("connect_key", "Issue connector key", false)
     );
-    outcome::html(
-        StatusCode::OK,
-        shell(
-            "Your page",
-            &session.who(),
-            Some(&session.csrf()),
-            &user_tabs(session.admin),
-            USER_KEYS_PATH,
-            notice(fields.get("done")),
-            &body,
-        ),
+    outcome::html(StatusCode::OK, user_shell(session, fields, &body))
+}
+
+/// The user page's frame around `body`.
+fn user_shell(session: &Session, fields: &Fields, body: &str) -> String {
+    shell(
+        "Your page",
+        &session.who(),
+        Some(&session.csrf()),
+        &user_tabs(session.admin),
+        USER_KEYS_PATH,
+        notice(fields.get("done")),
+        body,
     )
 }
 
@@ -483,7 +607,7 @@ pub async fn admin_page(
             Ok(listed) => listed,
             Err(response) => return *response,
         };
-        body.push_str(&table(&listed, Side::Admin, &session.csrf(), user));
+        body.push_str(&table(&listed, Side::Admin, &session.csrf(), user, None));
     }
     outcome::html(
         StatusCode::OK,
@@ -504,7 +628,7 @@ pub async fn admin_page(
 /// `user`.
 fn defined(side: Side, action: &str, name: &str) -> bool {
     match action {
-        "issue_key" | "connect_key" => matches!(name, "name" | "role"),
+        "issue_key" | "connect_key" => matches!(name, "name" | "role" | "expires"),
         "cut_off" => matches!(name, "key" | "confirm") || (side == Side::Admin && name == "user"),
         _ => name == "key",
     }
@@ -644,7 +768,18 @@ async fn act(
             let user = session.whoami.user.as_ref().map_or("", |u| u.name.as_str());
             let name = format!("{user}-{}", fields.given("name").unwrap_or_default());
             let connector = action == "connect_key";
-            match web.api.issue_key(&call, &key, &name, role, connector).await {
+            // The form's date is the end of that day in UTC. The API judges
+            // the instant, so a value that is not `YYYY-MM-DD`, or a day that
+            // has passed, is refused by it and shown as it answers; a day its
+            // month does not hold is read as that many days on (ADR-0079 d1).
+            let expiry = fields
+                .given("expires")
+                .map(|day| format!("{day}{END_OF_DAY}"));
+            match web
+                .api
+                .issue_key(&call, &key, &name, role, connector, expiry.as_deref())
+                .await
+            {
                 // A replay, which shows neither: the first answer's cookie
                 // holds the secret, and this one sets none over it.
                 Ok(issued) if issued.replayed() => return acts::see_other(USER_KEYS_PATH, &[]),

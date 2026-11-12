@@ -244,6 +244,7 @@ fn render(
     shown: Option<(&Secret, &str)>,
     csrf: &str,
     note: Option<&str>,
+    denied: bool,
 ) -> String {
     let mut body = head("Connect an agent", "h1", "Three steps, about two minutes.");
     if let Some(note) = note {
@@ -252,6 +253,9 @@ fn render(
             r#"<p class="notice" role="status">{}</p>"#,
             text(note)
         );
+    }
+    if denied {
+        body.push_str(&keys::denied_notice());
     }
     body.push_str(r#"<section class="card">"#);
     body.push_str(&head(
@@ -281,6 +285,15 @@ fn render(
             "h2",
             "Choose a client first.",
         )),
+        (Some(c), None) if denied => {
+            // The API refuses the issue for this session's key, now and for
+            // good, so no button is drawn (ADR-0070 d2).
+            body.push_str(&head(
+                "2. Get your credential",
+                "h2",
+                &format!("No key can be issued for {} from this session.", c.shown()),
+            ));
+        }
         (Some(c), None) => {
             body.push_str(&head(
                 "2. Get your credential",
@@ -406,6 +419,7 @@ pub async fn page(
             .map(|(s, _)| (s, server.as_str())),
         &session.csrf(),
         notice(&fields),
+        keys::denied(&session),
     );
     let html = shell(
         "Start",
@@ -504,6 +518,9 @@ pub async fn act(
                 &name,
                 "writer",
                 client == Client::ClaudeAi,
+                // The one-button issue sets no date: the Keys page's forms
+                // take one (ADR-0079, the operator's answer 3).
+                None,
             )
             .await;
         match issued {

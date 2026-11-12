@@ -48,6 +48,8 @@ const WEB_CLIENT_SECRET: &str = "parity-web-client-secret-0123456789";
 type TestApp = App<MemStore, MemSigner, FixedClock, SeqIdGen, MarkerScanner>;
 
 struct Rig {
+    /// The lead's clock, which a test moves to reach a key's expiry.
+    lead_clock: FixedClock,
     store: MemStore,
     app: Arc<TestApp>,
     /// The path router in front of the lead and `oml-web`.
@@ -59,10 +61,14 @@ struct Rig {
 }
 
 fn test_app(store: &MemStore) -> TestApp {
+    test_app_on(store, FixedClock::new())
+}
+
+fn test_app_on(store: &MemStore, clock: FixedClock) -> TestApp {
     App::new(
         store.clone(),
         MemSigner::new([7; 32]),
-        FixedClock::new(),
+        clock,
         SeqIdGen::new(),
         MarkerScanner::default(),
     )
@@ -133,16 +139,23 @@ async fn rig() -> Rig {
         .await
         .expect("bootstrap");
     let ping: DbPing = Arc::new(|| Box::pin(async { true }));
-    let lead = ApiState::new(Arc::new(test_app(&store)), store.clone(), ping, true, None)
-        .with_web(WebPages::new(
-            vec![
-                (Provider::Google, CLIENT_GOOGLE.to_owned()),
-                (Provider::GitHub, CLIENT_GITHUB.to_owned()),
-            ],
-            providers.clone(),
-        ))
-        .with_web_client(WebClient::new(Some(WEB_CLIENT_SECRET.to_owned()), None))
-        .into_router();
+    let lead_clock = FixedClock::new();
+    let lead = ApiState::new(
+        Arc::new(test_app_on(&store, lead_clock.clone())),
+        store.clone(),
+        ping,
+        true,
+        None,
+    )
+    .with_web(WebPages::new(
+        vec![
+            (Provider::Google, CLIENT_GOOGLE.to_owned()),
+            (Provider::GitHub, CLIENT_GITHUB.to_owned()),
+        ],
+        providers.clone(),
+    ))
+    .with_web_client(WebClient::new(Some(WEB_CLIENT_SECRET.to_owned()), None))
+    .into_router();
     let lead = serve(lead).await;
     let transport = oml_sdk::HttpTransport::new(&format!("http://{lead}"), Duration::from_secs(10))
         .expect("a transport");
@@ -157,6 +170,7 @@ async fn rig() -> Rig {
     });
     let web = serve(web).await;
     let rig = Rig {
+        lead_clock,
         app: Arc::new(test_app(&store)),
         store,
         router: front(lead, web),
@@ -5130,6 +5144,695 @@ async fn a_cut_off_persons_key_acts_are_refused_on_the_page_as_the_api_refuses_t
             .await
             .expect("a lookup");
         assert_eq!(named, None, "no key {key}");
+    }
+}
+
+/// An app over the rig's store for issuing several keys, with its own id
+/// generator started past the others': each app counts from one, so a
+/// second key issued by the rig's would repeat the secret of an earlier one.
+fn issuer_app(rig: &Rig) -> TestApp {
+    let ids = SeqIdGen::new();
+    for _ in 0..1_000_000 {
+        oml_app::ports::IdGen::new_id(&ids);
+    }
+    App::new(
+        rig.store.clone(),
+        MemSigner::new([7; 32]),
+        FixedClock::new(),
+        ids,
+        MarkerScanner::default(),
+    )
+    .with_oauth_issuer(Issuer::parse(ISSUER).expect("a public origin"))
+}
+
+/// A key of alice's with the limits it is issued under, by the tenant admin
+/// key: a user key on her root, a connector key where `connect`.
+async fn alice_key(
+    issuer: &TestApp,
+    rig: &Rig,
+    name: &str,
+    role: Role,
+    connect: bool,
+    expiry: Option<&str>,
+    requests_per_minute: Option<u32>,
+) {
+    let grants = [role, Role::Reader]
+        .into_iter()
+        .map(|role| GrantRequest {
+            node: Name::parse("alice").expect("a name").into(),
+            role,
+            deny: Vec::new(),
+            covers: oml_app::domain::access::Covers::Subtree,
+        })
+        .collect();
+    issuer
+        .issue_key(
+            &rig.boot.admin_key.value,
+            &IssueKeyRequest {
+                profile: None,
+                role,
+                name: Name::parse(name).expect("a name"),
+                principal: name.to_owned(),
+                held_by: Some(HeldBy::Human),
+                default_workarea: None,
+                crew: None,
+                grants,
+                connect_code: connect,
+                user: Some(Name::parse("alice").expect("a name")),
+                guardrail_scope: None,
+                expiry: expiry.map(|at| oml_app::domain::EventTime::parse(at).expect("an instant")),
+                requests_per_minute,
+            },
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+}
+
+/// The keys `GET /v2/keys` serves to the session `cookie` names, under its
+/// `capacity` credential, as the lead answers them.
+async fn api_keys(rig: &Rig, cookie: &str, capacity: &str, query: &str) -> Vec<Value> {
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let credential = oml_app::domain::web::capacity_credential(token, capacity);
+    let request = Request::get(format!("/v2/keys{query}"))
+        .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+        .header("oml-web-client", WEB_CLIENT_SECRET)
+        .body(Body::empty())
+        .expect("a request");
+    let (status, _, body) = send(&rig.router, request).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let listed: Value = serde_json::from_str(&body).expect("a JSON listing");
+    listed["items"].as_array().expect("items").clone()
+}
+
+/// One key's row of a keys table, from its name cell to the row's end.
+fn row_of<'a>(page: &'a str, name: &str) -> &'a str {
+    let start = page
+        .find(&format!(r#"<tr><td class="mono">{name}</td>"#))
+        .unwrap_or_else(|| panic!("no row for {name}: {page}"));
+    &page[start..start + page[start..].find("</tr>").expect("a row end")]
+}
+
+/// Markup as its text alone: every tag dropped, nothing put in its place.
+fn plain(markup: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in markup.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// A mark the page draws in the place it marks `revoked` and `cut off`.
+fn marked(row: &str, mark: &str) -> bool {
+    row.contains(&format!(r#"oml-chip is-quiet">{mark}</span>"#))
+}
+
+/// The page holds each key's row equal to the API's fields for it: its
+/// expiry to the second in UTC, with the instant as served in the `<time>`
+/// element's `datetime`, an expired mark exactly where `expired` is true,
+/// its rate in words, and none of the three for a key that carries none.
+fn assert_rows_equal_the_api(page: &str, items: &[Value]) {
+    for item in items {
+        let name = item["name"].as_str().expect("a name");
+        let row = row_of(page, name);
+        match item["expiry"].as_str() {
+            // To the second and in UTC by name, the instant as served in
+            // the element's `datetime`.
+            Some(expiry) => {
+                let shown = format!(
+                    r#"<time datetime="{expiry}">{} {} UTC</time>"#,
+                    &expiry[..10],
+                    &expiry[11..19]
+                );
+                assert!(row.contains(&shown), "{name}: {shown}: {row}");
+                assert_eq!(row.matches(expiry).count(), 1, "{name}: {row}");
+            }
+            None => assert!(
+                !row.contains("expires") && !row.contains("expired"),
+                "{name}: no date: {row}"
+            ),
+        }
+        assert_eq!(
+            marked(row, "expired"),
+            item["expired"] == true,
+            "{name}: the expired mark follows the API's `expired`: {row}"
+        );
+        match item["requests_per_minute"].as_u64() {
+            Some(1) => assert!(row.contains("1 request a minute"), "{name}: {row}"),
+            Some(n) => assert!(
+                row.contains(&format!("{n} requests a minute")),
+                "{name}: {row}"
+            ),
+            None => assert!(!row.contains("a minute"), "{name}: no rate: {row}"),
+        }
+    }
+}
+
+/// An expired key reads as expired, with its date, and a key with a rate
+/// shows it; a key with neither shows neither, and an admin key never
+/// carries either. The person's page and the admin's page each hold their
+/// rows equal to the API's fields, and an expired connector key is offered
+/// no new connect code (ADR-0079 d2, d3, d4; #337).
+#[tokio::test]
+async fn the_keys_pages_show_a_keys_expiry_expired_mark_and_rate_as_the_api_serves_them() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let issuer = issuer_app(&rig);
+    let (soon, late) = ("2026-10-29T12:30:00.000000Z", "2026-10-29T23:00:00.000000Z");
+    alice_key(
+        &issuer,
+        &rig,
+        "alice-both",
+        Role::Writer,
+        false,
+        Some(late),
+        Some(60),
+    )
+    .await;
+    alice_key(
+        &issuer,
+        &rig,
+        "alice-one",
+        Role::Reader,
+        false,
+        None,
+        Some(1),
+    )
+    .await;
+    alice_key(
+        &issuer,
+        &rig,
+        "alice-lapsed",
+        Role::Reader,
+        false,
+        Some(soon),
+        None,
+    )
+    .await;
+    alice_key(
+        &issuer,
+        &rig,
+        "alice-phone",
+        Role::Writer,
+        true,
+        Some(soon),
+        None,
+    )
+    .await;
+    alice_key(
+        &issuer,
+        &rig,
+        "alice-open",
+        Role::Writer,
+        true,
+        Some(late),
+        None,
+    )
+    .await;
+    alice_key(
+        &issuer,
+        &rig,
+        "alice-plain",
+        Role::Writer,
+        false,
+        None,
+        None,
+    )
+    .await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    // The lead's clock reaches the two 12:30 expiries.
+    rig.lead_clock.advance(3_600);
+    let mut checked = 0;
+    for (path, items) in [
+        ("/web/keys", api_keys(&rig, &cookie, "web", "").await),
+        (
+            "/web/admin/keys?user=alice",
+            api_keys(&rig, &admin, "admin", "?user=alice").await,
+        ),
+    ] {
+        let cookie = if path == "/web/keys" { &cookie } else { &admin };
+        let (status, _, page) = send(&rig.router, get(path, Some(cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        let expired: Vec<&str> = items
+            .iter()
+            .filter(|i| i["expired"] == true)
+            .filter_map(|i| i["name"].as_str())
+            .collect();
+        assert_eq!(
+            expired,
+            ["alice-lapsed", "alice-phone"],
+            "{path}: the API's own answer"
+        );
+        assert_rows_equal_the_api(&page, &items);
+        checked += items.len();
+        let phone = row_of(&page, "alice-phone");
+        assert!(!phone.contains("connect_code"), "{path}: {phone}");
+        if path == "/web/keys" {
+            assert!(
+                phone.contains("Expired: no new connect code until an admin sets a later date."),
+                "{path}: the page says why: {phone}"
+            );
+            assert!(row_of(&page, "alice-open").contains("New connect code"));
+        }
+    }
+    assert!(checked >= 14, "both pages checked every key: {checked}");
+    // A key that is cut off and expired carries two marks, apart in the
+    // markup and read as two: "cut off, expired".
+    let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
+    rig.app
+        .deny_key(
+            &rig.boot.admin_key.value,
+            name("alice-lapsed"),
+            name("universe"),
+        )
+        .await
+        .expect("the admin cuts alice-lapsed off");
+    for (path, cookie) in [
+        ("/web/keys", &cookie),
+        ("/web/admin/keys?user=alice", &admin),
+    ] {
+        let (_, _, page) = send(&rig.router, get(path, Some(cookie))).await;
+        let lapsed = row_of(&page, "alice-lapsed");
+        assert!(
+            lapsed.contains(
+                r#"cut off</span><span class="sr-only">,</span> <span class="tag oml-chip is-quiet">expired</span>"#
+            ),
+            "{path}: {lapsed}"
+        );
+        assert!(
+            plain(lapsed).contains("cut off, expired"),
+            "{path}: read as two marks: {}",
+            plain(lapsed)
+        );
+    }
+    // An admin key carries neither limit: the admin's own `boss-admin`, which
+    // the API lists on the admin's page of their keys, is drawn with none.
+    let items = api_keys(&rig, &admin, "web", "").await;
+    let ops: Vec<&Value> = items.iter().filter(|i| i["role"] == "admin").collect();
+    assert!(
+        !ops.is_empty(),
+        "the admin's own admin key is listed: {items:?}"
+    );
+    for item in ops {
+        assert_eq!(item["expiry"], Value::Null, "{item}");
+        assert_eq!(item["requests_per_minute"], Value::Null, "{item}");
+    }
+    let (_, _, page) = send(&rig.router, get("/web/keys", Some(&admin))).await;
+    assert_rows_equal_the_api(&page, &items);
+}
+
+/// The sentence the Keys and Start pages draw for a person whose session
+/// key carries a denial, and the muted line beneath it.
+const DENIED_SESSION: &str = "Your web session is restricted: you cannot issue keys, get connect codes or cut off keys. An administrator can do these for you.";
+const DENIED_STILL_WORKS: &str =
+    "Exporting your memories, requesting deletion and signing out still work.";
+
+/// The forms the Keys page and the Start page draw for the three acts a
+/// denied session key is refused.
+const KEY_FORMS: [&str; 7] = [
+    r#"value="issue_key""#,
+    r#"value="connect_key""#,
+    r#"value="connect_code""#,
+    r#"value="cut_off""#,
+    r#"value="issue_claude_ai""#,
+    r#"value="issue_claude_code""#,
+    r#"value="issue_other""#,
+];
+
+/// A person sets a date on a key they issue from the Keys page: each of the
+/// two issue forms has one optional date input, sent as the end of that day
+/// in UTC, and the key's row then shows the expiry the API serves. A date
+/// that has passed and a value that is not `YYYY-MM-DD` are refused on the page as
+/// the API refuses them, by its status, code and message, and issue no key.
+/// The Start page's one-button issue has no such input (ADR-0079 d1, the
+/// operator's answer 3; #352).
+#[tokio::test]
+async fn a_person_issues_a_key_with_an_expiry_date_from_the_keys_page() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(
+        page.matches(r#"<input type="date" name="expires">"#)
+            .count(),
+        2,
+        "one optional date input on each issue form: {page}"
+    );
+    assert_eq!(
+        page.matches("only an admin can change it later").count(),
+        2,
+        "{page}"
+    );
+    let start = start_pages(&rig, &cookie).await;
+    assert!(!start.contains(r#"name="expires""#), "{start}");
+
+    // Refused as the API refuses the instant the page sends.
+    let head = rig.head().await;
+    for (day, name) in [("2026-10-28", "past"), ("tomorrow", "nodate")] {
+        let (api_status, refusal) = api_as_web(
+            &rig,
+            &cookie,
+            "/v2/keys",
+            json!({
+                "name": format!("alice-{name}"),
+                "role": "writer",
+                "connect_code": false,
+                "expiry": format!("{day}T23:59:59Z"),
+            }),
+        )
+        .await;
+        assert_eq!(api_status, StatusCode::BAD_REQUEST, "{day}: {refusal}");
+        assert_eq!(refusal["error"]["code"], "request.validation", "{refusal}");
+        assert_eq!(refusal["error"]["details"]["field"], "/expiry", "{refusal}");
+        let message = refusal["error"]["message"].as_str().expect("a message");
+        for action in ["issue_key", "connect_key"] {
+            let (status, _, page) = act(
+                &rig,
+                &cookie,
+                "/web/keys",
+                &[
+                    ("action", action),
+                    ("name", name),
+                    ("role", "writer"),
+                    ("expires", day),
+                ],
+            )
+            .await;
+            assert_eq!(status, api_status, "{action} {day}: {page}");
+            assert!(
+                page.contains(&format!("request.validation: {message}")),
+                "{action} {day}: the page names the API's code and message: {page}"
+            );
+        }
+    }
+    assert_eq!(rig.head().await, head, "nothing journalled");
+
+    // Issued with a date: the row shows the expiry `GET /v2/keys` serves,
+    // the end of that day in UTC; without one, no date.
+    for (action, name, day) in [
+        ("issue_key", "laptop", "2026-10-29"),
+        ("connect_key", "phone", "2999-01-01"),
+        ("issue_key", "tablet", ""),
+    ] {
+        let (status, _, body) = act(
+            &rig,
+            &cookie,
+            "/web/keys",
+            &[
+                ("action", action),
+                ("name", name),
+                ("role", "writer"),
+                ("expires", day),
+            ],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{action} {name}: {body}");
+    }
+    let items = api_keys(&rig, &cookie, "web", "").await;
+    let expiry_of = |name: &str| {
+        items
+            .iter()
+            .find(|k| k["name"] == name)
+            .unwrap_or_else(|| panic!("no key {name}: {items:?}"))["expiry"]
+            .clone()
+    };
+    assert_eq!(expiry_of("alice-laptop"), "2026-10-29T23:59:59.000000Z");
+    assert_eq!(expiry_of("alice-phone"), "2999-01-01T23:59:59.000000Z");
+    assert_eq!(expiry_of("alice-tablet"), Value::Null);
+    let (status, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_rows_equal_the_api(&page, &items);
+    for key in ["alice-past", "alice-nodate"] {
+        assert!(
+            items.iter().all(|k| k["name"] != key),
+            "no key {key}: {items:?}"
+        );
+    }
+}
+
+/// The Start page as it is drawn with no client chosen and for each of its
+/// three clients, one after another.
+async fn start_pages(rig: &Rig, cookie: &str) -> String {
+    let mut pages = String::new();
+    for query in [
+        "",
+        "?client=claude-ai",
+        "?client=claude-code",
+        "?client=other",
+    ] {
+        let (status, _, page) = send(
+            &rig.router,
+            get(&format!("/web/start{query}"), Some(cookie)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{query}: {page}");
+        pages.push_str(&page);
+    }
+    pages
+}
+
+/// A person whose `<user>-web` key carries a denial, on `universe`, on their
+/// root or on a workarea outside it, is told so on the Keys page and the
+/// Start page and is drawn none of the forms for the three acts the API
+/// refuses that key for good; a person whose key carries none sees the
+/// forms. The page's state is the API's answer: each act posted anyway is
+/// the 403 `session_key_denied` the page drew no form for, and the export and
+/// the deletion request stay drawn (ADR-0070 d2; #343, #335).
+#[tokio::test]
+async fn a_denied_persons_keys_and_start_pages_state_the_refusal_and_draw_no_key_forms() {
+    for target in ["universe", "alice", "team"] {
+        let rig = rig().await;
+        let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+        laptop_key(&rig, &cookie).await;
+        act_and_follow(
+            &rig,
+            &cookie,
+            "/web/keys",
+            &[
+                ("action", "connect_key"),
+                ("name", "phone"),
+                ("role", "writer"),
+            ],
+        )
+        .await;
+        issuer_app(&rig)
+            .create_workarea(
+                &rig.boot.admin_key.value,
+                &Name::parse("team").expect("a name"),
+                Some(rig.boot.root_workarea_id.into()),
+                None,
+            )
+            .await
+            .expect("a workarea outside alice's root");
+        let (_, _, keys) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+        let start = start_pages(&rig, &cookie).await;
+        for form in KEY_FORMS {
+            assert!(
+                keys.contains(form) || start.contains(form),
+                "{target}: before a denial the pages draw {form}"
+            );
+        }
+        assert!(!keys.contains(DENIED_SESSION) && !start.contains(DENIED_SESSION));
+        assert!(DENIED_SESSION.split_whitespace().count() <= 25);
+        let web = row_of(&keys, "alice-web");
+        assert!(
+            marked(web, "live") && !marked(web, "restricted"),
+            "{target}: before a denial the session's own key is live: {web}"
+        );
+        let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
+        rig.app
+            .deny_key(&rig.boot.admin_key.value, name("alice-web"), name(target))
+            .await
+            .expect("the admin denies alice-web");
+        let (status, _, keys) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{target}: {keys}");
+        let start = start_pages(&rig, &cookie).await;
+        assert_eq!(
+            start.matches(DENIED_SESSION).count(),
+            4,
+            "{target}: the sentence is on the Start page with no client and with each"
+        );
+        // On the Keys page the sentence comes first, above the table.
+        assert!(
+            keys.find(DENIED_SESSION) < keys.find("<table>"),
+            "{target}: {keys}"
+        );
+        // The session's own key is the one row marked, in the sentence's
+        // word, and never `live`; a denial on `universe` is `cut off` too.
+        // No other key's row gains a state.
+        let web = row_of(&keys, "alice-web");
+        assert!(
+            marked(web, "restricted") && !marked(web, "live"),
+            "{target}: {web}"
+        );
+        assert_eq!(
+            marked(web, "cut off"),
+            target == "universe",
+            "{target}: {web}"
+        );
+        assert_eq!(
+            keys.matches(">restricted</span>").count(),
+            1,
+            "{target}: {keys}"
+        );
+        for other in ["alice-laptop", "alice-phone", "alice-review"] {
+            let row = row_of(&keys, other);
+            assert!(marked(row, "live"), "{target}: {other}: {row}");
+        }
+        for (page, body) in [("keys", &keys), ("start", &start)] {
+            assert!(body.contains(DENIED_SESSION), "{target}: {page}: {body}");
+            assert!(
+                body.contains(DENIED_STILL_WORKS),
+                "{target}: {page}: {body}"
+            );
+            for form in KEY_FORMS {
+                assert!(
+                    !body.contains(form),
+                    "{target}: {page} draws {form}: {body}"
+                );
+            }
+        }
+        assert!(
+            keys.contains("alice-laptop"),
+            "{target}: the keys are still listed"
+        );
+        // The export and the deletion request stay open to the person.
+        assert!(
+            start.contains(r#"href="/web/start/export""#),
+            "{target}: {start}"
+        );
+        assert!(
+            start.contains(r#"value="request_deletion""#),
+            "{target}: {start}"
+        );
+        // The API refuses each act the page no longer draws a form for.
+        for (api_path, body, fields) in [
+            (
+                "/v2/keys",
+                json!({"name": "alice-tablet", "role": "writer", "connect_code": false}),
+                vec![
+                    ("action", "issue_key"),
+                    ("name", "tablet"),
+                    ("role", "writer"),
+                ],
+            ),
+            (
+                "/v2/keys/alice-phone/connect-codes",
+                json!({}),
+                vec![("action", "connect_code"), ("key", "alice-phone")],
+            ),
+            (
+                "/v2/keys/alice-laptop/denials",
+                json!({"workarea": "universe"}),
+                vec![
+                    ("action", "cut_off"),
+                    ("key", "alice-laptop"),
+                    ("confirm", "yes"),
+                ],
+            ),
+        ] {
+            let (status, refusal) = api_as_web(&rig, &cookie, api_path, body).await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "{target}: {api_path}: {refusal}"
+            );
+            assert_eq!(
+                refusal["error"]["details"]["reason"], "session_key_denied",
+                "{target}: {refusal}"
+            );
+            let (status, _, page) = act(&rig, &cookie, "/web/keys", &fields).await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "{target}: {fields:?}: {page}"
+            );
+        }
+    }
+}
+
+/// A person whose `<user>-web` key carries a denial, on `universe`, on
+/// their root or on a workarea outside it, still downloads their export from
+/// the Start page and still files a deletion request from its form: the
+/// download is what it was before the denial, and `web.deletion_requested`
+/// journals under the denied key (ADR-0070 d2, the operator's decision of
+/// 2026-11-12; #335).
+#[tokio::test]
+async fn a_denied_person_still_exports_and_requests_deletion_from_the_start_page() {
+    for target in ["universe", "alice", "team"] {
+        let rig = rig().await;
+        let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+        let value = laptop_key(&rig, &cookie).await;
+        agent_writes(&rig, &value, "a kestrel the export keeps").await;
+        issuer_app(&rig)
+            .create_workarea(
+                &rig.boot.admin_key.value,
+                &Name::parse("team").expect("a name"),
+                Some(rig.boot.root_workarea_id.into()),
+                None,
+            )
+            .await
+            .expect("a workarea outside alice's root");
+        let exported = |body: &str| {
+            let mut export: Value = serde_json::from_str(body).expect("an export");
+            export
+                .as_object_mut()
+                .expect("an object")
+                .remove("exported_at");
+            export
+        };
+        let (status, _, body) = send(&rig.router, get("/web/start/export", Some(&cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{target}: {body}");
+        let before = exported(&body);
+        let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
+        rig.app
+            .deny_key(&rig.boot.admin_key.value, name("alice-web"), name(target))
+            .await
+            .expect("the admin denies alice-web");
+        let (status, headers, body) =
+            send(&rig.router, get("/web/start/export", Some(&cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{target}: {body}");
+        assert!(
+            headers[header::CONTENT_DISPOSITION]
+                .to_str()
+                .unwrap()
+                .starts_with("attachment"),
+        );
+        assert!(
+            body.contains("a kestrel the export keeps"),
+            "{target}: {body}"
+        );
+        assert_eq!(
+            exported(&body),
+            before,
+            "{target}: the export is what it was"
+        );
+        let (status, headers, body) = act(
+            &rig,
+            &cookie,
+            "/web/start",
+            &[("action", "request_deletion"), ("confirm", "delete")],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{target}: {body}");
+        assert_eq!(headers[header::LOCATION], "/web/start?done=requested");
+        let web = key_named(&rig, "alice-web").await.key_id;
+        let requested: Vec<_> = rig
+            .store
+            .events_range(rig.boot.tenant_id, 1, 1000)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.envelope.event_type == "web.deletion_requested")
+            .collect();
+        assert_eq!(requested.len(), 1, "{target}: journalled once");
+        assert_eq!(requested[0].envelope.api_key_id, Some(web), "{target}");
     }
 }
 

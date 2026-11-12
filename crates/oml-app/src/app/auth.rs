@@ -39,6 +39,18 @@ fn session_key_name(user: &Name, capacity: &str) -> Option<Name> {
     Capacity::parse(capacity).and_then(|c| key_name(user, c.suffix()).ok())
 }
 
+/// Whether `key` is its user's `<user>-web`: the session key of the web
+/// capacity, a user key, the one session key that runs the three key acts
+/// a denial refuses, as the transport admits it to them (ADR-0045 d6;
+/// ADR-0070 d2).
+pub(super) fn is_web_session_key(key: &KeyRecord) -> bool {
+    key.credential == Credential::Session
+        && key.user.is_some()
+        && key.session_user.as_ref().is_some_and(|user| {
+            key_name(user, Capacity::Web.suffix()).ok().as_ref() == key.name.as_ref()
+        })
+}
+
 /// Whether `key` is the session key `name` of `session`'s user: the row
 /// holding the name, a session key serving that user, not revoked
 /// (ADR-0045 d6).

@@ -55,7 +55,7 @@ pub const OPERATIONS: [&str; 41] = [
     "reviewHeld GET /v2/review/held query:ids resp:HeldNamed",
     "postBulkVerdict POST /v2/review/verdicts/bulk body:verdict,artifact_ids,reason resp:BulkVerdictResult",
     "reviewQueue GET /v2/review/queue resp:ReviewQueue",
-    "issueKey POST /v2/keys body:name,role,connect_code resp:KeyIssued",
+    "issueKey POST /v2/keys body:name,role,connect_code,expiry resp:KeyIssued",
     "mintConnectCode POST /v2/keys/{key}/connect-codes resp:ConnectCode",
     "addDenial POST /v2/keys/{key}/denials body:workarea resp:Denial",
     "getMemory GET /v1/memories/{artifact_id} resp:Memory",
@@ -180,6 +180,12 @@ pub struct Whoami {
     pub tenant: Option<NamedRef>,
     /// The key's user root; `None` for a tenant key.
     pub user: Option<NamedRef>,
+    /// Whether a person's `<user>-web` session key carries a denial on any
+    /// workarea, which refuses it issuing a key, minting a connect code and
+    /// cutting off a key for good; absent for every other key (ADR-0070 d2,
+    /// d5).
+    #[serde(default)]
+    pub denied: Option<bool>,
 }
 
 /// One verdict on a guardrail.
@@ -863,6 +869,17 @@ pub struct ListedKey {
     pub credential: String,
     pub revoked: bool,
     pub cut_off: bool,
+    /// The instant from which the key authenticates nothing; `None` for a
+    /// key that does not expire (ADR-0079 d3).
+    #[serde(default)]
+    pub expiry: Option<String>,
+    /// Whether the expiry has come on the server's clock (ADR-0079 d3).
+    #[serde(default)]
+    pub expired: bool,
+    /// The key's own requests per UTC minute; `None` for none of its own
+    /// (ADR-0079 d4).
+    #[serde(default)]
+    pub requests_per_minute: Option<u32>,
     pub grants: Vec<ListedGrant>,
 }
 
@@ -1668,7 +1685,9 @@ impl<T: Transport> Client<T> {
     }
 
     /// `POST /v2/keys` as a person's web session key: their own key `name`
-    /// with `role`, a connector key where `connect_code` is set.
+    /// with `role`, a connector key where `connect_code` is set, ending at
+    /// `expiry`, an RFC 3339 instant with its offset, where one is given
+    /// (ADR-0079 d1).
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -1679,14 +1698,20 @@ impl<T: Transport> Client<T> {
         name: &str,
         role: &str,
         connect_code: bool,
+        expiry: Option<&str>,
     ) -> Result<KeyIssued, Error> {
+        let mut body =
+            serde_json::json!({ "name": name, "role": role, "connect_code": connect_code });
+        if let Some(expiry) = expiry {
+            body["expiry"] = serde_json::json!(expiry);
+        }
         let (mut issued, replayed): (KeyIssued, bool) = self
             .exchange(
                 Method::POST,
                 Some(call),
                 "/v2/keys".to_owned(),
                 Some(idempotency_key),
-                Some(&serde_json::json!({ "name": name, "role": role, "connect_code": connect_code })),
+                Some(&body),
             )
             .await?;
         issued.replayed = replayed;
@@ -2084,7 +2109,7 @@ mod tests {
         for replay in [true, false] {
             let client = Client::new(Replaying { replay, body: BODY });
             let issued = client
-                .issue_key(&CALL, "idem", "alice-laptop", "writer", false)
+                .issue_key(&CALL, "idem", "alice-laptop", "writer", false, None)
                 .await
                 .unwrap();
             assert_eq!(issued.replayed(), replay);
@@ -2095,6 +2120,38 @@ mod tests {
                 .unwrap();
             assert_eq!(code.replayed(), replay);
         }
+    }
+
+    /// An issue sends `expiry` only where one is given: a key issued
+    /// without a date carries no such member, as before (ADR-0079 d1).
+    #[tokio::test]
+    async fn an_issue_sends_the_expiry_it_is_given_and_none_otherwise() {
+        const BODY: &str = r#"{"key_id":"k9","name":"alice-laptop","value":"oml_v"}"#;
+        let (client, seen) = recording(201, BODY);
+        for expiry in [None, Some("2026-12-01T23:59:59Z")] {
+            client
+                .issue_key(&CALL, "idem", "alice-laptop", "writer", false, expiry)
+                .await
+                .unwrap();
+        }
+        let sent: Vec<serde_json::Value> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| serde_json::from_slice(request.body()).unwrap())
+            .collect();
+        assert_eq!(
+            sent,
+            [
+                serde_json::json!({"name": "alice-laptop", "role": "writer", "connect_code": false}),
+                serde_json::json!({
+                    "name": "alice-laptop",
+                    "role": "writer",
+                    "connect_code": false,
+                    "expiry": "2026-12-01T23:59:59Z",
+                }),
+            ]
+        );
     }
 
     /// The method and path template of each table entry, by operation id.
@@ -2225,7 +2282,7 @@ mod tests {
             decodes(&client.review_queue(&CALL).await),
             decodes(
                 &client
-                    .issue_key(&CALL, "idem-7", "alice-laptop", "writer", false)
+                    .issue_key(&CALL, "idem-7", "alice-laptop", "writer", false, None)
                     .await,
             ),
             decodes(

@@ -1,19 +1,21 @@
 <!--
 id: adr/ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core
 tier: engineering
-status: accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11 and 2026-11-12; two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325) and the three on sign-out (#327) were accepted on 2026-11-12
+status: accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11 and 2026-11-12; two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325), the one that keeps its export and deletion request open (#335), the three on sign-out (#327) and the two on a denied session key's pages that state the absent forms and the `whoami` boolean (#343) were accepted on 2026-11-12, the build's wording and the third row's store-call counts not having been put to the operator
 answers: why the web pages stop calling oml-app's use cases and call the public HTTP API instead; which crate serves the pages and what it may depend on; how a signed-in person's session becomes an API credential without a key value at rest or in the browser; which middleware layer owns the request id, the session, CSRF, CSP, rate limits, audit and error mapping; how oml-web, always its own process, reaches the API; which existing operation serves each web call and which operations are new; what stays in the auth context; the bounded contexts; the migration phases and the test that proves parity; the overhead budget; what it amends in ADR-0042 and ADR-0045
 -->
 
 # ADR-0070 — The web console is a client of the public HTTP API, in a crate that cannot reach the application core
 
-**Status:** accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11 and 2026-11-12; two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325) and the three on sign-out (#327) were accepted on 2026-11-12
+**Status:** accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11 and 2026-11-12; two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325), the one that keeps its export and deletion request open (#335), the three on sign-out (#327) and the two on a denied session key's pages that state the absent forms and the `whoami` boolean (#343) were accepted on 2026-11-12, the build's wording and the third row's store-call counts not having been put to the operator
 
 **Amends:** ADR-0045 (d1: the page routes move to `oml-web` and the sign-in routes to the auth
 context; d6: a session key gains a per-session credential; d7: that credential, never the
 cookie, reaches the API, and only through the web client; d14: the page's line and the API's
 lines share a correlation id; d16: the new and changed operations below), ADR-0042 (d2:
-`credential: session` is now written on the API's own lines as well as on the page's)
+`credential: session` is now written on the API's own lines as well as on the page's), ADR-0039
+(d15: `GET /v2/whoami` tells a `<user>-web` session key, and no other key, whether it carries a
+denial; 2026-11-12, #343)
 
 **Amended in place:** 2026-11-10, by the operator's decision that `oml-web` runs only as its own
 process (d1, d2, d3, d4, d7, d8, d9 and d10 revised; d11 and d12 new). What changed and why is in
@@ -51,9 +53,13 @@ re-measurement (#286; d8 revised): see
 reads (#297; d2 and d8 revised): see
 [The session gate's reads](#the-session-gates-reads-2026-11-12-297). Amended on 2026-11-12, and
 accepted by the operator the same day: a denied session key's acts (#325; d2 and d8 revised): see
-[A denied session key's acts](#a-denied-session-keys-acts-2026-11-12-325); and sign-out on every
+[A denied session key's acts](#a-denied-session-keys-acts-2026-11-12-325), which also holds, by the
+operator's decision, that the export and the deletion request stay open to that key (#335; d2
+revised); sign-out on every
 page (#327; d2, d3 layer 4 and d5 revised): see
-[Sign-out on every page](#sign-out-on-every-page-2026-11-12-327).
+[Sign-out on every page](#sign-out-on-every-page-2026-11-12-327); and a denied session key's
+pages (#343; d2, d5 and d8 revised, and ADR-0039 d15 amended): see
+[A denied session key's pages](#a-denied-session-keys-pages-2026-11-12-343).
 
 ## Context
 
@@ -139,7 +145,7 @@ Built in phases (a) to (d), 2026-11-10 to 2026-11-11; the records below say how.
   the same commit that opens it. `oml-web` holds no state: it reads the session token from the
   `__Host-oml_session` cookie and derives the credential of the capacity an action needs. The
   API resolves `Authorization: Bearer omls_…` by digest to the session row and the capacity,
-  then checks on every request: the session row is live and unexpired, the capacity is one of the row's, and the `admin` capacity is served only where the row's admin flag is set. The gate reads no allowlist entry: the row carries the entry's user and admin flag as they were at sign-in, and every change to an entry (its user, its admin flag, its removal, the person's disabling) deletes that entry's sessions in the commit that makes it, so a live row's entry stands as the row says. The caller is then that session key, with credential `session`, under its own grants and verb ceiling; every act lands in the journal under it, as today. Three key acts read the session key's access again when they run and refuse a key that carries a denial, on any workarea: `POST /v2/keys` as `<user>-web` and the two key acts of a session key, `POST /v2/keys/{key}/connect-codes` and `POST /v2/keys/{key}/denials` (`access.verb_ceiling`, `details.reason: session_key_denied`; amended 2026-11-12, [A denied session key's acts](#a-denied-session-keys-acts-2026-11-12-325)). `POST /v2/web/session/end` acts on the session alone and consults none of the key's grants or denials, so a denied key still ends its session. The credential lives exactly as long as the session and ends with it (sign-out,
+  then checks on every request: the session row is live and unexpired, the capacity is one of the row's, and the `admin` capacity is served only where the row's admin flag is set. The gate reads no allowlist entry: the row carries the entry's user and admin flag as they were at sign-in, and every change to an entry (its user, its admin flag, its removal, the person's disabling) deletes that entry's sessions in the commit that makes it, so a live row's entry stands as the row says. The caller is then that session key, with credential `session`, under its own grants and verb ceiling; every act lands in the journal under it, as today. Three key acts read the session key's access again when they run and refuse a key that carries a denial, on any workarea: `POST /v2/keys` as `<user>-web` and the two key acts of a session key, `POST /v2/keys/{key}/connect-codes` and `POST /v2/keys/{key}/denials` (`access.verb_ceiling`, `details.reason: session_key_denied`; amended 2026-11-12, [A denied session key's acts](#a-denied-session-keys-acts-2026-11-12-325)). The Keys page and the Start page draw no form for those acts for a person whose `<user>-web` carries a denial, and say so in one sentence (amended 2026-11-12, [A denied session key's pages](#a-denied-session-keys-pages-2026-11-12-343)). `POST /v2/web/session/end` acts on the session alone and consults none of the key's grants or denials, so a denied key still ends its session. The credential lives exactly as long as the session and ends with it (sign-out,
   expiry, an entry change), so no revocation is needed; nothing at rest can be decrypted into it. Every page drawn for a signed-in person has a sign-out control in its header, a form that posts `sign_out` to the lead's `POST /web`: each page `oml-web` serves, each refusal page it answers, and the lead's own refusal page once the lead has read a live session from the cookie. An answer that is not a page has none, and neither has a page the lead draws before it reads the session (amended 2026-11-12, [Sign-out on every page](#sign-out-on-every-page-2026-11-12-327)); a session also ends by expiry, an entry change or a new sign-in in the same browser, which replaces it. Two gates keep [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
   d7: an `omls_` credential is refused on `/mcp` always, and on `/v1` and `/v2` unless the
   request proves `oml-web`'s client identity (`auth.invalid`, `details.reason:
@@ -290,6 +296,7 @@ Built in phases (a) to (d), 2026-11-10 to 2026-11-11; the records below say how.
     | `GET /v2/review/held` | `ids`: the named held rows only, each with its row or `null` when no longer held or no longer the caller's to judge | `review_named`, the bulk confirmation (main) | ADR-0055 d10 | no |
     | `POST /v2/web/emails`, `POST /v2/web/emails/remove` | `keep_an_admin: true` refuses removing or un-flagging the tenant's last admin entry, `request.validation` `details.field: admin`, in the same transaction | `web_other_admin` (main) | ADR-0045 d10 | yes |
     | `GET /v2/whoami` | `person`: for a key naming a user, `{user, under_quotas, usage, quotas, deletion_requested_at}` | `web_own_limits`, `web_deletion_pending` (#167) | ADR-0068 d5, d6, d10 | no |
+    | `GET /v2/whoami` | `denied`, a boolean on the record of a `<user>-web` session key and of no other key: whether the key holds a denial in force on any workarea (amended 2026-11-12, [A denied session key's pages](#a-denied-session-keys-pages-2026-11-12-343)) | the Keys and Start pages' choice to draw the forms of the three key acts (#343) | ADR-0039 d15 as amended here | no |
 
     **New operations.**
 
@@ -315,7 +322,7 @@ Built in phases (a) to (d), 2026-11-10 to 2026-11-11; the records below say how.
     record leaves the claim, which a resubmission answers `idempotency.in_progress` rather
     than acting again (#233, the table of 2026-11-11 below). The three key operations of the table above serve a
     session key through the page's own use case: `POST /v2/keys` as `<user>-web` is
-    `web_issue_key` (name, role and `connect_code` only), `POST /v2/keys/{key}/connect-codes`
+    `web_issue_key` (name, role and `connect_code` only; from v0.7.3 also an optional `expiry`, [ADR-0079](ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) d1 and the operator's answer 3), `POST /v2/keys/{key}/connect-codes`
     as `<user>-web` is `web_connect_code`, and `POST /v2/keys/{key}/denials` as `<user>-web`
     or `<user>-admin` is `web_cut_off`, on `universe` alone. Five of the ten (#2, #3, #8, #9, #10) need the admin key role; #1 needs it for any
     user but the caller's own. #3 is one operation for two acts because both are one job: an
@@ -899,7 +906,9 @@ The operator decided on 2026-11-12 that
 [#325](https://github.com/e8kor/open-memory-lab/issues/325) is fixed in v0.7.3. The two rows below
 are as built, and the operator accepted both on 2026-11-12, with what they state: any denial
 refuses, and for good; the end of the session stays open to a denied key; and each of the three
-key acts reads the chain head before the key's access.
+key acts reads the chain head before the key's access. A third row, below the tests, records the
+operator's decision of the same day that the export and the deletion request stay open to a
+denied key as well.
 
 The audit of this record found four acts of a session key that acted as the caller the gate built
 and consulted none of the key's grants or denials (the table of #297 above). A `<user>-web` key an
@@ -910,7 +919,7 @@ stays open to it. No operation, field or page call changed, and no key does more
 
 | Decision | Was | Is | Why |
 |---|---|---|---|
-| d2 | `POST /v2/keys` as `<user>-web`, `POST /v2/keys/{key}/connect-codes` and `POST /v2/keys/{key}/denials` as a session key, and `POST /v2/web/session/end` acted on the key record alone and consulted none of its grants or denials | the three key acts refuse a session key that carries a denial, on any workarea: `access.verb_ceiling`, `details.reason: session_key_denied`, `details.verb` naming the act, nothing journalled and the act's idempotency claim released; the Keys page and the Start page show that refusal by its code and message under its status, as layer 7 shows any other. `POST /v2/web/session/end` still consults nothing of the key, and neither does the lead's sign-out, so a denied key's session ends when the person signs out. An admin key takes no denial, so of the session keys only `<user>-web` meets the refusal while the rows are written by the verbs | a key `<user>-web` issues is granted the person's whole root, so an issuer denied on `universe`, on the root or on any workarea inside it would hand on access it no longer holds; a connect code opens a connection for a key of the same root; and a cut-off is an act journalled under a key the admin stopped. Any denial refuses, not only one on `universe`, and the refusal is permanent: no route lifts a denial from a key that is not an admin's, and a sign-in finds the session key by its name and issues no other, so after the person's entry is removed, added back and signed in again the key is the same `<user>-web`, still refused. That is the rule's cost, and it falls on a denial that masks nothing: a user key's grants lie in its root, but for the one reader grant issuance adds on the `universe` node alone ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d3), so a denial on a workarea outside the root, `universe` aside, changes nothing the key reads or writes and still ends the person's three key acts in the console for good. An admin key still issues a key naming the person's user, mints a connect code and cuts a key off for them. The operator decided on 2026-11-12 to keep any denial, strict and permanent. Rejected: a narrower rule, refusing only some denials, since one that passes a denial on part of the root lets the denied key issue a fresh key that reads that part. A rule that passes only a denial outside the root, which masks nothing, is not refuted by that reason; the operator's decision to keep any denial excludes it. Refusing the sign-out would keep a session an admin wanted stopped. The refusal says that the key is denied and never where: `GET /v2/keys` already serves `cut_off` on the person's own session key for a denial on `universe`, and no answer names a denied workarea |
+| d2 | `POST /v2/keys` as `<user>-web`, `POST /v2/keys/{key}/connect-codes` and `POST /v2/keys/{key}/denials` as a session key, and `POST /v2/web/session/end` acted on the key record alone and consulted none of its grants or denials | the three key acts refuse a session key that carries a denial, on any workarea: `access.verb_ceiling`, `details.reason: session_key_denied`, `details.verb` naming the act, nothing journalled and the act's idempotency claim released; the Keys page and the Start page show that refusal by its code and message under its status, as layer 7 shows any other (amended 2026-11-12, [A denied session key's pages](#a-denied-session-keys-pages-2026-11-12-343): the two pages draw no form for the three acts, and an act posted anyway is shown this way). `POST /v2/web/session/end` still consults nothing of the key, and neither does the lead's sign-out, so a denied key's session ends when the person signs out. An admin key takes no denial, so of the session keys only `<user>-web` meets the refusal while the rows are written by the verbs | a key `<user>-web` issues is granted the person's whole root, so an issuer denied on `universe`, on the root or on any workarea inside it would hand on access it no longer holds; a connect code opens a connection for a key of the same root; and a cut-off is an act journalled under a key the admin stopped. Any denial refuses, not only one on `universe`, and the refusal is permanent: no route lifts a denial from a key that is not an admin's, and a sign-in finds the session key by its name and issues no other, so after the person's entry is removed, added back and signed in again the key is the same `<user>-web`, still refused. That is the rule's cost, and it falls on a denial that masks nothing: a user key's grants lie in its root, but for the one reader grant issuance adds on the `universe` node alone ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d3), so a denial on a workarea outside the root, `universe` aside, changes nothing the key reads or writes and still ends the person's three key acts in the console for good. An admin key still issues a key naming the person's user, mints a connect code and cuts a key off for them. The operator decided on 2026-11-12 to keep any denial, strict and permanent. Rejected: a narrower rule, refusing only some denials, since one that passes a denial on part of the root lets the denied key issue a fresh key that reads that part. A rule that passes only a denial outside the root, which masks nothing, is not refuted by that reason; the operator's decision to keep any denial excludes it. Refusing the sign-out would keep a session an admin wanted stopped. The refusal says that the key is denied and never where: `GET /v2/keys` already serves `cut_off` on the person's own session key for a denial on `universe`, and no answer names a denied workarea |
 | d8 | those four acts resolved nothing | the three key acts resolve at the verb, after the wait on their idempotency claim and again on each retry of a chain conflict: one resolution, which is the key's access and, for `<user>-web`, its root, two store calls, and one for `<user>-admin`, by reading the code, held by no test. Each of the three reads the chain head before that resolution and seals its commit on that head: the head read every commit made, moved ahead of the access and not made again. A denial of the key committed before the head read is in the access the act reads, and one committed after it moves the head, so the commit's compare-and-set fails and the retry reads the denial; the journal never holds one of the three acts by a session key after that key's `key.denied`. An act that completes makes the store calls it made, in another order; one refused before its commit reads the head, which it did not read before (two store calls, `chain_head` and `events_range`). The acts seal on a head read at their start, so any commit in the tenant while one runs makes it retry whole, where before only a commit between its seal and its own did; that changes how often an act retries in a busy tenant and nothing about what it admits. A key issued without a connect code is several commits, the key and then its grants: a commit that lands between them, a denial included, fails the next, the half-issued key is revoked (`key.revoked`) with its value never returned, and the retry is refused. A key issued with a connect code is one chain and journals nothing on a conflict. `POST /v2/web/session/end` resolves nothing. Every one of them is a `POST`: no `GET` or `HEAD` gained a read, so the gate's one store call and the pages the benchmark measures are as #297 left them | the gate reads the access before the body arrives, so an act that mints a credential decides on a read made when it runs, as every other act of another method does. The head is read first because a head read after the access lets a `key.denied` committed between the two be followed in the journal by the denied key's `key.issued` |
 
 Tests, each over the lead's router: `a_cut_off_session_key_issues_no_key`, which also denies the
@@ -924,10 +933,24 @@ which denies the key on a workarea outside the person's root,
 `a_cut_off_persons_key_acts_are_refused_on_the_page_as_the_api_refuses_them`, which holds each
 page's status, code and message equal to the API's.
 
-Not decided here: a denied `<user>-web` still asks for the person's deletion
-(`POST /v2/web/deletion-requests`) and reads their export (`GET /v2/web/export`), by reading the
-code; #325 names neither, and [#335](https://github.com/e8kor/open-memory-lab/issues/335) asks
-whether a cut-off key keeps them.
+Decided by the operator on 2026-11-12, accepted (#335), and not proposed: the operator decided it
+directly, on the question this section left open.
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d2 | a denied `<user>-web` still asked for the person's deletion (`POST /v2/web/deletion-requests`) and read their export (`GET /v2/web/export`), by reading the code: neither reads the key's grants or denials, and whether that should stay was not decided | both stay open to a session key that carries a denial, on any workarea, as the end of the session does: the export answers `200` with what it served before the denial, and the deletion request journals `web.deletion_requested` under the denied key. The Start page draws the export link and the deletion form for a denied person | neither route reads the key's grants or denials, before or after this decision; no behaviour changed. The export serves every memory in the person's root and below, every state, and the person's keys. After a denial on `universe`, on the root or on a workarea inside it, that includes text the same key is refused through `GET /v1/memories/{artifact_id}` (`access.not_found`). A denial on `<user>-web` denies none of the person's agent keys. The deletion request journals `web.deletion_requested`, ends nothing and changes no access. [ADR-0068](ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d6 gives a person both from `/web/start`. The privacy page promises a copy and erasure on request by email, not through these routes, and that way stays open either way. Without the two routes a person whose session key is denied has no way in the console to take their memories out or to ask for their account to end. Put to the operator: keep both; keep the deletion request and refuse the export; refuse both. The operator chose "Keep both" on 2026-11-12, and confirmed it the same day after the reasons first recorded here (that the privacy page promises both, and that the routes widen no access) were found false |
+
+Tests, each over the lead's router: `a_denied_session_key_still_downloads_its_export` (a denial on
+`universe`, on the person's root and on a workarea outside it; the export is the same, apart from
+its `exported_at`, as before the denial),
+`a_denied_session_keys_export_serves_a_memory_the_key_is_refused_by_its_id` (a memory in
+`alice.notes`, with the key denied on `universe`, on the root or on `alice.notes`: the key's read of
+it by its id is `200` before the denial and `access.not_found` after, and the export holds its text)
+and `a_denied_session_key_still_files_its_deletion_request`
+in `crates/transports/oml-transport-http/tests/web_pages.rs`; and through `oml-web`,
+`a_denied_person_still_exports_and_requests_deletion_from_the_start_page`, which downloads the
+export and files the request from the Start page. Each fails if the refusal of the three key acts
+is added to the route.
 
 ## Sign-out on every page (2026-11-12, #327)
 
@@ -971,6 +994,43 @@ as a static render of `shell` under the stylesheet, at 1100px and 390px in both 
 with the control's container a `span`; it is a `div` now, since a form is no phrasing content,
 under the same rule of the stylesheet, and neither that header nor the refusal page's was looked
 at since. The running console was not.
+
+## A denied session key's pages (2026-11-12, #343)
+
+[#343](https://github.com/e8kor/open-memory-lab/issues/343) asked that a person whose `<user>-web`
+carries a denial is not offered the three key acts that key is refused. The three rows below are
+as built. The operator accepted on 2026-11-12 what the first two state, that the pages draw
+no form the key is refused and that `GET
+/v2/whoami` tells a person's `<user>-web` session key, and no other key, whether it carries a
+denial, as a boolean and nothing more ("Accept, web session key only"). The wording of the
+sentence a denied person reads, its place on the Keys page and the `restricted` mark on the
+calling key's own row are the build's. The same decision amends
+[ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md) d15, which says so in place.
+
+The refusal of #325 is permanent, and the Keys page and the Start page went on drawing the forms
+of the three acts, so each form answered the refusal every time it was pressed. Nothing a page
+read told it: `GET /v2/keys` serves `cut_off` for a denial on `universe` alone. One member joined
+one key's record on one operation; no operation and no page call was added.
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d2 | the Keys page and the Start page showed the refusal by its code and message under its status | for a person whose `<user>-web` carries a denial, the Keys page draws no **Issue key**, **Issue connector key**, **New connect code** or **Cut off**, and the Start page no **Issue my credential**; each draws one sentence in their place, of at most 25 words: "Your web session is restricted: you cannot issue keys, get connect codes or cut off keys. An administrator can do these for you." A muted line under it says that the export, the deletion request and sign-out still work. On the Keys page the sentence is the first thing under the heading, above the table, and the row of the session's own key, `<user>-web`, is marked `restricted`, the sentence's word, where it read `live` for a denial that is not on `universe`; no other key's row gains a state. An act posted anyway is still answered the refusal by its code and message. The admin's pages are unchanged | the refusal is permanent, so each form failed every time it was pressed |
+| d5 | `GET /v2/whoami` served nothing of a key's denials ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md) d15) | the record of a `<user>-web` session key carries `denied`, a boolean: whether the key holds a denial in force on any workarea. It names no workarea, no count, no author and no time. The member is absent on every other key: `<user>-review`, `<user>-curate` and `<user>-admin`, and every key with a value or a connection. The key is the one the web capacity names for its user, `<user>-web`, and the value is the test the three key acts make, whether the key's access holds a denial | `GET /v2/keys` serves `cut_off` for a denial on `universe` only, so no served member said that a denial elsewhere refuses the acts. The flag tells a person nothing the refusal of a key act does not already tell them. Rejected: keeping the forms; a member on the session key's listing item, which is still a new member, costs the listing's 12 store calls, and is no use to the Start page, which makes no listing call; and widening `cut_off` to any denial, which changes a served member's meaning |
+| d8 | (silent) | no read gained a store call: the flag is read off the access the gate already read. The five calls the two pages make cost 2, 2, 12, 4 and 8 store calls with and without a denial on the key | `whoami_names_a_denied_session_key_in_the_store_calls_it_already_makes` in `crates/bins/oml-server-lead/tests/web_console_reads.rs` holds the counts equal before and after a denial |
+
+Tests, over the lead's router in `crates/transports/oml-transport-http/tests/web_pages.rs`:
+`whoami_tells_the_web_session_key_alone_whether_it_carries_a_denial` (`alice-web` reads `false`,
+also while the person's agent key, `alice-review` and `alice-curate` are denied, and `true` once
+it is denied itself; `alice-review`, `alice-curate`, an admin's `<user>-admin`, an agent key and
+the tenant's admin key have no such member at any point) and
+`whoami_says_denied_exactly_when_the_key_acts_are_refused` (a denial on `universe`, on the
+person's root, on a workarea inside it and on one outside it: `false` and an issuance answered
+`201` before the denial, `true` and `session_key_denied` after). Through `oml-web`, in
+`crates/clients/oml-web/tests/web_pages.rs`:
+`a_denied_persons_keys_and_start_pages_state_the_refusal_and_draw_no_key_forms`, which holds the
+page equal to the API's answer: each act posted anyway is the `403` the page drew no form for;
+it also holds the sentence to 25 words, above the table on the Keys page, and the one row
+marked `restricted`. The pages were not looked at in a browser.
 
 ## Consequences
 

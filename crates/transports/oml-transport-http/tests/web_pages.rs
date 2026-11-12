@@ -1455,6 +1455,11 @@ fn value_of(page: &str) -> String {
 }
 
 async fn agent_writes(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
+    agent_writes_in(rig, value, None, body).await
+}
+
+/// The same write into `workarea`; `None` is the key's default workarea.
+async fn agent_writes_in(rig: &Rig, value: &str, workarea: Option<&str>, body: &str) -> uuid::Uuid {
     rig.app
         .submit_memory(
             value,
@@ -1467,7 +1472,8 @@ async fn agent_writes(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
                 verb: Some(oml_app::types::SubmitVerb::Remember),
                 kind: oml_app::domain::MemoryKind::Memory,
                 body: body.to_owned(),
-                workarea: None,
+                workarea: workarea
+                    .map(|w| oml_app::domain::name::Reference::parse(w).expect("a reference")),
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
@@ -1559,29 +1565,39 @@ async fn a_session_key_has_no_value_and_no_connect_code() {
     assert!(format!("{refused:?}").contains("SessionKey"), "{refused:?}");
 }
 
-/// A person's own issuance sets no limit: `POST /v2/keys` as `<user>-web`
-/// with `expiry` or `requests_per_minute` is `request.validation` naming
-/// the member, journals nothing and issues no key; a date or a rate on a
-/// person's key is an admin key's to set (ADR-0079 d1, open question 3;
-/// ADR-0045 d9).
+/// A person's own issuance sets the key's expiry and nothing else of its
+/// limits: `POST /v2/keys` as `<user>-web` with `expiry` issues a key that
+/// carries the date, under the rule of every issuance, so a bare date or an
+/// instant that is not later than the server's clock is `request.validation`
+/// naming `/expiry`; `requests_per_minute` is still `request.validation`
+/// naming the member. A refusal journals nothing and issues no key. Changing
+/// or clearing the date afterwards stays with the admin key role: the
+/// person's session key is refused the limits route (ADR-0079 d1, d5, the
+/// operator's answer 3; ADR-0045 d9).
 #[tokio::test]
-async fn a_persons_own_issuance_takes_no_expiry_and_no_rate() {
+async fn a_persons_own_issuance_takes_an_expiry_and_no_rate() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let head = rig.head().await;
     for (member, value) in [
-        ("expiry", json!("2999-01-01T00:00:00Z")),
         ("requests_per_minute", json!(60)),
+        ("expiry", json!("2999-01-01")),
+        ("expiry", json!("2999-01-01T00:00:00")),
+        ("expiry", json!("2000-01-01T00:00:00Z")),
     ] {
         let mut body = json!({"name": "alice-laptop", "role": "writer", "connect_code": false});
-        body[member] = value;
+        body[member] = value.clone();
         let (status, answer) = as_web(&rig, &cookie, "web", "/v2/keys", body).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{member}: {answer}");
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{member} {value}: {answer}"
+        );
         assert_eq!(answer["error"]["code"], "request.validation", "{answer}");
         assert_eq!(
-            answer["error"]["details"],
-            json!({ "field": format!("/{member}") }),
-            "{answer}"
+            answer["error"]["details"]["field"],
+            format!("/{member}"),
+            "{value}: {answer}"
         );
     }
     assert_eq!(rig.head().await, head, "nothing journalled");
@@ -1596,9 +1612,65 @@ async fn a_persons_own_issuance_takes_no_expiry_and_no_rate() {
         .expect("a lookup");
     assert_eq!(named, None, "no key was issued");
 
-    // The same issuance without a limit is the person's to make.
-    let _ = issued(&rig, &cookie, "laptop").await;
-    let key = key_named(&rig, "alice-laptop").await;
+    // With a date later than now the key is issued and carries it, for a
+    // key with a value and for a connector key alike.
+    for (name, connect_code) in [("alice-laptop", false), ("alice-phone", true)] {
+        let (status, key) = as_web(
+            &rig,
+            &cookie,
+            "web",
+            "/v2/keys",
+            json!({
+                "name": name,
+                "role": "writer",
+                "connect_code": connect_code,
+                "expiry": "2999-01-01T00:00:00+01:00",
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{name}: {key}");
+        assert_eq!(key["expiry"], "2998-12-31T23:00:00.000000Z", "{key}");
+        assert_eq!(key["requests_per_minute"], Value::Null, "{key}");
+        let record = key_named(&rig, name).await;
+        assert_eq!(
+            (
+                record.expiry.as_ref().map(|at| at.as_str().to_owned()),
+                record.requests_per_minute
+            ),
+            (Some("2998-12-31T23:00:00.000000Z".to_owned()), None),
+            "{name}"
+        );
+    }
+
+    // The date is the admin key role's to change: the person's session key
+    // is refused, whether it moves the date or clears it, and the date stays.
+    let head = rig.head().await;
+    for change in [
+        json!({"expiry": null}),
+        json!({"expiry": "3000-01-01T00:00:00Z"}),
+    ] {
+        let (status, answer) = as_web(
+            &rig,
+            &cookie,
+            "web",
+            "/v2/keys/alice-laptop/limits",
+            change.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{change}: {answer}");
+        assert_eq!(answer["error"]["code"], "access.verb_ceiling", "{answer}");
+    }
+    assert_eq!(rig.head().await, head, "nothing journalled");
+    let record = key_named(&rig, "alice-laptop").await;
+    assert_eq!(
+        record.expiry.as_ref().map(|at| at.as_str()),
+        Some("2998-12-31T23:00:00.000000Z")
+    );
+
+    // An issuance without a date is still the person's to make, and its
+    // key does not expire.
+    let _ = issued(&rig, &cookie, "tablet").await;
+    let key = key_named(&rig, "alice-tablet").await;
     assert_eq!((key.expiry, key.requests_per_minute), (None, None));
 }
 
@@ -2530,4 +2602,337 @@ async fn a_cut_off_session_key_still_ends_its_session() {
         StatusCode::UNAUTHORIZED,
         "the session ended"
     );
+}
+
+// ---------------------------------------------------------------------------
+// #343, #335: what a session key an admin denied is told and still does
+// ---------------------------------------------------------------------------
+
+/// `GET path` as `oml-web` makes it for the session `cookie` names, under the
+/// `web` credential.
+async fn get_as_web(rig: &Rig, cookie: &str, path: &str) -> (StatusCode, Value) {
+    get_as(rig, cookie, "web", path).await
+}
+
+/// The same `GET` under the session's `capacity` credential.
+async fn get_as(rig: &Rig, cookie: &str, capacity: &str, path: &str) -> (StatusCode, Value) {
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let credential = oml_app::domain::web::capacity_credential(token, capacity);
+    let request = Request::get(path)
+        .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+        .header("oml-web-client", WEB_CLIENT_SECRET)
+        .body(Body::empty())
+        .expect("a request");
+    let (status, _, answer) = send(&rig.router, request).await;
+    (status, serde_json::from_str(&answer).unwrap_or(Value::Null))
+}
+
+/// alice signed in with a connector key, a writer key and one memory her
+/// agent wrote, and the workarea `notes` in her root: her cookie and the
+/// agent key's value.
+async fn alice_with_a_memory(rig: &Rig) -> (String, String) {
+    let cookie = alice_with_a_connector(rig).await;
+    let (status, notes) = as_web(
+        rig,
+        &cookie,
+        "web",
+        "/v2/workareas",
+        json!({"name": "notes"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{notes}");
+    let laptop = issued(rig, &cookie, "agent").await;
+    let value = value_of(&laptop);
+    agent_writes(rig, &value, "alice keeps her export").await;
+    (cookie, value)
+}
+
+/// `GET /v2/whoami` tells a person's `<user>-web` session key, and no other
+/// key, whether it carries a denial: `denied` is a boolean on that key's
+/// record, false while the key holds no denial, also when the person's agent
+/// key is the one denied, and true once it holds one. It is absent for
+/// `<user>-review`, `<user>-curate` and `<user>-admin`, denied or not, and
+/// for a key with a value, so none of them learns anything of its denials
+/// (ADR-0039 d15 as amended by ADR-0070, the operator's decision of
+/// 2026-11-12; #343).
+#[tokio::test]
+async fn whoami_tells_the_web_session_key_alone_whether_it_carries_a_denial() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let (_, agent) = alice_with_a_memory(&rig).await;
+    let (status, team) = as_admin(
+        &rig,
+        "/v2/workareas",
+        "team",
+        json!({"name": "team", "parent": "universe"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{team}");
+    let (status, curate) = as_admin(
+        &rig,
+        "/v2/web/users/alice/capacities",
+        "curate-alice",
+        json!({"capacity": "curate", "workareas": ["team"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{curate}");
+    // A capacity is reached by the session that opens after its grant.
+    let alice = signed_in(&rig, "sub-1", EMAIL).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    // Every key but `alice-web`, each by the name its record carries.
+    async fn others(rig: &Rig, alice: &str, boss: &str, agent: &str, when: &str) {
+        for (cookie, capacity, name) in [
+            (alice, "review", "alice-review"),
+            (alice, "curate", "alice-curate"),
+            (boss, "admin", "boss-admin"),
+        ] {
+            let (status, me) = get_as(rig, cookie, capacity, "/v2/whoami?person=false").await;
+            assert_eq!(status, StatusCode::OK, "{when}: {capacity}: {me}");
+            assert_eq!(me["name"], name, "{when}: {me}");
+            assert!(me.get("denied").is_none(), "{when}: {capacity}: {me}");
+        }
+        for (value, name) in [
+            (agent, "alice-agent"),
+            (rig.boot.admin_key.value.as_str(), "root-admin"),
+        ] {
+            let whoami = Request::get("/v2/whoami?person=false")
+                .header(header::AUTHORIZATION, format!("Bearer {value}"))
+                .body(Body::empty())
+                .expect("a request");
+            let (status, _, me) = send(&rig.router, whoami).await;
+            assert_eq!(status, StatusCode::OK, "{when}: {name}: {me}");
+            let me: Value = serde_json::from_str(&me).expect("JSON");
+            assert_eq!(me["name"], name, "{when}: {me}");
+            assert!(me.get("denied").is_none(), "{when}: {name}: {me}");
+        }
+    }
+    let web = || async {
+        let (status, me) = get_as(&rig, &alice, "web", "/v2/whoami?person=false").await;
+        assert_eq!(status, StatusCode::OK, "{me}");
+        assert_eq!(me["name"], "alice-web", "{me}");
+        me["denied"].clone()
+    };
+    assert_eq!(web().await, false, "no denial yet");
+    others(&rig, &alice, &boss, &agent, "no denial yet").await;
+
+    // The person's agent key, review key and curate key denied: none of
+    // them is told, and the web key, which holds no denial, reads false.
+    for key in ["alice-agent", "alice-review", "alice-curate"] {
+        let (status, denial) = as_admin(
+            &rig,
+            &format!("/v2/keys/{key}/denials"),
+            &format!("deny-{key}"),
+            json!({"workarea": "universe"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{key}: {denial}");
+    }
+    assert_eq!(web().await, false, "only the other keys are denied");
+    others(&rig, &alice, &boss, &agent, "the other keys denied").await;
+
+    let (status, denial) = as_admin(
+        &rig,
+        "/v2/keys/alice-web/denials",
+        "deny-alice-web",
+        json!({"workarea": "universe"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+    assert_eq!(web().await, true, "alice-web denied");
+    others(&rig, &alice, &boss, &agent, "alice-web denied").await;
+}
+
+/// `denied` is true exactly when the three key acts are refused: for a
+/// denial on `universe`, on the person's root, on a workarea inside it and
+/// on one outside it, the member is false and an issuance is a 201 before
+/// the denial, and true and `session_key_denied` after it (ADR-0070 d2;
+/// #343, #325).
+#[tokio::test]
+async fn whoami_says_denied_exactly_when_the_key_acts_are_refused() {
+    for workarea in ["universe", "alice", "alice.notes", "team"] {
+        let rig = rig().await;
+        let (cookie, _) = alice_with_a_memory(&rig).await;
+        let (status, team) = as_admin(
+            &rig,
+            "/v2/workareas",
+            "team",
+            json!({"name": "team", "parent": "universe"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{team}");
+        let issue = |name: &'static str| {
+            as_web(
+                &rig,
+                &cookie,
+                "web",
+                "/v2/keys",
+                json!({"name": name, "role": "writer", "connect_code": false}),
+            )
+        };
+        let (status, me) = get_as_web(&rig, &cookie, "/v2/whoami?person=false").await;
+        assert_eq!(status, StatusCode::OK, "{me}");
+        assert_eq!(me["denied"], false, "{workarea}: none yet: {me}");
+        let (status, key) = issue("alice-before").await;
+        assert_eq!(status, StatusCode::CREATED, "{workarea}: {key}");
+        let (status, denial) = as_admin(
+            &rig,
+            "/v2/keys/alice-web/denials",
+            "deny-alice-web",
+            json!({"workarea": workarea}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{workarea}: {denial}");
+        let (status, me) = get_as_web(&rig, &cookie, "/v2/whoami?person=false").await;
+        assert_eq!(status, StatusCode::OK, "{me}");
+        assert_eq!(me["denied"], true, "{workarea}: {me}");
+        let (status, refused) = issue("alice-after").await;
+        assert_session_key_denied(status, &refused, "issue_key");
+    }
+}
+
+/// A person whose `<user>-web` key carries a denial, on `universe`, on her
+/// root or on a workarea outside it, downloads the export she downloaded
+/// before: the same text, the same keys, a 200. The route reads nothing of the
+/// key's grants or denials, as sign-out reads none: it serves every memory in
+/// her root and below, which after a denial on `universe` or inside the root
+/// includes text the same key is refused by its id (the next test). Without
+/// it she has no way in the console to take her memories out (ADR-0070 d2,
+/// the operator's decision of 2026-11-12; #335).
+#[tokio::test]
+async fn a_denied_session_key_still_downloads_its_export() {
+    for workarea in ["universe", "alice", "team"] {
+        let rig = rig().await;
+        let (cookie, _) = alice_with_a_memory(&rig).await;
+        let (status, before) = get_as_web(&rig, &cookie, "/v2/web/export").await;
+        assert_eq!(status, StatusCode::OK, "{before}");
+        assert_eq!(before["memories"].as_array().map(Vec::len), Some(1));
+        let (status, team) = as_admin(
+            &rig,
+            "/v2/workareas",
+            "team",
+            json!({"name": "team", "parent": "universe"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{team}");
+        let (status, denial) = as_admin(
+            &rig,
+            "/v2/keys/alice-web/denials",
+            "deny-alice-web",
+            json!({"workarea": workarea}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{workarea}: {denial}");
+        // The denial is on the key: the three key acts refuse it.
+        let (status, refused) = as_web(
+            &rig,
+            &cookie,
+            "web",
+            "/v2/keys",
+            json!({"name": "alice-tablet", "role": "writer", "connect_code": false}),
+        )
+        .await;
+        assert_session_key_denied(status, &refused, "issue_key");
+        let (status, mut after) = get_as_web(&rig, &cookie, "/v2/web/export").await;
+        assert_eq!(status, StatusCode::OK, "{workarea}: {after}");
+        let mut before = before;
+        for export in [&mut before, &mut after] {
+            export
+                .as_object_mut()
+                .expect("an object")
+                .remove("exported_at");
+        }
+        assert_eq!(after, before, "{workarea}: the export is what it was");
+    }
+}
+
+/// What keeping the export keeps: a memory in `alice.notes` is in the export
+/// of a `<user>-web` key denied on `universe`, on the root or on `notes`
+/// itself, text and all, while the same key's read of that memory by its id
+/// is `access.not_found`, where it was a 200 before the denial (ADR-0070 d2,
+/// the operator's decision of 2026-11-12; #335).
+#[tokio::test]
+async fn a_denied_session_keys_export_serves_a_memory_the_key_is_refused_by_its_id() {
+    for workarea in ["universe", "alice", "alice.notes"] {
+        let rig = rig().await;
+        let (cookie, agent) = alice_with_a_memory(&rig).await;
+        let text = "alice keeps this in her notes";
+        let id = agent_writes_in(&rig, &agent, Some("alice.notes"), text).await;
+        let by_id = format!("/v1/memories/{id}");
+        let (status, read) = get_as_web(&rig, &cookie, &by_id).await;
+        assert_eq!(status, StatusCode::OK, "{workarea}: {read}");
+        assert!(read.to_string().contains(text), "{workarea}: {read}");
+        let (status, denial) = as_admin(
+            &rig,
+            "/v2/keys/alice-web/denials",
+            "deny-alice-web",
+            json!({"workarea": workarea}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{workarea}: {denial}");
+        let (status, refused) = get_as_web(&rig, &cookie, &by_id).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{workarea}: {refused}");
+        assert_eq!(
+            refused["error"]["code"], "access.not_found",
+            "{workarea}: {refused}"
+        );
+        let (status, export) = get_as_web(&rig, &cookie, "/v2/web/export").await;
+        assert_eq!(status, StatusCode::OK, "{workarea}: {export}");
+        let exported: Vec<&Value> = export["memories"]
+            .as_array()
+            .expect("memories")
+            .iter()
+            .filter(|m| m["memory_id"] == id.to_string())
+            .collect();
+        assert_eq!(exported.len(), 1, "{workarea}: {export}");
+        assert_eq!(exported[0]["text"], text, "{workarea}: {export}");
+        assert_eq!(
+            exported[0]["workarea"], "universe.alice.notes",
+            "{workarea}: {export}"
+        );
+    }
+}
+
+/// The same person files a deletion request: `web.deletion_requested`
+/// journals under the denied key, once, and the request is pending for the
+/// admin to close (ADR-0070 d2, the operator's decision of 2026-11-12; #335).
+#[tokio::test]
+async fn a_denied_session_key_still_files_its_deletion_request() {
+    for workarea in ["universe", "alice", "team"] {
+        let rig = rig().await;
+        let (cookie, _) = alice_with_a_memory(&rig).await;
+        let (status, team) = as_admin(
+            &rig,
+            "/v2/workareas",
+            "team",
+            json!({"name": "team", "parent": "universe"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{team}");
+        let (status, denial) = as_admin(
+            &rig,
+            "/v2/keys/alice-web/denials",
+            "deny-alice-web",
+            json!({"workarea": workarea}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{workarea}: {denial}");
+        let (status, asked) =
+            as_web(&rig, &cookie, "web", "/v2/web/deletion-requests", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{workarea}: {asked}");
+        let web = key_named(&rig, "alice-web").await.key_id;
+        let requested: Vec<_> = rig
+            .store
+            .events_range(rig.boot.tenant_id, 1, 1000)
+            .await
+            .expect("the chain")
+            .into_iter()
+            .filter(|e| e.envelope.event_type == "web.deletion_requested")
+            .collect();
+        assert_eq!(requested.len(), 1, "{workarea}: journalled once");
+        assert_eq!(
+            requested[0].envelope.api_key_id,
+            Some(web),
+            "{workarea}: under the denied session key"
+        );
+    }
 }

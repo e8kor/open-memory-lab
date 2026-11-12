@@ -7,7 +7,7 @@ answers: how a key is given an end date and a request rate; what a request under
 
 # ADR-0079 — A key ends on a date and is held to a request rate, both set at issuance and changed only by an admin key that is not the key itself
 
-**Status:** accepted design · 2026-11-12, by the operator, as built, with its five open questions decided at their recommendations (1: a connection has no date apart from its key's; 2: a rate every server process shares is decided with ADR-0073's nodes; 3: a person sets a date on their own keys from the web console when the keys page is next changed, and changing it afterwards stays with the admin key role; 4: an expired key stays on its account's `keys` meter; 5: when the operator path is built, a date and a rate are refused on every role that can issue an admin key, before the first such key is issued) · proposed the same day with #323
+**Status:** accepted design · 2026-11-12, by the operator, as built, with its five open questions decided at their recommendations (1: a connection has no date apart from its key's; 2: a rate every server process shares is decided with ADR-0073's nodes; 3: a person sets a date on their own keys from the web console when the keys page is next changed, and changing it afterwards stays with the admin key role, built in v0.7.3 (#352); 4: an expired key stays on its account's `keys` meter; 5: when the operator path is built, a date and a rate are refused on every role that can issue an admin key, before the first such key is issued) · proposed the same day with #323
 
 **Release:** v0.7.3 (#323)
 
@@ -46,8 +46,10 @@ deleted silently ([ADR-0001](ADR-0001-the-constitution.md)).
   journals it in the `expiry` member it has always carried as null. A key issued without one does
   not expire, as before. A session key carries none: it ends with its web session
   ([ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
-  d6), and a person's own issuance from their web session still sends `name`, `role` and
-  `connect_code` only. The cost: a date is an instant, so an operator who means "the end of
+  d6). A person's own issuance from their web session sends `name`, `role` and `connect_code`,
+  and `expiry` where the person ends the key on a date, under this rule; it takes no
+  `requests_per_minute`, which is `request.validation` naming the member (The operator's
+  answers, 3; built in v0.7.3, #352). The cost: a date is an instant, so an operator who means "the end of
   Friday" writes the instant; a bare date is refused, not read as some midnight.
 
     An admin key carries neither limit, this date or the rate of d4. `POST /v2/keys` for role
@@ -121,7 +123,9 @@ deleted silently ([ADR-0001](ADR-0001-the-constitution.md)).
   connection, which every key that carries a limit admits, since a denial is refused only on
   an admin key. Moving an expired key's date later makes it authenticate again: an expiry is a
   date an admin holds, not an act like a revocation. The rate a key is held to is read from
-  its row on each request, so a change holds from the next request.
+  its row on each request, so a change holds from the next request. A person who set a date
+  at their own issuance (d1) does not change it: `<user>-web` is no admin key, so it is
+  `access.verb_ceiling` here like any other key that is not one.
 
     This amends ADR-0031 d11's "one whose key ended is dead for good" for an expired key: its
     connection stays `open` with no event, as that record says, and works again if the date is
@@ -161,8 +165,9 @@ deleted silently ([ADR-0001](ADR-0001-the-constitution.md)).
   [Roles and keys](../architecture/roles-and-keys.md), [security](../architecture/security.md)
   limit 7 and [limits](../reference/limits.md) say what is built.
 - The events tail shows `key.limits_set` to no key, as it shows no `key.*` event (ADR-0025 d15).
-- The web console's keys page does not yet mark an expired key; its listing carries `expired`,
-  and the page is a follow-up (The operator's answers, 3).
+- The web console's keys pages mark an expired key and show each key's date and rate (#337),
+  and a person's two issue forms take an optional date (The operator's answers, 3; #352). Both
+  were built in v0.7.3, after this record was accepted.
 - #185's reviewer key is issued with `--expires` and `--requests-per-minute` in the ops
   repository's seed script; that change is the operator's.
 
@@ -178,10 +183,24 @@ questions at the recommendation it carried.
    decided with
    [ADR-0073](ADR-0073-a-leader-signs-every-write-and-nodes-serve-the-workareas-placed-on-them-each-read-routed-to-the-closest-less-busy-replica-fresh-enough-for-it.md)'s
    nodes, when a second process serves requests; until then the bound is n times the rate.
-3. **A person setting a date or a rate on their own keys from the web console.** Not built: the
-   route takes the admin key role. Decided, at the recommendation: `expiry` is added to a
-   person's own issuance when the keys page is next changed, and changing it afterwards stays
-   with the admin key role.
+3. **A person setting a date or a rate on their own keys from the web console.** Not built
+   when this record was accepted: the route takes the admin key role. Decided, at the
+   recommendation: `expiry` is added to a person's own issuance when the keys page is next
+   changed, and changing it afterwards stays with the admin key role. Built in v0.7.3 (#352),
+   on the operator's word of 2026-11-12, "Build it in this bulk": `POST /v2/keys` as
+   `<user>-web` admits `expiry` under d1's rule and still refuses `requests_per_minute`. The
+   Keys page's two issue forms, for an agent key and for a connector key, each carry one
+   optional date input, which works without script and is sent as the last second of that day
+   in UTC (`YYYY-MM-DDT23:59:59Z`); a day that has passed, or a value that is not
+   `YYYY-MM-DD`, is refused on the page as the API refuses the instant; a day its month does
+   not hold, such as `2026-11-31`, is read as the day that many days on (`2026-12-01`), as
+   every `date-time` of the API reads it. The Start page's one-button issue sets
+   no date. A person's own issuance never issues an admin key, so d1's rule for admin keys is
+   untouched, and their session key is still `access.verb_ceiling` on
+   `POST /v2/keys/{key}/limits`, so the date moves or clears only by an admin key (d5). An
+   allowlist admin's `<user>-admin` is of the admin key role and is admitted there, though no
+   page sends the request. A
+   rate on a person's own key is still an admin key's to set.
 4. **Whether an expired key leaves its account's `keys` meter.** It stays (d3). Decided, at the
    recommendation: it stays, since the key can be given a later date and would then pass a
    quota it never counted against.
