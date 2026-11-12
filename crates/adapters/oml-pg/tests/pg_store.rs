@@ -373,6 +373,112 @@ async fn a_stop_the_writer_does_not_answer_in_time_tells_how_many_counts_it_leav
     drop_dbs(&created).await;
 }
 
+/// Counts told as lost, summed over every telling.
+fn told_total(told: &Told) -> u64 {
+    told.lock().expect("told lock").iter().map(|(n, _)| n).sum()
+}
+
+/// A stop that cannot wait tells every count it accepted and never wrote,
+/// the ones the full queue had dropped included: with the writer blocked,
+/// what was handed over is what is told as lost (ADR-0071 d8; #333).
+#[tokio::test]
+async fn a_stop_the_writer_does_not_answer_tells_the_counts_the_full_queue_dropped_too() {
+    use oml_app::ports::RecallMeter as _;
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut rig = ChainRig::new(593);
+    rig.seed_chain(&store, 0).await;
+    let account = Uuid::from_u128(0xACC2);
+    let at = oml_app::domain::EventTime::parse("2026-11-12T10:00:00.000000Z").expect("a time");
+    let mut owner = owner_conn(&store).await;
+    owner.execute("BEGIN").await.expect("begin");
+    owner
+        .execute("LOCK TABLE account_activity IN ACCESS EXCLUSIVE MODE")
+        .await
+        .expect("lock");
+    let (meter, told) = recall_meter(&store);
+    let handed = oml_pg::recall_meter::QUEUE as u64 + 501;
+    for i in 0..handed {
+        meter.count(rig.tenant_id, account, &at);
+        if i == 0 {
+            // The writer takes the first and waits on the lock, so the
+            // queue fills behind it.
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+    assert_eq!(
+        meter
+            .flush_at_stop(std::time::Duration::from_millis(300))
+            .await,
+        Err(handed)
+    );
+    assert_eq!(
+        told_total(&told),
+        handed,
+        "{:?}",
+        told.lock().expect("told lock")
+    );
+    owner.execute("ROLLBACK").await.expect("release the lock");
+    // The writer finishing after the stop tells of nothing a second time.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert_eq!(told_total(&told), handed);
+    drop_dbs(&created).await;
+}
+
+/// A stop that cannot wait tells every count it accepted and never wrote,
+/// the ones the store refused earlier in the pass in flight included: three
+/// refused and two held behind a lock are five told, none twice (ADR-0071
+/// d8; #333).
+#[tokio::test]
+async fn a_stop_in_the_middle_of_a_pass_tells_the_counts_the_store_refused_earlier_in_it_too() {
+    use oml_app::ports::RecallMeter as _;
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut rig = ChainRig::new(594);
+    rig.seed_chain(&store, 0).await;
+    let account = Uuid::from_u128(0xACC3);
+    let at = oml_app::domain::EventTime::parse("2026-11-12T10:00:00.000000Z").expect("a time");
+    let mut owner = owner_conn(&store).await;
+    owner.execute("BEGIN").await.expect("begin");
+    owner
+        .execute("LOCK TABLE account_activity IN ACCESS EXCLUSIVE MODE")
+        .await
+        .expect("lock");
+    let (meter, told) = recall_meter(&store);
+    // A tenant the store does not hold sorts before the real one, so its
+    // sum is refused first and the real tenant's waits on the lock.
+    for _ in 0..3 {
+        meter.count(Uuid::from_u128(1), account, &at);
+    }
+    for _ in 0..2 {
+        meter.count(rig.tenant_id, account, &at);
+    }
+    // The stop's wait is longer than the pass takes to refuse its first sum.
+    assert_eq!(
+        meter
+            .flush_at_stop(std::time::Duration::from_millis(500))
+            .await,
+        Err(2),
+        "the stop tells of the two it left; the three were told as they were refused"
+    );
+    assert_eq!(
+        told_total(&told),
+        5,
+        "{:?}",
+        told.lock().expect("told lock")
+    );
+    owner.execute("ROLLBACK").await.expect("release the lock");
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert_eq!(told_total(&told), 5, "nothing is told twice");
+    drop_dbs(&created).await;
+}
+
 /// The connection laws the double proves, against the real store: the
 /// connection folds run inside the commit's transaction under the tenant's
 /// `oml.tenant_id`, and a refused fold commits nothing (postgres-schema.md
