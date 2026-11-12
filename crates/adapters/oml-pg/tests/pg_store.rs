@@ -7322,7 +7322,9 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
         .await
         .expect("connect")
         .with_owner_url(&owner_url(&db));
-    let mut rig = ChainRig::new(562);
+    // A schema before 0044 takes a promotion with no approval; the twin's
+    // full schema is sent one.
+    let mut rig = ChainRig::new(562).before_approval();
     rig.seed_chain(&upgraded, 0).await;
     let wa = Uuid::from_u128(0xE2);
     lexeme_rows(&mut rig, &upgraded, wa).await;
@@ -8202,7 +8204,9 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
         .await
         .expect("connect")
         .with_owner_url(&owner_url(&db));
-    let mut rig = ChainRig::new(575);
+    // A schema before 0044 takes a promotion with no approval; the twin's
+    // full schema is sent one.
+    let mut rig = ChainRig::new(575).before_approval();
     rig.seed_chain(&upgraded, 0).await;
     let wa = Uuid::from_u128(0xE2);
     lexeme_rows(&mut rig, &upgraded, wa).await;

@@ -43,6 +43,13 @@ pub enum StoreError {
     /// the committing transaction; the commit wrote nothing (ADR-0030 d6).
     #[error("a version in the committed subtree is still held")]
     HeldRemaining,
+    /// A promotion or ratification carried no approval to a store whose
+    /// schema keeps one (migration 0044): the commit wrote nothing. The
+    /// application always sends one; only a store over a schema before 0044
+    /// takes `None`, as the migration laws' older databases do (ADR-0077
+    /// d6).
+    #[error("the promotion of version {memory_id} carries no approval, and this schema keeps one")]
+    ApprovalMissing { memory_id: Uuid },
     #[error("chain head moved: expected seq {expected_seq}, commit carries seq {found_seq}")]
     SeqConflict { expected_seq: u64, found_seq: u64 },
     #[error("prev_hash does not match the stored head at seq {seq}")]
@@ -331,8 +338,9 @@ pub enum MetadataFold {
     /// (postgres-schema.md `memories_served_tip`; ADR-0025 d10). `approval`
     /// is the approving verdict the event's `ratification_event_id` names,
     /// stored on the row with the promotion (ADR-0077 d6). The application
-    /// always sends one; `None` writes none, so a store over a schema
-    /// before migration 0044 still takes the promotion, as the migration
+    /// always sends one. A store whose schema keeps the approval refuses
+    /// `None` with [`StoreError::ApprovalMissing`]; one over a schema
+    /// before migration 0044 takes it and writes none, as the migration
     /// laws send it.
     MemoryPromoted {
         memory_id: Uuid,

@@ -1819,6 +1819,11 @@ fn apply_fold(
             memory_id,
             approval,
         } => {
+            // The double has no schema before 0044: a promotion with no
+            // approval is refused, as the store refuses it (ADR-0077 d6).
+            if approval.is_none() {
+                return Err(StoreError::ApprovalMissing { memory_id });
+            }
             if let Some(promoted) = state.memories.get(&memory_id).cloned() {
                 // One served tip per claim: any other tip refuses the
                 // commit, as `memories_served_tip` does (ADR-0025 d10).
@@ -1941,6 +1946,11 @@ fn apply_fold(
                 return Err(StoreError::Backend(
                     "memories_valid_time_ends: the end is not after the start".to_owned(),
                 ));
+            }
+            if approval.is_none() {
+                return Err(StoreError::ApprovalMissing {
+                    memory_id: successor,
+                });
             }
             if let Some(target) = state.memories.get_mut(&replaced) {
                 target.is_tip = false;

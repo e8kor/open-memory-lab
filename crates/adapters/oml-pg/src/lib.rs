@@ -2896,6 +2896,20 @@ async fn set_memory_status(
     Ok(())
 }
 
+/// Whether `memories` has the approval columns of migration 0044. Read only
+/// on a promotion that carries no approval, which the application never
+/// sends.
+async fn schema_keeps_approval(tx: &mut Transaction<'_, Postgres>) -> Result<bool, StoreError> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_attribute \
+         WHERE attrelid = 'memories'::regclass AND attname = 'approved_at' \
+           AND NOT attisdropped)",
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(backend)
+}
+
 /// Ratification of a first version: it is promoted, made the tip and
 /// stamped with the event's `at`; `memories_served_tip` refuses a second tip
 /// of its claim (ADR-0025 d10).
@@ -2907,9 +2921,12 @@ async fn promote_memory(
     approval: Option<&Approval>,
 ) -> Result<(), StoreError> {
     // The row keeps the approving verdict that ratified it, in the one
-    // statement that promotes it; a promotion that carries none names no
-    // approval column, so a schema before 0044 still takes it (ADR-0077
-    // d6).
+    // statement that promotes it. A promotion that carries none names no
+    // approval column, so a schema before 0044 still takes it; a schema that
+    // keeps the column refuses it, and the commit rolls back (ADR-0077 d6).
+    if approval.is_none() && schema_keeps_approval(tx).await? {
+        return Err(StoreError::ApprovalMissing { memory_id });
+    }
     let promote = match approval {
         Some(_) => {
             "UPDATE memories SET status = 'promoted', is_tip = true, \
