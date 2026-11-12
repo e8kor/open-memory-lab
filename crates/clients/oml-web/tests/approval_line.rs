@@ -36,6 +36,8 @@ impl Transport for Double {
             })
         } else if path.starts_with("/v1/memories") {
             json!({"items": self.memories, "next_cursor": null})
+        } else if path.contains("tree?counts=true") {
+            json!({"items": [], "truncated": false})
         } else {
             json!({"items": [], "next_cursor": null})
         };
@@ -64,6 +66,11 @@ fn memory(id: &str, state: &str, principal: Option<&str>, approval: Option<(&str
 
 /// The page of `/web/memories` over `memories`.
 async fn list(memories: Value) -> String {
+    list_at("/web/memories", memories).await
+}
+
+/// The answer at `path` over `memories`.
+async fn list_at(path: &str, memories: Value) -> String {
     let app = router(Web {
         layers: Layers {
             public_origin: Some(ORIGIN.to_owned()),
@@ -80,7 +87,7 @@ async fn list(memories: Value) -> String {
     });
     let response = app
         .oneshot(
-            Request::get("/web/memories")
+            Request::get(path)
                 .header("x-request-id", "page-7")
                 .header(header::COOKIE, format!("{SESSION_COOKIE}={TOKEN}"))
                 .body(Body::empty())
@@ -176,4 +183,46 @@ async fn an_unreviewed_card_names_no_approval() {
         "held until someone else reviews it"
     );
     assert!(!page.contains("approved by"), "{page}");
+}
+
+#[tokio::test]
+async fn the_json_route_carries_the_approval_the_card_shows_and_nothing_more() {
+    let json = list_at(
+        "/web/data/memories",
+        json!([
+            memory("own", "promoted", Some("alice"), Some(("human", true))),
+            memory(
+                "by-agent",
+                "promoted",
+                Some("alice"),
+                Some(("agent", false))
+            ),
+            memory("shared", "promoted", None, None),
+            memory("waiting", "held", Some("alice"), None),
+        ]),
+    )
+    .await;
+    let value: Value = serde_json::from_str(&json).unwrap();
+    let item = |id: &str| {
+        value["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["artifact_id"] == id)
+            .unwrap_or_else(|| panic!("no {id} in {value}"))
+            .clone()
+    };
+    assert_eq!(item("own")["approved_at"], "2026-11-10");
+    assert_eq!(
+        item("own")["approver"],
+        json!({"kind": "person", "same_user": true})
+    );
+    assert_eq!(
+        item("by-agent")["approver"],
+        json!({"kind": "agent", "same_user": false})
+    );
+    for id in ["shared", "waiting"] {
+        assert_eq!(item(id)["approved_at"], Value::Null, "{id}");
+        assert_eq!(item(id)["approver"], Value::Null, "{id}");
+    }
 }

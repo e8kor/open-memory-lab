@@ -268,15 +268,6 @@ fn kind_word(held_by: &str) -> &'static str {
     }
 }
 
-/// The word a row names an approving key's holder by.
-fn approver_kind(held_by: &str) -> &'static str {
-    match held_by {
-        "human" => "a person",
-        "agent" => "a reviewer agent",
-        _ => "a service",
-    }
-}
-
 fn day(at: &str) -> String {
     at.chars().take(10).collect()
 }
@@ -313,7 +304,7 @@ impl Card {
             scan: m.scan_finding.clone(),
             approved: m.approved_at.as_deref().map(day),
             approver: m.approver.as_ref().map(|a| Approver {
-                kind: approver_kind(&a.held_by),
+                kind: kind_word(&a.held_by),
                 same_user: a.same_user,
             }),
             id: m.artifact_id.clone(),
@@ -375,6 +366,11 @@ impl Card {
             "title": self.title,
             "text": self.body,
             "claim_key": self.claim_key,
+            "approved_at": self.approved,
+            "approver": self.approver.map(|a| json!({
+                "kind": a.kind,
+                "same_user": a.same_user,
+            })),
             "author": self.author,
             "author_kind": self.author_kind,
             "anchor": self.anchor,
@@ -391,7 +387,12 @@ impl Card {
     fn approval_line(&self) -> String {
         let mut line = String::from("approved");
         if let Some(approver) = self.approver {
-            let _ = write!(line, " by {}", approver.kind);
+            let who = match approver.kind {
+                "person" => "a person",
+                "agent" => "a reviewer agent",
+                _ => "a service",
+            };
+            let _ = write!(line, " by {who}");
         }
         if let Some(day) = &self.approved {
             let _ = write!(line, " on {}", text(day));
