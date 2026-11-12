@@ -364,3 +364,44 @@ fn row_of_user(page: &str, user: &str) -> String {
     let end = page[start..].find("</tr>").unwrap() + start;
     page[start..end].to_owned()
 }
+
+#[tokio::test]
+async fn a_quota_the_api_serves_as_null_is_unlimited_and_draws_no_bar_and_no_mark() {
+    let mut person = person_under_limits();
+    for quota in ["memories", "keys", "connections", "requests_per_minute"] {
+        person["quotas"][quota] = Value::Null;
+    }
+    let page = get(start_script(person), "/web/start").await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    let memories = row(&page.body, "Memories");
+    assert!(
+        memories.contains(r#"<span class="mono">800</span>"#),
+        "{memories}"
+    );
+    assert!(
+        !memories.contains("<meter") && !memories.contains("oml-chip"),
+        "{memories}"
+    );
+    assert!(row(&page.body, "Keys").contains(r#"<span class="mono">2</span>"#));
+    let rate = row(&page.body, "Requests, per key");
+    assert!(!rate.contains("/ min") && rate.contains("—"), "{rate}");
+
+    let users = json!([{
+        "user": "alice", "signed_up": true, "disabled": false, "under_quotas": true,
+        "usage": {"memories": 3, "text_bytes": 0, "writes": 0, "keys": 1, "connections": 0},
+        "quotas": {
+            "memories": null, "keys": null, "connections": null,
+            "requests_per_minute": null, "text_bytes": null, "writes_per_month": null,
+        },
+        "admin_keys": [],
+    }]);
+    let page = get(users_script(users), "/web/admin/users").await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    let alice = row_of_user(&page.body, "alice");
+    assert!(
+        alice.contains(r#"<td><span class="mono">3</span></td>"#),
+        "{alice}"
+    );
+    assert!(!alice.contains("oml-chip"), "{alice}");
+    assert!(alice.contains("<td>—</td>"), "{alice}");
+}

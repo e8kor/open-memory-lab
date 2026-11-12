@@ -70,7 +70,7 @@ pub(crate) fn readings(usage: &Usage, limits: &Limits) -> Vec<Reading> {
     let mut out = vec![Reading {
         name: "Memories",
         used: usage.memories,
-        limit: Some(limits.memories),
+        limit: limits.memories,
         bytes: false,
     }];
     if let Some(used) = usage.text_bytes {
@@ -92,13 +92,13 @@ pub(crate) fn readings(usage: &Usage, limits: &Limits) -> Vec<Reading> {
     out.push(Reading {
         name: "Keys",
         used: usage.keys,
-        limit: Some(limits.keys),
+        limit: limits.keys,
         bytes: false,
     });
     out.push(Reading {
         name: "Connections",
         used: usage.connections,
-        limit: Some(limits.connections),
+        limit: limits.connections,
         bytes: false,
     });
     out
@@ -142,6 +142,11 @@ pub(crate) fn cells(usage: &Usage, limits: &Limits) -> [String; 5] {
             .find(|r| r.name == name)
             .map_or_else(|| "—".to_owned(), cell)
     })
+}
+
+/// The request rate per key, a dash where it is unlimited.
+pub(crate) fn rate(limit: Option<u64>) -> String {
+    limit.map_or_else(|| "—".to_owned(), |n| format!("{n} / min"))
 }
 
 /// The card's heading, as the pages' sections draw one.
@@ -188,8 +193,8 @@ pub(crate) fn card(person: &Person) -> Option<String> {
     }
     let _ = write!(
         out,
-        r#"<tr><td>Requests, per key</td><td class="mono">{} / min</td><td></td></tr></table></section>"#,
-        limits.requests_per_minute
+        r#"<tr><td>Requests, per key</td><td class="mono">{}</td><td></td></tr></table></section>"#,
+        rate(limits.requests_per_minute)
     );
     Some(out)
 }

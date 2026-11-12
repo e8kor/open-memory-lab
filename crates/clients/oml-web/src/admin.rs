@@ -503,7 +503,9 @@ pub async fn users_page(
             writes,
             key_count,
             connections,
-            u.quotas.requests_per_minute,
+            u.quotas
+                .requests_per_minute
+                .map_or_else(|| "—".to_owned(), |n| n.to_string()),
         );
     }
     body.push_str("</table>");

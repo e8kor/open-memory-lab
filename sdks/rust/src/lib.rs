@@ -563,15 +563,15 @@ pub struct Usage {
     pub connections: u64,
 }
 
-/// A person's limits. `text_bytes` and `writes_per_month` are `None` where
-/// the quota is unlimited, and from an API before the usage meters
-/// (ADR-0071 d5).
+/// A person's limits, each `None` where the quota is unlimited (the API
+/// serves an unlimited quota as null, ADR-0071 d5); `text_bytes` and
+/// `writes_per_month` are also `None` from an API before the usage meters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct Limits {
-    pub memories: u64,
-    pub keys: u64,
-    pub connections: u64,
-    pub requests_per_minute: u64,
+    pub memories: Option<u64>,
+    pub keys: Option<u64>,
+    pub connections: Option<u64>,
+    pub requests_per_minute: Option<u64>,
     #[serde(default)]
     pub text_bytes: Option<u64>,
     #[serde(default)]
