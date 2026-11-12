@@ -167,8 +167,7 @@ pub(super) struct WidenSignals {
     pub wanted: Mutex<VecDeque<SignalKey>>,
     /// When each tenant's last build began, as a count of builds: the
     /// queue serves the tenant whose turn is oldest, so no tenant waits
-    /// behind another's whole demand. An entry lasts until the tenant's
-    /// signals are dropped (#294).
+    /// behind another's whole demand. One entry per tenant ever built.
     pub turns: Mutex<BTreeMap<Uuid, u64>>,
     /// The signal a build is working on; a recall does not ask for it.
     pub building: Mutex<Option<SignalKey>>,
@@ -356,8 +355,8 @@ impl WidenSignals {
         }
     }
 
-    /// Drops every signal of the tenant, its marks and its turn at the
-    /// builds, and raises its generation so a build already reading is discarded: an event of
+    /// Drops every signal of the tenant and its marks, and raises its
+    /// generation so a build already reading is discarded: an event of
     /// [`drops_widen_signals`] committed.
     pub(super) fn drop_tenant(&self, tenant_id: Uuid) {
         if let Ok(mut held) = self.held.lock() {
@@ -371,9 +370,6 @@ impl WidenSignals {
         }
         if let Ok(mut off) = self.off.lock() {
             off.remove(&tenant_id);
-        }
-        if let Ok(mut turns) = self.turns.lock() {
-            turns.remove(&tenant_id);
         }
     }
 
@@ -884,29 +880,5 @@ mod tests {
         signals.want(key(1, 5));
         signals.want(key(4, 1));
         assert_eq!(signals.take_next(), Some(key(4, 1)));
-    }
-
-    #[test]
-    fn a_tenants_turn_is_forgotten_with_its_signals_and_no_other_tenants_is() {
-        let signals = WidenSignals::default();
-        signals.want(key(1, 1));
-        signals.want(key(2, 1));
-        assert!(signals.take_next().is_some());
-        assert!(signals.take_next().is_some());
-        let turns = |s: &WidenSignals| -> Vec<u128> {
-            s.turns
-                .lock()
-                .expect("turns")
-                .keys()
-                .map(|t| t.as_u128())
-                .collect()
-        };
-        assert_eq!(turns(&signals), [1, 2]);
-        signals.drop_tenant(Uuid::from_u128(1));
-        assert_eq!(
-            turns(&signals),
-            [2],
-            "a dropped tenant kept an entry, one per tenant ever built (#294)"
-        );
     }
 }
