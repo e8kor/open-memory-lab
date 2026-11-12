@@ -87,7 +87,7 @@ def sync_detailed(
     default: the sign-up profile in the sign-up tenant, and no limits outside it. Journalled as
     account.profile_set with a null profile and no overrides, also for an account that had none
     assigned; the limits hold from the next write. Answers the account's usage under them. Deletes no
-    memory, key or count. Idempotent by its replace semantics; no Idempotency-Key. Proposed.
+    memory, key or count. Idempotent by its replace semantics; no Idempotency-Key.
 
     Args:
         account (str):
@@ -132,7 +132,7 @@ def sync(
     default: the sign-up profile in the sign-up tenant, and no limits outside it. Journalled as
     account.profile_set with a null profile and no overrides, also for an account that had none
     assigned; the limits hold from the next write. Answers the account's usage under them. Deletes no
-    memory, key or count. Idempotent by its replace semantics; no Idempotency-Key. Proposed.
+    memory, key or count. Idempotent by its replace semantics; no Idempotency-Key.
 
     Args:
         account (str):
@@ -172,7 +172,7 @@ async def asyncio_detailed(
     default: the sign-up profile in the sign-up tenant, and no limits outside it. Journalled as
     account.profile_set with a null profile and no overrides, also for an account that had none
     assigned; the limits hold from the next write. Answers the account's usage under them. Deletes no
-    memory, key or count. Idempotent by its replace semantics; no Idempotency-Key. Proposed.
+    memory, key or count. Idempotent by its replace semantics; no Idempotency-Key.
 
     Args:
         account (str):
@@ -215,7 +215,7 @@ async def asyncio(
     default: the sign-up profile in the sign-up tenant, and no limits outside it. Journalled as
     account.profile_set with a null profile and no overrides, also for an account that had none
     assigned; the limits hold from the next write. Answers the account's usage under them. Deletes no
-    memory, key or count. Idempotent by its replace semantics; no Idempotency-Key. Proposed.
+    memory, key or count. Idempotent by its replace semantics; no Idempotency-Key.
 
     Args:
         account (str):

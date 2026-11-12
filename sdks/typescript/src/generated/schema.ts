@@ -1358,7 +1358,7 @@ export interface paths {
         post?: never;
         /**
          * Take an account's quota profile and its overrides away, so it is on the deployment's default again.
-         * @description Requires: admin key role (ADR-0071 d5); every other role answers access.verb_ceiling. Removes the profile an admin assigned and every override of the account. The account is then on the deployment's default: the sign-up profile in the sign-up tenant, and no limits outside it. Journalled as account.profile_set with a null profile and no overrides, also for an account that had none assigned; the limits hold from the next write. Answers the account's usage under them. Deletes no memory, key or count. Idempotent by its replace semantics; no Idempotency-Key. Proposed.
+         * @description Requires: admin key role (ADR-0071 d5); every other role answers access.verb_ceiling. Removes the profile an admin assigned and every override of the account. The account is then on the deployment's default: the sign-up profile in the sign-up tenant, and no limits outside it. Journalled as account.profile_set with a null profile and no overrides, also for an account that had none assigned; the limits hold from the next write. Answers the account's usage under them. Deletes no memory, key or count. Idempotent by its replace semantics; no Idempotency-Key.
          */
         delete: operations["clearAccountProfile"];
         options?: never;

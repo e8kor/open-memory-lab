@@ -7,7 +7,7 @@ answers: what an account is and which column names it; the six meters and exactl
 
 # ADR-0071 — Every account is metered by counters the write updates in its own transaction, and named quota profiles set its limits
 
-**Status:** accepted design · 2026-11-12, by the operator, for usage metering; proposed 2026-11-06. d5's un-assigning, written on 2026-11-12 after the review of the port, is marked proposed where it stands.
+**Status:** accepted design · 2026-11-12, by the operator, for usage metering; proposed 2026-11-06. The acceptance covers d5's un-assigning, written on 2026-11-12 after the review of the port.
 
 **Release:** v0.7.3, the release `openapi.yaml` names for the new members
 
@@ -130,7 +130,7 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
     - **Assigning.** `PUT /v2/admin/accounts/{account}/profile` `{profile, overrides}` replaces the
       account's profile and its overrides. It is journalled as `account.profile_set` and folded
       into `account_profiles` and `user_quotas`. `web.quota_set` keeps writing one override.
-    - **Un-assigning (proposed 2026-11-12).** `DELETE /v2/admin/accounts/{account}/profile` takes
+    - **Un-assigning.** `DELETE /v2/admin/accounts/{account}/profile` takes
       the assigned profile and every override away. It is journalled as `account.profile_set`
       with a null `profile` and no overrides, and the account is on the deployment's default
       again: `quota.signup_profile` in the sign-up tenant, no limits outside it. An admin key
@@ -162,7 +162,7 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
     | `GET /v2/admin/accounts/{account}/usage` | an admin key of the tenant | the same, for one account by root id or user name |
     | `GET /v2/admin/usage?period=YYYY-MM[&format=csv]` | an admin key | the month's ledger rows, every account, as JSON or CSV for billing |
     | `PUT /v2/admin/accounts/{account}/profile` | an admin key | `account.profile_set` (d5) |
-    | `DELETE /v2/admin/accounts/{account}/profile` | an admin key | `account.profile_set` with no profile (d5, proposed 2026-11-12) |
+    | `DELETE /v2/admin/accounts/{account}/profile` | an admin key | `account.profile_set` with no profile (d5) |
     | `GET /v2/admin/usage/drift` | an admin key | the drift report of d3 |
 
     The own-usage route takes no account parameter, so no request can name another account. A
