@@ -4,14 +4,17 @@
 //! it proves.
 
 use oml_app::App;
+use oml_app::app::Capacity;
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::{Name, NamedKind, Reference};
+use oml_app::domain::web::Email;
 use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, event_types};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::ports::JournalStore as _;
 use oml_app::types::{
-    AppError, BootstrapRequest, BootstrapResult, GrantRequest, GuardrailRequest, GuardrailSet,
-    IssueKeyRequest, IssuedKey, RecallRequest, SubmitRequest, Verdict,
+    AppError, Bearer, BootstrapRequest, BootstrapResult, GrantRequest, GuardrailRequest,
+    GuardrailSet, IssueKeyRequest, IssuedKey, RecallRequest, SubmitRequest, SupersedeRequest,
+    Verdict, WebEmailRequest, WebSessionRecord,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
@@ -1605,10 +1608,12 @@ async fn last_event(store: &MemStore, tenant: Uuid, event_type: &str) -> serde_j
 /// One definition of `same_user` for a claim's approval, a transition's
 /// ratification and a claim edge's: true when both keys act for one person,
 /// false for two people, and false whenever either key is a tenant key that
-/// names no person (ADR-0046 d2, ADR-0055 d7). A tenant key writes no claim
-/// in a user's root (ADR-0044 d16), so the tenant key here is the reviewer;
-/// a claim a tenant key wrote there before that rule is approved with
-/// `same_user` false in the port contracts' user-root suite.
+/// names no person (ADR-0046 d2, ADR-0055 d7). A tenant key starts no memory
+/// in a user's root (ADR-0044 d16), so the tenant key is the reviewer of
+/// alice's claim, and as an author it is a reviewer granted there whose
+/// successor of her claim her own review key approves; a claim a tenant key
+/// wrote there before that rule is approved with `same_user` false in the
+/// port contracts' user-root suite.
 #[tokio::test]
 async fn same_user_is_one_rule_for_claim_approvals_transitions_and_edges() {
     let (app, store) = rig();
@@ -1642,14 +1647,14 @@ async fn same_user_is_one_rule_for_claim_approvals_transitions_and_edges() {
     let _bob = user_writer(&app, admin, "bob", "bob/laptop").await;
     let bob_review = user_curator(&app, admin, "bob", "bob/review").await;
 
-    // A crew key holding writer on alice's root writes nothing there.
+    // A crew key holding writer on alice's root starts no memory there.
     let refused = app
         .submit_memory(
             crew_writer.value.as_str(),
             &submit("crew-author", "Decision crew-author.", Some("alice")),
         )
         .await
-        .expect_err("a user's root takes claim writes from that user's keys only");
+        .expect_err("a memory is started in a user's root by that user's keys only");
     assert!(matches!(refused, AppError::UserRootRefused), "{refused:?}");
 
     // Claims: the person's own agent and reviewer, twice; a crew reviewer.
@@ -1708,6 +1713,180 @@ async fn same_user_is_one_rule_for_claim_approvals_transitions_and_edges() {
             expected,
             "edge ratified by {}",
             if expected { "alice" } else { "the crew" }
+        );
+    }
+
+    // A tenant key as the author: the crew reviewer edits alice's claim by
+    // proposal, which the rule still allows it, and alice's review key
+    // approves the successor. Its author names no person.
+    let successor = app
+        .supersede(
+            crew_review.value.as_str(),
+            &SupersedeRequest {
+                idempotency_key: "crew-successor".to_owned(),
+                on_similar: Default::default(),
+                target_id: promoted[1],
+                body: "Decision own-again, as the crew reworded it.".to_owned(),
+                kind: None,
+                retirement: false,
+                derives_from: Vec::new(),
+                reason: None,
+                workarea: None,
+                refuse_vocabulary_target: false,
+                severity: None,
+                rule: None,
+                valid_from: None,
+                valid_until: None,
+                anchor: None,
+                format: None,
+                title: None,
+                origin: None,
+                expected_version: 1,
+            },
+        )
+        .await
+        .expect("a tenant reviewer granted in alice's root edits by proposal")
+        .receipt
+        .memory_id;
+    let verdict = app
+        .post_verdict(&alice_review.value, successor, Verdict::Approve, None)
+        .await
+        .expect("alice's review key approves the crew's successor");
+    assert!(!verdict.same_user, "a tenant author is no one's person");
+    let journalled = last_event(&store, tenant, event_types::LIFECYCLE_SUPERSEDE).await;
+    assert_eq!(journalled["new_artifact_id"], successor.to_string());
+    assert_eq!(journalled["same_user"], false, "claim crew-author");
+}
+
+/// A person signed in once on the web: the session keys the first sign-in
+/// ensures (ADR-0045 d6) and a live session of theirs.
+async fn signed_in(app: &TestApp, admin: &str, user: &str, is_admin: bool) -> WebSessionRecord {
+    let (entry, _) = app
+        .allow_web_email(
+            admin,
+            &WebEmailRequest {
+                email: Email::parse(&format!("{user}@example.com")).expect("an email"),
+                user: name(user),
+                admin: is_admin,
+            },
+        )
+        .await
+        .expect("the entry is added");
+    app.web_ensure_keys(&entry).await.expect("the session keys");
+    let token = app
+        .web_session_open(&entry, 3600, None)
+        .await
+        .expect("the session opens")
+        .token;
+    app.web_session(&token)
+        .await
+        .expect("a read")
+        .expect("a live session")
+}
+
+/// Each session key the web console gives a person is read in a user root
+/// as that person's key and no one else's (ADR-0044 d16; ADR-0045 d6, d10).
+/// In the person's own root the user-root rule refuses none of them: what
+/// answers is the key's role or its grants. `<user>-web`, the one user key
+/// among them, starts a memory in its own root and reads nothing of
+/// another person's. `<user>-curate`, a tenant writer key with writer on
+/// the `universe` node alone, writes there, is told `access.grant_refused`
+/// in its person's root, and `submission.user_root_refused` in another
+/// person's root it reads. `<user>-review` and `<user>-admin` are refused
+/// a new memory by their role before any node is read, wherever it is
+/// addressed; the review key reaches the rule through a supersession, which
+/// the port contracts' user-root suite proves.
+#[tokio::test]
+async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key_and_no_one_elses()
+{
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", true).await;
+    signed_in(&app, admin, "bob", false).await;
+    // Alice, an admin, designates herself: curation over her root and
+    // bob's, and review on bob's (ADR-0045 d10).
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    for root in ["alice", "bob"] {
+        app.grant_curation_capacity(&alice_admin, &name("alice"), by_name(root))
+            .await
+            .expect("the curation designation");
+    }
+    app.grant_review_capacity(&alice_admin, &name("alice"), by_name("bob"))
+        .await
+        .expect("the review designation");
+
+    #[derive(Debug, PartialEq)]
+    enum Answer {
+        Held,
+        NotFound,
+        GrantRefused,
+        UserRootRefused,
+        VerbCeiling,
+    }
+    let cases = [
+        (Capacity::Web, "alice", Answer::Held),
+        (Capacity::Web, "bob", Answer::NotFound),
+        (Capacity::Curate, "universe", Answer::Held),
+        (Capacity::Curate, "alice", Answer::GrantRefused),
+        (Capacity::Curate, "bob", Answer::UserRootRefused),
+        (Capacity::Review, "alice", Answer::VerbCeiling),
+        (Capacity::Review, "bob", Answer::VerbCeiling),
+        (Capacity::Admin, "alice", Answer::VerbCeiling),
+        (Capacity::Admin, "bob", Answer::VerbCeiling),
+    ];
+    for (i, (capacity, workarea, expected)) in cases.into_iter().enumerate() {
+        let key = app
+            .web_caller(&alice, capacity)
+            .await
+            .expect("alice's session key");
+        let head = store
+            .events_range(boot.tenant_id, 1, 10_000)
+            .await
+            .expect("journal")
+            .len();
+        let outcome = app
+            .submit_memory(
+                Bearer::Session(&key),
+                &submit(
+                    &format!("capacity-{i}"),
+                    &format!("Decision capacity-{i}."),
+                    Some(workarea),
+                ),
+            )
+            .await;
+        let answer = match &outcome {
+            Ok(written) => {
+                assert_eq!(written.receipt.state, "held");
+                Answer::Held
+            }
+            Err(AppError::NotFound) => Answer::NotFound,
+            Err(AppError::GrantRefused {
+                needed_role: Role::Writer,
+                ..
+            }) => Answer::GrantRefused,
+            Err(AppError::UserRootRefused) => Answer::UserRootRefused,
+            Err(AppError::VerbCeiling { verb: "submit", .. }) => Answer::VerbCeiling,
+            Err(other) => panic!("alice-{} in {workarea}: {other:?}", capacity.suffix()),
+        };
+        assert_eq!(
+            answer,
+            expected,
+            "alice-{} in {workarea}",
+            capacity.suffix()
+        );
+        let journalled = store
+            .events_range(boot.tenant_id, 1, 10_000)
+            .await
+            .expect("journal")
+            .len();
+        assert_eq!(
+            journalled - head,
+            usize::from(expected == Answer::Held),
+            "a refusal journals nothing"
         );
     }
 }

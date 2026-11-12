@@ -842,6 +842,84 @@ async fn agent_writes_in(rig: &Rig, value: &str, body: &str, workarea: &str) -> 
         .memory_id
 }
 
+/// A tenant reviewer an admin granted into alice's root, dreamer and
+/// reader on its subtree: the key that puts another author's row there. A
+/// key that is not alice's starts no memory in her root (ADR-0044 d16), so
+/// what it holds there is a successor it proposed.
+async fn reviewer_in_alices_root(rig: &Rig) -> oml_app::types::IssuedKey {
+    tenant_reviewer_in(rig, "helper", "alice").await
+}
+
+/// The tenant reviewer `name`, dreamer and reader on `user`'s root.
+async fn tenant_reviewer_in(rig: &Rig, name: &str, user: &str) -> oml_app::types::IssuedKey {
+    rig.app
+        .issue_key(
+            &rig.boot.admin_key.value,
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Dreamer,
+                name: Name::parse(name).expect("a name"),
+                principal: name.to_owned(),
+                held_by: Some(HeldBy::Agent),
+                default_workarea: None,
+                crew: None,
+                grants: [Role::Dreamer, Role::Reader]
+                    .into_iter()
+                    .map(|role| GrantRequest {
+                        node: Name::parse(user).expect("a name").into(),
+                        role,
+                        deny: Vec::new(),
+                        covers: oml_app::domain::access::Covers::Subtree,
+                    })
+                    .collect(),
+                connect_code: false,
+                user: None,
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("a tenant reviewer on the root")
+}
+
+/// The reviewer approves `target`, a row alice's agent wrote, and proposes
+/// `body` as its successor: a held row in the target's workarea that
+/// another author wrote.
+async fn reviewer_holds_a_successor(rig: &Rig, reviewer: &str, target: uuid::Uuid, body: &str) {
+    rig.app
+        .post_verdict(reviewer, target, oml_app::types::Verdict::Approve, None)
+        .await
+        .expect("the reviewer approves alice's row");
+    rig.app
+        .supersede(
+            reviewer,
+            &oml_app::types::SupersedeRequest {
+                idempotency_key: format!("k-{body}"),
+                on_similar: Default::default(),
+                target_id: target,
+                body: body.to_owned(),
+                kind: None,
+                retirement: false,
+                derives_from: Vec::new(),
+                reason: None,
+                workarea: None,
+                refuse_vocabulary_target: false,
+                severity: None,
+                rule: None,
+                valid_from: None,
+                valid_until: None,
+                anchor: None,
+                format: None,
+                title: None,
+                origin: None,
+                expected_version: 1,
+            },
+        )
+        .await
+        .expect("the reviewer edits by proposal");
+}
+
 async fn person_with_agent(rig: &Rig, subject: &str, email: &str) -> (String, String) {
     let cookie = signed_in(rig, subject, email).await;
     let (_, _, page) = act_and_follow(
@@ -2415,6 +2493,172 @@ async fn a_supersession_runs_as_the_curator_on_its_own_claim_and_as_the_reviewer
     assert_ne!(
         author_of(&rig, "the release train leaves on thursdays").await,
         curate
+    );
+}
+
+/// Every memory whose text is `text`, by the admin read.
+async fn memories_reading(rig: &Rig, text: &str) -> Vec<uuid::Uuid> {
+    rig.app
+        .admin_search(
+            rig.boot.admin_key.value.as_str(),
+            Some(text),
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .expect("the admin reads")
+        .items
+        .iter()
+        .filter(|m| m.memory.body == text)
+        .map(|m| m.memory.memory_id)
+        .collect()
+}
+
+/// The admin retires `target`, a served version 1, on the admin memory
+/// page, and `reviewer` ratifies the retirement: the retirement's id.
+async fn retired_on_the_admin_page(
+    rig: &Rig,
+    admin: &str,
+    target: uuid::Uuid,
+    text: &str,
+    reviewer: &str,
+) -> uuid::Uuid {
+    let (status, _, body) = act(
+        rig,
+        admin,
+        "/web/admin/memory",
+        &[
+            ("action", "supersede"),
+            ("memory", &target.to_string()),
+            ("expected_version", "1"),
+            ("text", text),
+            ("retirement", "yes"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let [retirement] = memories_reading(rig, text).await[..] else {
+        panic!("one memory reading {text}");
+    };
+    let verdict = rig
+        .app
+        .post_verdict(reviewer, retirement, oml_app::types::Verdict::Approve, None)
+        .await
+        .expect("a reviewer ratifies the retirement");
+    assert_eq!(verdict.state, oml_app::domain::MemoryStatus::Promoted);
+    retirement
+}
+
+/// An admin retires a memory of his own on the admin memory page, a
+/// reviewer ratifies the retirement, and he puts the claim back on the
+/// same page. Both acts run as his `<user>-review`, a session key that is
+/// his though it carries no user root, so the successor of the ratified
+/// retirement in his own root is proposed and the act lands on the memory
+/// (ADR-0044 d16; ADR-0045 d6, d12).
+#[tokio::test]
+async fn an_admin_retires_his_own_memory_and_puts_it_back_on_the_admin_memory_page() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let (boss, agent) = person_with_agent(&rig, "sub-boss", "boss@example.com").await;
+    let own = agent_writes(&rig, &agent, "the pump runs at night").await;
+    let ratifier = tenant_reviewer_in(&rig, "ratifier", "boss").await;
+    rig.app
+        .post_verdict(&ratifier.value, own, oml_app::types::Verdict::Approve, None)
+        .await
+        .expect("a reviewer approves his agent's write");
+    let retirement =
+        retired_on_the_admin_page(&rig, &boss, own, "the pump was removed", &ratifier.value).await;
+
+    let (status, headers, body) = act(
+        &rig,
+        &boss,
+        "/web/admin/memory",
+        &[
+            ("action", "supersede"),
+            ("memory", &retirement.to_string()),
+            ("expected_version", "2"),
+            ("text", "the pump runs at night again"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let location = headers[header::LOCATION].to_str().expect("ASCII");
+    assert_eq!(
+        location,
+        format!("/web/admin/memory?id={retirement}&done=proposed")
+    );
+    let (status, _, _) = send(&rig.router, get(location, Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        author_of(&rig, "the pump runs at night again").await,
+        key_named(&rig, "boss-review").await.key_id
+    );
+}
+
+/// An admin designated for review on another person's root retires a
+/// memory of theirs on the admin memory page, and once the retirement is
+/// ratified his put-back is refused by its code: his `<user>-review` is his
+/// key, never read as theirs, and only their keys put their claim back in
+/// service (ADR-0044 d16; ADR-0045 d10). Nothing is written.
+#[tokio::test]
+async fn the_admin_memory_page_refuses_putting_another_persons_retired_memory_back() {
+    let rig = rig().await;
+    let (_, agent) = person_with_agent(&rig, "sub-1", EMAIL).await;
+    let alices = agent_writes(&rig, &agent, "the relay closes at noon").await;
+    let ratifier = tenant_reviewer_in(&rig, "ratifier", "alice").await;
+    rig.app
+        .post_verdict(
+            &ratifier.value,
+            alices,
+            oml_app::types::Verdict::Approve,
+            None,
+        )
+        .await
+        .expect("a reviewer approves alice's agent's write");
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, body) = act(
+        &rig,
+        &boss,
+        "/web/admin/people",
+        &[
+            ("action", "grant_review"),
+            ("user", "boss"),
+            ("workarea", "alice"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let retirement = retired_on_the_admin_page(
+        &rig,
+        &boss,
+        alices,
+        "the relay was removed",
+        &ratifier.value,
+    )
+    .await;
+
+    let (status, _, body) = act(
+        &rig,
+        &boss,
+        "/web/admin/memory",
+        &[
+            ("action", "supersede"),
+            ("memory", &retirement.to_string()),
+            ("expected_version", "2"),
+            ("text", "the relay closes at noon again"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(body.contains("submission.user_root_refused"));
+    assert!(
+        memories_reading(&rig, "the relay closes at noon again")
+            .await
+            .is_empty(),
+        "a refused put-back writes no version"
     );
 }
 
@@ -5134,36 +5378,12 @@ async fn the_user_page_never_lists_another_authors_held_row_outside_in_progress_
     agent_writes(&rig, &alice_agent, "alice keeps this note").await;
     agent_writes(&rig, &bob_agent, "bob held secret").await;
     other_tenant_writes(&rig, "rival tenant secret").await;
-    // A tenant agent an admin granted into alice's root writes there; its
-    // held row is another author's.
-    let helper = rig
-        .app
-        .issue_key(
-            &rig.boot.admin_key.value,
-            &IssueKeyRequest {
-                profile: None,
-                role: Role::Writer,
-                name: Name::parse("helper").expect("a name"),
-                principal: "helper".to_owned(),
-                held_by: Some(HeldBy::Agent),
-                default_workarea: None,
-                crew: None,
-                grants: vec![GrantRequest {
-                    node: Name::parse("alice").expect("a name").into(),
-                    role: Role::Writer,
-                    deny: Vec::new(),
-                    covers: oml_app::domain::access::Covers::Subtree,
-                }],
-                connect_code: false,
-                user: None,
-                guardrail_scope: None,
-                expiry: None,
-                requests_per_minute: None,
-            },
-        )
-        .await
-        .expect("a tenant agent on alice's root");
-    agent_writes(&rig, &helper.value, "helper held outside").await;
+    // A tenant reviewer an admin granted into alice's root proposes a
+    // successor of her agent's served row; the held successor is another
+    // author's.
+    let helper = reviewer_in_alices_root(&rig).await;
+    let settled = agent_writes(&rig, &alice_agent, "alice settled this").await;
+    reviewer_holds_a_successor(&rig, &helper.value, settled, "helper held outside").await;
     for path in ["/web/memories", "/web/memories?state=held"] {
         let (status, _, page) = send(&rig.router, get(path, Some(&alice))).await;
         assert_eq!(status, StatusCode::OK, "{page}");
@@ -5196,33 +5416,9 @@ async fn the_user_page_never_lists_another_authors_held_row_outside_in_progress_
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+    let inside = agent_writes_in(&rig, &alice_agent, "alice settled inside", "alice.proj").await;
     put_in_progress(&rig, &alice, "alice.proj").await;
-    rig.app
-        .submit_memory(
-            helper.value.as_str(),
-            &oml_app::types::SubmitRequest {
-                on_similar: Default::default(),
-                anchor: None,
-                origin: None,
-                idempotency_key: "k-inside".to_owned(),
-                claim_key: None,
-                verb: Some(oml_app::types::SubmitVerb::Remember),
-                kind: oml_app::domain::MemoryKind::Memory,
-                body: "helper held inside".to_owned(),
-                workarea: Some(
-                    oml_app::domain::name::Reference::parse("alice.proj").expect("a reference"),
-                ),
-                derives_from: Vec::new(),
-                severity: None,
-                rule: None,
-                valid_from: None,
-                valid_until: None,
-                format: None,
-                title: None,
-            },
-        )
-        .await
-        .expect("the helper writes inside");
+    reviewer_holds_a_successor(&rig, &helper.value, inside, "helper held inside").await;
     let (_, _, page) = send(
         &rig.router,
         get("/web/memories?workarea=alice.proj", Some(&alice)),
@@ -5640,36 +5836,15 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    let helper = rig
-        .app
-        .issue_key(
-            &rig.boot.admin_key.value,
-            &IssueKeyRequest {
-                profile: None,
-                role: Role::Writer,
-                name: Name::parse("helper").expect("a name"),
-                principal: "helper".to_owned(),
-                held_by: Some(HeldBy::Agent),
-                default_workarea: None,
-                crew: None,
-                grants: vec![GrantRequest {
-                    node: Name::parse("alice").expect("a name").into(),
-                    role: Role::Writer,
-                    deny: Vec::new(),
-                    covers: oml_app::domain::access::Covers::Subtree,
-                }],
-                connect_code: false,
-                user: None,
-                guardrail_scope: None,
-                expiry: None,
-                requests_per_minute: None,
-            },
-        )
-        .await
-        .expect("a tenant agent on alice's root");
-    agent_writes(&rig, &helper.value, "helper held outside").await;
+    // Another author's rows in alice's root: a tenant reviewer granted
+    // there holds a successor of a served row of hers, outside the
+    // in-progress child and inside it (ADR-0044 d16).
+    let helper = reviewer_in_alices_root(&rig).await;
+    let settled = agent_writes(&rig, &agent, "alice settled this").await;
+    reviewer_holds_a_successor(&rig, &helper.value, settled, "helper held outside").await;
+    let inside = agent_writes_in(&rig, &agent, "alice settled inside", "alice.proj").await;
     put_in_progress(&rig, &alice, "alice.proj").await;
-    agent_writes_in(&rig, &helper.value, "helper held inside", "alice.proj").await;
+    reviewer_holds_a_successor(&rig, &helper.value, inside, "helper held inside").await;
 
     let (status, _, value) = json_of(&rig, "/web/data/memories", &alice).await;
     assert_eq!(status, StatusCode::OK, "{value}");
@@ -5682,7 +5857,10 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
         root["counts"]["held"], 2,
         "her agent's two, never the helper's: {root}"
     );
-    assert_eq!(root["counts"]["total"], 2);
+    assert_eq!(
+        root["counts"]["total"], 3,
+        "and the served row the helper proposed to replace: {root}"
+    );
     let proj = region(&value, "universe.alice.proj").expect("the in-progress child");
     assert_eq!(proj["in_progress"], true);
     assert_eq!(
@@ -5747,7 +5925,10 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
     // The page draws what the route counts: no region of bob's.
     let (_, _, atlas) = send(&rig.router, get("/web/atlas", Some(&alice))).await;
     assert!(!atlas.contains("bob"), "{atlas}");
-    assert!(atlas.contains("aria-label=\"proj, 1 readable"), "{atlas}");
+    assert!(
+        atlas.contains("aria-label=\"proj, 2 readable: 1 promoted, 1 unreviewed in progress"),
+        "the served row and the helper's held successor of it: {atlas}"
+    );
     let (status, _, _) = send(
         &rig.router,
         get(&format!("/web/atlas?workarea={bob_root}"), Some(&alice)),

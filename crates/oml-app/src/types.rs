@@ -3045,14 +3045,14 @@ pub enum AppError {
         "{verb} is refused: this session key carries a denial (ADR-0070 d2, access.verb_ceiling)"
     )]
     SessionKeyDenied { role: Role, verb: &'static str },
-    /// A claim write addresses a user root, or a workarea beneath one, with
-    /// a key that is not that user's: answered where the key reads the
-    /// node or the target, in place of `access.grant_refused` and
-    /// `access.author_only`; a key that reads neither keeps
-    /// `access.not_found` (ADR-0044 d16; errors.md
+    /// A new memory, or a successor of a ratified retirement, addresses a
+    /// user root or a workarea beneath one with a key that is not that
+    /// user's: answered where the key reads the node or the target, in
+    /// place of `access.grant_refused` and `access.author_only`; a key that
+    /// reads neither keeps `access.not_found` (ADR-0044 d16; errors.md
     /// `submission.user_root_refused`).
     #[error(
-        "a user root takes claim writes from its own user's keys only; this key is not one of them (ADR-0044 d16, submission.user_root_refused)"
+        "a memory is started in a user root by its own user's keys only; this key is not one of them (ADR-0044 d16, submission.user_root_refused)"
     )]
     UserRootRefused,
     /// The key names a user root that is not one: the lead serves it

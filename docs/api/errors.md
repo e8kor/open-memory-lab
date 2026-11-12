@@ -116,7 +116,7 @@ Refusals at write time. A refused write stores nothing.
 | `submission.claim_key_conflict` | 409 | A new memory would put a second live version under one `claim_key` in the workarea. |
 | `submission.similar_exists` | 409 | The write sent `on_similar: refuse` and a readable memory already says the same. `details.similar` lists up to three. Resend with `hold`. |
 | `submission.universe_refused` | 409 | A write addressed the tenant's `universe` root from a key that may not write there. |
-| `submission.user_root_refused` | 409 | A new memory, a successor or a retirement addressed a user's root, or a workarea beneath it, from a key that is not that user's. Answered where the key reads the workarea or the target; a key that reads neither gets `access.not_found`. |
+| `submission.user_root_refused` | 409 | A new memory addressed a user's root, or a workarea beneath it, from a key that is not that user's; or such a key proposed a successor of a ratified retirement there, which would put the claim back in service. Answered where the key reads the workarea or the target; a key that reads neither gets `access.not_found`. |
 
 ## `name` — unique names
 

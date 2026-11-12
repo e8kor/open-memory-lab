@@ -402,8 +402,8 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::UserRootRefused => ApiError::new(
             StatusCode::CONFLICT,
             "submission.user_root_refused",
-            "A user root takes claim writes from its own user's keys only: a tenant key reads and reviews there under its grants and never writes there (ADR-0044 d16).",
-            "this workarea lies in a user's root: only that user's keys write there",
+            "A memory is started in a user root by its own user's keys only: a new memory, or a successor of a ratified retirement, which puts the claim back in service. A key granted there reads, reviews and proposes a successor or a retirement of a served memory (ADR-0044 d16).",
+            "this workarea lies in a user's root: only that user's keys start a memory there",
         ),
         AppError::UserRootInvalid => ApiError::auth_invalid("user_root"),
         AppError::RoleExclusive => ApiError::new(

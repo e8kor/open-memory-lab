@@ -9835,8 +9835,8 @@ async fn as_of_reads_pass_the_suite() {
     drop_dbs(&created).await;
 }
 
-/// Who writes in a user root, on PostgreSQL as the serving role under row
-/// security, exactly as the double passes it (ADR-0044 d16).
+/// Who starts a memory in a user root, on PostgreSQL as the serving role
+/// under row security, exactly as the double passes it (ADR-0044 d16).
 #[tokio::test]
 async fn user_root_writes_pass_the_suite() {
     if !splits().await {

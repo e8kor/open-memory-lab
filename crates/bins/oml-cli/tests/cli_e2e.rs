@@ -4939,10 +4939,10 @@ async fn doctor_warns_when_a_user_key_does_not_read_universe() {
 }
 
 /// ADR-0044 d16 through the real lead: a tenant writer key whose default
-/// workarea lies in a user's root is told by `oml doctor` that its writes
-/// there are refused and which key to issue instead, and the write it was
-/// warned about answers `submission.user_root_refused`; the user's own key
-/// is told nothing.
+/// workarea lies in a user's root is told by `oml doctor` that its new
+/// memories there are refused and which key to issue instead, and the
+/// write it was warned about answers `submission.user_root_refused`; the
+/// user's own key is told nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn doctor_warns_when_a_tenant_writer_keys_default_workarea_lies_in_a_users_root() {
     let Some(lab) = Lab::start().await else {
@@ -4991,7 +4991,7 @@ async fn doctor_warns_when_a_tenant_writer_keys_default_workarea_lies_in_a_users
     assert_eq!(doctor["verdict"], "warn", "{log}");
     assert_eq!(
         doctor["user_root_writes"],
-        "warn: the default workarea universe.alice.project lies in the root of user alice, where only alice's keys write memories; this tenant key's writes there are refused (submission.user_root_refused); issue the agent a key with --user alice",
+        "warn: the default workarea universe.alice.project lies in the root of user alice, where only alice's keys start memories; this tenant key's new memories there are refused (submission.user_root_refused); issue the agent a key with --user alice",
         "{log}"
     );
     let (code, refused, log) = lab.json(Some(&loader_key), &["write", "The loader ran at noon."]);

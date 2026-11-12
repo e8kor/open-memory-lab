@@ -1692,12 +1692,18 @@ async fn oml_write_with_retirement_true_proposes_retiring_the_target() {
     drop_db(&db).await;
 }
 
-/// `oml_write` reaches the same check in each of its modes (ADR-0044 d16):
-/// a tenant key's new memory in a user's root, and a tenant reviewer's
-/// successor and retirement of a memory there, are
-/// `submission.user_root_refused`, and the user's own key writes.
+/// `oml_write` reaches the same check in the three kinds of write this
+/// test sends (ADR-0044 d16): a tenant key's new memory in a user's root,
+/// under a `claim_key`, is `submission.user_root_refused`; a tenant
+/// reviewer granted there proposes a successor and a retirement of a served
+/// memory, each held; and it is refused a successor of the ratified
+/// retirement with the same code. The user's own keys write and put the
+/// retired claim back. A new memory with no `claim_key`, and one under a
+/// `claim_key` a rejected write released, are not sent here: the port
+/// contracts' user-root suite refuses them over the application.
 #[tokio::test]
-async fn oml_write_into_a_users_root_by_a_tenant_key_is_user_root_refused_in_every_mode() {
+async fn oml_write_by_a_tenant_key_starts_no_memory_in_a_users_root_and_its_reviewer_still_edits_by_proposal()
+ {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -1762,25 +1768,58 @@ async fn oml_write_into_a_users_root_by_a_tenant_key_is_user_root_refused_in_eve
     )
     .await;
     assert_eq!(refusal_code(&new_memory), "submission.user_root_refused");
-    for (id, retirement) in [(3, false), (4, true)] {
+    // The tenant reviewer's successor, then its retirement proposal, of
+    // the served version: both held, the second naming the first as the
+    // claim's latest version that key reads.
+    let mut proposed = Vec::new();
+    for (id, expected, retirement) in [(3, 1, false), (4, 2, true)] {
         let successor = call_tool(
             &router,
             crew_editor,
             id,
             "oml_write",
-            json!({"replaces": v1, "expected_version": 1,
+            json!({"replaces": v1, "expected_version": expected,
                    "text": "The relay closes at one.", "retirement": retirement,
                    "idempotency_key": format!("crew-edit-{id}")}),
         )
         .await;
-        assert_eq!(
-            refusal_code(&successor),
-            "submission.user_root_refused",
-            "retirement {retirement}"
-        );
+        assert_eq!(successor["isError"], false, "{successor}");
+        let receipt = &successor["structuredContent"];
+        assert_eq!(receipt["state"], "held", "{receipt}");
+        assert_eq!(receipt["retirement"], retirement, "{receipt}");
+        proposed.push(receipt["artifact_id"].as_str().expect("id").to_owned());
     }
+    // Alice's reviewer key ratifies the retirement, over the review ring.
+    let retirement = &proposed[1];
+    let (status, verdict) = send(
+        &router,
+        "POST",
+        "/v2/review/verdicts",
+        Some(alice_review),
+        Some("ratify-retirement"),
+        Some(&json!({
+            "serve_id": format!("srv_{}", retirement.replace('-', "")),
+            "verdict": "approve",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verdict}");
+    assert_eq!(verdict["state"], "promoted", "{verdict}");
+    // A successor of the ratified retirement would put the claim back in
+    // service: the tenant reviewer is refused, and alice's own key is not.
+    let put_back = json!({"replaces": retirement, "expected_version": 3,
+                          "text": "The relay closes at noon again."});
+    let mut theirs = put_back.clone();
+    theirs["idempotency_key"] = json!("crew-put-back");
+    let refused = call_tool(&router, crew_editor, 6, "oml_write", theirs).await;
+    assert_eq!(refusal_code(&refused), "submission.user_root_refused");
+    let mut hers = put_back;
+    hers["idempotency_key"] = json!("alice-put-back");
+    let back = call_tool(&router, alice_review, 7, "oml_write", hers).await;
+    assert_eq!(back["isError"], false, "{back}");
+    assert_eq!(back["structuredContent"]["state"], "held", "{back}");
 
-    // The tenant key still reads the row it may not replace.
+    // The tenant key still reads in the root it starts no memory in.
     let read = call_tool(
         &router,
         crew_loader,

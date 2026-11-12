@@ -8454,10 +8454,10 @@ pub async fn a_versions_write_is_counted_on_the_day_its_row_was_stored<S: Journa
 /// chain's account. A chain a tenant key started is no account's whoever
 /// revives it, and a chain an account started is that account's again
 /// when a tenant key revives it (ADR-0071 d2). The store holds such chains
-/// from builds before v0.7.3, where a tenant key wrote in a person's root;
-/// the application now refuses that write (ADR-0044 d16;
-/// [`user_roots`]), so the folds here are the store's alone, and this is
-/// the accounting those rows keep (ADR-0071 d3).
+/// from builds before v0.7.3, where a tenant key started a claim in a
+/// person's root; the application now refuses that new memory (ADR-0044
+/// d16; [`user_roots`]), so the folds here are the store's alone, and this
+/// is the accounting those rows keep (ADR-0071 d3).
 pub async fn a_claim_captured_under_a_released_key_counts_on_the_account_that_started_its_chain<
     S: JournalStore,
 >(
