@@ -58,9 +58,9 @@ The refusals of the connection flow for claude.ai and phone apps. At `POST /oaut
 | `oauth.pkce_required` | 400 | The authorize request has no `code_challenge`, or its method is not `S256`. |
 | `oauth.resource_mismatch` | 400 | `resource` is not exactly `<issuer>/mcp`. |
 | `oauth.authorization_expired` | 400 | The request outlived ten minutes or spent five attempts, or its handle names no live request. |
-| `oauth.connect_code_invalid` | 400 | The connect code is unknown, expired, voided, used, or belongs to a denied key. One answer for all five. |
-| `oauth.authorization_code_invalid` | 400 | The authorization code is unknown, expired, already redeemed, issued to another client, or its PKCE verifier does not match. |
-| `oauth.refresh_invalid` | 400 | The refresh token is unknown, expired, already rotated (which ends the connection), or issued to another client. |
+| `oauth.connect_code_invalid` | 400 | The connect code is unknown, expired, voided, used, or belongs to a key that is denied or past its expiry. One answer for all six. |
+| `oauth.authorization_code_invalid` | 400 | The authorization code is unknown, expired, already redeemed, issued to another client, its PKCE verifier does not match, or its key is past its expiry. The expired key's code is not spent, and redeems if an admin moves the key's date before the code lapses ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) d2, d5). |
+| `oauth.refresh_invalid` | 400 | The refresh token is unknown, expired, already rotated (which ends the connection), issued to another client, or its key is past its expiry. An expired key ends no connection and rotates nothing, so the token works again if an admin moves the key's date ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) d2, d5). |
 | `oauth.origin_refused` | 403 | A `POST /oauth/authorize` came from another origin. It uses no attempt. |
 | `oauth.attach_refused` | 403 | Reserved. This build does not return it. |
 | `oauth.connect_refused` | 422 | The key cannot hold a connection. `details.reason` is `role`, `held_by_service`, `bearer_key`, `revoked`, `expired`, `not_configured`, `connector_key`, `session_key` or `not_confined`; the last is a code that lives past ten minutes asked for a key that reaches more than one workarea, the universe or a user root. |

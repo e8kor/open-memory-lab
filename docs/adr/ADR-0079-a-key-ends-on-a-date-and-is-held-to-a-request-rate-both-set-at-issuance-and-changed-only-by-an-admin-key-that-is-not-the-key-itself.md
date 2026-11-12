@@ -83,13 +83,20 @@ deleted silently ([ADR-0001](ADR-0001-the-constitution.md)).
   d2), because d5 lets an admin give it a later date.
 
 - **d4 — A key may carry a rate of its own, in one unit: requests per minute.** `POST /v2/keys`
-  takes `requests_per_minute`, a whole number from 1 to 1,000,000, the bound a quota's limit has
-  (ADR-0068 d5); `key.issued` journals it for a key that carries one. It is counted as ADR-0068
+  takes `requests_per_minute`, a whole number from 1 to 1,000,000; a quota's limit runs from 0
+  to 1,000,000 (ADR-0068 d5), so the two share the upper bound and a key's rate is never 0.
+  `key.issued` journals it for a key that carries one. It is counted as ADR-0068
   d5 counts an account's rate: the requests the key makes in a fixed UTC minute, each request
   that reaches a use case as that key, over HTTP and at `/mcp`, by value or by connection. The
   request past the limit is `429 limit.rate` with `details: {quota: "requests_per_minute",
   limit}` and `Retry-After` set to the seconds left in the minute, and it is not counted. A key
-  of an account under a quota is held to both rates and the lower one refuses first. There is
+  of an account under a quota is held to both rates and the lower one refuses first. The key's
+  own rate is counted before the account's, so a request the account's rate refuses still
+  consumes one of the key's own. The count is of use cases, not of HTTP requests: a request
+  that runs more than one is counted once for each. `GET /v2/keys/{key}` runs three use cases
+  and would cost a caller held to a rate three counts (#341); the route takes the admin key
+  role, which carries no rate of its own (d1), so no key pays three today, and a key of
+  another role is refused by the first use case and counted once. There is
   one unit and one window: no burst allowance, no per-operation limit, no tier. A frame at
   `/mcp` that calls no tool (`initialize`, `tools/list`, `ping`) reaches no use case and is not
   counted, as today; a flood of those, or of requests with no valid key, is the edge's to stop.
