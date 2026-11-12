@@ -150,7 +150,10 @@ other code after the pin is reviewed; a commit cannot move. One action is one co
 workflow, so a version bump is one change that every job takes together.
 `python scripts/lint_practices.py actions`, in the practices workflow's lints job, fails a pull
 request that adds a `uses:` without a 40-hex SHA, a pin without its `# v<tag>` comment, or a second
-commit for an action already pinned.
+commit for an action already pinned. The lint parses each workflow as YAML and reads every `uses`
+key from the parsed file, so a key in a flow mapping, a quoted key, a value on the next line or an
+anchor is read as any other; a file that does not parse fails. One action is one repository: a
+sub-path such as `actions/cache/restore` is pinned to the commit `actions/cache` is.
 
 To add or change a pin, resolve the tag to a commit and write both:
 

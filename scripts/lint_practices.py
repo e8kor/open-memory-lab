@@ -152,32 +152,69 @@ def lint_like(root: Path, use_allow: bool = True) -> list[str]:
 
 # ---- actions ----------------------------------------------------------------------------
 
-USES = re.compile(r"^\s*(?:-\s+)?uses:\s*[\"']?([^\s\"'#]+)[\"']?\s*(#.*)?$")
 PIN = re.compile(r"^(?P<action>[\w.-]+/[\w./-]+)@(?P<sha>[0-9a-f]{40})$")
 TAG_COMMENT = re.compile(r"^#\s*v\d\S*(\s|$)")
 
 
+def uses_values(node, seen: set[int]):
+    """Every value of a `uses` key in a composed YAML document, however the key or the value is written: in a flow
+    mapping, quoted, with a space before the colon, on the next line, tagged, anchored, aliased or merged in."""
+    import yaml
+
+    if id(node) in seen:
+        return
+    seen.add(id(node))
+    if isinstance(node, yaml.MappingNode):
+        for key, value in node.value:
+            if isinstance(key, yaml.ScalarNode) and key.value == "uses":
+                yield value
+            yield from uses_values(key, seen)
+            yield from uses_values(value, seen)
+    elif isinstance(node, yaml.SequenceNode):
+        for item in node.value:
+            yield from uses_values(item, seen)
+
+
 def lint_actions(root: Path, use_allow: bool = True) -> list[str]:
-    """A tag can be moved to other code; a commit cannot, so a pin names the commit and the comment names the tag a reader can check it against."""
+    """A tag can be moved to other code; a commit cannot, so a pin names the commit and the comment names the tag a reader can check it against.
+
+    Each workflow is parsed as YAML and every `uses` key is read from the parsed document, so no way of writing the key
+    passes unread; a file that does not parse is a problem, never skipped. One action is one repository: a sub-path of
+    it (`actions/cache/restore`) at another commit is the same action at two commits."""
+    import yaml
+
     problems = []
     seen: dict[str, dict[str, str]] = {}
     files = sorted((root / ".github").rglob("*.yml")) + sorted((root / ".github").rglob("*.yaml"))
     for f in files:
         rel = f.relative_to(root)
-        for i, line in enumerate(f.read_text().splitlines(), 1):
-            m = USES.match(line)
-            if not m:
-                continue
-            target, comment = m.group(1), m.group(2) or ""
-            if target.startswith("./"):
-                continue
-            pin = PIN.match(target)
-            if not pin:
-                problems.append(f"{rel}:{i}: {target} is not pinned to a 40-hex commit SHA")
-                continue
-            if not TAG_COMMENT.match(comment):
-                problems.append(f"{rel}:{i}: {target} has no trailing `# v<tag>` comment naming the tag it was resolved from")
-            seen.setdefault(pin["action"].lower(), {}).setdefault(pin["sha"], f"{rel}:{i}")
+        text = f.read_text()
+        lines = text.splitlines()
+        try:
+            documents = [d for d in yaml.compose_all(text) if d is not None]
+        except yaml.YAMLError as e:
+            problems.append(f"{rel}: is not YAML, so its actions cannot be read ({str(e).splitlines()[0]})")
+            continue
+        visited: set[int] = set()
+        for document in documents:
+            for value in uses_values(document, visited):
+                at = f"{rel}:{value.start_mark.line + 1}"
+                if not isinstance(value, yaml.ScalarNode):
+                    problems.append(f"{at}: `uses` is not a string, so it names no action a pin can be read from")
+                    continue
+                target = value.value.strip()
+                if target.startswith("./"):
+                    continue
+                pin = PIN.match(target)
+                if not pin:
+                    problems.append(f"{at}: {target} is not pinned to a 40-hex commit SHA")
+                    continue
+                end = value.end_mark
+                rest = lines[end.line][end.column:] if end.line < len(lines) else ""
+                if not TAG_COMMENT.match(rest.lstrip(" \t\"',}]")):
+                    problems.append(f"{at}: {target} has no trailing `# v<tag>` comment naming the tag it was resolved from")
+                repository = "/".join(pin["action"].lower().split("/")[:2])
+                seen.setdefault(repository, {}).setdefault(pin["sha"], at)
     for action, shas in sorted(seen.items()):
         if len(shas) > 1:
             where = ", ".join(f"{sha[:12]} at {at}" for sha, at in sorted(shas.items()))

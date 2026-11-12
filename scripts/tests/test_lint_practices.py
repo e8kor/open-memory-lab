@@ -175,6 +175,66 @@ class Actions(unittest.TestCase):
         text = "# uses: actions/checkout@v4\njobs:\n  x:\n    steps:\n      - run: echo uses actions/checkout@v4\n"
         self.assertEqual([], self.lint(a=text))
 
+    def test_an_unpinned_use_is_flagged_in_every_form_yaml_writes_a_uses_key(self):
+        forms = {
+            "a flow mapping": "steps:\n  - { uses: actions/checkout@v4 }\n",
+            "a quoted key": 'steps:\n  - "uses": actions/checkout@v4\n',
+            "a single-quoted key": "steps:\n  - 'uses': actions/checkout@v4\n",
+            "a space before the colon": "steps:\n  - uses : actions/checkout@v4\n",
+            "the value on the next line": "steps:\n  - uses:\n      actions/checkout@v4\n",
+            "a folded value": "steps:\n  - uses: >-\n      actions/checkout@v4\n",
+            "a tagged value": "steps:\n  - uses: !!str actions/checkout@v4\n",
+            "an anchored value": "steps:\n  - uses: &co actions/checkout@v4\n",
+            "an alias of a value defined elsewhere": "x: &co actions/checkout@v4\nsteps:\n  - uses: *co\n",
+            "a merged mapping": "x: &step { uses: actions/checkout@v4 }\nsteps:\n  - <<: *step\n",
+            "a reusable workflow": "jobs:\n  x:\n    uses: org/repo/.github/workflows/w.yml@main\n",
+        }
+        for name, text in forms.items():
+            with self.subTest(name):
+                problems = self.lint(a=text)
+                self.assertTrue(problems, f"{name} passed unpinned")
+                self.assertTrue(
+                    all("is not pinned to a 40-hex commit SHA" in p for p in problems), problems
+                )
+
+    def test_a_pinned_use_passes_in_those_forms_with_its_tag_comment(self):
+        forms = {
+            "a flow mapping": f"steps:\n  - {{ uses: actions/checkout@{SHA_A} }} # v4.4.0\n",
+            "a quoted key": f'steps:\n  - "uses": actions/checkout@{SHA_A} # v4.4.0\n',
+            "a quoted value": f'steps:\n  - uses: "actions/checkout@{SHA_A}" # v4.4.0\n',
+            "a space before the colon": f"steps:\n  - uses : actions/checkout@{SHA_A} # v4.4.0\n",
+            "the value on the next line": f"steps:\n  - uses:\n      actions/checkout@{SHA_A} # v4.4.0\n",
+        }
+        for name, text in forms.items():
+            with self.subTest(name):
+                self.assertEqual([], self.lint(a=text))
+
+    def test_a_sub_path_of_an_action_at_a_second_commit_is_one_action_at_two_commits(self):
+        problems = self.lint(
+            a=f"steps:\n  - uses: actions/cache@{SHA_A} # v4.3.0\n"
+            f"  - uses: actions/cache/restore@{SHA_B} # v4.2.0\n"
+        )
+        self.assertEqual(1, len(problems), problems)
+        self.assertIn("actions/cache is pinned to 2 different commits", problems[0])
+        # The same commit under two paths of one repository is one pin.
+        self.assertEqual(
+            [],
+            self.lint(
+                a=f"steps:\n  - uses: actions/cache@{SHA_A} # v4.3.0\n"
+                f"  - uses: actions/cache/restore@{SHA_A} # v4.3.0\n"
+            ),
+        )
+
+    def test_a_workflow_that_is_not_yaml_is_named_and_not_skipped(self):
+        problems = self.lint(a="steps:\n  - uses: [actions/checkout@v4\n")
+        self.assertEqual(1, len(problems), problems)
+        self.assertIn("is not YAML", problems[0])
+
+    def test_a_uses_value_that_is_not_text_is_flagged(self):
+        problems = self.lint(a="steps:\n  - uses: [actions/checkout@v4]\n")
+        self.assertEqual(1, len(problems), problems)
+        self.assertIn("is not a string", problems[0])
+
     def test_the_committed_workflows_are_pinned(self):
         self.assertEqual([], L.lint_actions(Path(__file__).resolve().parents[2], False))
 
