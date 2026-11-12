@@ -86,7 +86,14 @@ reviews every pull request; [CODEOWNERS](.github/CODEOWNERS) lists who owns whic
   [docs/NUMBERS.md](docs/NUMBERS.md) before the file exists:
   `python scripts/reserve_number.py adr|migration --branch <branch> --title "<title>"`, then
   commit and push the reservation. CI (`scripts/check_numbers.py`) fails a pull request that
-  introduces a number reserved by another branch, or not reserved at all.
+  introduces a number reserved by another branch, or not reserved at all. A reservation holds
+  its number on any remote branch whose commits are not all in `main`, with or without a pull
+  request, so push it before you open one. A squash-merged branch holds an unused reserved number
+  until it is deleted, so delete a merged or dead branch to release its numbers. Both
+  scripts fetch every remote head first and refuse, naming the reason, when they cannot (no
+  network); `--no-fetch` works from the refs already here and says so. A branch whose
+  `docs/NUMBERS.md` has conflict markers or a malformed row is named and refuses the reserve, since
+  its reservations are unknown: fix or delete that branch.
 - **Open work is an issue.** A limitation, an unmeasured claim or an open question is a GitHub
   issue labelled `roadmap` and one of `measure`, `verify`, `feature` or `decision`, not a row in
   a page ([ADR-0066](docs/adr/ADR-0066-open-work-is-tracked-as-github-issues-and-the-roadmap-fr-numbers-and-design-draft-status-lines-are-retired.md);
