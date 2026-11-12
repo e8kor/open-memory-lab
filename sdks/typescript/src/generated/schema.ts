@@ -991,7 +991,7 @@ export interface paths {
         };
         /**
          * Everything the person holds, as a JSON attachment.
-         * @description Requires: the person's web session key (<user>-web, through its capacity credential); any other key, the person's agent keys included, answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5). The memories of their root and below, every state, with text, and their keys, at most 10000 memories. Since v0.6.4.
+         * @description Requires: the person's web session key (<user>-web, through its capacity credential); any other key, the person's agent keys included, answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5). The memories of their root and below, every state, with text, and their keys, at most 100000 memories. Since v0.6.4.
          */
         get: operations["exportWebPerson"];
         put?: never;
