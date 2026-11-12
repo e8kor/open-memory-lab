@@ -175,16 +175,13 @@ def uses_values(node, seen: set[int]):
             yield from uses_values(item, seen)
 
 
-def lint_actions(root: Path, use_allow: bool = True) -> list[str]:
-    """A tag can be moved to other code; a commit cannot, so a pin names the commit and the comment names the tag a reader can check it against.
-
-    Each workflow is parsed as YAML and every `uses` key is read from the parsed document, so no way of writing the key
-    passes unread; a file that does not parse is a problem, never skipped. One action is one repository: a sub-path of
-    it (`actions/cache/restore`) at another commit is the same action at two commits."""
+def read_uses(root: Path) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Every `uses` value under .github/ as (where, target, what follows it on its line), and a problem for each
+    file that is not YAML and each `uses` that is not a string. scripts/check_action_updates.py reads the pins
+    through this, so the weekly check sees every use the lint sees."""
     import yaml
 
-    problems = []
-    seen: dict[str, dict[str, str]] = {}
+    uses, problems = [], []
     files = sorted((root / ".github").rglob("*.yml")) + sorted((root / ".github").rglob("*.yaml"))
     for f in files:
         rel = f.relative_to(root)
@@ -202,19 +199,35 @@ def lint_actions(root: Path, use_allow: bool = True) -> list[str]:
                 if not isinstance(value, yaml.ScalarNode):
                     problems.append(f"{at}: `uses` is not a string, so it names no action a pin can be read from")
                     continue
-                target = value.value.strip()
-                if target.startswith("./"):
-                    continue
-                pin = PIN.match(target)
-                if not pin:
-                    problems.append(f"{at}: {target} is not pinned to a 40-hex commit SHA")
-                    continue
                 end = value.end_mark
                 rest = lines[end.line][end.column:] if end.line < len(lines) else ""
-                if not TAG_COMMENT.match(rest.lstrip(" \t\"',}]")):
-                    problems.append(f"{at}: {target} has no trailing `# v<tag>` comment naming the tag it was resolved from")
-                repository = "/".join(pin["action"].lower().split("/")[:2])
-                seen.setdefault(repository, {}).setdefault(pin["sha"], at)
+                uses.append((at, value.value.strip(), rest.lstrip(" \t\"',}]")))
+    return uses, problems
+
+
+def repository(action: str) -> str:
+    """The repository an action lives in: `actions/cache/restore` is `actions/cache`."""
+    return "/".join(action.lower().split("/")[:2])
+
+
+def lint_actions(root: Path, use_allow: bool = True) -> list[str]:
+    """A tag can be moved to other code; a commit cannot, so a pin names the commit and the comment names the tag a reader can check it against.
+
+    Each workflow is parsed as YAML and every `uses` key is read from the parsed document, so no way of writing the key
+    passes unread; a file that does not parse is a problem, never skipped. One action is one repository: a sub-path of
+    it (`actions/cache/restore`) at another commit is the same action at two commits."""
+    uses, problems = read_uses(root)
+    seen: dict[str, dict[str, str]] = {}
+    for at, target, comment in uses:
+        if target.startswith("./"):
+            continue
+        pin = PIN.match(target)
+        if not pin:
+            problems.append(f"{at}: {target} is not pinned to a 40-hex commit SHA")
+            continue
+        if not TAG_COMMENT.match(comment):
+            problems.append(f"{at}: {target} has no trailing `# v<tag>` comment naming the tag it was resolved from")
+        seen.setdefault(repository(pin["action"]), {}).setdefault(pin["sha"], at)
     for action, shas in sorted(seen.items()):
         if len(shas) > 1:
             where = ", ".join(f"{sha[:12]} at {at}" for sha, at in sorted(shas.items()))

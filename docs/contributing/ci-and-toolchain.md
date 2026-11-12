@@ -162,11 +162,15 @@ gh api repos/<owner>/<repo>/git/ref/tags/<tag> --jq .object        # type "commi
 gh api repos/<owner>/<repo>/git/tags/<sha> --jq .object.sha        # type "tag" (annotated): dereference once
 ```
 
-The weekly dependency pass runs `scripts/check_action_updates.py`, which lists every pinned action
-with a newer `vN.M.P` tag. A newer tag of the pinned major is a finding in the weekly issue: take it
-by changing every use of that action in one pull request, with the same resolve step. A newer major
-is printed in the job log and is not a finding, because a major can change inputs, the runner's Node
-version or defaults, and gets its own reviewed pull request. No bot opens these pull requests; the
+The weekly dependency pass runs `scripts/check_action_updates.py`, which reads the pins as the lint
+does. For each it checks that the pinned commit is the one the tag in its comment points at, and
+lists every pinned action with a newer `vN.M.P` tag. A pin that is not its tag's commit, and a
+newer tag of the pinned major, are findings in the weekly issue: take a newer tag by changing every
+use of that action in one pull request, with the same resolve step. A newer major is printed in the
+job log, which the step prints whatever the check returned, and is not a finding, because a major
+can change inputs, the runner's Node version or defaults, and gets its own reviewed pull request. A
+comment that names a major alone (`# v4`) is checked against that tag and the newest release of the
+major. No bot opens these pull requests; the
 weekly issue is the reminder.
 
 ## Release artifacts: SBOM, signing, provenance
