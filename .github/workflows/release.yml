@@ -64,11 +64,19 @@ jobs:
       sdk_sdist: ${{ steps.v.outputs.sdk_sdist }}
       sdk_tgz: ${{ steps.v.outputs.sdk_tgz }}
     steps:
+      # Every tag, so the markers step below can compare this release with the previous one.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
       # RELEASE-HOLD at the root holds every release; every other job needs
       # this one (scripts/check_release.py holds that).
       - name: no release hold
         run: python3 scripts/check_release_hold.py
+      # The markers are computed here as well as where the notes are written, so
+      # a scanner source this script cannot read stops the release before
+      # anything is built, pushed or signed (scripts/release_markers.py).
+      - name: the release markers can be computed
+        run: python3 scripts/release_markers.py list --tag "$GITHUB_REF_NAME"
       - id: v
         run: |
           tag="${GITHUB_REF_NAME#v}"

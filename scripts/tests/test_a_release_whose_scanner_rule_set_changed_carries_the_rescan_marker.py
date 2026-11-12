@@ -115,6 +115,37 @@ class Markers(unittest.TestCase):
         with d:
             self.assertEqual(run(root, "list", "--tag", "v0.7.2")[1].strip(), MARKER)
 
+    def test_the_real_scanner_source_declares_a_rule_set(self):
+        # A rename, a wrapped declaration or a changed visibility of the constant fails here,
+        # in the pull request, and not in the release's publish job after the images are pushed.
+        real = Path(__file__).resolve().parents[2] / M.SCANNER_SOURCE
+        self.assertIsNotNone(M.ruleset_of(real.read_text(encoding="utf-8")), f"{M.SCANNER_SOURCE}: no `pub const RULESET` this script reads")
+
+    def test_a_file_or_constant_absent_at_a_tag_is_not_declared_and_a_git_failure_is_an_error(self):
+        d, root = repo([("v0.7.1", ""), ("v0.7.2", "oml-scan/1.2")])
+        with d:
+            self.assertIsNone(M.ruleset_at(root, "v0.7.1"))  # the file holds no constant
+            self.assertEqual(M.ruleset_at(root, "v0.7.2"), "oml-scan/1.2")
+            (root / M.SCANNER_SOURCE).unlink()
+            subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "gone"], check=True)
+            self.assertIsNone(M.ruleset_at(root, "HEAD"))  # the file is not there
+            with self.assertRaises(RuntimeError) as e:
+                M.ruleset_at(root, "v9.9.9")  # git cannot resolve the revision
+            self.assertIn("v9.9.9", str(e.exception))
+
+    def test_a_git_failure_reading_the_previous_tag_fails_by_name_and_demands_no_marker(self):
+        d, root = repo([("v0.7.1", "oml-scan/1.1"), ("v0.7.2", "oml-scan/1.2")])
+        with d:
+            # The previous tag's commit object is gone: git cannot read it, which is not "not declared".
+            tag_commit = subprocess.run(["git", "-C", str(root), "rev-parse", "v0.7.1^{commit}"], capture_output=True, text=True, check=True).stdout.strip()
+            obj = root / ".git" / "objects" / tag_commit[:2] / tag_commit[2:]
+            obj.chmod(0o644)
+            obj.unlink()
+            code, out, err = run(root, "list", "--tag", "v0.7.2")
+            self.assertEqual((code, out), (1, ""))
+            self.assertIn("release markers: git", err)
+            self.assertNotIn("not declared", err)
+
 
 class Workflow(unittest.TestCase):
     jobs = yaml.safe_load(R.WORKFLOW.read_text())["jobs"]
@@ -144,7 +175,58 @@ class Workflow(unittest.TestCase):
         moved = [s for s in job["steps"] if "release_markers.py" in str(s.get("run", ""))]
         job["steps"] = [s for s in job["steps"] if s not in moved] + moved
         got = self.errors(jobs)
-        self.assertTrue(any("before it creates the release" in e for e in got), got)
+        self.assertTrue(any("not before it" in e for e in got), got)
+
+    def release_job(self):
+        jobs = copy.deepcopy(self.jobs)
+        job = next(j for j in jobs.values() if R.step_index(j, "gh release create") is not None)
+        step = next(s for s in job["steps"] if "release_markers.py append" in str(s.get("run", "")))
+        return jobs, job, step
+
+    def test_a_release_job_that_checks_the_markers_before_it_appends_them_is_refused(self):
+        for split in (False, True):
+            jobs, job, step = self.release_job()
+            append, check = step["run"].strip().splitlines()
+            if split:
+                step["run"] = check
+                job["steps"].insert(job["steps"].index(step) + 1, {"name": "append", "run": append})
+            else:
+                step["run"] = check + "\n" + append
+            got = self.errors(jobs)
+            self.assertTrue(any("before it appends" in e for e in got), (split, got))
+
+    def test_a_release_job_that_only_echoes_the_commands_is_refused(self):
+        jobs, _, step = self.release_job()
+        step["run"] = ('echo python3 scripts/release_markers.py append --tag x notes.md\n'
+                       'echo scripts/release_markers.py check --tag x notes.md\n'
+                       '# python3 scripts/release_markers.py check --tag x notes.md\n')
+        got = self.errors(jobs)
+        self.assertTrue(any("does not run scripts/release_markers.py append" in e for e in got), got)
+        self.assertTrue(any("does not run scripts/release_markers.py check" in e for e in got), got)
+
+    @staticmethod
+    def early_errors(jobs):
+        found = []
+        R.check_early_markers(found, jobs)
+        return found
+
+    def test_release_yml_computes_the_markers_in_the_version_job_before_anything_is_built(self):
+        self.assertEqual(self.early_errors(self.jobs), [])
+        self.assertIsNotNone(R.marker_command(self.jobs["version"], "list"))
+
+    def test_a_version_job_that_does_not_run_the_markers_list_is_refused(self):
+        jobs = copy.deepcopy(self.jobs)
+        for step in jobs["version"]["steps"]:
+            if "release_markers.py" in str(step.get("run", "")):
+                step["run"] = 'echo python3 scripts/release_markers.py list --tag "$GITHUB_REF_NAME"'
+        self.assertTrue(any("does not run scripts/release_markers.py list" in e for e in self.early_errors(jobs)))
+
+    def test_a_version_job_with_a_shallow_checkout_is_refused(self):
+        jobs = copy.deepcopy(self.jobs)
+        for step in jobs["version"]["steps"]:
+            if str(step.get("uses", "")).startswith("actions/checkout@"):
+                step.pop("with", None)
+        self.assertTrue(any("fetch-depth: 0" in e for e in self.early_errors(jobs)))
 
     def test_a_shallow_checkout_is_refused_since_it_holds_no_tags(self):
         jobs = copy.deepcopy(self.jobs)

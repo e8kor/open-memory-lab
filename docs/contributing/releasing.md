@@ -38,7 +38,7 @@ may read. One is defined: `admin-rescan-record-held`, present when the scanner's
 `crates/oml-scan/src/lib.rs`) differs from the previous stable tag's, since versions held under the old rule set
 stay their authors' alone until `oml admin rescan --record-held` reads them
 ([upgrades](../operations/upgrades.md)). The release's publish job runs `scripts/release_markers.py append`
-and then `check` on the notes before it creates the release, and `scripts/check_release.py` holds those steps.
+and then `check` on the notes before it creates the release, and `scripts/check_release.py` holds those steps. The version job runs `scripts/release_markers.py list` first, so a scanner source whose `RULESET` the script cannot read stops the release before anything is built; a unit test reads the real source in every pull request too.
 When the check fails, it names the line to add to the notes' source, the notes step of `release.yml`.
 
 ## Publishing the SDKs
