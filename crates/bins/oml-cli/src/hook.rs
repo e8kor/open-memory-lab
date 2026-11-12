@@ -204,12 +204,12 @@ pub struct Pair {
 /// The server and key as one pair from one source, or the stderr line
 /// saying why there is none (ADR-0040 d3). The plugin's two options are the
 /// pair when either is set and non-empty, else `OML_URL` and `OML_API_KEY`;
-/// an empty variable counts as unset. The key option alone is paired with
-/// the plugin's default server, where its tools send the same key
-/// (ADR-0043 d3); the URL option alone is a plugin not configured: the key
-/// option is named and the environment pair is not tried, so a key never
-/// goes to a URL from another source (ADR-0039 d15). The environment pair
-/// takes no default.
+/// an empty variable counts as unset. Either option alone is a plugin not
+/// configured: the unset option is named and the environment pair is not
+/// tried, so a key never goes to a URL from another source (ADR-0039 d15);
+/// the key option alone names `no_server` and how to set the URL, since the
+/// plugin's `url` has no default (ADR-0076 d3, d8). The environment pair
+/// takes no default either.
 /// It reads those four variables and nothing else, never the CLI's
 /// credentials file, which may hold an admin key.
 ///
@@ -237,13 +237,15 @@ pub(crate) fn resolve_pair_for(
     let set = |name: &str| var(name).filter(|v| !v.is_empty());
     let (option_url, option_key) = (set(OPTION_URL), set(OPTION_API_KEY));
     let (url, key, url_var, key_var) = if option_url.is_some() || option_key.is_some() {
-        // The key option alone is the plugin's default server: Claude Code
-        // fills `url` with its default for the tools, and exports only the
-        // values the user saved to a hook (ADR-0043 d3).
-        let option_url = match (&option_url, &option_key) {
-            (None, Some(_)) => Some(crate::setup::DEFAULT_URL.to_owned()),
-            _ => option_url,
-        };
+        // The key option alone reaches no server: the plugin's `url` has no
+        // default, so its tools reach none either (ADR-0076 d3, d8).
+        if option_url.is_none() {
+            return Err(format!(
+                "no_server: {OPTION_URL} is not set, so {nothing}; set the oml plugin's url \
+                 option to your server (claude plugin configure oml@open-memory-lab, or oml \
+                 setup claude-code --url <server>)"
+            ));
+        }
         (option_url, option_key, OPTION_URL, OPTION_API_KEY)
     } else {
         (set("OML_URL"), set("OML_API_KEY"), "OML_URL", "OML_API_KEY")
@@ -1400,12 +1402,12 @@ mod tests {
         assert_eq!(resolved, not_set(OPTION_API_KEY));
     }
 
-    /// The plugin's key option alone is the plugin's default server and that
-    /// key, the pair its tools send, since Claude Code fills `url` with its
-    /// default for the tools and exports only saved values to a hook; the
-    /// environment pair beside it is ignored (ADR-0043 d3).
+    /// The plugin's key option alone is a plugin not configured: no URL is
+    /// taken from anywhere, nothing is sent, and the line names the unset
+    /// option with `no_server` and how to set it; the environment pair
+    /// beside it is ignored (ADR-0076 d3, d8).
     #[test]
-    fn a_plugin_configured_with_its_key_alone_is_the_default_server_and_that_key() {
+    fn a_hook_with_the_key_option_alone_names_the_url_option_and_sends_nothing() {
         for url in [None, Some("")] {
             let mut vars = vec![
                 (OPTION_API_KEY, OPT_KEY),
@@ -1418,15 +1420,18 @@ mod tests {
             let (resolved, _) = resolve(&vars);
             assert_eq!(
                 resolved,
-                pair(crate::setup::DEFAULT_URL, OPT_KEY),
+                Err(format!(
+                    "no_server: {OPTION_URL} is not set, so no context was loaded; set the oml \
+                     plugin's url option to your server (claude plugin configure \
+                     oml@open-memory-lab, or oml setup claude-code --url <server>)"
+                )),
                 "{url:?}"
             );
         }
     }
 
     /// The environment pair takes no default: `OML_API_KEY` without
-    /// `OML_URL` sends nothing and names `OML_URL`, so a caller that is not
-    /// the plugin never reaches the public server unasked (ADR-0043 d3).
+    /// `OML_URL` sends nothing and names `OML_URL` (ADR-0040 d3).
     #[test]
     fn the_environment_key_alone_takes_no_default_server() {
         let (resolved, _) = resolve(&[("OML_API_KEY", ENV_KEY)]);
@@ -1595,7 +1600,7 @@ mod tests {
     /// The failure hook resolves its server and key as the session-start
     /// hook does: the plugin's URL option set alone names the key option,
     /// the environment pair beside it is not borrowed, and the line says
-    /// nothing was recalled (ADR-0038 d4, ADR-0040 d3, ADR-0043 d3).
+    /// nothing was recalled (ADR-0038 d4, ADR-0040 d3).
     #[test]
     fn the_tool_failure_hook_refuses_the_plugin_url_option_set_alone() {
         let var = |name: &str| match name {
@@ -1650,7 +1655,7 @@ mod tests {
 
     /// The plugin's URL option set alone is a plugin not configured: the
     /// hook names the key option and does not fall back to a whole
-    /// environment pair (ADR-0040 d3, ADR-0043 d3).
+    /// environment pair (ADR-0040 d3).
     #[test]
     fn the_session_start_hook_refuses_the_plugin_url_option_set_alone() {
         let var = |name: &str| match name {

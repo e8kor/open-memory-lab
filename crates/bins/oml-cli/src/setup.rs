@@ -16,33 +16,37 @@ pub const PLUGIN: &str = "oml@open-memory-lab";
 /// The marketplace's GitHub repository.
 pub const MARKETPLACE: &str = "e8kor/open-memory-lab";
 
-/// The maintainer's public server, which every integration a release ships
-/// connects to unless told otherwise: the oml plugin's `url` default and the
-/// agent kit's configurations, which `scripts/check_plugin.py` and
-/// `scripts/check_agent_kit.py` hold equal to this (ADR-0043 d1). Among the
-/// CLI's verbs only `oml setup claude-code` takes it (d4, d5).
-pub const DEFAULT_URL: &str = "https://memory.doublegate.io";
+/// The prompt `oml setup claude-code` prints to stderr, on a terminal, for
+/// a key named without a URL; it shows no suggested value (ADR-0076 d4).
+pub const URL_PROMPT: &str = "OML server URL (without /mcp): ";
 
-/// What the verb prints to stderr before it sends a key named without a URL
-/// to [`DEFAULT_URL`] (ADR-0043 d4).
-pub const DEFAULT_NOTICE: &str = "no URL was given; the key will be sent to \
-    https://memory.doublegate.io, the maintainer's public server; pass --url to use another server";
-
-/// What the verb prints to stderr when [`DEFAULT_URL`] refuses a key it was
-/// given no URL for, before the refusal itself (ADR-0043 d4, d7).
-pub const DEFAULT_REFUSED: &str = "the key went to https://memory.doublegate.io, the default \
-    server, which does not know a key from another server; pass --url with the server that \
-    issued it";
-
-/// The URL `oml setup claude-code` pairs with a key: the one named beside
-/// it, or else [`DEFAULT_URL`] with the line to print before anything is
-/// sent (ADR-0043 d4).
+/// Why `oml setup claude-code` refuses a key named without a URL, off a
+/// terminal or after an empty answer, with `OML_URL`'s line when that
+/// variable is set beside a key file (ADR-0076 d4, d8).
 #[must_use]
-pub fn url_beside_key(named: Option<&str>) -> (String, Option<&'static str>) {
-    named.map_or_else(
-        || (DEFAULT_URL.to_owned(), Some(DEFAULT_NOTICE)),
-        |url| (url.to_owned(), None),
-    )
+pub fn no_server(oml_url_beside_key_file: bool) -> String {
+    let mut why = "refused setup.no_server: a key was given without a server URL; pass --url \
+                   <server> (without /mcp), or export OML_URL beside OML_API_KEY; nothing was sent"
+        .to_owned();
+    if oml_url_beside_key_file {
+        why.push_str("; ");
+        why.push_str(OML_URL_NOT_PAIRED);
+    }
+    why
+}
+
+/// What the prompt and the refusal add when `OML_URL` is set and a key file
+/// came without `--url`: the variable is another source, never paired with
+/// the file (ADR-0076 d4; ADR-0039 d15).
+pub const OML_URL_NOT_PAIRED: &str =
+    "OML_URL is set but is never paired with --key-file; pass it as --url";
+
+/// The URL typed at the prompt, or `None` for an empty answer (ADR-0076 d4
+/// step 2): one line, its surrounding whitespace cut.
+#[must_use]
+pub fn answered_url(line: &str) -> Option<String> {
+    let url = line.trim();
+    (!url.is_empty()).then(|| url.to_owned())
 }
 
 /// The first Claude Code with `claude plugin configure --values-stdin`
@@ -307,39 +311,43 @@ mod tests {
         assert_eq!(other_plugins("{}"), None);
     }
 
-    /// A key named without a URL goes to the maintainer's public server,
-    /// and the verb says so before anything is sent; a URL named beside the
-    /// key is the one used, with nothing said (ADR-0043 d1, d4).
+    /// The refusal names `setup.no_server`, both ways to name a server and
+    /// that nothing was sent; with `OML_URL` beside a key file it also says
+    /// why the variable was not used (ADR-0076 d4, d8).
     #[test]
-    fn a_key_named_without_a_url_goes_to_the_default_server_and_says_so_first() {
-        assert_eq!(DEFAULT_URL, "https://memory.doublegate.io");
-        let (url, said) = url_beside_key(None);
-        assert_eq!(url, DEFAULT_URL);
-        let said = said.expect("a line before whoami");
+    fn the_no_server_refusal_names_the_reason_and_both_ways_to_name_a_server() {
+        let plain = no_server(false);
+        assert!(plain.starts_with("refused setup.no_server: "), "{plain}");
         assert!(
-            said.contains(DEFAULT_URL) && said.contains("--url"),
-            "{said}"
+            plain.contains("--url <server>") && plain.contains("OML_URL beside OML_API_KEY"),
+            "{plain}"
         );
-        let (url, said) = url_beside_key(Some("https://oml.example.com"));
-        assert_eq!((url.as_str(), said), ("https://oml.example.com", None));
+        assert!(plain.ends_with("nothing was sent"), "{plain}");
+        assert!(no_server(true).ends_with(OML_URL_NOT_PAIRED));
     }
 
-    /// A refusal from the default server names where the key went and the
-    /// flag that names another server (ADR-0043 d4, d7).
+    /// An empty or blank answer is no URL; any other is used as typed,
+    /// trimmed (ADR-0076 d4).
     #[test]
-    fn a_refusal_from_the_default_server_names_where_the_key_went_and_url() {
-        assert!(
-            DEFAULT_REFUSED.contains(DEFAULT_URL) && DEFAULT_REFUSED.contains("--url"),
-            "{DEFAULT_REFUSED}"
+    fn an_empty_answer_at_the_prompt_is_no_url() {
+        assert_eq!(answered_url("\n"), None);
+        assert_eq!(answered_url("   "), None);
+        assert_eq!(
+            answered_url(" https://oml.example.com\n").as_deref(),
+            Some("https://oml.example.com")
         );
     }
 
-    /// The printed configure line saves the URL the key was checked against,
-    /// the default included (ADR-0043 d4).
+    /// The printed configure line saves the URL the key was checked against
+    /// (ADR-0076 d4).
     #[test]
-    fn the_printed_configure_line_saves_the_default_url_when_it_was_used() {
-        let lines = printed("0.4.1", DEFAULT_URL, Some("/home/you/agent.key"));
-        assert!(lines[2].contains(DEFAULT_URL), "{}", lines[2]);
+    fn the_printed_configure_line_saves_the_url_the_key_was_checked_against() {
+        let lines = printed(
+            "0.4.1",
+            "https://oml.example.com",
+            Some("/home/you/agent.key"),
+        );
+        assert!(lines[2].contains("https://oml.example.com"), "{}", lines[2]);
     }
 
     #[test]

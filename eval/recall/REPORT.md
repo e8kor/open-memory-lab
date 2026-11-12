@@ -349,7 +349,7 @@ candidates, so the estimate chooses; the union searches all of them. The **skew*
 - **Latency.** p95 stays within 47 ms in every mode on this host, which other builds shared; the reference set's statistics read is one more statement per recall.
 - **At 1,000 candidates** (`pg_store`'s `federation_overhead_at_1000_candidates`, release build, the same shared host): the statistics reads alone take 6.2 ms at p50 and 10.9 ms at p95, against d12's 10 ms. A whole `scope` recall with federation on takes 27.8 ms at p50 and 55.3 ms at p95, against 12.6 ms and 38.0 ms with it off; `wide` at `max_sources` 8 takes 47.0 ms and 113.1 ms. Working out the candidates, one ancestry and one subtree read per reader grant, costs more than the counts.
 - **The cross split** re-scopes the existing labelled queries to a topic holding none of their answers, so it measures what reach buys over the union, not cross-team phrasing; new cross-team queries remain to be written (#205).
-- **The candidate count** over the public server's live keys is read by `cargo run --release -p oml-pg --example federation_candidates -- <owner url>`; that run is the operator's, since this report's host does not reach the public server's database.
+- **The candidate count** over a live server's keys is read by `cargo run --release -p oml-pg --example federation_candidates -- <owner url>`; that run is the operator's, since this report's host does not reach that server's database.
 
 ## Federated recall, phase 2 gate (ADR-0072 d4.5, d11; #206), 2026-11-11
 

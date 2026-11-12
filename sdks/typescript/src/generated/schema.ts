@@ -2070,7 +2070,7 @@ export interface components {
              * @enum {string}
              */
             verdict: "refuse" | "hold" | "annotate";
-            /** @description The rule set it was found under, oml-scan/1.1. */
+            /** @description The rule set it was found under, oml-scan/1.2. */
             rule_set: string | null;
             /** @description /body, /title, or /body/ and a decoded view's path; null on a finding migrated from the single stored finding. */
             field: string | null;
@@ -2678,6 +2678,8 @@ export interface components {
             profile?: "curator" | null;
             /** @description The person the key's user root names; null for a tenant key (ADR-0070 d5). Absent with person=false (#286). */
             person?: components["schemas"]["WhoamiPerson"] | null;
+            /** @description Whether the server's admins are not the caller's: true when the operator sets server.shared or opens sign-up. oml sync asks consent of a shared server; a server from this release always sends it; optional here so a client reads an answer without it, from an older server, as false (ADR-0076 d9). */
+            shared?: boolean;
         };
         WhoamiPerson: {
             user: string;
@@ -7081,7 +7083,7 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "scanner_version": "oml-scan/1.1",
+                     *       "scanner_version": "oml-scan/1.2",
                      *       "scanned": 2,
                      *       "findings": [
                      *         {

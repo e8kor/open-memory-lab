@@ -31,11 +31,16 @@ You need a recent backup and the release you are moving to.
    Give it the owner and serving roles and a copy of the keyring. Boot the new server against it on another
    loopback port. Check the migrations, `oml doctor` and a recall over the copied data. Delete the copy afterward. A release that fails here
    goes no further.
-4. **Swap and restart.** Keep the running binary as `<name>.v<old>`, install the new one and restart. The
+4. **Set `server.shared` first, on a server other people use.** Set `server.shared = true`
+   (`OML_SERVER__SHARED`) before the new binary starts, or in the same deploy ([configuration](configuration.md)).
+   A server that does not say it is shared gets no consent prompt from `oml sync`, and nothing warns you that
+   the setting is missing: a CLI of this release syncs to it with no disclosure to its users until you set it.
+   Open sign-up implies it, and a server only you use leaves it `false`.
+5. **Swap and restart.** Keep the running binary as `<name>.v<old>`, install the new one and restart. The
    migrations run at boot. On Kubernetes, follow [Install OML on Kubernetes](../guides/kubernetes.md).
-5. **Upgrade the lake writer after the server**, if you run one, so it meets the migrated schema
+6. **Upgrade the lake writer after the server**, if you run one, so it meets the migrated schema
    ([Run the lake writer](lake.md)).
-6. **Check.** `/readyz` names the new version, the log carries `role_split_booted`, and `oml doctor` answers
+7. **Check.** `/readyz` names the new version, the log carries `role_split_booted`, and `oml doctor` answers
    `ok` for the agent and admin keys.
 
 One server serves every request, so every upgrade is an outage. The server stops, starts, runs its

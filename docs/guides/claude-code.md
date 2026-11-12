@@ -12,7 +12,7 @@ This page takes you from nothing to an agent that saves and finds shared memory 
 
 - Claude Code 2.1.285 or later.
 - An agent key. [Get an agent key](get-an-agent-key.md) from the web page of a server you can sign in to, or from your administrator. Trying it alone? Run the [quickstart](../start/quickstart.md), then use `oml setup claude-code --url http://127.0.0.1:8080 --key-file oml/keys/agent`.
-- The server's address, unless you use [the public server](../start/install.md). With a key from the public server, the key is the only setting.
+- The server's address. No release names one: the server that issued the key gives it to you, on its sign-up page, beside the key on its web page, or in the line `oml keys issue-agent` prints.
 
 The commands are in the [CLI reference](../cli/reference.md). The plugin's behavior is in its
 [README](https://github.com/e8kor/open-memory-lab/blob/main/plugins/oml/README.md). What we have run against a live Claude Code is under [Limits](../reference/limits.md#not-verified-against-a-live-client).
@@ -26,9 +26,9 @@ curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/op
 It writes one file, `~/.local/bin/oml`, and prints what it checked. For Windows and the
 inspect-first form, see [install](../start/install.md).
 
-## 2. Log in, for your own server
+## 2. Log in
 
-With a key file for the public server, skip to step 3. For your own server:
+With a key file and the setup line your administrator sent, skip to step 3. Otherwise:
 
 ```sh
 oml login https://oml.example.com
@@ -42,13 +42,13 @@ from, never the key, and the key's role, tenant and default workarea.
 ## 3. Set up the plugin
 
 ```sh
-oml setup claude-code --key-file "$HOME/.config/oml/keys/crew-agent-7"   # the public server
+oml setup claude-code --url https://oml.example.com --key-file "$HOME/.config/oml/keys/crew-agent-7"
 oml setup claude-code                                                    # after step 2
 ```
 
-Given a key and no URL, the command pairs the key with the public server and says so on stderr
-before it sends anything. If that server refuses the key, the command names `--url` and installs
-nothing. It refuses an `admin` or `operator` key (`setup.admin_key`) and checks `claude --version`.
+Given a key and no URL, the command asks for the server's address on a terminal and, in a script
+or CI job, refuses as `setup.no_server` before it sends anything; it never pairs a key file with
+`OML_URL`. It refuses an `admin` or `operator` key (`setup.admin_key`) and checks `claude --version`.
 It adds the marketplace at the CLI's own tag, installs `oml@open-memory-lab` and hands the key to
 Claude Code on standard input.
 
@@ -120,12 +120,12 @@ Inside Claude Code:
 ```
 
 The install opens a dialog for `url` and `api_key`. The key field is masked, and Claude Code
-keeps the key in the system keychain. Paste the key. Leave `url` empty for the public server, or
-enter your own server's address.
+keeps the key in the system keychain. Enter the server's address and paste the key; the dialog
+does not accept an empty `url`, which has no default.
 
-If you leave `url` at the default with a key from another server, the public server refuses it
-with `401 auth.invalid` and the plugin serves no tools. That server's operator has seen the key,
-so ask your administrator to replace it. Without the CLI, the session-start hook does nothing.
+A key entered with another server's address is refused there with `401 auth.invalid` and the
+plugin serves no tools. That server's operator has seen the key, so ask your administrator to
+replace it. Without the CLI, the session-start hook does nothing.
 For a connection with no plugin, see [other tools](other-harnesses.md#claude-code-without-the-plugin).
 
 ## Remove the plugin

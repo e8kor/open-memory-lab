@@ -2864,7 +2864,7 @@ paths:
           content:
             application/json:
               example:
-                scanner_version: oml-scan/1.1
+                scanner_version: oml-scan/1.2
                 scanned: 2
                 findings:
                 - artifact_id: 00000000-0000-4000-8000-0000000000a1
@@ -4066,7 +4066,7 @@ components:
         class: { type: string, description: "The threat class, injection.override." }
         rule: { type: string, description: "The rule id, ignore-instructions." }
         verdict: { type: string, enum: [refuse, hold, annotate], description: "refuse appears only on a finding a recording rescan made on a version already stored (ADR-0074 d14)." }
-        rule_set: { type: [string, 'null'], description: "The rule set it was found under, oml-scan/1.1." }
+        rule_set: { type: [string, 'null'], description: "The rule set it was found under, oml-scan/1.2." }
         field: { type: [string, 'null'], description: "/body, /title, or /body/ and a decoded view's path; null on a finding migrated from the single stored finding." }
         line: { type: [integer, 'null'], minimum: 1, description: "The 1-based line of the field the match starts on." }
         via: { type: [string, 'null'], description: "The view the rule read: raw, clean, spaced or letters (ADR-0074 d6)." }
@@ -4743,6 +4743,7 @@ components:
           oneOf:
             - { $ref: '#/components/schemas/WhoamiPerson' }
             - { type: 'null' }
+        shared: { type: boolean, description: "Whether the server's admins are not the caller's: true when the operator sets server.shared or opens sign-up. oml sync asks consent of a shared server; a server from this release always sends it; optional here so a client reads an answer without it, from an older server, as false (ADR-0076 d9)." }
 
     WhoamiPerson:
       type: object

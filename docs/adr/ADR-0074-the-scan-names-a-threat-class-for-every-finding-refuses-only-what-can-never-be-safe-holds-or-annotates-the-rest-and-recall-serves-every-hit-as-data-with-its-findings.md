@@ -523,7 +523,30 @@ flowchart TD
     words, each literal compiled at build through the same steps (its skeleton, and its letters
     with spaces removed). Literal phrases are long enough that the letters-only view costs little
     in false positives; the corpus measures it (d15). **Regexes read raw, clean, decoded,
-    folded and collapsed.** The secret rules read raw, clean and decoded, never folded or
+    folded and collapsed.** **A letters-only match counts only at word edges** (`oml-scan/1.2`,
+    #226). The edges are read from the folded text (each removable character made a space, then
+    NFKD and lower case), as the raw rules' ASCII `\b` reads them: an ASCII letter touching either
+    end of the match, a combining mark counting with its letter, makes it part of a longer word,
+    so `Danish` and a phrase inside a camelCase identifier do not hold. A digit, `_`, a letter of
+    another script, a fullwidth form (which folds to an ASCII letter but is not one in the text)
+    and any punctuation are edges, so a phrase joined by `_`, `/` or `-`, spelled with a separator
+    after each letter, or set beside Chinese, Japanese, Korean or Cyrillic text, still holds, as the
+    evasion tests below require. The cost: a phrase glued to an ASCII letter (`xignore previous
+    instructions`, `ignore previous instructionss`, `pleaseignore previous instructions`,
+    `do.not.tell.the.users`) is a longer word and does not hold, which no rule can tell from
+    `Danish`; the raw rules never held these either. A rule's last word may be singular or plural,
+    and a match refused at its edge is retried at the same start with the singular, so the `s` of
+    the next word does not hide the phrase. `new-instructions`, which the raw rules read as two
+    words with a colon, reads three in this view, `(new|updated|real)(system)(instructions)`, since
+    only phrases of three words or more read it (ADR-0065 d14): its words must be joined by a space
+    or the phrase's own separator and not across a sentence (a line break, or a full stop, comma,
+    colon, semicolon, question or exclamation mark and a space), and it holds when a colon follows
+    on its line or when it ends its line, as a heading does (`## New system instructions`).
+    `The new system instructions are in the wiki` passes, and a sentence that ends in the phrase with
+    no full stop holds, which a heading cannot be told from. The two-word form, with its colon, stays
+    with the raw rule. Findings that `/1.1` recorded on held versions stay on them until a
+    reviewer judges the version; the rescan adds findings and never removes one (d14). The secret
+    rules read raw, clean and decoded, never folded or
     skeleton, since a provider prefix such as `AKIA` is case-sensitive; the keyword and entropy
     rules read raw only, since decoded binary scores high on entropy by nature; the
     hidden-character rules read raw only, since step 2 removes what they look for. A finding
