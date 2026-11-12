@@ -1,0 +1,11 @@
+# The names the SDKs are published under on PyPI and npm are the operator's decision, and it is not
+# made. The names in the two manifests (`name` in sdks/python/pyproject.toml and
+# sdks/typescript/package.json) are what the packages are called today, not a claim that a
+# registry will accept them: PyPI refuses a name that differs from an existing one only by
+# `.-_`, l/i/1 or o/0, and npm one that differs only by `.-_`.
+#
+# release.yml's publish-sdk-pypi and publish-sdk-npm jobs run scripts/check_sdk_registry_names.py
+# first and stop while `decided` is false, or while `python` and `npm` below are not exactly the
+# names in the manifests. To decide: set the names in the manifests, write them here, set
+# `decided = true`, in one reviewed change (docs/contributing/releasing.md, "Publishing the SDKs").
+decided = false

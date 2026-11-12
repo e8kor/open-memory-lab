@@ -107,6 +107,65 @@ async fn federated_recall_double_timing_does_not_depend_on_an_unreadable_workare
     assert_within_noise(without, with);
 }
 
+/// Test 4 over the double, its deterministic half: a list naming an
+/// unreadable workarea that holds 100,000 matching rows is refused with the
+/// same bytes and the same work as one naming an absent name, the rows its
+/// reads visit the same count, so its time cannot depend on the workarea. A
+/// recall that does read rows is counted by the same meter, so the equal
+/// counts are not a meter that counts nothing (ADR-0072 d6, d13; #295).
+#[tokio::test]
+async fn a_lists_unreadable_name_refusal_reads_the_rows_an_absent_names_refusal_reads() {
+    use contracts::federation::{refusal_sample, refusal_world};
+    let t = refusal_world(MemStore::new().answering_bm25_with_any_word()).await;
+    t.world.store.seed_copies(t.world.tenant, t.secret, 100_000);
+    let work = |names: [&'static str; 2]| {
+        let t = &t;
+        async move {
+            let read = t.world.store.rows_read();
+            let refused = refusal_sample(t, names, 20).await;
+            (refused, t.world.store.rows_read() - read)
+        }
+    };
+    let (unreadable, unreadable_rows) = work(["legal", "secret"]).await;
+    let (absent, absent_rows) = work(["legal", "nowhere"]).await;
+    assert_eq!(unreadable, absent, "the two refusals differ");
+    assert_eq!(
+        unreadable_rows, absent_rows,
+        "an unreadable name's refusal visited rows an absent name's did not"
+    );
+    // The meter counts a recall that reads: a list naming a readable
+    // workarea visits its rows.
+    let read = t.world.store.rows_read();
+    let answered = t
+        .world
+        .recall(
+            &t.key,
+            "invoice",
+            "home",
+            Some(oml_app::federation::Sources::List(vec!["legal".to_owned()])),
+            "bm25",
+            10,
+        )
+        .await
+        .expect("a readable list is answered");
+    drop(answered);
+    assert!(t.world.store.rows_read() > read, "the meter counts reads");
+}
+
+/// Test 4 over the double, its timing half, a measurement run by hand or
+/// by the weekly bench (`--ignored`): an unreadable name's refusal and an
+/// absent one's take the same median time within noise. Wall-clock times
+/// move with the host's load, so it gates no change (#295).
+#[tokio::test]
+#[ignore = "a measurement: wall-clock times, run by the weekly bench"]
+async fn a_lists_unreadable_name_refusal_takes_the_time_of_an_absent_names_refusal() {
+    use contracts::federation::{assert_refusals_within_noise, refusal_timings, refusal_world};
+    let t = refusal_world(MemStore::new().answering_bm25_with_any_word()).await;
+    t.world.store.seed_copies(t.world.tenant, t.secret, 100_000);
+    let (unreadable, absent) = refusal_timings(&t, 44).await;
+    assert_refusals_within_noise(unreadable, absent);
+}
+
 /// The widen hint's laws over the double, one test per sentence
 /// (ADR-0072 d8, d12, as built by #244).
 #[tokio::test]
