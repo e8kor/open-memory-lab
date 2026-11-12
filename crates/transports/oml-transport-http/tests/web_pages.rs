@@ -1455,6 +1455,11 @@ fn value_of(page: &str) -> String {
 }
 
 async fn agent_writes(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
+    agent_writes_in(rig, value, None, body).await
+}
+
+/// The same write into `workarea`; `None` is the key's default workarea.
+async fn agent_writes_in(rig: &Rig, value: &str, workarea: Option<&str>, body: &str) -> uuid::Uuid {
     rig.app
         .submit_memory(
             value,
@@ -1467,7 +1472,8 @@ async fn agent_writes(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
                 verb: Some(oml_app::types::SubmitVerb::Remember),
                 kind: oml_app::domain::MemoryKind::Memory,
                 body: body.to_owned(),
-                workarea: None,
+                workarea: workarea
+                    .map(|w| oml_app::domain::name::Reference::parse(w).expect("a reference")),
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
@@ -2629,9 +2635,11 @@ async fn whoami_tells_a_session_key_whether_it_carries_a_denial_and_no_other_key
 /// A person whose `<user>-web` key carries a denial, on `universe`, on her
 /// root or on a workarea outside it, downloads the export she downloaded
 /// before: the same text, the same keys, a 200. The route reads nothing of the
-/// key's denials, as sign-out reads none, because the export serves what
-/// the person wrote in her own root and widens no access (ADR-0070 d2, the
-/// operator's decision of 2026-11-12; #335).
+/// key's grants or denials, as sign-out reads none: it serves every memory in
+/// her root and below, which after a denial on `universe` or inside the root
+/// includes text the same key is refused by its id (the next test). Without
+/// it she has no way in the console to take her memories out (ADR-0070 d2,
+/// the operator's decision of 2026-11-12; #335).
 #[tokio::test]
 async fn a_denied_session_key_still_downloads_its_export() {
     for workarea in ["universe", "alice", "team"] {
@@ -2676,6 +2684,53 @@ async fn a_denied_session_key_still_downloads_its_export() {
                 .remove("exported_at");
         }
         assert_eq!(after, before, "{workarea}: the export is what it was");
+    }
+}
+
+/// What keeping the export keeps: a memory in `alice.notes` is in the export
+/// of a `<user>-web` key denied on `universe`, on the root or on `notes`
+/// itself, text and all, while the same key's read of that memory by its id
+/// is `access.not_found`, where it was a 200 before the denial (ADR-0070 d2,
+/// the operator's decision of 2026-11-12; #335).
+#[tokio::test]
+async fn a_denied_session_keys_export_serves_a_memory_the_key_is_refused_by_its_id() {
+    for workarea in ["universe", "alice", "alice.notes"] {
+        let rig = rig().await;
+        let (cookie, agent) = alice_with_a_memory(&rig).await;
+        let text = "alice keeps this in her notes";
+        let id = agent_writes_in(&rig, &agent, Some("alice.notes"), text).await;
+        let by_id = format!("/v1/memories/{id}");
+        let (status, read) = get_as_web(&rig, &cookie, &by_id).await;
+        assert_eq!(status, StatusCode::OK, "{workarea}: {read}");
+        assert!(read.to_string().contains(text), "{workarea}: {read}");
+        let (status, denial) = as_admin(
+            &rig,
+            "/v2/keys/alice-web/denials",
+            "deny-alice-web",
+            json!({"workarea": workarea}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{workarea}: {denial}");
+        let (status, refused) = get_as_web(&rig, &cookie, &by_id).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{workarea}: {refused}");
+        assert_eq!(
+            refused["error"]["code"], "access.not_found",
+            "{workarea}: {refused}"
+        );
+        let (status, export) = get_as_web(&rig, &cookie, "/v2/web/export").await;
+        assert_eq!(status, StatusCode::OK, "{workarea}: {export}");
+        let exported: Vec<&Value> = export["memories"]
+            .as_array()
+            .expect("memories")
+            .iter()
+            .filter(|m| m["memory_id"] == id.to_string())
+            .collect();
+        assert_eq!(exported.len(), 1, "{workarea}: {export}");
+        assert_eq!(exported[0]["text"], text, "{workarea}: {export}");
+        assert_eq!(
+            exported[0]["workarea"], "universe.alice.notes",
+            "{workarea}: {export}"
+        );
     }
 }
 
