@@ -940,6 +940,69 @@ async fn the_rescan_read_counts_the_promoted_versions_that_carry_no_approval() {
     drop_db(&w.rig.db_name).await;
 }
 
+/// The remedy doctor names for `approval_unmatched` (#311): supersede the
+/// version and have a reviewer approve the successor. The count is of
+/// served tips, so the remedy brings it to zero; the replaced version
+/// stays readable with no approval.
+#[tokio::test]
+async fn superseding_an_unapproved_version_and_approving_its_successor_brings_the_count_to_zero() {
+    let Some(w) = World::boot().await else {
+        return;
+    };
+    let r = &w.rig.router;
+    let count = |answer: Value| answer["promoted_unapproved"].clone();
+    let read = || {
+        ok(
+            r,
+            "GET",
+            "/v2/admin/rescan?limit=1",
+            &w.admin,
+            None,
+            StatusCode::OK,
+        )
+    };
+    // Review serves the oldest held row first, so the one waiting is
+    // judged before the successor is written.
+    approve(r, &w.reviewers[1], &w.unreviewed).await;
+    let mut owner = PgConnection::connect(&super_url(&w.rig.db_name))
+        .await
+        .expect("superuser connect");
+    sqlx::query(
+        "UPDATE memories SET approver_held_by = NULL, approver_same_user = NULL, \
+         approved_at = NULL WHERE id = $1::uuid",
+    )
+    .bind(&w.by_crew)
+    .execute(&mut owner)
+    .await
+    .expect("clear one approval");
+    owner.close().await.expect("close");
+    assert_eq!(count(read().await), json!(1));
+
+    let successor = ok(
+        r,
+        "POST",
+        &format!("/v1/memories/{}/supersede", w.by_crew),
+        &w.ann.value,
+        Some(json!({ "body": "The gantry crane lifts twelve tonnes.", "expected_version": 1 })),
+        StatusCode::ACCEPTED,
+    )
+    .await["artifact_id"]
+        .as_str()
+        .expect("id")
+        .to_owned();
+    assert_eq!(
+        count(read().await),
+        json!(1),
+        "a held successor changes nothing: the version is still the served tip"
+    );
+    approve(r, &w.reviewers[1], &successor).await;
+    assert_eq!(count(read().await), json!(0), "the remedy is done");
+    let replaced = get(r, &w.reader, &w.by_crew).await;
+    assert_eq!(replaced["tip"], false, "{replaced}");
+    assert_eq!(replaced["approver"], Value::Null, "{replaced}");
+    drop_db(&w.rig.db_name).await;
+}
+
 /// Runs migration 0044's fill, as shipped, under the owner login the
 /// migration runs under.
 async fn run_the_fill(db: &str) {

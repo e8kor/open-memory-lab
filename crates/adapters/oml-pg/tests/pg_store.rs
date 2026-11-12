@@ -225,6 +225,46 @@ async fn journal_store_contract_suite() {
     drop_dbs(&created).await;
 }
 
+/// The unapproved count is of served tips, over the real store: the same
+/// law the double passes, so the two agree on a count above zero, and the
+/// remedy doctor names brings it to zero (ADR-0077 d6; #311).
+#[tokio::test]
+async fn the_unapproved_count_is_of_served_tips_and_the_remedy_brings_it_to_zero() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let db: String = sqlx::query_scalar("SELECT current_database()::text")
+        .fetch_one(store.pool())
+        .await
+        .expect("database name");
+    oml_port_contracts::the_unapproved_count_is_of_served_tips_and_a_ratified_successor_brings_it_to_zero(
+        &store,
+        |tenant, memory| {
+            let db = db.clone();
+            async move {
+                // As migration 0044's fill leaves a version whose verdict it
+                // could not match: promoted, its three approval columns null.
+                let mut admin = admin_in(&db).await;
+                let done = sqlx::query(
+                    "UPDATE memories SET approver_held_by = NULL, approver_same_user = NULL, \
+                     approved_at = NULL WHERE tenant_id = $1 AND id = $2",
+                )
+                .bind(tenant)
+                .bind(memory)
+                .execute(&mut admin)
+                .await
+                .expect("clear one approval");
+                assert_eq!(done.rows_affected(), 1);
+                admin.close().await.expect("close");
+            }
+        },
+    )
+    .await;
+    drop_dbs(&created).await;
+}
+
 /// The connection laws the double proves, against the real store: the
 /// connection folds run inside the commit's transaction under the tenant's
 /// `oml.tenant_id`, and a refused fold commits nothing (postgres-schema.md

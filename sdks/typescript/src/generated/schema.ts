@@ -3162,7 +3162,7 @@ export interface components {
             rescan_due: number;
             /** @description After this call, held versions whose stored scan finding has no row in the findings list, written by a server older than migration 0043: doctor's scan_findings_unlisted (ADR-0074 d23). */
             findings_unlisted?: number;
-            /** @description After this call, promoted versions with no approval: their approved_at is null because migration 0044's fill could not match the verdict their promotion names. Doctor's approval_unmatched (ADR-0077 d6). A count, never a list. */
+            /** @description After this call, served versions (promoted tips) with no approval: their approved_at is null because migration 0044's fill could not match the verdict their promotion names. A version a ratified successor replaced is not counted. Doctor's approval_unmatched (ADR-0077 d6). A count, never a list. */
             promoted_unapproved?: number;
         };
         /** @description The build that answered (http-api.md "Health"). Times are UTC, YYYY-MM-DDTHH:MM:SSZ; a field nothing could supply is the string unknown. */

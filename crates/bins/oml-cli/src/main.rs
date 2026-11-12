@@ -5658,8 +5658,9 @@ fn scan_backlog_doctor(report: Option<&Value>) -> Vec<String> {
 }
 
 /// The approval line (ADR-0077 d6), from the same one-event rescan window:
-/// how many promoted versions carry no approval because migration 0044's
-/// fill could not match their verdict. A count, never a list. A server
+/// how many served versions carry no approval because migration 0044's
+/// fill could not match their verdict. A count, never a list, and no
+/// command lists them. A server
 /// before the count does not report it, and the line is then absent.
 fn approval_doctor(report: Option<&Value>) -> Vec<String> {
     let Some(report) = report else {
@@ -5670,7 +5671,7 @@ fn approval_doctor(report: Option<&Value>) -> Vec<String> {
     };
     vec![if unmatched > 0 {
         format!(
-            "warn approval_unmatched: {unmatched} promoted version(s) carry no approval, because migration 0044 found no verdict for their promotion in the journal; recall serves them with approver and approved_at null; supersede one with oml write --replaces and a reviewer approves the successor, or leave it"
+            "warn approval_unmatched: {unmatched} served version(s) carry no approval, because migration 0044 found no verdict for their promotion in the journal; recall serves them with approver and approved_at null, and no command lists which they are; to clear one, supersede it with oml write --replaces, and it is no longer counted once a reviewer approves the successor; or leave it"
         )
     } else {
         "approval_unmatched: 0".to_owned()
@@ -6645,7 +6646,7 @@ mod tests {
         let some = json!({ "scanner_version": "oml-scan/1.2", "promoted_unapproved": 3 });
         assert_eq!(
             approval_doctor(Some(&some)),
-            vec!["warn approval_unmatched: 3 promoted version(s) carry no approval, because migration 0044 found no verdict for their promotion in the journal; recall serves them with approver and approved_at null; supersede one with oml write --replaces and a reviewer approves the successor, or leave it".to_owned()]
+            vec!["warn approval_unmatched: 3 served version(s) carry no approval, because migration 0044 found no verdict for their promotion in the journal; recall serves them with approver and approved_at null, and no command lists which they are; to clear one, supersede it with oml write --replaces, and it is no longer counted once a reviewer approves the successor; or leave it".to_owned()]
         );
         let none = json!({ "scanner_version": "oml-scan/1.2", "promoted_unapproved": 0 });
         assert_eq!(

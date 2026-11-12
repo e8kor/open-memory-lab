@@ -7640,6 +7640,92 @@ pub async fn a_ratified_edge_between_a_memory_and_a_term_is_absent_from_the_rati
     );
 }
 
+/// The backlog's `promoted_unapproved` counts served tips that carry no
+/// approval, and no version a ratified successor took the tip from: so
+/// superseding such a version and approving its successor, the remedy
+/// `oml doctor` names, brings the count down by one, to zero when each is
+/// done (ADR-0077 d6; #311). No store takes an unapproved promotion through
+/// the port over a schema that keeps the approval, so `forget_approval`
+/// makes one as migration 0044's fill leaves a version it could not match:
+/// each store's suite passes its own, and the law holds the counts equal.
+pub async fn the_unapproved_count_is_of_served_tips_and_a_ratified_successor_brings_it_to_zero<
+    S,
+    F,
+    Fut,
+>(
+    store: &S,
+    forget_approval: F,
+) where
+    S: JournalStore,
+    F: Fn(Uuid, Uuid) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    let mut rig = ChainRig::new(478);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let key = Uuid::from_u128(0xE5);
+    let memory = |id: u128, claim: &str| MemoryRecord {
+        claim_key: claim.to_owned(),
+        ..held_memory(tenant, wa, Uuid::from_u128(id), "rita", key, claim)
+    };
+    let count = || async {
+        store
+            .scan_backlog(tenant, None)
+            .await
+            .expect("backlog")
+            .promoted_unapproved
+    };
+    let first = memory(0x7801, "the crane lifts ten tonnes");
+    let second = memory(0x7802, "the dock opens at six");
+    let waiting = memory(0x7803, "the gate is manned at night");
+    hold_and_promote(&mut rig, store, first.clone()).await;
+    hold_and_promote(&mut rig, store, second.clone()).await;
+    hold(&mut rig, store, waiting).await.expect("hold");
+    assert_eq!(
+        count().await,
+        0,
+        "every promoted version holds its approval, and a held one is not counted"
+    );
+
+    forget_approval(tenant, first.memory_id).await;
+    forget_approval(tenant, second.memory_id).await;
+    assert_eq!(count().await, 2, "two served tips with no approval");
+
+    // The remedy, once: the successor carries its own approval and takes
+    // the tip, and the version it replaced is no longer counted.
+    supersede(
+        &mut rig,
+        store,
+        &first,
+        Uuid::from_u128(0x7811),
+        "the crane lifts twelve tonnes",
+        false,
+    )
+    .await;
+    assert_eq!(count().await, 1, "the superseded version is not a tip");
+    supersede(
+        &mut rig,
+        store,
+        &second,
+        Uuid::from_u128(0x7812),
+        "the dock opens at five",
+        false,
+    )
+    .await;
+    assert_eq!(count().await, 0, "the remedy leaves nothing to count");
+    assert_eq!(
+        store
+            .memory(tenant, first.memory_id)
+            .await
+            .expect("read")
+            .expect("the replaced version")
+            .approval,
+        None,
+        "the replaced version keeps what it had: no approval"
+    );
+}
+
 /// A promotion stores the approving verdict that ratified the version on
 /// its row, read back exactly, a first version's and a successor's alike;
 /// a held version holds none, a successor's ratification leaves the

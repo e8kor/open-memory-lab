@@ -63,8 +63,10 @@ versions. Rehearse on a copy (step 3) to time it on your data.
 
 A version whose promotion event names no verdict the journal holds keeps `approved_at` null. It stays served,
 with `approver` and `approved_at` null. After the upgrade, `oml doctor` run with an admin key names the count
-as `approval_unmatched`. To give one an approval, supersede it with `oml write --replaces`, and a reviewer
-approves the successor, which carries its own approval. Leaving it as it is changes nothing else.
+as `approval_unmatched`: the served versions with no approval. It is a count; no command lists which versions
+they are. To clear one, supersede it with `oml write --replaces`. Once a reviewer approves the successor, it
+carries its own approval and the version it replaced is no longer counted. Leaving one as it is changes
+nothing else.
 
 ## Roll back
 

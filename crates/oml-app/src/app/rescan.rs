@@ -71,9 +71,9 @@ pub struct RescanReport {
     /// After this call, held versions whose `scan_finding` has no row in
     /// the findings list: doctor's `scan_findings_unlisted` (ADR-0074 d23).
     pub findings_unlisted: u64,
-    /// After this call, promoted versions with no approval, which only a
-    /// version promoted before migration 0044 can be: doctor's
-    /// `approval_unmatched` (ADR-0077 d6).
+    /// After this call, served tips with no approval, which only a version
+    /// promoted before migration 0044 can be: doctor's `approval_unmatched`
+    /// (ADR-0077 d6). A superseded version is not counted.
     pub promoted_unapproved: u64,
 }
 

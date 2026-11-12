@@ -5341,7 +5341,7 @@ components:
         held_unrescanned: { type: integer, minimum: 0, description: 'After this call, the tenant''s held versions last scanned under another rule set than the server''s, which stay their authors'' alone in in-progress workareas: doctor''s scan_held_unrescanned (ADR-0074 d28).' }
         rescan_due: { type: integer, minimum: 0, description: 'After this call, every stored version, erased ones aside, last scanned under another rule set: doctor''s scan_rescan_due (ADR-0074 d28).' }
         findings_unlisted: { type: integer, minimum: 0, description: 'After this call, held versions whose stored scan finding has no row in the findings list, written by a server older than migration 0043: doctor''s scan_findings_unlisted (ADR-0074 d23).' }
-        promoted_unapproved: { type: integer, minimum: 0, description: 'After this call, promoted versions with no approval: their approved_at is null because migration 0044''s fill could not match the verdict their promotion names. Doctor''s approval_unmatched (ADR-0077 d6). A count, never a list.' }
+        promoted_unapproved: { type: integer, minimum: 0, description: 'After this call, served versions (promoted tips) with no approval: their approved_at is null because migration 0044''s fill could not match the verdict their promotion names. A version a ratified successor replaced is not counted. Doctor''s approval_unmatched (ADR-0077 d6). A count, never a list.' }
 
     Build:
       type: object

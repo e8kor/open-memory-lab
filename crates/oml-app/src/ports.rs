@@ -2092,15 +2092,16 @@ pub struct RecordedVersion {
 /// under another rule set, every version so scanned, and held versions
 /// whose stored `scan_finding` has no row in the findings list, which an
 /// older server wrote while migration 0043 ran. It carries, from the same
-/// pass, the promoted versions with no approval (ADR-0077 d6), which only
-/// a version promoted before migration 0044 can be.
+/// pass, the served tips with no approval (ADR-0077 d6), which only a
+/// version promoted before migration 0044 can be.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ScanBacklog {
     pub held_unrescanned: u64,
     pub rescan_due: u64,
     pub findings_unlisted: u64,
-    /// Promoted versions whose `approved_at` is null: migration 0044's fill
-    /// could not match their promotion's verdict.
+    /// Served tips whose `approved_at` is null: migration 0044's fill could
+    /// not match their promotion's verdict. A version a ratified successor
+    /// took the tip from is not counted.
     pub promoted_unapproved: u64,
 }
 

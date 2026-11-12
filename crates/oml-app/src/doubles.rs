@@ -741,6 +741,22 @@ impl MemStore {
         }
     }
 
+    /// Takes a stored row's approval away, journalling nothing: a promoted
+    /// version as migration 0044's fill leaves one whose verdict it could
+    /// not match, which no promotion through the port produces (ADR-0077
+    /// d6). A row the tenant does not hold is left absent.
+    pub fn forget_approval(&self, tenant_id: Uuid, memory_id: Uuid) {
+        if let Some(tenant) = self.tenant_existing(tenant_id)
+            && let Some(memory) = tenant
+                .lock()
+                .expect("tenant lock")
+                .memories
+                .get_mut(&memory_id)
+        {
+            memory.approval = None;
+        }
+    }
+
     fn tenant(&self, tenant_id: Uuid) -> Arc<Mutex<TenantState>> {
         Arc::clone(
             self.tenants
@@ -3452,7 +3468,7 @@ impl JournalStore for MemStore {
         let unapproved = state
             .memories
             .values()
-            .filter(|m| m.status == MemoryStatus::Promoted && m.approval.is_none())
+            .filter(|m| m.status == MemoryStatus::Promoted && m.is_tip && m.approval.is_none())
             .count();
         Ok(crate::ports::ScanBacklog {
             held_unrescanned: held as u64,
