@@ -292,6 +292,46 @@ async fn the_keys_page_draws_the_card_above_the_keys_and_marks_it_unavailable_wh
     assert!(!page.body.contains("800 / 1000"), "{}", page.body);
 }
 
+#[tokio::test]
+async fn the_card_and_the_users_page_say_which_limits_the_quota_form_raises_and_which_the_profile_sets()
+ {
+    // The quota form posts to a route that takes memories, keys, connections
+    // and requests per minute; text stored and writes are the profile's.
+    let page = get(start_script(person_under_limits()), "/web/start").await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    assert!(
+        page.body.contains(
+            "An administrator can raise a limit for you. Text stored and writes follow the profile of your account, which an administrator changes with an admin key."
+        ),
+        "{}",
+        page.body
+    );
+
+    let page = get(users_script(json!([])), "/web/admin/users").await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    for quota in ["memories", "keys", "connections", "requests_per_minute"] {
+        assert!(
+            page.body.contains(&format!(r#"<option value="{quota}""#)),
+            "{quota}: {}",
+            page.body
+        );
+    }
+    for quota in ["text_bytes", "writes_per_month"] {
+        assert!(
+            !page.body.contains(&format!(r#"<option value="{quota}""#)),
+            "{quota}: {}",
+            page.body
+        );
+    }
+    assert!(
+        page.body.contains(
+            "Text stored and writes are not set here: they follow the profile of the account, which an admin key sets with <code>PUT /v2/admin/accounts/{account}/profile</code>."
+        ),
+        "{}",
+        page.body
+    );
+}
+
 fn users_script(users: Value) -> Script {
     Arc::new(move |path| {
         if path == "/v2/web/users" {

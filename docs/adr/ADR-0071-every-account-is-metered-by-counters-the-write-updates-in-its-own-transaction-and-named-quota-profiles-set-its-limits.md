@@ -184,7 +184,7 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
     each day. (`crates/transports/oml-transport-http/src/metering.rs`, `admin_usage_route`.)
 
     **As landed on main, after ADR-0070 (2026-11-12), for v0.7.3, amended the same day.** The
-    pages are `oml-web`'s and read over `/v2`, so the lead serves none of the three named above.
+    pages are `oml-web`'s and read over `/v2`, and the lead draws no page.
     `GET /v2/whoami`'s `person` and each row of `GET /v2/web/users` carry the `text_bytes` and
     `writes` counts beside the ones they had. They also carry the `text_bytes` and
     `writes_per_month` limits, null when unlimited. A "Your usage" card on the Start page and on
@@ -192,12 +192,19 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
     memories, text stored, writes this month, keys and connections, each with its count, its limit
     where one holds, and a mark at 80% of the limit and at the limit by the rule of d5, and the
     request rate beside them. The users page draws the same five as columns, a dash where the API
-    served no count. Three things are not on those fields and are not shown: the profile's name,
-    the month, and the `recalls` count. The five routes above take a key and no session
+    served no count, and a mark only on a row whose `under_quotas` is true. Three things are not
+    on those fields and are not shown: the profile's name, the month, and the `recalls` count.
+    The six routes above (five paths; `PUT` and `DELETE` share one) take a key and no session
     credential (ADR-0070 d2), so the pages do not read them, and a person outside the sign-up
     tenant whom no profile limits has no `usage` on `person`, so their pages show no card.
     Showing the three needs a route a console session may call or three fields on `person` and
-    on the users rows; neither is built.
+    on the users rows; neither is built (#322). The users page has no act that assigns or takes
+    away a profile, for the same reason; that is not built either (#322). Its "Set a quota" form
+    sets `memories`, `keys`, `connections` and `requests_per_minute`, the four
+    `POST /v2/web/users/{user}/quota` takes; `text_bytes` and `writes_per_month` are set through
+    the profile route with an admin key, and the card and the page say so. The Keys page gained
+    one call for the card, `GET /v2/whoami` with the person block, sent in the same round as the
+    key list. Its cost is unmeasured, on a page that was already over its budget (#322).
 
 - **d7 — Meters are counts. They never hold text, a query or an address.** `account_meters`,
   `account_activity` and `usage_daily` hold ids, a profile name, dates and integers. A recall

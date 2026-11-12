@@ -5,10 +5,10 @@
 //!
 //! A meter is shown with its count, its limit where one holds, and a mark
 //! at 80% of the limit and at the limit, by the rule the API's own
-//! `warning` and `reached` states follow. The five usage routes take a key
-//! and no session credential (ADR-0070 d2), so the page reads none of them:
-//! the profile's name, the month and the recall count are not on these
-//! fields and are not shown.
+//! `warning` and `reached` states follow. The six usage routes of ADR-0071
+//! d6 take a key and no session credential (ADR-0070 d2), so the page reads
+//! none of them: the profile's name, the month and the recall count are not
+//! on these fields and are not shown (#322).
 
 use std::fmt::Write as _;
 
@@ -174,10 +174,20 @@ pub(crate) fn card(person: &Person) -> Option<String> {
     let (usage, limits) = (person.usage?, person.quotas?);
     let readings = readings(&usage, &limits);
     let limited = readings.iter().any(|r| r.limit.is_some());
-    let desc = if limited {
-        "Each count against its limit; writes count this UTC month. A mark shows at 80% of a limit and at the limit. An administrator can raise a limit for you."
-    } else {
-        "No limit holds for your account; these are counts."
+    // The users page's quota form raises four limits; text stored and
+    // writes are the profile's (ADR-0071 d5), so the card says so where one
+    // of the two is limited.
+    let by_profile = readings
+        .iter()
+        .any(|r| r.limit.is_some() && matches!(r.name, "Text stored" | "Writes this month"));
+    let desc = match (limited, by_profile) {
+        (true, true) => {
+            "Each count against its limit; writes count this UTC month. A mark shows at 80% of a limit and at the limit. An administrator can raise a limit for you. Text stored and writes follow the profile of your account, which an administrator changes with an admin key."
+        }
+        (true, false) => {
+            "Each count against its limit; writes count this UTC month. A mark shows at 80% of a limit and at the limit. An administrator can raise a limit for you."
+        }
+        (false, _) => "No limit holds for your account; these are counts.",
     };
     let mut out = format!(r#"<section class="card" id="usage">{}"#, head(desc));
     out.push_str("<table><tr><th>meter</th><th>used</th><th></th></tr>");

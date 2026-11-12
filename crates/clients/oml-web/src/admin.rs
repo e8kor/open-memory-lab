@@ -49,7 +49,9 @@ pub const PEOPLE_ACTIONS: &[&str] = &[
 /// The users page's acts (ADR-0068 d5, d6, d8).
 pub const USERS_ACTIONS: &[&str] = &["set_quota", "disable_user", "close_deletion"];
 
-/// The quotas a person has (ADR-0068 d5).
+/// The quotas `POST /v2/web/users/{user}/quota` takes (ADR-0068 d5). The
+/// route takes no `text_bytes` or `writes_per_month`, which the account's
+/// profile and its overrides set (ADR-0071 d5), so the form offers neither.
 const QUOTAS: [&str; 4] = ["memories", "keys", "connections", "requests_per_minute"];
 
 /// The allowlist's page size, and how many pages the overview reads.
@@ -510,7 +512,7 @@ pub async fn users_page(
     }
     body.push_str("</table>");
     let options: Vec<(&str, &str)> = QUOTAS.iter().map(|q| (*q, *q)).collect();
-    body.push_str("<h2>Set a quota</h2>");
+    body.push_str("<h2>Set a quota</h2><p class=\"dim\">Text stored and writes are not set here: they follow the profile of the account, which an admin key sets with <code>PUT /v2/admin/accounts/{account}/profile</code>.</p>");
     body.push_str(&form(
         USERS_PATH,
         "set_quota",
