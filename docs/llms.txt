@@ -72,6 +72,7 @@
 - [Storage](https://e8kor.github.io/open-memory-lab/architecture/storage/): where the transactional commit point is; how the per-tenant signed hash chain, the outbox and the derived lake fit together; why journal payloads carry digests and no body text; where held bodies live
 - [Audit and lineage](https://e8kor.github.io/open-memory-lab/architecture/audit-and-lineage/): who approved this memory, what the journal records and never records, how lineage and supersession chains work, and what the signature does and does not prove
 - [Retrieval](https://e8kor.github.io/open-memory-lab/architecture/retrieval/): how recall finds and orders memories: who can see a hit, what you can ask, which search pipelines exist and how one is chosen, how steering and your own held memories join the answer, how a token budget cuts it, and what was measured
+- [When a recall repeats](https://e8kor.github.io/open-memory-lab/architecture/repeatable-recall/): when two recalls return the same answer: the inputs that define a recall's result under the default pipeline, what changes it between calls, what happens when a memory is approved between two calls, which parts of an answer are outside the guarantee, and how it is tested
 - [Compliance](https://e8kor.github.io/open-memory-lab/product/compliance/): what evidence OML produces, which data classes it holds and who controls their retention
 
 ## Benchmarks

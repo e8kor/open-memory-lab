@@ -81,8 +81,12 @@ fn code_only(text: &str) -> String {
                 // A character literal is a quote, one character or an escape,
                 // and a quote; anything else is a lifetime.
                 let width = text[i + 1..].chars().next().map_or(0, char::len_utf8);
+                // An escape is a backslash and the escaped character, which
+                // may itself be a quote, so the closing quote is searched
+                // for from the byte after them (#312).
                 let literal_end = if b.get(i + 1) == Some(&b'\\') {
-                    text[i + 2..].find('\'').map(|n| i + 2 + n + 1)
+                    text.get(i + 3..)
+                        .and_then(|rest| rest.find('\'').map(|n| i + 3 + n + 1))
                 } else if width > 0 && b.get(i + 1 + width) == Some(&b'\'') {
                     Some(i + 2 + width)
                 } else {
@@ -122,11 +126,15 @@ fn journal_commits(text: &str) -> Vec<usize> {
         if after.is_some_and(ident) || before.as_bytes().last().is_some_and(|&c| ident(c)) {
             continue;
         }
+        // A path or a method call may be split from its name by whitespace
+        // and line breaks (#312).
+        let before = before.trim_end();
+        let after = code[end..].trim_start().as_bytes().first().copied();
         if before.ends_with("::") {
             found.push(at);
         } else if before.ends_with('.') && after == Some(b'(') {
             // The receiver, which may end a previous line.
-            let head = code[..at - 1].trim_end();
+            let head = before[..before.len() - 1].trim_end();
             let receiver = head
                 .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
                 .next()
@@ -258,6 +266,54 @@ fn the_guard_reads_code_and_skips_strings_and_comments() {
         "self.commit(event, fold, None).await?;",
         "self\n            .commit_chain(links)\n            .await?;",
         "// a comment naming j.commit(request)",
+    ] {
+        assert!(
+            journal_commits(helper_call).is_empty(),
+            "flagged: {helper_call}"
+        );
+    }
+}
+
+/// An escaped quote is a character literal of four bytes, `'\''`, and its
+/// closing quote is the one after the escaped character: the first quote
+/// after the backslash is the escaped one. Read as two, the literal would
+/// swallow the code after it, and a commit there would pass (#312).
+#[test]
+fn the_guard_reads_an_escaped_quote_character_literal_whole() {
+    for bypass in [
+        "let q = ['\\'','\"']; j.commit(x)",
+        "let q = '\\''; j.commit(x)",
+        "let q = '\\n'; j.commit(x)",
+        "let q = '\\\\'; j.commit(x)",
+        "let q = '\\u{1F600}'; j.commit(x)",
+    ] {
+        assert_eq!(journal_commits(bypass).len(), 1, "missed: {bypass}");
+    }
+    assert!(journal_commits("let q = '\\''; // j.commit(x)").is_empty());
+}
+
+/// Whitespace and line breaks may separate a path or a method call from the
+/// name they lead to: `X::\n commit(..)`, `X:: commit(..)`, `j.\ncommit(..)`
+/// and `j.commit (..)` commit as `X::commit(..)` does (#312).
+#[test]
+fn the_guard_finds_a_commit_split_by_whitespace_or_a_line_break() {
+    for bypass in [
+        "JournalStore::\n    commit(&self.journal, request).await?;",
+        "JournalStore:: commit(&self.journal, request).await?;",
+        "JournalStore::\n    commit_chain(&self.journal, requests).await?;",
+        "j.\ncommit(request).await?;",
+        "j.\n    commit_chain(requests).await?;",
+        "j. commit(request).await?;",
+        "j.commit (request).await?;",
+        "j.commit\n    (request).await?;",
+        "j.commit_chain (requests).await?;",
+    ] {
+        assert_eq!(journal_commits(bypass).len(), 1, "missed: {bypass}");
+    }
+    for helper_call in [
+        "self.\ncommit(event).await?;",
+        "self.commit (event).await?;",
+        "self\n    .\n    commit_chain (links)\n    .await?;",
     ] {
         assert!(
             journal_commits(helper_call).is_empty(),

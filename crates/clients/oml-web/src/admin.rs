@@ -28,7 +28,7 @@ use http::{StatusCode, Uri};
 use oml_page::web::{ADMIN_TABS, form, hidden, input, select, shell, short, state_tag};
 use oml_sdk::WebEmail;
 
-use crate::pages::{Fields, refused};
+use crate::pages::{Fields, WalkEnd, refused, walk};
 use crate::session::{PageCalls, Session, call};
 use crate::{Capacity, Web, acts, keys, outcome};
 
@@ -85,37 +85,33 @@ async fn entries(
     session: &Session,
     calls: &PageCalls,
 ) -> Result<Vec<WebEmail>, acts::Refusal> {
-    let credential = session.credential(Capacity::Admin);
-    let mut out = Vec::new();
-    let mut cursor: Option<String> = None;
-    let mut seen = std::collections::HashSet::new();
-    for _ in 0..EMAIL_PAGES_MAX {
+    let credential = &session.credential(Capacity::Admin);
+    walk(EMAIL_PAGES_MAX, |cursor| async move {
         let ids = calls.next_ids();
         let page = web
             .api
-            .list_web_emails(&call(&credential, &ids), EMAIL_PAGE, cursor.as_deref())
-            .await
-            .map_err(|e| Box::new(outcome::page(&e, calls.page_id(), PEOPLE_PATH)))?;
-        out.extend(page.items);
-        match page.next_cursor {
-            None => return Ok(out),
-            Some(next) if !seen.insert(next.clone()) => {
-                return Err(Box::new(refused(
-                    StatusCode::BAD_GATEWAY,
-                    "unavailable",
-                    "the server repeated a cursor of the allowlist, so the list cannot be read whole; try again",
-                    calls,
-                )));
-            }
-            Some(next) => cursor = Some(next),
-        }
-    }
-    Err(Box::new(refused(
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "limit.list_too_long",
-        "the allowlist is longer than this page reads; use the API or the command line",
-        calls,
-    )))
+            .list_web_emails(&call(credential, &ids), EMAIL_PAGE, cursor.as_deref())
+            .await?;
+        Ok((page.items, page.next_cursor))
+    })
+    .await
+    .map_err(|end| {
+        Box::new(match end {
+            WalkEnd::Failed(e) => outcome::page(&e, calls.page_id(), PEOPLE_PATH),
+            WalkEnd::Repeated => refused(
+                StatusCode::BAD_GATEWAY,
+                "unavailable",
+                "the server repeated a cursor of the allowlist, so the list cannot be read whole; try again",
+                calls,
+            ),
+            WalkEnd::TooLong => refused(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "limit.list_too_long",
+                "the allowlist is longer than this page reads; use the API or the command line",
+                calls,
+            ),
+        })
+    })
 }
 
 fn people_notice(fields: &Fields) -> Option<&'static str> {
@@ -254,9 +250,12 @@ async fn removal_confirmation(
     );
     if last {
         let credential = session.credential(Capacity::Admin);
-        let listed = match keys::keys(web, &credential, calls, Some(&entry.user)).await {
+        // The whole list or none of it: a key left out here would keep
+        // working with no cut-off offered (#308).
+        let listed = match keys::keys(web, &credential, calls, Some(&entry.user), PEOPLE_PATH).await
+        {
             Ok(listed) => listed,
-            Err(e) => return outcome::page(&e, calls.page_id(), PEOPLE_PATH),
+            Err(response) => return *response,
         };
         let agents: Vec<_> = listed
             .into_iter()

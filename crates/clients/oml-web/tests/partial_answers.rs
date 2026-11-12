@@ -3,7 +3,8 @@
 //! test says: the Atlas and its JSON when the offers fail, the JSON route
 //! when the listing fails, a verdict whose next claim fails, the list past
 //! the pages of keys it reads, a key issue whose answer carries no value
-//! (#253), and the allowlist at a cursor the API repeats (#293).
+//! (#253), the allowlist at a cursor the API repeats (#293), and the key
+//! list at one, in a cycle of them and past its pages (#308).
 
 use std::sync::{Arc, Mutex};
 
@@ -331,6 +332,181 @@ async fn an_allowlist_cursor_the_api_repeats_is_refused_as_an_api_fault_instead_
         "{:?}",
         act.calls
     );
+}
+
+/// A cycle of allowlist cursors, A then B then A, is the same fault as a
+/// cursor repeated at once: refused `unavailable` at the page that names
+/// A again, the third (#308).
+#[tokio::test]
+async fn an_allowlist_cursor_cycle_is_refused_as_an_api_fault_at_its_first_repeat() {
+    let script: Script = Arc::new(|_, path| {
+        if path.starts_with("/v2/web/emails") {
+            let entry = json!({"email": "first@example.com", "user": "first", "admin": true});
+            let next = if path.contains("cursor=a") { "b" } else { "a" };
+            (
+                200,
+                json!({"items": [entry], "next_cursor": next}),
+                Vec::new(),
+            )
+        } else {
+            (200, empty_page(), Vec::new())
+        }
+    });
+    let page = send_as(script, get("/web/admin/people"), true).await;
+    assert_eq!(page.status, StatusCode::BAD_GATEWAY, "{}", page.body);
+    assert!(page.body.contains("unavailable"), "{}", page.body);
+    assert!(!page.body.contains("first@example.com"), "{}", page.body);
+    assert_eq!(calls_to(&page, "GET /v2/web/emails"), 3, "{:?}", page.calls);
+}
+
+/// One agent key of the person `first`, as `GET /v2/keys` lists it.
+fn agent_key() -> Value {
+    json!({
+        "id": "k-agent", "name": "first-agent", "role": "writer", "held_by": "agent",
+        "credential": "bearer", "revoked": false, "cut_off": false, "grants": [],
+    })
+}
+
+/// The calls of `answered` that start with `prefix`.
+fn calls_to(answered: &Answered, prefix: &str) -> usize {
+    answered
+        .calls
+        .iter()
+        .filter(|c| c.starts_with(prefix))
+        .count()
+}
+
+/// The allowlist's one entry, `first`'s only address, and the key list as
+/// `keys` answers each of its pages by the path's query.
+fn one_address_and_keys(keys: fn(&str) -> Value) -> Script {
+    Arc::new(move |_, path| {
+        if path.starts_with("/v2/web/emails") {
+            let entry = json!({"email": "first@example.com", "user": "first", "admin": false});
+            (
+                200,
+                json!({"items": [entry], "next_cursor": null}),
+                Vec::new(),
+            )
+        } else if path.starts_with("/v2/keys") {
+            (200, keys(path), Vec::new())
+        } else {
+            (200, empty_page(), Vec::new())
+        }
+    })
+}
+
+/// The three places that walk a person's key list, each sent to `script`:
+/// the Keys view, the admin's Keys view, and the confirmation before a
+/// person's last address is removed, which lists the keys to cut off.
+async fn key_walks(script: &Script) -> [Answered; 3] {
+    [
+        send_as(script.clone(), get("/web/keys"), true).await,
+        send_as(script.clone(), get("/web/admin/keys?user=first"), true).await,
+        send_as(
+            script.clone(),
+            post(
+                "/web/admin/people",
+                "action=remove_email&email=first%40example.com",
+            ),
+            true,
+        )
+        .await,
+    ]
+}
+
+/// A key cursor the API repeats is the API's fault on every page that
+/// walks the key list (#308): `unavailable` with 502 at the repeat, and
+/// no key of the cut list is shown, where the confirmation before a last
+/// address is removed would have left the keys past the repeat out.
+#[tokio::test]
+async fn a_key_list_cursor_the_api_repeats_is_refused_as_an_api_fault_and_no_cut_list_is_shown() {
+    let script = one_address_and_keys(|_| json!({"items": [agent_key()], "next_cursor": "same"}));
+    for answered in key_walks(&script).await {
+        assert_eq!(
+            answered.status,
+            StatusCode::BAD_GATEWAY,
+            "{}",
+            answered.body
+        );
+        assert!(answered.body.contains("unavailable"), "{}", answered.body);
+        assert!(answered.body.contains("repeated"), "{}", answered.body);
+        assert!(!answered.body.contains("first-agent"), "{}", answered.body);
+        assert!(
+            !answered.body.contains("limit.list_too_long"),
+            "{}",
+            answered.body
+        );
+        assert_eq!(
+            calls_to(&answered, "GET /v2/keys"),
+            2,
+            "{:?}",
+            answered.calls
+        );
+    }
+}
+
+/// A cycle of key cursors, A then B then A, is refused at the page that
+/// names A again, the third: a walk that compared a cursor with the one
+/// before it alone went round to its last page and showed what it had
+/// (#308).
+#[tokio::test]
+async fn a_key_list_cursor_cycle_is_refused_as_an_api_fault_at_its_first_repeat() {
+    let script = one_address_and_keys(|path| {
+        let next = if path.contains("cursor=a") { "b" } else { "a" };
+        json!({"items": [agent_key()], "next_cursor": next})
+    });
+    for answered in key_walks(&script).await {
+        assert_eq!(
+            answered.status,
+            StatusCode::BAD_GATEWAY,
+            "{}",
+            answered.body
+        );
+        assert!(answered.body.contains("unavailable"), "{}", answered.body);
+        assert!(!answered.body.contains("first-agent"), "{}", answered.body);
+        assert_eq!(
+            calls_to(&answered, "GET /v2/keys"),
+            3,
+            "{:?}",
+            answered.calls
+        );
+    }
+}
+
+/// Past the pages a view reads, the key list is refused by name,
+/// `limit.list_too_long`, and never shown cut at its last page (#308).
+#[tokio::test]
+async fn a_key_list_past_the_pages_a_view_reads_is_refused_by_name_and_no_cut_list_is_shown() {
+    let script = one_address_and_keys(|path| {
+        // Every page names a fresh next one.
+        let n: u32 = path
+            .split("cursor=c")
+            .nth(1)
+            .and_then(|n| n.split('&').next())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0);
+        json!({"items": [agent_key()], "next_cursor": format!("c{}", n + 1)})
+    });
+    for answered in key_walks(&script).await {
+        assert_eq!(
+            answered.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            answered.body
+        );
+        assert!(
+            answered.body.contains("limit.list_too_long"),
+            "{}",
+            answered.body
+        );
+        assert!(!answered.body.contains("first-agent"), "{}", answered.body);
+        assert_eq!(
+            calls_to(&answered, "GET /v2/keys"),
+            oml_web::keys::KEY_PAGES_MAX,
+            "{:?}",
+            answered.calls
+        );
+    }
 }
 
 #[tokio::test]
