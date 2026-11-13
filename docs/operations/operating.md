@@ -73,7 +73,7 @@ The limits bind in this order as a server grows: concurrent reranked recalls, th
 holding thousands of unreviewed rows. More than four reranked recalls at once start to time out and fall back
 to the first-stage order.
 
-We have not measured 1,000,000 memories, cold caches, an idle host or the per-tenant write ceiling under the
+No measurement exists of 1,000,000 memories, cold caches, an idle host or the per-tenant write ceiling under the
 chain lock.
 
 ## Protect the data

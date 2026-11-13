@@ -26,4 +26,4 @@ different identity approves it.
 
 **What a rule cannot do.** A rule the agent only reads is an instruction to a model, not a
 guarantee. Only the tool-call check binds. An exported file is a copy that withdrawal and erasure
-do not reach. We have not measured whether agents follow rules they only read.
+do not reach. Whether agents follow rules they only read has not been measured.

@@ -27,4 +27,4 @@ When the server cannot establish that an act is permitted and durable, the act d
 | The server refuses `oml-web`'s secret: different values, no `web.client_secret` on the server, a proxy that adds a client-certificate header, a rotation done out of order, or a previous secret past `web.client_secret_previous_until` | Refuses every capacity credential `oml-web` presents as `auth.invalid` `session_outside_web`. | Every page sends people back to sign-in. `oml-web --doctor` prints `fail api: ... refuses oml-web's web.client_secret`. A server start with a closed window logs `web_client_previous_closed`. | Set the same value on both, or keep the old one on the server as `web.client_secret_previous` while `oml-web` restarts ([Rotating the client secret](web-console.md#rotating-the-client-secret)). Strip client-certificate headers at the proxy. |
 | Metrics listener not set | Serves no `/metrics`. | `oml doctor` says where the counts are. | Set `server.metrics_listen`. |
 
-We have not measured how long each refusal window lasts.
+How long each refusal window lasts has not been measured.

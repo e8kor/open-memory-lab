@@ -2184,7 +2184,7 @@ fn run_chat_init(
                 return Err(CliError::local(format!("oml chat init: {why}")));
             }
             println!(
-                "your chat workarea {path} already exists; set OML_CHAT_WORKAREA={}",
+                "the chat workarea {path} already exists; set OML_CHAT_WORKAREA={}",
                 field(&existing, "id")
             );
             return Ok(ExitCode::SUCCESS);

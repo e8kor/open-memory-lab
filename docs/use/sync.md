@@ -12,7 +12,7 @@ writes the difference. Each memory is anchored to the repository, commit, path, 
 fingerprint of the span it came from.
 
 Requirements: git 2.7 or later on the `PATH`, since `oml sync` runs `git remote get-url` to derive
-the repository name (the other commands it runs are older). We run it against current git, and
+the repository name (the other commands it runs are older). It is run against current git, and
 against a stand-in that refuses the options git 2.30 added; it has not been run against git 2.7.
 
 1. **Pick the source and the adapter.** `adr` yields one memory per decision bullet, plus a summary
@@ -58,5 +58,5 @@ against a stand-in that refuses the options git 2.30 added; it has not been run 
 - A file whose name matches a secret pattern (`.env*`, `*.pem`, `*id_*`, `*credentials*`) is
   reported `unreadable` and skipped.
 
-We have not measured whether a reviewer catches a wrong extraction in a batch of 200. All flags are
+No measurement exists of whether a reviewer catches a wrong extraction in a batch of 200. All flags are
 in the [CLI reference](../cli/reference.md).

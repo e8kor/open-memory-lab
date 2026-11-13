@@ -95,7 +95,7 @@ nav:
       - Quickstart: start/quickstart.md
       - Get an agent key: guides/get-an-agent-key.md
       - Connect Claude Code: guides/claude-code.md
-      - Connect claude.ai and your phone: guides/claude-ai-and-mobile.md
+      - Connect claude.ai and a phone: guides/claude-ai-and-mobile.md
       - Connect other agent tools: guides/other-harnesses.md
       - Run a server: start/run-your-own.md
   - Guides:
@@ -123,7 +123,7 @@ nav:
       - Run the web console: operations/web-console.md
       - Run the lake writer: operations/lake.md
       - Capacity and SLOs: operations/operating.md
-      - Measure recall on your build: operations/recall-eval.md
+      - Measure recall on the build: operations/recall-eval.md
   - Reference:
       - reference/index.md
       - CLI: cli/reference.md

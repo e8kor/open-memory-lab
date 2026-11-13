@@ -39,11 +39,11 @@ A lost lake, or other derived data, is not a restore scenario. The lake is deriv
 
 ## Restore
 
-The backup set, the keyring copy from the same moment, and a head seq
-recorded earlier are required. `oml events` prints the head seq.
+Three things must be at hand: the backup set, the keyring copy from the same moment, and a head seq
+recorded earlier. `oml events` prints the head seq.
 
 1. **Stop the server and the lake writer.** Writes must not race the restore.
-2. **Record the state being left.** If the server can still answer, save `oml doctor --json` and the
+2. **Record the current state.** If the server can still answer, save `oml doctor --json` and the
    current head seq. This is the evidence that tells a restore from tampering later.
 3. **Restore PostgreSQL** to the recovery point. Use the host's base-backup and WAL tooling, `pg_restore`
    of a dump, or the managed service's point-in-time recovery into a new instance. Then point
@@ -89,4 +89,4 @@ new head seq somewhere off the server.
 Losing or replacing the signing key never loses history, because signatures verify against the key that
 made them ([runbooks](runbooks.md)).
 
-Recovery time is the steps above, from the restore to a clean `oml doctor`. We have not timed it.
+Recovery time is the steps above, from the restore to a clean `oml doctor`. It has not been timed.

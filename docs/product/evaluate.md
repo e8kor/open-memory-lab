@@ -14,7 +14,7 @@ An agent's wrong conclusion should not become every agent's fact. A write is sto
 
 ## What it costs
 
-- **Reviewer time.** The reviewers decide how fast a write becomes readable. We have no measured figure for review speed.
+- **Reviewer time.** The reviewers decide how fast a write becomes readable. No measured figure for review speed exists.
 - **Running it.** A self-hosted server needs PostgreSQL 17 or later and backups, and one process serves the API. A server someone else runs removes that work and asks for trust in its operator.
 - **No model fees from OML.** OML runs no language model. The scan and the search are deterministic code.
 

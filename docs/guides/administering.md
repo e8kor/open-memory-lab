@@ -52,7 +52,7 @@ The claim stores `url` and `api_key` in `~/.config/oml/credentials` (0600). `OML
 
 The CLI takes its pair from the first source that sets either value: `--url` and `--api-key`, then `OML_URL` and `OML_API_KEY`, then the file. An exported agent pair therefore wins over the stored admin pair, so run admin verbs with both unset. `oml login <url>` replaces the stored pair once `GET /v2/whoami` accepts the key.
 
-Never put an admin key into an agent; issue the administrator a writer key.
+Never put an admin key into an agent; issue a writer key for the agent's use.
 
 ## Workareas and names
 
