@@ -397,6 +397,86 @@ pub struct Memory {
     /// `approved_at` is (ADR-0077 d2).
     #[serde(default)]
     pub approver: Option<Approver>,
+    /// `memory`, `derived_fact`, `steering`, `guardrail` or a vocabulary
+    /// kind; `None` from an API that does not name it.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Who wrote it, by kind: `agent`, `human`, `connector` or
+    /// `simulation`.
+    #[serde(default)]
+    pub provenance: Option<String>,
+    /// What kind of source the text came from, as signed; `None` on a
+    /// version written before ADR-0063.
+    #[serde(default)]
+    pub origin: Option<Origin>,
+    /// Whether this version is a retirement: approving it stops serving
+    /// the claim.
+    #[serde(default)]
+    pub retirement: bool,
+    /// `changed` or `removed` from the served version's latest source
+    /// check; `None` otherwise, and always on a held version (ADR-0057 d5).
+    #[serde(default)]
+    pub stale: Option<String>,
+    /// The version's latest source check; `None` on a held version.
+    #[serde(default)]
+    pub source_checked: Option<SourceChecked>,
+    /// The ancestors the caller can read (ADR-0025 d3).
+    #[serde(default)]
+    pub derives_from: Vec<String>,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
+    /// Budget tokens of the body (counter `oml-tc/1`).
+    #[serde(default)]
+    pub tokens: Option<u64>,
+    /// Whether the served version is held: the caller's own, or another
+    /// author's inside an in-progress workarea (ADR-0030 d3, d4).
+    #[serde(default)]
+    pub unreviewed: bool,
+    /// When held-item expiry dead-letters a held row; `None` elsewhere.
+    #[serde(default)]
+    pub held_expires_at: Option<String>,
+    /// The SHA-256 of the plaintext, `sha256:<hex>`.
+    #[serde(default)]
+    pub plaintext_digest: Option<String>,
+}
+
+/// What kind of source a version's text came from (openapi.yaml `Origin`;
+/// ADR-0063 d1).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Origin {
+    /// `repo`, `doc`, `code`, `lake`, `chat`, `web` or `manual`.
+    pub kind: String,
+}
+
+/// A version's latest source check (openapi.yaml `SourceChecked`;
+/// ADR-0057 d5).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SourceChecked {
+    pub rev: String,
+    pub at: String,
+    /// `fresh`, `equivalent`, `moved`, `changed` or `removed`.
+    pub result: String,
+    #[serde(default)]
+    pub moved_to: Option<MovedTo>,
+}
+
+/// Where a `moved` source check found the span (ADR-0057 d18).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct MovedTo {
+    pub path: String,
+    #[serde(default)]
+    pub fragment: Option<String>,
+}
+
+/// An attachment as a memory names it (openapi.yaml `AttachmentDescriptor`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Attachment {
+    #[serde(default)]
+    pub digest: Option<String>,
+    #[serde(default)]
+    pub media_type: Option<String>,
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
 }
 
 /// The kind of reviewer that approved a version (ADR-0077 d2): the
@@ -533,6 +613,16 @@ pub struct AdminRead {
     pub plaintext_digest: Option<String>,
     #[serde(default)]
     pub verdicts: Vec<AdminVerdict>,
+    /// The authoring key's holder, `agent`, `human` or `service`; absent,
+    /// with the two fields after it, from an API before v0.7.0.
+    #[serde(default)]
+    pub held_by: Option<String>,
+    #[serde(default)]
+    pub promoted_at: Option<String>,
+    /// Admission's scan finding, `class: rule at place`, never the matched
+    /// text (ADR-0065 d8).
+    #[serde(default)]
+    pub scan_finding: Option<String>,
 }
 
 /// `POST /v1/memories` and `POST /v1/memories/{artifact_id}/supersede`:
