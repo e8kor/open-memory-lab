@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("notes", nargs="?", type=Path, help="the release notes file (append, check)")
     ap.add_argument("--tag", required=True)
     ap.add_argument("--root", type=Path, default=ROOT)
-    # Intermixed: the workflow names the notes after --tag, which older argparse (3.11, the runner's) refuses.
+    # Intermixed: the workflow names the notes after --tag, which the argparse of the runner's system python3 refuses.
     args = ap.parse_intermixed_args(argv)
     if args.action != "list" and args.notes is None:
         ap.error(f"{args.action} needs the release notes file")
