@@ -32,6 +32,13 @@ jobs:
       # check_release.py and check_contract_sync.py read YAML; their tests do too.
       - run: pip install --retries 5 --timeout 30 pyyaml==6.0.3
       - run: python -m unittest discover -s scripts/tests
+      # The release job runs these scripts on the runner's system python3, an older build than
+      # the one above; 3.11 refuses the same argument orders that build does.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - run: pip install --retries 5 --timeout 30 pyyaml==6.0.3
+      - run: python -m unittest discover -s scripts/tests
 
   numbers:
     name: ADR and migration numbers are reserved
