@@ -602,15 +602,20 @@ async fn a_connector_key_issued_by_the_cli_connects_by_code_and_acts_at_mcp_as_i
 }
 
 /// The limit Claude allows a discovery, registration or token call
-/// (ADR-0031, "What Claude expects").
+/// (ADR-0031, "What Claude expects"). The three authorize requests come from
+/// the person's browser, not from Claude, so no Claude limit covers them;
+/// this suite holds them to the same 10 seconds by its own choice.
 const SIGN_IN_LIMIT: Duration = Duration::from_secs(10);
 /// The limit Claude allows a refresh (ADR-0031, the same section).
 const RENEWAL_LIMIT: Duration = Duration::from_secs(30);
 
-/// #115's timing criterion, measured over TCP against the real lead: both
-/// discovery documents, the registration, the three authorize requests and
-/// the token exchange each answer under 10 seconds, and a refresh under 30.
-/// Each step's time is printed, so a run with `--nocapture` records it.
+/// #115's timing criterion, measured over TCP against the real lead: the
+/// unauthenticated `/mcp` probe that starts discovery, both discovery
+/// documents, the registration and the token exchange each answer under the
+/// 10 seconds Claude allows, and a refresh under its 30. The three authorize
+/// requests, which the person's browser sends, are held to the same 10
+/// seconds by this suite's choice. Each step's time is printed, so a run
+/// with `--nocapture` records it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn every_sign_in_call_answers_within_claudes_ten_seconds_and_a_refresh_within_its_thirty() {
     let Some(lead) = Lead::start(Some(ISSUER)).await else {
@@ -634,6 +639,23 @@ async fn every_sign_in_call_answers_within_claudes_ten_seconds_and_a_refresh_wit
     let base = lead.url.clone();
     let mut timings = blocking(move || {
         let mut timings = Vec::new();
+        let (status, headers, body) = timed(
+            &mut timings,
+            "discovery, unauthenticated /mcp",
+            agent()
+                .post(&format!("{base}/mcp"))
+                .set("Content-Type", "application/json")
+                .set("Accept", "application/json, text/event-stream"),
+            Some(
+                json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {} })
+                    .to_string(),
+            ),
+        );
+        assert_eq!(status, 401, "{body}");
+        assert_eq!(
+            header(&headers, "www-authenticate"),
+            Some(CHALLENGE_MISSING)
+        );
         for (step, path) in [
             (
                 "discovery, protected resource",
