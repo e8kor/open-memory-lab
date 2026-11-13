@@ -17,7 +17,7 @@ use oml_app::domain::web::{Email, Provider, ProviderIdentity, SIGN_IN_TTL_SECS, 
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::AppError;
 
-use super::page::{STYLESHEET, attr, shell, short};
+use super::page::{STYLESHEET, attr, bare, short};
 use super::{
     Answer, append_cookie, clear_cookie, cookie, human_only, origin_refused, set_cookie,
     unique_fields, unix_now,
@@ -78,18 +78,6 @@ fn html_response(status: StatusCode, html: String) -> Response {
         HeaderValue::from_static("text/html; charset=utf-8"),
     );
     secured(response)
-}
-
-/// A page of these: the shared chrome of `page::shell` and the design
-/// system's one stylesheet.
-fn document(
-    title: &str,
-    who: Option<&str>,
-    tabs: &[(&str, &str)],
-    active: &str,
-    body: &str,
-) -> String {
-    shell(title, who.unwrap_or(""), None, tabs, active, None, body)
 }
 
 /// The pending sign-up the cookie seals (ADR-0068 d2).
@@ -194,11 +182,8 @@ where
         let mut answer = Answer {
             response: html_response(
                 error.status,
-                document(
+                bare(
                     "Not available",
-                    None,
-                    &[],
-                    "",
                     &format!(
                         r#"<h1>This cannot continue</h1><p class="error">{}: {}</p><p><a href="/web/start">Back</a></p>"#,
                         escape(error.code),
@@ -234,10 +219,7 @@ where
             short(&policy.terms_version),
             attr(&policy.privacy_url),
         );
-        let mut response = html_response(
-            StatusCode::OK,
-            document("Create your account", None, &[], "", &body),
-        );
+        let mut response = html_response(StatusCode::OK, bare("Create an account", &body));
         append_cookie(
             &mut response,
             &set_cookie(SIGN_UP_COOKIE, &sealed, SIGN_IN_TTL_SECS),

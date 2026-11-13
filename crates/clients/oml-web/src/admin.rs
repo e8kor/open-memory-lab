@@ -25,7 +25,7 @@ use axum::extract::rejection::FormRejection;
 use axum::extract::{Form, State};
 use axum::response::Response;
 use http::{StatusCode, Uri};
-use oml_page::web::{ADMIN_TABS, form, hidden, input, select, shell, short, state_tag};
+use oml_page::web::{form, hidden, input, select, shell, short, state_tag};
 use oml_sdk::WebEmail;
 
 use crate::pages::{Fields, WalkEnd, refused, walk};
@@ -74,15 +74,7 @@ fn admin_only(session: &Session, calls: &PageCalls) -> Option<Response> {
 fn page(session: &Session, title: &str, active: &str, note: Option<&str>, body: &str) -> Response {
     outcome::html(
         StatusCode::OK,
-        shell(
-            title,
-            &session.who(),
-            Some(&session.csrf()),
-            &ADMIN_TABS,
-            active,
-            note,
-            body,
-        ),
+        shell(title, &session.administration(), active, note, body),
     )
 }
 
@@ -229,13 +221,7 @@ pub async fn people_page(
             false,
         ));
     }
-    page(
-        &session,
-        "Administration",
-        PEOPLE_PATH,
-        people_notice(&fields),
-        &body,
-    )
+    page(&session, "", PEOPLE_PATH, people_notice(&fields), &body)
 }
 
 fn yes(fields: &Fields, name: &str) -> bool {
@@ -465,7 +451,7 @@ pub async fn users_page(
     };
     let csrf = session.csrf();
     let mut body = String::from(
-        r#"<p class="label">Administration</p><h1>Users</h1><p class="lede">What each person holds against their quotas. Raising a quota, disabling a person and closing a deletion request are journalled under your admin key.</p><h2>Deletion requests</h2>"#,
+        r#"<p class="label">Administration</p><h1>Quotas</h1><p class="lede">What each person holds against their quotas. Raising a quota, disabling a person and closing a deletion request are journalled under your admin key.</p><h2>Deletion requests</h2>"#,
     );
     if listed.deletions.is_empty() {
         body.push_str(r#"<p class="dim">None pending.</p>"#);
@@ -578,7 +564,7 @@ fn user_confirmation(session: &Session, action: &str, user: &str) -> Response {
         true,
     ));
     let _ = write!(body, r#"<p><a href="{USERS_PATH}">Keep them</a></p>"#);
-    page(session, "Quotas", USERS_PATH, None, &body)
+    page(session, "Confirm", USERS_PATH, None, &body)
 }
 
 /// Whether `user` is a name under the creation grammar, the API's own.

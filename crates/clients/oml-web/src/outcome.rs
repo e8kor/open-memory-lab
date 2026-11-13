@@ -83,6 +83,20 @@ pub fn html(status: StatusCode, body: String) -> Response {
     response
 }
 
+/// The refusal page of `code` and `message`, naming the page's request id
+/// and drawn in the bar of the session `calls` records, with its sign-out
+/// control and a link back to the page's tab (#327; design notes row 25).
+#[must_use]
+pub fn refusal_page(code: &str, message: &str, calls: &PageCalls) -> String {
+    oml_page::web::refusal_page(
+        code,
+        message,
+        Some(calls.page_id()),
+        calls.bar().as_ref(),
+        calls.path(),
+    )
+}
+
 /// The page for a call that has no usable answer, naming the page's
 /// request id and carrying the sign-out control of the session `calls`
 /// records: an API refusal as its outcome, a timeout as `504`, and an
@@ -91,9 +105,7 @@ pub fn html(status: StatusCode, body: String) -> Response {
 /// outcome.
 #[must_use]
 pub fn page(error: &Error, calls: &PageCalls, next: &str) -> Response {
-    let refusal = |code: &str, message: &str| {
-        oml_page::web::refusal_page(code, message, Some(calls.page_id()), calls.csrf())
-    };
+    let refusal = |code: &str, message: &str| refusal_page(code, message, calls);
     match error {
         Error::Api(e) => {
             let outcome = PageOutcome::of_code(&e.code);
@@ -242,7 +254,7 @@ mod tests {
             let calls = PageCalls::new("page-7");
             let no_one = body(page(failure, &calls, "/web")).await;
             assert!(!no_one.contains("sign_out"), "{failure:?}");
-            calls.carries_session("the-session-token");
+            calls.carries_session("the-session-token", "/web/keys");
             let signed_in = body(page(failure, &calls, "/web")).await;
             assert!(signed_in.contains(&control), "{failure:?}");
         }

@@ -23,8 +23,8 @@ use axum::extract::{Form, State};
 use axum::response::Response;
 use http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use oml_page::web::{
-    ADMIN_KEYS_PATH, ADMIN_TABS, USER_KEYS_PATH, attr, form, hidden, input, select, shell, short,
-    state_tag, text, user_tabs,
+    ADMIN_KEYS_PATH, USER_KEYS_PATH, attr, form, hidden, input, select, shell, short, state_tag,
+    text,
 };
 use oml_sdk::{ListedKey, encode};
 
@@ -460,15 +460,7 @@ pub async fn user_page(
             let (title, body) = secret_card(&secret);
             return clearing(outcome::html(
                 StatusCode::OK,
-                shell(
-                    title,
-                    &session.who(),
-                    Some(&session.csrf()),
-                    &user_tabs(session.admin),
-                    USER_KEYS_PATH,
-                    None,
-                    &body,
-                ),
+                shell(title, &session.personal(), USER_KEYS_PATH, None, &body),
             ));
         }
         return clearing(user_view(&web, &session, &calls, &fields, &uri).await);
@@ -561,10 +553,8 @@ async fn user_view(
 /// The user page's frame around `body`.
 fn user_shell(session: &Session, fields: &Fields, body: &str) -> String {
     shell(
-        "Your page",
-        &session.who(),
-        Some(&session.csrf()),
-        &user_tabs(session.admin),
+        "",
+        &session.personal(),
         USER_KEYS_PATH,
         notice(fields.get("done")),
         body,
@@ -612,10 +602,8 @@ pub async fn admin_page(
     outcome::html(
         StatusCode::OK,
         shell(
-            "Administration",
-            &session.who(),
-            Some(&session.csrf()),
-            &ADMIN_TABS,
+            "",
+            &session.administration(),
             ADMIN_KEYS_PATH,
             notice(fields.get("done")),
             &body,
@@ -661,22 +649,11 @@ fn cut_off_confirmation(session: &Session, side: Side, key: &str, user: Option<&
         true,
     ));
     let _ = write!(body, r#"<p><a href="{}">Keep it</a></p>"#, attr(&back));
-    let (title, tabs) = match side {
-        Side::User => ("Your page", user_tabs(session.admin)),
-        Side::Admin => ("Administration", ADMIN_TABS.to_vec()),
+    let bar = match side {
+        Side::User => session.personal(),
+        Side::Admin => session.administration(),
     };
-    outcome::html(
-        StatusCode::OK,
-        shell(
-            title,
-            &session.who(),
-            Some(&session.csrf()),
-            &tabs,
-            page,
-            None,
-            &body,
-        ),
-    )
+    outcome::html(StatusCode::OK, shell("Confirm", &bar, page, None, &body))
 }
 
 /// An issue or a new connect code the API answered without the secret and

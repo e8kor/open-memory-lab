@@ -24,8 +24,8 @@ use axum::extract::{Form, State};
 use axum::response::{IntoResponse as _, Response};
 use http::{HeaderValue, StatusCode, Uri, header};
 use oml_page::web::{
-    ADMIN_TABS, ADMIN_WORKAREAS_PATH, USER_WORKAREAS_PATH, attr, form, hidden, input, shell, short,
-    text, user_tabs, workarea_label,
+    ADMIN_WORKAREAS_PATH, USER_WORKAREAS_PATH, attr, form, hidden, input, shell, short, text,
+    workarea_label,
 };
 use oml_sdk::{WorkareaNode, WorkareaOffers};
 use tokio::sync::Semaphore;
@@ -695,7 +695,7 @@ async fn view(
         ),
     };
     let table = table(page, &nodes, &rows);
-    let (title, tabs, body) = match side {
+    let (bar, body) = match side {
         Side::User => {
             let user = session.whoami.user.as_ref().map_or("", |u| u.name.as_str());
             let mut body = format!(
@@ -719,11 +719,10 @@ async fn view(
                 "Create",
                 true,
             ));
-            ("Your page", user_tabs(session.admin), body)
+            (session.personal(), body)
         }
         Side::Admin => (
-            "Administration",
-            ADMIN_TABS.to_vec(),
+            session.administration(),
             format!(
                 r#"<h1>Workareas</h1><p class="desc">Apply asks you to confirm.</p><details class="help"><summary>?</summary>Status changes run as your admin key and need a second key to ratify; in progress and commit run as your reviewer key.</details>{confirm}{table}"#
             ),
@@ -731,15 +730,7 @@ async fn view(
     };
     outcome::html(
         StatusCode::OK,
-        shell(
-            title,
-            &session.who(),
-            Some(&session.csrf()),
-            &tabs,
-            page,
-            notice(fields.get("done")),
-            &body,
-        ),
+        shell("", &bar, page, notice(fields.get("done")), &body),
     )
 }
 

@@ -28,7 +28,7 @@ use axum::extract::{Form, State};
 use axum::response::{IntoResponse as _, Response};
 use http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use oml_page::digest::{base64_32, sha256};
-use oml_page::web::{attr, glyph_svg, shell, text, user_tabs};
+use oml_page::web::{attr, glyph_svg, shell, text};
 use oml_sdk::{Error, Person};
 use serde_json::json;
 
@@ -246,7 +246,11 @@ fn render(
     note: Option<&str>,
     denied: bool,
 ) -> String {
-    let mut body = head("Connect an agent", "h1", "Three steps, about two minutes.");
+    let mut body = head(
+        "Start",
+        "h1",
+        "Connect an agent: three steps, about two minutes.",
+    );
     if let Some(note) = note {
         let _ = write!(
             body,
@@ -421,16 +425,7 @@ pub async fn page(
         notice(&fields),
         keys::denied(&session),
     );
-    let html = shell(
-        "Start",
-        &session.who(),
-        Some(&session.csrf()),
-        &user_tabs(session.admin),
-        START_PATH,
-        None,
-        &body,
-    )
-    .replacen(
+    let html = shell("Start", &session.personal(), START_PATH, None, &body).replacen(
         "</body>",
         &format!("<script>{START_SCRIPT}</script></body>"),
         1,
@@ -700,15 +695,7 @@ pub async fn setup(State(web): State<Web>, Extension(session): Extension<Session
     );
     outcome::html(
         StatusCode::OK,
-        shell(
-            "Your page",
-            &session.who(),
-            Some(&session.csrf()),
-            &user_tabs(session.admin),
-            SETUP_PATH,
-            None,
-            &body,
-        ),
+        shell("Set up", &session.personal(), START_PATH, None, &body),
     )
 }
 
