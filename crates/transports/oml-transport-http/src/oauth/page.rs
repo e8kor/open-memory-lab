@@ -99,13 +99,13 @@ pub const ONLY_IF_YOURS: &str = "Enter the code only if you opened this page you
 the connector in Claude, in the last few minutes. If someone sent you this link, close it.";
 
 /// Where the code comes from, with a same-origin link to the account page.
-pub const WHERE_THE_CODE_COMES_FROM: &str = "Get a connect code from your account page: \
+pub const WHERE_THE_CODE_COMES_FROM: &str = "Get a connect code from the account page: \
 <a href=\"/web\">Connect Claude on the web or a phone</a>. Codes are shown once; use New \
-connect code on the key's row if you lost it.";
+connect code on the key's row if it was lost.";
 
 /// The one answer to every wrong code (http-api.md, word for word).
 pub const CODE_NOT_VALID: &str =
-    "This code is not valid. Check it, or ask your administrator for a new one.";
+    "This code is not valid. Check it, or ask an administrator for a new one.";
 
 /// The connect-code form (ADR-0031 d9 steps 1 and 2): the client, the
 /// redirect host and the sealed handle its form carries.
@@ -289,11 +289,11 @@ mod tests {
             wrong_code: false,
         });
         assert!(html.contains(
-            "Get a connect code from your account page: \
+            "Get a connect code from the account page: \
              <a href=\"/web\">Connect Claude on the web or a phone</a>."
         ));
         assert!(html.contains(
-            "Codes are shown once; use New connect code on the key's row if you lost it."
+            "Codes are shown once; use New connect code on the key's row if it was lost."
         ));
     }
 

@@ -158,7 +158,7 @@ async fn each_api_call_of_a_page_carries_the_pages_id_as_its_correlation_and_a_n
     let (status, _, page, calls, lines) = page(all()).await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(
-        page.contains("Rules in force at <code>universe.alice</code>"),
+        page.contains("Rules in force at <code>alice</code>"),
         "{page}"
     );
     assert!(page.contains("alice · oml"), "{page}");

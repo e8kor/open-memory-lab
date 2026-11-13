@@ -612,3 +612,168 @@ async fn the_counted_trees_offers_serve_only_where_the_tree_and_the_offers_opera
         admin_on_root.body
     );
 }
+
+// ---------------------------------------------------------------------------
+// The Review pages' reads (bulk D, the review lane)
+// ---------------------------------------------------------------------------
+
+/// The reads the person's Review page and its one-item page add (design
+/// notes rows 1, 4, 6, 15), each a read the API already serves, so each
+/// costs the gate's one store call and the verb's own: the held listing as
+/// `<user>-review` at the API's largest page (the list and "Waiting for
+/// review" from one read), the person's key list as `<user>-web` (whether
+/// an item's author is one of the person's keys), and the replaced
+/// version as `<user>-review` (the change at page density). Printed, so
+/// the counts the report states are the ones measured.
+#[tokio::test]
+async fn the_review_pages_reads_cost_the_gate_and_their_own_verbs_store_calls() {
+    let rig = rig().await;
+    let held = get(
+        &rig.router,
+        "/v2/review/held?limit=200",
+        &web(&rig.alice, "review"),
+        true,
+    )
+    .await;
+    assert_eq!(held.status, StatusCode::OK, "{}", held.body);
+    let keys = get(
+        &rig.router,
+        "/v2/keys?limit=200",
+        &web(&rig.alice, "web"),
+        true,
+    )
+    .await;
+    assert_eq!(keys.status, StatusCode::OK, "{}", keys.body);
+    let named = get(
+        &rig.router,
+        "/v2/review/held?ids=00000000-0000-4000-8000-000000000001",
+        &web(&rig.alice, "review"),
+        true,
+    )
+    .await;
+    assert_eq!(named.status, StatusCode::OK, "{}", named.body);
+    println!(
+        "store calls: held listing {}, key list {}, named held {}",
+        held.store_calls(),
+        keys.store_calls(),
+        named.store_calls()
+    );
+    // Measured 2026-11-13 over the in-memory store: the gate's one call
+    // and the listing's three; the key list's eleven, as the Keys page
+    // pays them; the named read's three.
+    assert_eq!(held.store_calls(), 4, "{}", held.line);
+    assert_eq!(keys.store_calls(), 12, "{}", keys.line);
+    assert_eq!(named.store_calls(), 4, "{}", named.line);
+    // The held listing at 200 a page costs what it costs at 50: the page
+    // size changes no store call.
+    let fifty = get(
+        &rig.router,
+        "/v2/review/held?limit=50",
+        &web(&rig.alice, "review"),
+        true,
+    )
+    .await;
+    assert_eq!(held.store_calls(), fifty.store_calls(), "{}", held.line);
+    assert_eq!(
+        keys.store_calls(),
+        get(&rig.router, "/v2/keys", &web(&rig.alice, "web"), true)
+            .await
+            .store_calls()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The workarea picker's reads (design notes row 14, decided 2026-11-13)
+// ---------------------------------------------------------------------------
+
+/// The picker's hints are names only, from the uncounted tree read, which
+/// every page that draws the field makes once; the counted read is made
+/// only for an opened Browse. Each read's store calls over the rig's
+/// tenant (`universe`, alice's root and bob's), for the two session keys
+/// the pages read with: as `alice-web`, which reads `universe` and her root,
+/// the uncounted read is 8 calls and the counted one 28; as `alice-admin`,
+/// which reads the structure, 4 and 7. A page whose Browse is closed pays
+/// the uncounted read alone, and the Atlas of `universe` takes its names
+/// from its own counted read and pays neither.
+#[tokio::test]
+async fn the_pickers_hint_read_costs_less_than_browses_counted_read() {
+    let rig = rig().await;
+    for (capacity, nodes, names_calls, counted_calls) in [("web", 2, 8, 28), ("admin", 3, 4, 7)] {
+        let bearer = web(&rig.alice, capacity);
+        let names = get(
+            &rig.router,
+            "/v2/workareas/universe/tree?limit=200",
+            &bearer,
+            true,
+        )
+        .await;
+        let counted = get(
+            &rig.router,
+            "/v2/workareas/universe/tree?counts=true",
+            &bearer,
+            true,
+        )
+        .await;
+        assert_eq!(names.status, StatusCode::OK, "{}", names.body);
+        assert_eq!(counted.status, StatusCode::OK, "{}", counted.body);
+        assert_eq!(names.body["items"].as_array().map(Vec::len), Some(nodes));
+        assert_eq!(
+            names.store_calls(),
+            names_calls,
+            "{capacity}: {}",
+            names.line
+        );
+        assert_eq!(
+            counted.store_calls(),
+            counted_calls,
+            "{capacity}: {}",
+            counted.line
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The redesign's fix round (bulk D): the top label read
+// ---------------------------------------------------------------------------
+
+/// A page that names a workarea under a top label it does not know reads
+/// that label's node once, `GET /v2/workareas/{top}/tree?limit=1`, whose
+/// `user_root` mark says whether the names beneath it are `<user>.<name>`
+/// (design notes row 20). Its store calls, as the admin key reading a
+/// person's root and as a person's reviewer key reading its own, printed
+/// so the counts ADR-0070's as-built rows state are the ones measured.
+#[tokio::test]
+async fn the_top_label_read_costs_the_gate_and_one_tree_walk() {
+    let rig = rig().await;
+    let admin = get(
+        &rig.router,
+        "/v2/workareas/bob/tree?limit=1",
+        &web(&rig.alice, "admin"),
+        true,
+    )
+    .await;
+    let review = get(
+        &rig.router,
+        "/v2/workareas/alice/tree?limit=1",
+        &web(&rig.alice, "review"),
+        true,
+    )
+    .await;
+    assert_eq!(admin.status, StatusCode::OK, "{}", admin.body);
+    assert_eq!(review.status, StatusCode::OK, "{}", review.body);
+    assert_eq!(admin.body["items"][0]["user_root"], true, "{}", admin.body);
+    assert_eq!(
+        review.body["items"][0]["user_root"], true,
+        "{}",
+        review.body
+    );
+    println!(
+        "store calls: top label read as admin {}, as review {}",
+        admin.store_calls(),
+        review.store_calls()
+    );
+    // Measured 2026-11-13 over the in-memory store: the admin key reads
+    // the structure, the reviewer key its access as well.
+    assert_eq!(admin.store_calls(), 4, "{}", admin.line);
+    assert_eq!(review.store_calls(), 7, "{}", review.line);
+}

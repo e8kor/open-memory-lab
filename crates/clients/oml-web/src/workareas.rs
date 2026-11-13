@@ -24,14 +24,15 @@ use axum::extract::{Form, State};
 use axum::response::{IntoResponse as _, Response};
 use http::{HeaderValue, StatusCode, Uri, header};
 use oml_page::web::{
-    ADMIN_TABS, ADMIN_WORKAREAS_PATH, USER_WORKAREAS_PATH, attr, form, hidden, input, shell, short,
-    text, user_tabs, workarea_label,
+    ADMIN_MEMORIES_PATH, ADMIN_WORKAREAS_PATH, USER_MEMORIES_PATH, USER_WORKAREAS_PATH, attr, form,
+    hidden, input, shell, short, text,
 };
 use oml_sdk::{WorkareaNode, WorkareaOffers};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::pages::{Fields, refused, workareas as tree};
+use crate::picker::reference;
 use crate::session::{PageCalls, Session, call};
 use crate::{Api, Capacity, Web, outcome};
 
@@ -39,6 +40,11 @@ use crate::{Api, Capacity, Web, outcome};
 /// workarea's offers and proposals. A constant of the build, unmeasured
 /// (#170).
 pub const FAN_OUT: usize = 8;
+
+/// The rows a Workareas page draws, each with its offers and proposals
+/// read: the page's secondary reads are bounded by it (design notes row 26;
+/// ADR-0045 d25's scaling limit).
+pub const ROWS_PAGE: usize = 50;
 
 /// The form actions of the view, each the act of one documented operation.
 pub const ACTIONS: &[&str] = &[
@@ -121,9 +127,10 @@ impl Act {
         }
     }
 
-    /// What a confirmed act will do, in a sentence.
-    fn consequence(&self, path: &str) -> String {
-        let path = text(path);
+    /// What a confirmed act will do, in a sentence, naming the workarea by
+    /// its reference.
+    fn consequence(&self, reference: &str) -> String {
+        let path = text(reference);
         match self {
             Self::Propose(to) => format!(
                 "Proposes that <code>{path}</code> becomes {}. It keeps its status until a key other than the one proposing ratifies it.",
@@ -135,7 +142,7 @@ impl Act {
                 text(to)
             ),
             Self::InProgress => format!(
-                "Puts <code>{path}</code> in progress: your agents recall each other's unreviewed memories inside it, marked unreviewed, and nothing leaves it until it is committed."
+                "Puts <code>{path}</code> in progress: the user's agents recall each other's unreviewed memories inside it, marked unreviewed, and nothing leaves it until it is committed."
             ),
             Self::Commit => format!(
                 "Commits <code>{path}</code>: it leaves in progress, which needs every memory in it reviewed."
@@ -469,13 +476,54 @@ async fn rows(
         .collect()
 }
 
-/// The table of `nodes`, each with its status, mode, live proposals and
-/// dropdown.
-fn table(page: &str, nodes: &[WorkareaNode], rows: &[Row]) -> String {
+/// The reference of each of `nodes`, the form every field takes
+/// (design notes row 20): the user roots are the tree's own, and the
+/// person's where the page knows it.
+fn references(nodes: &[WorkareaNode], own_root: Option<&str>) -> Vec<String> {
+    let roots: std::collections::BTreeSet<&str> = nodes
+        .iter()
+        .filter(|n| n.user_root)
+        .map(|n| n.name.as_str())
+        .chain(own_root)
+        .collect();
+    nodes
+        .iter()
+        .map(|n| reference(&n.path, |l| roots.contains(l)))
+        .collect()
+}
+
+/// The table of `nodes`, each by its reference and the one it sits in,
+/// with its status, mode, live proposals and dropdown.
+fn table(
+    side: Side,
+    nodes: &[WorkareaNode],
+    refs: &[String],
+    shown: std::ops::Range<usize>,
+    rows: &[Row],
+) -> String {
+    let page = side.path();
+    let memories = match side {
+        Side::User => USER_MEMORIES_PATH,
+        Side::Admin => ADMIN_MEMORIES_PATH,
+    };
     let mut out = String::from(
-        "<table><tr><th>Path</th><th>Name to use</th><th>Status</th><th>Mode</th><th>Act</th></tr>",
+        "<table class=\"oml-stack t-wa\"><tr><th>Workarea</th><th>Inside</th><th>Status</th><th>Mode</th><th>Act</th></tr>",
     );
-    for (node, row) in nodes.iter().zip(rows) {
+    for ((node, reference), row) in nodes[shown.clone()]
+        .iter()
+        .zip(&refs[shown.clone()])
+        .zip(rows)
+    {
+        let inside = node
+            .parent_id
+            .as_deref()
+            .and_then(|p| nodes.iter().position(|n| n.id == p))
+            .map_or_else(String::new, |i| text(&refs[i]));
+        let named = format!(
+            r#"<td class="mono"><a href="{memories}?workarea={}">{}</a></td><td class="mono">{inside}</td>"#,
+            attr(&oml_sdk::encode(reference)),
+            text(reference),
+        );
         let pending: String = row
             .pending
             .iter()
@@ -485,9 +533,7 @@ fn table(page: &str, nodes: &[WorkareaNode], rows: &[Row]) -> String {
             Ok(offers) => {
                 let _ = write!(
                     out,
-                    r#"<tr><td class="mono">{}</td><td class="mono">{}</td><td>{}{pending}</td><td>{}</td><td>{}</td></tr>"#,
-                    text(&node.path),
-                    text(workarea_label(&node.path)),
+                    r#"<tr>{named}<td>{}{pending}</td><td>{}</td><td>{}</td></tr>"#,
                     text(&offers.transitions.status),
                     if offers.transitions.mode == "in_progress" {
                         "in progress"
@@ -502,15 +548,36 @@ fn table(page: &str, nodes: &[WorkareaNode], rows: &[Row]) -> String {
             Err(request_id) => {
                 let _ = write!(
                     out,
-                    r#"<tr><td class="mono">{}</td><td class="mono">{}</td><td colspan="3"><span class="error" role="status">unavailable (request <code>{}</code>)</span></td></tr>"#,
-                    text(&node.path),
-                    text(workarea_label(&node.path)),
+                    r#"<tr>{named}<td colspan="3"><span class="error" role="status">unavailable (request <code>{}</code>)</span></td></tr>"#,
                     text(request_id)
                 );
             }
         }
     }
     out.push_str("</table>");
+    if shown.start > 0 || shown.end < nodes.len() {
+        let _ = write!(
+            out,
+            r#"<p class="pager">{} of {}"#,
+            if shown.is_empty() {
+                "none".to_owned()
+            } else {
+                format!("{}–{}", shown.start + 1, shown.end)
+            },
+            nodes.len()
+        );
+        if shown.start > 0 {
+            let _ = write!(out, r#" · <a href="{page}">First page</a>"#);
+        }
+        if shown.end < nodes.len() {
+            let _ = write!(
+                out,
+                r#" · <a rel="next" href="{page}?from={}">Next page</a>"#,
+                shown.end
+            );
+        }
+        out.push_str("</p>");
+    }
     out
 }
 
@@ -531,6 +598,7 @@ struct ViewCtx<'a> {
 async fn confirmation(
     view: &ViewCtx<'_>,
     nodes: &[WorkareaNode],
+    refs: &[String],
     fields: &Fields,
     op: &str,
 ) -> Result<String, Box<Response>> {
@@ -552,8 +620,9 @@ async fn confirmation(
     };
     let listed = nodes
         .iter()
-        .find(|n| n.id == named || n.path == named || workarea_label(&n.path) == named)
-        .map(|n| (n.id.clone(), n.path.clone()));
+        .zip(refs)
+        .find(|(n, r)| n.id == named || n.path == named || *r == named)
+        .map(|(n, r)| (n.id.clone(), r.clone()));
     // A workarea the table does not list, zoomed to from the Atlas, is read
     // through the API, which checks the key may read it.
     let (id, path) = match listed {
@@ -565,7 +634,14 @@ async fn confirmation(
                 .workarea(&call(&credentials.transitions, &ids), named)
                 .await
             {
-                Ok(view) => (view.id, view.path),
+                Ok(view) => {
+                    let own = own_root(session, side);
+                    let reference = reference(&view.path, |l| {
+                        own.as_deref() == Some(l)
+                            || nodes.iter().any(|n| n.user_root && n.name == l)
+                    });
+                    (view.id, reference)
+                }
                 Err(e) => return Err(Box::new(outcome::page(&e, calls, page))),
             }
         }
@@ -621,6 +697,15 @@ async fn confirmation(
     ))
 }
 
+/// The person's root's name on the user page, which makes the names
+/// beneath it `<user>.<name>`.
+fn own_root(session: &Session, side: Side) -> Option<String> {
+    match side {
+        Side::User => session.whoami.user.as_ref().map(|u| u.name.clone()),
+        Side::Admin => None,
+    }
+}
+
 async fn view(
     web: Web,
     session: Session,
@@ -671,6 +756,20 @@ async fn view(
             );
         }
     };
+    let refs = references(&nodes, own_root(&session, side).as_deref());
+    let from = match fields.get("from").map(str::parse::<usize>) {
+        None => 0,
+        Some(Ok(from)) => from.min(nodes.len()),
+        Some(Err(_)) => {
+            return refused(
+                StatusCode::BAD_REQUEST,
+                "request.validation",
+                "from is a whole number",
+                &calls,
+            );
+        }
+    };
+    let shown = from..(from + ROWS_PAGE).min(nodes.len());
     let ctx = ViewCtx {
         web: &web,
         session: &session,
@@ -681,8 +780,8 @@ async fn view(
     let (confirm, rows) = match fields.get("op") {
         Some(op) => {
             let (confirm, rows) = tokio::join!(
-                confirmation(&ctx, &nodes, &fields, op),
-                rows(&web.api, &credentials, &calls, &nodes),
+                confirmation(&ctx, &nodes, &refs, &fields, op),
+                rows(&web.api, &credentials, &calls, &nodes[shown.clone()]),
             );
             match confirm {
                 Ok(confirm) => (confirm, rows),
@@ -691,18 +790,18 @@ async fn view(
         }
         None => (
             String::new(),
-            rows(&web.api, &credentials, &calls, &nodes).await,
+            rows(&web.api, &credentials, &calls, &nodes[shown.clone()]).await,
         ),
     };
-    let table = table(page, &nodes, &rows);
-    let (title, tabs, body) = match side {
+    let table = table(side, &nodes, &refs, shown, &rows);
+    let (bar, body) = match side {
         Side::User => {
             let user = session.whoami.user.as_ref().map_or("", |u| u.name.as_str());
             let mut body = format!(
-                r#"<h1>Workareas</h1><p class="desc">Under <code>universe.{}</code>. Apply asks you to confirm.</p>{confirm}{table}"#,
+                r#"<h1>Workareas</h1><p class="desc">Under <code>{}</code>. Apply asks for a confirmation.</p>{confirm}{table}"#,
                 short(user)
             );
-            body.push_str("<details class=\"help\"><summary>?</summary>In progress: your agents recall each other's unreviewed memories inside it, and nothing leaves it until you commit, which needs every memory in it reviewed.</details>");
+            body.push_str("<details class=\"help\"><summary>?</summary>In progress: the user's agents recall each other's unreviewed memories inside it, and nothing leaves it until it is committed, which needs every memory in it reviewed.</details>");
             body.push_str("<h2>New workarea</h2>");
             // Creating a workarea is the view's act, through `POST
             // /v2/workareas` under the form's nonce (ADR-0070 d7 (b)).
@@ -713,33 +812,24 @@ async fn view(
                 &format!(
                     "{}{}{}",
                     input("name", "name", "", true),
-                    input("parent", "inside (blank: your root)", "", false),
+                    input("parent", "inside (blank: the user root)", "", false),
                     hidden("nonce", &nonce())
                 ),
                 "Create",
                 true,
             ));
-            ("Your page", user_tabs(session.admin), body)
+            (session.personal(), body)
         }
-        Side::Admin => (
-            "Administration",
-            ADMIN_TABS.to_vec(),
+        Side::Admin => (session.administration(), {
+            let user = short(session.whoami.user.as_ref().map_or("", |u| u.name.as_str()));
             format!(
-                r#"<h1>Workareas</h1><p class="desc">Apply asks you to confirm.</p><details class="help"><summary>?</summary>Status changes run as your admin key and need a second key to ratify; in progress and commit run as your reviewer key.</details>{confirm}{table}"#
-            ),
-        ),
+                r#"<h1>Workareas</h1><p class="desc">Apply asks for a confirmation.</p><details class="help"><summary>?</summary>Status changes run as <code>{user}-admin</code> and need a second key to ratify; in progress and commit run as <code>{user}-review</code>.</details>{confirm}{table}"#
+            )
+        }),
     };
     outcome::html(
         StatusCode::OK,
-        shell(
-            title,
-            &session.who(),
-            Some(&session.csrf()),
-            &tabs,
-            page,
-            notice(fields.get("done")),
-            &body,
-        ),
+        shell("", &bar, page, notice(fields.get("done")), &body),
     )
 }
 

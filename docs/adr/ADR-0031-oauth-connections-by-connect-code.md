@@ -473,7 +473,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
        its writes may be self-signed and readable there without review." Last, always: "It cannot
        approve, demote, delete or administer anything." The buttons are Connect and Cancel. A wrong
        code answers the same form with one sentence for an unknown, expired, voided, spent, or revoked
-       or expired key's code alike — "This code is not valid. Check it, or ask your administrator for a new one." —
+       or expired key's code alike — "This code is not valid. Check it, or ask an administrator for a new one." —
        and the attempts left, under a new sealed handle with one attempt fewer. The fifth wrong
        entry ends the request and redirects with `access_denied`. An earlier handle sent again
        carries its earlier count, which costs nothing: the five attempts bound one page's typing

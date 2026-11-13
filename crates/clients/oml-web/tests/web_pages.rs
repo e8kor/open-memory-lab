@@ -534,14 +534,19 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
     let (_, _, page) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
     assert!(page.contains("Guardrails"), "{page}");
     assert!(
-        page.contains("Rules in force at <code>universe.alice</code>"),
+        page.contains("Rules in force at <code>alice</code>"),
         "{page}"
     );
     assert!(
         page.contains("This workarea and its readable parent workareas."),
         "{page}"
     );
-    assert!(page.contains("<select name=\"workarea\">"), "{page}");
+    // The picker names the scope in force by its reference (design notes
+    // row 20).
+    assert!(
+        page.contains(r#"name="workarea" type="text" value="alice""#),
+        "{page}"
+    );
     // Held, it is no rule yet: the set holds none (d3); the memories view
     // lists the agents' held rows.
     assert!(page.contains("No guardrail applies here."), "{page}");
@@ -565,7 +570,9 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
         page.contains("[must] Run the tests before every commit."),
         "{page}"
     );
-    assert!(page.contains("universe.alice"), "{page}");
+    // Its source by the reference the field takes, not by its path.
+    assert!(page.contains("(alice, auto-"), "{page}");
+    assert!(!page.contains("universe.alice"), "{page}");
     let (status, _, _) = act(
         &rig,
         &cookie,
@@ -612,11 +619,11 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
     .await;
     assert_eq!(status, StatusCode::OK, "{nested}");
     assert!(
-        nested.contains("Rules in force at <code>universe.alice.proj.docs</code>"),
+        nested.contains("Rules in force at <code>alice.docs</code>"),
         "{nested}"
     );
     assert!(
-        nested.contains(&format!("value=\"{docs}\" selected")),
+        nested.contains(r#"name="workarea" type="text" value="alice.docs""#),
         "{nested}"
     );
     assert!(
@@ -666,8 +673,12 @@ async fn the_guardrail_selector_includes_workareas_after_the_first_tree_page() {
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(
-        page.contains(&format!("value=\"{last}\" selected")),
-        "the selected workarea is present beyond the first page: {page}"
+        page.contains(r#"name="workarea" type="text" value="alice.w199""#),
+        "the chosen workarea is named beyond the first page: {page}"
+    );
+    assert!(
+        page.contains(r#"<option value="alice.w199"></option>"#),
+        "the hints hold the workarea beyond the first page: {page}"
     );
 }
 
@@ -709,9 +720,13 @@ async fn a_workarea_act_is_confirmed_before_it_runs() {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     let (_, _, page) = send(&rig.router, get("/web/workareas", Some(&cookie))).await;
-    assert!(page.contains("universe.alice.proj.child"), "{page}");
-    assert!(page.contains(">alice.proj.child<"), "{page}");
-    assert!(!page.contains(">alice.child<"), "{page}");
+    // Each workarea by the reference every field takes, and the one it
+    // sits in (design notes row 20).
+    assert!(!page.contains("alice.proj.child"), "{page}");
+    assert!(
+        page.contains(">alice.child</a></td><td class=\"mono\">alice.proj</td>"),
+        "{page}"
+    );
     assert!(page.contains("<select name=\"op\""), "{page}");
     assert!(page.contains("value=\"propose:committed\""), "{page}");
     assert!(page.contains("value=\"mode:in_progress\""), "{page}");
@@ -1558,7 +1573,7 @@ async fn the_workareas_pages_draw_the_header_and_tabs_the_leads_pages_draw() {
 
 /// The page header with the active tab's marker removed.
 fn header_of(page: &str) -> String {
-    let start = page.find(r#"<header class="top">"#).expect("a header");
+    let start = page.find(r#"<header class="top"#).expect("a header");
     let end = page[start..].find("</header>").expect("its end") + start;
     page[start..end].replace(r#" class="on" aria-current="page""#, "")
 }
@@ -3264,7 +3279,7 @@ async fn the_start_page_shows_a_credential_once_and_carries_its_one_script() {
     let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
     assert_eq!(csp, oml_web::start::start_csp());
     assert!(
-        page.contains("<script>") && page.contains("Issue my credential"),
+        page.contains("<script>") && page.contains("Issue credential"),
         "{page}"
     );
     let csrf = csrf_of(&page);
@@ -3476,7 +3491,7 @@ async fn a_deletion_request_needs_the_word_delete_and_is_shown_as_pending() {
     assert_eq!(headers[header::LOCATION], "/web/start?done=requested");
     let (_, _, page) = send(&rig.router, get("/web/start?done=requested", Some(&cookie))).await;
     assert!(
-        page.contains("Your deletion request is with the administrator"),
+        page.contains("The deletion request is with the administrator"),
         "{page}"
     );
     assert!(!page.contains("Type delete to confirm"), "{page}");
@@ -4195,10 +4210,10 @@ async fn the_review_page_shows_a_held_guardrails_load_warning() {
 
 /// A reviewer sees what a verdict makes true: the held version's own valid
 /// time and, on a supersession, the end approving it gives the version it
-/// replaces, on the review card and in the bulk table (ADR-0059
+/// replaces, on the review card and on the bulk review's card (ADR-0059
 /// d2, d4).
 #[tokio::test]
-async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_card_and_the_bulk_table()
+async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_card_and_the_bulk_review_card()
  {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
@@ -4232,7 +4247,10 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
         .memory_id;
     let (_, _, page) =
         act_and_follow(&rig, &cookie, "/web/review", &[("action", "review_next")]).await;
-    assert!(page.contains("valid from 2025, open"), "{page}");
+    assert!(
+        page.contains(r#"<dt>Valid</dt><dd>from <time datetime="2025">2025</time>, open</dd>"#),
+        "{page}"
+    );
     act_and_follow(
         &rig,
         &cookie,
@@ -4286,26 +4304,30 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
     .await;
     let (_, _, page) = send(&rig.router, get("/web/admin/review", Some(&admin))).await;
     assert!(page.contains("the api is at version 4"), "{page}");
-    assert!(page.contains("<th>Valid</th>"), "{page}");
     assert!(
         page.contains(
-            "from 2026-06-01, open; approving ends version 1 at 2026-06-01T00:00:00.000000Z"
+            r#"from <time datetime="2026-06-01">2026-06-01</time>, open; approving ends version 1 at <time datetime="2026-06-01T00:00:00.000000Z">2026-06-01 00:00:00 UTC</time>"#
         ),
         "{page}"
     );
     let (_, _, page) =
         act_and_follow(&rig, &cookie, "/web/review", &[("action", "review_next")]).await;
     assert!(page.contains("the api is at version 4"), "{page}");
-    assert!(page.contains("valid from 2026-06-01, open"), "{page}");
     assert!(
-        page.contains("approving ends version 1 at 2026-06-01T00:00:00.000000Z"),
+        page.contains(
+            r#"<dt>Valid</dt><dd>from <time datetime="2026-06-01">2026-06-01</time>, open"#
+        ),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"approving ends version 1 at <time datetime="2026-06-01T00:00:00.000000Z">2026-06-01 00:00:00 UTC</time>"#),
         "{page}"
     );
 }
 
 /// The review card names every finding stored on the version, one line
 /// each with its verdict, its class and rule and where it fired, and the
-/// bulk table counts them by verdict (ADR-0074 d17, d18 phase 1, d23). The
+/// bulk review's card counts them by verdict (ADR-0074 d17, d18 phase 1, d23). The
 /// double holds on its marker in the body and in the title alike, so the
 /// version carries two findings where the single stored `scan_finding`
 /// named one.
@@ -4338,7 +4360,7 @@ async fn the_review_card_names_every_scan_finding() {
         )
         .await
         .expect("the agent writes");
-    // The bulk table first: a serve claims the item for its reviewer.
+    // The bulk review first: a serve claims the item for its reviewer.
     rig.allow("boss@example.com", "boss", true).await;
     let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
     act(
@@ -4353,10 +4375,9 @@ async fn the_review_card_names_every_scan_finding() {
     )
     .await;
     let (_, _, page) = send(&rig.router, get("/web/admin/review", Some(&admin))).await;
-    assert!(page.contains("<th>Findings</th>"), "{page}");
     assert!(
-        page.contains(r#"<td class="mono findings">2 hold</td>"#),
-        "{page}"
+        page.contains(r#"<span class="k">scan</span><span class="v">2 hold</span>"#),
+        "the card's scan fact counts them by verdict: {page}"
     );
     let (status, _, page) =
         act_and_follow(&rig, &cookie, "/web/review", &[("action", "review_next")]).await;
@@ -4593,7 +4614,12 @@ async fn a_bulk_confirmation_records_nothing_and_its_verdict_lands_on_the_view_a
         page.contains(&format!(r#"name="pick_000" value="{a}">"#)),
         "{page}"
     );
-    assert!(page.contains("(you)"), "{page}");
+    // Its own agent's writes are marked same user on the card (row 32).
+    assert!(
+        page.contains(r#"<span class="tag oml-chip is-quiet">same user</span>"#),
+        "{page}"
+    );
+    assert!(!page.contains("(you)"), "{page}");
     let (status, _, confirm) = act(
         &rig,
         &cookie,
@@ -4698,6 +4724,223 @@ async fn the_persons_review_page_holds_no_bulk_review_and_refuses_its_acts() {
     assert_eq!(held.status.as_str(), "held");
 }
 
+/// The person's Review lists what waits, by workarea, from the held
+/// listing their reviewer key reads (design notes rows 1, 6, 15); a write
+/// by one of their own agents is listed marked same user; "Open to judge"
+/// draws the item with its verdict form, and the verdict is recorded as a
+/// listed-set verdict of one id, under the person's reviewer key, as a
+/// single approve journals it (ADR-0055 d4; the operator's decision of
+/// 2026-11-13).
+#[tokio::test]
+async fn a_person_judges_one_listed_item_from_the_review_page_as_a_one_id_verdict() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let memory = agent_writes(&rig, &value, "Deploys pause on Fridays.").await;
+    let (status, _, page) = send(&rig.router, get("/web/review", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Waiting for review · 1"), "{page}");
+    assert!(page.contains("Deploys pause on Fridays."), "{page}");
+    assert!(
+        page.contains(r#"<span class="oml-decision">New memory</span>"#),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<span class="tag oml-chip is-quiet">same user</span>"#),
+        "{page}"
+    );
+    let open = format!(r#"href="/web/review?memory={memory}">Open to judge</a>"#);
+    assert!(page.contains(&open), "{page}");
+    assert!(
+        !page.contains("pick_000"),
+        "no bulk pick on the person's page: {page}"
+    );
+    let (status, _, item) = send(
+        &rig.router,
+        get(&format!("/web/review?memory={memory}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{item}");
+    assert!(item.contains(r#"name="action" value="judge""#), "{item}");
+    assert_eq!(field_of(&item, "artifact_id"), memory.to_string());
+    assert!(item.contains("Record verdict"), "{item}");
+    assert!(
+        item.contains("approving is a self-review, marked same user"),
+        "{item}"
+    );
+    let head = rig.head().await;
+    let form = [
+        ("action", "judge"),
+        ("artifact_id", &memory.to_string()),
+        ("verdict", "approve"),
+        ("reason", ""),
+        ("nonce", &field_of(&item, "nonce")),
+    ];
+    let (status, headers, _) = act(&rig, &cookie, "/web/review", &form).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        headers[header::LOCATION].to_str().unwrap(),
+        "/web/review?done=verdict&version=1&state=promoted"
+    );
+    let promoted = rig
+        .store
+        .memory(rig.boot.tenant_id, memory)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(promoted.status.as_str(), "promoted");
+    let events = rig
+        .store
+        .events_range(rig.boot.tenant_id, head + 1, 500)
+        .await
+        .unwrap();
+    let verdicts: Vec<_> = events
+        .iter()
+        .filter(|e| e.envelope.event_type == "review.approve")
+        .collect();
+    assert_eq!(verdicts.len(), 1, "one verdict");
+    assert_eq!(
+        verdicts[0].envelope.api_key_id,
+        Some(key_named(&rig, "alice-review").await.key_id)
+    );
+    let (_, _, page) = send(&rig.router, get("/web/review", Some(&cookie))).await;
+    assert!(page.contains("Waiting for review · 0"), "{page}");
+    assert!(page.contains("Nothing waits for review."), "{page}");
+}
+
+/// R2 on the person's page: a version the person's reviewer key wrote is
+/// never listed to it, and a judge naming its id is refused with
+/// `review.author_in_lineage` and records nothing (ADR-0055 d5).
+#[tokio::test]
+async fn a_version_the_reviewer_key_wrote_is_never_listed_and_judging_it_is_refused() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let memory = agent_writes(&rig, &value, "The backup runs at two.").await;
+    let (_, _, item) = send(
+        &rig.router,
+        get(&format!("/web/review?memory={memory}"), Some(&cookie)),
+    )
+    .await;
+    let (status, _, _) = act(
+        &rig,
+        &cookie,
+        "/web/review",
+        &[
+            ("action", "judge"),
+            ("artifact_id", &memory.to_string()),
+            ("verdict", "approve"),
+            ("nonce", &field_of(&item, "nonce")),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    // boss, an admin with review on alice's root, proposes its next
+    // version: boss-review writes it.
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    act(
+        &rig,
+        &boss,
+        "/web/admin/people",
+        &[
+            ("action", "grant_review"),
+            ("user", "boss"),
+            ("workarea", "alice"),
+        ],
+    )
+    .await;
+    let (status, _, page) = act(
+        &rig,
+        &boss,
+        "/web/admin/memory",
+        &[
+            ("action", "supersede"),
+            ("memory", &memory.to_string()),
+            ("expected_version", "1"),
+            ("text", "The backup runs at three."),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+    // alice's reviewer key may judge it; boss's never sees it listed.
+    let (_, _, alice_list) = send(&rig.router, get("/web/review", Some(&cookie))).await;
+    assert!(
+        alice_list.contains("The backup runs at three."),
+        "{alice_list}"
+    );
+    assert!(
+        alice_list
+            .contains(r#"<span class="oml-decision">Edit <span class="of">of v1</span></span>"#),
+        "{alice_list}"
+    );
+    let marker = "/web/review?memory=";
+    let at = alice_list.find(marker).expect("a row") + marker.len();
+    let successor = alice_list[at..at + 36].to_owned();
+    for path in ["/web/review", "/web/admin/review"] {
+        let (_, _, listed) = send(&rig.router, get(path, Some(&boss))).await;
+        assert!(
+            !listed.contains("The backup runs at three."),
+            "{path}: {listed}"
+        );
+    }
+    let (status, _, refused) = act(
+        &rig,
+        &boss,
+        "/web/review",
+        &[
+            ("action", "judge"),
+            ("artifact_id", &successor),
+            ("verdict", "approve"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert!(refused.contains("review.author_in_lineage"), "{refused}");
+    let held = rig
+        .store
+        .memory(rig.boot.tenant_id, successor.parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(held.status.as_str(), "held", "nothing recorded");
+}
+
+/// The admin's One memory page draws the same card as the person's, with
+/// the scan finding the admin read serves, and says why it offers no
+/// verdict (MemoryScreen).
+#[tokio::test]
+async fn the_admin_memory_page_shows_the_scan_finding_the_persons_page_shows() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let memory = agent_writes(&rig, &value, "Keys rotate quarterly. [needs-human]").await;
+    let (_, _, person) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={memory}"), Some(&cookie)),
+    )
+    .await;
+    assert!(person.contains(r#"<div class="findings">"#), "{person}");
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, page) = send(
+        &rig.router,
+        get(&format!("/web/admin/memory?id={memory}"), Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains(r#"<div class="findings">"#), "{page}");
+    assert!(page.contains("scan findings · 1"), "{page}");
+    assert!(
+        page.contains("0 of the 1 approval this workarea's review policy asks for."),
+        "{page}"
+    );
+    assert!(
+        page.contains("Read here as <code>boss-admin</code>, which never judges. Judge it in Review as <code>boss-review</code>."),
+        "{page}"
+    );
+}
+
 #[tokio::test]
 async fn the_served_card_is_read_by_the_memory_the_redirect_names_never_by_the_serve_id() {
     // The serve id is opaque in the contract (openapi.yaml `serve_id`): the
@@ -4717,6 +4960,12 @@ async fn the_served_card_is_read_by_the_memory_the_redirect_names_never_by_the_s
         "{location}"
     );
     let serve_id = query_param(&location, "serve").expect("the serve id");
+    // The redirect carries the serve's expiry, and the page says it (row 18).
+    let (_, _, served) = send(&rig.router, get(&location, Some(&cookie))).await;
+    assert!(
+        served.contains("Served for review until <time datetime=\"20"),
+        "{served}"
+    );
     let (status, _, page) = send(
         &rig.router,
         get(
@@ -5102,7 +5351,7 @@ async fn a_cut_off_persons_key_acts_are_refused_on_the_page_as_the_api_refuses_t
         let (status, _, page) = act(&rig, &cookie, "/web/keys", fields).await;
         assert_eq!(status, api_status, "{fields:?}: {page}");
         assert!(
-            page.contains(&format!("access.verb_ceiling: {message}")),
+            page.contains(&format!("<code>access.verb_ceiling</code>: {message}")),
             "{fields:?}: the page names the API's code and message: {page}"
         );
     }
@@ -5127,7 +5376,10 @@ async fn a_cut_off_persons_key_acts_are_refused_on_the_page_as_the_api_refuses_t
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
-    assert!(page.contains("access.verb_ceiling: "), "{page}");
+    assert!(
+        page.contains("<code>access.verb_ceiling</code>: "),
+        "{page}"
+    );
     assert_eq!(rig.head().await, head, "nothing journalled");
     // The denial ends no session and refuses no sign-in.
     let again = signed_in(&rig, "sub-1", EMAIL).await;
@@ -5449,9 +5701,9 @@ async fn the_keys_pages_show_a_keys_expiry_expired_mark_and_rate_as_the_api_serv
 
 /// The sentence the Keys and Start pages draw for a person whose session
 /// key carries a denial, and the muted line beneath it.
-const DENIED_SESSION: &str = "Your web session is restricted: you cannot issue keys, get connect codes or cut off keys. An administrator can do these for you.";
+const DENIED_SESSION: &str = "This web session is restricted: it cannot issue keys, get connect codes or cut off keys. An administrator can.";
 const DENIED_STILL_WORKS: &str =
-    "Exporting your memories, requesting deletion and signing out still work.";
+    "Exporting memories, requesting deletion and signing out still work.";
 
 /// The forms the Keys page and the Start page draw for the three acts a
 /// denied session key is refused.
@@ -5526,7 +5778,7 @@ async fn a_person_issues_a_key_with_an_expiry_date_from_the_keys_page() {
             .await;
             assert_eq!(status, api_status, "{action} {day}: {page}");
             assert!(
-                page.contains(&format!("request.validation: {message}")),
+                page.contains(&format!("<code>request.validation</code>: {message}")),
                 "{action} {day}: the page names the API's code and message: {page}"
             );
         }
@@ -5660,7 +5912,7 @@ async fn a_denied_persons_keys_and_start_pages_state_the_refusal_and_draw_no_key
         );
         // On the Keys page the sentence comes first, above the table.
         assert!(
-            keys.find(DENIED_SESSION) < keys.find("<table>"),
+            keys.find(DENIED_SESSION) < keys.find("<table"),
             "{target}: {keys}"
         );
         // The session's own key is the one row marked, in the sentence's
@@ -6318,15 +6570,22 @@ async fn the_atlas_view_is_a_treemap_drawn_on_the_server_with_no_script() {
         .find(|w| w.name.as_str() == "proj")
         .unwrap()
         .workarea_id;
+    // Each region links and is named by its reference (design notes row
+    // 20), and the scope's panel links up to its parent instead of a
+    // breadcrumb (AtlasScreen).
     assert!(
-        page.contains(&format!(
-            "<a href=\"/web/atlas?workarea={proj}\" aria-label=\"proj, 1 readable: 1 held\"><title>proj, 1 readable: 1 held</title>"
-        )),
+        page.contains(
+            "<a href=\"/web/atlas?workarea=alice.proj\" aria-label=\"alice.proj, 1 readable: 1 held\"><title>alice.proj, 1 readable: 1 held</title>"
+        ),
         "{page}"
     );
     assert!(page.contains("id=\"atlas-table\""), "{page}");
     assert!(page.contains("<td class=\"num\">1</td>"), "{page}");
-    assert!(page.contains("aria-label=\"Breadcrumb\""), "{page}");
+    assert!(!page.contains("aria-label=\"Breadcrumb\""), "{page}");
+    assert!(
+        page.contains(r#"Up to <a href="/web/atlas?workarea=universe">universe</a>"#),
+        "{page}"
+    );
     // The vendored scripts are gone with the script.
     let (status, _, _) = send(
         &rig.router,
@@ -6345,7 +6604,7 @@ async fn the_atlas_view_is_a_treemap_drawn_on_the_server_with_no_script() {
     )
     .await;
     assert!(
-        zoomed.contains("<span aria-current=\"page\">proj</span>"),
+        zoomed.contains(r#"<h2 id="sel-h" class="mono">alice.proj</h2><p class="oml-atlas-up">Up to <a href="/web/atlas?workarea=alice">alice</a></p>"#),
         "{zoomed}"
     );
     assert!(zoomed.contains("<select name=\"op\""), "{zoomed}");
@@ -6355,9 +6614,13 @@ async fn the_atlas_view_is_a_treemap_drawn_on_the_server_with_no_script() {
         zoomed.contains(r#"<form class="row act" method="get" action="/web/workareas">"#),
         "{zoomed}"
     );
-    // The list links to the Atlas of the same page, filters kept.
+    // The list links to the Atlas of the same page, filters kept, in one
+    // link (design notes row 23).
     let (_, _, list) = send(&rig.router, get("/web/memories?state=held", Some(&cookie))).await;
-    assert!(list.contains("href=\"/web/atlas?state=held\""), "{list}");
+    assert!(
+        list.contains(r#"<a href="/web/atlas?state=held">The same filters on the Atlas</a>"#),
+        "{list}"
+    );
 }
 
 #[tokio::test]
@@ -6629,7 +6892,7 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
     let (_, _, atlas) = send(&rig.router, get("/web/atlas", Some(&alice))).await;
     assert!(!atlas.contains("bob"), "{atlas}");
     assert!(
-        atlas.contains("aria-label=\"proj, 2 readable: 1 promoted, 1 unreviewed in progress"),
+        atlas.contains("aria-label=\"alice.proj, 2 readable: 1 promoted, 1 unreviewed in progress"),
         "the served row and the helper's held successor of it: {atlas}"
     );
     let (status, _, _) = send(
@@ -6672,7 +6935,12 @@ async fn the_old_memories_urls_are_not_found_and_the_list_and_atlas_answer_at_th
         assert!(headers.get(header::LOCATION).is_none(), "{old}");
         let (status, _, page) = send(&rig.router, get(new, Some(who))).await;
         assert_eq!(status, StatusCode::OK, "{page}");
-        assert!(page.contains("<h1>Memories</h1>"), "{new}: {page}");
+        let h1 = if new.ends_with("atlas") {
+            "<h1>Atlas</h1>"
+        } else {
+            "<h1>Memories</h1>"
+        };
+        assert!(page.contains(h1), "{new}: {page}");
     }
     // The list's rows link to one memory's own page; the old link to it is
     // not found.
@@ -6728,7 +6996,9 @@ async fn the_memories_pages_draw_the_header_and_tabs_the_leads_pages_draw() {
         assert_eq!(status, StatusCode::OK, "{moved}");
         assert_eq!(header_of(&moved), header_of(&lead), "{path}");
         assert!(
-            moved.contains(r#"<a href="/web/admin/memories" class="on" aria-current="page">"#),
+            moved.contains(&format!(
+                r#"<a href="{path}" class="on" aria-current="page">"#
+            )),
             "{moved}"
         );
     }
@@ -6832,4 +7102,940 @@ async fn a_lead_mid_rotation_accepts_the_old_and_new_secret_and_the_doctor_tells
     assert_eq!(probe(closed, WEB_CLIENT_SECRET).await.0, Level::Ok);
     let (level, text) = probe(closed, OLD).await;
     assert_eq!(level, Level::Fail, "the window closed: {text}");
+}
+
+// -- the workarea picker and its reference (design notes rows 14, 20, 21) --
+
+/// alice with `proj` and `docs` inside it, a memory in each, and boss, an
+/// admin: alice's cookie, boss's cookie.
+async fn alice_proj_docs(rig: &Rig) -> (String, String) {
+    rig.allow("boss@example.com", "boss", true).await;
+    let (alice, agent) = person_with_agent(rig, "sub-1", EMAIL).await;
+    alice_proj(rig, &alice).await;
+    let (status, _, _) = act(
+        rig,
+        &alice,
+        "/web/workareas",
+        &[
+            ("action", "create_workarea"),
+            ("name", "docs"),
+            ("parent", "alice.proj"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    agent_writes_in(rig, &agent, "inside proj", "alice.proj").await;
+    agent_writes_in(rig, &agent, "inside docs", "alice.docs").await;
+    let boss = signed_in(rig, "sub-boss", "boss@example.com").await;
+    (alice, boss)
+}
+
+#[tokio::test]
+async fn the_workareas_pages_name_a_workarea_by_the_reference_every_field_takes() {
+    let rig = rig().await;
+    let (alice, boss) = alice_proj_docs(&rig).await;
+    for (cookie, path, memories) in [
+        (&alice, "/web/workareas", "/web/memories"),
+        (&boss, "/web/admin/workareas", "/web/admin/memories"),
+    ] {
+        let (status, _, page) = send(&rig.router, get(path, Some(cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        assert!(
+            !page.contains("alice.proj.docs"),
+            "{path} prints a path no field takes: {page}"
+        );
+        assert!(page.contains(">alice.docs<"), "{path}: {page}");
+        // The name the page prints is one the Memories field takes.
+        let (status, _, listed) = send(
+            &rig.router,
+            get(&format!("{memories}?workarea=alice.docs"), Some(cookie)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{listed}");
+        assert!(listed.contains("inside docs"), "{listed}");
+    }
+}
+
+#[tokio::test]
+async fn a_bare_name_resolves_on_the_admin_pages_as_on_the_persons() {
+    let rig = rig().await;
+    let (alice, boss) = alice_proj_docs(&rig).await;
+    for (cookie, path) in [
+        (&alice, "/web/memories?workarea=docs"),
+        (&boss, "/web/admin/memories?workarea=docs"),
+        (&alice, "/web/atlas?workarea=docs"),
+        (&boss, "/web/admin/atlas?workarea=docs"),
+    ] {
+        let (status, _, page) = send(&rig.router, get(path, Some(cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {page}");
+        assert!(
+            page.contains(r#"name="workarea" type="text" value="alice.docs""#),
+            "{path} shows the reference it resolved: {page}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_admin_atlas_links_up_by_a_reference_that_resolves_below_a_user_root() {
+    let rig = rig().await;
+    let (_alice, boss) = alice_proj_docs(&rig).await;
+    let (status, _, page) = send(
+        &rig.router,
+        get("/web/admin/atlas?workarea=alice.docs", Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let links: Vec<String> = page
+        .match_indices("href=\"/web/admin/atlas?workarea=")
+        .map(|(at, m)| {
+            let start = at + "href=\"".len();
+            page[start..at + m.len() + page[at + m.len()..].find('"').unwrap()]
+                .replace("&amp;", "&")
+        })
+        .collect();
+    assert!(
+        links
+            .iter()
+            .any(|l| l == "/web/admin/atlas?workarea=alice.proj"),
+        "the scope links up to its parent by reference: {links:?}"
+    );
+    for link in &links {
+        let (status, _, answer) = send(&rig.router, get(link, Some(&boss))).await;
+        assert_eq!(status, StatusCode::OK, "{link}: {answer}");
+    }
+}
+
+#[tokio::test]
+async fn an_unknown_and_an_unreadable_workarea_get_one_refusal_naming_only_readable_names() {
+    let rig = rig().await;
+    let (alice, _boss) = alice_proj_docs(&rig).await;
+    rig.allow("bob@example.com", "bob", false).await;
+    signed_in(&rig, "sub-bob", "bob@example.com").await;
+    for (typed, said) in [("bob", "bob"), ("nosuch", "nosuch"), ("BOB", "bob")] {
+        for path in ["/web/memories", "/web/atlas"] {
+            let (status, _, page) = send(
+                &rig.router,
+                get(&format!("{path}?workarea={typed}"), Some(&alice)),
+            )
+            .await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path} {typed}: {page}");
+            let sentence = format!("No readable workarea is named <code>{said}</code>.");
+            assert!(page.contains(&sentence), "{path} {typed}: {page}");
+            assert!(page.contains(r#"aria-invalid="true""#), "{page}");
+            assert!(!page.contains("<option value=\"bob"), "{page}");
+            assert!(
+                !page.contains("oml-mlist\"><li"),
+                "nothing is listed: {page}"
+            );
+            assert!(page.contains("No close name"), "{page}");
+        }
+    }
+    // A name near a readable one is offered by its reference.
+    let (status, _, page) =
+        send(&rig.router, get("/web/memories?workarea=prj", Some(&alice))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
+    assert!(
+        page.contains(r#"<a href="/web/memories?workarea=alice.proj">alice.proj</a>"#),
+        "{page}"
+    );
+    // A typed name is trimmed and lower-cased.
+    let (status, _, page) = send(
+        &rig.router,
+        get("/web/memories?workarea=%20ALICE.PROJ%20", Some(&alice)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains(r#"type="text" value="alice.proj""#), "{page}");
+    assert!(page.contains("inside proj"), "{page}");
+}
+
+#[tokio::test]
+async fn the_workareas_page_draws_fifty_rows_a_page_with_a_link_to_the_next() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    for n in 0..51 {
+        let name = format!("w{n:02}");
+        let (status, _, body) = act(
+            &rig,
+            &cookie,
+            "/web/workareas",
+            &[("action", "create_workarea"), ("name", &name)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{name}: {body}");
+    }
+    // alice's root and its 51 children: 52 rows.
+    let (status, _, first) = send(&rig.router, get("/web/workareas", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(
+        first.matches("<select name=\"op\"").count()
+            + first.matches("nothing to do here now").count(),
+        50,
+        "{first}"
+    );
+    assert!(
+        first.contains(r#"<p class="pager">1–50 of 52 · <a rel="next" href="/web/workareas?from=50">Next page</a></p>"#),
+        "{first}"
+    );
+    let (status, _, next) = send(&rig.router, get("/web/workareas?from=50", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{next}");
+    assert!(next.contains(">alice.w50<"), "{next}");
+    assert!(!next.contains(">alice.w00<"), "{next}");
+    assert!(
+        next.contains(
+            r#"<p class="pager">51–52 of 52 · <a href="/web/workareas">First page</a></p>"#
+        ),
+        "{next}"
+    );
+    let (status, _, _) = send(&rig.router, get("/web/workareas?from=x", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+// -- the two sides (the design system's BrandHeader, variant A) --------------
+
+/// A page without its stylesheet, whose comments and selectors are not
+/// what the page says.
+fn markup(page: &str) -> String {
+    page.replace(oml_page::web::STYLESHEET, "")
+}
+
+/// The text between the first `open` and the `close` after it.
+fn between<'a>(page: &'a str, open: &str, close: &str) -> &'a str {
+    let start = page.find(open).map_or(page.len(), |i| i + open.len());
+    let end = page[start..].find(close).map_or(page.len(), |i| i + start);
+    &page[start..end]
+}
+
+/// The side's `<nav>` a page with `current` its current tab draws: the
+/// side's pages alone, in the BrandHeader's order.
+fn side_nav(label: &str, tabs: &[(&str, &str)], current: &str) -> String {
+    let mut nav = format!(r#"<nav aria-label="{label}">"#);
+    for (href, word) in tabs {
+        let on = if *href == current {
+            r#" class="on" aria-current="page""#
+        } else {
+            ""
+        };
+        nav.push_str(&format!(r#"<a href="{href}"{on}>{word}</a>"#));
+    }
+    nav + "</nav>"
+}
+
+const PERSONAL: [(&str, &str); 7] = [
+    ("/web/start", "Start"),
+    ("/web/memories", "Memories"),
+    ("/web/review", "Review"),
+    ("/web/atlas", "Atlas"),
+    ("/web/keys", "Keys"),
+    ("/web/workareas", "Workareas"),
+    ("/web/guardrails", "Guardrails"),
+];
+
+const ADMINISTRATION: [(&str, &str); 8] = [
+    ("/web/admin/people", "People"),
+    ("/web/admin/users", "Quotas"),
+    ("/web/admin/memories", "Memories"),
+    ("/web/admin/review", "Review"),
+    ("/web/admin/atlas", "Atlas"),
+    ("/web/admin/keys", "Keys"),
+    ("/web/admin/workareas", "Workareas"),
+    ("/web/admin/curate", "Curate"),
+];
+
+/// Each tab's page, on each side, draws that side's bar: its nav exactly,
+/// the scope word, the switch to the other side, the `<title>` and an
+/// `<h1>` that is the tab's word.
+#[tokio::test]
+async fn each_side_draws_its_own_nav_and_each_page_is_titled_and_headed_by_its_tab() {
+    let rig = rig().await;
+    rig.allow("bob@example.com", "bob", true).await;
+    let bob = signed_in(&rig, "sub-2", "bob@example.com").await;
+    for (side, label, tabs, title, switch) in [
+        (
+            "personal",
+            "Personal",
+            &PERSONAL[..],
+            "",
+            r#"<a class="switch" href="/web/admin/people">"#,
+        ),
+        (
+            "admin",
+            "Administration",
+            &ADMINISTRATION[..],
+            "Admin · ",
+            r#"<a class="switch" href="/web/start">"#,
+        ),
+    ] {
+        for (path, word) in tabs {
+            let (status, _, page) = send(&rig.router, get(path, Some(&bob))).await;
+            assert_eq!(status, StatusCode::OK, "{path}: {page}");
+            let page = markup(&page);
+            assert_eq!(
+                between(&page, "<title>", "</title>"),
+                format!("{title}{word} · OML"),
+                "{path}"
+            );
+            assert_eq!(between(&page, "<h1>", "</h1>"), *word, "{path}");
+            let header = between(&page, "<header", "</header>");
+            assert!(
+                header.starts_with(&format!(r#" class="top {side}">"#)),
+                "{path}: {header}"
+            );
+            assert_eq!(
+                format!("<nav{}</nav>", between(header, "<nav", "</nav>")),
+                side_nav(label, tabs, path),
+                "{path}"
+            );
+            assert!(
+                header.contains(&format!("{label}</span><nav")),
+                "{path}: {header}"
+            );
+            assert_eq!(header.matches(r#"class="switch""#).count(), 1, "{path}");
+            assert!(header.contains(switch), "{path}: {header}");
+            assert!(!page.contains("Your page"), "{path}");
+        }
+    }
+}
+
+/// A person without the admin capacity is shown no word, link or address
+/// of the Administration side: no switch, no admin tab, no admin title,
+/// on any page of theirs or on the refusal of an admin address, which is
+/// drawn in the Personal bar and leads back to Start (ADR-0045 d10).
+#[tokio::test]
+async fn a_person_without_the_admin_capacity_sees_nothing_of_the_admin_side() {
+    let rig = rig().await;
+    let alice = signed_in(&rig, "sub-1", EMAIL).await;
+    let mut pages = Vec::new();
+    for (path, _) in PERSONAL {
+        let (status, _, page) = send(&rig.router, get(path, Some(&alice))).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {page}");
+        pages.push((path.to_owned(), page));
+    }
+    for (path, _) in ADMINISTRATION {
+        let (status, _, page) = send(&rig.router, get(path, Some(&alice))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {page}");
+        assert!(
+            page.contains(r#"<header class="top personal">"#),
+            "{path}: {page}"
+        );
+        assert!(
+            page.contains(r#"<p><a href="/web/start">Back to Start</a></p>"#),
+            "{path}: {page}"
+        );
+        pages.push((path.to_owned(), page));
+    }
+    for (path, page) in pages {
+        let page = markup(&page);
+        for word in [
+            "Administration",
+            "/web/admin",
+            "Admin ·",
+            r#"class="switch""#,
+        ] {
+            assert!(!page.contains(word), "{path} names {word}: {page}");
+        }
+    }
+}
+
+/// A refusal is drawn inside the bar of the side it happened on, with the
+/// sign-out control and one link back to the tab of the page that refused.
+#[tokio::test]
+async fn a_refusal_page_is_drawn_inside_its_sides_bar_with_a_link_back_to_its_tab() {
+    let rig = rig().await;
+    rig.allow("bob@example.com", "bob", true).await;
+    let bob = signed_in(&rig, "sub-2", "bob@example.com").await;
+    let unknown = "00000000-0000-4000-8000-000000000000";
+    for (path, side, back) in [
+        (
+            format!("/web/admin/memory?id={unknown}"),
+            "admin",
+            r#"<a href="/web/admin/memories">Back to Memories</a>"#,
+        ),
+        (
+            format!("/web/memory?id={unknown}"),
+            "personal",
+            r#"<a href="/web/memories">Back to Memories</a>"#,
+        ),
+        (
+            "/web/keys?unknown=1&unknown=2".to_owned(),
+            "personal",
+            r#"<a href="/web/keys">Back to Keys</a>"#,
+        ),
+    ] {
+        let (status, _, page) = send(&rig.router, get(&path, Some(&bob))).await;
+        assert!(status.is_client_error(), "{path}: {status} {page}");
+        let page = markup(&page);
+        assert!(
+            page.contains(&format!(r#"<header class="top {side}">"#)),
+            "{path}: {page}"
+        );
+        assert!(page.contains("<h1>This cannot continue</h1>"), "{path}");
+        assert!(page.contains(back), "{path}: {page}");
+        assert!(page.contains(r#"value="sign_out""#), "{path}");
+        assert!(
+            page.contains(r#"<span class="name">bob · "#),
+            "{path}: {page}"
+        );
+    }
+}
+
+/// Every page's bar names its side and the person at every width: the
+/// scope word, the name and the tenant are in the bar's markup, and no
+/// rule of the stylesheet hides them below 600px (`oml-page`'s
+/// `the_bar_keeps_the_side_and_the_person_at_every_width`).
+#[tokio::test]
+async fn every_bar_names_its_side_and_the_person() {
+    let rig = rig().await;
+    rig.allow("bob@example.com", "bob", true).await;
+    let bob = signed_in(&rig, "sub-2", "bob@example.com").await;
+    let (_, _, whoami) = send(&rig.router, get("/web/keys", Some(&bob))).await;
+    let name = between(&whoami, r#"<span class="name">"#, "</span>").to_owned();
+    assert!(
+        name.starts_with("bob · ") && name.len() > "bob · ".len(),
+        "{name}"
+    );
+    for (path, label) in PERSONAL
+        .iter()
+        .map(|(p, _)| (*p, "Personal"))
+        .chain(ADMINISTRATION.iter().map(|(p, _)| (*p, "Administration")))
+    {
+        let (_, _, page) = send(&rig.router, get(path, Some(&bob))).await;
+        let header = between(&page, "<header", "</header>");
+        assert!(
+            header.contains(&format!(r#"<span class="name">{name}</span>"#)),
+            "{path}"
+        );
+        assert!(
+            header.contains(&format!("{label}</span><nav")),
+            "{path}: {header}"
+        );
+    }
+}
+
+// -- one memory, the same facts on every person surface (bulk D fixes) -----
+
+/// The card of `id` on `page`: its `<article>` whole.
+fn card_of<'a>(page: &'a str, id: &str) -> &'a str {
+    let at = page
+        .find(&format!(r#"id="m-{id}""#))
+        .unwrap_or_else(|| panic!("no card m-{id}: {page}"));
+    let start = page[..at].rfind("<article").expect("an article");
+    &page[start..at + page[at..].find("</article>").expect("its end")]
+}
+
+/// The head's facts of a card, without the Memories row's version bar
+/// (design notes row 12) and the `same user` mark the Review listing adds.
+fn head_facts(card: &str) -> String {
+    let start = card.find(r#"<ul class="mc-facts">"#).expect("the facts");
+    let rest = &card[start..];
+    // The facts list holds the version bar's own `<ol>`, never a `</ul>`
+    // before its end.
+    let mut facts = rest[..rest.find("</li></ul>").expect("the facts' end")].to_owned();
+    if let Some(bar) = facts.find(r#"<span class="vb">"#) {
+        let end = bar + facts[bar..].find("</ol></span>").expect("the bar's end");
+        facts.replace_range(bar..end + "</ol></span>".len(), "");
+    }
+    facts.replace(
+        r#" <span class="tag oml-chip is-quiet">same user</span>"#,
+        "",
+    )
+}
+
+/// The opened facts of a card, as `(label, value)`, without the way in
+/// and the page's ids.
+fn body_facts(card: &str) -> Vec<(String, String)> {
+    let list = between(card, r#"<dl class="oml-facts">"#, "</dl>");
+    list.split("<dt>")
+        .skip(1)
+        .filter_map(|pair| {
+            let (label, value) = pair.split_once("</dt><dd>")?;
+            let value = value.trim_end_matches("</dd>");
+            (!matches!(
+                label,
+                "Open" | "Id" | "Kind" | "Text digest" | "Attachments"
+            ))
+            .then(|| (label.to_owned(), value.to_owned()))
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn one_memory_shows_the_same_facts_in_the_same_words_on_memories_review_and_its_page() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let memory = agent_writes(&rig, &value, "Backups run at 02:00 UTC.").await;
+    let id = memory.to_string();
+    let (_, _, memories) = send(&rig.router, get("/web/memories", Some(&cookie))).await;
+    let (_, _, review) = send(&rig.router, get("/web/review", Some(&cookie))).await;
+    let (_, _, page) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={id}"), Some(&cookie)),
+    )
+    .await;
+    let cards = [
+        ("Memories", card_of(&memories, &id)),
+        ("Review", card_of(&review, &id)),
+        ("its page", card_of(&page, &id)),
+    ];
+    for (surface, card) in &cards {
+        // The author as the read serves it, and no kind the read cannot
+        // stand behind: its provenance is `agent` for every key.
+        assert!(!card.contains(r#"class="kind""#), "{surface}: {card}");
+        assert!(!card.contains("data-author-kind"), "{surface}: {card}");
+        assert!(
+            card.contains(r#"<span class="who">alice-laptop</span>"#),
+            "{surface}: {card}"
+        );
+    }
+    let (_, memories_card) = cards[0];
+    for (surface, card) in &cards[1..] {
+        assert_eq!(
+            head_facts(card),
+            head_facts(memories_card),
+            "{surface}'s head facts"
+        );
+        assert_eq!(
+            body_facts(card),
+            body_facts(memories_card),
+            "{surface}'s opened facts"
+        );
+    }
+    let labels: Vec<String> = body_facts(memories_card)
+        .into_iter()
+        .map(|(l, _)| l)
+        .collect();
+    assert_eq!(
+        labels,
+        ["Source", "Valid", "Approval", "Served"],
+        "{memories_card}"
+    );
+}
+
+#[tokio::test]
+async fn the_approval_line_has_one_wording_on_both_sides_and_never_names_who() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let memory = agent_writes(&rig, &value, "Tokens rotate every 90 days.").await;
+    let id = memory.to_string();
+    let (_, _, item) = send(
+        &rig.router,
+        get(&format!("/web/review?memory={id}"), Some(&cookie)),
+    )
+    .await;
+    let form = [
+        ("action", "judge"),
+        ("artifact_id", id.as_str()),
+        ("verdict", "approve"),
+        ("reason", ""),
+        ("nonce", &field_of(&item, "nonce")),
+    ];
+    let (status, _, _) = act(&rig, &cookie, "/web/review", &form).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (_, _, person) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={id}"), Some(&cookie)),
+    )
+    .await;
+    let (_, _, admin) = send(
+        &rig.router,
+        get(&format!("/web/admin/memory?id={id}"), Some(&boss)),
+    )
+    .await;
+    let approval = |page: &str| {
+        body_facts(card_of(page, &id))
+            .into_iter()
+            .find(|(l, _)| l == "Approval")
+            .map(|(_, v)| v)
+            .unwrap_or_else(|| panic!("no Approval: {page}"))
+    };
+    let (person, admin) = (approval(&person), approval(&admin));
+    // The person's read serves the kind of key; the admin read does not,
+    // so its line leaves that slot out and keeps the same words.
+    assert!(
+        person.starts_with("approved by a person's key on 20"),
+        "{person}"
+    );
+    assert!(admin.starts_with("approved on 20"), "{admin}");
+    assert_eq!(
+        person
+            .replace(" by a person's key", "")
+            .split(" · ")
+            .next()
+            .unwrap_or_default(),
+        admin,
+        "one wording"
+    );
+    assert!(!admin.contains("alice-review") && !person.contains("alice-review"));
+}
+
+/// `universe.platform.oncall`, a shared workarea nested under another, and
+/// a held memory in it that a tenant writer wrote; `alice-review` and
+/// `boss-review` may judge it. Alice's cookie and the admin's.
+async fn held_in_a_nested_shared_workarea(rig: &Rig) -> (String, String, uuid::Uuid) {
+    rig.allow("boss@example.com", "boss", true).await;
+    let alice = signed_in(rig, "sub-1", EMAIL).await;
+    let boss = signed_in(rig, "sub-boss", "boss@example.com").await;
+    let admin = &rig.boot.admin_key.value;
+    let name = |n: &str| Name::parse(n).expect("a name");
+    // Through the lead's API, whose id generator the rig's own app does
+    // not share.
+    for (child, parent) in [("platform", "universe"), ("oncall", "platform")] {
+        let request = Request::post("/v2/workareas")
+            .header(header::AUTHORIZATION, format!("Bearer {admin}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("Idempotency-Key", format!("wa-{child}"))
+            .body(Body::from(
+                json!({"name": child, "parent": parent}).to_string(),
+            ))
+            .expect("a request");
+        let (status, _, body) = send(&rig.router, request).await;
+        assert_eq!(status, StatusCode::CREATED, "{child}: {body}");
+    }
+    let pager = rig
+        .app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Writer,
+                name: name("pager"),
+                principal: "pager".to_owned(),
+                held_by: Some(HeldBy::Agent),
+                default_workarea: None,
+                crew: None,
+                grants: [Role::Writer, Role::Reader]
+                    .into_iter()
+                    .map(|role| GrantRequest {
+                        node: name("oncall").into(),
+                        role,
+                        deny: Vec::new(),
+                        covers: oml_app::domain::access::Covers::Subtree,
+                    })
+                    .collect(),
+                connect_code: false,
+                user: None,
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("a tenant writer on oncall");
+    let memory = agent_writes_in(rig, &pager.value, "The pager rotates weekly.", "oncall").await;
+    for user in ["alice", "boss"] {
+        let (status, _, body) = act(
+            rig,
+            &boss,
+            "/web/admin/people",
+            &[
+                ("action", "grant_review"),
+                ("user", user),
+                ("workarea", "oncall"),
+            ],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{user}: {body}");
+    }
+    (alice, boss, memory)
+}
+
+#[tokio::test]
+async fn a_nested_shared_workarea_is_named_by_its_bare_name_on_both_review_pages_and_their_links() {
+    let rig = rig().await;
+    let (alice, boss, memory) = held_in_a_nested_shared_workarea(&rig).await;
+    let (status, _, page) = send(&rig.router, get("/web/review", Some(&alice))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("The pager rotates weekly."), "{page}");
+    assert!(!page.contains("platform.oncall"), "{page}");
+    // The Waiting table, the card's "in" link and the verdict line.
+    assert!(
+        page.contains(r#"<a href="/web/review?workarea=oncall">oncall</a>"#),
+        "{page}"
+    );
+    // Its oldest row's instant is to the second, in UTC, as on every page.
+    assert!(page.contains(" UTC</time></td></tr>"), "{page}");
+    assert!(!page.contains("Z</td>"), "no raw instant: {page}");
+    assert!(
+        page.contains(r#"href="/web/memories?workarea=oncall">oncall</a>"#),
+        "{page}"
+    );
+    assert!(
+        page.contains("to every key that reads <code>oncall</code>"),
+        "{page}"
+    );
+    // The name the page prints filters the list.
+    let (status, _, filtered) = send(
+        &rig.router,
+        get("/web/review?workarea=oncall", Some(&alice)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{filtered}");
+    assert!(filtered.contains("The pager rotates weekly."), "{filtered}");
+    let (status, _, item) = send(
+        &rig.router,
+        get(&format!("/web/review?memory={memory}"), Some(&alice)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{item}");
+    assert!(!item.contains("platform.oncall"), "{item}");
+    assert!(
+        item.contains("to every key that reads <code>oncall</code>"),
+        "{item}"
+    );
+
+    let (status, _, admin) = send(&rig.router, get("/web/admin/review", Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK, "{admin}");
+    assert!(!admin.contains("platform.oncall"), "{admin}");
+    assert!(admin.contains(" UTC</time></td></tr>"), "{admin}");
+    assert!(
+        admin.contains(r#"href="/web/admin/review?held=1&amp;workarea=oncall">oncall</a>"#),
+        "{admin}"
+    );
+    let link = r#"href="/web/admin/memories?workarea=oncall">oncall</a>"#;
+    assert!(admin.contains(link), "{admin}");
+    let (status, _, listed) = send(
+        &rig.router,
+        get("/web/admin/memories?workarea=oncall", Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert!(listed.contains("The pager rotates weekly."), "{listed}");
+    let (status, _, filtered) = send(
+        &rig.router,
+        get("/web/admin/review?held=1&workarea=oncall", Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{filtered}");
+    assert!(filtered.contains("The pager rotates weekly."), "{filtered}");
+    // The admin's One memory page reads the policy by the same reference.
+    let (status, _, one) = send(
+        &rig.router,
+        get(&format!("/web/admin/memory?id={memory}"), Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{one}");
+    assert!(link_free(&one, "platform.oncall"), "{one}");
+    assert!(
+        one.contains("this workarea's review policy asks for"),
+        "{one}"
+    );
+}
+
+/// Whether `page` prints `text` nowhere.
+fn link_free(page: &str, text: &str) -> bool {
+    !page.contains(text)
+}
+
+/// The admin review page is unchanged by "Open to judge" (ADR-0055 d10 as
+/// amended on 2026-11-13; ADR-0070 d7 (b)): no link, no judge form for a
+/// listed id, and its act list refuses `judge` by name.
+#[tokio::test]
+async fn the_admin_review_page_has_no_open_to_judge_and_refuses_the_judge_act() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let cookie = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let value = laptop_key(&rig, &cookie).await;
+    let memory = agent_writes(&rig, &value, "Releases ship on Thursdays.").await;
+    let (status, _, page) = send(&rig.router, get("/web/admin/review", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Releases ship on Thursdays."), "{page}");
+    assert!(!page.contains("Open to judge"), "{page}");
+    assert!(!page.contains("?memory="), "{page}");
+    let (_, _, opened) = send(
+        &rig.router,
+        get(&format!("/web/admin/review?memory={memory}"), Some(&cookie)),
+    )
+    .await;
+    assert!(!opened.contains(r#"value="judge""#), "{opened}");
+    let head = rig.head().await;
+    let (status, _, body) = act(
+        &rig,
+        &cookie,
+        "/web/admin/review",
+        &[
+            ("action", "judge"),
+            ("artifact_id", &memory.to_string()),
+            ("verdict", "approve"),
+            ("reason", ""),
+            ("nonce", "n-judge"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(rig.head().await, head, "nothing is journalled");
+}
+
+/// The `memory.admin_read` events journalled after `head`.
+async fn admin_reads_since(rig: &Rig, head: u64) -> usize {
+    rig.store
+        .events_range(rig.boot.tenant_id, head + 1, 500)
+        .await
+        .unwrap()
+        .iter()
+        .filter(|e| e.envelope.event_type == "memory.admin_read")
+        .count()
+}
+
+/// The admin's One memory page makes one journalled admin read on load:
+/// the change against the replaced version is a second admin read, which
+/// the admin chooses through "Show the change" (bulk D fixes).
+#[tokio::test]
+async fn the_admin_memory_page_reads_the_replaced_version_only_when_the_admin_asks() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let (_, agent) = person_with_agent(&rig, "sub-1", EMAIL).await;
+    let target = agent_writes(&rig, &agent, "The relay closes at noon.").await;
+    let helper = reviewer_in_alices_root(&rig).await;
+    reviewer_holds_a_successor(&rig, &helper.value, target, "The relay closes at one.").await;
+    let [successor] = memories_reading(&rig, "The relay closes at one.").await[..] else {
+        panic!("one successor");
+    };
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let head = rig.head().await;
+    let path = format!("/web/admin/memory?id={successor}");
+    let (status, _, page) = send(&rig.router, get(&path, Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(admin_reads_since(&rig, head).await, 1, "one admin read");
+    assert!(!page.contains("Change against"), "{page}");
+    let show =
+        format!(r#"<a href="/web/admin/memory?id={successor}&amp;change=1">Show the change</a>"#);
+    assert!(page.contains(&show), "{page}");
+    let head = rig.head().await;
+    let (status, _, page) = send(&rig.router, get(&format!("{path}&change=1"), Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(
+        admin_reads_since(&rig, head).await,
+        2,
+        "the asked-for second read"
+    );
+    assert!(page.contains("Change against v1"), "{page}");
+    assert!(page.contains("<del>noon.</del>"), "{page}");
+    // Replaces names the claim and the version, as the person's page
+    // does, and Derives from does not name the same version again.
+    let replaces = between(&page, "<dt>Replaces</dt><dd>", "</dd>");
+    assert!(replaces.contains(" · v1</a>"), "{replaces}");
+    assert!(!page.contains(&format!(">{target}</a>")), "{page}");
+}
+
+/// Review's Browse link opens Browse on both sides, as on Memories (bulk D
+/// fixes): the link the closed field draws leads to a page that draws it
+/// open.
+#[tokio::test]
+async fn the_review_pages_browse_link_opens_browse() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let alice = signed_in(&rig, "sub-1", EMAIL).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    for (cookie, path) in [(&alice, "/web/review"), (&boss, "/web/admin/review")] {
+        let (_, _, page) = send(&rig.router, get(path, Some(cookie))).await;
+        let marker = r#"<a class="oml-wa-browse oml-wa-ask" href=""#;
+        let at = page
+            .find(marker)
+            .unwrap_or_else(|| panic!("{path}: {page}"))
+            + marker.len();
+        let link = page[at..at + page[at..].find('"').unwrap()].replace("&amp;", "&");
+        assert!(link.contains("browse=1"), "{link}");
+        let (status, _, opened) = send(&rig.router, get(&link, Some(cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{link}: {opened}");
+        assert!(
+            opened.contains(r#"<details class="oml-wa-browse" open>"#),
+            "{link}: {opened}"
+        );
+    }
+}
+
+/// A `judge` form resent with its nonce and another memory's id conflicts,
+/// as every other act's resend with another request does, and judges
+/// nothing (bulk D fixes): the API keys a listed verdict per item, so the
+/// page binds the form's nonce to the item it drew.
+#[tokio::test]
+async fn a_judge_form_resent_with_another_id_conflicts_and_judges_nothing() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let first = agent_writes(&rig, &value, "The cache warms at boot.").await;
+    let second = agent_writes(&rig, &value, "The cache holds a day.").await;
+    let (_, _, item) = send(
+        &rig.router,
+        get(&format!("/web/review?memory={first}"), Some(&cookie)),
+    )
+    .await;
+    let nonce = field_of(&item, "nonce");
+    let judge = |id: uuid::Uuid| {
+        vec![
+            ("action", "judge".to_owned()),
+            ("artifact_id", id.to_string()),
+            ("verdict", "approve".to_owned()),
+            ("reason", String::new()),
+            ("nonce", nonce.clone()),
+        ]
+    };
+    let sent = judge(first);
+    let fields: Vec<(&str, &str)> = sent.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let (status, _, _) = act(&rig, &cookie, "/web/review", &fields).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let head = rig.head().await;
+    let resent = judge(second);
+    let fields: Vec<(&str, &str)> = resent.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let (status, _, body) = act(&rig, &cookie, "/web/review", &fields).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("idempotency.digest_mismatch"), "{body}");
+    assert_eq!(rig.head().await, head, "nothing is journalled");
+    let held = rig
+        .store
+        .memory(rig.boot.tenant_id, second)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(held.status.as_str(), "held");
+    // The same form sent again for its own item replays.
+    let fields: Vec<(&str, &str)> = sent.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let (status, _, _) = act(&rig, &cookie, "/web/review", &fields).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(rig.head().await, head, "a replay journals nothing");
+}
+
+/// The redesign's pages, as the fix round left them: the Atlas has its own
+/// line under its heading on both sides, the admin side's Memories and
+/// Atlas name the key that reads, the three wide tables stack below 600px,
+/// and the decision is a chip, not a button (bulk D fixes).
+#[tokio::test]
+async fn the_atlas_has_its_own_lede_and_the_admin_lists_name_the_key_that_reads() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let alice = signed_in(&rig, "sub-1", EMAIL).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (_, _, atlas) = send(&rig.router, get("/web/atlas", Some(&alice))).await;
+    let (_, _, list) = send(&rig.router, get("/web/memories", Some(&alice))).await;
+    let lede = |page: &str| between(page, "</h1></div><p class=\"desc\">", "</p>").to_owned();
+    assert_ne!(lede(&atlas), lede(&list), "{atlas}");
+    assert!(lede(&atlas).contains("workarea"), "{atlas}");
+    for path in ["/web/admin/memories", "/web/admin/atlas"] {
+        let (_, _, page) = send(&rig.router, get(path, Some(&boss))).await;
+        assert!(
+            lede(&page).starts_with("Read as <code>boss-admin</code>"),
+            "{path}: {page}"
+        );
+    }
+    let (_, _, admin_atlas) = send(&rig.router, get("/web/admin/atlas", Some(&boss))).await;
+    let (_, _, admin_list) = send(&rig.router, get("/web/admin/memories", Some(&boss))).await;
+    assert_ne!(lede(&admin_atlas), lede(&admin_list));
+    for (path, class) in [("/web/workareas", "t-wa"), ("/web/keys", "t-keys")] {
+        let (_, _, page) = send(&rig.router, get(path, Some(&alice))).await;
+        assert!(
+            page.contains(&format!(r#"<table class="oml-stack {class}">"#)),
+            "{path}: {page}"
+        );
+    }
+    let sheet = oml_page::web::STYLESHEET;
+    assert!(sheet.contains(".oml-stack.t-wa td:nth-child(2)::before{content:\"Inside\"}"));
+    let decision = between(sheet, ".oml-decision{", "}");
+    assert!(
+        decision.contains("border-radius:var(--radius-pill)"),
+        "{decision}"
+    );
 }

@@ -1,6 +1,6 @@
 //! The usage meters the pages draw from the fields `GET /v2/whoami`'s
 //! `person` and each row of `GET /v2/web/users` carry (ADR-0071 d6): the
-//! "Your usage" card of the Start and Keys pages, and the meter columns of
+//! "Usage" card of the Start and Keys pages, and the meter columns of
 //! the users page, each meter in both of its states and for a person no
 //! limit is read for. Against an API double that answers the person as a
 //! test says.
@@ -185,7 +185,7 @@ async fn the_start_page_draws_each_meter_against_its_limit_with_a_mark_at_eighty
  {
     let page = get(start_script(person_under_limits()), "/web/start").await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.body);
-    assert!(page.body.contains("<h2>Your usage</h2>"), "{}", page.body);
+    assert!(page.body.contains("<h2>Usage</h2>"), "{}", page.body);
 
     let memories = row(&page.body, "Memories");
     assert!(memories.contains("800 / 1000"), "{memories}");
@@ -247,7 +247,11 @@ async fn a_person_no_limit_is_read_for_gets_no_usage_card_and_no_zeros() {
         };
         let page = get(script, path).await;
         assert_eq!(page.status, StatusCode::OK, "{path}: {}", page.body);
-        assert!(!page.body.contains("Your usage"), "{path}: {}", page.body);
+        assert!(
+            !page.body.contains("<h2>Usage</h2>"),
+            "{path}: {}",
+            page.body
+        );
         assert!(
             !page.body.contains(r#"id="usage""#),
             "{path}: {}",
@@ -278,7 +282,7 @@ async fn the_keys_page_draws_the_card_above_the_keys_and_marks_it_unavailable_wh
  {
     let page = get(keys_script(Ok(person_under_limits())), "/web/keys").await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.body);
-    let card = page.body.find("<h2>Your usage</h2>").expect("the card");
+    let card = page.body.find("<h2>Usage</h2>").expect("the card");
     let keys = page.body.find("alice-agent").expect("the key");
     assert!(card < keys, "{}", page.body);
     assert!(row(&page.body, "Memories").contains("800 / 1000"));
@@ -291,7 +295,7 @@ async fn the_keys_page_draws_the_card_above_the_keys_and_marks_it_unavailable_wh
     assert!(page.body.contains("alice-agent"), "{}", page.body);
     assert!(
         page.body
-            .contains("Your usage is unavailable (request <code>page-7."),
+            .contains("Usage is unavailable (request <code>page-7."),
         "{}",
         page.body
     );
@@ -307,7 +311,7 @@ async fn the_card_and_the_users_page_say_which_limits_the_quota_form_raises_and_
     assert_eq!(page.status, StatusCode::OK, "{}", page.body);
     assert!(
         page.body.contains(
-            "An administrator can raise a limit for you. Text stored and writes follow the profile of your account, which an administrator changes with an admin key."
+            "An administrator can raise a limit. Text stored and writes follow the profile of the account, which an administrator changes with an admin key."
         ),
         "{}",
         page.body
@@ -331,7 +335,7 @@ async fn the_card_and_the_users_page_say_which_limits_the_quota_form_raises_and_
     }
     assert!(
         page.body.contains(
-            "Text stored and writes are not set here: they follow the profile of the account, which an admin key sets with <code>PUT /v2/admin/accounts/{account}/profile</code>."
+            "Text stored and writes are not set here: they follow the account's profile, which an admin sets through the API or the command line."
         ),
         "{}",
         page.body
@@ -440,11 +444,14 @@ async fn the_users_page_marks_no_meter_of_a_person_whose_limits_do_not_hold() {
     }
     assert!(!free.contains("oml-chip"), "{free}");
     assert!(
-        page.body
-            .contains("on a row whose <code>under_quotas</code> is true"),
+        page.body.contains("for a person whose quotas are enforced"),
         "{}",
         page.body
     );
+    // No API name in the page's copy, and the regular lede type.
+    for name in ["under_quotas", "PUT /v2/", r#"class="lede""#] {
+        assert!(!page.body.contains(name), "{name}: {}", page.body);
+    }
 }
 
 /// The users table's row of `user`.

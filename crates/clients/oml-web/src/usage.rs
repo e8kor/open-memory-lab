@@ -216,7 +216,7 @@ pub(crate) fn rate(limit: Option<u64>) -> String {
 /// The card's heading, as the pages' sections draw one.
 fn head(desc: &str) -> String {
     format!(
-        r#"<header class="oml-section-head"><div class="top"><h2>Your usage</h2></div><p class="desc">{}</p></header>"#,
+        r#"<header class="oml-section-head"><div class="top"><h2>Usage</h2></div><p class="desc">{}</p></header>"#,
         text(desc)
     )
 }
@@ -237,12 +237,12 @@ pub(crate) fn card(person: &Person) -> Option<String> {
         .any(|r| r.limit.is_some() && matches!(r.name, "Text stored" | "Writes this month"));
     let desc = match (limited, by_profile) {
         (true, true) => {
-            "Each count against its limit; writes count this UTC month. A mark shows at 80% of a limit and at the limit. An administrator can raise a limit for you. Text stored and writes follow the profile of your account, which an administrator changes with an admin key."
+            "Each count against its limit; writes count this UTC month. A mark shows at 80% of a limit and at the limit. An administrator can raise a limit. Text stored and writes follow the profile of the account, which an administrator changes with an admin key."
         }
         (true, false) => {
-            "Each count against its limit; writes count this UTC month. A mark shows at 80% of a limit and at the limit. An administrator can raise a limit for you."
+            "Each count against its limit; writes count this UTC month. A mark shows at 80% of a limit and at the limit. An administrator can raise a limit."
         }
-        (false, _) => "No limit holds for your account; these are counts.",
+        (false, _) => "No limit holds for this account; these are counts.",
     };
     let mut out = format!(r#"<section class="card" id="usage">{}"#, head(desc));
     out.push_str("<table><tr><th>meter</th><th>used</th><th></th></tr>");
@@ -280,7 +280,7 @@ pub(crate) fn card(person: &Person) -> Option<String> {
 /// the request that failed, as a partial page marks a part it lacks.
 pub(crate) fn unavailable(request_id: &str) -> String {
     format!(
-        r#"<section class="card" id="usage">{}<p class="error" role="status">Your usage is unavailable (request <code>{}</code>).</p></section>"#,
+        r#"<section class="card" id="usage">{}<p class="error" role="status">Usage is unavailable (request <code>{}</code>).</p></section>"#,
         head("Each count against its limit."),
         text(request_id)
     )

@@ -80,7 +80,9 @@ code="$(curl -s -o "$work/workareas.html" -w '%{http_code}' -H "$jar" "$origin/w
 [ "$code" = 200 ] || fail "GET /web/workareas answered $code: $(head -c 400 "$work/workareas.html")"
 grep -q '<h1>Workareas</h1>' "$work/workareas.html" || fail "GET /web/workareas did not draw the Workareas view"
 grep -q '<a href="/web/workareas" class="on"' "$work/workareas.html" || fail "the Workareas tab is not the current one"
-user="$(sed -n 's/.*Under <code>universe\.\([^<]*\)<\/code>.*/\1/p' "$work/workareas.html")"
+# The view names the user's root by its reference, the name every field
+# takes (design notes row 20).
+user="$(sed -n 's/.*Under <code>\([^<]*\)<\/code>.*/\1/p' "$work/workareas.html")"
 [ -n "$user" ] || fail "the Workareas view names no user root"
 csrf="$(field "$work/workareas.html" csrf_token)"
 [ -n "$csrf" ] || fail "the Workareas view carries no csrf_token"
@@ -113,7 +115,7 @@ for attempt in first resubmitted; do
 done
 code="$(curl -s -o "$work/after.html" -w '%{http_code}' -H "$jar" "$origin/web/workareas?done=mode+set")"
 [ "$code" = 200 ] || fail "GET /web/workareas after the act answered $code"
-grep -q "universe\.$user\.proj</td><td class=\"mono\">$user\.proj</td><td>development</td><td>in progress</td>" "$work/after.html" \
+grep -q "workarea=$user\.proj\">$user\.proj</a></td><td class=\"mono\">$user</td><td>development</td><td>in progress</td>" "$work/after.html" \
     || fail "the act did not put $user.proj in progress: $(head -c 600 "$work/after.html")"
 
 code="$(curl -s -o /dev/null -D "$work/old-workareas" -w '%{http_code}' -H "$jar" "$origin/web?view=workarea")"

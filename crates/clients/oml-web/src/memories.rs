@@ -22,14 +22,16 @@ use axum::extract::State;
 use axum::response::{IntoResponse as _, Response};
 use http::{HeaderMap, StatusCode, Uri};
 use oml_page::web::{
-    ADMIN_ATLAS_PATH, ADMIN_MEMORIES_PATH, ADMIN_TABS, USER_ATLAS_PATH, USER_MEMORIES_PATH, attr,
-    glyph_svg, input, select, shell, state_tag, text, user_tabs,
+    ADMIN_ATLAS_PATH, ADMIN_MEMORIES_PATH, USER_ATLAS_PATH, USER_MEMORIES_PATH, attr, input,
+    select, shell, text,
 };
-use oml_sdk::{AdminMemory, AdminSearch, CountedNode, Memory, MemoryQuery, RecallQuery};
+use oml_sdk::{AdminSearch, CountedNode, MemoryQuery, RecallQuery};
 use serde_json::{Value, json};
 
 use crate::atlas::{Counts, Tile, legend, lifebar, svg};
+use crate::card::{Card, Kinds, kind_word, row_state};
 use crate::pages::{Fields, WalkEnd, refused, walk};
+use crate::picker::{self, Browse, Chosen, Field, Names, Roots};
 use crate::session::{PageCalls, Session, call, cookie};
 use crate::workareas::{
     Credentials, NodeOffers, Side as ActSide, mode_offers, offers_of, transitions_offers,
@@ -42,10 +44,10 @@ pub const PAGE_DEFAULT: u32 = 50;
 pub const PAGE_MAX: u32 = 200;
 /// Recall's own bound on one answer, the user page's text search.
 pub const RECALL_MAX: u32 = 100;
-/// The most pages of the person's keys the list reads to name their kinds:
-/// 10 pages of 200. Past them the list is refused with
-/// `limit.list_too_long`, never shown with kinds missing. A constant of the
-/// build, unmeasured (#170).
+/// The most pages of the person's keys the text search reads to find the
+/// key an author filter names: 10 pages of 200. Past them the search is
+/// refused with `limit.list_too_long`, never run against a cut list. A
+/// constant of the build, unmeasured (#170).
 pub const KEY_PAGES_MAX: usize = 10;
 
 /// The user page's JSON route (ADR-0045 d25).
@@ -90,12 +92,25 @@ impl Side {
         }
     }
 
-    fn lede(self) -> &'static str {
-        match self {
-            Self::User => {
-                "Newest first. A held memory waits for another identity's review. Its author and the agent's signed-in owner can read it; an in-progress workarea also serves it to readers."
-            }
-            Self::Admin => "Every memory, newest first. Each page you read is journalled.",
+    /// The view's one line under its heading: on the admin side the
+    /// capacity line, which names the key that reads (BrandHeader,
+    /// MemoriesScreen, AtlasScreen).
+    fn lede(self, atlas: bool, session: &Session) -> String {
+        let admin = session.whoami.user.as_ref().map_or_else(
+            || "the admin key".to_owned(),
+            |u| format!("{}-admin", u.name),
+        );
+        match (self, atlas) {
+            (Self::User, false) => "Newest first. A held memory waits for another identity's review. Its author and the agent's signed-in owner can read it; an in-progress workarea also serves it to readers.".to_owned(),
+            (Self::User, true) => "Each workarea sized by the memories this account reads in it, by state.".to_owned(),
+            (Self::Admin, false) => format!(
+                "Read as <code>{}</code>: every memory of the tenant, newest first. Each page read is journalled. This key never recalls and never judges.",
+                text(&admin)
+            ),
+            (Self::Admin, true) => format!(
+                "Read as <code>{}</code>: every workarea of the tenant, sized by its memories, each row counted as structure. No text is read.",
+                text(&admin)
+            ),
         }
     }
 }
@@ -104,7 +119,9 @@ impl Side {
 type FieldRefusal = (&'static str, String);
 
 /// The Memories view's query, each field checked as the lead checked it
-/// (ADR-0045 d22); the API checks a workarea's and an author's grammar.
+/// (ADR-0045 d22); the API checks an author's grammar, and the picker a
+/// workarea's ([`crate::picker`]).
+#[derive(Clone)]
 struct ListQuery {
     q: Option<String>,
     state: Option<String>,
@@ -188,324 +205,6 @@ impl ListQuery {
     }
 }
 
-/// One memory as the row shows it and the JSON route serves it: nothing
-/// the row does not show (ADR-0045 d22, d25).
-struct Card {
-    id: String,
-    state: &'static str,
-    workarea: String,
-    version: u32,
-    title: Option<String>,
-    body: String,
-    prose: bool,
-    claim_key: String,
-    /// `None` where the row shows the shared area (ADR-0044 d9).
-    author: Option<String>,
-    /// `agent`, `person` or `service`, the author key's holder, where the
-    /// page's key may know it; `None` otherwise.
-    author_kind: Option<&'static str>,
-    written: String,
-    served: Option<String>,
-    scan: Option<String>,
-    /// When the approving verdict was given, the API's `approved_at` whole,
-    /// and the kind of key that gave it, where the API serves them: never
-    /// who (ADR-0077 d2, d4). The card shows the day; the JSON route serves
-    /// the timestamp under the API's name.
-    approved: Option<String>,
-    approver: Option<Approver>,
-    anchor: Option<String>,
-    format: Option<String>,
-    valid: Option<String>,
-}
-
-/// The kind of reviewer that approved a version, as the page words it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Approver {
-    kind: &'static str,
-    /// Whether the reviewing key acts for the author's person.
-    same_user: bool,
-}
-
-/// An anchor as one line (ADR-0057 d2), unescaped.
-fn anchor_text(anchor: Option<&oml_sdk::Anchor>) -> Option<String> {
-    let a = anchor?;
-    let fragment = a
-        .fragment
-        .as_deref()
-        .map_or_else(String::new, |f| format!("#{f}"));
-    match (&a.repo, &a.uri) {
-        (Some(repo), _) => {
-            let rev = a.rev.as_deref().unwrap_or_default();
-            Some(format!(
-                "{repo} @ {} {}{fragment}",
-                rev.chars().take(12).collect::<String>(),
-                a.path.as_deref().unwrap_or_default()
-            ))
-        }
-        (None, Some(uri)) => Some(format!("{uri}{fragment}")),
-        (None, None) => None,
-    }
-}
-
-fn valid_text(from: Option<&str>, until: Option<&str>) -> Option<String> {
-    (from.is_some() || until.is_some()).then(|| {
-        format!(
-            "from {}, {}",
-            from.unwrap_or("any time"),
-            until.map_or_else(|| "open".to_owned(), |u| format!("until {u}"))
-        )
-    })
-}
-
-fn is_prose(media_type: &str) -> bool {
-    matches!(media_type, "text/plain" | "text/markdown")
-}
-
-/// The word a row names a key's holder by.
-fn kind_word(held_by: &str) -> &'static str {
-    match held_by {
-        "human" => "person",
-        "agent" => "agent",
-        _ => "service",
-    }
-}
-
-fn day(at: &str) -> String {
-    at.chars().take(10).collect()
-}
-
-/// A served version's state as the admin read names it: a promoted version
-/// that is no longer its claim's tip is `superseded` (ADR-0045 d21).
-fn row_state(state: &str, tip: bool) -> &'static str {
-    match state {
-        "held" => "held",
-        "promoted" if tip => "promoted",
-        "promoted" => "superseded",
-        "rejected" => "rejected",
-        _ => "demoted",
-    }
-}
-
-/// The person's own keys: `(id, name, kind)`.
-type Kinds = Vec<(String, Option<String>, &'static str)>;
-
-impl Card {
-    fn of_memory(m: &Memory, kinds: &Kinds) -> Self {
-        let format = m.format.clone().unwrap_or_else(|| "text/plain".to_owned());
-        let prose = is_prose(&format);
-        Self {
-            author_kind: m.principal.as_ref().and_then(|_| {
-                let key = m.author_key_id.as_deref()?;
-                kinds
-                    .iter()
-                    .find(|(id, _, _)| id == key)
-                    .map(|(_, _, w)| *w)
-            }),
-            written: day(&m.created_at),
-            served: m.promoted_at.as_deref().map(day),
-            scan: m.scan_finding.clone(),
-            approved: m.approved_at.clone(),
-            approver: m.approver.as_ref().map(|a| Approver {
-                kind: kind_word(&a.held_by),
-                same_user: a.same_user,
-            }),
-            id: m.artifact_id.clone(),
-            state: row_state(&m.state, m.tip),
-            workarea: m.workarea_path.clone().unwrap_or_default(),
-            version: m.version,
-            title: m.title.clone(),
-            body: m.text.clone().unwrap_or_default(),
-            prose,
-            claim_key: m.claim_key.clone(),
-            author: m.principal.clone(),
-            anchor: anchor_text(m.anchor.as_ref()),
-            format: (!prose).then_some(format),
-            valid: valid_text(m.valid_from.as_deref(), m.valid_until.as_deref()),
-        }
-    }
-
-    fn of_admin(m: &AdminMemory) -> Self {
-        let format = m.format.clone().unwrap_or_else(|| "text/plain".to_owned());
-        let prose = is_prose(&format);
-        let key = m.key.clone().unwrap_or_default();
-        Self {
-            author_kind: m.held_by.as_deref().map(kind_word),
-            written: day(&m.created_at),
-            served: m.promoted_at.as_deref().map(day),
-            scan: m.scan_finding.clone(),
-            // The admin search serves no approval: the line says approved
-            // and nothing of who.
-            approved: None,
-            approver: None,
-            id: m.artifact_id.clone(),
-            state: STATES
-                .iter()
-                .find(|s| **s == m.state)
-                .copied()
-                .unwrap_or("demoted"),
-            workarea: m.workarea_path.clone(),
-            version: m.version,
-            title: m.title.clone(),
-            body: m.text.clone(),
-            prose,
-            claim_key: m.claim_key.clone(),
-            author: Some(match &m.user {
-                Some(user) => format!("{key} ({user})"),
-                None => key,
-            }),
-            anchor: anchor_text(m.anchor.as_ref()),
-            format: (!prose).then_some(format),
-            valid: valid_text(m.valid_from.as_deref(), m.valid_until.as_deref()),
-        }
-    }
-
-    fn json(&self) -> Value {
-        json!({
-            "artifact_id": self.id,
-            "state": self.state,
-            "workarea": self.workarea,
-            "version": self.version,
-            "title": self.title,
-            "text": self.body,
-            "claim_key": self.claim_key,
-            "approved_at": self.approved,
-            "approver": self.approver.map(|a| json!({
-                "kind": a.kind,
-                "same_user": a.same_user,
-            })),
-            "author": self.author,
-            "author_kind": self.author_kind,
-            "anchor": self.anchor,
-            "format": self.format,
-            "valid": self.valid,
-        })
-    }
-
-    /// What the review step says of an approved version: the day it was
-    /// approved and whether a person's, an agent's or a service's key
-    /// approved it, and that a person's own review of their agent's write is
-    /// one. The line names the key's kind: a key no one attested is stored
-    /// as an agent's (`key.issued`'s `held_by`), so "a reviewer agent" would
-    /// say more than is known. A field the
-    /// API does not serve, an unreviewed or a `universe` row's, adds nothing,
-    /// so the line never says more than the API did (ADR-0077 d2, d4).
-    fn approval_line(&self) -> String {
-        let mut line = String::from("approved");
-        if let Some(approver) = self.approver {
-            let who = match approver.kind {
-                "person" => "a person's key",
-                "agent" => "an agent's key",
-                _ => "a service's key",
-            };
-            let _ = write!(line, " by {who}");
-        }
-        if let Some(at) = &self.approved {
-            let _ = write!(line, " on {}", text(&day(at)));
-        }
-        if self.approver.is_some_and(|a| a.same_user) {
-            line.push_str(" · self-review: the same person's keys wrote it and approved it");
-        }
-        line
-    }
-
-    /// The memory as the design system's Round 3 compact row (ADR-0045
-    /// d32; ADR-0069 d3): the summary holds the state and the text,
-    /// clamped, then the author's kind, the version and the way in; the
-    /// body, closed by default, holds the provenance timeline and the facts.
-    fn html(&self, memory_page: &str) -> String {
-        let reviewed = self.state != "held";
-        let served = matches!(self.state, "promoted" | "superseded" | "demoted");
-        let rejected = self.state == "rejected";
-        let quiet = matches!(self.state, "superseded" | "rejected" | "demoted");
-        let who = self
-            .author
-            .as_deref()
-            .map_or_else(|| "the shared area".to_owned(), text);
-        let kind = self.author_kind.unwrap_or("shared");
-        let actor_glyph = match self.author_kind {
-            Some("person") => glyph_svg("person"),
-            Some(_) => glyph_svg("agent"),
-            None => glyph_svg("shared"),
-        };
-        let segment = match self.state {
-            "demoted" => "retired",
-            other => other,
-        };
-        let mut out = format!(
-            r#"<li><details class="oml-mrow{}" id="m-{}" data-author-kind="{kind}" data-reviewed="{reviewed}"><summary><div class="top">{}<span class="tx">{}</span></div><div class="sub"><span class="oml-actor">{actor_glyph}<span class="who">{who}</span><span class="kind">{kind}</span></span><span class="vb"><ol aria-label="Versions"><li aria-current="true"><i class="{segment}"></i></li></ol>v{}{}</span><span class="more"><span class="w">Provenance</span></span></div></summary><div class="body">"#,
-            if quiet { " quiet" } else { "" },
-            self.id,
-            state_tag(self.state),
-            text(self.title.as_deref().unwrap_or(&self.body)),
-            self.version,
-            if self.state == "promoted" {
-                " · tip"
-            } else {
-                ""
-            },
-        );
-        if self.title.is_some() {
-            let _ = write!(
-                out,
-                r#"<p class="text{}">{}</p>"#,
-                if self.prose { "" } else { " mono" },
-                text(&self.body)
-            );
-        }
-        let step = |done: bool| if done { "" } else { " class=\"wait\"" };
-        let review_line = match self.state {
-            "held" => "held until someone else reviews it".to_owned(),
-            "rejected" => "rejected by a key outside its lineage".to_owned(),
-            _ => self.approval_line(),
-        };
-        let served_line = match (self.state, &self.served) {
-            ("rejected", _) => "never: the text is kept".to_owned(),
-            (_, Some(d)) => format!("to readers of {} · {d}", text(&self.workarea)),
-            _ => "not yet".to_owned(),
-        };
-        let _ = write!(
-            out,
-            r#"<div class="oml-timeline-wrap"><ol class="oml-timeline" aria-label="Provenance"><li><span class="c-dim">{actor_glyph}</span><span class="step">Written</span><span><span class="who">{who}</span> · {kind}</span><span>{}</span></li><li><span class="c-held">{}</span><span class="step">Held</span><span>scan: {}</span></li><li{}><span class="{}">{}</span><span class="step">{}</span><span>{review_line}</span></li><li{}><span class="{}">{}</span><span class="step">Served</span><span>{served_line}</span></li></ol></div><details class="oml-more"><summary>Details</summary><dl class="oml-facts"><dt>Id</dt><dd><span class="id">{}</span></dd><dt>Workarea</dt><dd><span class="id">{}</span></dd><dt>Claim key</dt><dd><span class="id">{}</span></dd>"#,
-            self.written,
-            glyph_svg("held"),
-            self.scan
-                .as_deref()
-                .map_or_else(|| "no findings".to_owned(), text),
-            step(reviewed),
-            if rejected {
-                "c-rejected"
-            } else if reviewed {
-                "c-dim"
-            } else {
-                "c-faint"
-            },
-            glyph_svg("person"),
-            if rejected { "Rejected" } else { "Reviewed" },
-            step(served),
-            if served { "c-promoted" } else { "c-faint" },
-            glyph_svg("promoted"),
-            self.id,
-            text(&self.workarea),
-            text(&self.claim_key),
-        );
-        for (label, value) in [
-            ("Source", &self.anchor),
-            ("Format", &self.format),
-            ("Valid", &self.valid),
-        ] {
-            if let Some(value) = value {
-                let _ = write!(out, "<dt>{label}</dt><dd>{}</dd>", text(value));
-            }
-        }
-        let _ = write!(
-            out,
-            r#"<dt>Open</dt><dd><a href="{memory_page}?id={}">this memory</a></dd></dl></details></div></details></li>"#,
-            self.id
-        );
-        out
-    }
-}
-
 /// One page of rows and the cursor of the next.
 struct CardPage {
     cards: Vec<Card>,
@@ -535,12 +234,12 @@ impl From<oml_sdk::Error> for Failed {
     }
 }
 
-/// The person's own keys, each with its kind (ADR-0045 d32), through
-/// `GET /v2/keys` as `<user>-web`, a page at a time; past
-/// [`KEY_PAGES_MAX`] pages the page is refused `limit.list_too_long`, and
-/// at a cursor the API repeats, the API's fault, `unavailable` with 502
-/// (#281): a list cut short would leave rows without their kind and send
-/// an author search to `access.not_found` for a key the person holds.
+/// The person's own keys, through `GET /v2/keys` as `<user>-web`, a page
+/// at a time, for the text search's author filter, which recall cannot
+/// take by name; past [`KEY_PAGES_MAX`] pages the page is refused
+/// `limit.list_too_long`, and at a cursor the API repeats, the API's
+/// fault, `unavailable` with 502 (#281): a list cut short would send an
+/// author search to `access.not_found` for a key the person holds.
 async fn own_kinds(web: &Web, credential: &str, calls: &PageCalls) -> Result<Kinds, Failed> {
     walk(KEY_PAGES_MAX, |cursor| async move {
         let ids = calls.next_ids();
@@ -561,14 +260,14 @@ async fn own_kinds(web: &Web, credential: &str, calls: &PageCalls) -> Result<Kin
         WalkEnd::Repeated => Failed::Refused(
             StatusCode::BAD_GATEWAY,
             "unavailable",
-            "the server repeated a cursor of your key list, so the list cannot be read whole; try again"
+            "the server repeated a cursor of this account's key list, so the list cannot be read whole; try again"
                 .to_owned(),
         ),
         WalkEnd::TooLong => Failed::Refused(
             StatusCode::UNPROCESSABLE_ENTITY,
             "limit.list_too_long",
             format!(
-                "you hold more keys than this page reads ({} pages of {PAGE_MAX}); use the API or the command line",
+                "this account holds more keys than this page reads ({} pages of {PAGE_MAX}); use the API or the command line",
                 KEY_PAGES_MAX
             ),
         ),
@@ -594,22 +293,17 @@ async fn user_cards(
             limit: q.limit,
             cursor: q.cursor.as_deref(),
         };
-        let listing_call = call(&credential, &ids);
-        let (page, kinds) = tokio::join!(
-            web.api.list_memories(&listing_call, &query),
-            own_kinds(web, &credential, calls),
-        );
-        let (page, kinds) = (page?, kinds?);
+        let page = web
+            .api
+            .list_memories(&call(&credential, &ids), &query)
+            .await?;
         return Ok(CardPage {
-            cards: page
-                .items
-                .iter()
-                .map(|m| Card::of_memory(m, &kinds))
-                .collect(),
+            cards: page.items.iter().map(Card::of_memory).collect(),
             next: page.next_cursor,
         });
     };
-    // The person's keys beside the recall, one round for both (#286).
+    // The person's keys beside the recall, one round for both (#286), read
+    // only where an author names one of them: the recall filters by key id.
     let ids = calls.next_ids();
     let recall_call = call(&credential, &ids);
     let recall = RecallQuery {
@@ -618,16 +312,18 @@ async fn user_cards(
         workarea: q.workarea.as_deref(),
         origin: q.origin.as_deref(),
     };
-    let (kinds, result) = tokio::join!(
-        own_kinds(web, &credential, calls),
-        web.api.recall(&recall_call, &recall),
-    );
+    let keys = async {
+        match &q.author {
+            Some(_) => own_kinds(web, &credential, calls).await.map(Some),
+            None => Ok(None),
+        }
+    };
+    let (kinds, result) = tokio::join!(keys, web.api.recall(&recall_call, &recall));
     let kinds = kinds?;
     // The author, one of the person's own keys; a name none of them holds
     // is refused whatever the recall found.
-    let author = match &q.author {
-        None => None,
-        Some(name) => Some(
+    let author = match (&q.author, &kinds) {
+        (Some(name), Some(kinds)) => Some(
             kinds
                 .iter()
                 .find(|(_, n, _)| n.as_deref() == Some(name.as_str()))
@@ -636,10 +332,11 @@ async fn user_cards(
                     Failed::Refused(
                         StatusCode::NOT_FOUND,
                         "access.not_found",
-                        "no such key of yours".to_owned(),
+                        "no such key of this account".to_owned(),
                     )
                 })?,
         ),
+        _ => None,
     };
     let result = result?;
     let cards = result
@@ -656,7 +353,7 @@ async fn user_cards(
                 .as_deref()
                 .is_none_or(|a| m.author_key_id.as_deref() == Some(a))
         })
-        .map(|m| Card::of_memory(m, &kinds))
+        .map(Card::of_memory)
         .collect();
     Ok(CardPage { cards, next: None })
 }
@@ -692,9 +389,62 @@ async fn admin_cards(
     })
 }
 
-/// The filter form, the List · Atlas toggle and, for the list, the rows
-/// and the pager (ADR-0045 d22, d25, d27).
-fn list_view(side: Side, q: &ListQuery, page: Option<&CardPage>, atlas: bool) -> String {
+/// The filters the picker's links keep beside the workarea, in the form's
+/// order.
+fn keep(q: &ListQuery) -> Vec<(&'static str, String)> {
+    [
+        ("q", &q.q),
+        ("state", &q.state),
+        ("origin", &q.origin),
+        ("author", &q.author),
+        ("limit", &q.limit_sent),
+    ]
+    .into_iter()
+    .filter_map(|(name, value)| value.clone().map(|v| (name, v)))
+    .collect()
+}
+
+/// The workarea field of the view's filter form: the person's Atlas
+/// empty is the person's root (ADR-0045 d25), every other view's every
+/// workarea the key reads.
+fn field(
+    side: Side,
+    q: &ListQuery,
+    atlas: bool,
+    chosen: &Chosen,
+    names: &Names,
+    browse: Option<&Browse>,
+) -> String {
+    let keep = keep(q);
+    Field {
+        id: "wa",
+        action: if atlas { side.atlas() } else { side.memories() },
+        keep: &keep,
+        chosen,
+        names,
+        browse,
+        admin: side == Side::Admin,
+        standalone: false,
+        empty: match (side, atlas) {
+            (Side::User, true) => "Empty: the user root.",
+            (Side::User, false) => "Empty: every readable workarea.",
+            (Side::Admin, _) => "Empty: every workarea.",
+        },
+    }
+    .html()
+}
+
+/// The filter form, its workarea field first, the link to the same
+/// filters on the other view and, for the list, the rows and the pager
+/// (ADR-0045 d22, d25, d27; design notes row 23).
+fn list_view(
+    side: Side,
+    lede: &str,
+    q: &ListQuery,
+    page: Option<(&CardPage, &Roots)>,
+    atlas: bool,
+    field: &str,
+) -> String {
     let state = q.state.as_deref().unwrap_or("");
     let origin = q.origin.as_deref().unwrap_or("");
     let selected = |options: &[(&'static str, &'static str)], chosen: &str| {
@@ -732,30 +482,33 @@ fn list_view(side: Side, q: &ListQuery, page: Option<&CardPage>, atlas: bool) ->
         origin,
     );
     let mut out = format!(
-        r#"<header class="oml-section-head"><div class="top"><h1>Memories</h1></div><p class="desc">{}</p></header><form class="filters" method="get" action="{}">{}{}{}{}{}<button type="submit">Filter</button></form>"#,
-        side.lede(),
+        r#"<header class="oml-section-head"><div class="top"><h1>{}</h1></div><p class="desc">{}</p></header>"#,
+        if atlas { "Atlas" } else { "Memories" },
+        lede,
+    );
+    let _ = write!(
+        out,
+        r#"<form class="filters" method="get" action="{}">{field}{}{}{}{}<button type="submit">Filter</button></form>"#,
         if atlas { side.atlas() } else { side.memories() },
         input("q", "Text", q.q.as_deref().unwrap_or(""), false),
         select("state", "State", &states),
-        input(
-            "workarea",
-            "Workarea",
-            q.workarea.as_deref().unwrap_or(""),
-            false
-        ),
         select("origin", "Source", &origins),
         input("author", "Author", q.author.as_deref().unwrap_or(""), false),
     );
-    let list_href = q.link(side.memories(), q.cursor.as_deref());
-    let atlas_href = q.link(side.atlas(), q.cursor.as_deref());
-    let on = r#" class="on" aria-current="page""#;
-    let _ = write!(
-        out,
-        r#"<nav class="toggle" aria-label="display"><a href="{list_href}"{}>List</a><a href="{atlas_href}"{}>Atlas</a></nav>"#,
-        if atlas { "" } else { on },
-        if atlas { on } else { "" },
-    );
-    let Some(page) = page else {
+    let _ = if atlas {
+        write!(
+            out,
+            r#"<p class="oml-other-view"><a href="{}">The same filters as a list</a></p>"#,
+            q.link(side.memories(), None)
+        )
+    } else {
+        write!(
+            out,
+            r#"<p class="oml-other-view"><a href="{}">The same filters on the Atlas</a></p>"#,
+            q.link(side.atlas(), None)
+        )
+    };
+    let Some((page, roots)) = page else {
         return out;
     };
     if q.q.is_some() && side == Side::User {
@@ -766,7 +519,7 @@ fn list_view(side: Side, q: &ListQuery, page: Option<&CardPage>, atlas: bool) ->
     }
     out.push_str(r#"<ul class="oml-mlist">"#);
     for card in &page.cards {
-        out.push_str(&card.html(side.memory_page()));
+        out.push_str(&card.html(side.memory_page(), roots));
     }
     out.push_str(r#"</ul><p class="pager">"#);
     if q.cursor.is_some() {
@@ -790,10 +543,24 @@ fn list_view(side: Side, q: &ListQuery, page: Option<&CardPage>, atlas: bool) ->
 /// The Atlas's scope: the workarea the filter names, else the person's
 /// root, or `universe` on the admin page.
 fn scope(side: Side, session: &Session, q: &ListQuery) -> Option<String> {
-    q.workarea.clone().or_else(|| match side {
+    q.workarea.clone().or_else(|| default_scope(side, session))
+}
+
+/// The Atlas's scope when the field is empty (ADR-0045 d25).
+fn default_scope(side: Side, session: &Session) -> Option<String> {
+    match side {
         Side::User => session.whoami.user.as_ref().map(|u| u.id.clone()),
         Side::Admin => Some("universe".to_owned()),
-    })
+    }
+}
+
+/// The person's root's name, which makes the names beneath it
+/// `<user>.<name>`; none on the admin page.
+fn own_root(side: Side, session: &Session) -> Option<String> {
+    match side {
+        Side::User => session.whoami.user.as_ref().map(|u| u.name.clone()),
+        Side::Admin => None,
+    }
 }
 
 /// The reader of the Atlas's counts.
@@ -880,6 +647,7 @@ fn atlas_view(
     nodes: &[CountedNode],
     partial: bool,
     offers: &Result<NodeOffers, (String, oml_sdk::Error)>,
+    refer: &dyn Fn(&str) -> String,
 ) -> Option<String> {
     let top = nodes.first()?;
     let top_id = top.id.as_str();
@@ -898,15 +666,24 @@ fn atlas_view(
             subtree[parent].add(own);
         }
     }
-    let zoom = |id: &str| format!("{}?workarea={}", side.atlas(), oml_sdk::encode(id));
+    // Every link, tile and heading names a workarea by its reference, the
+    // form every field takes on both pages (design notes row 20).
+    let zoom = |path: &str| {
+        format!(
+            "{}?workarea={}",
+            side.atlas(),
+            oml_sdk::encode(&refer(path))
+        )
+    };
+    let top_ref = refer(&top.path);
     let in_progress = |n: &CountedNode| n.mode == "in_progress";
     let mut tiles: Vec<Tile> = nodes
         .iter()
         .enumerate()
         .filter(|(_, n)| n.parent_id.as_deref() == Some(top_id))
         .map(|(i, n)| Tile {
-            name: n.name.clone(),
-            href: zoom(&n.id),
+            name: refer(&n.path),
+            href: zoom(&n.path),
             counts: subtree[i],
             status: n.status.clone(),
             in_progress: in_progress(n),
@@ -915,8 +692,8 @@ fn atlas_view(
     let own = Counts::of(&top.counts);
     if own.total() > 0 || tiles.is_empty() {
         tiles.push(Tile {
-            name: format!("{} · own rows", top.name),
-            href: format!("{}?workarea={}", side.memories(), oml_sdk::encode(top_id)),
+            name: format!("{top_ref} (own rows)"),
+            href: format!("{}?workarea={}", side.memories(), oml_sdk::encode(&top_ref)),
             counts: own,
             status: top.status.clone(),
             in_progress: in_progress(top),
@@ -935,22 +712,9 @@ fn atlas_view(
         .collect();
     let total = subtree[0];
 
-    // The breadcrumb: the scope's ancestors, by the names its path holds.
-    let mut out = String::from(r#"<nav class="crumbs" aria-label="Breadcrumb">"#);
-    let segments: Vec<&str> = top.path.split('.').collect();
-    for name in &segments[..segments.len().saturating_sub(1)] {
-        let _ = write!(
-            out,
-            r#"<a href="{}">{}</a> / "#,
-            attr(&zoom(name)),
-            text(name)
-        );
-    }
-    let _ = write!(
-        out,
-        r#"<span aria-current="page">{}</span></nav>"#,
-        text(&top.name)
-    );
+    // No breadcrumb: the scope is the field's value, and the panel links
+    // up to the scope's parent by its reference (AtlasScreen).
+    let mut out = String::new();
     let _ = write!(
         out,
         r#"<div class="oml-main"><div class="col"><p class="desc">{} readable · area = count{}</p>"#,
@@ -988,8 +752,15 @@ fn atlas_view(
     // The scope's panel: what it holds, where to read it, what to do.
     let _ = write!(
         out,
-        r#"<aside class="oml-rail-side" aria-labelledby="sel-h"><section class="oml-panel"><h2 id="sel-h" class="mono">{}</h2><p class="desc">{}{} · <b>{}</b> readable</p>{}{}<p><a href="{}?workarea={}">Open memories</a></p>"#,
-        text(&top.path),
+        r#"<aside class="oml-rail-side" aria-labelledby="sel-h"><section class="oml-panel"><h2 id="sel-h" class="mono">{}</h2>{}<p class="desc">{}{} · <b>{}</b> readable</p>{}{}<p><a href="{}?workarea={}">Open memories</a></p>"#,
+        text(&top_ref),
+        top.path
+            .rsplit_once('.')
+            .map_or_else(String::new, |(parent, _)| format!(
+                r#"<p class="oml-atlas-up">Up to <a href="{}">{}</a></p>"#,
+                attr(&zoom(parent)),
+                text(&refer(parent))
+            )),
         text(&top.status),
         if in_progress(top) {
             " · in progress"
@@ -1000,7 +771,7 @@ fn atlas_view(
         lifebar(total),
         legend(total),
         side.memories(),
-        attr(&oml_sdk::encode(top_id)),
+        attr(&oml_sdk::encode(&top_ref)),
     );
     match offers {
         Ok(offers) => out.push_str(&offers.dropdown(side.acts().path(), top_id)),
@@ -1033,28 +804,120 @@ fn admin_only(side: Side, session: &Session, calls: &PageCalls) -> Option<Respon
 
 /// The page's chrome around `body`, with `active` the tab marked.
 fn page(side: Side, session: &Session, active: &str, body: &str) -> Response {
-    let (title, tabs) = match side {
-        Side::User => ("Your page", user_tabs(session.admin)),
-        Side::Admin => ("Administration", ADMIN_TABS.to_vec()),
+    let bar = match side {
+        Side::User => session.personal(),
+        Side::Admin => session.administration(),
     };
-    outcome::html(
-        StatusCode::OK,
-        shell(
-            title,
-            &session.who(),
-            Some(&session.csrf()),
-            &tabs,
-            active,
-            None,
-            body,
-        ),
-    )
+    outcome::html(StatusCode::OK, shell("", &bar, active, None, body))
 }
 
 fn failed_page(failed: Failed, calls: &PageCalls, next: &str) -> Response {
     match failed {
         Failed::Api(e) => outcome::page(&e, calls, next),
         Failed::Refused(status, code, message) => refused(status, code, &message, calls),
+    }
+}
+
+/// One page of the list as the page's key reads it, `workarea` the value
+/// sent in place of the query's.
+async fn cards(
+    web: &Web,
+    session: &Session,
+    calls: &PageCalls,
+    side: Side,
+    q: &ListQuery,
+    workarea: Option<&str>,
+) -> Result<CardPage, Failed> {
+    let mut sent = q.clone();
+    sent.workarea = workarea.map(str::to_owned);
+    match side {
+        Side::User => user_cards(web, session, calls, &sent).await,
+        Side::Admin => admin_cards(web, session, calls, &sent).await,
+    }
+}
+
+/// The picker's reads, made beside the page's primary read: the names for
+/// its hints, from the uncounted tree, and Browse's counted tree only when
+/// the query asks for Browse open (the operator's decision on the design
+/// notes' row 14).
+async fn picker_reads(
+    web: &Web,
+    session: &Session,
+    calls: &PageCalls,
+    side: Side,
+    browse: bool,
+    names: bool,
+) -> (Names, Option<Browse>) {
+    let credential = session.credential(reader(side));
+    let own = own_root(side, session);
+    tokio::join!(
+        async {
+            if names {
+                Names::read(
+                    web,
+                    &credential,
+                    calls,
+                    "universe",
+                    own.as_deref(),
+                    picker::LIST_HINTS_PAGES,
+                )
+                .await
+            } else {
+                Names::default()
+            }
+        },
+        async {
+            if browse {
+                Some(Browse::read(web, &credential, calls, "universe").await)
+            } else {
+                None
+            }
+        }
+    )
+}
+
+/// A page drawn with `status`: the picker's refusal answers 404 or 400
+/// with the page whole around it.
+fn with_status(mut response: Response, status: StatusCode) -> Response {
+    *response.status_mut() = status;
+    response
+}
+
+/// What a page's primary read answered for the field's value.
+enum Primary<T> {
+    /// Served, for `Chosen`.
+    Served(Chosen, T),
+    /// The field is refused; nothing is read or drawn below it.
+    Missed(Chosen),
+    /// The read failed for another reason.
+    Failed(Failed),
+}
+
+/// The primary read `read` for `chosen`, settled against `names`: an
+/// `access.not_found` to the field's value is its miss, or one more read by
+/// the place a bare name names (ADR-0044 d5, the admin page's case).
+async fn settle<T, F, Fut>(
+    names: &Names,
+    chosen: Chosen,
+    first: Option<Result<T, Failed>>,
+    read: F,
+) -> Primary<T>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: Future<Output = Result<T, Failed>>,
+{
+    match first {
+        None => Primary::Missed(names.settle(chosen)),
+        Some(Ok(served)) => Primary::Served(names.settle(chosen), served),
+        Some(Err(Failed::Api(e))) if picker::is_not_found(&e) => match names.not_found(&chosen) {
+            Some(Chosen::Place(place)) => match read(place.id.clone()).await {
+                Ok(served) => Primary::Served(Chosen::Place(place), served),
+                Err(failed) => Primary::Failed(failed),
+            },
+            Some(miss) => Primary::Missed(miss),
+            None => Primary::Failed(Failed::Api(e)),
+        },
+        Some(Err(failed)) => Primary::Failed(failed),
     }
 }
 
@@ -1071,8 +934,13 @@ async fn list_page(
     let next = uri
         .path_and_query()
         .map_or(side.memories(), |pq| pq.as_str());
-    let q = match Fields::of(uri).and_then(|f| ListQuery::parse(&f).map_err(|(_, m)| m)) {
-        Ok(q) => q,
+    let parsed = Fields::of(uri).and_then(|f| {
+        ListQuery::parse(&f)
+            .map(|q| (q, picker::browse_asked(f.get(picker::BROWSE))))
+            .map_err(|(_, m)| m)
+    });
+    let (mut q, browse) = match parsed {
+        Ok(parsed) => parsed,
         Err(message) => {
             return refused(
                 StatusCode::BAD_REQUEST,
@@ -1082,19 +950,62 @@ async fn list_page(
             );
         }
     };
-    let cards = match side {
-        Side::User => user_cards(&web, &session, &calls, &q).await,
-        Side::Admin => admin_cards(&web, &session, &calls, &q).await,
+    let chosen = Chosen::of(q.workarea.as_deref());
+    let first = async {
+        match chosen.value() {
+            _ if chosen.refused() => None,
+            value => Some(cards(&web, &session, &calls, side, &q, value).await),
+        }
     };
-    match cards {
-        Ok(cards) => page(
+    let ((names, browse), first) = tokio::join!(
+        picker_reads(&web, &session, &calls, side, browse, true),
+        first
+    );
+    let primary = settle(&names, chosen, first, |id| {
+        let (web, session, calls, q) = (&web, &session, &calls, &q);
+        async move { cards(web, session, calls, side, q, Some(&id)).await }
+    })
+    .await;
+    let (chosen, cards) = match primary {
+        Primary::Served(chosen, cards) => (chosen, Some(cards)),
+        Primary::Missed(chosen) => (chosen, None),
+        Primary::Failed(failed) => return failed_page(failed, &calls, next),
+    };
+    q.workarea = chosen.shown().map(str::to_owned);
+    // Each row names its workarea by reference: the names' kinds, and a
+    // read of any top label they leave unknown (design notes row 20).
+    let roots = match &cards {
+        Some(cards) => {
+            names
+                .roots()
+                .clone()
+                .learn(
+                    &web,
+                    &session.credential(reader(side)),
+                    &calls,
+                    cards.cards.iter().map(Card::workarea),
+                )
+                .await
+        }
+        None => names.roots().clone(),
+    };
+    let field = field(side, &q, false, &chosen, &names, browse.as_ref());
+    with_status(
+        page(
             side,
             &session,
             side.memories(),
-            &list_view(side, &q, Some(&cards), false),
+            &list_view(
+                side,
+                &side.lede(false, &session),
+                &q,
+                cards.as_ref().map(|c| (c, &roots)),
+                false,
+                &field,
+            ),
         ),
-        Err(failed) => failed_page(failed, &calls, next),
-    }
+        chosen.status(),
+    )
 }
 
 async fn atlas_page(
@@ -1108,8 +1019,13 @@ async fn atlas_page(
         return refusal;
     }
     let next = uri.path_and_query().map_or(side.atlas(), |pq| pq.as_str());
-    let q = match Fields::of(uri).and_then(|f| ListQuery::parse(&f).map_err(|(_, m)| m)) {
-        Ok(q) => q,
+    let parsed = Fields::of(uri).and_then(|f| {
+        ListQuery::parse(&f)
+            .map(|q| (q, picker::browse_asked(f.get(picker::BROWSE))))
+            .map_err(|(_, m)| m)
+    });
+    let (mut q, browse_asked) = match parsed {
+        Ok(parsed) => parsed,
         Err(message) => {
             return refused(
                 StatusCode::BAD_REQUEST,
@@ -1119,7 +1035,7 @@ async fn atlas_page(
             );
         }
     };
-    let Some(scope) = scope(side, &session, &q) else {
+    let Some(default) = default_scope(side, &session) else {
         return refused(
             StatusCode::NOT_FOUND,
             "access.not_found",
@@ -1127,27 +1043,90 @@ async fn atlas_page(
             &calls,
         );
     };
-    let (counts, offers) = regions(&web, &session, &calls, side, &scope).await;
-    let counts = match counts {
-        Ok(counts) => counts,
-        Err(e) => return outcome::page(&e, &calls, next),
+    let chosen = Chosen::of(q.workarea.as_deref());
+    let scope = chosen.value().unwrap_or(&default).to_owned();
+    // The Atlas of `universe` is the tree the hints and Browse read: its
+    // counted read gives the names and an open Browse, and neither costs a
+    // call of its own.
+    let whole = scope == "universe";
+    let reuse = browse_asked && whole;
+    let first = async {
+        if chosen.refused() {
+            None
+        } else {
+            Some(regions(&web, &session, &calls, side, &scope).await)
+        }
     };
-    let Some(drawn) = atlas_view(side, &counts.items, counts.truncated, &offers) else {
-        return refused(
-            StatusCode::NOT_FOUND,
-            "access.not_found",
-            "not found",
-            &calls,
-        );
+    let ((names, browse), first) = tokio::join!(
+        picker_reads(&web, &session, &calls, side, browse_asked && !reuse, !whole),
+        first
+    );
+    // The counts are the primary read; the offers ride with them.
+    let mut offers_of_first = None;
+    let first = first.map(|(counts, offers)| {
+        offers_of_first = Some(offers);
+        counts.map_err(Failed::Api)
+    });
+    let retried = std::sync::Mutex::new(None);
+    let primary = settle(&names, chosen, first, |id| {
+        let (web, session, calls, retried) = (&web, &session, &calls, &retried);
+        async move {
+            let (counts, offers) = regions(web, session, calls, side, &id).await;
+            *retried.lock().expect("unpoisoned") = Some(offers);
+            counts.map_err(Failed::Api)
+        }
+    })
+    .await;
+    let offers = retried
+        .into_inner()
+        .expect("unpoisoned")
+        .or(offers_of_first);
+    let own = own_root(side, &session);
+    let mut names = names;
+    let (chosen, drawn, reused) = match primary {
+        Primary::Served(chosen, counts) => {
+            if whole {
+                names = Names::of_counted(&counts.items, counts.truncated);
+            }
+            let chosen = names.settle(chosen);
+            let refer = |path: &str| {
+                picker::reference(path, |l| {
+                    names.is_user_root(l)
+                        || own.as_deref() == Some(l)
+                        || counts.items.iter().any(|n| n.user_root && n.name == l)
+                })
+            };
+            let offers = offers.unwrap_or_else(|| {
+                Err((
+                    String::new(),
+                    oml_sdk::Error::Decode {
+                        status: 200,
+                        why: "no offers were read".to_owned(),
+                    },
+                ))
+            });
+            let Some(drawn) = atlas_view(side, &counts.items, counts.truncated, &offers, &refer)
+            else {
+                return refused(
+                    StatusCode::NOT_FOUND,
+                    "access.not_found",
+                    "not found",
+                    &calls,
+                );
+            };
+            let browse = reuse.then(|| Browse::of(counts.items.clone(), counts.truncated));
+            (chosen, drawn, browse)
+        }
+        Primary::Missed(chosen) => (chosen, String::new(), None),
+        Primary::Failed(Failed::Api(e)) => return outcome::page(&e, &calls, next),
+        Primary::Failed(failed) => return failed_page(failed, &calls, next),
     };
-    let mut body = list_view(side, &q, None, true);
+    let browse = reused.or(browse);
+    q.workarea = chosen.shown().map(str::to_owned);
+    let field = field(side, &q, true, &chosen, &names, browse.as_ref());
+    let mut body = list_view(side, &side.lede(true, &session), &q, None, true, &field);
     body.push_str(&drawn);
-    // The admin page has no Atlas tab: its list's tab stays marked.
-    let active = match side {
-        Side::User => USER_ATLAS_PATH,
-        Side::Admin => ADMIN_MEMORIES_PATH,
-    };
-    page(side, &session, active, &body)
+    with_status(page(side, &session, side.atlas(), &body), chosen.status())
 }
 
 /// `GET /web/memories`: the user page's Memories list.

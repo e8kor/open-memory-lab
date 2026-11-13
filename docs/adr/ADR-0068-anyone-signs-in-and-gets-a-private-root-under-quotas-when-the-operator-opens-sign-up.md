@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up
 tier: engineering
-status: proposed
+status: proposed · amended 2026-11-13 (d10: the Start page's heading and step wording follow the voice rule and ADR-0045's header amendment, accepted by the operator on 2026-11-13); the ADR remains proposed
 answers: how a deployment opens sign-up to anyone with a Google or GitHub account and keeps self-hosters unchanged; how a self-signed-up person accepts the terms and which version is recorded; which tenant and which admin key a sign-up lands under; why a person's space is a user root and not a tenant of their own, and what proves no second person can see, count or recall it; how a person reviews their agents' writes without breaking R2; which quotas and rate limits hold, what they refuse and how an admin raises them; how a person exports their memories and asks for their account to be deleted, and what deletion does while erasure is unbuilt; the per-address sign-up limit, the disable switch and the absence of anonymous access; the onboarding page and its status poll; what it amends in ADR-0045 and ADR-0058
 -->
 
 # ADR-0068 — When the operator opens sign-up, anyone signs in with Google or GitHub and gets a private root under quotas, and leaves through a journalled request
 
-**Status:** proposed · 2026-11-06 · amended by ADR-0071, ADR-0079
+**Status:** proposed · 2026-11-06 · amended by ADR-0071, ADR-0079 · amended 2026-11-13 by [the amendment](#the-amendment-of-2026-11-13-the-start-pages-heading-is-start) (d10: the Start page's heading and step wording, which follow the voice rule and ADR-0045's header amendment, both accepted by the operator on 2026-11-13); the ADR itself remains proposed
 
 **Amends:** ADR-0045 (d1: three routes join `WEB_ROUTES`; d2: in open mode a sign-in adds its own entry; d8: one page carries one hashed script; d15: sign-ups are limited per client address), ADR-0058 (d5 is the gate that opening sign-up on the public server waits for)
 
@@ -260,7 +260,7 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
     | `GET /web/admin/users` | the users, their quota use, pending deletion requests |
     | `POST /web/admin/users` | `set_quota`, `disable_user`, `close_deletion` |
 
-    The page has one heading and one line per step:
+    The page has one heading and one line per step *(amended 2026-11-13: the heading's word; see [the amendment](#the-amendment-of-2026-11-13-the-start-pages-heading-is-start))*:
     1. **Choose your client**: claude.ai, Desktop or phone; Claude Code; other MCP tools.
     2. **Get your credential**: one button per client.
         - claude.ai: issues a connector key `<user>-claude-ai` and shows its connect code once,
@@ -306,6 +306,27 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
     | deletion requests pending | — | `warn signup` with the count and the oldest request's time (d6) |
     | an admin key whose row names a person's root | `workarea.admin_key_under_root` on that person's disable or deletion close, nothing journalled (d8) | `warn keys` naming the key and the person, from `GET /v2/web/users`' `admin_keys` |
     | open sign-up on a deployment with no backup | — | — (an ADR-0058 d5 rule; the production page checklist) |
+
+## The amendment of 2026-11-13: the Start page's heading is Start
+
+**Status of this amendment:** accepted design · 2026-11-13, by the operator, before it is built · built in v0.7.3 with the console redesign
+
+The mockups of the console redesign draw the Start page under the header of
+[ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)'s
+header amendment of the same date, whose rule is that the `<h1>` is the nav item's own word. The
+operator decided on 2026-11-13, after seeing them, that the build ships in v0.7.3, and, on
+2026-11-12 and 2026-11-13, that UI copy is impersonal and neutral ("dont use you … neutral tone"),
+with the rule "everywhere". This amendment records what that does to d10, in its heading's word
+and its step headings only.
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d10 | the page's one heading is "Connect an agent" | the `<h1>` is "Start", and the one line under it reads "Connect an agent: three steps, about two minutes." The page still has one heading and one line per step | the heading is the nav item's word, as on every page of both sides |
+| d10 | step 1 is "Choose your client" and step 2 "Get your credential" | the step headings and their buttons carry no second person, under the voice rule of [design/README.md](../../design/README.md). The words are the console copy the build writes, and are the build's: this record does not fix them | the voice rule applies to the console everywhere; ADR-0068's other decisions are unchanged |
+
+Three things are not changed: the three steps, one button per client and what each issues, the
+status poll and the account section's acts. The documentation's rewrite to the same voice is
+[#357](https://github.com/e8kor/open-memory-lab/issues/357)'s, not this amendment's.
 
 ## Consequences
 

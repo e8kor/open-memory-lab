@@ -172,11 +172,12 @@ fn session(record: &str) -> Option<(u16, Value, Option<&'static str>)> {
     })
 }
 
-/// The text search reads the person's keys beside the recall, so the page
-/// spends two rounds, the session check and then both, where it spent
-/// three (#286).
+/// The text search that names an author reads the person's keys beside
+/// the recall, so the page spends two rounds, the session check and then
+/// both, where it spent three (#286); one that names none reads no key
+/// list, since the card names no author's kind (bulk D fixes).
 #[tokio::test]
-async fn the_text_search_reads_the_persons_keys_beside_the_recall() {
+async fn the_text_search_reads_the_persons_keys_beside_the_recall_only_for_an_author() {
     let script: Script = |record| {
         if let Some(answer) = session(record) {
             return answer;
@@ -197,12 +198,31 @@ async fn the_text_search_reads_the_persons_keys_beside_the_recall() {
             (500, envelope("internal.error"), None)
         }
     };
-    let answered = page(script, "/web/memories?q=deploy").await;
+    let answered = page(script, "/web/memories?q=deploy&author=alice-laptop").await;
     assert_eq!(answered.status, StatusCode::OK, "{}", answered.body);
     assert!(
         answered.body.contains("No memory matches."),
         "{}",
         answered.body
+    );
+    let alone: Script = |record| {
+        if let Some(answer) = session(record) {
+            return answer;
+        }
+        if record.starts_with("POST /v1/memories/recall") {
+            (200, json!({"steering": [], "hits": []}), None)
+        } else if record.starts_with("GET /v2/workareas/universe/tree") {
+            (200, json!({"items": [], "next_cursor": null}), None)
+        } else {
+            (500, envelope("internal.error"), None)
+        }
+    };
+    let answered = page(alone, "/web/memories?q=deploy").await;
+    assert_eq!(answered.status, StatusCode::OK, "{}", answered.body);
+    assert!(
+        !answered.calls.iter().any(|c| c.starts_with("GET /v2/keys")),
+        "{:?}",
+        answered.calls
     );
     // A named author is still refused by name when no key of the person's
     // holds it, after both reads.
@@ -245,7 +265,7 @@ async fn the_keys_page_reads_the_persons_usage_beside_the_key_list() {
     let answered = page(script, "/web/keys").await;
     assert_eq!(answered.status, StatusCode::OK, "{}", answered.body);
     assert!(
-        answered.body.contains("<h2>Your usage</h2>") && answered.body.contains("4 / 1000"),
+        answered.body.contains("<h2>Usage</h2>") && answered.body.contains("4 / 1000"),
         "{}",
         answered.body
     );
@@ -380,4 +400,137 @@ async fn the_admin_atlas_reads_its_offers_apart_from_an_api_that_refuses_the_par
     let scope = &value["workareas"]["items"][0];
     assert_eq!(scope["path"], "universe", "{value}");
     assert!(scope.get("offers_unavailable").is_none(), "{value}");
+}
+
+/// The person's names under `universe`: the tree read the picker's hints
+/// come from.
+fn names() -> Value {
+    json!({"items": [
+        {"id": UNIVERSE, "name": "universe", "path": "universe", "parent_id": null, "user_root": false},
+        {"id": ROOT, "name": "alice", "path": "universe.alice", "parent_id": UNIVERSE, "user_root": true},
+        {"id": "6f1c2d4e-0000-4000-8000-000000000002", "name": "proj", "path": "universe.alice.proj", "parent_id": ROOT, "user_root": false},
+    ], "next_cursor": null})
+}
+
+/// The person's Memories with each read the page makes after the session
+/// check held until its partner arrives: the listing, the person's keys
+/// and the picker's names go together in one round.
+fn memories_script(record: &str) -> (u16, Value, Option<&'static str>) {
+    if let Some(answer) = session(record) {
+        return answer;
+    }
+    if record.starts_with("GET /v2/keys") {
+        (
+            200,
+            json!({"items": [], "next_cursor": null}),
+            Some("/tree?limit=200"),
+        )
+    } else if record.starts_with("GET /v2/workareas/universe/tree?limit=200 web") {
+        (200, names(), Some("GET /v1/memories"))
+    } else if record.starts_with("GET /v1/memories") {
+        (
+            200,
+            json!({"items": [], "next_cursor": null}),
+            Some("/tree?limit=200"),
+        )
+    } else if record.starts_with("GET /v2/workareas/universe/tree?counts=true web") {
+        (200, counts(UNIVERSE, "universe"), None)
+    } else {
+        (500, envelope("internal.error"), None)
+    }
+}
+
+/// The picker's hints are names only, from the uncounted tree read made
+/// beside the listing, so Memories keeps two rounds; with Browse closed
+/// the page makes no counted read, and Browse asked open makes exactly one
+/// (the operator's decision on the design notes' row 14).
+#[tokio::test]
+async fn the_memories_page_reads_the_pickers_names_beside_its_listing_and_counts_only_for_an_open_browse()
+ {
+    let closed = page(memories_script, "/web/memories").await;
+    assert_eq!(closed.status, StatusCode::OK, "{}", closed.body);
+    assert!(
+        closed
+            .body
+            .contains(r#"<option value="alice.proj"></option>"#),
+        "{}",
+        closed.body
+    );
+    let counted = |calls: &Seen| calls.iter().filter(|c| c.contains("counts=true")).count();
+    let named = |calls: &Seen| {
+        calls
+            .iter()
+            .filter(|c| c.contains("tree?limit=200"))
+            .count()
+    };
+    assert_eq!(counted(&closed.calls), 0, "{:?}", closed.calls);
+    assert_eq!(named(&closed.calls), 1, "{:?}", closed.calls);
+    assert!(
+        closed
+            .body
+            .contains(r#"href="/web/memories?browse=1">Browse</a>"#),
+        "{}",
+        closed.body
+    );
+    let open = page(memories_script, "/web/memories?browse=1").await;
+    assert_eq!(open.status, StatusCode::OK, "{}", open.body);
+    assert_eq!(counted(&open.calls), 1, "{:?}", open.calls);
+    assert_eq!(named(&open.calls), 1, "{:?}", open.calls);
+    assert!(
+        open.body
+            .contains(r#"<details class="oml-wa-browse" open>"#),
+        "{}",
+        open.body
+    );
+    assert!(open.body.contains("3 readable"), "{}", open.body);
+}
+
+/// A path typed where a name goes is answered by the console with the
+/// API's code for it, and the listing is never asked (ADR-0026 d7).
+#[tokio::test]
+async fn a_path_typed_in_the_field_is_refused_without_a_listing_call() {
+    // No listing comes, so the names' read waits for no partner.
+    let script: Script = |record| match memories_script(record) {
+        (status, body, Some("GET /v1/memories")) => (status, body, None),
+        other => other,
+    };
+    let answered = page(script, "/web/memories?workarea=Alice.Proj.Docs").await;
+    assert_eq!(
+        answered.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        answered.body
+    );
+    assert!(
+        !answered
+            .calls
+            .iter()
+            .any(|c| c.starts_with("GET /v1/memories")),
+        "{:?}",
+        answered.calls
+    );
+    assert!(
+        answered.body.contains("<code>request.validation</code>"),
+        "{}",
+        answered.body
+    );
+    assert!(
+        answered
+            .body
+            .contains("<code>alice.proj.docs</code> is a path, not a name."),
+        "{}",
+        answered.body
+    );
+    assert!(
+        answered.body.contains(r#"aria-invalid="true""#),
+        "{}",
+        answered.body
+    );
+    assert!(
+        answered
+            .body
+            .contains(r#"<a href="/web/memories?workarea=alice.proj">alice.proj</a>"#),
+        "the closest names come from the names read: {}",
+        answered.body
+    );
 }
