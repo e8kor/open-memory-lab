@@ -11,7 +11,7 @@ through grants on nodes. A grant covers the node and its subtree, and a denial o
 wins. `universe` holds only what curators place there, each memory reviewed by a second identity.
 No user key writes to it directly.
 
-## Your own workarea
+## The user's own workarea
 
 When a person's first key is issued, OML creates a workarea of their own under `universe`. Their
 keys write, read and make workareas there, so two people can each have a `project`. Under alice's

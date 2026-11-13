@@ -16,7 +16,7 @@ It prints each check with `ok`, `warn` or `fail`, and where each value came from
 
 ## `url` reads `fail no_server`, or `api key` reads `unset`
 
-No source sets the value. No release names a server, so the address always comes from you or from the server that issued the key. The pair comes from flags, then `OML_URL` and `OML_API_KEY`, then the credentials file, whole from the first source that sets either.
+No source sets the value. No release names a server, so the address always comes from the caller or from the server that issued the key. The pair comes from flags, then `OML_URL` and `OML_API_KEY`, then the credentials file, whole from the first source that sets either.
 
 ```bash
 oml login <url>
@@ -29,7 +29,7 @@ The other lines that name a missing or shared server:
 - **`plugin : warn plugin_no_server`**: the plugin has a key and no `url`, so its tools reach no server. Set `url` with `oml setup claude-code --url <server>` or `claude plugin configure oml@open-memory-lab`.
 - **`oauth : warn server_origin`** (an admin key): the server sets no `oauth.issuer`, so its pages cannot show agents the URL to set beside their keys. Set `oauth.issuer` ([configuration](../operations/configuration.md)).
 - **`sync : warn sync_shared_server`**: the server says it is shared and this clone holds no consent for it. Run `oml sync` once with `--allow-public-server` ([sync](../use/sync.md)).
-- **`sync : warn sync_consent_unbound`**: the clone holds the old `oml.allowPublicServer=true`, which names no server and is no longer read. Run `oml sync` once with `--allow-public-server` against the server you mean: it records that server's origin and removes the old value, and the line goes.
+- **`sync : warn sync_consent_unbound`**: the clone holds the old `oml.allowPublicServer=true`, which names no server and is no longer read. Run `oml sync` once with `--allow-public-server` against the server in question: it records that server's origin and removes the old value, and the line goes.
 - **`error: refused setup.no_server`** from `oml setup claude-code`: a key came without a URL off a terminal. Pass `--url` beside `--key-file`, or export `OML_URL` with `OML_API_KEY`.
 
 ## `oml login` fails
@@ -62,7 +62,7 @@ Work down this list. Each step assumes the ones above it hold.
    ```
 
    Exported `OML_URL` and `OML_API_KEY` do not reach the plugin. See [Claude Code](../guides/claude-code.md).
-2. Use your server's address. `url` has no default: left unset, the plugin reaches no server and the session-start hook prints `no_server: CLAUDE_PLUGIN_OPTION_URL is not set`. A key sent to a server that did not issue it is refused with `401 auth.invalid`. See [install](../start/install.md).
+2. Use the server's address. `url` has no default: left unset, the plugin reaches no server and the session-start hook prints `no_server: CLAUDE_PLUGIN_OPTION_URL is not set`. A key sent to a server that did not issue it is refused with `401 auth.invalid`. See [install](../start/install.md).
 3. Give the address without `/mcp`. The plugin appends it.
 4. Use an agent key. `oml setup claude-code` refuses an `admin` or `operator` key with `setup.admin_key`.
 
@@ -71,7 +71,7 @@ Work down this list. Each step assumes the ones above it hold.
    ```
 
 5. Use Claude Code 2.1.285 or later. An older one is refused with `setup.claude_code_version`.
-6. If you see `setup.marketplace`, remove the other marketplace, then set up again.
+6. On `setup.marketplace`, remove the other marketplace, then set up again.
 
    ```bash
    claude plugin marketplace remove open-memory-lab
@@ -95,15 +95,15 @@ The CLI prints the code, a message and a `rule:` line, then exits `1`. Branch on
 | `review.serve_invalid` | The served item expired, was used, or changed. | Run `oml review next` again. |
 | `limit.rate` | A cap was reached: unused client registrations, recall feedback labels for the day, or the key's requests per minute. | Retry after `Retry-After` seconds. |
 
-## My memory does not appear when I recall
+## A memory does not appear in recall
 
 A new memory is held. Nobody but its author can recall it until a different reviewer approves it.
 
-- **If you wrote it**, find it with `include_unreviewed: true` on `oml_read`. Or list your writes with their `state`.
+- **If the key wrote it**, find it with `include_unreviewed: true` on `oml_read`. Or list the writes with their `state`.
 - **If someone else wrote it**, a reviewer key approves it. See [review held memories](../guides/reviewing.md).
-- **If it is approved but missing**, check that your key has a reader grant on the workarea. Without one you get `access.not_found`.
+- **If it is approved but missing**, check that the key has a reader grant on the workarea. Without one the answer is `access.not_found`.
 
-Recall matches any of your words by default. Try other words. `--match all` requires every word, so remove it if you used it.
+Recall matches any of the words by default. Try other words. `--match all` requires every word, so remove it if it was used.
 
 ```bash
 oml read --query "<words>"
@@ -153,7 +153,7 @@ To check by hand, see [install](../start/install.md).
 
 ## claude.ai or the phone app does not connect
 
-- **`oauth.connect_code_invalid`**: the code is unknown, expired, used, or its key is denied. A code lives ten minutes and works once. Your administrator issues another.
+- **`oauth.connect_code_invalid`**: the code is unknown, expired, used, or its key is denied. A code lives ten minutes and works once. The administrator issues another.
 
   ```bash
   oml keys connect-code <key>
@@ -161,4 +161,4 @@ To check by hand, see [install](../start/install.md).
 
 - **`oauth.authorization_expired`**: the request outlived ten minutes or five attempts. Start again from the connector.
 - **`oauth.connect_refused`**: `details.reason` says why. `not_configured` means `oauth.issuer` is unset.
-- **Claude cannot reach the server**: a server on `127.0.0.1` is unreachable from claude.ai. You need a public HTTPS address, `oauth.issuer` set to it, and `oml doctor` showing `oauth` as `ok`. See [claude.ai and mobile](../guides/claude-ai-and-mobile.md).
+- **Claude cannot reach the server**: a server on `127.0.0.1` is unreachable from claude.ai. A public HTTPS address is required, `oauth.issuer` set to it, and `oml doctor` showing `oauth` as `ok`. See [claude.ai and mobile](../guides/claude-ai-and-mobile.md).

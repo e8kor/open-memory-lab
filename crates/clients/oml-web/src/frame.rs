@@ -63,7 +63,7 @@ pub fn lines(set: &GuardrailSet) -> Vec<String> {
             .map(|h| format!("{} v{}", one_line(&h.claim_key), h.version))
             .collect();
         lines.push(format!(
-            "Held, not in force (your own, awaiting review, never served as a rule): {}",
+            "Held, not in force (this key's own, awaiting review, never served as a rule): {}",
             named.join(", ")
         ));
     }

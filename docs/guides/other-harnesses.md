@@ -12,7 +12,7 @@ release and signed with cosign. The kit's
 [README](https://github.com/e8kor/open-memory-lab/blob/main/kit/README.md) names each file, where
 it goes and the tool's documentation with its fetch date.
 
-You need an agent key ([get one](get-an-agent-key.md)). Which tools we have run against a live client is under [Limits](../reference/limits.md#not-verified-against-a-live-client).
+An agent key ([get one](get-an-agent-key.md)) is required. The tools run against a live client are listed under [Limits](../reference/limits.md#not-verified-against-a-live-client).
 
 
 ## 1. Export the key
@@ -23,8 +23,8 @@ Export the agent's key in the shell that starts the tool:
 export OML_API_KEY="$(cat "$HOME/.config/oml/keys/crew-agent-7")"
 ```
 
-The key file is the one `oml keys issue-agent --out` wrote. Without one, export the key you were
-given. None of the kit's files holds a key.
+The key file is the one `oml keys issue-agent --out` wrote. Without one, export the key that was
+issued. None of the kit's files holds a key.
 
 ## 2. Copy the tool's file
 

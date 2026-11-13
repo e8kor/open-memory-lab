@@ -6,7 +6,7 @@ answers: "how to upgrade an OML server: how migrations run, the upgrade steps in
 
 # Upgrade OML
 
-An upgrade replaces the server binary. The new server applies the schema migrations itself at boot. You back up
+An upgrade replaces the server binary. The new server applies the schema migrations itself at boot. The operator backs up
 first, because rollback restores binaries and never the schema.
 
 ## How migrations run
@@ -17,13 +17,13 @@ serving role never holds DDL rights. The server refuses to start, with `postgres
 log in as one role.
 
 There are no down migrations. A down path on a system of record is untestable, because nothing can
-un-happen against a journal. You run no migration step of your own.
+un-happen against a journal. No migration step is run by hand.
 
 ## Upgrade in order
 
-You need a recent backup and the release you are moving to.
+A recent backup and the release to move to are required.
 
-1. **Verify the release.** Check the cosign signature of every archive you install
+1. **Verify the release.** Check the cosign signature of every installed archive
    ([deploy](deployment.md#install-the-server-archive)).
 2. **Back up the database and the keyring together** ([Back up and restore](restore.md)). Take the dump
    as a superuser and name it for the version it precedes.
@@ -33,12 +33,12 @@ You need a recent backup and the release you are moving to.
    goes no further.
 4. **Set `server.shared` first, on a server other people use.** Set `server.shared = true`
    (`OML_SERVER__SHARED`) before the new binary starts, or in the same deploy ([configuration](configuration.md)).
-   A server that does not say it is shared gets no consent prompt from `oml sync`, and nothing warns you that
-   the setting is missing: a CLI of this release syncs to it with no disclosure to its users until you set it.
-   Open sign-up implies it, and a server only you use leaves it `false`.
+   A server that does not say it is shared gets no consent prompt from `oml sync`, and nothing warns that
+   the setting is missing: a CLI of this release syncs to it with no disclosure to its users until it is set.
+   Open sign-up implies it, and a server used by one person leaves it `false`.
 5. **Swap and restart.** Keep the running binary as `<name>.v<old>`, install the new one and restart. The
    migrations run at boot. On Kubernetes, follow [Install OML on Kubernetes](../guides/kubernetes.md).
-6. **Upgrade the lake writer after the server**, if you run one, so it meets the migrated schema
+6. **Upgrade the lake writer after the server**, if one runs, so it meets the migrated schema
    ([Run the lake writer](lake.md)).
 7. **Check.** `/readyz` names the new version, the log carries `role_split_booted`, and `oml doctor` answers
    `ok` for the agent and admin keys.
@@ -59,7 +59,7 @@ loaded shared host with PostgreSQL 18:
 | 100,000 | 13.4 to 21.6 s |
 
 The fill rewrites each promoted row once, so `memories` grows by about 70% until vacuum reclaims the old row
-versions. Rehearse on a copy (step 3) to time it on your data.
+versions. Rehearse on a copy (step 3) to time it on the data.
 
 A version whose promotion event names no verdict the journal holds keeps `approved_at` null. It stays served,
 with `approver` and `approved_at` null. After the upgrade, `oml doctor` run with an admin key names the count
@@ -118,13 +118,13 @@ a database whose `universe` root stores the status `development`, with `check co
 database again.
 
 From v0.5.4, the server aligns each workarea's stored status with the status v0.5.1 served, before migration
-`0017` runs. Nothing is journalled, because reads always served that status. You take no extra step. Back up
+`0017` runs. Nothing is journalled, because reads always served that status. No extra step is needed. Back up
 and start v0.5.4 or later.
 
 ## Splitting an install from before v0.3.1
 
 A build before v0.3.1 migrated and served under one PostgreSQL role that owned every table. v0.3.1 and later
-refuse that role on both URLs. You split it once, in one outage. A superuser runs every statement, connected to
+refuse that role on both URLs. The split happens once, in one outage. A superuser runs every statement, connected to
 the install's database. The old build stays stopped from step 2 to the end, because it cannot run once ownership moves.
 
 1. **Back up as a superuser.** `pg_dump` fails when its role cannot bypass row security.
@@ -157,5 +157,5 @@ the install's database. The old build stays stopped from step 2 to the end, beca
 6. **Start the new server.** It migrates under the owner URL and then serves. The split worked when the
    log carries `role_split_booted` with `owner_role` and `serving_role`, and `/readyz` answers 200.
 
-Until the new server starts, you can reverse the move with `REASSIGN OWNED BY <owner> TO <role>` and restart
+Until the new server starts, the move can be reversed with `REASSIGN OWNED BY <owner> TO <role>` and restart
 the old build. After it starts, the way back is the backup.

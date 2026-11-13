@@ -29,7 +29,7 @@ kind, the memories it derives from, and a source anchor. Every save is **held**.
 
 `oml_read` with a query returns steering rules first, then ranked hits within the workarea's
 subtree, within the budget the agent sets (`max_tokens`). Each hit says which words it matched.
-A hit holds any of your words, ranked by how many. Add `--match all` (`match: all`) to require
+A hit holds any of the words, ranked by how many. Add `--match all` (`match: all`) to require
 every word.
 
 The agent sees its own held writes with `include_unreviewed`. Everyone else sees a memory after a
@@ -41,7 +41,7 @@ Without a query, `oml_read` lists the key's own work by state or the promoted ti
 
 ## Correct, retire and link
 
-- **Correct.** Write the new text naming the memory it replaces and the version you read
+- **Correct.** Write the new text naming the memory it replaces and the version read
   (`expected_version`). The new version is held, and others keep the old one until it is approved.
 - **Retire.** Mark the write a retirement with a reason. Approval removes the memory from recall.
   Every version stays fetchable as history.

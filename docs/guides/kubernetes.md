@@ -6,9 +6,9 @@ answers: "how to install OML on Kubernetes with the release's Helm chart: prereq
 
 # Install OML on Kubernetes
 
-The chart, `deploy/helm/oml`, runs one `oml-server-lead` against a PostgreSQL you bring, and the web console, `oml-web`, as a second Deployment from the same image. The signing keyring sits on a volume claim that `helm uninstall` keeps. The chart does not deploy the optional lake writer; run it as [Run the lake writer](../operations/lake.md) describes.
+The chart, `deploy/helm/oml`, runs one `oml-server-lead` against a PostgreSQL supplied separately, and the web console, `oml-web`, as a second Deployment from the same image. The signing keyring sits on a volume claim that `helm uninstall` keeps. The chart does not deploy the optional lake writer; run it as [Run the lake writer](../operations/lake.md) describes.
 
-## Before you start
+## Before starting
 
 - **Kubernetes 1.23 or later** (`kubeVersion >=1.23.0-0`, for `fsGroupChangePolicy`), **Helm 3** and `cosign`.
 - **A StorageClass** that provisions a `ReadWriteOnce` claim and keeps file modes (the keyring file must stay `0600`). Name one in `keyring.storageClassName` or use the default.
@@ -42,7 +42,7 @@ Pin `image.digest` to the index digest in the release notes.
 
 ## 2. Create the Secret and a values file
 
-The chart reads both URLs from one Secret you create, never from a value.
+The chart reads both URLs from one Secret created beforehand, never from a value.
 
 ```sh
 kubectl create namespace oml
@@ -74,7 +74,7 @@ kubectl --namespace oml rollout status deployment/oml-server-lead
 
 A release named `oml` gives `deployment/oml-server-lead`, `service/oml-server`, `deployment/oml-web`, `service/oml-web`, the Secret `oml-web-client` and the claim `oml-keyring`; any other name prefixes them `<release>-oml`.
 
-`oml-web` reaches the server at `service/oml-server` over plain http inside the cluster (`web.allowPlainHttpApi`, on by default) and proves itself with a secret both Deployments read. Create that Secret yourself and name it, so its value never depends on a render:
+`oml-web` reaches the server at `service/oml-server` over plain http inside the cluster (`web.allowPlainHttpApi`, on by default) and proves itself with a secret both Deployments read. Create that Secret by hand and name it, so its value never depends on a render:
 
 ```sh
 kubectl --namespace oml create secret generic oml-web-client \
@@ -90,7 +90,7 @@ kubectl --namespace oml rollout status deployment/oml-web
 kubectl --namespace oml exec deployment/oml-web -- /usr/local/bin/oml-web --doctor
 ```
 
-To rotate the secret, put the new value in the Secret beside the old one and an instant at most 7 days ahead, restart the server, then `oml-web`, then remove the old value. The server reads the two extra keys, each optional, and accepts the old value until the instant; `oml-web` reads only the current one, so neither restart refuses a page ([Rotating the client secret](../operations/web-console.md#rotating-the-client-secret)). The chart-made Secret keeps the keys you add across upgrades.
+To rotate the secret, put the new value in the Secret beside the old one and an instant at most 7 days ahead, restart the server, then `oml-web`, then remove the old value. The server reads the two extra keys, each optional, and accepts the old value until the instant; `oml-web` reads only the current one, so neither restart refuses a page ([Rotating the client secret](../operations/web-console.md#rotating-the-client-secret)). The chart-made Secret keeps added keys across upgrades.
 
 ```sh
 OLD="$(kubectl --namespace oml get secret oml-web-client -o jsonpath='{.data.OML_WEB__CLIENT_SECRET}')"
@@ -120,7 +120,7 @@ While no tenant exists, the server prints a single-use enrollment token in its l
 TOKEN="$(kubectl --namespace oml logs deployment/oml-server-lead | grep -o 'enr_[0-9a-f]\{48\}' | tail -1)"
 kubectl --namespace oml port-forward service/oml-server 8080:8080 &
 printf '%s\n' "$TOKEN" | oml --url http://127.0.0.1:8080 bootstrap claim <key-name> \
-  --token-stdin --tenant-name <tenant> --principal <you>
+  --token-stdin --tenant-name <tenant> --principal <admin>
 ```
 
 The CLI prints the key once and stores it in `~/.config/oml/credentials`. A restart before the claim voids the old token, so read it from the running pod, never with `--previous`.
@@ -132,7 +132,7 @@ After the claim, add the Ingress and upgrade:
 ```yaml
 ingress:
   enabled: true
-  className: nginx            # your controller's class
+  className: nginx            # the controller's class
   hosts:
     - host: oml.example.com
       paths:
@@ -179,7 +179,7 @@ The server runs new migrations at boot. `Recreate` stops the old pod first, so e
 
 `helm uninstall oml --namespace oml` removes both Deployments, both Services and ServiceAccounts, the Ingress and the NetworkPolicies. It keeps:
 
-- **The web client Secret** `oml-web-client`, whether you made it or the chart did (`helm.sh/resource-policy: keep`); a reinstall reads it back.
+- **The web client Secret** `oml-web-client`, whether made by hand or by the chart (`helm.sh/resource-policy: keep`); a reinstall reads it back.
 
 - **The keyring claim** `oml-keyring` (`helm.sh/resource-policy: keep`). A reinstall under the same release name and namespace takes it back; under another name use `--set keyring.existingClaim=oml-keyring`.
 - **The database** and the `oml-postgres` Secret.

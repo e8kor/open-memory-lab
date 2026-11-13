@@ -6,8 +6,8 @@ answers: "how to deploy an OML server: the three ways to run it, what runs, how 
 
 # Deploy OML
 
-You can run OML three ways. Pick the smallest one that fits, because each step up adds a trust
-boundary you must operate.
+OML runs three ways. The smallest one that fits is the right pick, because each step up adds a trust
+boundary to operate.
 
 | Path | For | Needs | Start with |
 |---|---|---|---|
@@ -17,7 +17,7 @@ boundary you must operate.
 
 Every path runs the same server binary, `oml-server-lead`, and the web console beside it,
 `oml-web`. The lead is the one process that holds the signing key, writes the journal and serves
-the API. [Run your own server](../start/run-your-own.md)
+the API. [Run a server](../start/run-your-own.md)
 walks the first two paths in order.
 
 ## What runs
@@ -35,15 +35,15 @@ migrations at start. The serving role owns nothing and serves requests. The serv
 with `postgres.role_split`, when both URLs log in as one role. Each role has `LOGIN` and no other
 attribute.
 
-Administration is the [`oml` CLI](../cli/reference.md). People use the web pages once you turn
-on sign-in ([configuration](configuration.md)). The pages are moving from the server into
+Administration is the [`oml` CLI](../cli/reference.md). People use the web pages once sign-in is turned
+on ([configuration](configuration.md)). The pages are moving from the server into
 `oml-web` one at a time, so both processes serve pages behind one proxy origin while that
 lasts. The session cookie is a `__Host-` cookie the browser sends to one host only, so the
 server, `oml-web` and the sign-in routes must share that origin.
 
 ## Start on one machine with Docker
 
-You need Docker with compose v2 and the `oml` CLI ([install](../start/install.md)).
+Docker with compose v2 and the `oml` CLI ([install](../start/install.md)) are required.
 
 ```sh
 oml quickstart
@@ -61,8 +61,8 @@ the keyring. Use it for a trial or for one person, not as a team's server.
 
 ## Run on one host behind TLS
 
-You need PostgreSQL 17 or later with the `ltree` and `pg_trgm` extensions, a reverse proxy with a TLS
-certificate, and the `oml` CLI on your own machine.
+PostgreSQL 17 or later with the `ltree` and `pg_trgm` extensions, a reverse proxy with a TLS
+certificate, and the `oml` CLI on the operator's machine are required.
 
 1. Create the two PostgreSQL roles and a database owned by the owner role:
 
@@ -72,7 +72,7 @@ certificate, and the `oml` CLI on your own machine.
     CREATE DATABASE oml OWNER oml_owner;
     ```
 
-    The migrations grant the serving role its privileges. You grant it nothing by hand.
+    The migrations grant the serving role its privileges. Nothing is granted by hand.
 2. [Install the server archive](#install-the-server-archive).
 3. Set the two connection strings in the server's environment or in `oml.toml`:
    `OML_POSTGRES__URL` for the serving role and `OML_POSTGRES__OWNER_URL` for the owner role.
@@ -91,7 +91,7 @@ Every setting is on [configuration](configuration.md).
 
 Each release attaches `oml-server-lead-X.Y.Z-<target>.tar.gz` for `x86_64-unknown-linux-gnu` and
 `aarch64-unknown-linux-gnu`. The archive holds `oml-server-lead`, the README and the license.
-Verify it before you stop anything:
+Verify it before stopping anything:
 
 ```sh
 v=X.Y.Z t=x86_64-unknown-linux-gnu           # aarch64-unknown-linux-gnu on arm64
@@ -118,7 +118,7 @@ any proxy or Ingress exposes it. Do it from the host or through a port-forward:
 
 ```sh
 printf '%s\n' "$TOKEN" | oml --url http://127.0.0.1:8080 bootstrap claim <key-name> \
-    --token-stdin --tenant-name <tenant> --principal <you>
+    --token-stdin --tenant-name <tenant> --principal <admin>
 ```
 
 The token also sits in whatever store collects the server's logs until a claim consumes it. The CLI
@@ -176,7 +176,7 @@ The server answers `/healthz` and `/readyz` ([HTTP API](../api/http-api.md)).
   compares the stored chain head with the last signed head.
 
 If a restore or failover lost committed events, or the server loaded a different signing key, the server
-stays down until you resolve it. There is no override that accepts and forks the chain
+stays down until the operator resolves it. There is no override that accepts and forks the chain
 ([runbooks](runbooks.md)).
 
 `oml doctor` prints each signal with a verdict and exits 1 on any failure
@@ -202,10 +202,10 @@ rehearse one restore, before anyone relies on the server ([Back up and restore](
 
 Losing the keyring while the database survives loses the deployment's identity. The chain stays readable
 and verifiable, but the server cannot extend it. Any copy of the keyring is a usable key copy, so guard
-copies as you guard the live file.
+copies as the live file is guarded.
 
-A backup is also a copy of erased content. Your backup retention window is the upper bound on how long
-erased content survives, so state it where your compliance statement needs it
+A backup is also a copy of erased content. The backup retention window is the upper bound on how long
+erased content survives, so state it where the compliance statement needs it
 ([compliance](../product/compliance.md)).
 
 ## Size the server

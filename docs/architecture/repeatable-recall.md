@@ -63,7 +63,7 @@ The ranking reads one snapshot of the database, and each ranked row is checked a
 
 Two cases serve unapproved memories, so a write changes the answer at once:
 
-- With `include_unreviewed`, your key's own held memories join the hits.
+- With `include_unreviewed`, the key's own held memories join the hits.
 - Inside an [in-progress workarea](workareas.md#in-progress-workareas), every author's held memories join, labeled `unreviewed`.
 
 ## What is outside the guarantee

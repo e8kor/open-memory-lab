@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-06
-answers: "the size, rate, page and capacity bounds OML enforces or has measured, with units, who sets them and what error you get"
+answers: "the size, rate, page and capacity bounds OML enforces or has measured, with units, who sets them and what error is returned"
 ---
 
 # Limits
@@ -28,7 +28,7 @@ Settings are on the [settings page](../operations/configuration.md). The request
 ## Availability
 
 - One lead, no follower. Every upgrade or restart stops the API until the new instance is ready. A single-lead deployment's worked availability target is 99.5% over 30 days, an error budget of 3 h 36 min ([capacity and SLOs](../operations/operating.md)).
-- Writes are signed one after another on a single chain per tenant, so write throughput has a ceiling that we have not measured.
+- Writes are signed one after another on a single chain per tenant, so write throughput has a ceiling that has not been measured.
 
 ## Measured capacity
 
@@ -48,13 +48,13 @@ From the maintainers' own runs on one 8-vCPU host with PostgreSQL:
 
 ## Not verified against a live client
 
-The Claude Code plugin, installed from the plugin marketplace with its URL and key set in the plugin's options, is in daily use against a single-lead production server. The CI suites run the rest against test servers only. As of 2026-11-06 we have not completed a run of these against a live client, so their steps follow the vendor's documentation:
+The Claude Code plugin, installed from the plugin marketplace with its URL and key set in the plugin's options, is in daily use against a single-lead production server. The CI suites run the rest against test servers only. As of 2026-11-06 no run of these has been completed against a live client, so their steps follow the vendor's documentation:
 
-- the `oml setup claude-code` command, which writes the same plugin options for you;
+- the `oml setup claude-code` command, which writes the same plugin options;
 - the claude.ai and mobile connector flow: the operator verified it up to connecting and listing the three tools (operator, 2026-11-06), with Claude Code and claude.ai connected through a connect code. A remember and recall round trip from claude.ai has not been reported yet, so the steps after the connection follow Anthropic's documentation;
 - the agent kit's configuration for Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop, where the kit's README marks what a tool's documentation does not settle.
 
-[Connect Claude Code](../guides/claude-code.md), [claude.ai and your phone](../guides/claude-ai-and-mobile.md) and [other agent tools](../guides/other-harnesses.md) link here.
+[Connect Claude Code](../guides/claude-code.md), [claude.ai and the phone](../guides/claude-ai-and-mobile.md) and [other agent tools](../guides/other-harnesses.md) link here.
 
 ## Not available in this build
 

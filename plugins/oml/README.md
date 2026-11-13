@@ -2,17 +2,17 @@
 
 This plugin connects Claude Code to an Open Memory Lab server over MCP. It adds three
 tools, `oml_write`, `oml_read` and `oml_workarea`, a skill that explains when to use
-them, and a read-only subagent that searches for you. Every write is held until a
+them, and a read-only subagent that searches. Every write is held until a
 different identity approves it.
-That is the point of the server, and it means a fact you store is not shared the moment
-you store it.
+That is the point of the server, and it means a stored fact is not shared the moment
+it is stored.
 
 ## Install
 
 *Available since v0.1.0; the pinned marketplace and offline archive since v0.3.1; setup through Claude Code's plugin settings since v0.4.0; no default server since the next release · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 The plugin takes two settings: `url`, the server without `/mcp`, and `api_key`, this agent's own
-key. Both are required, and neither has a default: the server that issued the key gives you its
+key. Both are required, and neither has a default: the server that issued the key gives its
 address, on its sign-up page, beside the key on its web page, or in the line `oml keys
 issue-agent` prints. Claude Code keeps the key in the system keychain, never in `settings.json`.
 
@@ -54,7 +54,7 @@ The [Claude Code guide](../../docs/guides/claude-code.md) walks the whole path.
 From a shell without the CLI, `claude plugin install` opens no dialog, so pipe the settings to
 `claude plugin configure --values-stdin`. This path needs Claude Code 2.1.285 or later. With the
 key in the owner-only file that `oml keys issue-agent --out` writes, `jq` reads the file and the
-key never enters a command line or your shell history; `u` is your server's address:
+key never enters a command line or the shell history; `u` is the server's address:
 
 ```sh
 claude plugin marketplace add e8kor/open-memory-lab
@@ -96,9 +96,9 @@ cosign verify-blob \
 
 With no network, take `oml-claude-plugins-X.Y.Z.tar.gz` (or `.zip`) instead: verify it the same
 way, extract it, and run `claude plugin marketplace add ./oml-claude-plugins-X.Y.Z`. Claude Code
-reads the plugins from that directory in place, so keep it where you extracted it. Every form
+reads the plugins from that directory in place, so keep it where it was extracted. Every form
 names the marketplace `open-memory-lab`, so `claude plugin install oml@open-memory-lab` installs
-from whichever you added, and you hold one of them at a time. See
+from whichever was added, and only one is held at a time. See
 [release artifacts](../../docs/contributing/ci-and-toolchain.md).
 
 The plugin registers one MCP connection, `oml`, and every tool runs on the one key behind
@@ -159,7 +159,7 @@ conversation. See the
 *Available since v0.1.0; per-platform archives since v0.3.1; the installer since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 `oml setup claude-code`, the session-start hook below and key issuance need the `oml` CLI on
-your `PATH`. One line installs it for you alone and checks the download:
+the `PATH`. One line installs it for the current user alone and checks the download:
 
 ```sh
 curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.7.2/scripts/install/install.sh | sh
@@ -174,11 +174,11 @@ runs only when Git for Windows, which provides Git Bash, is installed; see the
 
 *Available since v0.2.2; the plugin settings first, the compaction prompt naming `oml_write` and the two read tools since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
-When the `oml` CLI is on your `PATH`, the plugin's SessionStart hook runs `oml hook
+When the `oml` CLI is on the `PATH`, the plugin's SessionStart hook runs `oml hook
 session-start` each time a session starts, resumes, is cleared, is compacted or is forked. It
 sends two requests with the agent's key, both to that one server: `GET
-/v1/memories?own=true&limit=10`, your key's ten newest submissions, and `POST
-/v1/memories/recall`, whose query is the name of the directory you work in, split into words
+/v1/memories?own=true&limit=10`, the key's ten newest submissions, and `POST
+/v1/memories/recall`, whose query is the name of the working directory, split into words
 (`open memory lab` for `~/src/open-memory-lab`, never the rest of the path), and which answers
 the workarea's steering and at most 800 budget tokens of matching memories. It adds what comes
 back to the session as stored data to check. After a compaction it also asks Claude to record the
@@ -190,9 +190,9 @@ nothing, and it prints nothing when the server does not answer. Set `OML_SESSION
 `OML_SESSION_CONTEXT_MAX_TOKENS` to change the budget. Without the CLI the hook does nothing. See
 the [CLI reference](../../docs/cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin).
 
-A plugin cannot allow its own tools for you, so Claude Code asks you before each call to one
-of them until you allow it. To stop the question on reads and keep it on every write, add the
-two read tools to `permissions.allow` in your settings:
+A plugin cannot allow its own tools, so Claude Code asks before each call to one
+of them until the user allows it. To stop the question on reads and keep it on every write, add the
+two read tools to `permissions.allow` in the settings:
 
 ```json
 {
@@ -206,8 +206,8 @@ two read tools to `permissions.allow` in your settings:
 ```
 
 The broader rule, `mcp__plugin_oml_oml`, allows every tool of the plugin, the write too, and
-costs you the sight of it: Claude then calls `oml_write`, which can propose retiring a claim,
-without showing you the call, so whatever the session
+costs the user the sight of it: Claude then calls `oml_write`, which can propose retiring a claim,
+without showing the call, so whatever the session
 chooses to record leaves for the server unseen. What it chooses is shaped by the stored text the
 hook adds at session start, which other writers in the workarea can influence. Every write is
 still held until a different identity reviews it, so nothing it records is shared before then.
@@ -222,7 +222,7 @@ as an error code or an identifier, with keys and tokens removed first, and adds 
 matching memories, marked as possibly irrelevant. It skips `grep`, `test`, `[` and `diff`, an
 error it already searched for in the session, and every search after one that failed; a miss adds
 nothing. It reads its server and key as the session-start hook does, the plugin's two settings
-first. The cost is that the error's words go to your server. A per-session file under
+first. The cost is that the error's words go to the server. A per-session file under
 `~/.cache/oml/sessions` remembers which memories the session already has, never their text, and
 the SessionEnd hook deletes it. See the
 [CLI reference](../../docs/cli/reference.md#oml-hook-tool-failure-recall-after-a-failed-command).
@@ -231,42 +231,42 @@ the SessionEnd hook deletes it. See the
 
 *Since v0.6.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
-Run `oml chat init` once with your own key, not an agent's: it opens `chat` under your user
-root, the one place your agents write what you tell them, and prints its id. Put that id in the
+Run `oml chat init` once with the user's own key, not an agent's: it opens `chat` under the user
+root, the one place agents write what the user says, and prints its id. Put that id in the
 plugin's `chat_workarea` setting, or `OML_CHAT_WORKAREA`, and set `OML_CHAT_CAPTURE=1`. Every
 fifth turn (`OML_CHAT_CAPTURE_EVERY`), and at once after a compaction, the Stop hook asks Claude
 to use the `oml-chat-capture` skill: Claude itself picks out the preferences, decisions and
 corrections those turns settled and writes each as one held memory, with the turn it came from.
-No other model reads the conversation and no transcript leaves your machine. Each fact names its
+No other model reads the conversation and no transcript leaves the machine. Each fact names its
 turn by a fingerprint keyed with a secret salt kept owner-only in `~/.config/oml/chat-salt` and never
 sent, so the fingerprint cannot be checked against a guessed prompt by anyone without that file. A session asks at most four
 times and for at most 24 facts, and never while a Stop hook is already continuing. The cost is
 the tokens Claude spends on those short continuations (Claude is asked for at most 24 facts, and
 the server does not count them), and the last turns of a session that ends
 between two captures are not kept. `OML_CHAT_EXCERPT=1` lets Claude quote up to 280 characters of
-what you said under a fact.
+the user's words under a fact.
 
 Set `OML_TURN_RECALL=1` and the UserPromptSubmit hook searches with up to eight words of each
-prompt, in your chat workarea and the key's default workarea, and adds at most six memories,
+prompt, in the chat workarea and the key's default workarea, and adds at most six memories,
 each marked `[unreviewed]` when no one has reviewed it yet. It waits at most
 `OML_TURN_RECALL_BUDGET_MS` (300 ms by default, at most 1,000) and adds nothing when the server is
-slower; after three slow answers it stops for the session. The cost is that your prompt's words
-go to your server on every turn, and a short secret typed as plain words, such as a password, is
-not recognised as one and goes with them. Nothing you or Claude writes leaves the chat workarea until you
-review it.
+slower; after three slow answers it stops for the session. The cost is that the prompt's words
+go to the server on every turn, and a short secret typed as plain words, such as a password, is
+not recognised as one and goes with them. Nothing the user or Claude writes leaves the chat workarea until it is
+reviewed.
 
 ## Guardrails
 
 *Since v0.5.1 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
-When the `oml` CLI is on your `PATH`, the plugin also runs `oml hook guardrails` at every session
+When the `oml` CLI is on the `PATH`, the plugin also runs `oml hook guardrails` at every session
 start, after a compaction and when Claude starts a subagent. It loads the reviewed rules in force
-for your key's workarea, and for the workareas above it when the key's guardrail scope is
+for the key's workarea, and for the workareas above it when the key's guardrail scope is
 `ancestors`, which an admin sets when issuing the key. Claude sees them as instructions, each with
 where it was set and how many reviewers approved it. At session start it also writes the rules
-that carry a check to a file only you can read, under `~/.local/state/oml/guardrails`, and the
+that carry a check to a file only its owner can read, under `~/.local/state/oml/guardrails`, and the
 PreToolUse hook, `oml hook pre-tool-use`, checks each matching tool call against that file before
-it runs: a match denies the call or asks you, and nothing is ever allowed by a rule. The check
+it runs: a match denies the call or asks the user, and nothing is ever allowed by a rule. The check
 sends nothing to the server. Without the file, after a server outage at session start, the check
 decides nothing and says so once per call; restart the session to load the rules. A text rule is
 an instruction to Claude, not a guarantee, and a checked rule holds only where this plugin's hooks
@@ -278,7 +278,7 @@ run. See the
 *Available since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 The plugin adds one subagent, `oml:librarian`, for "what does OML hold about X". Claude delegates
-to it, or you ask for it with `@agent-oml:librarian`. One query that finds nothing proves
+to it, or the user asks for it with `@agent-oml:librarian`. One query that finds nothing proves
 little; the librarian runs up to eight, the subject's own words and then their variants
 (synonyms, abbreviations, the most distinctive word alone), and returns each finding with its `artifact_id`, `claim_key`, workarea and time,
 under the same data line the hooks use, with the queries it ran. Its only tool is `oml_read`: it
@@ -286,7 +286,7 @@ cannot call `oml_write`, edit a file or run a command. It runs on Haiku, so the 
 less than on the main conversation's model and its raw results stay out of that conversation's
 context; the cost is that a smaller model chooses the variants and which hits matter. The
 `oml_read` rule under `permissions.allow` above applies to the whole session, the librarian's
-calls included; without it, each of its calls asks you in the main session.
+calls included; without it, each of its calls asks the user in the main session.
 
 ## Other MCP clients
 
@@ -320,14 +320,14 @@ that documentation does not settle as unverified.
 
 Release 0.4.0 reads the server and the key from the plugin's two settings, not from `OML_URL` and
 `OML_API_KEY`: a 0.3 install that only exported the variables gets no tools after the update until
-you configure the plugin once. Run `claude plugin update oml@open-memory-lab` (auto-update is off
+the plugin is configured once. Run `claude plugin update oml@open-memory-lab` (auto-update is off
 by default for a third-party marketplace), then set `url` to the old `OML_URL`, which has no
 default, and `api_key` to the old key, in the dialog or through the shell path under "Install". The session-start hook
-reads the same two settings first, so the exported variables can then leave your shell profile,
+reads the same two settings first, so the exported variables can then leave the shell profile,
 unless the `oml` CLI or another client still reads them.
 
 Release 0.4.0 also replaces the eight 0.3 tools with these three. The `permissions.allow` rules
-you wrote for the 0.3 read tools, `oml_recall`, `oml_get`, `oml_my_work`, `oml_workarea_info` and
+written for the 0.3 read tools, `oml_recall`, `oml_get`, `oml_my_work`, `oml_workarea_info` and
 `oml_events_tail`, allow nothing any more: replace them with the two rules above, or with
 `mcp__plugin_oml_oml`. Run `claude plugin update oml@open-memory-lab` and install the 0.4.0
 CLI, so the skill and the session-start hook name the new tools. The events tail is no longer a

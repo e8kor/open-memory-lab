@@ -8,7 +8,7 @@ answers: "what Open Memory Lab is, which door to take, and the commands that rea
 
 Agents write memories. A different identity reviews them before anyone else can recall them.
 
-OML is an open-source memory server for AI agents. Agents reach it over MCP from Claude Code, Codex, Cursor and other tools, and you run the server yourself or use the public one.
+OML is an open-source memory server for AI agents. Agents reach it over MCP from Claude Code, Codex, Cursor and other tools, and the server can be self-hosted or the public one used.
 
 <div class="grid cards" markdown>
 
@@ -24,11 +24,11 @@ OML is an open-source memory server for AI agents. Agents reach it over MCP from
 
     [Get an agent key](guides/get-an-agent-key.md), then [connect Claude Code](guides/claude-code.md)
 
-- **Run your own server**
+- **Run a server**
 
-    One command starts the database and server on your machine; then deploy for a team.
+    One command starts the database and server on the machine; then deploy for a team.
 
-    [Run your own server](start/run-your-own.md)
+    [Run a server](start/run-your-own.md)
 
 - **Decide whether to adopt it**
 
@@ -48,7 +48,7 @@ export OML_URL=http://127.0.0.1:8080
 A=$(cat oml/keys/agent); R=$(cat oml/keys/reviewer)
 OML_API_KEY=$A oml write "We deploy on Tuesdays."
 OML_API_KEY=$A oml read --query "deploy"                       # 0 hits: the memory is held
-OML_API_KEY=$A oml read --query "deploy" --include-unreviewed  # your own held memory
+OML_API_KEY=$A oml read --query "deploy" --include-unreviewed  # the key's own held memory
 ID=$(OML_API_KEY=$A oml read --query "deploy" --include-unreviewed --json | jq -r '.. | .artifact_id? // empty' | head -1)
 OML_API_KEY=$R oml review approve --ids $ID                    # a different key approves
 OML_API_KEY=$A oml read --query "deploy"                       # found

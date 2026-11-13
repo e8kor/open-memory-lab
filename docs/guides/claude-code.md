@@ -6,16 +6,16 @@ answers: "how to connect Claude Code to an OML server from nothing: install the 
 
 # Connect Claude Code to OML
 
-This page takes you from nothing to an agent that saves and finds shared memory in Claude Code, in four steps.
+This page goes from nothing to an agent that saves and finds shared memory in Claude Code, in four steps.
 
-## Before you start
+## Before starting
 
 - Claude Code 2.1.285 or later.
-- An agent key. [Get an agent key](get-an-agent-key.md) from the web page of a server you can sign in to, or from your administrator. Trying it alone? Run the [quickstart](../start/quickstart.md), then use `oml setup claude-code --url http://127.0.0.1:8080 --key-file oml/keys/agent`.
-- The server's address. No release names one: the server that issued the key gives it to you, on its sign-up page, beside the key on its web page, or in the line `oml keys issue-agent` prints.
+- An agent key. [Get an agent key](get-an-agent-key.md) from the web page of a server with a sign-in, or from the administrator. Trying it alone? Run the [quickstart](../start/quickstart.md), then use `oml setup claude-code --url http://127.0.0.1:8080 --key-file oml/keys/agent`.
+- The server's address. No release names one: the server that issued the key gives it, on its sign-up page, beside the key on its web page, or in the line `oml keys issue-agent` prints.
 
 The commands are in the [CLI reference](../cli/reference.md). The plugin's behavior is in its
-[README](https://github.com/e8kor/open-memory-lab/blob/main/plugins/oml/README.md). What we have run against a live Claude Code is under [Limits](../reference/limits.md#not-verified-against-a-live-client).
+[README](https://github.com/e8kor/open-memory-lab/blob/main/plugins/oml/README.md). The runs against a live Claude Code are listed under [Limits](../reference/limits.md#not-verified-against-a-live-client).
 
 ## 1. Install the CLI
 
@@ -28,7 +28,7 @@ inspect-first form, see [install](../start/install.md).
 
 ## 2. Log in
 
-With a key file and the setup line your administrator sent, skip to step 3. Otherwise:
+With a key file and the setup line the administrator sent, skip to step 3. Otherwise:
 
 ```sh
 oml login https://oml.example.com
@@ -52,7 +52,7 @@ or CI job, refuses as `setup.no_server` before it sends anything; it never pairs
 It adds the marketplace at the CLI's own tag, installs `oml@open-memory-lab` and hands the key to
 Claude Code on standard input.
 
-If your administrator sent a key file from `oml keys issue-agent --out`, skip step 2 and run the
+If the administrator sent a key file from `oml keys issue-agent --out`, skip step 2 and run the
 line they sent: `oml setup claude-code --url <url> --key-file <file>`. With `--print`, the
 command runs nothing and prints the commands.
 
@@ -71,7 +71,7 @@ again; it calls `oml_read` with `include_unreviewed: true` and finds its own mem
 unreviewed. No other key finds it until a reviewer who did not write it approves it
 ([why a write is held](../concepts/why-a-write-is-held.md)).
 
-To approve it yourself on a server you run, use a reviewer key:
+To approve it on a server the user runs, use a reviewer key:
 `OML_API_KEY=$(cat oml/keys/reviewer) oml review next`, then [review held memories](reviewing.md).
 
 ## Go further
@@ -85,8 +85,8 @@ and the memories matching the project directory's name, within 800 budget tokens
 It sends and prints nothing when the server cannot be reached. `OML_SESSION_CONTEXT=off` turns it
 off.
 
-Claude Code asks before every tool call until you allow it. To allow reads and keep the question
-on writes, add to `permissions.allow` in your settings:
+Claude Code asks before every tool call until allowed. To allow reads and keep the question
+on writes, add to `permissions.allow` in the settings:
 
 ```json
 {
@@ -99,7 +99,7 @@ on writes, add to `permissions.allow` in your settings:
 }
 ```
 
-`mcp__plugin_oml_oml` also allows the write, which Claude then makes without showing you the
+`mcp__plugin_oml_oml` also allows the write, which Claude then makes without showing the
 call. The write is still held for review.
 
 ### The librarian and failure recall
@@ -107,7 +107,7 @@ call. The write is still held for review.
 - `@agent-oml:librarian` answers "what does OML hold about X" with up to eight searches on Haiku.
   `oml_read` is its only tool.
 - `OML_FAILURE_RECALL=1` makes a failed Bash command search for up to three distinctive words of
-  its error. The cost: those words go to your server
+  its error. The cost: those words go to the server
   ([CLI reference](../cli/reference.md)).
 
 ## Install without the CLI
@@ -124,7 +124,7 @@ keeps the key in the system keychain. Enter the server's address and paste the k
 does not accept an empty `url`, which has no default.
 
 A key entered with another server's address is refused there with `401 auth.invalid` and the
-plugin serves no tools. That server's operator has seen the key, so ask your administrator to
+plugin serves no tools. That server's operator has seen the key, so ask the administrator to
 replace it. Without the CLI, the session-start hook does nothing.
 For a connection with no plugin, see [other tools](other-harnesses.md#claude-code-without-the-plugin).
 
@@ -137,7 +137,7 @@ rm ~/.local/bin/oml ~/.config/oml/credentials
 ```
 
 The memories stay on the server. Removing the plugin deletes only this machine's settings. OML has
-no revoke verb, so ask your administrator to run `oml deny set <key> universe`, which keeps the key
+no revoke verb, so ask the administrator to run `oml deny set <key> universe`, which keeps the key
 out of every workarea ([CLI reference](../cli/reference.md)).
 
 If something fails, see [client troubleshooting](../help/troubleshooting-client.md).

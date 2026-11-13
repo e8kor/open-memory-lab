@@ -95,8 +95,9 @@ pub(crate) fn page_response(status: StatusCode, html: String) -> Response {
 }
 
 /// The sentence above the code field (http-api.md, word for word).
-pub const ONLY_IF_YOURS: &str = "Enter the code only if you opened this page yourself, by adding \
-the connector in Claude, in the last few minutes. If someone sent you this link, close it.";
+pub const ONLY_IF_YOURS: &str = "Enter the code only on a page this account's user opened, by adding \
+the connector in Claude, in the last few minutes. A link from anyone else may connect their agent \
+instead; if someone else sent this link, close it.";
 
 /// Where the code comes from, with a same-origin link to the account page.
 pub const WHERE_THE_CODE_COMES_FROM: &str = "Get a connect code from the account page: \

@@ -6,17 +6,17 @@ answers: "how to start a server, write a memory as an agent, see it held, approv
 
 # Quickstart: see a memory held, then approved
 
-You start a server on your machine, write a memory as an agent and watch it stay invisible until a different key approves it. You need the `oml` CLI ([install](install.md)) and either PostgreSQL 17 or later or Docker.
+A server starts on the machine, a memory is written a memory as an agent and stays invisible until a different key approves it. The `oml` CLI ([install](install.md)) and either PostgreSQL 17 or later or Docker are required.
 
 **Time.** Measured on 2026-11-06 on Linux x86_64 with the v0.6.0 release binaries and PostgreSQL 18.6, from the download to the last recall: 1.8 s to download both archives, 1.5 s to verify and unpack them, and 2.9 s for everything after that, about 6 s of command time in all. Typing and reading take longer, so allow five minutes. The Docker tab, measured in CI on a GitHub-hosted ubuntu runner on 2026-11-06, took 7 s from `oml quickstart` (start, claim and both keys) through the first held write to the first recall of it, with the image already on the runner. It excludes the image pull and the `colleague` key, so a first run takes longer by the pull.
 
 ## 1. Start a server and issue three keys
 
-You get a server, a workarea `crew`, an agent key, a second agent key called `colleague` and a reviewer key.
+The result is a server, a workarea `crew`, an agent key, a second agent key called `colleague` and a reviewer key.
 
 === "Binaries, no Docker"
 
-    Install PostgreSQL 17 or later with `ltree` and `pg_trgm` (the contrib package). The first block makes a throwaway cluster on port 54329. Use your own database if you have one, and set `OWNER_PW` and `SERVER_PW` to the passwords of its owner and serving roles.
+    Install PostgreSQL 17 or later with `ltree` and `pg_trgm` (the contrib package). The first block makes a throwaway cluster on port 54329. An existing database works too: and set `OWNER_PW` and `SERVER_PW` to the passwords of its owner and serving roles.
 
     ```sh
     initdb -D oml/pg -A trust -U postgres
@@ -39,7 +39,7 @@ You get a server, a workarea `crew`, an agent key, a second agent key called `co
     echo $! > ../server.pid; cd ../..
     ```
 
-    Claim the server with the token, create the workarea and issue the keys. The claim keeps the admin key in `oml/credentials`, apart from your own login file.
+    Claim the server with the token, create the workarea and issue the keys. The claim keeps the admin key in `oml/credentials`, apart from the user's own login file.
 
     ```sh
     until curl -fs http://127.0.0.1:8080/readyz >/dev/null; do sleep 1; done
@@ -70,7 +70,7 @@ You get a server, a workarea `crew`, an agent key, a second agent key called `co
 
 === "Docker"
 
-    You need Docker with compose v2. One command starts the database, the server and the web console, claims the server and issues the agent and reviewer keys.
+    Docker with compose v2 is required. One command starts the database, the server and the web console, claims the server and issues the agent and reviewer keys.
 
     ```sh
     oml quickstart
@@ -86,7 +86,7 @@ You get a server, a workarea `crew`, an agent key, a second agent key called `co
     and `router` services and `OML_WEB_CLIENT_SECRET` from a new quickstart's `compose.yaml` and
     `.env` to the old one.
 
-Both paths end the same way. Name the keys in your shell and point the CLI at the server:
+Both paths end the same way. Name the keys in the shell and point the CLI at the server:
 
 ```sh
 export OML_URL=http://127.0.0.1:8080
@@ -122,7 +122,7 @@ OML_API_KEY=$A oml read --query "deploy Friday"
 
 A held memory is invisible to every read, even its author's.
 
-## 4. Ask for your own unreviewed memories
+## 4. Ask for the key's own unreviewed memories
 
 ```sh
 OML_API_KEY=$A oml read --query "deploy Friday" --include-unreviewed
@@ -185,7 +185,7 @@ OML_API_KEY=$C oml read --query "deploy Friday"
 
 The memory is now `promoted`, and every key with read access to `crew` finds it, with no flag.
 
-## What you saw
+## What the run showed
 
 The write waited for a reviewer, and the reviewer had to be someone other than the author. Approval changed who could read the memory, not how it ranks. The cost is a delay between writing and recall; [why a write is held](../concepts/why-a-write-is-held.md) explains what that buys.
 
@@ -201,6 +201,6 @@ Docker: `docker compose --project-directory oml down -v`.
 
 ## Next
 
-- [Get an agent key](../guides/get-an-agent-key.md) for a real server, then connect [Claude Code](../guides/claude-code.md), [claude.ai and your phone](../guides/claude-ai-and-mobile.md) or [another tool](../guides/other-harnesses.md). For Claude Code on this machine: `oml setup claude-code --url http://127.0.0.1:8080 --key-file oml/keys/agent`.
-- Run the server for a team: [run your own server](run-your-own.md).
+- [Get an agent key](../guides/get-an-agent-key.md) for a real server, then connect [Claude Code](../guides/claude-code.md), [claude.ai and the phone](../guides/claude-ai-and-mobile.md) or [another tool](../guides/other-harnesses.md). For Claude Code on this machine: `oml setup claude-code --url http://127.0.0.1:8080 --key-file oml/keys/agent`.
+- Run the server for a team: [run a server](run-your-own.md).
 - Review a queue: [review held memories](../guides/reviewing.md).

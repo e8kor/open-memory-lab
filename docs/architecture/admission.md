@@ -35,7 +35,7 @@ The `erased` state exists in the API enum. This build has no erase verb.
 
 ## What happens to a write
 
-1. **Capture.** You call `oml write`, or an agent calls `oml_write`. The server normalizes the text to Unicode NFC, then scans it. If the scan passes, the server commits one transaction. It holds a signed journal event, the memory row in state `held` and an outbox row. The write is durable once that transaction commits.
+1. **Capture.** A person runs `oml write`, or an agent calls `oml_write`. The server normalizes the text to Unicode NFC, then scans it. If the scan passes, the server commits one transaction. It holds a signed journal event, the memory row in state `held` and an outbox row. The write is durable once that transaction commits.
 2. **Hold.** Only the author can see the held memory. Recall shows it to the author with `--include-unreviewed`.
 3. **Review.** A reviewer key (role `dreamer`) claims the memory with `oml review next`. The reviewer reads it and approves or rejects it.
 4. **Approval.** One approval from a reviewer who is not the author promotes the memory. The journal records the verdict and the review policy it was decided under. A supersession or a retirement passes the same pipeline. It changes the claim's current version only at approval.
@@ -71,7 +71,7 @@ OML runs no model. Reviewers are agents or people that hold reviewer keys and us
 
 Every workarea uses one fixed policy: one approving verdict from a reviewer key ratifies. A policy with several approvals, a required human verdict or a held-item expiry is not available.
 
-A verdict counts only against a serve. The server hands one held memory to one reviewer key, and the verdict applies to that memory. OML checks independence at approval. It cannot make an external reviewer diligent. The quality and speed of review depend on your reviewers, not on OML.
+A verdict counts only against a serve. The server hands one held memory to one reviewer key, and the verdict applies to that memory. OML checks independence at approval. It cannot make an external reviewer diligent. The quality and speed of review depend on the reviewers, not on OML.
 
 ## When no reviewer is available
 
@@ -79,4 +79,4 @@ Nothing promotes. A workarea with no reviewer key that is allowed to judge its m
 
 A failure inside the pipeline is typed and names its rule ([errors](../api/errors.md)). An unclassifiable failure refuses the write rather than admitting it unscanned.
 
-How fast review goes depends on your reviewers; OML has no measured figure.
+How fast review goes depends on the reviewers; OML has no measured figure.

@@ -20,13 +20,13 @@ Not in the default path. The default pipeline, `bm25-postings`, is keyword scori
 
 ### What does it cost?
 
-The software is Apache-2.0 and you can run it yourself on PostgreSQL; a server someone else runs sets its own terms. See [Is OML for you?](product/is-oml-for-you.md) and [install](start/install.md).
+The software is Apache-2.0 and can be run on PostgreSQL by anyone; a server someone else runs sets its own terms. See [Is OML a fit?](product/is-oml-for-you.md) and [install](start/install.md).
 
 ### How long until a write is readable by others?
 
-Until a reviewer approves it. How long that takes depends on your reviewers, and we have no measured figure. The author reads its own write at once with `include_unreviewed`.
+Until a reviewer approves it. How long that takes depends on the reviewers, and there is no measured figure. The author reads its own write at once with `include_unreviewed`.
 
-### Can I turn review off?
+### Can review be turned off?
 
 No. A development home with one person is the one exception: that person's approval of their own memory counts once and is marked `self_signed`. See [why a write is held](concepts/why-a-write-is-held.md#the-exception-a-development-home).
 
@@ -36,7 +36,7 @@ Claude Code through a plugin, claude.ai and the Claude phone apps through a conn
 
 ## Install and connect
 
-### Which platforms can I install on?
+### Which platforms are supported?
 
 Linux x86_64 and arm64, and Windows x86_64. There is no macOS build, so build from source on a Mac. See [install](start/install.md).
 
@@ -52,37 +52,37 @@ The script writes one file to `$HOME/.local/bin` and edits no profile. Add the `
 
 Set `api_key` and `url` in the plugin settings, not `OML_API_KEY` in the shell. See [troubleshoot the client](help/troubleshooting-client.md#the-claude-code-plugin-shows-no-tools).
 
-### Can claude.ai or my phone reach a server on my laptop?
+### Can claude.ai or a phone reach a server on a laptop?
 
 No. It needs a public HTTPS address with `oauth.issuer` set to it. See [claude.ai and mobile](guides/claude-ai-and-mobile.md).
 
-### Where do I get the connect code?
+### Where does the connect code come from?
 
-From your account page, before you add the connector. Open `/web` on your server and sign in, find **Connect Claude on the web or a phone**, type a name, keep **writer** and click **Issue connector key**. Copy the connect code it shows once, then paste it on the `/oauth/authorize` page Claude opens. If it is lost or expired, click **New connect code** on that key's row (connector keys only). See [claude.ai and mobile](guides/claude-ai-and-mobile.md#1-get-a-connect-code-first).
+From the account page, before adding the connector. Open `/web` on the server and sign in, find **Connect Claude on the web or a phone**, type a name, keep **writer** and click **Issue connector key**. Copy the connect code it shows once, then paste it on the `/oauth/authorize` page Claude opens. If it is lost or expired, click **New connect code** on that key's row (connector keys only). See [claude.ai and mobile](guides/claude-ai-and-mobile.md#1-get-a-connect-code-first).
 
 ## Write, review and recall
 
-### I wrote a memory and my agent cannot see it. Why?
+### A memory was written and the agent cannot see it. Why?
 
 A new memory is held until a different reviewer approves it. Its author can see it with `include_unreviewed: true`. See [write and read memories](use/remember-and-recall.md).
 
 ### It was approved but recall finds nothing. Why?
 
-Recall returns memories that hold any of your words, best first. Check that your key has a reader grant on the workarea, or you get `access.not_found`.
+Recall returns memories that hold any of the words, best first. Check that the key has a reader grant on the workarea; without one the answer is `access.not_found`.
 
-### Can I read my own unreviewed work while I develop?
+### Can unreviewed work be read during development?
 
 Yes, in an in-progress workarea. Readers see unreviewed memories, labeled as such, until a person commits the workarea. See [workareas](use/workareas.md).
 
-### Why was my write refused with `submission.scan_veto`?
+### Why was a write refused with `submission.scan_veto`?
 
 The scan found something it blocks, such as a leaked key. `details.finding` names the class. Remove it and write again. See [errors](api/errors.md).
 
-### Can I approve my own memory?
+### Can an author approve their own memory?
 
 No. The author, and the author of anything the memory derives from, cannot approve it. A development home with one person is the exception: the approval counts once and is marked `self_signed`.
 
-### How do I review many memories at once?
+### How are many memories reviewed at once?
 
 List them with `oml review list`, then approve or reject the set. Each item gets its own verdict. See [review held memories](guides/reviewing.md).
 
@@ -94,7 +94,7 @@ An agent can write and read. It can never approve, sign, demote or delete. See [
 
 ### Why does `oml quickstart` fail?
 
-Port `8080` may be in use, so pass `--port`. Docker must be installed. See [run your own server](start/run-your-own.md).
+Port `8080` may be in use, so pass `--port`. Docker must be installed. See [run a server](start/run-your-own.md).
 
 ### Why does `/readyz` answer 503?
 
@@ -104,6 +104,6 @@ One of `postgres`, `fork_check` or `names_assigned` is not `ok`. See [troublesho
 
 Writes in one tenant serialize on the journal, so a lead takeover or a failed fork check refuses them for a time. Retry after `Retry-After`. For the limits, see [limits](reference/limits.md).
 
-### Is my data sent anywhere, and can I delete it?
+### Is data sent anywhere, and can it be deleted?
 
 On any server, its operator can read stored memories, and its request logs are kept 30 days unless the operator changes that. OML does not delete memories; rejected and retired ones stay as history. See [commitments](product/commitments.md).

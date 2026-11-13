@@ -31,9 +31,9 @@
 
 ## Quickstart
 
-You need a server and an agent key from it. Run one on your machine with `oml quickstart`
-([quick start](docs/start/index.md)), or use a server someone runs for you: its sign-up page or
-its administrator gives you its address and the key. Then, with that address:
+A server and an agent key from it are needed. Run one on the machine with `oml quickstart`
+([quick start](docs/start/index.md)), or use a server someone else runs: its sign-up page or
+its administrator gives the address and the key. Then, with that address:
 
 ```sh
 curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.7.2/scripts/install/install.sh | sh
@@ -43,16 +43,16 @@ oml setup claude-code
 
 The installer checks the download against the release's signed checksums; `oml login` stores
 the address and the key without showing the key; restart Claude Code. No release names a server
-for you, so the address always comes from the server you use. On Windows, or to read the script first, see
+on the user's behalf, so the address always comes from the server in use. On Windows, or to read the script first, see
 [install](docs/start/install.md).
 
 ## Use it
 
 | | |
 |---|---|
-| **Remember** | The agent saves with `oml_write`. The save is *held*: you and your reviewers see it until someone else approves it. |
+| **Remember** | The agent saves with `oml_write`. The save is *held*: only its author and the reviewers see it until someone else approves it. |
 | **Recall** | Each session starts from the agent's recent work and the memories that match the project; `oml_read` searches. |
-| **Review** | Approve or reject on your server's page, `<server>/web`, or with `oml review next`. Nobody reviews their own work. |
+| **Review** | Approve or reject on the server's page, `<server>/web`, or with `oml review next`. Nobody reviews their own work. |
 | **Workareas** | One per project or crew. `oml_workarea` says where the agent is and what to read first. |
 
 ## Connect
@@ -64,14 +64,14 @@ for you, so the address always comes from the server you use. On Windows, or to 
 | **Codex, Cursor, Gemini CLI, VS Code, Claude Desktop** | The release's agent kit; set `OML_URL` and `OML_API_KEY` ([guide](docs/guides/other-harnesses.md)) |
 | **Python and TypeScript** | SDKs in [`sdks/`](sdks/), reading `OML_URL` and `OML_API_KEY` |
 
-## Run your own
+## Run a server
 
 `oml quickstart` starts a server with Docker, creates a workarea, issues an agent key and a
-reviewer key and checks one save end to end. For TLS or Kubernetes: [run your own](docs/start/run-your-own.md),
+reviewer key and checks one save end to end. For TLS or Kubernetes: [run a server](docs/start/run-your-own.md),
 [Kubernetes](docs/guides/kubernetes.md), [administering](docs/guides/administering.md).
 
 Recall ranks by `bm25-postings` out of the box: keyword scoring, no model, the same answer for
-the same query. `bm25-sparse` finds more. On our recall eval it puts an answer in the top five
+the same query. `bm25-sparse` finds more. On the recall eval it puts an answer in the top five
 for 0.983 of queries, against 0.934. It needs a 268 MB model and CPU to encode each write, and
 it is slower than the default above a few thousand memories in scope.
 [Choosing a pipeline](docs/architecture/retrieval.md#which-one-to-use).

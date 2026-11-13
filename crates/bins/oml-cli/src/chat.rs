@@ -737,10 +737,10 @@ pub fn doctor_lines(var: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
     let capture_or_recall = on.contains(&CAPTURE_SWITCH) || on.contains(&TURN_RECALL_SWITCH);
     match chat_workarea(var) {
         None if on.contains(&CAPTURE_SWITCH) => out.push(format!(
-            "warn chat: {CAPTURE_SWITCH}=1 but no chat workarea is named, so nothing is captured; run oml chat init with your own key and set {WORKAREA_VAR}"
+            "warn chat: {CAPTURE_SWITCH}=1 but no chat workarea is named, so nothing is captured; run oml chat init with this account's own key and set {WORKAREA_VAR}"
         )),
         None if capture_or_recall => out.push(format!(
-            "warn chat: {TURN_RECALL_SWITCH}=1 recalls from the key's default workarea alone; run oml chat init and set {WORKAREA_VAR} to recall your chat facts too"
+            "warn chat: {TURN_RECALL_SWITCH}=1 recalls from the key's default workarea alone; run oml chat init and set {WORKAREA_VAR} to recall the chat facts too"
         )),
         Some(w) if capture_or_recall => out.push(format!("ok chat: {} on, workarea {w}", on.join(", "))),
         _ => {}
@@ -753,7 +753,7 @@ pub fn doctor_lines(var: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
         let mode = meta.permissions().mode() & 0o777;
         if mode != 0o600 {
             out.push(format!(
-                "warn chat: {} is mode {mode:o}, not 600; anyone who reads it can link your chat anchors to your sessions: chmod 600 it",
+                "warn chat: {} is mode {mode:o}, not 600; anyone who reads it can link the chat anchors to the sessions: chmod 600 it",
                 path.display()
             ));
         }
@@ -787,7 +787,7 @@ pub fn chat_scope_line(path: Option<&str>, user: Option<&str>) -> Option<String>
     let theirs = format!("universe.{user}.chat");
     (path != theirs).then(|| {
         format!(
-            "warn chat: the chat workarea is {path}, not {theirs}, the one oml chat init opens with your own key; point {WORKAREA_VAR} at {theirs}"
+            "warn chat: the chat workarea is {path}, not {theirs}, the one oml chat init opens with this account's own key; point {WORKAREA_VAR} at {theirs}"
         )
     })
 }

@@ -6,7 +6,7 @@ answers: "what the connect page shows a person who adds the claude.ai connector,
 
 # The connect page
 
-When claude.ai adds the connector, the person's browser opens `/oauth/authorize` on your server. This page lists what that page says. The server tests its own sentences against this text, so the two cannot drift. The routes themselves are on the [HTTP API reference](../api/http-api.md#oauth).
+When claude.ai adds the connector, the person's browser opens `/oauth/authorize` on the server. This page lists what that page says. The server tests its own sentences against this text, so the two cannot drift. The routes themselves are on the [HTTP API reference](../api/http-api.md#oauth).
 
 **The authorization page.** It sets no cookie and runs no script. Every page carries
 `Content-Security-Policy: default-src 'none'; style-src 'sha256-…'; form-action 'self' <redirect
@@ -19,9 +19,9 @@ a document client's `client_name` "verified by" the document URL's whole host, i
 client's `client_name` marked "name not verified" — and the redirect URI's host. Its sentences
 are fixed, word for word:
 
-- Above the code field: "Enter the code only if you opened this page yourself,
-  by adding the connector in Claude, in the last few minutes. If someone sent you this link, close
-  it."
+- Above the code field: "Enter the code only on a page this account's user
+  opened, by adding the connector in Claude, in the last few minutes. A link from anyone else may
+  connect their agent instead; if someone else sent this link, close it."
 - Below it: "Get a connect code from the account page: Connect Claude on the web or a phone."
   with the phrase linked to `/web` on the same origin, then "Codes are shown once; use New connect
   code on the key's row if it was lost."

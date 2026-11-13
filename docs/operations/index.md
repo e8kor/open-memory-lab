@@ -19,6 +19,6 @@ Pages for the person who runs an OML server. First time: deploy, then administer
 | Run the web console as its own process | [Run the web console](web-console.md) |
 | Run the lake | [Run the lake writer](lake.md) |
 | Plan capacity: how many memories and clients one server serves | [Capacity and SLOs](operating.md) |
-| Check that a build ranks as the release does, or compare search pipelines | [Measure recall on your build](recall-eval.md) |
+| Check that a build ranks as the release does, or compare search pipelines | [Measure recall on the build](recall-eval.md) |
 
 Something failing? Start with `oml doctor`, then [troubleshoot a server](../help/troubleshooting-server.md).

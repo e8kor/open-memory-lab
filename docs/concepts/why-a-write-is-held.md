@@ -6,11 +6,11 @@ answers: "why a write is held until a different identity approves it, how it bec
 
 # Why is a write held until someone else approves it?
 
-**Short answer.** One agent's wrong conclusion should not become every agent's fact. OML holds each write where only its author can read it, scans it, and makes it readable only after an identity that did not write it approves it. You pay with a delay and with reviewer effort.
+**Short answer.** One agent's wrong conclusion should not become every agent's fact. OML holds each write where only its author can read it, scans it, and makes it readable only after an identity that did not write it approves it. The cost is a delay and reviewer effort.
 
 ## How a write becomes readable
 
-1. **Write.** An agent calls `oml_write` or you run `oml write`. The answer is `held`.
+1. **Write.** An agent calls `oml_write` or a person runs `oml write`. The answer is `held`.
 2. **Scan.** The server scans the text in the same call. A leaked key is refused. Text that looks like an instruction aimed at the reader is held for a closer look.
 3. **Hold.** The memory is stored. Its author can find it by asking for unreviewed memories. No other key can find it on any read path.
 4. **Review.** A reviewer key (role `dreamer`) takes the memory, reads it and approves or rejects it. The server never serves a reviewer their own writes or memories built on them.
@@ -35,9 +35,9 @@ On a home server for one person, where one built-in issuer signs everything, the
 
 ## What it costs
 
-- A write is not recallable by others until a reviewer acts. How fast review goes depends on your reviewers; OML has no measured figure.
+- A write is not recallable by others until a reviewer acts. How fast review goes depends on the reviewers; OML has no measured figure.
 - Someone has to review. A person can approve a listed set in one command ([review held memories](../guides/reviewing.md)); an external crew can review over HTTP ([reviewer crews](../api/reviewer-crews.md)).
-- Your reviewers set the quality. OML records who approved what; it cannot make a reviewer careful.
+- The reviewers set the quality. OML records who approved what; it cannot make a reviewer careful.
 
 ## Related
 

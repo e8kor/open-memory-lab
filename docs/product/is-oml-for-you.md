@@ -4,9 +4,9 @@ verified: 2026-11-06
 answers: "who OML is for, what it gives and costs, when not to use it, and five scenarios that use only built verbs"
 ---
 
-# Is OML for you?
+# Is OML a fit?
 
-OML is for teams that run AI agents on any framework and must show who wrote a memory and who checked it. If nobody in your organization is asked that question, a plain memory store is cheaper and faster.
+OML is for teams that run AI agents on any framework and must show who wrote a memory and who checked it. If nobody in the organization is asked that question, a plain memory store is cheaper and faster.
 
 For a decision, start with [Evaluate OML](evaluate.md): why writes are held, what it costs, [limits](../reference/limits.md), [benchmarks](../benchmarks/index.md) and [security](../architecture/security.md), one line each.
 
@@ -16,26 +16,26 @@ A crew's memory is the one output nobody reviews. Code goes through review. A de
 
 The store cannot tell a verified finding from a hallucination or a planted instruction. When an agent acts on a wrong memory, someone asks who wrote it, who checked it and why it was served.
 
-## What you get
+## What it gives
 
 OML holds every memory until a second identity approves it. Every write is scanned, held, reviewed by someone who did not write it, signed, and only then readable by others. Read [why a write is held](../concepts/why-a-write-is-held.md) for the reasoning.
 
-Memory lives in workareas that mirror your crews. Every write, verdict and key issue is an entry in the journal, a signed, hash-chained record. `oml audit verify-chain` checks that record.
+Memory lives in workareas that mirror the crews. Every write, verdict and key issue is an entry in the journal, a signed, hash-chained record. `oml audit verify-chain` checks that record.
 
 OML works as a memory provider on its own. Agents write, recall, fetch and replace memories through three tools. See [MCP tools](../api/mcp-plugin.md).
 
 ## What it costs
 
-- **Review effort.** A memory stays held until a reviewer acts. Your organization supplies that capacity, usually a reviewing crew with a person as the fallback.
+- **Review effort.** A memory stays held until a reviewer acts. The organization supplies that capacity, usually a reviewing crew with a person as the fallback.
 - **A write that waits.** Other agents do not see a new memory right away. Its author reads it at once, marked unreviewed. Inside a development workarea, teammates can also recall unreviewed work ([workareas](../use/workareas.md)).
 - **Running a server.** Self-hosting needs PostgreSQL and backups; the optional lake takes a directory or an object store. A server someone else runs removes that work, at the price of trusting its operator ([install](../start/install.md)).
 
 ## When not to use OML
 
-- You want every write visible to every agent the moment it is saved.
+- Every write must be visible to every agent the moment it is saved.
 - Nobody can review. A held memory with no reviewer never becomes readable.
-- You need OML to extract memories from conversations on its own. It does not. Agents write what they choose to remember.
-- You need a profile builder, an answering service or a crew manager. OML returns memories with their provenance and governs what crews remember, not what they do.
+- OML must extract memories from conversations on its own. It does not. Agents write what they choose to remember.
+- A profile builder, an answering service or a crew manager is needed. OML returns memories with their provenance and governs what crews remember, not what they do.
 
 ## Five scenarios
 
@@ -69,8 +69,8 @@ OML works as a memory provider on its own. Agents write, recall, fetch and repla
 **Use OML from claude.ai or a phone.**
 
 1. An administrator mints a connect code with `oml keys connect-code`.
-2. You add the server as a custom connector in claude.ai.
-3. You enter the code once on OML's page.
+2. The user adds the server as a custom connector in claude.ai.
+3. The user enters the code once on OML's page.
 4. Every Claude app signed in to that account then has the three tools ([claude.ai and mobile](../guides/claude-ai-and-mobile.md)).
 
 ## Next

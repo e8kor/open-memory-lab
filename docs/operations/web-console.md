@@ -49,7 +49,7 @@ deleted"). A bookmark of `GET /web?view=...` answers not found once signed in, `
 anything below it that `oml-web` does not serve answer not found, and a form from an old page that
 posts an act other than sign-out to `POST /web` or `POST /web/admin` is refused and runs nothing.
 Use the paths above. Run
-`oml-web` behind the same proxy as the server before you upgrade: a deployment that sends these
+`oml-web` behind the same proxy as the server before an upgrade: a deployment that sends these
 paths to the server shows not found.
 
 `oml-web` ships everywhere the server does:
@@ -61,7 +61,7 @@ paths to the server shows not found.
 | `docker-compose.yml` and `oml quickstart` | A service `oml-web` and a Caddy router, the one published port, in front of it and the server. |
 | The Helm chart | A second Deployment, `oml-web`, with its Service and the web client Secret ([Kubernetes](../guides/kubernetes.md)). |
 
-## What you need
+## Requirements
 
 - The server with `oauth.issuer` set and the pages on, as for the [user and admin pages](deployment.md).
 - One secret, set as `web.client_secret` on the server and on `oml-web`: at least 32 visible
@@ -133,7 +133,7 @@ names the setting and, for a file, its path and mode, never the value.
 
 ### Rotating the client secret
 
-The server accepts the old secret beside the new one for a window you bound, so `oml-web` keeps
+The server accepts the old secret beside the new one for a bounded window, so `oml-web` keeps
 working while it restarts onto the new value:
 
 1. On the server, set the new value as `web.client_secret`, the old one as

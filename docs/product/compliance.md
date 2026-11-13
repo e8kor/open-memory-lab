@@ -6,7 +6,7 @@ answers: "what evidence OML produces, which data classes it holds and who contro
 
 # Compliance evidence
 
-OML produces evidence an auditor can check. It is not certified against any framework, and no assessor has examined it. Whether a deployment meets a requirement is a judgment for your auditor and counsel. The limits of each mechanism below are in [what OML guarantees](commitments.md).
+OML produces evidence an auditor can check. It is not certified against any framework, and no assessor has examined it. Whether a deployment meets a requirement is a judgment for the auditor and counsel. The limits of each mechanism below are in [what OML guarantees](commitments.md).
 
 ## What OML records
 
@@ -22,21 +22,21 @@ A row means "this mechanism produces evidence relevant to this article". It does
 
 ## What OML does not offer
 
-- **Erasure.** OML has no erase verb. Removal is a journaled demotion or retirement that keeps the bytes. A right-to-erasure request needs a procedure you run outside OML.
+- **Erasure.** OML has no erase verb. Removal is a journaled demotion or retirement that keeps the bytes. A right-to-erasure request needs a procedure run outside OML.
 - **Evidence export.** No export verb exists. An auditor can read the journal and run `oml audit verify-chain`.
-- **Per-person lookup.** No index finds every memory about a person. You search your own content.
-- **Legal hold or retention schedule.** Nothing expires memory content. Retire memories deliberately if you have a data-minimization duty.
+- **Per-person lookup.** No index finds every memory about a person. Searching means reading the content itself.
+- **Legal hold or retention schedule.** Nothing expires memory content. Retire memories deliberately where a data-minimization duty applies.
 
 ## Data classes and retention
 
 | Data class | Where it lives | Who controls retention |
 |---|---|---|
-| Memory bodies | PostgreSQL, the object store and the lake as ciphertext, and search-index entries derived from readable text. | You. Content stays until a journaled demotion or retirement. |
+| Memory bodies | PostgreSQL, the object store and the lake as ciphertext, and search-index entries derived from readable text. | The operator. Content stays until a journaled demotion or retirement. |
 | Journal metadata | PostgreSQL. It records who wrote, reviewed and approved, with timestamps and placement. | OML. The record is append-only and permanent. |
-| Telemetry | Your monitoring stack, outside OML's data stores. | You. Metrics and logs carry no memory content, no query text and no principal values. See [observability](../operations/observability.md). |
+| Telemetry | The monitoring stack, outside OML's data stores. | The operator. Metrics and logs carry no memory content, no query text and no principal values. See [observability](../operations/observability.md). |
 
-Agent memory is often free text about people. Treat bodies as personal data unless you know otherwise.
+Agent memory is often free text about people. Treat bodies as personal data unless known otherwise.
 
-The telemetry rule keeps your monitoring pipeline free of copies that a removal would have to reach.
+The telemetry rule keeps the monitoring pipeline free of copies that a removal would have to reach.
 
-Recall telemetry keeps each recall for 30 days, with query text only if your organization opts in (`oml usage settings`).
+Recall telemetry keeps each recall for 30 days, with query text only if the organization opts in (`oml usage settings`).

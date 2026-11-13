@@ -37,7 +37,7 @@ Per-command sections below omit these options.
 | `oml keys limit` | Set or clear a key's expiry and its requests per minute; needs an admin key other than the key itself, and journals key.limits_set. |
 | `oml keys disconnect` | Revoke one connector-key connection and journal connection.revoked |
 | `oml deny set` | Create or extend a global deny over a subtree, overriding all grants; journals key.denied |
-| `oml chat init` | Open your `chat` workarea under your user root and print OML_CHAT_WORKAREA for plugin capture and recall. |
+| `oml chat init` | Open the key's `chat` workarea under its user root and print OML_CHAT_WORKAREA for plugin capture and recall. |
 | `oml workareas create` | Create a child workarea in development status |
 | `oml workareas tree` | List a workarea tree with each node's path, id, status, and crew |
 | `oml workareas show` | Show a workarea's path, status, crew, and children |
@@ -313,7 +313,7 @@ Manage a person's chat memory
 
 ### `oml chat init`
 
-Open your `chat` workarea under your user root and print OML_CHAT_WORKAREA for plugin capture and recall. Requires a person's key
+Open the key's `chat` workarea under its user root and print OML_CHAT_WORKAREA for plugin capture and recall. Requires a person's key
 
 ```
 oml chat init [OPTIONS]
@@ -321,7 +321,7 @@ oml chat init [OPTIONS]
 
 | Option | Meaning |
 |---|---|
-| `--parent <PARENT>` | Parent by id or name; omitted, your key's user root |
+| `--parent <PARENT>` | Parent by id or name; omitted, the key's user root |
 
 
 ## `oml workareas`

@@ -82,7 +82,7 @@ curl -s http://127.0.0.1:9466/metrics | grep -E 'oml_lake_(lag|commit_failures|d
 
 [Install OML on Kubernetes](../guides/kubernetes.md) describes the chart. Probes: startup checks `/healthz` every 2 seconds for up to 60 failures, which covers migrations; liveness checks `/healthz` every 10 seconds; readiness checks `/readyz` every 5 seconds and answers 503 until PostgreSQL is reachable and the startup fork check has passed. The timings are chosen, not measured.
 
-| You see | Cause | Do this |
+| Symptom | Cause | Do this |
 |---|---|---|
 | The pod waits in `CreateContainerConfigError`, naming the Secret | The Secret or its key is missing | Create it as in step 2 of the install. The pod starts on its own. |
 | `CrashLoopBackOff`; the log ends `fatal: postgres connect: ...` | The URL in the Secret does not reach PostgreSQL | Fix the URL or the network path. With the NetworkPolicy on, check `networkPolicy.postgres`. |

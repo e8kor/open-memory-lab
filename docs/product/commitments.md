@@ -28,17 +28,17 @@ Guarantee 6 depends on three deployment settings: `FORCE ROW LEVEL SECURITY` on 
 
 ## Guaranteed within a bound
 
-- **Tamper evidence.** The chain detects rewriting by anyone who cannot sign. An attacker who holds the signing key and can write to the database can rebuild a consistent chain. Detection then depends on chain heads you stored outside the deployment.
+- **Tamper evidence.** The chain detects rewriting by anyone who cannot sign. An attacker who holds the signing key and can write to the database can rebuild a consistent chain. Detection then depends on chain heads stored outside the deployment.
 - **Durability.** Surviving a failover without losing acknowledged commits needs quorum-synchronous replication with `remote_apply`. `remote_write` does not survive a standby operating-system crash. A single-node install is one machine's disk.
-- **Exactly-once lake writes.** This rests on the Delta library's transaction-identifier behavior, which we have not tested under load.
+- **Exactly-once lake writes.** This rests on the Delta library's transaction-identifier behavior, which has not been tested under load.
 - **Access changes.** A denied key or withdrawn grant stops acting at the key's next request. The server recomputes access from the record on every request.
 
 ## Provided, not measured
 
 Each item works. Its quality has no figure yet.
 
-- Review throughput per reviewing crew: it depends on your reviewers, and we have no figure.
-- Recall quality and latency at scale beyond the [benchmarks](../benchmarks/index.md): we have no other figures.
+- Review throughput per reviewing crew: it depends on the reviewers, and there is no figure.
+- Recall quality and latency at scale beyond the [benchmarks](../benchmarks/index.md): there are no other figures.
 - Scan latency at admission: only the per-rule timings on the [admission page](../architecture/admission.md).
 - Lake-writer throughput and commit latency: not yet measured.
 - The record store's size ceiling: not yet measured.

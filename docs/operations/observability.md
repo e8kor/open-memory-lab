@@ -8,14 +8,14 @@ answers: "how to turn on, scrape and read an OML server's metrics, request log a
 
 Use this page to watch a running server. It covers the metrics listener, the request log, trace export, `oml doctor` and three alerts. For the metric names and labels, see [Metrics](../reference/metrics.md). For every setting, see [configuration](configuration.md).
 
-## Before you start
+## Before starting
 
 - A running server with an operator or admin key.
 - A Prometheus-compatible scraper that can reach the host.
 
 ## Turn on the metrics listener
 
-The metrics listener is off until you give it an address. It serves `GET /metrics` and nothing else, without authentication. The API listener never routes `/metrics`.
+The metrics listener is off until it is given an address. It serves `GET /metrics` and nothing else, without authentication. The API listener never routes `/metrics`.
 
 1. Set `server.metrics_listen` (environment `OML_SERVER__METRICS_LISTEN`) to an address only the scraper reaches, for example `127.0.0.1:9464`.
 2. Restart the server.
@@ -29,7 +29,7 @@ curl -s http://127.0.0.1:9464/metrics | head
 
 The lake writer has a listener of its own. It defaults to `127.0.0.1:9466` and is set by `OML_LAKE_METRICS_ADDR`. See [the lake](lake.md).
 
-To let `oml doctor` read rerank, scan and recall-telemetry counts, set `OML_METRICS_URL` to the lead's listener when you run it.
+To let `oml doctor` read rerank, scan and recall-telemetry counts, set `OML_METRICS_URL` to the lead's listener when it runs.
 
 ```bash
 OML_METRICS_URL=http://127.0.0.1:9464 oml doctor
@@ -39,7 +39,7 @@ OML_METRICS_URL=http://127.0.0.1:9464 oml doctor
 
 Every OML binary writes JSON lines to stderr. Each line has `timestamp`, `level`, `target`, `event` and the event's fields. Stdout is reserved for the show-once enrollment token.
 
-The server writes one `http_request` line per request, except probes answered `200`. The fields you read most:
+The server writes one `http_request` line per request, except probes answered `200`. The fields read most often:
 
 | Field | Meaning |
 |---|---|
@@ -76,11 +76,11 @@ Keep logs at most 30 days where they land. The server holds no log file and dele
 - **Docker:** the default `json-file` driver rotates by size, not age. Use the `journald` driver or a shipper with a 30-day policy.
 - **Kubernetes:** set the retention in the cluster's log pipeline. The kubelet rotates by size.
 
-Make your reverse proxy omit the `Location` header of `POST /oauth/authorize` and the request bodies of `POST /oauth/authorize` and `POST /oauth/token` from its access log. They carry an authorization code.
+Make the reverse proxy omit the `Location` header of `POST /oauth/authorize` and the request bodies of `POST /oauth/authorize` and `POST /oauth/token` from its access log. They carry an authorization code.
 
 ## Export traces
 
-Trace export is off until you set `server.otlp_endpoint` (environment `OML_SERVER__OTLP_ENDPOINT`) to the base URL of an OpenTelemetry collector. The server posts spans to `<endpoint>/v1/traces` over OTLP with protobuf. It sends no authentication header. Once export is on, request log lines carry `trace_id`.
+Trace export is off until `server.otlp_endpoint` is set (environment `OML_SERVER__OTLP_ENDPOINT`) to the base URL of an OpenTelemetry collector. The server posts spans to `<endpoint>/v1/traces` over OTLP with protobuf. It sends no authentication header. Once export is on, request log lines carry `trace_id`.
 
 ## Run `oml doctor`
 
@@ -107,7 +107,7 @@ Run it after every upgrade and when a user reports a problem. For what to do wit
 
 ## Set three alerts
 
-OML ships no thresholds, because no baseline is measured yet. These three work without one. Replace `$WINDOW` and the values with your own.
+OML ships no thresholds, because no baseline is measured yet. These three work without one. Replace `$WINDOW` and the values with the deployment's own.
 
 **1. The API returns 5xx.**
 
@@ -117,9 +117,9 @@ sum(rate(oml_http_request_duration_seconds_count{status=~"5.."}[$WINDOW]))
 sum(rate(oml_http_request_duration_seconds_count[$WINDOW]))
 ```
 
-Page when the ratio stays above your error budget. Two causes are expected: a lead takeover and a failed fork check both refuse writes with `system.unavailable` (503). See [operational alerts](runbooks.md).
+Page when the ratio stays above the error budget. Two causes are expected: a lead takeover and a failed fork check both refuse writes with `system.unavailable` (503). See [operational alerts](runbooks.md).
 
-**2. The lake falls behind.** Skip this one if you do not run the lake writer.
+**2. The lake falls behind.** Skip this one without a lake writer.
 
 ```
 oml_lake_lag_seconds > $SECONDS
@@ -133,7 +133,7 @@ Brief lag is normal while a batch commits. Alert on sustained growth. A rising `
 histogram_quantile(0.95, sum(rate(oml_review_wait_seconds_bucket[1d])) by (le))
 ```
 
-Alert when the 95th percentile of the wait passes the time you promised your agents. Then run `oml review list` to see what is held.
+Alert when the 95th percentile of the wait passes the time promised to the agents. Then run `oml review list` to see what is held.
 
 A fully down server exports nothing, so a metrics-only alert misses a total outage. Add a blackbox probe against `/readyz`. For service-level targets, see [operating](operating.md).
 

@@ -29,17 +29,17 @@ Two scripts install the `oml` CLI for the current user, write one file and print
 
     Native on x86_64; Windows on ARM64 runs it under emulation.
 
-No release names a server: the plugin, the agent kit and the CLI each take the address of the server you use, which that server's sign-up page or its administrator gives you beside the key; [get an agent key](../guides/get-an-agent-key.md).
+No release names a server: the plugin, the agent kit and the CLI each take the address of the server in use, which that server's sign-up page or its administrator gives beside the key; [get an agent key](../guides/get-an-agent-key.md).
 
 If the installer refuses, see [the installer refuses](../help/troubleshooting-client.md#the-installer-refuses) and the [FAQ](../faq.md#install-and-connect).
 
-## Put `oml` on your `PATH`
+## Put `oml` on the `PATH`
 
 The one file is `oml` (`oml.exe`) in the install directory, renamed into place, so a running `oml` is never left half written. When the directory is not on `PATH`, the script prints the one line that would add it and changes nothing. It then prints the next command:
 
 ```text
-Next, connect to your server with your agent key:
-    oml login https://<your OML server>
+Next, connect to the server with the agent key:
+    oml login https://<OML server>
     oml doctor
 ```
 
@@ -60,7 +60,7 @@ iex` takes none, so set `$env:OML_VERSION`, `$env:OML_INSTALL_DIR` or
 
 ## Verify the download
 
-The installer checks the archive for you. This section says what it checks and how to check by hand.
+The installer checks the archive. This section says what it checks and how to check by hand.
 
 ### What a piped install trusts
 
@@ -100,7 +100,7 @@ Every refusal names its reason and installs nothing: a cosign failure, a checksu
 missing line in `SHA256SUMS`, or `--require-signature` without cosign. After the copy the script
 requires that `oml --version` prints the requested version. The shell script's body is one
 function called on its last line, so a download cut short runs nothing. The PowerShell script
-throws rather than exits, so `| iex` never closes your shell.
+throws rather than exits, so `| iex` never closes the shell.
 
 ### Install by hand with cosign
 
@@ -110,7 +110,7 @@ x86_64 and arm64 and Windows x86_64, each with a cosign signature bundle.
 Linux, on x86_64 (on arm64, `t=aarch64-unknown-linux-musl`); the binary is static:
 
 ```sh
-v=X.Y.Z t=x86_64-unknown-linux-musl          # the release and your target
+v=X.Y.Z t=x86_64-unknown-linux-musl          # the release and the target
 base=https://github.com/e8kor/open-memory-lab/releases/download/v$v
 curl -fsSLO "$base/oml-cli-$v-$t.tar.gz" -O "$base/oml-cli-$v-$t.tar.gz.sigstore.json"
 cosign verify-blob \
@@ -138,7 +138,7 @@ cosign verify-blob `
 if ($LASTEXITCODE -eq 0) { Expand-Archive "$n.zip" -DestinationPath . }
 ```
 
-Then put `$n\oml.exe` in a directory on your `PATH`. Extract only after `cosign verify-blob`
+Then put `$n\oml.exe` in a directory on the `PATH`. Extract only after `cosign verify-blob`
 exits 0: an archive that does not verify is not a release. What else differs on Windows, the
 owner-only files and the plugin's hook under Git Bash, is in the [CLI
 reference](../cli/reference.md).

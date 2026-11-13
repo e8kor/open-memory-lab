@@ -93,7 +93,7 @@ rest is.
    in `sdks/python/src/oml_sdk/client.py`; then write both names and `decided = true` in
    `sdks/REGISTRY-NAMES.toml`. The Python import name stays `oml_sdk`. Tests fail while any of
    these disagree.
-3. **PyPI: a pending trusted publisher.** Sign in at pypi.org, open Your account, Publishing, and add
+3. **PyPI: a pending trusted publisher.** Sign in at pypi.org, open The account, Publishing, and add
    a GitHub pending publisher with these fields: PyPI project name the Python name chosen in step 1;
    owner `e8kor`; repository name `open-memory-lab`; workflow name `release.yml`; environment name
    `pypi`. A pending publisher creates the project at the first upload and stores no token. It does
@@ -112,7 +112,7 @@ rest is.
    ([npm: trusted publishers](https://docs.npmjs.com/trusted-publishers)). A trusted-publisher
    configuration that is not used within two days expires.
 5. **GitHub environments (recommended).** Settings, Environments: create `pypi` and `npm` and
-   add yourself as a required reviewer, so each upload waits for a click. A job that names an
+   add the releaser as a required reviewer, so each upload waits for a click. A job that names an
    environment that does not exist creates it without a reviewer.
 6. **Set the switch.** Settings, Secrets and variables, Actions, Variables: create `PUBLISH_SDKS`
    with the value `true`. The jobs compare it with `==`, which GitHub evaluates without regard to
@@ -129,13 +129,13 @@ rest is.
 ## What a shared server needs before a release that contains X
 
 A server that people other than its operator use, an invitation-only one included, has three things to
-do around an upgrade that a server only you use does not. Each is silent or slow when missed. The
+do around an upgrade that a server used by one person does not. Each is silent or slow when missed. The
 release notes name the ones a release carries; this list says what each means and where it is
 sourced. The upgrade steps themselves are in [Upgrade OML](../operations/upgrades.md).
 
 | The release contains | Do | If it is missed |
 |---|---|---|
-| ADR-0076: no release names a server, and `oml sync` asks consent of a server that says it is shared ([ADR-0076](../adr/ADR-0076-releases-ship-no-default-server-and-setup-asks-for-the-server-or-reads-it-from-the-key-or-the-environment.md) d9) | Set `server.shared = true` (`OML_SERVER__SHARED`) before the upgrade, or in the same deploy. Open sign-up implies it; a server only you use leaves it `false`. Afterwards `GET /v2/whoami` answers `shared: true`. | Nothing fails and nothing warns. A server that omits `shared`, or answers `false`, gets no consent prompt from a new CLI, so its users' `oml sync` runs with no disclosure, and `oml doctor`'s `sync_shared_server` line cannot appear. |
+| ADR-0076: no release names a server, and `oml sync` asks consent of a server that says it is shared ([ADR-0076](../adr/ADR-0076-releases-ship-no-default-server-and-setup-asks-for-the-server-or-reads-it-from-the-key-or-the-environment.md) d9) | Set `server.shared = true` (`OML_SERVER__SHARED`) before the upgrade, or in the same deploy. Open sign-up implies it; a server used by one person leaves it `false`. Afterwards `GET /v2/whoami` answers `shared: true`. | Nothing fails and nothing warns. A server that omits `shared`, or answers `false`, gets no consent prompt from a new CLI, so its users' `oml sync` runs with no disclosure, and `oml doctor`'s `sync_shared_server` line cannot appear. |
 | A new scanner rule set (the rule set's name, `oml-scan/<n>.<n>`, moves; the release notes say so, as for `oml-scan/1.2` in #226) | After the upgrade, run `oml admin rescan --record-held` (ADR-0074 d28). | Until it has run, held versions last scanned under the old rule set stay their authors' alone inside in-progress workareas, and `oml doctor` warns `scan_held_unrescanned` and `scan_rescan_due`. Nothing is demoted or deleted, and the findings the old rule set recorded stay on a held version until a reviewer judges it. |
 | A migration that rewrites `memories` (migration 0044, #175, fills `approved_at` and the approver's kind on every promoted row from the journal) | Rehearse the upgrade on a restored copy ([Upgrade OML](../operations/upgrades.md#upgrade-in-order), step 3), read the time the migration took, and schedule the outage for it. Check free disk for the rewritten partition. | The server serves nothing until the migration ends: it runs at start, in one transaction, before the server answers. An older server refuses to start once it has run, so the way back is the dump taken before the upgrade. |
 
@@ -145,7 +145,7 @@ loaded shared host, as the non-superuser owner with row security forced: 0.84 to
 333 MB at 100,000 rows until vacuum ([#311](https://github.com/e8kor/open-memory-lab/issues/311)).
 It is one host and not a benchmark, and its publication in the operations docs is still open on
 that issue; a server with more promoted rows than 100,000, or slower disks, should expect more, and
-the rehearsal is what measures yours.
+the rehearsal is what measures the actual figure.
 
 ## Merge queue
 
