@@ -844,6 +844,134 @@ Both bars stick at every width and the nav wraps and never scrolls inside itself
 assert the scope word, the nav's label, the switch for each capacity and the titles are the
 build's.
 
+## The two provider points as checked against the providers' documentation (2026-11-13, #119)
+
+d4 left two provider points unverified: whether Google's ID token may be accepted without a
+signature check, and whether GitHub's token endpoint enforces the PKCE challenge. Each provider's
+documentation was fetched on 2026-11-13 and is quoted below; the code that relies on each point
+is cited by file and line at `main` 053f439e. The sign-in runs in the lead, not in `oml-web`:
+`crates/adapters/oml-fetch/src/signin.rs` makes the provider calls,
+`crates/oml-app/src/app/auth.rs` judges the callback and `crates/oml-domain/src/web.rs` judges
+the answer. Nothing here is a live sign-in; those, the #150 measurements and the security test
+stay open on #119.
+
+### Google: the ID token's signature is not checked, and that holds
+
+[OpenID Connect Core 1.0 incorporating errata set 2, §3.1.3.7 "ID Token Validation"](https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation),
+fetched 2026-11-13, opens "Clients MUST validate the ID Token in the Token Response in the
+following manner:" and its item 6 reads:
+
+> If the ID Token is received via direct communication between the Client and the Token Endpoint
+> (which it is in this flow), the TLS server validation MAY be used to validate the issuer in
+> place of checking the token signature. The Client MUST validate the signature of all other ID
+> Tokens according to JWS [JWS] using the algorithm specified in the JWT alg Header Parameter.
+> The Client MUST use the keys provided by the Issuer.
+
+The same section keeps the other checks: item 2, "The Issuer Identifier for the OpenID Provider
+(which is typically obtained during Discovery) MUST exactly match the value of the iss (issuer)
+Claim."; item 3, "The Client MUST validate that the aud (audience) Claim contains its client_id
+value registered at the Issuer identified by the iss (issuer) Claim as an audience. The aud
+(audience) Claim MAY contain an array with more than one element. The ID Token MUST be rejected
+if the ID Token does not list the Client as a valid audience, or if it contains additional
+audiences not trusted by the Client."; item 9, "The current time MUST be before the time
+represented by the exp Claim."; item 11, "If a nonce value was sent in the Authentication
+Request, a nonce Claim MUST be present and its value checked to verify that it is the same value
+as the one that was sent in the Authentication Request." §3.1.3 adds "Communication with the
+Token Endpoint MUST utilize TLS."
+
+[Google's OpenID Connect guide](https://developers.google.com/identity/openid-connect/openid-connect),
+fetched 2026-11-13, says under "Obtain user information from the ID token":
+
+> Normally, it is critical that you validate an ID token before you use it, but since you are
+> communicating directly with Google over an intermediary-free HTTPS channel and using your
+> client secret to authenticate yourself to Google, you can be confident that the token you
+> receive really comes from Google and is valid. If your server passes the ID token to other
+> components of your app, it is extremely important that the other components validate the
+> token before using it.
+
+and under "Validating an ID token": "You need to validate all ID tokens on your server unless you
+know that they came directly from Google." Its steps 2 to 4 are "Verify that the value of the
+`iss` claim in the ID token is equal to `https://accounts.google.com` or `accounts.google.com`.",
+"Verify that the value of the `aud` claim in the ID token is equal to your app's client ID." and
+"Verify that the expiry time (`exp` claim) of the ID token has not passed." Its claims table
+describes `email_verified` as "True if the user's email address has been verified; otherwise
+false.", and the page warns "you shouldn't use the email field in the ID token as a unique
+identifier for a user. Always use the sub field".
+
+**Verdict: the point holds, under both sources' conditions, and the code meets them.**
+
+| Condition the sources set | Where the code meets it |
+|---|---|
+| The token comes directly from the token endpoint, over TLS, with the client secret | `signin.rs:125-137` posts the code, the client secret and the verifier to the constant `https://oauth2.googleapis.com/token` (`signin.rs:26`), with no proxy from the environment and no redirect followed (`signin.rs:91-97`); `ureq` 2.12.1 is built with its default `tls` feature, rustls with the `webpki-roots` certificates (`Cargo.lock`). `ProviderAnswer::GoogleIdToken` is built only from that answer (`signin.rs:145`), so no token from a browser or another component reaches the judgement |
+| The token is not passed to other components | it is judged in the same process (`auth.rs:146`) and dropped; nothing stores or forwards it |
+| `iss` is Google's | `web.rs:47` holds exactly the two values Google names; `web.rs:355-358` refuses any other |
+| `aud` is the client id | `web.rs:359-366` |
+| `exp` is in the future | `web.rs:367-370` refuses `exp <= now` |
+| `nonce` equals the one sent | `web.rs:371-374`, compared in constant time against the sealed nonce; a missing nonce is refused |
+| a verified address, keyed by `sub` | `web.rs:375-387` admits only `email_verified` true (as a boolean or the string `"true"`, which Google's own example payload shows); `web.rs:388-391` takes `sub` as the subject d4 pins, never the email |
+
+One difference from item 3, minor and not a reliance: when `aud` is an array, `web.rs:361`
+admits it if any element is the client id, while item 3 also rejects an array with "additional
+audiences not trusted by the Client". Google's guide describes `aud` as one client id, and only
+Google's own token endpoint can hand the lead a token, so no other audience can reach it on this
+path. Refusing a multi-audience array would match item 3 exactly; that is a code change for its
+own issue, not this record.
+
+### GitHub: the PKCE challenge is documented as required once sent; a refusal is not stated
+
+[GitHub's "Authorizing OAuth apps"](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps),
+fetched 2026-11-13, lists for `GET https://github.com/login/oauth/authorize`:
+
+> `code_challenge` · Strongly recommended · Used to secure the authentication flow with PKCE
+> (Proof Key for Code Exchange). Required if `code_challenge_method` is included. Must be a 43
+> character SHA-256 hash of a random string generated by the client.
+
+> `code_challenge_method` · Strongly recommended · Used to secure the authentication flow with
+> PKCE (Proof Key for Code Exchange). Required if `code_challenge` is included. Must be `S256` -
+> the `plain` code challenge method is not supported.
+
+and for `POST https://github.com/login/oauth/access_token`:
+
+> `code_verifier` · Strongly recommended · Used to secure the authentication flow with PKCE
+> (Proof Key for Code Exchange). Required if `code_challenge` was sent during the user
+> authorization. Must be the original value used to generate the `code_challenge` in the
+> authorization request.
+
+[GitHub's changelog of 2025-07-14, "PKCE support for OAuth and GitHub App authentication"](https://github.blog/changelog/2025-07-14-pkce-support-for-oauth-and-github-app-authentication/),
+fetched 2026-11-13:
+
+> To use PKCE, your application can include the `code_challenge_method` and `code_challenge`
+> query parameters when your app launches the user authorization flow. It must then include the
+> corresponding `code_verifier` parameter when exchanging the authorization code for an access
+> token. Only the S256 code challenge method is accepted. GitHub is not requiring PKCE for any
+> authentication flow at this time, as GitHub does not distinguish between public and
+> confidential clients.
+
+> A small set of applications were incorrectly using the PKCE flow, and they have been given an
+> exemption from PKCE enforcement to ensure they keep working.
+
+**Verdict: documented, not proven.** GitHub states that a verifier is required once a challenge
+was sent and must be the original value, accepts S256 only, and speaks of "PKCE enforcement" from
+which a few applications are exempt. Neither page states that the token endpoint refuses a
+missing or mismatched verifier, nor what it answers when it does. PKCE is optional at GitHub, so
+an application that sends no challenge is not refused.
+
+What the code relies on. The lead sends `code_challenge` and `code_challenge_method=S256` on
+every GitHub sign-in (`crates/transports/oml-transport-http/src/web/mod.rs:665-666`), the
+challenge being the 43-character unpadded base64url SHA-256 of the verifier
+(`crates/oml-domain/src/oauth/pkce.rs:72-73`), which matches GitHub's "43 character" rule; the
+verifier is 64 lower-case hexadecimal characters (`web.rs:225-229`), inside RFC 7636's syntax, and
+goes with the code to the token endpoint (`auth.rs:140`, `signin.rs:159-165`). GitHub's
+application sends no `nonce` and returns no ID token (`web.rs:122`), so on the GitHub path PKCE
+is the only control that binds a code to the browser that started the sign-in. The `state` check
+(`web.rs:279-284`) stops a forged callback in someone else's browser, but not a code taken from
+another person's callback and presented through a sign-in the taker started: that sign-in's own
+`state` and cookie are valid, and only the token endpoint's check of the verifier refuses the
+code. The reliance therefore holds exactly as far as GitHub enforces what its documentation calls
+required. The live check that closes it is part of #119's live sign-ins: a GitHub sign-in whose
+token call carries a verifier other than the one the challenge was made from must answer an
+error, which the lead shows as `provider_refused`.
+
 ## Consequences
 
 - **ADR-0015's reasons, answered one by one.** *Accretion:* the route set and each page's actions
