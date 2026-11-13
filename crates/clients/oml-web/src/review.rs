@@ -241,6 +241,13 @@ fn verdict_line(card: &Card, reviewer: &str, roots: &Roots) -> String {
                 card.version()
             )
         }
+        // The kind comes from the item; the version it replaces is one this
+        // key cannot read, so the line names it by its kind alone.
+        _ if card.retirement() => "Approve stops serving the claim; the version it retires is not readable to this key. Reject keeps that version served.".to_owned(),
+        _ if card.successor() => format!(
+            "Approve serves v{} to every key that reads {reference} and ends the version it replaces, which is not readable to this key. Reject keeps that version served.",
+            card.version()
+        ),
         _ => format!(
             "Approve serves it to every key that reads {reference}. Reject keeps the text, as rejected."
         ),
@@ -303,8 +310,13 @@ async fn own_author(view: &ViewCtx<'_>, m: &Memory) -> Option<bool> {
 /// The change against the version `m` replaces, read as the person's
 /// reviewer key; nothing when it replaces none or the read fails.
 async fn replaced_change(view: &ViewCtx<'_>, card: &Card) -> String {
+    const UNREADABLE: &str = r#"<p class="desc">The version it replaces is not readable to this key, so no change is drawn.</p>"#;
     let Some((id, Some(was_version))) = card.replaces() else {
-        return String::new();
+        return if card.successor() {
+            UNREADABLE.to_owned()
+        } else {
+            String::new()
+        };
     };
     let credential = view.session.credential(Capacity::Review);
     let ids = view.calls.next_ids();
@@ -316,7 +328,7 @@ async fn replaced_change(view: &ViewCtx<'_>, card: &Card) -> String {
             card.body(),
             card.retirement(),
         ),
-        Err(_) => String::new(),
+        Err(_) => UNREADABLE.to_owned(),
     }
 }
 
@@ -1417,6 +1429,42 @@ mod tests {
             Some("Recorded: 0 approved, 0 rejected, 0 skipped.")
         );
         assert_eq!(notice(&fields("done=hello")), None);
+    }
+
+    /// A held successor as the listing serves it to a key that cannot read
+    /// the version it replaces: `replaces` null, the item's own version
+    /// and `retirement` still served.
+    fn unreadable_successor(retirement: bool) -> Card {
+        let m: Memory = serde_json::from_value(serde_json::json!({
+            "artifact_id": "m2", "claim_key": "c", "version": 2, "tip": false,
+            "workarea_path": "universe.alice", "state": "held", "principal": "helper",
+            "created_at": "2026-11-09T08:00:00.000000Z", "text": "t",
+            "retirement": retirement, "replaces": null,
+        }))
+        .unwrap();
+        Card::of_held(&m, false)
+    }
+
+    #[test]
+    fn an_edit_or_retirement_whose_replaced_version_is_unreadable_is_labelled_by_its_kind() {
+        let roots = Roots::default();
+        let edit = unreadable_successor(false);
+        assert_eq!(edit.decision(), r#"<span class="oml-decision">Edit</span>"#);
+        let line = verdict_line(&edit, "alice-review", &roots);
+        assert!(line.contains("Approve serves v2"), "{line}");
+        assert!(line.contains("not readable to this key"), "{line}");
+        assert!(
+            !line.contains("Reject keeps the text, as rejected"),
+            "{line}"
+        );
+        let retirement = unreadable_successor(true);
+        assert_eq!(
+            retirement.decision(),
+            r#"<span class="oml-decision">Retirement</span>"#
+        );
+        let line = verdict_line(&retirement, "alice-review", &roots);
+        assert!(line.contains("Approve stops serving the claim"), "{line}");
+        assert!(!line.contains("Approve serves it"), "{line}");
     }
 
     #[test]

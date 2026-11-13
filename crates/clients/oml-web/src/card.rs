@@ -560,6 +560,14 @@ impl Card {
         self.retirement
     }
 
+    /// Whether the version replaces another, by the item's own facts: a
+    /// retirement, a version that names what it replaces, or one after the
+    /// first, whose `replaces` a key that cannot read the replaced version
+    /// is not served.
+    pub(crate) const fn successor(&self) -> bool {
+        self.retirement || self.replaces.is_some() || self.version > 1
+    }
+
     /// The authoring principal, or on the admin side the key and its user.
     pub(crate) fn author(&self) -> Option<&str> {
         self.author.as_deref()
@@ -667,7 +675,7 @@ impl Card {
             .map_or_else(String::new, |v| {
                 format!(r#" <span class="of">of v{v}</span>"#)
             });
-        let word = match (self.retirement, self.replaces.is_some()) {
+        let word = match (self.retirement, self.successor()) {
             (true, _) => "Retirement",
             (false, true) => "Edit",
             (false, false) => return r#"<span class="oml-decision">New memory</span>"#.to_owned(),
