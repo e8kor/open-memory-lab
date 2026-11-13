@@ -44,6 +44,7 @@ use oml_page::web::{
 };
 use oml_sdk::{AdminMemory, AdminRead, Anchor, Attachment, Memory, ScanFinding, SourceChecked};
 
+use crate::keys::instant;
 use crate::picker::Roots;
 use serde_json::{Value, json};
 
@@ -73,8 +74,20 @@ pub(crate) fn anchor_text(anchor: Option<&Anchor>) -> Option<String> {
     }
 }
 
+/// A version's valid time as markup, each end an instant to the second in
+/// UTC (`crate::keys::instant`), `None` when it declares none.
+pub(crate) fn valid_html(from: Option<&str>, until: Option<&str>) -> Option<String> {
+    (from.is_some() || until.is_some()).then(|| {
+        format!(
+            "from {}, {}",
+            from.map_or_else(|| "any time".to_owned(), instant),
+            until.map_or_else(|| "open".to_owned(), |u| format!("until {}", instant(u)))
+        )
+    })
+}
+
 /// A version's valid time as one line, unescaped, `None` when it declares
-/// none.
+/// none: the JSON route's.
 pub(crate) fn valid_text(from: Option<&str>, until: Option<&str>) -> Option<String> {
     (from.is_some() || until.is_some()).then(|| {
         format!(
@@ -100,15 +113,6 @@ pub(crate) fn kind_word(held_by: &str) -> &'static str {
 
 pub(crate) fn day(at: &str) -> String {
     at.chars().take(10).collect()
-}
-
-/// An instant to the second, in UTC: `2026-11-10T08:12:44Z`.
-fn instant(at: &str) -> String {
-    if at.len() >= 19 && at.as_bytes()[10] == b'T' && at.is_char_boundary(19) {
-        format!("{}Z", &at[..19])
-    } else {
-        at.to_owned()
-    }
 }
 
 /// A served version's state as the card names it: a promoted version that
@@ -354,6 +358,8 @@ pub(crate) struct Card {
     /// The media type, where it is not prose.
     format: Option<String>,
     valid: Option<String>,
+    valid_from: Option<String>,
+    valid_until: Option<String>,
     kind: Option<String>,
     origin: Option<String>,
     stale: Option<String>,
@@ -406,6 +412,8 @@ impl Card {
             anchor: anchor_text(m.anchor.as_ref()),
             format: (!prose).then_some(format),
             valid: valid_text(m.valid_from.as_deref(), m.valid_until.as_deref()),
+            valid_from: m.valid_from.clone(),
+            valid_until: m.valid_until.clone(),
             kind: m.kind.clone(),
             origin: m.origin.as_ref().map(|o| o.kind.clone()),
             stale: m.stale.clone(),
@@ -466,6 +474,8 @@ impl Card {
             anchor: anchor_text(m.anchor.as_ref()),
             format: (!prose).then_some(format),
             valid: valid_text(m.valid_from.as_deref(), m.valid_until.as_deref()),
+            valid_from: m.valid_from.clone(),
+            valid_until: m.valid_until.clone(),
             kind: None,
             origin: None,
             stale: None,
@@ -525,6 +535,8 @@ impl Card {
             anchor: anchor_text(m.anchor.as_ref()),
             format: (!prose).then_some(format),
             valid: valid_text(m.valid_from.as_deref(), m.valid_until.as_deref()),
+            valid_from: m.valid_from.clone(),
+            valid_until: m.valid_until.clone(),
             kind: m.kind.clone(),
             origin: None,
             stale: None,
@@ -819,7 +831,7 @@ impl Card {
             out,
             r#"<li><span class="k">scan</span><span class="v">{}</span></li><li><span class="k">written</span><span class="v t">{}</span></li></ul>"#,
             scan_fact(self.findings.as_deref(), self.scan.as_deref()),
-            text(&instant(&self.created))
+            instant(&self.created)
         );
         out
     }
@@ -844,8 +856,7 @@ impl Card {
                 parts.push("<span>not checked while held</span>".to_owned());
             } else if let Some(c) = &self.checked {
                 let mut line = format!(
-                    "checked {} at {}: {}",
-                    instant(&c.at),
+                    "{}: {}",
                     c.rev.chars().take(12).collect::<String>(),
                     c.result
                 );
@@ -859,7 +870,11 @@ impl Card {
                             .map_or_else(String::new, |f| format!("#{f}"))
                     );
                 }
-                parts.push(format!("<span>{}</span>", text(&line)));
+                parts.push(format!(
+                    "<span>checked {} at {}</span>",
+                    instant(&c.at),
+                    text(&line)
+                ));
             }
         }
         Some(parts.join(" "))
@@ -914,12 +929,10 @@ impl Card {
         if let Some(source) = self.source() {
             fact("Source", &source);
         }
-        let mut valid = self
-            .valid
-            .as_deref()
-            .map_or_else(|| "none declared".to_owned(), text);
+        let mut valid = valid_html(self.valid_from.as_deref(), self.valid_until.as_deref())
+            .unwrap_or_else(|| "none declared".to_owned());
         if let (Some(end), Some((_, Some(v)))) = (&self.replaces_valid_until, &self.replaces) {
-            let _ = write!(valid, "; approving ends version {v} at {}", text(end));
+            let _ = write!(valid, "; approving ends version {v} at {}", instant(end));
         }
         fact("Valid", &valid);
         fact("Approval", &self.review_line());
@@ -1198,8 +1211,12 @@ mod tests {
     fn an_instant_reads_to_the_second_in_utc() {
         assert_eq!(
             instant("2026-11-10T08:12:44.123456Z"),
-            "2026-11-10T08:12:44Z"
+            r#"<time datetime="2026-11-10T08:12:44.123456Z">2026-11-10 08:12:44 UTC</time>"#
         );
-        assert_eq!(instant("2026-11"), "2026-11");
+        let valid = valid_html(Some("2026-12-20T00:00:00.000000Z"), None).unwrap();
+        assert_eq!(
+            valid,
+            r#"from <time datetime="2026-12-20T00:00:00.000000Z">2026-12-20 00:00:00 UTC</time>, open"#
+        );
     }
 }

@@ -762,7 +762,11 @@ async fn the_top_label_read_costs_the_gate_and_one_tree_walk() {
     assert_eq!(admin.status, StatusCode::OK, "{}", admin.body);
     assert_eq!(review.status, StatusCode::OK, "{}", review.body);
     assert_eq!(admin.body["items"][0]["user_root"], true, "{}", admin.body);
-    assert_eq!(review.body["items"][0]["user_root"], true, "{}", review.body);
+    assert_eq!(
+        review.body["items"][0]["user_root"], true,
+        "{}",
+        review.body
+    );
     println!(
         "store calls: top label read as admin {}, as review {}",
         admin.store_calls(),

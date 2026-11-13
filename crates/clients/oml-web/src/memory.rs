@@ -239,7 +239,7 @@ fn attribution(
             short(v.key.as_deref().unwrap_or_default()),
             short(v.principal.as_deref().unwrap_or_default()),
             short(v.reason.as_deref().unwrap_or_default()),
-            short(&v.at)
+            crate::keys::instant(&v.at)
         );
     }
     out.push_str("</table>");

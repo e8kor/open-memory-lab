@@ -462,7 +462,7 @@ pub async fn users_page(
                 body,
                 r#"<tr><td class="mono">{}</td><td class="mono">{}</td><td>{}</td></tr>"#,
                 short(&d.user),
-                short(&d.requested_at),
+                crate::keys::instant(&d.requested_at),
                 form(
                     USERS_PATH,
                     "close_deletion",

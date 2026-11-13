@@ -97,8 +97,9 @@ pub(crate) fn denied_notice() -> String {
 
 /// A served instant to the second, in UTC by name, inside a `<time>` whose
 /// `datetime` is the instant as served: `2026-10-29 12:30:00 UTC`. An
-/// instant in any other shape is shown as served.
-fn instant(at: &str) -> String {
+/// instant in any other shape is shown as served. Every page shows an
+/// instant this way.
+pub(crate) fn instant(at: &str) -> String {
     let shown = match unix_of(at) {
         Some(_) => format!("{} {} UTC", &at[..10], &at[11..19]),
         None => at.to_owned(),

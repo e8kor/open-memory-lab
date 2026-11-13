@@ -45,6 +45,7 @@ use oml_sdk::{HeldPage, Memory, encode};
 
 use crate::acts::Refusal;
 use crate::card::{Card, View, change};
+use crate::keys::instant;
 use crate::pages::{Fields, refused};
 use crate::picker::{self, Browse, Chosen, Field, Names, Roots};
 use crate::session::{PageCalls, Session, call};
@@ -235,7 +236,7 @@ fn verdict_line(card: &Card, reviewer: &str, roots: &Roots) -> String {
         Some((_, Some(was))) => {
             let end = card
                 .replaces_valid_until()
-                .map_or_else(String::new, |at| format!(" at {}", short(at)));
+                .map_or_else(String::new, |at| format!(" at {}", instant(at)));
             format!(
                 "Approve serves v{} to every key that reads {reference} and ends v{was}{end}. Reject keeps v{was} served.",
                 card.version()
@@ -490,7 +491,7 @@ async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
             attr(&encode(&reference)),
             short(&reference),
             row.held,
-            short(&row.oldest_at)
+            instant(&row.oldest_at)
         );
     }
     body.push_str("</table>");
@@ -690,7 +691,7 @@ async fn person_list(
             r#"<tr><td class="mono"><a href="{page}?workarea={}">{}</a></td><td>{n}</td><td class="mono">{}</td></tr>"#,
             attr(&encode(reference)),
             short(reference),
-            short(oldest)
+            instant(oldest)
         );
     }
     body.push_str("</table>");
@@ -886,7 +887,7 @@ async fn view(
             let _ = write!(
                 body,
                 r#"<p class="desc">Served for review until {}. Held text is read by its author, the reviewer it is served to, an admin through the journalled admin read, and readers inside an in-progress workarea.</p>"#,
-                text(at)
+                instant(at)
             );
         }
         match item(&ctx, fields.given("memory"), act).await {

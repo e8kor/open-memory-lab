@@ -4246,7 +4246,7 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
     let (_, _, page) =
         act_and_follow(&rig, &cookie, "/web/review", &[("action", "review_next")]).await;
     assert!(
-        page.contains("<dt>Valid</dt><dd>from 2025, open</dd>"),
+        page.contains(r#"<dt>Valid</dt><dd>from <time datetime="2025">2025</time>, open</dd>"#),
         "{page}"
     );
     act_and_follow(
@@ -4304,7 +4304,7 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
     assert!(page.contains("the api is at version 4"), "{page}");
     assert!(
         page.contains(
-            "from 2026-06-01, open; approving ends version 1 at 2026-06-01T00:00:00.000000Z"
+            r#"from <time datetime="2026-06-01">2026-06-01</time>, open; approving ends version 1 at <time datetime="2026-06-01T00:00:00.000000Z">2026-06-01 00:00:00 UTC</time>"#
         ),
         "{page}"
     );
@@ -4312,11 +4312,13 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
         act_and_follow(&rig, &cookie, "/web/review", &[("action", "review_next")]).await;
     assert!(page.contains("the api is at version 4"), "{page}");
     assert!(
-        page.contains("<dt>Valid</dt><dd>from 2026-06-01, open"),
+        page.contains(
+            r#"<dt>Valid</dt><dd>from <time datetime="2026-06-01">2026-06-01</time>, open"#
+        ),
         "{page}"
     );
     assert!(
-        page.contains("approving ends version 1 at 2026-06-01T00:00:00.000000Z"),
+        page.contains(r#"approving ends version 1 at <time datetime="2026-06-01T00:00:00.000000Z">2026-06-01 00:00:00 UTC</time>"#),
         "{page}"
     );
 }
@@ -4958,7 +4960,10 @@ async fn the_served_card_is_read_by_the_memory_the_redirect_names_never_by_the_s
     let serve_id = query_param(&location, "serve").expect("the serve id");
     // The redirect carries the serve's expiry, and the page says it (row 18).
     let (_, _, served) = send(&rig.router, get(&location, Some(&cookie))).await;
-    assert!(served.contains("Served for review until 20"), "{served}");
+    assert!(
+        served.contains("Served for review until <time datetime=\"20"),
+        "{served}"
+    );
     let (status, _, page) = send(
         &rig.router,
         get(
@@ -7749,6 +7754,9 @@ async fn a_nested_shared_workarea_is_named_by_its_bare_name_on_both_review_pages
         page.contains(r#"<a href="/web/review?workarea=oncall">oncall</a>"#),
         "{page}"
     );
+    // Its oldest row's instant is to the second, in UTC, as on every page.
+    assert!(page.contains(" UTC</time></td></tr>"), "{page}");
+    assert!(!page.contains(".000"), "{page}");
     assert!(
         page.contains(r#"href="/web/memories?workarea=oncall">oncall</a>"#),
         "{page}"
@@ -7780,6 +7788,7 @@ async fn a_nested_shared_workarea_is_named_by_its_bare_name_on_both_review_pages
     let (status, _, admin) = send(&rig.router, get("/web/admin/review", Some(&boss))).await;
     assert_eq!(status, StatusCode::OK, "{admin}");
     assert!(!admin.contains("platform.oncall"), "{admin}");
+    assert!(admin.contains(" UTC</time></td></tr>"), "{admin}");
     assert!(
         admin.contains(r#"href="/web/admin/review?held=1&amp;workarea=oncall">oncall</a>"#),
         "{admin}"
