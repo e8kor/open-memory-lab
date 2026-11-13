@@ -122,6 +122,14 @@ jobs:
       - run: cargo test --workspace --locked
         env:
           OML_TEST_REQUIRE_SPLIT: "1"
+      # The connect flow's sign-in calls timed against Claude's limits, 10 s
+      # for discovery, registration and token calls and 30 s for a refresh
+      # (ADR-0031, #115); the workspace run above asserts them, this one
+      # prints each step's time into the log. Already built, it reruns one test.
+      - name: Sign-in response times (connect flow)
+        run: cargo test --locked -p oml-cli --test connect_flow every_sign_in_call -- --nocapture
+        env:
+          OML_TEST_REQUIRE_SPLIT: "1"
       # The adapter's real-model tests are ignored without the model; here
       # they run against the cached pinned files (ADR-0053 d10).
       - run: cargo test --locked -p oml-rerank -- --ignored

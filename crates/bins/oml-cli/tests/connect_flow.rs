@@ -6,11 +6,14 @@
 //! `keys disconnect` and `keys connect-code`, a dynamic client
 //! registration, the authorization page, the token exchange, and `/mcp`
 //! under the access token, under the refresh token and under no credential.
+//! It also times each sign-in call against the limits Claude allows: 10
+//! seconds for discovery, registration and token calls, 30 for a refresh
+//! (ADR-0031, "What Claude expects").
 
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::response::IntoResponse as _;
 use ed25519_dalek::SigningKey;
@@ -286,10 +289,27 @@ async fn tool(url: &str, bearer: &str, name: &str, arguments: Value) -> Value {
     body["result"].clone()
 }
 
-/// What a connection's flow leaves the client holding.
+/// What a connection's flow leaves the client holding, and how long each
+/// of its HTTP calls took to answer.
 struct Connected {
+    client_id: String,
     access_token: String,
     refresh_token: String,
+    timings: Vec<(&'static str, Duration)>,
+}
+
+/// [`http`], with the time from sending to the whole body read recorded
+/// under `step`.
+fn timed(
+    timings: &mut Vec<(&'static str, Duration)>,
+    step: &'static str,
+    request: ureq::Request,
+    body: Option<String>,
+) -> (u16, Vec<(String, String)>, Value) {
+    let started = Instant::now();
+    let answer = http(request, body);
+    timings.push((step, started.elapsed()));
+    answer
 }
 
 /// A dynamic registration, the authorize page, `code` entered and Connect,
@@ -298,7 +318,10 @@ async fn connect(url: &str, code: &str) -> Connected {
     let base = url.to_owned();
     let code = code.to_owned();
     blocking(move || {
-        let (status, _, registered) = http(
+        let mut timings = Vec::new();
+        let (status, _, registered) = timed(
+            &mut timings,
+            "registration",
             agent()
                 .post(&format!("{base}/oauth/register"))
                 .set("Content-Type", "application/json"),
@@ -328,7 +351,9 @@ async fn connect(url: &str, code: &str) -> Connected {
             ("resource", &format!("{ISSUER}/mcp")),
             ("scope", "mcp"),
         ]);
-        let (status, _, page) = http(
+        let (status, _, page) = timed(
+            &mut timings,
+            "authorize page",
             agent().get(&format!("{base}/oauth/authorize?{query}")),
             None,
         );
@@ -339,7 +364,9 @@ async fn connect(url: &str, code: &str) -> Connected {
                 .set("Content-Type", FORM)
                 .set("Sec-Fetch-Site", "same-origin")
         };
-        let (status, _, page) = http(
+        let (status, _, page) = timed(
+            &mut timings,
+            "authorize code entry",
             post(),
             Some(form(&[
                 ("handle", &handle_of(&page)),
@@ -351,7 +378,9 @@ async fn connect(url: &str, code: &str) -> Connected {
             page.as_str().expect("a page").contains("<dt>Key</dt>"),
             "{page}"
         );
-        let (status, headers, _) = http(
+        let (status, headers, _) = timed(
+            &mut timings,
+            "authorize connect",
             post(),
             Some(form(&[
                 ("handle", &handle_of(&page)),
@@ -367,7 +396,9 @@ async fn connect(url: &str, code: &str) -> Connected {
             .find_map(|pair| pair.strip_prefix("code="))
             .map(pct_decode)
             .expect("an authorization code");
-        let (status, _, pair) = http(
+        let (status, _, pair) = timed(
+            &mut timings,
+            "token exchange",
             agent()
                 .post(&format!("{base}/oauth/token"))
                 .set("Content-Type", FORM),
@@ -381,6 +412,7 @@ async fn connect(url: &str, code: &str) -> Connected {
         );
         assert_eq!(status, 200, "{pair}");
         Connected {
+            client_id,
             access_token: pair["access_token"]
                 .as_str()
                 .expect("an access token")
@@ -389,6 +421,7 @@ async fn connect(url: &str, code: &str) -> Connected {
                 .as_str()
                 .expect("a refresh token")
                 .to_owned(),
+            timings,
         }
     })
     .await
@@ -564,6 +597,113 @@ async fn a_connector_key_issued_by_the_cli_connects_by_code_and_acts_at_mcp_as_i
     )
     .await;
     assert_eq!(status, 200, "{body}");
+
+    lead.stop().await;
+}
+
+/// The limit Claude allows a discovery, registration or token call
+/// (ADR-0031, "What Claude expects").
+const SIGN_IN_LIMIT: Duration = Duration::from_secs(10);
+/// The limit Claude allows a refresh (ADR-0031, the same section).
+const RENEWAL_LIMIT: Duration = Duration::from_secs(30);
+
+/// #115's timing criterion, measured over TCP against the real lead: both
+/// discovery documents, the registration, the three authorize requests and
+/// the token exchange each answer under 10 seconds, and a refresh under 30.
+/// Each step's time is printed, so a run with `--nocapture` records it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_sign_in_call_answers_within_claudes_ten_seconds_and_a_refresh_within_its_thirty() {
+    let Some(lead) = Lead::start(Some(ISSUER)).await else {
+        return;
+    };
+    let (code, stdout, stderr) = lead
+        .oml(&[
+            "keys",
+            "issue-agent",
+            "claude-timed",
+            "--principal",
+            "crew/claude-timed",
+            "--workarea",
+            "universe",
+            "--connect-code",
+        ])
+        .await;
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    let (_, connect_code) = connector_url_and_code(&stdout);
+
+    let base = lead.url.clone();
+    let mut timings = blocking(move || {
+        let mut timings = Vec::new();
+        for (step, path) in [
+            (
+                "discovery, protected resource",
+                "/.well-known/oauth-protected-resource/mcp",
+            ),
+            (
+                "discovery, authorization server",
+                "/.well-known/oauth-authorization-server",
+            ),
+        ] {
+            let (status, _, body) = timed(
+                &mut timings,
+                step,
+                agent().get(&format!("{base}{path}")),
+                None,
+            );
+            assert_eq!(status, 200, "{step}: {body}");
+        }
+        timings
+    })
+    .await;
+
+    let connected = connect(&lead.url, &connect_code).await;
+    timings.extend(connected.timings.iter().copied());
+
+    let base = lead.url.clone();
+    let client_id = connected.client_id.clone();
+    let refresh_token = connected.refresh_token.clone();
+    let (refreshed, renewal) = blocking(move || {
+        let mut renewal = Vec::new();
+        let (status, _, pair) = timed(
+            &mut renewal,
+            "refresh",
+            agent()
+                .post(&format!("{base}/oauth/token"))
+                .set("Content-Type", FORM),
+            Some(form(&[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", &refresh_token),
+                ("client_id", &client_id),
+            ])),
+        );
+        assert_eq!(status, 200, "{pair}");
+        (pair, renewal)
+    })
+    .await;
+    let access_token = refreshed["access_token"]
+        .as_str()
+        .expect("a refreshed access token");
+    let (status, _, body) = mcp(&lead.url, Some(access_token), "tools/list", json!({})).await;
+    assert_eq!(status, 200, "the refreshed token acts at /mcp: {body}");
+
+    for (step, took) in &timings {
+        println!("sign-in {step}: {} ms", took.as_millis());
+    }
+    for (step, took) in &renewal {
+        println!("renewal {step}: {} ms", took.as_millis());
+    }
+    for (step, took) in &timings {
+        assert!(
+            *took < SIGN_IN_LIMIT,
+            "{step} took {took:?}, at or past Claude's {SIGN_IN_LIMIT:?}"
+        );
+    }
+    for (step, took) in &renewal {
+        assert!(
+            *took < RENEWAL_LIMIT,
+            "{step} took {took:?}, at or past Claude's {RENEWAL_LIMIT:?}"
+        );
+    }
 
     lead.stop().await;
 }

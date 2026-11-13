@@ -11,7 +11,7 @@ Claude on the web, Claude Desktop's connectors and the Claude apps for iOS and A
 the same origin that serves `/mcp`. There is no separate host, port or service. Claude never
 receives the key, only a connection the server can withdraw.
 
-The server's `oauth_flow` and the CLI's `connect_flow` test suites run this flow end to end in CI. The runs against live claude.ai are listed under [Limits](../reference/limits.md#not-verified-against-a-live-client).
+The server's `oauth_flow` and the CLI's `connect_flow` test suites run this flow end to end in CI, and `connect_flow` holds each sign-in call under the 10 seconds Claude allows and a refresh under its 30. The runs against live claude.ai are listed under [Limits](../reference/limits.md#not-verified-against-a-live-client).
 
 ## Before starting
 
