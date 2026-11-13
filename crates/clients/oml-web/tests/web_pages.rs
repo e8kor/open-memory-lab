@@ -7931,3 +7931,54 @@ async fn the_review_pages_browse_link_opens_browse() {
         );
     }
 }
+
+/// A `judge` form resent with its nonce and another memory's id conflicts,
+/// as every other act's resend with another request does, and judges
+/// nothing (bulk D fixes): the API keys a listed verdict per item, so the
+/// page binds the form's nonce to the item it drew.
+#[tokio::test]
+async fn a_judge_form_resent_with_another_id_conflicts_and_judges_nothing() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let first = agent_writes(&rig, &value, "The cache warms at boot.").await;
+    let second = agent_writes(&rig, &value, "The cache holds a day.").await;
+    let (_, _, item) = send(
+        &rig.router,
+        get(&format!("/web/review?memory={first}"), Some(&cookie)),
+    )
+    .await;
+    let nonce = field_of(&item, "nonce");
+    let judge = |id: uuid::Uuid| {
+        vec![
+            ("action", "judge".to_owned()),
+            ("artifact_id", id.to_string()),
+            ("verdict", "approve".to_owned()),
+            ("reason", String::new()),
+            ("nonce", nonce.clone()),
+        ]
+    };
+    let sent = judge(first);
+    let fields: Vec<(&str, &str)> = sent.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let (status, _, _) = act(&rig, &cookie, "/web/review", &fields).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let head = rig.head().await;
+    let resent = judge(second);
+    let fields: Vec<(&str, &str)> = resent.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let (status, _, body) = act(&rig, &cookie, "/web/review", &fields).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("idempotency.digest_mismatch"), "{body}");
+    assert_eq!(rig.head().await, head, "nothing is journalled");
+    let held = rig
+        .store
+        .memory(rig.boot.tenant_id, second)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(held.status.as_str(), "held");
+    // The same form sent again for its own item replays.
+    let fields: Vec<(&str, &str)> = sent.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let (status, _, _) = act(&rig, &cookie, "/web/review", &fields).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(rig.head().await, head, "a replay journals nothing");
+}

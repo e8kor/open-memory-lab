@@ -372,9 +372,13 @@ async fn item(
         item.text.as_deref().unwrap_or_default(),
     );
     let reviewer = view.reviewer();
-    let (action, fields) = match act {
-        Act::Serve(serve_id) => ("verdict", hidden("serve_id", serve_id)),
-        Act::Judge => ("judge", hidden("artifact_id", &item.artifact_id)),
+    let (action, fields, nonce) = match act {
+        Act::Serve(serve_id) => ("verdict", hidden("serve_id", serve_id), acts::nonce_field()),
+        Act::Judge => (
+            "judge",
+            hidden("artifact_id", &item.artifact_id),
+            hidden("nonce", &judge_nonce(view.session, &item.artifact_id)),
+        ),
     };
     let strip = format!(
         r#"<div class="oml-strip" aria-label="Review">{}{}{}</div>"#,
@@ -392,7 +396,7 @@ async fn item(
                     &[("approve", "approve"), ("reject", "reject")]
                 ),
                 input("reason", "reason (required to reject)", "", false),
-                acts::nonce_field()
+                nonce
             ),
             "Record verdict",
             true,
@@ -407,6 +411,14 @@ async fn item(
         ..View::page(view.side == Side::Admin, &roots)
     });
     Ok((out, drawing.is_some()))
+}
+
+/// The nonce of the `judge` form drawn for `id`: bound to the memory, so
+/// the form resent with another id conflicts as any act's resend with
+/// another request does. The API keys a listed verdict per item
+/// (`{key}/{id}`), so a nonce alone would judge the other memory too.
+fn judge_nonce(session: &Session, id: &str) -> String {
+    session.act_key(&format!("judge/{id}"))[..32].to_owned()
 }
 
 /// How the item's verdict form acts.
@@ -1192,6 +1204,19 @@ async fn judge(
     let Some(id) = fields.given("artifact_id").filter(|id| is_id(id)) else {
         return acts::invalid("artifact_id is the listed memory's id", calls);
     };
+    // A sent nonce is the one drawn for this memory; with none, the act
+    // runs under a fresh one, as every act does.
+    if fields
+        .given("nonce")
+        .is_some_and(|nonce| nonce != judge_nonce(session, id))
+    {
+        return refused(
+            StatusCode::CONFLICT,
+            "idempotency.digest_mismatch",
+            "this form was drawn for another memory; open the memory to judge it",
+            calls,
+        );
+    }
     let key = match acts::key(session, fields, calls) {
         Ok(key) => key,
         Err(refusal) => return *refusal,
