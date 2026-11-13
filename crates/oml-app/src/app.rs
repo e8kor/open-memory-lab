@@ -658,6 +658,24 @@ fn base62_43(bytes: &[u8; 32]) -> String {
 /// A node's derived path from its ancestry, listed node to root: the names
 /// from `universe` down to the node, joined with `.` (ADR-0025 d14). Every
 /// path the app serves is this derivation.
+/// The ancestry of `node` as `workarea_ancestry` serves it, the node then
+/// each parent in turn to the root, from records already read; `None` where
+/// they do not reach the root, and the caller reads it instead.
+fn ancestry_of(walked: &BTreeMap<Uuid, WorkareaRecord>, node: Uuid) -> Option<Vec<WorkareaRecord>> {
+    let mut ancestry = Vec::new();
+    let mut at = Some(node);
+    while let Some(id) = at {
+        let record = walked.get(&id)?;
+        // A cycle is no ancestry; the store's walk decides it.
+        if ancestry.len() > walked.len() {
+            return None;
+        }
+        at = record.parent_id;
+        ancestry.push(record.clone());
+    }
+    Some(ancestry)
+}
+
 fn derived_path(ancestry: &[WorkareaRecord]) -> String {
     ancestry
         .iter()
@@ -2116,10 +2134,31 @@ where
         root: Uuid,
         role: Role,
     ) -> Result<Vec<Uuid>, AppError> {
+        self.nodes_walked(caller, root, role, None).await
+    }
+
+    /// [`Self::nodes_with`], keeping in `walked` every workarea record the
+    /// walk read: the root's ancestry and its subtree, from which
+    /// [`ancestry_of`] derives any of their ancestries without another read.
+    async fn nodes_walked(
+        &self,
+        caller: &Caller,
+        root: Uuid,
+        role: Role,
+        mut walked: Option<&mut BTreeMap<Uuid, WorkareaRecord>>,
+    ) -> Result<Vec<Uuid>, AppError> {
         let tenant_id = caller.key.tenant_id;
-        let above = self.ancestry(tenant_id, root).await?;
+        let above_records = self
+            .journal
+            .workarea_ancestry(tenant_id, root)
+            .await?
+            .unwrap_or_default();
+        let above: Vec<Uuid> = above_records.iter().map(|w| w.workarea_id).collect();
         if above.is_empty() {
             return Ok(Vec::new());
+        }
+        if let Some(walked) = walked.as_deref_mut() {
+            walked.extend(above_records.into_iter().map(|w| (w.workarea_id, w)));
         }
         let mut ancestries: BTreeMap<Uuid, Vec<Uuid>> = BTreeMap::from([(root, above)]);
         let mut nodes = Vec::new();
@@ -2127,6 +2166,9 @@ where
         // ancestry is its parent's with the node in front.
         for node in self.journal.workarea_subtree(tenant_id, root).await? {
             let id = node.workarea_id;
+            if let Some(walked) = walked.as_deref_mut() {
+                walked.insert(id, node.clone());
+            }
             if id != root {
                 let parent = node
                     .parent_id
@@ -2289,6 +2331,31 @@ where
     /// (ADR-0025 d1).
     async fn dreamer_nodes(&self, caller: &Caller) -> Result<Vec<Uuid>, AppError> {
         self.nodes_holding(caller, Role::Dreamer).await
+    }
+
+    /// [`Self::dreamer_nodes`] with the workarea records the walk read, so
+    /// a listing serving rows across many of those nodes derives each
+    /// row's workarea path from them instead of reading an ancestry per
+    /// workarea (ADR-0070 d8, the held listing of 2026-11-13).
+    async fn dreamer_nodes_walked(
+        &self,
+        caller: &Caller,
+    ) -> Result<(Vec<Uuid>, BTreeMap<Uuid, WorkareaRecord>), AppError> {
+        let roots: BTreeSet<Uuid> = caller
+            .grants
+            .iter()
+            .filter(|g| g.role == Role::Dreamer)
+            .map(|g| g.node)
+            .collect();
+        let mut walked = BTreeMap::new();
+        let mut nodes = BTreeSet::new();
+        for root in roots {
+            nodes.extend(
+                self.nodes_walked(caller, root, Role::Dreamer, Some(&mut walked))
+                    .await?,
+            );
+        }
+        Ok((nodes.into_iter().collect(), walked))
     }
 
     /// Every node where `role` is effective for the caller: the union over
@@ -5608,7 +5675,7 @@ where
             });
         }
         let tenant_id = key.tenant_id;
-        let mut nodes = self.dreamer_nodes(&caller).await?;
+        let (mut nodes, walked) = self.dreamer_nodes_walked(&caller).await?;
         if let Some(workarea) = &req.workarea {
             let root = self.resolve(key, NamedKind::Workarea, workarea).await?;
             let subtree: BTreeSet<Uuid> = self
@@ -5681,6 +5748,11 @@ where
                     same
                 }
             };
+            if let Entry::Vacant(slot) = ancestries.entry(m.workarea_id)
+                && let Some(ancestry) = ancestry_of(&walked, m.workarea_id)
+            {
+                slot.insert(Some(ancestry));
+            }
             items.push(HeldItem {
                 same_user: same,
                 held_since: row.held_since,
@@ -5704,7 +5776,8 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_person_reviewer(key)?;
-        let nodes: BTreeSet<Uuid> = self.dreamer_nodes(&caller).await?.into_iter().collect();
+        let (nodes, walked) = self.dreamer_nodes_walked(&caller).await?;
+        let nodes: BTreeSet<Uuid> = nodes.into_iter().collect();
         let mut rows: BTreeMap<Uuid, MemoryRecord> = self
             .journal
             .memories(key.tenant_id, ids)
@@ -5722,7 +5795,14 @@ where
         let mut named = Vec::with_capacity(ids.len());
         for id in ids {
             let served = match rows.remove(id) {
-                Some(m) => Some(self.served_in(&caller, m, &mut ancestries).await?),
+                Some(m) => {
+                    if let Entry::Vacant(slot) = ancestries.entry(m.workarea_id)
+                        && let Some(ancestry) = ancestry_of(&walked, m.workarea_id)
+                    {
+                        slot.insert(Some(ancestry));
+                    }
+                    Some(self.served_in(&caller, m, &mut ancestries).await?)
+                }
                 None => None,
             };
             named.push((*id, served));

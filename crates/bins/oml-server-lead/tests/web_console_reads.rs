@@ -15,10 +15,14 @@ use serde_json::Value;
 use tower::ServiceExt as _;
 
 use oml_app::App;
-use oml_app::domain::name::Name;
+use oml_app::domain::access::Covers;
+use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::web::{Email, capacity_credential};
+use oml_app::domain::{HeldBy, MemoryKind, Role};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
-use oml_app::types::{BootstrapRequest, WebEmailRequest};
+use oml_app::types::{
+    BootstrapRequest, GrantRequest, IssueKeyRequest, SubmitRequest, WebEmailRequest,
+};
 use oml_server_lead::log_subscriber;
 use oml_server_lead::timed::Timed;
 use oml_transport_http::ApiState;
@@ -60,6 +64,8 @@ fn app(store: &Timed<MemStore>) -> TestApp {
 /// `bob`, a person who is no admin.
 struct Rig {
     router: Router,
+    /// The lead's application, which the router serves, for seeding.
+    app: Arc<TestApp>,
     admin: String,
     alice: String,
     bob: String,
@@ -67,7 +73,9 @@ struct Rig {
 
 async fn rig() -> Rig {
     let store = Timed::new(MemStore::new());
-    let boot = app(&store)
+    // One application, so its ids never repeat across the seed.
+    let lead = Arc::new(app(&store));
+    let boot = lead
         .bootstrap_tenant(&BootstrapRequest {
             tenant_name: Name::parse("acme").expect("a name"),
             admin_key_name: Name::parse("root-admin").expect("a name"),
@@ -75,7 +83,7 @@ async fn rig() -> Rig {
         })
         .await
         .expect("bootstrap, outside any request");
-    let sessions = app(&store);
+    let sessions = &lead;
     let mut tokens = Vec::new();
     for (email, user, admin) in [
         ("alice@example.com", "alice", true),
@@ -105,7 +113,7 @@ async fn rig() -> Rig {
         );
     }
     let router = ApiState::new(
-        Arc::new(app(&store)),
+        Arc::clone(&lead),
         store,
         Arc::new(|| Box::pin(async { true })),
         true,
@@ -117,6 +125,7 @@ async fn rig() -> Rig {
     let alice = tokens.pop().expect("alice's token");
     Rig {
         router,
+        app: lead,
         admin: boot.admin_key.value,
         alice,
         bob,
@@ -680,6 +689,126 @@ async fn the_review_pages_reads_cost_the_gate_and_their_own_verbs_store_calls() 
             .await
             .store_calls()
     );
+}
+
+/// `n` workareas, alice's root and `n - 1` beneath it, each holding one
+/// row a user agent key wrote and nobody has judged, as the web bench
+/// seeds them (`bench/web/run.py`).
+async fn held_in_workareas(rig: &Rig, n: usize) {
+    let root = Reference::Name(Name::parse("alice").expect("a name"));
+    let mut nodes = vec![root.clone()];
+    for i in 1..n {
+        let created = rig
+            .app
+            .create_workarea(
+                rig.admin.as_str(),
+                &Name::parse(&format!("p{i}")).expect("a name"),
+                Some(root.clone()),
+                None,
+            )
+            .await
+            .expect("the workarea is created");
+        nodes.push(Reference::Id(created.workarea.workarea_id));
+    }
+    let writer = rig
+        .app
+        .issue_key(
+            rig.admin.as_str(),
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Writer,
+                name: Name::parse("alice-bench-writer").expect("a name"),
+                principal: "bench/writer".to_owned(),
+                held_by: Some(HeldBy::Agent),
+                default_workarea: Some(root.clone()),
+                crew: None,
+                grants: vec![GrantRequest {
+                    node: root.clone(),
+                    role: Role::Writer,
+                    deny: Vec::new(),
+                    covers: Covers::Subtree,
+                }],
+                connect_code: false,
+                user: Some(Name::parse("alice").expect("a name")),
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("the writer key")
+        .value;
+    for (i, node) in nodes.into_iter().enumerate() {
+        rig.app
+            .submit_memory(
+                writer.as_str(),
+                &SubmitRequest {
+                    on_similar: Default::default(),
+                    anchor: None,
+                    origin: None,
+                    idempotency_key: format!("held-{i}"),
+                    claim_key: None,
+                    verb: None,
+                    kind: MemoryKind::Memory,
+                    body: format!("The service in area {i} logs one line per request."),
+                    workarea: Some(node),
+                    derives_from: Vec::new(),
+                    severity: None,
+                    rule: None,
+                    valid_from: None,
+                    valid_until: None,
+                    format: None,
+                    title: None,
+                },
+            )
+            .await
+            .expect("the row is held");
+    }
+}
+
+/// The held listing's store calls do not grow with the workarea count:
+/// one held row in each of 6 workareas and in each of 48 is served in the
+/// same calls, since each row's workarea path comes from the walk that
+/// found the reviewer's dreamer nodes, not from a read per workarea. The
+/// web bench measured 13 and 55 before (ADR-0070 d8, 2026-11-13). Every
+/// row is listed, and none is the reviewer's own.
+#[tokio::test]
+async fn the_held_listings_store_calls_do_not_grow_with_the_workareas() {
+    let mut calls = Vec::new();
+    for n in [6, 48] {
+        let rig = rig().await;
+        held_in_workareas(&rig, n).await;
+        let held = get(
+            &rig.router,
+            "/v2/review/held?limit=200",
+            &web(&rig.alice, "review"),
+            true,
+        )
+        .await;
+        assert_eq!(held.status, StatusCode::OK, "{}", held.body);
+        let items = held.body["items"].as_array().expect("items");
+        assert_eq!(items.len(), n, "{}", held.body);
+        for item in items {
+            assert_eq!(item["state"], "held", "{item}");
+        }
+        // Each row's path is its workarea's, as the ancestry read derives it.
+        let mut paths: Vec<&str> = items
+            .iter()
+            .map(|i| i["workarea_path"].as_str().expect("a path"))
+            .collect();
+        paths.sort_unstable();
+        let mut expected: Vec<String> = std::iter::once("universe.alice".to_owned())
+            .chain((1..n).map(|i| format!("universe.alice.p{i}")))
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(paths, expected);
+        println!(
+            "store calls: held listing at {n} workareas {}",
+            held.store_calls()
+        );
+        calls.push(held.store_calls());
+    }
+    assert_eq!(calls, [7, 7], "the held listing's store calls at 6 and 48");
 }
 
 // ---------------------------------------------------------------------------
