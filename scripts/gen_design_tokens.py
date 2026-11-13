@@ -48,6 +48,7 @@ SITE_DESIGN = ROOT / "site/design"
 WEB_GLYPHS = (
     "held", "promoted", "superseded", "retired", "rejected", "unreviewed", "in-progress",
     "stale", "self-signed", "pending", "same-user", "gate", "agent", "person", "can", "blocked",
+    "personal", "admin",
 )
 
 
@@ -99,8 +100,12 @@ def decls(pairs) -> str:
 def tokens_css(t: dict, selectors: dict[str, str] | None = None, media: bool = True) -> str:
     """Night on :root, paper under prefers-color-scheme: light (or under the given selectors)."""
     logos = logo_colours()
-    dark = theme_vars(t, "dark") + list(logos["dark"].items())
-    light = theme_vars(t, "light") + list(logos["light"].items())
+    # On a bar whose ground and ink change places (the Administration bar), the mark draws the
+    # other theme's file, so each theme also carries the other's three colours.
+    inverse = {theme: {f"{n}-inverse": v for n, v in logos[other].items()}
+               for theme, other in (("dark", "light"), ("light", "dark"))}
+    dark = theme_vars(t, "dark") + list(logos["dark"].items()) + list(inverse["dark"].items())
+    light = theme_vars(t, "light") + list(logos["light"].items()) + list(inverse["light"].items())
     lines = [f"/* {HEAD} */", f":root{{{decls(static_vars(t))}}}"]
     if selectors is None:
         lines.append(f":root{{color-scheme:dark;{decls(dark)}}}")

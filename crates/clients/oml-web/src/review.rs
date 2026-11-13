@@ -38,8 +38,8 @@ use axum::extract::{Form, State};
 use axum::response::Response;
 use http::{StatusCode, Uri};
 use oml_page::web::{
-    ADMIN_REVIEW_PATH, ADMIN_TABS, USER_MEMORIES_PATH, USER_REVIEW_PATH, attr, form, hidden, input,
-    select, shell, short, text, user_tabs,
+    ADMIN_REVIEW_PATH, Bar, USER_MEMORIES_PATH, USER_REVIEW_PATH, attr, form, hidden, input,
+    select, shell, short, text,
 };
 use oml_sdk::{HeldPage, Memory, encode};
 
@@ -614,17 +614,10 @@ async fn held(view: &ViewCtx<'_>, fields: &Fields, hints: &[String]) -> Result<S
     Ok(body)
 }
 
-fn tabs(session: &Session, side: Side) -> Vec<(&'static str, &'static str)> {
+fn bar(session: &Session, side: Side) -> Bar {
     match side {
-        Side::User => user_tabs(session.admin),
-        Side::Admin => ADMIN_TABS.to_vec(),
-    }
-}
-
-fn title(side: Side) -> &'static str {
-    match side {
-        Side::User => "Your page",
-        Side::Admin => "Administration",
+        Side::User => session.personal(),
+        Side::Admin => session.administration(),
     }
 }
 
@@ -728,10 +721,8 @@ async fn view(
     let mut response = outcome::html(
         StatusCode::OK,
         shell(
-            title(side),
-            &session.who(),
-            Some(&session.csrf()),
-            &tabs(&session, side),
+            if act.is_some() { "One memory" } else { "" },
+            &bar(&session, side),
             page,
             notice(&fields).as_deref(),
             &body,
@@ -1170,15 +1161,7 @@ async fn bulk_confirm(
     let _ = write!(body, r#"<p><a href="{page}">Back to the list</a></p>"#);
     outcome::html(
         StatusCode::OK,
-        shell(
-            "Bulk review",
-            &session.who(),
-            Some(&session.csrf()),
-            &tabs(session, side),
-            page,
-            None,
-            &body,
-        ),
+        shell("Confirm", &bar(session, side), page, None, &body),
     )
 }
 

@@ -1558,7 +1558,7 @@ async fn the_workareas_pages_draw_the_header_and_tabs_the_leads_pages_draw() {
 
 /// The page header with the active tab's marker removed.
 fn header_of(page: &str) -> String {
-    let start = page.find(r#"<header class="top">"#).expect("a header");
+    let start = page.find(r#"<header class="top"#).expect("a header");
     let end = page[start..].find("</header>").expect("its end") + start;
     page[start..end].replace(r#" class="on" aria-current="page""#, "")
 }
@@ -3264,7 +3264,7 @@ async fn the_start_page_shows_a_credential_once_and_carries_its_one_script() {
     let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
     assert_eq!(csp, oml_web::start::start_csp());
     assert!(
-        page.contains("<script>") && page.contains("Issue my credential"),
+        page.contains("<script>") && page.contains("Issue credential"),
         "{page}"
     );
     let csrf = csrf_of(&page);
@@ -3476,7 +3476,7 @@ async fn a_deletion_request_needs_the_word_delete_and_is_shown_as_pending() {
     assert_eq!(headers[header::LOCATION], "/web/start?done=requested");
     let (_, _, page) = send(&rig.router, get("/web/start?done=requested", Some(&cookie))).await;
     assert!(
-        page.contains("Your deletion request is with the administrator"),
+        page.contains("The deletion request is with the administrator"),
         "{page}"
     );
     assert!(!page.contains("Type delete to confirm"), "{page}");
@@ -5325,7 +5325,7 @@ async fn a_cut_off_persons_key_acts_are_refused_on_the_page_as_the_api_refuses_t
         let (status, _, page) = act(&rig, &cookie, "/web/keys", fields).await;
         assert_eq!(status, api_status, "{fields:?}: {page}");
         assert!(
-            page.contains(&format!("access.verb_ceiling: {message}")),
+            page.contains(&format!("<code>access.verb_ceiling</code>: {message}")),
             "{fields:?}: the page names the API's code and message: {page}"
         );
     }
@@ -5350,7 +5350,10 @@ async fn a_cut_off_persons_key_acts_are_refused_on_the_page_as_the_api_refuses_t
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
-    assert!(page.contains("access.verb_ceiling: "), "{page}");
+    assert!(
+        page.contains("<code>access.verb_ceiling</code>: "),
+        "{page}"
+    );
     assert_eq!(rig.head().await, head, "nothing journalled");
     // The denial ends no session and refuses no sign-in.
     let again = signed_in(&rig, "sub-1", EMAIL).await;
@@ -5672,9 +5675,9 @@ async fn the_keys_pages_show_a_keys_expiry_expired_mark_and_rate_as_the_api_serv
 
 /// The sentence the Keys and Start pages draw for a person whose session
 /// key carries a denial, and the muted line beneath it.
-const DENIED_SESSION: &str = "Your web session is restricted: you cannot issue keys, get connect codes or cut off keys. An administrator can do these for you.";
+const DENIED_SESSION: &str = "This web session is restricted: it cannot issue keys, get connect codes or cut off keys. An administrator can.";
 const DENIED_STILL_WORKS: &str =
-    "Exporting your memories, requesting deletion and signing out still work.";
+    "Exporting memories, requesting deletion and signing out still work.";
 
 /// The forms the Keys page and the Start page draw for the three acts a
 /// denied session key is refused.
@@ -5749,7 +5752,7 @@ async fn a_person_issues_a_key_with_an_expiry_date_from_the_keys_page() {
             .await;
             assert_eq!(status, api_status, "{action} {day}: {page}");
             assert!(
-                page.contains(&format!("request.validation: {message}")),
+                page.contains(&format!("<code>request.validation</code>: {message}")),
                 "{action} {day}: the page names the API's code and message: {page}"
             );
         }
@@ -6895,7 +6898,12 @@ async fn the_old_memories_urls_are_not_found_and_the_list_and_atlas_answer_at_th
         assert!(headers.get(header::LOCATION).is_none(), "{old}");
         let (status, _, page) = send(&rig.router, get(new, Some(who))).await;
         assert_eq!(status, StatusCode::OK, "{page}");
-        assert!(page.contains("<h1>Memories</h1>"), "{new}: {page}");
+        let h1 = if new.ends_with("atlas") {
+            "<h1>Atlas</h1>"
+        } else {
+            "<h1>Memories</h1>"
+        };
+        assert!(page.contains(h1), "{new}: {page}");
     }
     // The list's rows link to one memory's own page; the old link to it is
     // not found.
@@ -6951,7 +6959,9 @@ async fn the_memories_pages_draw_the_header_and_tabs_the_leads_pages_draw() {
         assert_eq!(status, StatusCode::OK, "{moved}");
         assert_eq!(header_of(&moved), header_of(&lead), "{path}");
         assert!(
-            moved.contains(r#"<a href="/web/admin/memories" class="on" aria-current="page">"#),
+            moved.contains(&format!(
+                r#"<a href="{path}" class="on" aria-current="page">"#
+            )),
             "{moved}"
         );
     }
@@ -7055,4 +7065,225 @@ async fn a_lead_mid_rotation_accepts_the_old_and_new_secret_and_the_doctor_tells
     assert_eq!(probe(closed, WEB_CLIENT_SECRET).await.0, Level::Ok);
     let (level, text) = probe(closed, OLD).await;
     assert_eq!(level, Level::Fail, "the window closed: {text}");
+}
+
+// -- the two sides (the design system's BrandHeader, variant A) --------------
+
+/// A page without its stylesheet, whose comments and selectors are not
+/// what the page says.
+fn markup(page: &str) -> String {
+    page.replace(oml_page::web::STYLESHEET, "")
+}
+
+/// The text between the first `open` and the `close` after it.
+fn between<'a>(page: &'a str, open: &str, close: &str) -> &'a str {
+    let start = page.find(open).map_or(page.len(), |i| i + open.len());
+    let end = page[start..].find(close).map_or(page.len(), |i| i + start);
+    &page[start..end]
+}
+
+/// The side's `<nav>` a page with `current` its current tab draws: the
+/// side's pages alone, in the BrandHeader's order.
+fn side_nav(label: &str, tabs: &[(&str, &str)], current: &str) -> String {
+    let mut nav = format!(r#"<nav aria-label="{label}">"#);
+    for (href, word) in tabs {
+        let on = if *href == current {
+            r#" class="on" aria-current="page""#
+        } else {
+            ""
+        };
+        nav.push_str(&format!(r#"<a href="{href}"{on}>{word}</a>"#));
+    }
+    nav + "</nav>"
+}
+
+const PERSONAL: [(&str, &str); 7] = [
+    ("/web/start", "Start"),
+    ("/web/memories", "Memories"),
+    ("/web/review", "Review"),
+    ("/web/atlas", "Atlas"),
+    ("/web/keys", "Keys"),
+    ("/web/workareas", "Workareas"),
+    ("/web/guardrails", "Guardrails"),
+];
+
+const ADMINISTRATION: [(&str, &str); 8] = [
+    ("/web/admin/people", "People"),
+    ("/web/admin/users", "Quotas"),
+    ("/web/admin/memories", "Memories"),
+    ("/web/admin/review", "Review"),
+    ("/web/admin/atlas", "Atlas"),
+    ("/web/admin/keys", "Keys"),
+    ("/web/admin/workareas", "Workareas"),
+    ("/web/admin/curate", "Curate"),
+];
+
+/// Each tab's page, on each side, draws that side's bar: its nav exactly,
+/// the scope word, the switch to the other side, the `<title>` and an
+/// `<h1>` that is the tab's word.
+#[tokio::test]
+async fn each_side_draws_its_own_nav_and_each_page_is_titled_and_headed_by_its_tab() {
+    let rig = rig().await;
+    rig.allow("bob@example.com", "bob", true).await;
+    let bob = signed_in(&rig, "sub-2", "bob@example.com").await;
+    for (side, label, tabs, title, switch) in [
+        (
+            "personal",
+            "Personal",
+            &PERSONAL[..],
+            "",
+            r#"<a class="switch" href="/web/admin/people">"#,
+        ),
+        (
+            "admin",
+            "Administration",
+            &ADMINISTRATION[..],
+            "Admin · ",
+            r#"<a class="switch" href="/web/start">"#,
+        ),
+    ] {
+        for (path, word) in tabs {
+            let (status, _, page) = send(&rig.router, get(path, Some(&bob))).await;
+            assert_eq!(status, StatusCode::OK, "{path}: {page}");
+            let page = markup(&page);
+            assert_eq!(
+                between(&page, "<title>", "</title>"),
+                format!("{title}{word} · OML"),
+                "{path}"
+            );
+            assert_eq!(between(&page, "<h1>", "</h1>"), *word, "{path}");
+            let header = between(&page, "<header", "</header>");
+            assert!(
+                header.starts_with(&format!(r#" class="top {side}">"#)),
+                "{path}: {header}"
+            );
+            assert_eq!(
+                format!("<nav{}</nav>", between(header, "<nav", "</nav>")),
+                side_nav(label, tabs, path),
+                "{path}"
+            );
+            assert!(
+                header.contains(&format!("{label}</span><nav")),
+                "{path}: {header}"
+            );
+            assert_eq!(header.matches(r#"class="switch""#).count(), 1, "{path}");
+            assert!(header.contains(switch), "{path}: {header}");
+            assert!(!page.contains("Your page"), "{path}");
+        }
+    }
+}
+
+/// A person without the admin capacity is shown no word, link or address
+/// of the Administration side: no switch, no admin tab, no admin title,
+/// on any page of theirs or on the refusal of an admin address, which is
+/// drawn in the Personal bar and leads back to Start (ADR-0045 d10).
+#[tokio::test]
+async fn a_person_without_the_admin_capacity_sees_nothing_of_the_admin_side() {
+    let rig = rig().await;
+    let alice = signed_in(&rig, "sub-1", EMAIL).await;
+    let mut pages = Vec::new();
+    for (path, _) in PERSONAL {
+        let (status, _, page) = send(&rig.router, get(path, Some(&alice))).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {page}");
+        pages.push((path.to_owned(), page));
+    }
+    for (path, _) in ADMINISTRATION {
+        let (status, _, page) = send(&rig.router, get(path, Some(&alice))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {page}");
+        assert!(
+            page.contains(r#"<header class="top personal">"#),
+            "{path}: {page}"
+        );
+        assert!(
+            page.contains(r#"<p><a href="/web/start">Back to Start</a></p>"#),
+            "{path}: {page}"
+        );
+        pages.push((path.to_owned(), page));
+    }
+    for (path, page) in pages {
+        let page = markup(&page);
+        for word in [
+            "Administration",
+            "/web/admin",
+            "Admin ·",
+            r#"class="switch""#,
+        ] {
+            assert!(!page.contains(word), "{path} names {word}: {page}");
+        }
+    }
+}
+
+/// A refusal is drawn inside the bar of the side it happened on, with the
+/// sign-out control and one link back to the tab of the page that refused.
+#[tokio::test]
+async fn a_refusal_page_is_drawn_inside_its_sides_bar_with_a_link_back_to_its_tab() {
+    let rig = rig().await;
+    rig.allow("bob@example.com", "bob", true).await;
+    let bob = signed_in(&rig, "sub-2", "bob@example.com").await;
+    let unknown = "00000000-0000-4000-8000-000000000000";
+    for (path, side, back) in [
+        (
+            format!("/web/admin/memory?id={unknown}"),
+            "admin",
+            r#"<a href="/web/admin/memories">Back to Memories</a>"#,
+        ),
+        (
+            format!("/web/memory?id={unknown}"),
+            "personal",
+            r#"<a href="/web/memories">Back to Memories</a>"#,
+        ),
+        (
+            "/web/keys?unknown=1&unknown=2".to_owned(),
+            "personal",
+            r#"<a href="/web/keys">Back to Keys</a>"#,
+        ),
+    ] {
+        let (status, _, page) = send(&rig.router, get(&path, Some(&bob))).await;
+        assert!(status.is_client_error(), "{path}: {status} {page}");
+        let page = markup(&page);
+        assert!(
+            page.contains(&format!(r#"<header class="top {side}">"#)),
+            "{path}: {page}"
+        );
+        assert!(page.contains("<h1>This cannot continue</h1>"), "{path}");
+        assert!(page.contains(back), "{path}: {page}");
+        assert!(page.contains(r#"value="sign_out""#), "{path}");
+        assert!(
+            page.contains(r#"<span class="name">bob · "#),
+            "{path}: {page}"
+        );
+    }
+}
+
+/// Every page's bar names its side and the person at every width: the
+/// scope word, the name and the tenant are in the bar's markup, and no
+/// rule of the stylesheet hides them below 600px (`oml-page`'s
+/// `the_bar_keeps_the_side_and_the_person_at_every_width`).
+#[tokio::test]
+async fn every_bar_names_its_side_and_the_person() {
+    let rig = rig().await;
+    rig.allow("bob@example.com", "bob", true).await;
+    let bob = signed_in(&rig, "sub-2", "bob@example.com").await;
+    let (_, _, whoami) = send(&rig.router, get("/web/keys", Some(&bob))).await;
+    let name = between(&whoami, r#"<span class="name">"#, "</span>").to_owned();
+    assert!(
+        name.starts_with("bob · ") && name.len() > "bob · ".len(),
+        "{name}"
+    );
+    for (path, label) in PERSONAL
+        .iter()
+        .map(|(p, _)| (*p, "Personal"))
+        .chain(ADMINISTRATION.iter().map(|(p, _)| (*p, "Administration")))
+    {
+        let (_, _, page) = send(&rig.router, get(path, Some(&bob))).await;
+        let header = between(&page, "<header", "</header>");
+        assert!(
+            header.contains(&format!(r#"<span class="name">{name}</span>"#)),
+            "{path}"
+        );
+        assert!(
+            header.contains(&format!("{label}</span><nav")),
+            "{path}: {header}"
+        );
+    }
 }

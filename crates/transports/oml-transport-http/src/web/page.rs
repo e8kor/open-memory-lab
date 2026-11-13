@@ -21,7 +21,9 @@ use axum::response::Response;
 use oml_app::domain::web::Provider;
 
 use oml_page::escape;
-pub use oml_page::web::{STYLESHEET, attr, brand, document, refusal, refusal_page, shell, short};
+pub use oml_page::web::{
+    Bar, STYLESHEET, Scope, attr, bare, brand, document, refusal, refusal_page, short,
+};
 
 /// The pages' `Content-Security-Policy`: nothing loads but the one
 /// stylesheet, forms post only to the page and redirect only to the
@@ -85,7 +87,7 @@ pub(crate) fn page_response(
 #[must_use]
 pub fn sign_in(providers: &[Provider], refusal: Option<(&str, &str)>, next: &str) -> String {
     let mut body = String::from(
-        r#"<div class="signin"><p class="label">Sign in</p><h1>Your memory, your agents</h1><p class="desc">Use the address your administrator listed. No password is stored.</p>"#,
+        r#"<div class="signin"><p class="label">Sign in</p><h1>Open Memory Lab</h1><p class="desc">Sign in with the address an administrator listed. No password is stored.</p>"#,
     );
     if let Some((code, message)) = refusal {
         let _ = write!(
@@ -110,7 +112,7 @@ pub fn sign_in(providers: &[Provider], refusal: Option<(&str, &str)>, next: &str
         "Sign in",
         &format!(
             r#"<header class="top">{}</header><main class="wrap">{body}</main>"#,
-            brand(false)
+            brand()
         ),
     )
 }

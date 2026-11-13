@@ -28,9 +28,8 @@ use axum::extract::{Form, State};
 use axum::response::Response;
 use http::{StatusCode, Uri};
 use oml_page::web::{
-    ADMIN_CURATE_PATH, ADMIN_MEMORIES_PATH, ADMIN_MEMORY_PATH, ADMIN_TABS, USER_MEMORIES_PATH,
+    ADMIN_CURATE_PATH, ADMIN_MEMORIES_PATH, ADMIN_MEMORY_PATH, USER_MEMORIES_PATH,
     USER_MEMORY_PATH, form, hidden, input, select, shell, short, state_tag, text, textarea,
-    user_tabs,
 };
 use oml_sdk::Memory;
 use oml_sdk::{AdminRead, Error};
@@ -149,10 +148,8 @@ pub async fn user_page(
     page(
         &web,
         shell(
-            "Your page",
-            &session.who(),
-            Some(&session.csrf()),
-            &user_tabs(session.admin),
+            "One memory",
+            &session.personal(),
             USER_MEMORIES_PATH,
             None,
             &body,
@@ -360,10 +357,8 @@ pub async fn admin_page(
     page(
         &web,
         shell(
-            "Administration",
-            &session.who(),
-            Some(&session.csrf()),
-            &ADMIN_TABS,
+            "One memory",
+            &session.administration(),
             ADMIN_MEMORIES_PATH,
             notice(&fields),
             &body,
@@ -530,10 +525,8 @@ pub async fn curate_page(
     page(
         &web,
         shell(
-            "Administration",
-            &session.who(),
-            Some(&session.csrf()),
-            &ADMIN_TABS,
+            "",
+            &session.administration(),
             ADMIN_CURATE_PATH,
             notice(&fields),
             &body,
