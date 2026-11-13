@@ -2,7 +2,7 @@
 
 This plugin is for the person who administers an Open Memory Lab server from Claude Code. It
 adds one skill, `issue-agent-key`, and no tool: it issues an agent's key through the `oml` CLI on
-your machine, under the admin key the CLI already uses, and the key value never enters the
+the operator's machine, under the admin key the CLI already uses, and the key value never enters the
 conversation. Install it beside, not instead of, the agent plugin `oml`; an agent that installs
 `oml` gains no admin instruction.
 
@@ -15,7 +15,7 @@ conversation. Install it beside, not instead of, the agent plugin `oml`; an agen
 /plugin install oml-admin@open-memory-lab
 ```
 
-It needs the `oml` CLI on your `PATH`, logged in with an admin key (`oml login <url>`), or the
+It needs the `oml` CLI on the `PATH`, logged in with an admin key (`oml login <url>`), or the
 admin pair `oml bootstrap claim` stored. For a stack `oml quickstart` started, start Claude Code
 with `OML_CLI_CREDENTIALS=./oml/credentials`, the file where the quick start keeps its admin pair.
 
@@ -29,14 +29,14 @@ oml keys issue-agent agent-7-laptop --principal crew/agent-7 --workarea metals-c
 ```
 
 The value goes to a new owner-only file. The CLI prints four lines that carry the file's path and
-never the value, and the skill hands you the one to run on the agent's machine:
+never the value, and the skill hands over the one to run on the agent's machine:
 
 ```sh
 oml setup claude-code --url 'https://oml.example.com' --key-file '/home/op/.config/oml/keys/crew-agent-7'
 ```
 
 which installs the `oml` plugin at the CLI's release and configures it, refusing an admin key.
-Where that machine has no `oml` CLI, the skill hands you the printed `jq | claude plugin configure
+Where that machine has no `oml` CLI, the skill hands over the printed `jq | claude plugin configure
 --values-stdin` line instead. Delete the key file once the line has run: it is the only copy of the
 value, and the server keeps only its hash.
 
