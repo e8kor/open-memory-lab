@@ -97,7 +97,7 @@ nav:
       - Connect Claude Code: guides/claude-code.md
       - Connect claude.ai and your phone: guides/claude-ai-and-mobile.md
       - Connect other agent tools: guides/other-harnesses.md
-      - Run your own server: start/run-your-own.md
+      - Run a server: start/run-your-own.md
   - Guides:
       - guides/index.md
       - Use:
@@ -142,7 +142,7 @@ nav:
   - Concepts:
       - concepts.md
       - Evaluate OML: product/evaluate.md
-      - Is OML for you: product/is-oml-for-you.md
+      - Is OML a fit: product/is-oml-for-you.md
       - Why a write is held: concepts/why-a-write-is-held.md
       - What OML guarantees: product/commitments.md
       - How a write is admitted: architecture/admission.md

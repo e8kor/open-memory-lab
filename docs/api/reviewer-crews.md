@@ -14,7 +14,7 @@ Every route is declared on the [HTTP API page](http-api.md#review) and in
 [openapi.yaml](openapi.yaml). Every error is in [errors](errors.md). Review throughput is not
 measured yet. For the human routine, see [Review held memories](../guides/reviewing.md).
 
-## Before you start
+## Before starting
 
 - A reviewer key per crew member. Attribution and the check that the reviewer is never the author
   use the (key, principal) pair, and a shared key makes crew members one identity.
@@ -152,10 +152,10 @@ There is no path to make a stale judgment count. The crew re-serves and reviews 
 ## Choose a polling cadence
 
 `review/next` is a poll. There is no push on this surface. No poll cadence has a
-measured basis, so poll at the rate your review deadline implies.
+measured basis, so poll at the rate the review deadline implies.
 
 - A `204` costs one request. Back off on repeated `204`s and tighten when held memories pile up.
-- A key has no rate limit unless its administrator set one (`oml keys issue --requests-per-minute`); past it a request answers `429 limit.rate` with `Retry-After`. Poll at the rate your review deadline implies.
+- A key has no rate limit unless its administrator set one (`oml keys issue --requests-per-minute`); past it a request answers `429 limit.rate` with `Retry-After`. Poll at the rate the review deadline implies.
 
 ## Errors the loop meets
 

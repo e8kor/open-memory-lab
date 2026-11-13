@@ -10,14 +10,14 @@ Administration is the `oml` CLI: each verb is one [HTTP API](../api/http-api.md)
 
 ## The first hour
 
-You need an unclaimed server only you can reach, and the `oml` CLI ([install](../start/install.md)).
+An unclaimed server that only the administrator can reach and the `oml` CLI ([install](../start/install.md)) are required.
 
 1. **Read the enrollment token**, `enr_` plus 48 hex digits, which the server prints at every start while no tenant exists; a restart voids the old one. On Kubernetes, read the pod log ([Kubernetes](kubernetes.md)).
 2. **Claim the server** before any proxy exposes it; the first to present the token gets the first admin key ([deploy](../operations/deployment.md#claim-the-first-admin-key)).
 
    ```sh
    printf '%s\n' "$TOKEN" | oml --url https://oml.example.com bootstrap claim ops-admin \
-       --token-stdin --tenant-name acme --principal platform/you
+       --token-stdin --tenant-name acme --principal platform/admin
    ```
 
 3. **Check it** with `oml doctor`, which exits `1` on any failure.
@@ -52,7 +52,7 @@ The claim stores `url` and `api_key` in `~/.config/oml/credentials` (0600). `OML
 
 The CLI takes its pair from the first source that sets either value: `--url` and `--api-key`, then `OML_URL` and `OML_API_KEY`, then the file. An exported agent pair therefore wins over the stored admin pair, so run admin verbs with both unset. `oml login <url>` replaces the stored pair once `GET /v2/whoami` accepts the key.
 
-Never put an admin key into an agent; issue yourself a writer key.
+Never put an admin key into an agent; issue the administrator a writer key.
 
 ## Workareas and names
 
@@ -78,7 +78,7 @@ A key's role fixes its grants: `writer` takes `reader` and `writer`, `dreamer` t
 
 **A reviewer.** `oml keys issue --role dreamer --grant <workarea>:dreamer` with a principal no writer there uses, plus `--grant <workarea>:reader`, or the reviewer sees a held memory without its sources ([reviewing](reviewing.md)).
 
-**A key for someone outside your team**, such as a reviewer of a demo workarea. Add `--expires <instant>` and `--requests-per-minute <n>` to either issuing verb: from that instant the key, and the connection of a connector key, authenticates nothing, and the request past the rate answers `429` until the next minute. The instant is RFC 3339 with its offset, such as `2026-12-01T17:00:00Z`. Both are for reader, writer and dreamer keys: an admin key issued with either is refused, so no admin key is temporary.
+**A key for someone outside the team**, such as a reviewer of a demo workarea. Add `--expires <instant>` and `--requests-per-minute <n>` to either issuing verb: from that instant the key, and the connection of a connector key, authenticates nothing, and the request past the rate answers `429` until the next minute. The instant is RFC 3339 with its offset, such as `2026-12-01T17:00:00Z`. Both are for reader, writer and dreamer keys: an admin key issued with either is refused, so no admin key is temporary.
 
 **Another admin.** `--role admin --held-by human`, no `--grant`; a dreamer grant is refused as `access.role_exclusive`. **A reader or service:** `--role reader --held-by service --grant <workarea>:reader`.
 
@@ -98,7 +98,7 @@ It is journaled as `key.denied`; on an admin key it is refused.
 - **Move or clear a key's expiry or rate:** `oml keys limit <key> --expires <instant>` or `--no-expiry`, `--requests-per-minute <n>` or `--no-rate-limit`, with an admin key other than the key itself. An admin key takes neither limit, so naming one is refused. An expired key whose date is moved later works again.
 - **End one connection:** `oml keys disconnect <key> <connection-id> [--reason <text>]`.
 
-An admin key cannot be cut off today, by a denial or by an expiry: keep the admin credentials file on one machine. Deny a key whose value you lost and replace it.
+An admin key cannot be cut off today, by a denial or by an expiry: keep the admin credentials file on one machine. Deny a key whose value is lost and replace it.
 
 A denial on a person's `<user>-web` session key also stops their console issuing a key, minting a connect code and cutting a key off, each refused as `access.verb_ceiling` with `details.reason: session_key_denied`. It ends no session and denies none of the person's agent keys: the person still signs in, sees their keys, signs out, downloads their export and files a deletion request, and their agents keep working. The export holds every memory in the person's root, a workarea the denial names included. The Keys and Start pages draw none of the three forms for that person and say in one sentence that their web session is restricted and that an administrator can do the three for them. To stop the person and their agents together, disable them on the admin page's Quotas view.
 
@@ -114,9 +114,9 @@ At the overview, `/web/admin/people`, an administrator's session acts through it
 memory of the organisation, newest first, 50 a page, filtered by state, workarea, origin,
 author key or text; each page read is one `memory.admin_read` in the journal, the Atlas view's
 included. **Atlas** shows the workareas as a map sized by their rows, with a table twin.
-**Workareas** shows the tree with one dropdown a workarea: status changes as your admin key,
-ratified only by a key other than the proposer's; in progress and commit as your reviewer key.
-Apply asks you to confirm first ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
+**Workareas** shows the tree with one dropdown a workarea: status changes as the admin key,
+ratified only by a key other than the proposer's; in progress and commit as the reviewer key.
+Apply asks for confirmation first ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
 
 ## The admin page
 
@@ -124,9 +124,9 @@ At the overview, `/web/admin/people`, an administrator's session acts through it
 memory of the organisation, newest first, 50 a page, filtered by state, workarea, origin,
 author key or text; each page read is one `memory.admin_read` in the journal, the Atlas view's
 included. **Atlas** shows the workareas as a map sized by their rows, with a table twin.
-**Workareas** shows the tree with one dropdown a workarea: status changes as your admin key,
-ratified only by a key other than the proposer's; in progress and commit as your reviewer key.
-Apply asks you to confirm first ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
+**Workareas** shows the tree with one dropdown a workarea: status changes as the admin key,
+ratified only by a key other than the proposer's; in progress and commit as the reviewer key.
+Apply asks for confirmation first ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
 
 ## Rules no admin key bypasses
 

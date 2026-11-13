@@ -1,14 +1,14 @@
 ---
 status: Stable
 verified: 2026-11-06
-answers: "what the server does, what you see and what to do when each dependency or role fails"
+answers: "what the server does, what is seen and what to do when each dependency or role fails"
 ---
 
 # Failure modes
 
 When the server cannot establish that an act is permitted and durable, the act does not happen. It refuses with a typed code from the [error list](../api/errors.md). Each row below is one failure on its own. For steps, see [operational alerts](runbooks.md). For the signals, see [Monitor an OML server](observability.md).
 
-| Failure | What the server does | What you see | What to do |
+| Failure | What the server does | What is seen | What to do |
 |---|---|---|---|
 | Postgres primary unreachable | Refuses every write and read, because the serving store is the store that is down. | `system.unavailable` (503, retryable). `/readyz` fails. | Restore Postgres. Clients retry on their own. |
 | Stored chain head does not verify at start (fork check) | Refuses writes and stays down. It never signs on top of a fork. | `/readyz` fails. Writes return `system.unavailable`. | Follow [fork check failing](runbooks.md#fork-check-failing). |

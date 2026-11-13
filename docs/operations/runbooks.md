@@ -6,7 +6,7 @@ answers: "the steps to take for each operational alert: a failed fork check, no 
 
 # Operational alerts
 
-Use this page when an alert fires or `oml doctor` shows a failing line. Each section gives the steps, one command per step. Where OML has no command, the step says what you do instead.
+Use this page when an alert fires or `oml doctor` shows a failing line. Each section gives the steps, one command per step. Where OML has no command, the step says what to do instead.
 
 Two rules hold throughout. Never edit a store by hand. Capture ids, digests and counts as evidence, never memory text.
 
@@ -167,7 +167,7 @@ Use this when `oml doctor` under an admin key prints `warn usage: <n> accounts d
    ```
 
 2. Read it again a minute later. A difference that grows names a fold that still miscounts. A difference that stays is one past event or a hand edit.
-3. Report it as an issue with both reads and the server's version, before you change anything. The cause is the finding.
+3. Report it as an issue with both reads and the server's version, before changing anything. The cause is the finding.
 4. If an account is refused before its real limit, give it room with an override, which is journalled. Take it away with `DELETE` on the same route once the counter is right.
 
    ```bash
@@ -207,7 +207,7 @@ Planned and emergency rotation are deployment steps. OML has no command for eith
    oml audit verify-chain --genesis --signing-key <new-64-hex-public-key> --tenant <tenant>
    ```
 
-Rotation does not heal the past. Anything the attacker signed still verifies under the old key. The rotation event and the last head you stored outside the deployment bound the span to review.
+Rotation does not heal the past. Anything the attacker signed still verifies under the old key. The rotation event and the last head stored outside the deployment bound the span to review.
 
 ## Revoke a key
 

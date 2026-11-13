@@ -6,7 +6,7 @@ answers: "what the connect page shows a person who adds the claude.ai connector,
 
 # The connect page
 
-When claude.ai adds the connector, the person's browser opens `/oauth/authorize` on your server. This page lists what that page says. The server tests its own sentences against this text, so the two cannot drift. The routes themselves are on the [HTTP API reference](../api/http-api.md#oauth).
+When claude.ai adds the connector, the person's browser opens `/oauth/authorize` on the server. This page lists what that page says. The server tests its own sentences against this text, so the two cannot drift. The routes themselves are on the [HTTP API reference](../api/http-api.md#oauth).
 
 **The authorization page.** It sets no cookie and runs no script. Every page carries
 `Content-Security-Policy: default-src 'none'; style-src 'sha256-…'; form-action 'self' <redirect

@@ -6,7 +6,7 @@ answers: "which SLOs an operator can run an OML server to, how the error budget 
 
 # Capacity and SLOs
 
-[Observability](observability.md) fixes the SLI formulas and leaves every target to you. This page is a
+[Observability](observability.md) fixes the SLI formulas and leaves every target to the operator. This page is a
 worked policy for one server on one host. It gives the targets, what a spent error budget stops, the
 capacity measured so far, and the path from an alert to a person. Another deployment sets its own
 numbers. Each number below names its source.
@@ -34,7 +34,7 @@ from 1 ms, and a threshold between two edges is interpolated, not counted.
   cause beside the incident.
 - **A planned upgrade spends budget like any outage.** None is excused.
 - **Thin traffic.** With fewer than 20 events in a window, one slow event is 5% of it. So the
-  burn-rate alerts need a minimum count, and you judge the budget over 30 days.
+  burn-rate alerts need a minimum count, and the budget is judged over 30 days.
 
 ### Burn-rate alerts
 
@@ -84,7 +84,7 @@ the last dump. Losing the keyring alone leaves the chain readable and verifiable
 server can no longer extend it ([runbooks](runbooks.md)).
 
 Take backups, and rehearse one restore, before any of these happens: a sign-in allowlist entry for
-someone else, a second organization, or memories you could not recreate by hand. Alert on a failed backup
+someone else, a second organization, or memories that could not be recreated by hand. Alert on a failed backup
 ([runbooks](runbooks.md)).
 
 Logs and telemetry hold personal data: client IP, principal and user agent. They are kept 30 days

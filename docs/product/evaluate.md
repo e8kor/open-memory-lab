@@ -10,15 +10,15 @@ OML is a memory server for AI agents in which no write is readable by others unt
 
 ## Why writes are held
 
-An agent's wrong conclusion should not become every agent's fact. A write is stored where only its author reads it, scanned, and made readable after a reviewer who did not write it approves it. You pay with a delay and with reviewer effort. [Why a write is held](../concepts/why-a-write-is-held.md) has the reasoning and the alternatives we rejected. [See it in the quickstart](../start/quickstart.md).
+An agent's wrong conclusion should not become every agent's fact. A write is stored where only its author reads it, scanned, and made readable after a reviewer who did not write it approves it. The cost is a delay and reviewer effort. [Why a write is held](../concepts/why-a-write-is-held.md) has the reasoning and the rejected alternatives. [See it in the quickstart](../start/quickstart.md).
 
 ## What it costs
 
-- **Reviewer time.** Your reviewers decide how fast a write becomes readable. We have no measured figure for review speed.
-- **Running it.** A self-hosted server needs PostgreSQL 17 or later and backups, and one process serves the API. A server someone else runs removes that work and asks you to trust its operator.
+- **Reviewer time.** The reviewers decide how fast a write becomes readable. We have no measured figure for review speed.
+- **Running it.** A self-hosted server needs PostgreSQL 17 or later and backups, and one process serves the API. A server someone else runs removes that work and asks for trust in its operator.
 - **No model fees from OML.** OML runs no language model. The scan and the search are deterministic code.
 
-More in [Is OML for you?](is-oml-for-you.md).
+More in [Is OML a fit?](is-oml-for-you.md).
 
 ## Limits
 
@@ -34,4 +34,4 @@ The tenant comes from the key, never from the request. Row-level security covers
 
 ## When not to use it
 
-You want every write visible to every agent at once, or nobody can review. See [when not to use OML](is-oml-for-you.md#when-not-to-use-oml).
+Every write must be visible to every agent at once, or nobody can review. See [when not to use OML](is-oml-for-you.md#when-not-to-use-oml).

@@ -1,20 +1,20 @@
 ---
 status: Stable
 verified: 2026-11-11
-answers: "how to run OML's recall eval against a build of your own, what it needs, what passing means, and how to compare search pipelines on it"
+answers: "how to run OML's recall eval against a local build, what it needs, what passing means, and how to compare search pipelines on it"
 ---
 
-# Measure recall on your build
+# Measure recall on the build
 
-The recall eval loads 200 memories and 121 labelled queries into a server built from your checkout, runs every query through `oml_read` once per search pipeline, and compares the numbers with the ones committed in the repository. Run it after you change the server, or to see what `bm25-sparse` would gain over the default before you load its model. The data and the metrics are described in [`eval/recall/README.md`](https://github.com/e8kor/open-memory-lab/blob/main/eval/recall/README.md).
+The recall eval loads 200 memories and 121 labelled queries into a server built from the checkout, runs every query through `oml_read` once per search pipeline, and compares the numbers with the ones committed in the repository. Run it after a change to the server, or to see what `bm25-sparse` would gain over the default before loading its model. The data and the metrics are described in [`eval/recall/README.md`](https://github.com/e8kor/open-memory-lab/blob/main/eval/recall/README.md).
 
-It measures OML's ranking on a fixed, made-up corpus, not your own memories. A pass says your build ranks as the released one does.
+It measures OML's ranking on a fixed, made-up corpus, not any deployment's memories. A pass says the build ranks as the released one does.
 
-## What you need
+## Requirements
 
 - A checkout of the repository and Rust through `rustup`.
 - `psql`, `jq`, `curl`, `sha256sum` and Python 3. The eval's scripts use only Python's standard library.
-- A PostgreSQL superuser on a cluster you can throw away. The script creates a database and two roles, and drops them when it ends. The compose database is one: `docker compose up -d postgres`.
+- A PostgreSQL superuser on a throwaway cluster. The script creates a database and two roles, and drops them when it ends. The compose database is one: `docker compose up -d postgres`.
 - About 350 MB for the two model files, which go to `.tmp/oml-models`, plus a release build of `oml-server-lead` and `oml`.
 
 ## Run it
@@ -30,7 +30,7 @@ A missing tool, or no `PGPORT`, stops it before it builds anything, and the mess
 
 | Variable | Default | Effect |
 |---|---|---|
-| `PGPORT` | none | The throwaway cluster's port. Required, so the script never reaches a server you did not name. |
+| `PGPORT` | none | The throwaway cluster's port. Required, so the script never reaches a server that was not named. |
 | `PGHOST`, `PGUSER`, `PGPASSWORD` | `127.0.0.1`, `oml`, `oml_dev_only` | The superuser the script connects as. |
 | `EVAL_PIPELINES` | all eight CI measures | For example `"bm25-postings bm25-sparse"` to compare the default with the recommended pipeline. A list without `bm25-rerank`, `sparse` or `bm25-sparse` fetches no model. |
 | `EVAL_DEFAULT` | `bm25-postings` | The pipeline that must pass its gate. |

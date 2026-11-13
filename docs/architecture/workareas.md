@@ -12,13 +12,13 @@ OML mirrors an externally managed crew with a workarea. It records which governe
 
 ## The tree
 
-Every workarea except `universe` has exactly one parent, so the tree has no cycles and each node has one path from the root. A workarea's name is unique in its tenant and never changes. You can refer to a node by name or by id.
+Every workarea except `universe` has exactly one parent, so the tree has no cycles and each node has one path from the root. A workarea's name is unique in its tenant and never changes. A node can be referred to by name or by id.
 
 The root, `universe`, has three fixed properties:
 
 - It stays `committed`. It never moves to `development` or `validated`.
 - It cannot be deleted.
-- It takes writes only from curators. See [user roots](#your-own-workarea).
+- It takes writes only from curators. See [user roots](#the-workarea-of-each-user).
 
 The diagram shows one tenant. Solid arrows are the tree.
 
@@ -39,7 +39,7 @@ flowchart TD
 
 A tenant's tree never spans tenants. Nothing on this page reaches across a tenant boundary.
 
-## Your own workarea
+## The workarea of each user
 
 When a person's first key is issued, OML creates a workarea of their own under `universe`, named for them. Their keys write, read and create workareas there. With alice's key, `oml workareas create alice project` creates `universe.alice.project`. Two people can each have a `project`.
 
@@ -59,8 +59,8 @@ flowchart TD
 ```
 
 - **A user key reaches its own root and the `universe` node, nothing else.** It reads memories placed on `universe` itself. It never reads another user's root or a shared workarea.
-- **Recall.** A recall inside your root also searches `universe`. A memory shown from `universe` carries no author and no source.
-- **Only your keys start a memory in your root.** A reviewer granted there reads, reviews and proposes edits and retirements. Its new memory is refused with `submission.user_root_refused`, and so is putting a retired memory back. The keys of your web session are yours: your `<user>-review` key puts a retired memory of yours back, and in another person's root it is a granted reviewer like any other.
+- **Recall.** A recall inside the root also searches `universe`. A memory shown from `universe` carries no author and no source.
+- **Only the keys start a memory in the root.** A reviewer granted there reads, reviews and proposes edits and retirements. Its new memory is refused with `submission.user_root_refused`, and so is putting a retired memory back. The keys of the web session belong to the user: the `<user>-review` key puts the user's retired memory back, and in another person's root it is a granted reviewer like any other.
 - **Curation.** `universe` holds only memories that curators place there. A second identity reviews each one like any write. No user key writes to it directly.
 - **Climbing the ladder.** A user root reaches `committed` and no further.
 
@@ -68,7 +68,7 @@ Workareas and keys made before user roots existed stay where they are and belong
 
 ## Grants bind to node ids
 
-A grant names a node id, never a path. A name resolves to an id before any access check, so a name you may not see answers exactly as its id would.
+A grant names a node id, never a path. A name resolves to an id before any access check, so a name the key may not see answers exactly as its id would.
 
 Effective access is computed on every request and cached nowhere. A revoked grant or a new denial applies to the key's next request.
 

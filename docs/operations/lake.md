@@ -7,15 +7,15 @@ answers: "how to run the lake writer, rotate its key, read the lake with the nam
 # Run the lake writer
 
 The lake writer, `oml-lakewriter`, copies what PostgreSQL commits into Delta tables for analysis. No client
-reads the lake. Recall, search and get are served from PostgreSQL. The lake answers your questions about how
+reads the lake. Recall, search and get are served from PostgreSQL. The lake answers the questions about how
 the system is used. The tables are on [Delta tables](../data/delta-tables.md).
 
 The lake writer is a separate process from the server. The Helm chart does not deploy it, and `oml quickstart`
-does not start it. Run it on the server's host, or as your own workload on a cluster, with a role of its own.
+does not start it. Run it on the server's host, or as a workload of its own on a cluster, with a role of its own.
 
 ## Start it
 
-You need a running server, a directory or object-store path for the lake, and a PostgreSQL role for the writer.
+A running server, a directory or object-store path for the lake, and a PostgreSQL role for the writer are required.
 
 ```sh
 oml-lakewriter keygen --out <kek-file>          # once; owner-only, back it up with the database
@@ -39,7 +39,7 @@ oml-lakewriter keygen --rotate --kek-file <kek-file>   # takes the lease, re-wra
 ```
 
 If it stops part way, the file keeps both versions. Run it again. Back up the new file with the database
-before you restart the writer.
+before the writer restarts.
 
 ## Where the lake lives
 

@@ -59,7 +59,7 @@ do. That is the cost of making the digest the lake's cross-system join key.
 
 ## `bronze.events`
 
-A digest-only mirror of the journal. It lets you query the event stream in columnar form and cross-check
+A digest-only mirror of the journal. It allows querying the event stream in columnar form and cross-check
 the lake against the chain without loading PostgreSQL. It never holds content, so erase never touches it.
 Partitioned by `event_date`.
 
@@ -74,7 +74,7 @@ Partitioned by `event_date`.
 | `prev_hash` | BINARY | no | Chain predecessor hash |
 | `hash` | BINARY | no | This event's chain hash |
 | `sig` | BINARY | no | ed25519 signature over `signed_bytes` |
-| `signed_bytes` | BINARY | no | The signed envelope, so you can re-verify chain segments from bronze alone |
+| `signed_bytes` | BINARY | no | The signed envelope, so chain segments can be re-verified from bronze alone |
 | `payload` | STRING | no | Canonical JSON with digests and references only |
 | `principal` | STRING | no | Acting principal |
 | `api_key_id` | STRING | yes | Key that performed the act |
@@ -178,8 +178,8 @@ Merges are copy-on-write. They rewrite the files that hold matched rows and leav
 | Demote | `state` becomes `demoted`, `retracted_at` is set | A new event row |
 | Erase | `state` becomes `erased`, `body_ciphertext` and `ciphertext_digest` become null, `retracted_at` is set. Digests and attribution remain. | A new event row |
 
-An erase that cannot be applied is a dead letter. The old ciphertext stays in the live table version until you
-repair it, and `oml-lakewriter doctor` reports `lake.dead_letter`.
+An erase that cannot be applied is a dead letter. The old ciphertext stays in the live table version until it is
+repaired, and `oml-lakewriter doctor` reports `lake.dead_letter`.
 
 ## Maintenance
 
@@ -190,4 +190,4 @@ runs `VACUUM`. Delta also checkpoints every 100 commits.
 The **lake erasure bound** sets both the `VACUUM` retention and the log retention on every table. The default is
 7 days (`--retention-hours 168`). After an erase, old files that hold the sealed body open under no key. They
 persist until the first daily pass after the bound expires. Shortening the bound tightens that window and
-shrinks the time-travel history you can read.
+shrinks the time-travel history that can be read.

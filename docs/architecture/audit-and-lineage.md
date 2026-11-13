@@ -33,7 +33,7 @@ The chain carries the actor's name and key id, because attribution is the point.
 
 ## Ask who approved a memory
 
-| You want | Run | What you get |
+| Goal | Run | Result |
 |---|---|---|
 | The memory's author, version, promotion time and sources | `oml read <artifact_id> --json` | `principal`, `version`, `promoted_at`, `derives_from`, `replaces` |
 | When it was approved, and by what kind of reviewer | `oml read <artifact_id> --json` | `approved_at`, and `approver` with `held_by` and `same_user` |

@@ -37,7 +37,7 @@ A dash means OML refuses the verb with a typed error. For content verbs, the col
 | Workarea info, tree and edges | yes | — | — | yes (see below) | — |
 | Own-work status | yes | yes | yes | yes | — |
 | Remember, learn | — | yes | — | — | — |
-| Propose a new version of your own memory | — | yes | — | — | — |
+| Propose a new version of the key's own memory | — | yes | — | — | — |
 | Edit another key's memory (as a proposal) | — | — | yes | — | — |
 | Propose a connection edge | — | — | yes | — | — |
 | Verdict on a held memory | — | — | yes | refused | — |
@@ -51,7 +51,7 @@ A dash means OML refuses the verb with a typed error. For content verbs, the col
 
 Approve, sign and delete appear in no column: approval is an effect of review, `oml-server` signs, and deletion does not exist.
 
-- **A memory you wrote is your own.** A bearer key reads its own memories in any state. The signed-in user page also reads every key belonging to that user (ADR-0045 d16). Everyone else sees `promoted` memories only.
+- **A memory written by a key is that key's own.** A bearer key reads its own memories in any state. The signed-in user page also reads every key belonging to that user (ADR-0045 d16). Everyone else sees `promoted` memories only.
 - **An admin key reads workarea structure without grants**: names, ids, parents, statuses, crews, children and edges in its tenant. Never a memory's content.
 - **A global denial on an admin key is refused, `request.validation` with `details.field: key`.**
 - **Only a reader grant reads content, and no admin key can carry one.** An admin key that calls recall gets `access.verb_ceiling`.

@@ -4,16 +4,16 @@ verified: 2026-11-06
 answers: "how claude.ai, Claude Desktop's connectors and the Claude mobile apps reach an OML server through a one-time connect code on the server's own origin; what the server needs; the administrator's and the user's steps; what chat and mobile get and do not get; and how a connection ends"
 ---
 
-# Connect claude.ai and your phone
+# Connect claude.ai and a phone
 
 Claude on the web, Claude Desktop's connectors and the Claude apps for iOS and Android cannot run
 `oml login`. OML links them to one agent key through a one-time connect code, over OAuth 2.1, on
 the same origin that serves `/mcp`. There is no separate host, port or service. Claude never
 receives the key, only a connection the server can withdraw.
 
-The server's `oauth_flow` and the CLI's `connect_flow` test suites run this flow end to end in CI. What we have run against live claude.ai is under [Limits](../reference/limits.md#not-verified-against-a-live-client).
+The server's `oauth_flow` and the CLI's `connect_flow` test suites run this flow end to end in CI. The runs against live claude.ai are listed under [Limits](../reference/limits.md#not-verified-against-a-live-client).
 
-## Before you start
+## Before starting
 
 The server needs three things.
 
@@ -25,29 +25,29 @@ The server needs three things.
    issuer the server names in `/readyz`.
 
 Claude cannot reach a laptop on `127.0.0.1`. This path needs a server people reach over the
-internet ([run your own server](../start/run-your-own.md)).
+internet ([run a server](../start/run-your-own.md)).
 
 ## Where sign-up is open: sign up, then follow /web/start
 
-Where the operator has opened sign-up ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md), proposed), no administrator is needed. Sign up at `<server>/web` with Google or GitHub, at the address the server's operator gives you, accept the terms, and on `/web/start` choose **claude.ai, Desktop or phone**. One button issues a connector key and shows its connect code once, with the exact connector URL and copy buttons. Then in claude.ai:
+Where the operator has opened sign-up ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md), proposed), no administrator is needed. Sign up at `<server>/web` with Google or GitHub, at the address the server's operator gives, accept the terms, and on `/web/start` choose **claude.ai, Desktop or phone**. One button issues a connector key and shows its connect code once, with the exact connector URL and copy buttons. Then in claude.ai:
 
 1. Open Customize, then Connectors.
 2. Add a custom connector and paste the URL.
 3. Connect, and enter the code on the page that opens.
 
-The page turns from "Waiting for your first connection…" to "Connected ✓", and then to "First memory held: review it". The rest of this guide is for a server you run, where an administrator issues the code.
+The page turns from "Waiting for the first connection…" to "Connected ✓", and then to "First memory held: review it". The rest of this guide is for a server run by the reader, where an administrator issues the code.
 
 ## 1. Get a connect code first
 
-Claude's connect page, `/oauth/authorize` on your server, asks for a connect code. You get the code
-before you add the connector; the page does not make one.
+Claude's connect page, `/oauth/authorize` on the server, asks for a connect code. The code comes
+before the connector is added; the page does not make one.
 
-1. Open your server's `/web` page and sign in.
+1. Open the server's `/web` page and sign in.
 2. Find **Connect Claude on the web or a phone**.
 3. Type a name, keep the role **writer**, and click **Issue connector key**.
 4. Copy the connect code the page shows. It is shown once and works for ten minutes.
 
-If you lost the code or it ran out, click **New connect code** on that key's row. The button is on
+If the code is lost or ran out, click **New connect code** on that key's row. The button is on
 connector keys only.
 
 An administrator can do the same from a terminal:
@@ -70,13 +70,13 @@ memories of a fictional team: twenty approved, four approved and then replaced, 
 
 ## 2. Add the connector and paste the code
 
-1. On claude.ai, open Customize > Connectors and add a custom connector with your server's
-   address, `https://<your-server>/mcp`.
-2. Claude opens OML's connect page. Paste the code from step 1 into it. The page tells you where
+1. On claude.ai, open Customize > Connectors and add a custom connector with the server's
+   address, `https://<server>/mcp`.
+2. Claude opens OML's connect page. Paste the code from step 1 into it. The page says where
    the code comes from: "Get a connect code from the account page: Connect Claude on the web or a
    phone", with a link to `/web`, and "Codes are shown once; use New connect code on the key's row
-   if it was lost." If someone sent you a link to the page and you did not start the connection
-   yourself, close it.
+   if it was lost." If someone sent a link to the page and the connection was not started
+   from the connector settings, close it.
 3. The page shows the organization, the agent identity and the workareas the connection will use,
    and what it may do there. Where it may write, it says that nothing written reaches anyone else
    until someone else reviews it. Confirm.
@@ -98,7 +98,7 @@ descriptions lead it to. Every write is held, as from any client.
 ## 3. Tell Claude to use it as memory
 
 Without a hint, Claude calls the tools only when a question obviously needs them. To have it recall
-and remember on its own, paste this into your personal preferences (Settings > Profile), which apply
+and remember on its own, paste this into the personal preferences (Settings > Profile), which apply
 to every chat, or into a Project's instructions, which apply to chats in that project:
 
 ```text
@@ -115,7 +115,7 @@ I have an external memory connected: Open Memory Lab (tools oml_read, oml_write,
 - Don't save small talk or things that only matter in this conversation.
 ```
 
-A memory written from chat is held until you approve it on your account page, so other agents see it
+A memory written from chat is held until it is approved on the account page, so other agents see it
 only after review. Approving in batches keeps that quick ([review memories](reviewing.md)).
 
 ## End a connection

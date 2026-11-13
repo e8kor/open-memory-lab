@@ -13,7 +13,7 @@ fingerprint of the span it came from.
 
 Requirements: git 2.7 or later on the `PATH`, since `oml sync` runs `git remote get-url` to derive
 the repository name (the other commands it runs are older). We run it against current git, and
-against a stand-in that refuses the options git 2.30 added; we have not run it against git 2.7.
+against a stand-in that refuses the options git 2.30 added; it has not been run against git 2.7.
 
 1. **Pick the source and the adapter.** `adr` yields one memory per decision bullet, plus a summary
    and a rejected-alternatives memory. `headings` yields one per heading of level 2 to 4. `lines`
@@ -30,7 +30,7 @@ against a stand-in that refuses the options git 2.30 added; we have not run it a
    needs the flag each run. A server older than this release does not say, and is not asked
    about. A clone that recorded `oml.allowPublicServer=true` before must opt in once more:
    `oml doctor` names it as `sync_consent_unbound`, and one `--allow-public-server` run against the
-   server you mean records its origin and removes the old value. The server's admins can read submitted
+   server in question records its origin and removes the old value. The server's admins can read submitted
    memories. Supersession or retirement does not erase submitted text or anchors.
 5. **Review in bulk.** A person reads the batch with `oml review list --author-key <sync key>` and
    approves it with `oml review approve --ids -`.

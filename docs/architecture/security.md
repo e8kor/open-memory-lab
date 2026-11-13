@@ -38,7 +38,7 @@ Tenants share the Postgres cluster, the lead process with its signing key, and t
 
 ## If the signing key is compromised
 
-There is no rotate command. Stop writes, replace the key at its custody point and start the lead, which journals `system.signing_key_rotated`. Verify each tenant's chain against heads you kept outside the deployment; the [runbooks](../operations/runbooks.md) give the steps. Rotation bounds the future only: events the old key signed in the compromise window still verify, and separating them from attacker events is an audit against those heads.
+There is no rotate command. Stop writes, replace the key at its custody point and start the lead, which journals `system.signing_key_rotated`. Verify each tenant's chain against heads kept outside the deployment; the [runbooks](../operations/runbooks.md) give the steps. Rotation bounds the future only: events the old key signed in the compromise window still verify, and separating them from attacker events is an audit against those heads.
 
 ## Transport
 
@@ -48,7 +48,7 @@ TLS 1.2 is the floor. Plaintext HTTP only on loopback or a private compose netwo
 
 Approval changes visibility, not truth or safety: an approved memory can still carry a prompt injection or a malicious URL.
 
-- **Treat recalled content as data.** Delimit recalled bodies as untrusted in your agent's prompt, keep the served provenance (artifact id, author, workarea) beside them, and never auto-execute instructions found in a body.
+- **Treat recalled content as data.** Delimit recalled bodies as untrusted in the agent's prompt, keep the served provenance (artifact id, author, workarea) beside them, and never auto-execute instructions found in a body.
 - **Steering rows get no stricter default review.** A steering row precedes every hit in its workarea's recalls, so it is the highest-leverage injection surface. It is held and reviewed under the workarea's policy; set a stricter policy where steering matters.
 
 ## Connections: the OAuth surface
@@ -58,13 +58,13 @@ A connection lets Claude's hosted apps reach `/mcp` through an OAuth client boun
 | Threat | Control | What remains |
 |---|---|---|
 | A connect code is entered first by someone else | Single use, 10 minutes, one live code per key; `oml keys show` lists connections so an admin can end an unexpected one. | For its minutes the code is a bearer secret: its first enterer connects as the key, at `/mcp` only. The admin sees that a connection opened, not whose account. |
-| Consent phishing | The page names the client and redirect host and says to enter a code only on a page you opened. Authorization codes go only to `https://claude.ai/api/mcp/auth_callback`. | The page cannot tell which claude.ai account started the request; the warning works only if read. |
-| A co-tenant hands you a code for its own key | The confirmation names the tenant, using the name the operator set. | A person who does not read the tenant name connects into the other tenant. |
+| Consent phishing | The page names the client and redirect host and says to enter a code only on a page opened by the user. Authorization codes go only to `https://claude.ai/api/mcp/auth_callback`. | The page cannot tell which claude.ai account started the request; the warning works only if read. |
+| A co-tenant hands over a code for its own key | The confirmation names the tenant, using the name the operator set. | A person who does not read the tenant name connects into the other tenant. |
 | CSRF, clickjacking, injected content, open redirect | No cookie; same-origin check (`Origin: null` is `oauth.origin_refused`); `frame-ancestors 'none'`; exact-match redirect allowlist. | None known. |
-| Authorization code interception | S256 PKCE only; a code lives 60 seconds and works once. | Your reverse proxy must not log the authorize redirect or OAuth request bodies. |
-| Access-token theft | Opaque, digest-stored, `/mcp` only, `Authorization` header only, 1 hour, key re-checked each request. | A stolen token acts as the key at `/mcp` until it expires or you end the connection. |
+| Authorization code interception | S256 PKCE only; a code lives 60 seconds and works once. | The reverse proxy must not log the authorize redirect or OAuth request bodies. |
+| Access-token theft | Opaque, digest-stored, `/mcp` only, `Authorization` header only, 1 hour, key re-checked each request. | A stolen token acts as the key at `/mcp` until it expires or the connection ends. |
 | Refresh-token theft | Never authenticates `/mcp`; rotates on use; a rotated token presented again revokes the connection. | A thief who refreshes first holds the connection until the client's next refresh trips the reuse check. |
-| SSRF through a client metadata URL | Public unicast addresses only; no proxy or redirect; caps on size, time and concurrency. | The lead makes outbound HTTPS requests to hosts an unauthenticated client names. Your egress policy must refuse internal ranges, NAT64 included. |
+| SSRF through a client metadata URL | Public unicast addresses only; no proxy or redirect; caps on size, time and concurrency. | The lead makes outbound HTTPS requests to hosts an unauthenticated client names. The egress policy must refuse internal ranges, NAT64 included. |
 
 Connection rows carry their key's tenant and fall under its RLS. Deployment-level rows such as OAuth clients belong to a reserved provider tenant and hold no tenant content.
 
@@ -79,7 +79,7 @@ A user page and an admin page run on the lead's origin. People sign in through G
 | CSRF, session fixation, login forgery | `SameSite=Lax`, same-origin check and `csrf_token` on every `POST`; the session token is minted at the callback; the callback admits only the `state` sealed in the starting browser's cookie. | None known. |
 | A moved or recycled email address | Only a provider-verified address counts; the provider account is pinned at first sign-in (`identity_changed` otherwise). | Before an entry's first sign-in, whoever controls the address at the provider holds it. |
 | Mermaid claim drawn in a review card | Drawn only in a sandboxed frame ([ADR-0056](../adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md) d9): opaque origin with no cookie, storage or network, one pinned bundle and one hashed initialiser, a token sealed to the session for 5 minutes. Text is escaped and stripped of control and bidirectional characters. | Mermaid has had cross-site scripting advisories; a compromised frame can draw a misleading picture of the one claim's source the session was already shown, which is always beside it. |
-| Secrets in logs | Route template only, never the query; the journal holds an email's digest. | Your reverse proxy's access log must drop the query on `/web/callback/*`. |
+| Secrets in logs | Route template only, never the query; the journal holds an email's digest. | The reverse proxy's access log must drop the query on `/web/callback/*`. |
 | A person outliving their access | Removing an email ends its sessions. | Their agent keys keep working until an admin adds a global denial to each. |
 | Admin authority through the pages | The admin key never reviews; it reads content only on two admin read routes, journaled as `memory.admin_read`. | A tenant admin can read every person's memories, held ones included. Privacy from the admin needs its own tenant. |
 

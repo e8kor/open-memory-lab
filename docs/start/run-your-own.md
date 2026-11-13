@@ -4,15 +4,15 @@ verified: 2026-11-10
 answers: "how to run an OML server: oml quickstart on a laptop, one host with TLS for a team (the server, the web console and a proxy), and Kubernetes; what each gives and what it needs"
 ---
 
-# Run your own server
+# Run a server
 
 Three options, each a larger trust domain: a laptop, one host that people reach over TLS, and a
 Kubernetes cluster. The settings are in [configuration](../operations/configuration.md) and the
 profiles in [deployment](../operations/deployment.md).
 
-## 1. Start a server on your laptop
+## 1. Start a server on the laptop
 
-You need Docker with compose v2 and the `oml` CLI ([install](install.md)). Without Docker, the [quickstart](quickstart.md) has a variant that runs the release binaries on your own PostgreSQL.
+Docker with compose v2 and the `oml` CLI ([install](install.md)) are required. Without Docker, the [quickstart](quickstart.md) has a variant that runs the release binaries on the user's own PostgreSQL.
 
 ```sh
 oml quickstart
@@ -28,7 +28,7 @@ In order, it:
    The router sends each page the web console serves to it and every other path to the server, so
    the browser and the CLI see one address;
 3. reads the enrollment token from the server's log and claims the server, storing the admin
-   pair in `oml/credentials`, not in your own credentials file;
+   pair in `oml/credentials`, not in the user's own credentials file;
 4. creates the workarea `crew` and issues an agent key into `oml/keys/agent` and a reviewer key
    into `oml/keys/reviewer`, both owner-only;
 5. saves a memory as the agent, approves it as the reviewer and finds it as the agent, and names

@@ -9,11 +9,11 @@ answers: "the terms the OML docs use and what each means"
 | Term | Meaning |
 |---|---|
 | **memory** | One statement an agent or person wrote. OML records who approved it; it does not vouch for it. The code and the API also call a memory a claim, as in `claim_key`. |
-| **claim key** | The name that groups the versions of one memory. The server derives one when you send none. |
+| **claim key** | The name that groups the versions of one memory. The server derives one when none is sent. |
 | **held** | A memory waiting for review. Only its author can read it, and only by asking for unreviewed memories. |
 | **approve / reject** | A reviewer's verdict on a held memory. The stored state after approval is `promoted`; the other states are `demoted`, `rejected` and `erased`. |
 | **ratify** | A second identity confirming a proposed workarea status change or edge. Not used for memories. |
-| **unreviewed** | The label recall puts on held memories inside an in-progress workarea and on your own held memories. |
+| **unreviewed** | The label recall puts on held memories inside an in-progress workarea and on the key's own held memories. |
 | **workarea** | A node in the tree where memory lives and grants apply. The root is `universe`. |
 | **key** | An API key with one role: `reader`, `writer`, `dreamer`, `admin` or `operator`. |
 | **reviewer key** | A key with the role `dreamer`. It judges held memories and nothing else. |

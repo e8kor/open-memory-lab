@@ -1,12 +1,12 @@
 ---
 status: Stable
 verified: 2026-11-06
-answers: "how recall finds and orders memories: who can see a hit, what you can ask, which search pipelines exist and how one is chosen, how steering and your own held memories join the answer, how a token budget cuts it, and what was measured"
+answers: "how recall finds and orders memories: who can see a hit, what can be asked, which search pipelines exist and how one is chosen, how steering and the key's own held memories join the answer, how a token budget cuts it, and what was measured"
 ---
 
 # How recall finds and orders memories
 
-A recall returns promoted memories that your key can read, ranked by the search pipeline you chose. Standing instructions (steering) come first and are never ranked. PostgreSQL serves every read. The Delta lake serves none, because a derived copy must not become an authority.
+A recall returns promoted memories that the key can read, ranked by the chosen search pipeline. Standing instructions (steering) come first and are never ranked. PostgreSQL serves every read. The Delta lake serves none, because a derived copy must not become an authority.
 
 ## Who sees a hit
 
@@ -17,11 +17,11 @@ A recall returns promoted memories inside the key's effective access ([workareas
 
 Superseded versions stay readable by id as history. They are never hits.
 
-## What you can ask
+## What can be asked
 
 Each flag below belongs to `oml read`. The same fields exist on the `oml_read` MCP tool and the [HTTP API](../api/http-api.md).
 
-| You want | Flag | Default |
+| Goal | Flag | Default |
 |---|---|---|
 | Ranked hits for a query | `--query "<words>"` | none |
 | More or fewer hits | `--k` | 8; range 1 to 100 |
@@ -29,7 +29,7 @@ Each flag below belongs to `oml read`. The same fields exist on the `oml_read` M
 | A different subtree | `--workarea <id or name>` | the key's default workarea |
 | A different search pipeline | `--search <name>` | the tenant's default |
 | Every word to match | `--match all` | `any` |
-| Your own held memories too | `--include-unreviewed` | off |
+| The key's own held memories too | `--include-unreviewed` | off |
 | Memories anchored in one repository | `--anchor-repo`, `--anchor-path-prefix` | no filter |
 | Memories from one origin | `--origin-kind`, repeatable | no filter |
 | Workareas beyond the scope | `--sources wide` or `--sources legal,product` | `scope`; needs federation on |
@@ -48,13 +48,13 @@ flowchart LR
     C --> A
 ```
 
-The server decides what you may read before any ranking runs. A pipeline ranks the rows in that scope and nothing else. It never reads a verdict or a reviewer. Statistics such as document frequency come from the rows you can read. A memory you cannot read never moves the rank of one you can.
+The server decides what the key may read before any ranking runs. A pipeline ranks the rows in that scope and nothing else. It never reads a verdict or a reviewer. Statistics such as document frequency come from the rows the key can read. A memory the key cannot read never moves the rank of one it can.
 
 ## Search pipelines
 
 | Pipeline | What it ranks | Offered by default |
 |---|---|---|
-| `keyword-any` | A hit holds any of your words, exactly | yes |
+| `keyword-any` | A hit holds any of the words, exactly | yes |
 | `keyword-all` | A hit holds every word, exactly | no |
 | `bm25` | BM25 over each word's stored forms: the word, the parts of identifiers such as `useInvoiceFilters.ts`, and English stems | yes |
 | `bm25-postings` | The same score as `bm25`, read from an index that works under row security | yes, and the default |
@@ -101,19 +101,19 @@ What it costs:
 
     Both miss the 50 ms bar above a few thousand memories, and `bm25-sparse` misses it by more. At 100,000 memories, measured at the database, `bm25-sparse` reads two lists 100 deep: 272 ms p95 at universe scope and 114 ms at every scope. `bm25-postings` at `k` 10 took 29.2 and 20.4 ms (`bench/scale/REPORT.md`).
 
-**`bm25-postings`, the default, when you need any of these:** no model file and no download, or a memory ranked fully the moment it is approved. It also gives the same answer for the same query, key, memories and settings, because it reads only those ([when a recall repeats](repeatable-recall.md)). It is the faster of the two at large scope.
+**`bm25-postings`, the default, for any of these needs:** no model file and no download, or a memory ranked fully the moment it is approved. It also gives the same answer for the same query, key, memories and settings, because it reads only those ([when a recall repeats](repeatable-recall.md)). It is the faster of the two at large scope.
 
 To switch, list `bm25-sparse` in `search.enabled` with the model in place. Then set `search.default = "bm25-sparse"` for every tenant, or a tenant's admin runs `oml search set-default bm25-sparse` for theirs. A request can also name it with `--search bm25-sparse`.
 
 ### Any word or every word
 
-The default is `--match any`: a hit holds any of your words. `--match all` keeps only memories that hold every word. When none does, the answer returns the any-word hits and marks `search.fallback: "any_term"`.
+The default is `--match any`: a hit holds any of the words. `--match all` keeps only memories that hold every word. When none does, the answer returns the any-word hits and marks `search.fallback: "any_term"`.
 
 ### What the answer says
 
 The answer reports the pipeline that ran (`search.pipeline`) and the words it read (`search.terms`). Each hit carries `matched`, the words it holds, and `of`, how many words the query had.
 
-When a recall finds fewer than three hits, `search.did_you_mean` suggests spellings. They come from words in memories you can read, so a suggestion never reveals a word that only an unreadable memory holds. Scores compare within one answer only.
+When a recall finds fewer than three hits, `search.did_you_mean` suggests spellings. They come from words in memories the key can read, so a suggestion never reveals a word that only an unreadable memory holds. Scores compare within one answer only.
 
 Under `bm25-postings`, a very common word can be left out of the index read. `search.pruned` names every such word, and `pruned: []` means the list is the same as `bm25`'s.
 
@@ -126,11 +126,11 @@ A recall returns two segments in a fixed order.
 
 Steering comes first because a standing instruction that relevance could bury fails when an agent needs it most. Nothing a client sends changes that order.
 
-A recall inside your user root also searches `universe`. Its memories rank with your own, and its steering applies as an ancestor's. See [workareas](workareas.md#your-own-workarea).
+A recall inside the user root also searches `universe`. Its memories rank with the user's own, and its steering applies as an ancestor's. See [workareas](workareas.md#the-workarea-of-each-user).
 
-### Your own held memories
+### The key's own held memories
 
-With `--include-unreviewed`, your key's own held memories join the hits. Each is marked `state: held`. They rank by the same order and count against `k` and the token budget. Held steering and held retirements never appear, because neither is in force yet.
+With `--include-unreviewed`, the key's own held memories join the hits. Each is marked `state: held`. They rank by the same order and count against `k` and the token budget. Held steering and held retirements never appear, because neither is in force yet.
 
 Inside an in-progress workarea, every author's held memories join, labeled unreviewed. See [workareas](workareas.md#in-progress-workareas).
 
@@ -147,7 +147,7 @@ The cut works in four steps:
 
 For example, take steering of 120 tokens, hits of 300, 250 and 90, and `max_tokens` of 500. The answer serves the first hit. It reports `used_tokens` 420, `truncated: true`, `hits_omitted: 2` and `next_hit_tokens: 250`. When steering alone exceeds the budget, the answer still serves it.
 
-`max_tokens` with `include_text: false` is refused with `request.validation`, because it would budget text you did not ask to receive.
+`max_tokens` with `include_text: false` is refused with `request.validation`, because it would budget text that was not requested.
 
 ## What was measured
 

@@ -148,4 +148,4 @@ The workarea then refuses new writes and approvals. There is no unfreeze. See [w
 
 ## What OML does not do
 
-OML returns memories, not answers, and runs no model. Review capacity comes from your reviewers, and the scan is deterministic rules. The Delta lake serves no read. Web pages cover sign-in, a user page and an admin page, with no dashboards. Memory does not cross tenants.
+OML returns memories, not answers, and runs no model. Review capacity comes from the reviewers, and the scan is deterministic rules. The Delta lake serves no read. Web pages cover sign-in, a user page and an admin page, with no dashboards. Memory does not cross tenants.
