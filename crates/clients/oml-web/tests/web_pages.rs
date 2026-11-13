@@ -7818,3 +7818,42 @@ async fn a_nested_shared_workarea_is_named_by_its_bare_name_on_both_review_pages
 fn link_free(page: &str, text: &str) -> bool {
     !page.contains(text)
 }
+
+/// The admin review page is unchanged by "Open to judge" (ADR-0055 d10 as
+/// amended on 2026-11-13; ADR-0070 d7 (b)): no link, no judge form for a
+/// listed id, and its act list refuses `judge` by name.
+#[tokio::test]
+async fn the_admin_review_page_has_no_open_to_judge_and_refuses_the_judge_act() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let cookie = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let value = laptop_key(&rig, &cookie).await;
+    let memory = agent_writes(&rig, &value, "Releases ship on Thursdays.").await;
+    let (status, _, page) = send(&rig.router, get("/web/admin/review", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Releases ship on Thursdays."), "{page}");
+    assert!(!page.contains("Open to judge"), "{page}");
+    assert!(!page.contains("?memory="), "{page}");
+    let (_, _, opened) = send(
+        &rig.router,
+        get(&format!("/web/admin/review?memory={memory}"), Some(&cookie)),
+    )
+    .await;
+    assert!(!opened.contains(r#"value="judge""#), "{opened}");
+    let head = rig.head().await;
+    let (status, _, body) = act(
+        &rig,
+        &cookie,
+        "/web/admin/review",
+        &[
+            ("action", "judge"),
+            ("artifact_id", &memory.to_string()),
+            ("verdict", "approve"),
+            ("reason", ""),
+            ("nonce", "n-judge"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(rig.head().await, head, "nothing is journalled");
+}

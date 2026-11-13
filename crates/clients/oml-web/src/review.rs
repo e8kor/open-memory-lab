@@ -68,14 +68,10 @@ pub const BULK_MAX: usize = 200;
 /// The user page's acts: review next and the verdict.
 pub const USER_ACTIONS: &[&str] = &["review_next", "verdict", "judge"];
 
-/// The admin page's acts: the user page's and bulk review (ADR-0055 d1).
-pub const ADMIN_ACTIONS: &[&str] = &[
-    "review_next",
-    "verdict",
-    "judge",
-    "bulk_confirm",
-    "bulk_verdict",
-];
+/// The admin page's acts: review next, the served verdict and bulk review
+/// (ADR-0055 d1); "Open to judge" is the person's page's alone (ADR-0055
+/// d10 as amended on 2026-11-13: the admin page is unchanged).
+pub const ADMIN_ACTIONS: &[&str] = &["review_next", "verdict", "bulk_confirm", "bulk_verdict"];
 
 /// Which page the view is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,12 +259,21 @@ fn verdict_line(card: &Card, reviewer: &str, roots: &Roots) -> String {
 fn review_row(view: &ViewCtx<'_>, m: &Memory, same_user: bool, roots: &Roots) -> String {
     let card = Card::of_held(m, same_user);
     let reviewer = view.reviewer();
+    // "Open to judge" is the person's page's; the admin page picks and
+    // confirms instead (ADR-0055 d10 as amended).
+    let open = if view.side == Side::User {
+        format!(
+            r#"<p><a class="button" href="{}?memory={}">Open to judge</a></p>"#,
+            view.side.path(),
+            attr(&encode(&m.artifact_id)),
+        )
+    } else {
+        String::new()
+    };
     let strip = format!(
-        r#"<div class="oml-strip" aria-label="Review">{}{}<p><a class="button" href="{}?memory={}">Open to judge</a></p></div>"#,
+        r#"<div class="oml-strip" aria-label="Review">{}{}{open}</div>"#,
         lineage(&card, &reviewer, Some(same_user)),
         verdict_line(&card, &reviewer, roots),
-        view.side.path(),
-        attr(&encode(&m.artifact_id)),
     );
     card.render(&View {
         decision: true,
@@ -814,10 +819,10 @@ async fn view(
     let mut framed = false;
     // One item, served by Review next or opened to judge from the list,
     // drawn alone at page density.
-    let act = match (fields.given("serve"), fields.given("memory")) {
-        (Some(serve), _) => Some(Act::Serve(serve)),
-        (None, Some(_)) => Some(Act::Judge),
-        (None, None) => None,
+    let act = match (fields.given("serve"), fields.given("memory"), side) {
+        (Some(serve), _, _) => Some(Act::Serve(serve)),
+        (None, Some(_), Side::User) => Some(Act::Judge),
+        _ => None,
     };
     if let Some(act) = act {
         if let (Act::Serve(_), Some(at)) = (act, expiry(&fields)) {
