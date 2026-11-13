@@ -16,15 +16,21 @@
 //!
 //! 1. state (or decision), `stale`, a kind that is not `memory`, a format
 //!    that is not prose; then the title and the text;
-//! 2. the author and its kind, and `same user` where the held listing says
-//!    so; `in` the workarea's reference; `claim` key and version, `· tip`;
+//! 2. the author, by the name the read serves; on the admin side, whose
+//!    read serves the key's holder, its kind after it; on the person's
+//!    side no kind, since the read serves none it can stand behind
+//!    (`provenance` is `agent` for every key); and `same user` where the
+//!    page knows it; `in` the workarea's reference; `claim` key and version, `· tip`;
 //!    `replaces vN` or `retires vN`; `from` the origin kind; `scan`;
 //!    `written`, the instant to the second;
-//! 3. opened: the format and what it will be found by, the guardrail's load
-//!    warning, the change against the replaced version (page density
-//!    only), replaces or retires as a link, derives from, every scan
-//!    finding, the source with its last check, valid time, the approval as
-//!    ADR-0077 words it and never who, where it is served, and the way in;
+//! 3. opened, the same list on every surface (the `MemoryCard` order): the
+//!    format and what it will be found by, the guardrail's load warning,
+//!    the change against the replaced version (page density only),
+//!    replaces or retires as a link, derives from, every scan finding, the
+//!    source with its last check, valid time, the approval as ADR-0077
+//!    words it and never who, where it is served, and the way in; the
+//!    Memories row keeps its provenance timeline above that list (design
+//!    notes row 12, not decided);
 //! 4. page: the id, the kind with its format and tokens, the text's digest,
 //!    the attachments.
 //!
@@ -100,16 +106,6 @@ pub(crate) fn kind_word(held_by: &str) -> &'static str {
     }
 }
 
-/// The word a card names an author's provenance by: `human` is a person,
-/// `connector` a service, `agent` and `simulation` an agent.
-fn provenance_word(provenance: &str) -> &'static str {
-    match provenance {
-        "human" => "person",
-        "connector" => "service",
-        _ => "agent",
-    }
-}
-
 pub(crate) fn day(at: &str) -> String {
     at.chars().take(10).collect()
 }
@@ -135,7 +131,8 @@ pub(crate) fn row_state(state: &str, tip: bool) -> &'static str {
     }
 }
 
-/// The person's own keys: `(id, name, kind)`.
+/// The person's own keys: `(id, name, kind)`, which the Memories text
+/// search reads an author's name by.
 pub(crate) type Kinds = Vec<(String, Option<String>, &'static str)>;
 
 /// The order a finding's verdict takes on the card: refuse, then hold,
@@ -346,7 +343,8 @@ pub(crate) struct Card {
     claim_key: String,
     /// `None` where the card shows the shared area (ADR-0044 d9).
     author: Option<String>,
-    /// `agent`, `person` or `service`, where the read says it.
+    /// `agent`, `person` or `service`: the admin read's `held_by`, the one
+    /// read that serves the key's holder; `None` on the person's side.
     author_kind: Option<&'static str>,
     created: String,
     served: Option<String>,
@@ -381,22 +379,15 @@ pub(crate) struct Card {
 }
 
 impl Card {
-    /// A memory as a person's key reads it; `kinds` names the kind of the
-    /// person's own keys, and `provenance` the kind of every other author.
-    pub(crate) fn of_memory(m: &Memory, kinds: &Kinds) -> Self {
+    /// A memory as a person's key reads it. The author is the principal
+    /// the read serves, with no kind: the read's `provenance` is `agent`
+    /// for every key, so a kind word here would be a guess, and the same
+    /// memory would read one way on Memories and another in Review.
+    pub(crate) fn of_memory(m: &Memory) -> Self {
         let format = m.format.clone().unwrap_or_else(|| "text/plain".to_owned());
         let prose = is_prose(&format);
-        let own = m.author_key_id.as_deref().and_then(|key| {
-            kinds
-                .iter()
-                .find(|(id, _, _)| id == key)
-                .map(|(_, _, w)| *w)
-        });
         Self {
-            author_kind: m
-                .principal
-                .as_ref()
-                .and(own.or_else(|| m.provenance.as_deref().map(provenance_word))),
+            author_kind: None,
             created: m.created_at.clone(),
             served: m.promoted_at.clone(),
             scan: m.scan_finding.clone(),
@@ -444,7 +435,7 @@ impl Card {
     pub(crate) fn of_held(m: &Memory, same_user: bool) -> Self {
         Self {
             same_user,
-            ..Self::of_memory(m, &Vec::new())
+            ..Self::of_memory(m)
         }
     }
 
@@ -509,7 +500,18 @@ impl Card {
             served: m.promoted_at.clone(),
             scan: m.scan_finding.clone(),
             findings: None,
-            approved: None,
+            // When it was approved, from the last approving verdict the
+            // read lists; the kind of key is not served, so the line says
+            // when and nothing of who (ADR-0077 d2).
+            approved: (!matches!(m.state.as_str(), "held" | "rejected"))
+                .then(|| {
+                    m.verdicts
+                        .iter()
+                        .rev()
+                        .find(|v| v.verdict == "approve")
+                        .map(|v| v.at.clone())
+                })
+                .flatten(),
             approver: None,
             id: m.artifact_id.clone(),
             state: admin_state(&m.state),
@@ -713,22 +715,30 @@ impl Card {
         )
     }
 
-    /// The author's kind word and glyph.
-    fn actor_kind(&self) -> (&'static str, &'static str) {
+    /// The author's kind word and glyph: `shared` for a row whose author
+    /// is not served, the admin read's kind where it serves one, and none
+    /// on the person's side, whose read serves no kind it can stand behind.
+    fn actor_kind(&self) -> Option<(&'static str, &'static str)> {
         match (self.author.is_some(), self.author_kind) {
-            (false, _) | (true, None) => (
-                "shared",
-                glyph_svg(if self.author.is_some() {
-                    "agent"
-                } else {
-                    "shared"
-                }),
-            ),
-            (true, Some(kind)) => (
+            (false, _) => Some(("shared", glyph_svg("shared"))),
+            (true, None) => None,
+            (true, Some(kind)) => Some((
                 kind,
                 glyph_svg(if kind == "person" { "person" } else { "agent" }),
-            ),
+            )),
         }
+    }
+
+    /// The author as one tag: the glyph and the kind where known, and the
+    /// name as served.
+    fn actor(&self) -> String {
+        let (glyph, kind) = self.actor_kind().map_or(("", String::new()), |(k, g)| {
+            (g, format!(r#"<span class="kind">{k}</span>"#))
+        });
+        format!(
+            r#"<span class="oml-actor">{glyph}<span class="who">{}</span>{kind}</span>"#,
+            self.who()
+        )
     }
 
     fn who(&self) -> String {
@@ -739,11 +749,7 @@ impl Card {
 
     /// The head's facts, outside the summary, in their one order.
     fn facts(&self, view: &View<'_>) -> String {
-        let (kind, glyph) = self.actor_kind();
-        let mut out = format!(
-            r#"<ul class="mc-facts"><li><span class="oml-actor">{glyph}<span class="who">{}</span><span class="kind">{kind}</span></span>"#,
-            self.who()
-        );
+        let mut out = format!(r#"<ul class="mc-facts"><li>{}"#, self.actor());
         if self.same_user {
             out.push_str(r#" <span class="tag oml-chip is-quiet">same user</span>"#);
         }
@@ -903,10 +909,8 @@ impl Card {
             let _ = write!(valid, "; approving ends version {v} at {}", text(end));
         }
         fact("Valid", &valid);
-        if !view.timeline {
-            fact("Approval", &self.review_line());
-            fact("Served", &self.served_line());
-        }
+        fact("Approval", &self.review_line());
+        fact("Served", &self.served_line());
         if view.open_link {
             fact(
                 "Open",
@@ -963,10 +967,12 @@ impl Card {
         let reviewed = self.state != "held";
         let served = matches!(self.state, "promoted" | "superseded" | "demoted");
         let rejected = self.state == "rejected";
-        let (kind, actor_glyph) = self.actor_kind();
+        let (kind, actor_glyph) = self
+            .actor_kind()
+            .map_or((String::new(), ""), |(k, g)| (format!(" · {k}"), g));
         let step = |done: bool| if done { "" } else { " class=\"wait\"" };
         format!(
-            r#"<div class="oml-timeline-wrap"><ol class="oml-timeline" aria-label="Provenance"><li><span class="c-dim">{actor_glyph}</span><span class="step">Written</span><span><span class="who">{}</span> · {kind}</span><span>{}</span></li><li><span class="c-held">{}</span><span class="step">Held</span><span>scan: {}</span></li><li{}><span class="{}">{}</span><span class="step">{}</span><span>{}</span></li><li{}><span class="{}">{}</span><span class="step">Served</span><span>{}</span></li></ol></div>"#,
+            r#"<div class="oml-timeline-wrap"><ol class="oml-timeline" aria-label="Provenance"><li><span class="c-dim">{actor_glyph}</span><span class="step">Written</span><span><span class="who">{}</span>{kind}</span><span>{}</span></li><li><span class="c-held">{}</span><span class="step">Held</span><span>scan: {}</span></li><li{}><span class="{}">{}</span><span class="step">{}</span><span>{}</span></li><li{}><span class="{}">{}</span><span class="step">Served</span><span>{}</span></li></ol></div>"#,
             self.who(),
             day(&self.created),
             glyph_svg("held"),
@@ -983,7 +989,11 @@ impl Card {
             },
             glyph_svg("person"),
             if rejected { "Rejected" } else { "Reviewed" },
-            self.review_line(),
+            if reviewed {
+                self.review_line()
+            } else {
+                "not yet".to_owned()
+            },
             step(served),
             if served { "c-promoted" } else { "c-faint" },
             glyph_svg("promoted"),
@@ -994,10 +1004,12 @@ impl Card {
     /// The card, at `view`'s density.
     pub(crate) fn render(&self, view: &View<'_>) -> String {
         let reviewed = self.state != "held";
-        let (kind, _) = self.actor_kind();
+        let kind = self
+            .actor_kind()
+            .map_or_else(String::new, |(k, _)| format!(r#" data-author-kind="{k}""#));
         let page = view.density == Density::Page;
         let mut out = format!(
-            r#"<article class="oml-mc{}{}" id="m-{}" data-author-kind="{kind}" data-reviewed="{reviewed}" aria-label="{} v{}">"#,
+            r#"<article class="oml-mc{}{}" id="m-{}"{kind} data-reviewed="{reviewed}" aria-label="{} v{}">"#,
             if page { " page" } else { "" },
             if self.quiet() { " quiet" } else { "" },
             attr(&self.id),

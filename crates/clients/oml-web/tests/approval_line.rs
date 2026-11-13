@@ -192,9 +192,13 @@ async fn a_card_the_api_serves_no_approval_for_says_approved_and_nothing_more() 
 #[tokio::test]
 async fn an_unreviewed_card_names_no_approval() {
     let page = list(json!([memory("waiting", "held", Some("alice"), None)])).await;
-    assert_eq!(
-        review_step(&page, "waiting"),
-        "held until someone else reviews it"
+    // The timeline's Reviewed step waits; the opened facts' Approval says
+    // why, in the words every surface uses.
+    assert_eq!(review_step(&page, "waiting"), "not yet");
+    assert!(
+        card(&page, "waiting")
+            .contains("<dt>Approval</dt><dd>held until someone else reviews it</dd>"),
+        "{page}"
     );
     assert!(!page.contains("approved by"), "{page}");
 }

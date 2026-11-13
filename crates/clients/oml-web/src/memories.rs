@@ -44,10 +44,10 @@ pub const PAGE_DEFAULT: u32 = 50;
 pub const PAGE_MAX: u32 = 200;
 /// Recall's own bound on one answer, the user page's text search.
 pub const RECALL_MAX: u32 = 100;
-/// The most pages of the person's keys the list reads to name their kinds:
-/// 10 pages of 200. Past them the list is refused with
-/// `limit.list_too_long`, never shown with kinds missing. A constant of the
-/// build, unmeasured (#170).
+/// The most pages of the person's keys the text search reads to find the
+/// key an author filter names: 10 pages of 200. Past them the search is
+/// refused with `limit.list_too_long`, never run against a cut list. A
+/// constant of the build, unmeasured (#170).
 pub const KEY_PAGES_MAX: usize = 10;
 
 /// The user page's JSON route (ADR-0045 d25).
@@ -221,12 +221,12 @@ impl From<oml_sdk::Error> for Failed {
     }
 }
 
-/// The person's own keys, each with its kind (ADR-0045 d32), through
-/// `GET /v2/keys` as `<user>-web`, a page at a time; past
-/// [`KEY_PAGES_MAX`] pages the page is refused `limit.list_too_long`, and
-/// at a cursor the API repeats, the API's fault, `unavailable` with 502
-/// (#281): a list cut short would leave rows without their kind and send
-/// an author search to `access.not_found` for a key the person holds.
+/// The person's own keys, through `GET /v2/keys` as `<user>-web`, a page
+/// at a time, for the text search's author filter, which recall cannot
+/// take by name; past [`KEY_PAGES_MAX`] pages the page is refused
+/// `limit.list_too_long`, and at a cursor the API repeats, the API's
+/// fault, `unavailable` with 502 (#281): a list cut short would send an
+/// author search to `access.not_found` for a key the person holds.
 async fn own_kinds(web: &Web, credential: &str, calls: &PageCalls) -> Result<Kinds, Failed> {
     walk(KEY_PAGES_MAX, |cursor| async move {
         let ids = calls.next_ids();
@@ -280,22 +280,17 @@ async fn user_cards(
             limit: q.limit,
             cursor: q.cursor.as_deref(),
         };
-        let listing_call = call(&credential, &ids);
-        let (page, kinds) = tokio::join!(
-            web.api.list_memories(&listing_call, &query),
-            own_kinds(web, &credential, calls),
-        );
-        let (page, kinds) = (page?, kinds?);
+        let page = web
+            .api
+            .list_memories(&call(&credential, &ids), &query)
+            .await?;
         return Ok(CardPage {
-            cards: page
-                .items
-                .iter()
-                .map(|m| Card::of_memory(m, &kinds))
-                .collect(),
+            cards: page.items.iter().map(Card::of_memory).collect(),
             next: page.next_cursor,
         });
     };
-    // The person's keys beside the recall, one round for both (#286).
+    // The person's keys beside the recall, one round for both (#286), read
+    // only where an author names one of them: the recall filters by key id.
     let ids = calls.next_ids();
     let recall_call = call(&credential, &ids);
     let recall = RecallQuery {
@@ -304,16 +299,18 @@ async fn user_cards(
         workarea: q.workarea.as_deref(),
         origin: q.origin.as_deref(),
     };
-    let (kinds, result) = tokio::join!(
-        own_kinds(web, &credential, calls),
-        web.api.recall(&recall_call, &recall),
-    );
+    let keys = async {
+        match &q.author {
+            Some(_) => own_kinds(web, &credential, calls).await.map(Some),
+            None => Ok(None),
+        }
+    };
+    let (kinds, result) = tokio::join!(keys, web.api.recall(&recall_call, &recall));
     let kinds = kinds?;
     // The author, one of the person's own keys; a name none of them holds
     // is refused whatever the recall found.
-    let author = match &q.author {
-        None => None,
-        Some(name) => Some(
+    let author = match (&q.author, &kinds) {
+        (Some(name), Some(kinds)) => Some(
             kinds
                 .iter()
                 .find(|(_, n, _)| n.as_deref() == Some(name.as_str()))
@@ -326,6 +323,7 @@ async fn user_cards(
                     )
                 })?,
         ),
+        _ => None,
     };
     let result = result?;
     let cards = result
@@ -342,7 +340,7 @@ async fn user_cards(
                 .as_deref()
                 .is_none_or(|a| m.author_key_id.as_deref() == Some(a))
         })
-        .map(|m| Card::of_memory(m, &kinds))
+        .map(Card::of_memory)
         .collect();
     Ok(CardPage { cards, next: None })
 }

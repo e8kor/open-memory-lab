@@ -172,11 +172,12 @@ fn session(record: &str) -> Option<(u16, Value, Option<&'static str>)> {
     })
 }
 
-/// The text search reads the person's keys beside the recall, so the page
-/// spends two rounds, the session check and then both, where it spent
-/// three (#286).
+/// The text search that names an author reads the person's keys beside
+/// the recall, so the page spends two rounds, the session check and then
+/// both, where it spent three (#286); one that names none reads no key
+/// list, since the card names no author's kind (bulk D fixes).
 #[tokio::test]
-async fn the_text_search_reads_the_persons_keys_beside_the_recall() {
+async fn the_text_search_reads_the_persons_keys_beside_the_recall_only_for_an_author() {
     let script: Script = |record| {
         if let Some(answer) = session(record) {
             return answer;
@@ -197,12 +198,31 @@ async fn the_text_search_reads_the_persons_keys_beside_the_recall() {
             (500, envelope("internal.error"), None)
         }
     };
-    let answered = page(script, "/web/memories?q=deploy").await;
+    let answered = page(script, "/web/memories?q=deploy&author=alice-laptop").await;
     assert_eq!(answered.status, StatusCode::OK, "{}", answered.body);
     assert!(
         answered.body.contains("No memory matches."),
         "{}",
         answered.body
+    );
+    let alone: Script = |record| {
+        if let Some(answer) = session(record) {
+            return answer;
+        }
+        if record.starts_with("POST /v1/memories/recall") {
+            (200, json!({"steering": [], "hits": []}), None)
+        } else if record.starts_with("GET /v2/workareas/universe/tree") {
+            (200, json!({"items": [], "next_cursor": null}), None)
+        } else {
+            (500, envelope("internal.error"), None)
+        }
+    };
+    let answered = page(alone, "/web/memories?q=deploy").await;
+    assert_eq!(answered.status, StatusCode::OK, "{}", answered.body);
+    assert!(
+        !answered.calls.iter().any(|c| c.starts_with("GET /v2/keys")),
+        "{:?}",
+        answered.calls
     );
     // A named author is still refused by name when no key of the person's
     // holds it, after both reads.

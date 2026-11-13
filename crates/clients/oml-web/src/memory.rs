@@ -119,7 +119,7 @@ pub async fn user_page(
         &memory.artifact_id,
         memory.text.as_deref().unwrap_or_default(),
     );
-    let card = Card::of_memory(&memory, &Vec::new());
+    let card = Card::of_memory(&memory);
     // The change against the version it replaces: one more read, as the
     // same key (MemoryCard, page density; design notes row 4).
     let changed = match memory.replaces.as_ref() {

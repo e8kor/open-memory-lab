@@ -7504,3 +7504,163 @@ async fn every_bar_names_its_side_and_the_person() {
         );
     }
 }
+
+// -- one memory, the same facts on every person surface (bulk D fixes) -----
+
+/// The card of `id` on `page`: its `<article>` whole.
+fn card_of<'a>(page: &'a str, id: &str) -> &'a str {
+    let at = page
+        .find(&format!(r#"id="m-{id}""#))
+        .unwrap_or_else(|| panic!("no card m-{id}: {page}"));
+    let start = page[..at].rfind("<article").expect("an article");
+    &page[start..at + page[at..].find("</article>").expect("its end")]
+}
+
+/// The head's facts of a card, without the Memories row's version bar
+/// (design notes row 12) and the `same user` mark the Review listing adds.
+fn head_facts(card: &str) -> String {
+    let start = card.find(r#"<ul class="mc-facts">"#).expect("the facts");
+    let rest = &card[start..];
+    // The facts list holds the version bar's own `<ol>`, never a `</ul>`
+    // before its end.
+    let mut facts = rest[..rest.find("</li></ul>").expect("the facts' end")].to_owned();
+    if let Some(bar) = facts.find(r#"<span class="vb">"#) {
+        let end = bar + facts[bar..].find("</ol></span>").expect("the bar's end");
+        facts.replace_range(bar..end + "</ol></span>".len(), "");
+    }
+    facts.replace(
+        r#" <span class="tag oml-chip is-quiet">same user</span>"#,
+        "",
+    )
+}
+
+/// The opened facts of a card, as `(label, value)`, without the way in
+/// and the page's ids.
+fn body_facts(card: &str) -> Vec<(String, String)> {
+    let list = between(card, r#"<dl class="oml-facts">"#, "</dl>");
+    list.split("<dt>")
+        .skip(1)
+        .filter_map(|pair| {
+            let (label, value) = pair.split_once("</dt><dd>")?;
+            let value = value.trim_end_matches("</dd>");
+            (!matches!(
+                label,
+                "Open" | "Id" | "Kind" | "Text digest" | "Attachments"
+            ))
+            .then(|| (label.to_owned(), value.to_owned()))
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn one_memory_shows_the_same_facts_in_the_same_words_on_memories_review_and_its_page() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let memory = agent_writes(&rig, &value, "Backups run at 02:00 UTC.").await;
+    let id = memory.to_string();
+    let (_, _, memories) = send(&rig.router, get("/web/memories", Some(&cookie))).await;
+    let (_, _, review) = send(&rig.router, get("/web/review", Some(&cookie))).await;
+    let (_, _, page) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={id}"), Some(&cookie)),
+    )
+    .await;
+    let cards = [
+        ("Memories", card_of(&memories, &id)),
+        ("Review", card_of(&review, &id)),
+        ("its page", card_of(&page, &id)),
+    ];
+    for (surface, card) in &cards {
+        // The author as the read serves it, and no kind the read cannot
+        // stand behind: its provenance is `agent` for every key.
+        assert!(!card.contains(r#"class="kind""#), "{surface}: {card}");
+        assert!(!card.contains("data-author-kind"), "{surface}: {card}");
+        assert!(
+            card.contains(r#"<span class="who">alice-laptop</span>"#),
+            "{surface}: {card}"
+        );
+    }
+    let (_, memories_card) = cards[0];
+    for (surface, card) in &cards[1..] {
+        assert_eq!(
+            head_facts(card),
+            head_facts(memories_card),
+            "{surface}'s head facts"
+        );
+        assert_eq!(
+            body_facts(card),
+            body_facts(memories_card),
+            "{surface}'s opened facts"
+        );
+    }
+    let labels: Vec<String> = body_facts(memories_card)
+        .into_iter()
+        .map(|(l, _)| l)
+        .collect();
+    assert_eq!(
+        labels,
+        ["Source", "Valid", "Approval", "Served"],
+        "{memories_card}"
+    );
+}
+
+#[tokio::test]
+async fn the_approval_line_has_one_wording_on_both_sides_and_never_names_who() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let memory = agent_writes(&rig, &value, "Tokens rotate every 90 days.").await;
+    let id = memory.to_string();
+    let (_, _, item) = send(
+        &rig.router,
+        get(&format!("/web/review?memory={id}"), Some(&cookie)),
+    )
+    .await;
+    let form = [
+        ("action", "judge"),
+        ("artifact_id", id.as_str()),
+        ("verdict", "approve"),
+        ("reason", ""),
+        ("nonce", &field_of(&item, "nonce")),
+    ];
+    let (status, _, _) = act(&rig, &cookie, "/web/review", &form).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (_, _, person) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={id}"), Some(&cookie)),
+    )
+    .await;
+    let (_, _, admin) = send(
+        &rig.router,
+        get(&format!("/web/admin/memory?id={id}"), Some(&boss)),
+    )
+    .await;
+    let approval = |page: &str| {
+        body_facts(card_of(page, &id))
+            .into_iter()
+            .find(|(l, _)| l == "Approval")
+            .map(|(_, v)| v)
+            .unwrap_or_else(|| panic!("no Approval: {page}"))
+    };
+    let (person, admin) = (approval(&person), approval(&admin));
+    // The person's read serves the kind of key; the admin read does not,
+    // so its line leaves that slot out and keeps the same words.
+    assert!(
+        person.starts_with("approved by a person's key on 20"),
+        "{person}"
+    );
+    assert!(admin.starts_with("approved on 20"), "{admin}");
+    assert_eq!(
+        person
+            .replace(" by a person's key", "")
+            .split(" · ")
+            .next()
+            .unwrap_or_default(),
+        admin,
+        "one wording"
+    );
+    assert!(!admin.contains("alice-review") && !person.contains("alice-review"));
+}

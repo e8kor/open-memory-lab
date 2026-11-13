@@ -237,8 +237,10 @@ async fn the_json_route_answers_the_apis_refusal_as_json_when_the_listing_fails(
     assert_eq!(value["request_id"], "page-7", "{value}");
 }
 
+/// The text search with an author is the one Memories read that walks the
+/// key list: the recall filters by the key's id.
 #[tokio::test]
-async fn the_memories_list_refuses_by_name_past_ten_pages_of_keys_and_never_shows_a_cut_list() {
+async fn the_memories_search_refuses_by_name_past_ten_pages_of_keys_and_never_shows_a_cut_list() {
     let script: Script = Arc::new(|_, path| {
         if path.starts_with("/v2/keys") {
             // Every page names a fresh next one: past the ten the list reads.
@@ -254,7 +256,7 @@ async fn the_memories_list_refuses_by_name_past_ten_pages_of_keys_and_never_show
             (200, empty_page(), Vec::new())
         }
     });
-    let page = send(script, get("/web/memories")).await;
+    let page = send(script, get("/web/memories?q=deploy&author=alice-laptop")).await;
     assert_eq!(
         page.status,
         StatusCode::UNPROCESSABLE_ENTITY,
@@ -283,7 +285,7 @@ async fn a_key_cursor_the_api_repeats_is_refused_as_an_api_fault_instead_of_cutt
             (200, empty_page(), Vec::new())
         }
     });
-    let page = send(script, get("/web/memories")).await;
+    let page = send(script, get("/web/memories?q=deploy&author=alice-laptop")).await;
     assert_eq!(page.status, StatusCode::BAD_GATEWAY, "{}", page.body);
     assert!(page.body.contains("unavailable"), "{}", page.body);
     assert!(page.body.contains("repeated"), "{}", page.body);
