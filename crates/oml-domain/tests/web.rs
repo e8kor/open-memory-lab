@@ -125,8 +125,8 @@ fn a_google_token_whose_aud_array_names_any_audience_besides_the_client_is_refus
 }
 
 #[test]
-fn a_google_token_whose_aud_is_the_client_id_alone_as_a_string_or_a_one_element_array_signs_in() {
-    for aud in [json!(CLIENT), json!([CLIENT])] {
+fn a_google_token_whose_aud_names_the_client_id_alone_as_a_string_or_an_array_signs_in() {
+    for aud in [json!(CLIENT), json!([CLIENT]), json!([CLIENT, CLIENT])] {
         let mut c = claims();
         c["aud"] = aud.clone();
         let identity = admit_google_id_token(&id_token(&c), CLIENT, NONCE, NOW)

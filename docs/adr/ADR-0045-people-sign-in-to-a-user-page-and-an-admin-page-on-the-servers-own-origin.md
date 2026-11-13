@@ -916,7 +916,7 @@ admits it if any element is the client id, while item 3 also rejects an array wi
 audiences not trusted by the Client". Google's guide describes `aud` as one client id, and only
 Google's own token endpoint can hand the lead a token, so no other audience can reach it on this
 path. Refusing a multi-audience array would match item 3 exactly; that is a code change for its
-own issue, not this record. *(Closed 2026-11-13, #366: `web.rs` admits an `aud` array only when
+own issue, not this record. *(Closed 2026-11-13, #366: `web.rs:364-373` admits an `aud` array only when
 every element is the client id; an array naming any other audience, or an empty one, is
 `provider_refused`, the reason a string `aud` naming another client already gets. d4's "`aud` is
 the configured client id" already states this, so d4 is unchanged.)*
