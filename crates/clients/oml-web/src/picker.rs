@@ -70,6 +70,141 @@ pub fn reference(path: &str, is_user_root: impl Fn(&str) -> bool) -> String {
     }
 }
 
+/// The top labels under `universe` a page knows the kind of: a person's
+/// root, which makes the names beneath it `<user>.<name>`, or a shared
+/// workarea, whose descendants are named by their bare name (design notes
+/// row 20). A path alone cannot tell `universe.platform.oncall` (`oncall`)
+/// from `universe.alice.docs` (`alice.docs`), so a page fills this from
+/// what it read: the tree read's `user_root` marks, the person's own root,
+/// and, for a top label none of those names, one read of that label's
+/// node ([`Roots::learn`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Roots {
+    user: BTreeSet<String>,
+    shared: BTreeSet<String>,
+}
+
+impl Roots {
+    /// The kinds a tree read's nodes mark: every node marked a user root,
+    /// and every node directly under `universe` not marked one.
+    fn of_nodes<'a>(nodes: impl IntoIterator<Item = (&'a str, &'a str, bool)>) -> Self {
+        let mut roots = Self::default();
+        for (name, path, user_root) in nodes {
+            if user_root {
+                roots.user.insert(name.to_owned());
+            } else if path.split('.').count() == 2 {
+                roots.shared.insert(name.to_owned());
+            }
+        }
+        roots
+    }
+
+    /// The person's own root, `name`, where the page knows it.
+    #[must_use]
+    pub fn with_own(mut self, name: Option<&str>) -> Self {
+        if let Some(name) = name {
+            self.shared.remove(name);
+            self.user.insert(name.to_owned());
+        }
+        self
+    }
+
+    /// The reference of `path` by these kinds; a top label they do not
+    /// know is read as a shared workarea's.
+    #[must_use]
+    pub fn reference(&self, path: &str) -> String {
+        reference(path, |l| self.user.contains(l))
+    }
+
+    /// Whether `name` is a person's root.
+    #[must_use]
+    pub fn is_user_root(&self, name: &str) -> bool {
+        self.user.contains(name)
+    }
+
+    /// The top label of `path` whose kind changes its reference and that
+    /// these kinds do not know: one under `universe`, with a workarea
+    /// beneath it.
+    fn unknown<'a>(&self, path: &'a str) -> Option<&'a str> {
+        let mut labels = path.split('.');
+        let (Some("universe"), Some(top), Some(_)) = (labels.next(), labels.next(), labels.next())
+        else {
+            return None;
+        };
+        (!self.user.contains(top) && !self.shared.contains(top)).then_some(top)
+    }
+
+    /// These kinds with every top label of `paths` they do not know read
+    /// once, as `credential`, by its node's first tree row
+    /// (`GET /v2/workareas/{top}/tree?limit=1`), whose `user_root` mark
+    /// says which it is; the reads run together. A page whose reads name
+    /// only the person's root and `universe` makes none. A label the key
+    /// cannot read, or whose read fails, stays shared: a person's review
+    /// key reaches another person's root only by a grant on that root,
+    /// which reads it (ADR-0045 d10).
+    pub async fn learn<'a>(
+        mut self,
+        web: &Web,
+        credential: &str,
+        calls: &PageCalls,
+        paths: impl IntoIterator<Item = &'a str>,
+    ) -> Self {
+        let mut tops: Vec<String> = Vec::new();
+        for path in paths {
+            if let Some(top) = self.unknown(path)
+                && !tops.iter().any(|t| t == top)
+            {
+                tops.push(top.to_owned());
+            }
+        }
+        let reads = tops.iter().map(|top| async move {
+            let ids = calls.next_ids();
+            let first = web
+                .api
+                .workarea_tree(&call(credential, &ids), top, 1, None)
+                .await;
+            let user_root = first.ok().is_some_and(|page| {
+                page.items
+                    .first()
+                    .is_some_and(|n| n.user_root && n.name == *top)
+            });
+            (top.clone(), user_root)
+        });
+        for (top, user_root) in join_all(reads.collect()).await {
+            if user_root {
+                self.user.insert(top);
+            } else {
+                self.shared.insert(top);
+            }
+        }
+        self
+    }
+}
+
+/// Every future of `futures`, polled together, their outputs in order.
+async fn join_all<F: Future>(futures: Vec<F>) -> Vec<F::Output> {
+    let mut futures: Vec<std::pin::Pin<Box<F>>> = futures.into_iter().map(Box::pin).collect();
+    let mut out: Vec<Option<F::Output>> = futures.iter().map(|_| None).collect();
+    std::future::poll_fn(|cx| {
+        let mut pending = false;
+        for (future, slot) in futures.iter_mut().zip(out.iter_mut()) {
+            if slot.is_none() {
+                match future.as_mut().poll(cx) {
+                    std::task::Poll::Ready(value) => *slot = Some(value),
+                    std::task::Poll::Pending => pending = true,
+                }
+            }
+        }
+        if pending {
+            std::task::Poll::Pending
+        } else {
+            std::task::Poll::Ready(())
+        }
+    })
+    .await;
+    out.into_iter().flatten().collect()
+}
+
 /// One workarea of the tree read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Place {
@@ -85,7 +220,7 @@ pub struct Place {
 #[derive(Debug, Clone, Default)]
 pub struct Names {
     places: Vec<Place>,
-    roots: BTreeSet<String>,
+    roots: Roots,
     /// The read stopped at the cap: a name not here may still exist.
     more: bool,
     /// The read failed: the request id, and nothing is known.
@@ -133,16 +268,16 @@ impl Names {
                 Some(next) => cursor = Some(next),
             }
         }
-        let mut roots: BTreeSet<String> = nodes
-            .iter()
-            .filter(|n| n.user_root)
-            .map(|n| n.name.clone())
-            .collect();
-        roots.extend(own_root.map(str::to_owned));
+        let roots = Roots::of_nodes(
+            nodes
+                .iter()
+                .map(|n| (n.name.as_str(), n.path.as_str(), n.user_root)),
+        )
+        .with_own(own_root);
         let places = nodes
             .into_iter()
             .map(|n| Place {
-                reference: reference(&n.path, |l| roots.contains(l)),
+                reference: roots.reference(&n.path),
                 id: n.id,
                 name: n.name,
                 path: n.path,
@@ -169,15 +304,15 @@ impl Names {
     /// every workarea the viewer reads unless the read was cut at its cap.
     #[must_use]
     pub fn of_counted(nodes: &[CountedNode], truncated: bool) -> Self {
-        let roots: BTreeSet<String> = nodes
-            .iter()
-            .filter(|n| n.user_root)
-            .map(|n| n.name.clone())
-            .collect();
+        let roots = Roots::of_nodes(
+            nodes
+                .iter()
+                .map(|n| (n.name.as_str(), n.path.as_str(), n.user_root)),
+        );
         let places = nodes
             .iter()
             .map(|n| Place {
-                reference: reference(&n.path, |l| roots.contains(l)),
+                reference: roots.reference(&n.path),
                 id: n.id.clone(),
                 name: n.name.clone(),
                 path: n.path.clone(),
@@ -192,21 +327,17 @@ impl Names {
     }
 
     /// Names from a read the page already made, `(id, path)` each, with
-    /// the user roots it knows, and no call. Such a set is never taken as
-    /// every workarea the viewer reads, so a name it lacks is left to the
-    /// API.
+    /// the kinds of top label it knows, and no call. Such a set is never
+    /// taken as every workarea the viewer reads, so a name it lacks is
+    /// left to the API.
     #[must_use]
-    pub fn of_places(
-        places: impl IntoIterator<Item = (String, String)>,
-        roots: impl IntoIterator<Item = String>,
-    ) -> Self {
-        let roots: BTreeSet<String> = roots.into_iter().collect();
+    pub fn of_places(places: impl IntoIterator<Item = (String, String)>, roots: Roots) -> Self {
         let mut seen = BTreeSet::new();
         let places = places
             .into_iter()
             .filter(|(id, _)| seen.insert(id.clone()))
             .map(|(id, path)| Place {
-                reference: reference(&path, |l| roots.contains(l)),
+                reference: roots.reference(&path),
                 name: path.rsplit('.').next().unwrap_or_default().to_owned(),
                 id,
                 path,
@@ -223,18 +354,17 @@ impl Names {
     /// The names of `places`, as a read would hold them.
     #[cfg(test)]
     fn of(paths: &[(&str, &str, bool)]) -> Self {
-        let roots: BTreeSet<String> = paths
-            .iter()
-            .filter(|(_, _, root)| *root)
-            .map(|(_, path, _)| path.rsplit('.').next().unwrap_or_default().to_owned())
-            .collect();
+        let roots =
+            Roots::of_nodes(paths.iter().map(|(_, path, root)| {
+                (path.rsplit('.').next().unwrap_or_default(), *path, *root)
+            }));
         let places = paths
             .iter()
             .map(|(id, path, _)| Place {
                 id: (*id).to_owned(),
                 name: path.rsplit('.').next().unwrap_or_default().to_owned(),
                 path: (*path).to_owned(),
-                reference: reference(path, |l| roots.contains(l)),
+                reference: roots.reference(path),
             })
             .collect();
         Self {
@@ -253,13 +383,19 @@ impl Names {
     /// The reference of `path`, with the user roots this read found.
     #[must_use]
     pub fn reference(&self, path: &str) -> String {
-        reference(path, |l| self.roots.contains(l))
+        self.roots.reference(path)
     }
 
     /// Whether `name` is a person's root.
     #[must_use]
     pub fn is_user_root(&self, name: &str) -> bool {
-        self.roots.contains(name)
+        self.roots.is_user_root(name)
+    }
+
+    /// The kinds of top label this read knows.
+    #[must_use]
+    pub fn roots(&self) -> &Roots {
+        &self.roots
     }
 
     /// Whether the read holds every workarea the viewer reads, so a name

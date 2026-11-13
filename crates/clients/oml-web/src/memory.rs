@@ -35,8 +35,9 @@ use oml_sdk::Memory;
 use oml_sdk::{AdminRead, Error};
 
 use crate::acts::Refusal;
-use crate::card::{Card, View, change, reference_of};
+use crate::card::{Card, View, change};
 use crate::pages::{Fields, refused};
+use crate::picker::Roots;
 use crate::review::is_id;
 use crate::session::{PageCalls, Session, call};
 use crate::{Capacity, Web, acts, outcome, render};
@@ -120,6 +121,13 @@ pub async fn user_page(
         memory.text.as_deref().unwrap_or_default(),
     );
     let card = Card::of_memory(&memory);
+    // The person's web key reads `universe` and the person's root alone
+    // (ADR-0044 d3), so any other top label is read once (design notes
+    // row 20).
+    let roots = Roots::default()
+        .with_own(session.whoami.user.as_ref().map(|u| u.name.as_str()))
+        .learn(&web, &credential, &calls, [card.workarea()])
+        .await;
     // The change against the version it replaces: one more read, as the
     // same key (MemoryCard, page density; design notes row 4).
     let changed = match memory.replaces.as_ref() {
@@ -142,7 +150,7 @@ pub async fn user_page(
             open_link: false,
             drawing: drawing.as_deref().unwrap_or_default(),
             change: &changed,
-            ..View::page(false)
+            ..View::page(false, &roots)
         })
     );
     page(
@@ -180,13 +188,14 @@ fn attribution(
     admin: &str,
     reviewer: &str,
     policy: Option<u32>,
+    roots: &Roots,
 ) -> String {
     let card = Card::of_admin_read(m);
     let mut out = card.render(&View {
         open_link: false,
         drawing,
         change: changed,
-        ..View::page(true)
+        ..View::page(true, roots)
     });
     if m.state == "held" {
         let _ = write!(
@@ -299,11 +308,18 @@ pub async fn admin_page(
             None => String::new(),
         }
     };
+    // The kinds of the workarea's top label: the author's own root, and
+    // one read of any other (design notes row 20); the policy is read by
+    // the reference they give.
+    let admin = session.credential(Capacity::Admin);
+    let roots = Roots::default()
+        .with_own(read.user.as_deref())
+        .learn(&web, &admin, &calls, [read.workarea_path.as_str()])
+        .await;
     let policy = async {
-        let credential = session.credential(Capacity::Admin);
         let ids = calls.next_ids();
         web.api
-            .workarea(&call(&credential, &ids), &reference_of(&read.workarea_path))
+            .workarea(&call(&admin, &ids), &roots.reference(&read.workarea_path))
             .await
             .ok()
             .and_then(|w| w.policy)
@@ -324,7 +340,8 @@ pub async fn admin_page(
             &changed,
             &format!("{user}-admin"),
             &format!("{user}-review"),
-            policy
+            policy,
+            &roots,
         ),
         short(&format!("{user}-review"))
     );
@@ -612,7 +629,15 @@ mod tests {
             "principal": "alice", "user": "alice", "created_at": "2026-11-11T10:00:00Z",
         }))
         .unwrap();
-        let page = attribution(&read, "", "", "alice-admin", "alice-review", None);
+        let page = attribution(
+            &read,
+            "",
+            "",
+            "alice-admin",
+            "alice-review",
+            None,
+            &Roots::default(),
+        );
         assert!(
             page.contains("6f1c2d4e-0000-4000-8000-0000000000aa (alice)"),
             "{page}"
@@ -624,7 +649,15 @@ mod tests {
             "principal": "alice", "user": null, "created_at": "2026-11-11T10:00:00Z",
         }))
         .unwrap();
-        let page = attribution(&named, "", "", "alice-admin", "alice-review", None);
+        let page = attribution(
+            &named,
+            "",
+            "",
+            "alice-admin",
+            "alice-review",
+            None,
+            &Roots::default(),
+        );
         assert!(
             page.contains(r#"<span class="who">alice-laptop</span>"#),
             "a named key shows its name: {page}"

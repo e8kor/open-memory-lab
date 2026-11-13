@@ -7664,3 +7664,157 @@ async fn the_approval_line_has_one_wording_on_both_sides_and_never_names_who() {
     );
     assert!(!admin.contains("alice-review") && !person.contains("alice-review"));
 }
+
+/// `universe.platform.oncall`, a shared workarea nested under another, and
+/// a held memory in it that a tenant writer wrote; `alice-review` and
+/// `boss-review` may judge it. Alice's cookie and the admin's.
+async fn held_in_a_nested_shared_workarea(rig: &Rig) -> (String, String, uuid::Uuid) {
+    rig.allow("boss@example.com", "boss", true).await;
+    let alice = signed_in(rig, "sub-1", EMAIL).await;
+    let boss = signed_in(rig, "sub-boss", "boss@example.com").await;
+    let admin = &rig.boot.admin_key.value;
+    let name = |n: &str| Name::parse(n).expect("a name");
+    // Through the lead's API, whose id generator the rig's own app does
+    // not share.
+    for (child, parent) in [("platform", "universe"), ("oncall", "platform")] {
+        let request = Request::post("/v2/workareas")
+            .header(header::AUTHORIZATION, format!("Bearer {admin}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("Idempotency-Key", format!("wa-{child}"))
+            .body(Body::from(
+                json!({"name": child, "parent": parent}).to_string(),
+            ))
+            .expect("a request");
+        let (status, _, body) = send(&rig.router, request).await;
+        assert_eq!(status, StatusCode::CREATED, "{child}: {body}");
+    }
+    let pager = rig
+        .app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Writer,
+                name: name("pager"),
+                principal: "pager".to_owned(),
+                held_by: Some(HeldBy::Agent),
+                default_workarea: None,
+                crew: None,
+                grants: [Role::Writer, Role::Reader]
+                    .into_iter()
+                    .map(|role| GrantRequest {
+                        node: name("oncall").into(),
+                        role,
+                        deny: Vec::new(),
+                        covers: oml_app::domain::access::Covers::Subtree,
+                    })
+                    .collect(),
+                connect_code: false,
+                user: None,
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("a tenant writer on oncall");
+    let memory = agent_writes_in(rig, &pager.value, "The pager rotates weekly.", "oncall").await;
+    for user in ["alice", "boss"] {
+        let (status, _, body) = act(
+            rig,
+            &boss,
+            "/web/admin/people",
+            &[
+                ("action", "grant_review"),
+                ("user", user),
+                ("workarea", "oncall"),
+            ],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{user}: {body}");
+    }
+    (alice, boss, memory)
+}
+
+#[tokio::test]
+async fn a_nested_shared_workarea_is_named_by_its_bare_name_on_both_review_pages_and_their_links() {
+    let rig = rig().await;
+    let (alice, boss, memory) = held_in_a_nested_shared_workarea(&rig).await;
+    let (status, _, page) = send(&rig.router, get("/web/review", Some(&alice))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("The pager rotates weekly."), "{page}");
+    assert!(!page.contains("platform.oncall"), "{page}");
+    // The Waiting table, the card's "in" link and the verdict line.
+    assert!(
+        page.contains(r#"<a href="/web/review?workarea=oncall">oncall</a>"#),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"href="/web/memories?workarea=oncall">oncall</a>"#),
+        "{page}"
+    );
+    assert!(
+        page.contains("to every key that reads <code>oncall</code>"),
+        "{page}"
+    );
+    // The name the page prints filters the list.
+    let (status, _, filtered) = send(
+        &rig.router,
+        get("/web/review?workarea=oncall", Some(&alice)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{filtered}");
+    assert!(filtered.contains("The pager rotates weekly."), "{filtered}");
+    let (status, _, item) = send(
+        &rig.router,
+        get(&format!("/web/review?memory={memory}"), Some(&alice)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{item}");
+    assert!(!item.contains("platform.oncall"), "{item}");
+    assert!(
+        item.contains("to every key that reads <code>oncall</code>"),
+        "{item}"
+    );
+
+    let (status, _, admin) = send(&rig.router, get("/web/admin/review", Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK, "{admin}");
+    assert!(!admin.contains("platform.oncall"), "{admin}");
+    assert!(
+        admin.contains(r#"href="/web/admin/review?held=1&amp;workarea=oncall">oncall</a>"#),
+        "{admin}"
+    );
+    let link = r#"href="/web/admin/memories?workarea=oncall">oncall</a>"#;
+    assert!(admin.contains(link), "{admin}");
+    let (status, _, listed) = send(
+        &rig.router,
+        get("/web/admin/memories?workarea=oncall", Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert!(listed.contains("The pager rotates weekly."), "{listed}");
+    let (status, _, filtered) = send(
+        &rig.router,
+        get("/web/admin/review?held=1&workarea=oncall", Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{filtered}");
+    assert!(filtered.contains("The pager rotates weekly."), "{filtered}");
+    // The admin's One memory page reads the policy by the same reference.
+    let (status, _, one) = send(
+        &rig.router,
+        get(&format!("/web/admin/memory?id={memory}"), Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{one}");
+    assert!(link_free(&one, "platform.oncall"), "{one}");
+    assert!(
+        one.contains("this workarea's review policy asks for"),
+        "{one}"
+    );
+}
+
+/// Whether `page` prints `text` nowhere.
+fn link_free(page: &str, text: &str) -> bool {
+    !page.contains(text)
+}

@@ -43,20 +43,12 @@ use oml_page::web::{
     short, state_tag, text,
 };
 use oml_sdk::{AdminMemory, AdminRead, Anchor, Attachment, Memory, ScanFinding, SourceChecked};
+
+use crate::picker::Roots;
 use serde_json::{Value, json};
 
 /// The states the admin read names a version by.
 const ADMIN_STATES: &[&str] = &["held", "promoted", "rejected", "superseded", "demoted"];
-
-/// The reference of `path` on the pages this module draws, by the picker's
-/// one function (design notes row 20): a person's keys read their own root
-/// and the `universe` node alone, so every top label below `universe` they
-/// meet is a root; on the admin page the same reading holds for every
-/// person's root, and a shared workarea nested under another reads as
-/// `top.name` where the page has no tree read to tell it apart.
-pub(crate) fn reference_of(path: &str) -> String {
-    crate::picker::reference(path, |_| true)
-}
 
 /// An anchor as one line for a reviewer (ADR-0057 d2): the repository, the
 /// commit's first 12 digits, the path and the fragment, or the page;
@@ -286,12 +278,16 @@ pub(crate) struct View<'a> {
     pub(crate) change: &'a str,
     /// The review strip, after the body.
     pub(crate) strip: &'a str,
+    /// The kinds of top label the page knows, which name the workarea by
+    /// its reference (design notes row 20).
+    pub(crate) roots: &'a Roots,
 }
 
-impl View<'_> {
+impl<'a> View<'a> {
     /// A list's row, closed, on `admin`'s side.
-    pub(crate) const fn row(admin: bool) -> Self {
+    pub(crate) const fn row(admin: bool, roots: &'a Roots) -> Self {
         Self {
+            roots,
             density: Density::Row,
             admin,
             open: false,
@@ -305,10 +301,10 @@ impl View<'_> {
     }
 
     /// The one-memory page, on `admin`'s side.
-    pub(crate) const fn page(admin: bool) -> Self {
+    pub(crate) const fn page(admin: bool, roots: &'a Roots) -> Self {
         Self {
             density: Density::Page,
-            ..Self::row(admin)
+            ..Self::row(admin, roots)
         }
     }
 
@@ -580,9 +576,14 @@ impl Card {
         self.replaces_valid_until.as_deref()
     }
 
-    /// The workarea's reference.
-    pub(crate) fn reference(&self) -> String {
-        reference_of(&self.workarea)
+    /// The workarea's path, as the read serves it.
+    pub(crate) fn workarea(&self) -> &str {
+        &self.workarea
+    }
+
+    /// The workarea's reference, by the kinds of top label `roots` knows.
+    pub(crate) fn reference(&self, roots: &Roots) -> String {
+        roots.reference(&self.workarea)
     }
 
     pub(crate) fn json(&self) -> Value {
@@ -644,10 +645,14 @@ impl Card {
     }
 
     /// Where the version is served, by reference (design notes row 20).
-    fn served_line(&self) -> String {
+    fn served_line(&self, roots: &Roots) -> String {
         match (self.state, &self.served) {
             ("rejected", _) => "never: the text is kept".to_owned(),
-            (_, Some(at)) => format!("to readers of {} · {}", text(&self.reference()), day(at)),
+            (_, Some(at)) => format!(
+                "to readers of {} · {}",
+                text(&self.reference(roots)),
+                day(at)
+            ),
             _ => "not yet".to_owned(),
         }
     }
@@ -754,7 +759,7 @@ impl Card {
             out.push_str(r#" <span class="tag oml-chip is-quiet">same user</span>"#);
         }
         out.push_str("</li>");
-        let reference = self.reference();
+        let reference = self.reference(view.roots);
         let _ = write!(
             out,
             r#"<li><span class="k">in</span><a class="v" href="{}?workarea={}">{}</a></li>"#,
@@ -910,7 +915,7 @@ impl Card {
         }
         fact("Valid", &valid);
         fact("Approval", &self.review_line());
-        fact("Served", &self.served_line());
+        fact("Served", &self.served_line(view.roots));
         if view.open_link {
             fact(
                 "Open",
@@ -963,7 +968,7 @@ impl Card {
 
     /// The provenance timeline the Memories row keeps (ADR-0045 d32;
     /// design notes row 12, not decided).
-    fn timeline(&self) -> String {
+    fn timeline(&self, roots: &Roots) -> String {
         let reviewed = self.state != "held";
         let served = matches!(self.state, "promoted" | "superseded" | "demoted");
         let rejected = self.state == "rejected";
@@ -997,7 +1002,7 @@ impl Card {
             step(served),
             if served { "c-promoted" } else { "c-faint" },
             glyph_svg("promoted"),
-            self.served_line(),
+            self.served_line(roots),
         )
     }
 
@@ -1041,7 +1046,7 @@ impl Card {
             out.push_str(view.change);
         }
         if view.timeline {
-            out.push_str(&self.timeline());
+            out.push_str(&self.timeline(view.roots));
         }
         out.push_str(&self.body_facts(view));
         out.push_str("</div>");
@@ -1053,10 +1058,10 @@ impl Card {
     /// The Memories row (ADR-0045 d22, d32), as a list item, with the
     /// version bar and the provenance timeline it keeps; `memory_page` is
     /// the side's one-memory page.
-    pub(crate) fn html(&self, memory_page: &str) -> String {
+    pub(crate) fn html(&self, memory_page: &str, roots: &Roots) -> String {
         let view = View {
             timeline: true,
-            ..View::row(memory_page == ADMIN_MEMORY_PATH)
+            ..View::row(memory_page == ADMIN_MEMORY_PATH, roots)
         };
         format!("<li>{}</li>", self.render(&view))
     }

@@ -31,7 +31,7 @@ use serde_json::{Value, json};
 use crate::atlas::{Counts, Tile, legend, lifebar, svg};
 use crate::card::{Card, Kinds, kind_word, row_state};
 use crate::pages::{Fields, WalkEnd, refused, walk};
-use crate::picker::{self, Browse, Chosen, Field, Names};
+use crate::picker::{self, Browse, Chosen, Field, Names, Roots};
 use crate::session::{PageCalls, Session, call, cookie};
 use crate::workareas::{
     Credentials, NodeOffers, Side as ActSide, mode_offers, offers_of, transitions_offers,
@@ -427,7 +427,7 @@ fn field(
 fn list_view(
     side: Side,
     q: &ListQuery,
-    page: Option<&CardPage>,
+    page: Option<(&CardPage, &Roots)>,
     atlas: bool,
     field: &str,
 ) -> String {
@@ -494,7 +494,7 @@ fn list_view(
             q.link(side.atlas(), None)
         )
     };
-    let Some(page) = page else {
+    let Some((page, roots)) = page else {
         return out;
     };
     if q.q.is_some() && side == Side::User {
@@ -505,7 +505,7 @@ fn list_view(
     }
     out.push_str(r#"<ul class="oml-mlist">"#);
     for card in &page.cards {
-        out.push_str(&card.html(side.memory_page()));
+        out.push_str(&card.html(side.memory_page(), roots));
     }
     out.push_str(r#"</ul><p class="pager">"#);
     if q.cursor.is_some() {
@@ -950,13 +950,30 @@ async fn list_page(
         Primary::Failed(failed) => return failed_page(failed, &calls, next),
     };
     q.workarea = chosen.shown().map(str::to_owned);
+    // Each row names its workarea by reference: the names' kinds, and a
+    // read of any top label they leave unknown (design notes row 20).
+    let roots = match &cards {
+        Some(cards) => {
+            names
+                .roots()
+                .clone()
+                .learn(
+                    &web,
+                    &session.credential(reader(side)),
+                    &calls,
+                    cards.cards.iter().map(Card::workarea),
+                )
+                .await
+        }
+        None => names.roots().clone(),
+    };
     let field = field(side, &q, false, &chosen, &names, browse.as_ref());
     with_status(
         page(
             side,
             &session,
             side.memories(),
-            &list_view(side, &q, cards.as_ref(), false, &field),
+            &list_view(side, &q, cards.as_ref().map(|c| (c, &roots)), false, &field),
         ),
         chosen.status(),
     )

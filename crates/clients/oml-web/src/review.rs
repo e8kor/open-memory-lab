@@ -44,9 +44,9 @@ use oml_page::web::{
 use oml_sdk::{HeldPage, Memory, encode};
 
 use crate::acts::Refusal;
-use crate::card::{Card, View, change, reference_of};
+use crate::card::{Card, View, change};
 use crate::pages::{Fields, refused};
-use crate::picker::{self, Chosen, Field, Names};
+use crate::picker::{self, Chosen, Field, Names, Roots};
 use crate::session::{PageCalls, Session, call};
 use crate::{Capacity, Web, acts, outcome};
 
@@ -158,6 +158,25 @@ struct ViewCtx<'a> {
 }
 
 impl ViewCtx<'_> {
+    /// The kinds of top label of `paths`, as `capacity`'s key reads them:
+    /// the person's own root, and one read of any other top label the
+    /// paths name (design notes row 20).
+    async fn roots<'p>(
+        &self,
+        capacity: Capacity,
+        paths: impl IntoIterator<Item = &'p str>,
+    ) -> Roots {
+        Roots::default()
+            .with_own(self.session.whoami.user.as_ref().map(|u| u.name.as_str()))
+            .learn(
+                self.web,
+                &self.session.credential(capacity),
+                self.calls,
+                paths,
+            )
+            .await
+    }
+
     /// The person's reviewer key's name, `<user>-review` (ADR-0045 d6).
     fn reviewer(&self) -> String {
         self.session.whoami.user.as_ref().map_or_else(
@@ -211,8 +230,8 @@ fn lineage(card: &Card, reviewer: &str, same_user: Option<bool>) -> String {
 
 /// What each verdict does, in one muted line, by the kind of decision
 /// (ReviewCard).
-fn verdict_line(card: &Card, reviewer: &str) -> String {
-    let reference = code(&card.reference());
+fn verdict_line(card: &Card, reviewer: &str, roots: &Roots) -> String {
+    let reference = code(&card.reference(roots));
     let mut line = match card.replaces() {
         Some((_, Some(was))) if card.retirement() => format!(
             "Approve stops serving the claim: v{was} and this reason are kept. Reject keeps v{was} served."
@@ -241,13 +260,13 @@ fn verdict_line(card: &Card, reviewer: &str) -> String {
 /// A listed row as a review card at row density: the decision first, the
 /// facts, and opened, the checks, what each verdict does and "Open to
 /// judge", which draws the item with its verdict form.
-fn review_row(view: &ViewCtx<'_>, m: &Memory, same_user: bool) -> String {
+fn review_row(view: &ViewCtx<'_>, m: &Memory, same_user: bool, roots: &Roots) -> String {
     let card = Card::of_held(m, same_user);
     let reviewer = view.reviewer();
     let strip = format!(
         r#"<div class="oml-strip" aria-label="Review">{}{}<p><a class="button" href="{}?memory={}">Open to judge</a></p></div>"#,
         lineage(&card, &reviewer, Some(same_user)),
-        verdict_line(&card, &reviewer),
+        verdict_line(&card, &reviewer, roots),
         view.side.path(),
         attr(&encode(&m.artifact_id)),
     );
@@ -255,7 +274,7 @@ fn review_row(view: &ViewCtx<'_>, m: &Memory, same_user: bool) -> String {
         decision: true,
         open_link: false,
         strip: &strip,
-        ..View::row(view.side == Side::Admin)
+        ..View::row(view.side == Side::Admin, roots)
     })
 }
 
@@ -328,9 +347,13 @@ async fn item(
         ));
     };
     let mut card = Card::of_held(&item, false);
-    // The person's keys and the replaced version, in one round (design
-    // notes rows 4 and 15).
-    let (same_user, changed) = tokio::join!(own_author(view, &item), replaced_change(view, &card));
+    // The person's keys, the replaced version and the kinds of the
+    // workarea's top label, in one round (design notes rows 4, 15, 20).
+    let (same_user, changed, roots) = tokio::join!(
+        own_author(view, &item),
+        replaced_change(view, &card),
+        view.roots(Capacity::Review, [card.workarea()]),
+    );
     if same_user == Some(true) {
         card = Card::of_held(&item, true);
     }
@@ -351,7 +374,7 @@ async fn item(
     let strip = format!(
         r#"<div class="oml-strip" aria-label="Review">{}{}{}</div>"#,
         lineage(&card, &reviewer, same_user),
-        verdict_line(&card, &reviewer),
+        verdict_line(&card, &reviewer, &roots),
         form(
             view.side.path(),
             action,
@@ -376,7 +399,7 @@ async fn item(
         drawing: drawing.as_deref().unwrap_or_default(),
         change: &changed,
         strip: &strip,
-        ..View::page(view.side == Side::Admin)
+        ..View::page(view.side == Side::Admin, &roots)
     });
     Ok((out, drawing.is_some()))
 }
@@ -403,6 +426,9 @@ async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
         .await
         .map_err(|e| Box::new(outcome::page(&e, view.calls, view.side.path())))?;
     let page = view.side.path();
+    let roots = view
+        .roots(Capacity::Admin, rows.items.iter().map(|r| r.path.as_str()))
+        .await;
     let mut body = String::from(
         r#"<h2>Queue</h2><p class="desc">Held memories per workarea, every one of the tenant's; the list below shows only what this reviewer key may judge.</p><table><tr><th>Workarea</th><th>Held</th><th>Oldest since</th></tr>"#,
     );
@@ -410,7 +436,7 @@ async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
         body.push_str(r#"<tr><td colspan="3" class="dim">Nothing is held.</td></tr>"#);
     }
     for row in &rows.items {
-        let reference = reference_of(&row.path);
+        let reference = roots.reference(&row.path);
         let _ = write!(
             body,
             r#"<tr><td class="mono"><a href="{page}?held=1&amp;workarea={}">{}</a></td><td>{}</td><td class="mono">{}</td></tr>"#,
@@ -421,11 +447,11 @@ async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
         );
     }
     body.push_str("</table>");
-    let names = names_of(
+    let names = Names::of_places(
         rows.items
             .iter()
-            .map(|r| (r.workarea_id.clone(), r.path.clone()))
-            .collect(),
+            .map(|r| (r.workarea_id.clone(), r.path.clone())),
+        roots,
     );
     Ok((body, names))
 }
@@ -467,23 +493,6 @@ fn filters(view: &ViewCtx<'_>, fields: &Fields, names: &Names, chosen: &Chosen) 
             false
         ),
     )
-}
-
-/// The names a page's own read gives the picker: `(id, path)` of each
-/// workarea, and as user roots the top label of every path below one, the
-/// reading [`reference_of`] takes.
-fn names_of(places: Vec<(String, String)>) -> Names {
-    let roots: Vec<String> = places
-        .iter()
-        .filter_map(|(_, path)| {
-            let mut labels = path.split('.');
-            match (labels.next(), labels.next(), labels.next()) {
-                (Some("universe"), Some(top), Some(_)) => Some(top.to_owned()),
-                _ => None,
-            }
-        })
-        .collect();
-    Names::of_places(places, roots)
 }
 
 /// The filters the listing is read with: the chosen workarea as the
@@ -544,10 +553,10 @@ async fn listing(
 
 /// The workareas of a listing, each with its count and the instant its
 /// oldest row was held, in the listing's order (oldest first).
-fn waiting(page: &HeldPage) -> Vec<(String, usize, String)> {
+fn waiting(page: &HeldPage, roots: &Roots) -> Vec<(String, usize, String)> {
     let mut groups: Vec<(String, usize, String)> = Vec::new();
     for item in &page.items {
-        let reference = reference_of(item.memory().workarea_path.as_deref().unwrap_or(""));
+        let reference = roots.reference(item.memory().workarea_path.as_deref().unwrap_or(""));
         match groups.iter_mut().find(|(r, _, _)| *r == reference) {
             Some(group) => group.1 += 1,
             None => groups.push((reference, 1, item.held_since.clone())),
@@ -587,15 +596,24 @@ async fn person_list(view: &ViewCtx<'_>, fields: &Fields) -> Result<String, Refu
     let page = view.side.path();
     let chosen = Chosen::of(fields.get("workarea"));
     let read = listing(view, fields, &chosen, WAITING_PAGE).await?;
-    let groups = read.as_ref().map(waiting).unwrap_or_default();
-    let names = names_of(
-        read.iter()
-            .flat_map(|p| p.items.iter())
-            .filter_map(|i| {
-                let m = i.memory();
-                Some((m.workarea_id.clone()?, m.workarea_path.clone()?))
-            })
-            .collect(),
+    let roots = view
+        .roots(
+            Capacity::Review,
+            read.iter()
+                .flat_map(|p| p.items.iter())
+                .filter_map(|i| i.memory().workarea_path.as_deref()),
+        )
+        .await;
+    let groups = read
+        .as_ref()
+        .map(|p| waiting(p, &roots))
+        .unwrap_or_default();
+    let names = Names::of_places(
+        read.iter().flat_map(|p| p.items.iter()).filter_map(|i| {
+            let m = i.memory();
+            Some((m.workarea_id.clone()?, m.workarea_path.clone()?))
+        }),
+        roots.clone(),
     );
     let (listing, chosen) = settled(read, chosen, &names);
     let total = if listing.next_cursor.is_some() {
@@ -634,7 +652,7 @@ async fn person_list(view: &ViewCtx<'_>, fields: &Fields) -> Result<String, Refu
             let _ = write!(
                 body,
                 "<li>{}</li>",
-                review_row(view, item.memory(), item.same_user)
+                review_row(view, item.memory(), item.same_user, &roots)
             );
         }
         body.push_str("</ul>");
@@ -659,6 +677,21 @@ async fn held(view: &ViewCtx<'_>, fields: &Fields, names: &Names) -> Result<Stri
     let chosen = names.resolve(Chosen::of(fields.get("workarea")));
     let read = listing(view, fields, &chosen, HELD_PAGE).await?;
     let (listing, chosen) = settled(read, chosen, names);
+    // The queue's kinds, and a read of any top label the listing names
+    // beyond them, as the admin key, which reads every node.
+    let roots = names
+        .roots()
+        .clone()
+        .learn(
+            view.web,
+            &view.session.credential(Capacity::Admin),
+            view.calls,
+            listing
+                .items
+                .iter()
+                .filter_map(|i| i.memory().workarea_path.as_deref()),
+        )
+        .await;
     let all = fields.get("select") == Some("all");
     let kept = kept_filters(fields);
     let cursor = fields.given("cursor").map_or(String::new(), |c| {
@@ -684,7 +717,7 @@ async fn held(view: &ViewCtx<'_>, fields: &Fields, names: &Names) -> Result<Stri
                 m.version,
                 attr(&m.artifact_id),
                 if all { " checked" } else { "" },
-                review_row(view, m, item.same_user)
+                review_row(view, m, item.same_user, &roots)
             );
         }
         rows.push_str("</ul>");
