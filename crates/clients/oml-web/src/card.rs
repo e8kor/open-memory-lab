@@ -918,7 +918,7 @@ impl Card {
         if let (Some(end), Some((_, Some(v)))) = (&self.replaces_valid_until, &self.replaces) {
             let _ = write!(valid, "; approving ends version {v} at {}", text(end));
         }
-        fact("Valid", &format!("<span>valid {valid}</span>"));
+        fact("Valid", &valid);
         if !view.timeline {
             fact("Approval", &self.review_line());
             fact("Served", &self.served_line());

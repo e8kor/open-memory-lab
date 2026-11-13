@@ -4232,7 +4232,7 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
         .memory_id;
     let (_, _, page) =
         act_and_follow(&rig, &cookie, "/web/review", &[("action", "review_next")]).await;
-    assert!(page.contains("valid from 2025, open"), "{page}");
+    assert!(page.contains("<dt>Valid</dt><dd>from 2025, open</dd>"), "{page}");
     act_and_follow(
         &rig,
         &cookie,
@@ -4295,7 +4295,7 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
     let (_, _, page) =
         act_and_follow(&rig, &cookie, "/web/review", &[("action", "review_next")]).await;
     assert!(page.contains("the api is at version 4"), "{page}");
-    assert!(page.contains("valid from 2026-06-01, open"), "{page}");
+    assert!(page.contains("<dt>Valid</dt><dd>from 2026-06-01, open"), "{page}");
     assert!(
         page.contains("approving ends version 1 at 2026-06-01T00:00:00.000000Z"),
         "{page}"

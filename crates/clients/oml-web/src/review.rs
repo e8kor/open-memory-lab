@@ -350,6 +350,7 @@ async fn item(
     let strip = format!(
         r#"<div class="oml-strip" aria-label="Review">{}{}{}</div>"#,
         lineage(&card, &reviewer, same_user),
+        verdict_line(&card, &reviewer),
         form(
             view.side.path(),
             action,
@@ -367,7 +368,6 @@ async fn item(
             "Record verdict",
             true,
         ),
-        verdict_line(&card, &reviewer),
     );
     let out = card.render(&View {
         decision: true,

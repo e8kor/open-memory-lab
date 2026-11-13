@@ -250,7 +250,7 @@ details.oml-more>summary{cursor:pointer;min-height:var(--target-min);display:inl
    details, outside the summary, and stay visible; the body and the review strip follow them and
    show only while the details is open, by a sibling rule, with no script. article.oml-mc.page
    draws everything. Only var(--…) from tokens.css. */
-.oml-mcs{list-style:none;margin:0 0 var(--space-4);padding:0;display:flex;flex-direction:column;gap:var(--space-2);max-width:var(--card-max)}
+.oml-mcs{list-style:none;margin:0 0 var(--space-4);padding:0;display:flex;flex-direction:column;gap:var(--space-2);max-width:var(--card-max);width:100%;flex:1 1 100%}
 .oml-mlist>li{list-style:none}
 .oml-mc{display:flex;flex-direction:column;background:var(--ground-alt);border:1px solid var(--rule);border-radius:var(--radius-md);container-type:inline-size;min-width:0;width:100%;max-width:var(--card-max)}
 .oml-mc:has(>.mc-d[open]){border-color:var(--control-border)}
@@ -314,6 +314,6 @@ details.oml-more>summary{cursor:pointer;min-height:var(--target-min);display:inl
 /* the review lists: a pick box beside each card, the bulk bar, the waiting table */
 .oml-pick{display:grid;grid-template-columns:auto minmax(0,1fr);gap:var(--space-2);align-items:start}
 .oml-pick>.box{display:flex;align-items:center;min-height:calc(var(--target-min) + var(--space-6))}
-.oml-bulkbar{display:flex;flex-direction:column;gap:var(--space-2);border:1px solid var(--control-border);border-radius:var(--radius-md);background:var(--panel);padding:var(--space-3) var(--space-4);max-width:var(--card-max)}
+.oml-bulkbar{display:flex;flex-direction:column;gap:var(--space-2);border:1px solid var(--control-border);border-radius:var(--radius-md);background:var(--panel);padding:var(--space-3) var(--space-4);max-width:var(--card-max);width:100%;flex:1 1 100%}
 @container (max-width:479px){.oml-checks li{grid-template-columns:minmax(0,1fr)}}
 /* ==== end MemoryCard and ReviewCard ==== */
