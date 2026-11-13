@@ -277,10 +277,10 @@ enum GuardrailsCommand {
 
 #[derive(Subcommand)]
 enum ChatCommand {
-    /// Open your `chat` workarea under your user root and print OML_CHAT_WORKAREA
+    /// Open the key's `chat` workarea under its user root and print OML_CHAT_WORKAREA
     /// for plugin capture and recall. Requires a person's key.
     Init {
-        /// Parent by id or name; omitted, your key's user root.
+        /// Parent by id or name; omitted, the key's user root.
         #[arg(long)]
         parent: Option<String>,
     },
