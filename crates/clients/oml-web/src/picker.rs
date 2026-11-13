@@ -90,6 +90,8 @@ pub struct Names {
     more: bool,
     /// The read failed: the request id, and nothing is known.
     unavailable: Option<String>,
+    /// Built from another read than the tree's: a name not here may exist.
+    partial: bool,
 }
 
 impl Names {
@@ -150,7 +152,7 @@ impl Names {
             places,
             roots,
             more,
-            unavailable: None,
+            ..Self::default()
         }
     }
 
@@ -159,6 +161,35 @@ impl Names {
     pub fn unavailable(request_id: String) -> Self {
         Self {
             unavailable: Some(request_id),
+            ..Self::default()
+        }
+    }
+
+    /// Names from a read the page already made, `(id, path)` each, with
+    /// the user roots it knows, and no call. Such a set is never taken as
+    /// every workarea the viewer reads, so a name it lacks is left to the
+    /// API.
+    #[must_use]
+    pub fn of_places(
+        places: impl IntoIterator<Item = (String, String)>,
+        roots: impl IntoIterator<Item = String>,
+    ) -> Self {
+        let roots: BTreeSet<String> = roots.into_iter().collect();
+        let mut seen = BTreeSet::new();
+        let places = places
+            .into_iter()
+            .filter(|(id, _)| seen.insert(id.clone()))
+            .map(|(id, path)| Place {
+                reference: reference(&path, |l| roots.contains(l)),
+                name: path.rsplit('.').next().unwrap_or_default().to_owned(),
+                id,
+                path,
+            })
+            .collect();
+        Self {
+            places,
+            roots,
+            partial: true,
             ..Self::default()
         }
     }
@@ -208,7 +239,7 @@ impl Names {
     /// Whether the read holds every workarea the viewer reads, so a name
     /// it lacks is one the viewer cannot read.
     fn whole(&self) -> bool {
-        !self.more && self.unavailable.is_none()
+        !self.more && !self.partial && self.unavailable.is_none()
     }
 
     /// The workarea `typed` names: by id, by reference, or by a bare name
