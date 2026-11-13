@@ -731,3 +731,45 @@ async fn the_pickers_hint_read_costs_less_than_browses_counted_read() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// The redesign's fix round (bulk D): the top label read
+// ---------------------------------------------------------------------------
+
+/// A page that names a workarea under a top label it does not know reads
+/// that label's node once, `GET /v2/workareas/{top}/tree?limit=1`, whose
+/// `user_root` mark says whether the names beneath it are `<user>.<name>`
+/// (design notes row 20). Its store calls, as the admin key reading a
+/// person's root and as a person's reviewer key reading its own, printed
+/// so the counts ADR-0070's as-built rows state are the ones measured.
+#[tokio::test]
+async fn the_top_label_read_costs_the_gate_and_one_tree_walk() {
+    let rig = rig().await;
+    let admin = get(
+        &rig.router,
+        "/v2/workareas/bob/tree?limit=1",
+        &web(&rig.alice, "admin"),
+        true,
+    )
+    .await;
+    let review = get(
+        &rig.router,
+        "/v2/workareas/alice/tree?limit=1",
+        &web(&rig.alice, "review"),
+        true,
+    )
+    .await;
+    assert_eq!(admin.status, StatusCode::OK, "{}", admin.body);
+    assert_eq!(review.status, StatusCode::OK, "{}", review.body);
+    assert_eq!(admin.body["items"][0]["user_root"], true, "{}", admin.body);
+    assert_eq!(review.body["items"][0]["user_root"], true, "{}", review.body);
+    println!(
+        "store calls: top label read as admin {}, as review {}",
+        admin.store_calls(),
+        review.store_calls()
+    );
+    // Measured 2026-11-13 over the in-memory store: the admin key reads
+    // the structure, the reviewer key its access as well.
+    assert_eq!(admin.store_calls(), 4, "{}", admin.line);
+    assert_eq!(review.store_calls(), 7, "{}", review.line);
+}

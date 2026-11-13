@@ -1049,6 +1049,31 @@ amendment of the same date, which holds the decision, R2 and what is not changed
 | d7 (b), d4 | the Review view of the user page holds review next only, "bulk review staying the admin page's (ADR-0055 d1), so the person's page refuses its acts as no action of the page" | the person's Review view holds review next, the held listing (`GET /v2/review/held`) and a one-id verdict from it (`POST /v2/review/verdicts/bulk` with one id). The page's closed action set gains that one verdict; the admin page's queue and bulk review are unchanged, and no selection of many is added on the person's side. A `GET` of the view gains the listing's reads, and `web_console_reads.rs` is updated to the new count with this reason; the post-redirect-get of d3 layer 4 holds for the verdict | the decision is "Open to judge", and the listing and the verdict are operations the API serves to `<user>-review` already |
 | d8 | the budget is p95 page time no more than 5 ms above today's; the counted tree, `GET /v2/workareas/{workarea}/tree?counts=true`, is the costly read of the pages that make it, the Atlas against Memories and Review, which do not ([web.md](../benchmarks/web.md)), and a picker with counts on every page would add it to Memories and both Reviews | the budget is kept for the picker and is not widened. A picker's hints name workareas only, from the uncounted tree or from data the page already reads, on Memories, Atlas and both Reviews of both sides; a count is shown only inside an opened Browse, the one place a page makes the counted read (the mockups' `?browse=1`; the mechanism is the build's). The build measures what the hints add against d8 and states any miss as the rows of [#286](#the-re-measurement-of-2026-11-12-286) do, and records the reads of each changed `GET` in `web_console_reads.rs` | the cost of a picker is where its counts are, not its names; a count is asked for by opening Browse. The cost: a hint carries no count until Browse is opened |
 
+### As built: the reads each changed page makes (the fix round of 2026-11-13)
+
+The redesign's build added reads the rows above did not count, and its review found them. The fix
+round removed what a page did not need and states the rest here. Counts are the `oml-web` page's
+API calls after the session check's `whoami` pair, on v0.7.2 (`main`), on the redesign's first
+build and as built; the store calls per API call are the ones `web_console_reads.rs` measures over
+the in-memory store. The page times are measured by the pre-tag web benchmark
+([web.md](../benchmarks/web.md)), not here.
+
+| Page (`GET`) | v0.7.2 | first build | as built | What the as-built calls are |
+|---|---|---|---|---|
+| Memories, person | 2 | 3 to 12 | 2 | the listing, and one page of the uncounted tree for the hints (8 store calls as `<user>-web`); the key list (12) is no longer read, since the card names no author's kind; a text search that names an author reads it beside the recall |
+| Memories, admin | 1 | 2 to 11 | 2 | the admin search, one page of the tree (4), and one top label read per workarea's top label the page does not know, which is none unless the tree's first page stops before it |
+| Atlas, person | 2 | 3 to 12 | 3 | the counted tree with its offers, the mode offers, and one page of the tree for the hints |
+| Atlas, admin | 2 | 2 | 2 (3 when scoped below `universe`) | as v0.7.2, and the hints' one page when the scope is not `universe` |
+| Review, person | 0 | 1 | 1, and 1 per other top label | the held listing (4); a top label read (7 as `<user>-review`) for each top label other than the person's root under which a held row sits deeper than one level |
+| Review, one item (`?memory=` or `?serve=`) | 1 | 2 or 3 | 2 or 3, and 0 or 1 | the named read (4), the person's key list (12) and, for an edit or a retirement, the replaced version; a top label read when the item's top label is not the person's root. The key list stays: `same user` comes from it alone, since the named read serves no `same_user` mark and a flag in the link could be forged |
+| Review, admin | 2 | 2 | 3 | the queue, the held listing and one page of the tree as the admin key (4), whose marks name the queue's workareas by reference; a top label read only past that page |
+| One memory, person | 1 | 1 or 2 | 1 or 2 | the read, and for a successor the replaced version as the same key |
+| One memory, admin | 1 | 2 or 3 | 2, and 0 or 1 | the journalled admin read and the workarea's review policy, which the Verdicts line ("1 of the 2 approvals ...") needs; a top label read (4) when the workarea is not in the author's own root. The replaced version is a second journalled admin read, made only behind "Show the change" (`&change=1`), so the page makes no journalled read the admin did not ask for |
+
+The top label read is `GET /v2/workareas/{top}/tree?limit=1`: a path alone cannot tell
+`universe.platform.oncall`, named `oncall`, from `universe.alice.docs`, named `alice.docs`, and the
+node's `user_root` mark can.
+
 ## Consequences
 
 - `oml-web`, `oml-page` and `oml-sdk` join the workspace; `oml-transport-http` loses its page

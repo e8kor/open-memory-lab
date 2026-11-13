@@ -424,15 +424,33 @@ enum Act<'a> {
 async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
     let credential = view.session.credential(Capacity::Admin);
     let ids = view.calls.next_ids();
-    let rows = view
-        .web
-        .api
-        .review_queue(&call(&credential, &ids))
-        .await
-        .map_err(|e| Box::new(outcome::page(&e, view.calls, view.side.path())))?;
+    // Beside the queue, one page of the tree as the admin key, whose
+    // `user_root` marks name the top labels' kinds (design notes row 20):
+    // one call, where a read per person's root would grow with the tenant.
+    let own = view.session.whoami.user.as_ref().map(|u| u.name.as_str());
+    let queue_call = call(&credential, &ids);
+    let (rows, tree) = tokio::join!(
+        view.web.api.review_queue(&queue_call),
+        Names::read(
+            view.web,
+            &credential,
+            view.calls,
+            "universe",
+            own,
+            picker::LIST_HINTS_PAGES
+        ),
+    );
+    let rows = rows.map_err(|e| Box::new(outcome::page(&e, view.calls, view.side.path())))?;
     let page = view.side.path();
-    let roots = view
-        .roots(Capacity::Admin, rows.items.iter().map(|r| r.path.as_str()))
+    let roots = tree
+        .roots()
+        .clone()
+        .learn(
+            view.web,
+            &credential,
+            view.calls,
+            rows.items.iter().map(|r| r.path.as_str()),
+        )
         .await;
     let mut body = String::from(
         r#"<h2>Queue</h2><p class="desc">Held memories per workarea, every one of the tenant's; the list below shows only what this reviewer key may judge.</p><table><tr><th>Workarea</th><th>Held</th><th>Oldest since</th></tr>"#,
