@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Open Memory Lab for you</title>
-<meta name="description" content="Stop re-explaining your work to AI. Your agents save your projects, preferences and decisions; approve what is worth keeping, and Claude Code, claude.ai and your phone recall it.">
+<title>Open Memory Lab for personal use</title>
+<meta name="description" content="Stop re-explaining work to AI. Agents save projects, preferences and decisions; approve what is worth keeping, and Claude Code, claude.ai and a phone recall it.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="{{GROUND_DARK}}" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="{{GROUND_LIGHT}}" media="(prefers-color-scheme: light)">
 <link rel="canonical" href="https://memory.doublegate.io/personal">
-<meta property="og:title" content="Open Memory Lab for you">
-<meta property="og:description" content="Stop re-explaining your work to AI. Nothing sticks until you approve it.">
+<meta property="og:title" content="Open Memory Lab for personal use">
+<meta property="og:description" content="Stop re-explaining work to AI. Nothing sticks until it is approved.">
 <meta property="og:url" content="https://memory.doublegate.io/personal">
 <link rel="icon" type="image/svg+xml" href="{{FAVICON}}">
 <style>
@@ -23,16 +23,16 @@
 <main class="site">
   <div class="hero">
     <div class="hero-copy">
-      <h1>Stop re-explaining your work to AI.</h1>
-      <p class="lede">Your agents save your projects, preferences and decisions. Approve what is worth keeping, and Claude Code, claude.ai and your phone all recall it.</p>
-      <div class="row"><a class="btn primary" href="{{DOCS_URL}}start/quickstart/">Run it yourself</a><a class="btn" href="{{CONTACT_URL}}">Ask about access</a></div>
-      <p class="caption">Your own server takes about five minutes to start on Linux, and Claude Code can use it from your laptop. claude.ai and phones cannot reach a laptop, so for them it needs a public HTTPS address. Hosted access is by invitation: <a href="{{CONTACT_URL}}">{{CONTACT_EMAIL}}</a>.</p>
+      <h1>Stop re-explaining work to AI.</h1>
+      <p class="lede">Agents save projects, preferences and decisions. Approve what is worth keeping, and Claude Code, claude.ai and a phone all recall it.</p>
+      <div class="row"><a class="btn primary" href="{{DOCS_URL}}start/quickstart/">Run a local server</a><a class="btn" href="{{CONTACT_URL}}">Ask about access</a></div>
+      <p class="caption">A local server takes about five minutes to start on Linux, and Claude Code can use it from the same laptop. claude.ai and phones cannot reach a laptop, so for them it needs a public HTTPS address. Hosted access is by invitation: <a href="{{CONTACT_URL}}">{{CONTACT_EMAIL}}</a>.</p>
     </div>
     <div class="stack" role="img" aria-label="Three example memories: two approved, saved from Claude Code and claude.ai; one waiting for your approval.">
       <ul class="mlist" aria-hidden="true">
-        <li class="mrow"><span class="top"><span class="chip is-promoted">{{GLYPH:promoted}}approved</span><span class="tx">This repo's tests run with cargo nextest, never cargo test.</span></span><span class="sub"><span class="actor">{{GLYPH:agent}}<span class="who">claude-code</span></span><span class="vb"><ol><li><i class="superseded"></i></li><li aria-current="true"><i class="promoted"></i></li></ol>v2 · current</span><span>you approved</span></span></li>
-        <li class="mrow"><span class="top"><span class="chip is-promoted">{{GLYPH:promoted}}approved</span><span class="tx">Write docs in British English, sentence-case headings.</span></span><span class="sub"><span class="actor">{{GLYPH:agent}}<span class="who">claude-ai</span></span><span class="vb"><ol><li aria-current="true"><i class="promoted"></i></li></ol>v1 · current</span><span>you approved</span></span></li>
-        <li class="mrow"><span class="top"><span class="chip is-held">{{GLYPH:held}}waiting</span><span class="tx">The garden project moved from Notion to a plain Markdown folder.</span></span><span class="sub"><span class="actor">{{GLYPH:agent}}<span class="who">claude-mobile</span></span><span class="vb"><ol><li aria-current="true"><i class="held"></i></li></ol>v1</span><span>waits for you</span></span></li>
+        <li class="mrow"><span class="top"><span class="chip is-promoted">{{GLYPH:promoted}}approved</span><span class="tx">This repo's tests run with cargo nextest, never cargo test.</span></span><span class="sub"><span class="actor">{{GLYPH:agent}}<span class="who">claude-code</span></span><span class="vb"><ol><li><i class="superseded"></i></li><li aria-current="true"><i class="promoted"></i></li></ol>v2 · current</span><span>approved by the user</span></span></li>
+        <li class="mrow"><span class="top"><span class="chip is-promoted">{{GLYPH:promoted}}approved</span><span class="tx">Write docs in British English, sentence-case headings.</span></span><span class="sub"><span class="actor">{{GLYPH:agent}}<span class="who">claude-ai</span></span><span class="vb"><ol><li aria-current="true"><i class="promoted"></i></li></ol>v1 · current</span><span>approved by the user</span></span></li>
+        <li class="mrow"><span class="top"><span class="chip is-held">{{GLYPH:held}}waiting</span><span class="tx">The garden project moved from Notion to a plain Markdown folder.</span></span><span class="sub"><span class="actor">{{GLYPH:agent}}<span class="who">claude-mobile</span></span><span class="vb"><ol><li aria-current="true"><i class="held"></i></li></ol>v1</span><span>waits for approval</span></span></li>
       </ul>
     </div>
   </div>
@@ -40,22 +40,22 @@
   <section aria-labelledby="why-h">
     <h2 id="why-h">Tell it once</h2>
     <div class="vals">
-      <div><span class="v-prom">{{GLYPH:promoted}}</span><h3>One memory, many tools</h3><p class="caption">What Claude Code saves in the morning, claude.ai and your phone recall once you approve it.</p></div>
-      <div><span class="v-held">{{GLYPH:person}}</span><h3>You decide what sticks</h3><p class="caption">Until you approve a memory, your other tools never see it, so a wrong guess doesn't spread. The Review page, <code>/web/review</code>, shows them one at a time, with anything the scan flagged; on a server you run, <code>oml review list</code> lets you approve a batch in one act.</p></div>
-      <div><span class="v-gate">{{GLYPH:gate}}</span><h3>Kept to your workarea</h3><p class="caption">Your memories live in a workarea of your own, which other people's keys read only if granted. On the hosted server its operator can read them; on a server you run, they stay with you. A pasted API key or private key is refused, not saved.</p></div>
+      <div><span class="v-prom">{{GLYPH:promoted}}</span><h3>One memory, many tools</h3><p class="caption">What Claude Code saves in the morning, claude.ai and a phone recall once it is approved.</p></div>
+      <div><span class="v-held">{{GLYPH:person}}</span><h3>Approval decides what sticks</h3><p class="caption">Until a memory is approved, other tools never see it, so a wrong guess doesn't spread. The Review page, <code>/web/review</code>, shows them one at a time, with anything the scan flagged; on a self-run server, <code>oml review list</code> approves a batch in one act.</p></div>
+      <div><span class="v-gate">{{GLYPH:gate}}</span><h3>Kept to one workarea</h3><p class="caption">Memories live in a workarea of their own, which other people's keys read only if granted. On the hosted server its operator can read them; on a self-run server, they stay with the user. A pasted API key or private key is refused, not saved.</p></div>
     </div>
   </section>
 
   <section aria-labelledby="connect-h">
     <div class="start">
       <div class="hero-copy">
-        <h2 id="connect-h">Connect claude.ai and your phone in three steps</h2>
+        <h2 id="connect-h">Connect claude.ai and a phone in three steps</h2>
         <ol>
           <li><b>Get a code.</b> Sign in at <code>/web</code>, open Keys, issue a connector key and copy its connect code. It works once, for ten minutes.</li>
           <li><b>Add the connector.</b> On claude.ai, open Customize &gt; Connectors and add a custom connector at <code>https://memory.doublegate.io/mcp</code>.</li>
-          <li><b>Paste and confirm.</b> Paste the code on the page that opens. Every Claude app on that account, your phone included, can then use it.</li>
+          <li><b>Paste and confirm.</b> Paste the code on the page that opens. Every Claude app on that account, a phone included, can then use it.</li>
         </ol>
-        <p class="caption">Claude's Free plan allows one custom connector. Connecting is verified live; a full remember and recall from claude.ai is not yet (<a href="{{DOCS_URL}}reference/limits/#not-verified-against-a-live-client">what we have not tested live</a>). Using Claude Code? Run the two commands in the terminal box, then <code>/reload-plugins</code>.</p>
+        <p class="caption">Claude's Free plan allows one custom connector. Connecting is verified live; a full remember and recall from claude.ai is not yet (<a href="{{DOCS_URL}}reference/limits/#not-verified-against-a-live-client">what has not been tested live</a>). Using Claude Code? Run the two commands in the terminal box, then <code>/reload-plugins</code>.</p>
         <p class="links"><a href="{{DOCS_URL}}guides/claude-ai-and-mobile/">claude.ai and phone guide</a><a href="{{DOCS_URL}}guides/claude-code/">Claude Code guide</a><a href="{{DOCS_URL}}operations/observability/">What is logged</a></p>
       </div>
       <div class="term">
@@ -66,7 +66,7 @@
 <span class="c"># then, in Claude Code: /reload-plugins</span></pre>
       </div>
     </div>
-    <div class="row"><a class="btn primary" href="{{DOCS_URL}}start/quickstart/">Run it yourself</a><a class="btn" href="/#start">Set it up</a><a class="btn" href="{{CONTACT_URL}}">Ask about access</a></div>
+    <div class="row"><a class="btn primary" href="{{DOCS_URL}}start/quickstart/">Run a local server</a><a class="btn" href="/#start">Set it up</a><a class="btn" href="{{CONTACT_URL}}">Ask about access</a></div>
   </section>
 </main>
 
