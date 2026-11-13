@@ -7002,3 +7002,45 @@ async fn an_unknown_and_an_unreadable_workarea_get_one_refusal_naming_only_reada
     assert!(page.contains(r#"type="text" value="alice.proj""#), "{page}");
     assert!(page.contains("inside proj"), "{page}");
 }
+
+#[tokio::test]
+async fn the_workareas_page_draws_fifty_rows_a_page_with_a_link_to_the_next() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    for n in 0..51 {
+        let name = format!("w{n:02}");
+        let (status, _, body) = act(
+            &rig,
+            &cookie,
+            "/web/workareas",
+            &[("action", "create_workarea"), ("name", &name)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{name}: {body}");
+    }
+    // alice's root and its 51 children: 52 rows.
+    let (status, _, first) = send(&rig.router, get("/web/workareas", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(
+        first.matches("<select name=\"op\"").count()
+            + first.matches("nothing to do here now").count(),
+        50,
+        "{first}"
+    );
+    assert!(
+        first.contains(r#"<p class="pager">1–50 of 52 · <a rel="next" href="/web/workareas?from=50">Next page</a></p>"#),
+        "{first}"
+    );
+    let (status, _, next) = send(&rig.router, get("/web/workareas?from=50", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{next}");
+    assert!(next.contains(">alice.w50<"), "{next}");
+    assert!(!next.contains(">alice.w00<"), "{next}");
+    assert!(
+        next.contains(
+            r#"<p class="pager">51–52 of 52 · <a href="/web/workareas">First page</a></p>"#
+        ),
+        "{next}"
+    );
+    let (status, _, _) = send(&rig.router, get("/web/workareas?from=x", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

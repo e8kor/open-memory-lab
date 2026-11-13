@@ -225,7 +225,7 @@ details.oml-more>summary{cursor:pointer;min-height:var(--target-min);display:inl
    and Browse as one bordered unit. A closed Browse is a link (a.oml-wa-ask) that asks the page
    for the counted read; an open one is a details. The unit is a filter form's first row. */
 .oml-wa{display:flex;flex-direction:column;gap:var(--space-1);min-width:0;max-width:var(--tile-max);margin:0 0 var(--space-3);border:1px solid var(--rule);border-radius:var(--radius-md);background:var(--ground-alt);padding:var(--space-3) var(--space-3) 0}
-.filters>.oml-wa{flex:1 1 100%;margin:0}
+.filters>.oml-wa{flex:0 1 var(--tile-max);margin:0 max(0px,calc(100% - var(--tile-max))) 0 0}
 .oml-wa>label{font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);letter-spacing:normal;text-transform:none;color:var(--ink-dim)}
 .oml-wa .ctl{display:flex;gap:var(--space-2);min-width:0}
 .oml-wa .ctl .oml-input{flex:1 1 0;min-width:0;width:100%;font-family:var(--font-mono);font-variant-ligatures:none}
@@ -234,7 +234,7 @@ details.oml-more>summary{cursor:pointer;min-height:var(--target-min);display:inl
 .oml-wa-on{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1) var(--space-3);margin:var(--space-1) 0 0;font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
 .oml-wa-on .ref{font:var(--t-state-weight) var(--t-meta-size)/var(--t-meta-line) var(--font-mono);color:var(--ink);font-variant-ligatures:none}
 .oml-wa-browse{display:flex;flex-direction:column;margin:var(--space-2) calc(-1 * var(--space-3)) 0;border-top:1px solid var(--rule-soft)}
-a.oml-wa-browse,.oml-wa-browse>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:var(--space-2);min-height:var(--control-h);padding:0 var(--space-3);font:var(--t-button-weight) var(--t-button-size)/var(--t-button-line) var(--font-body);color:var(--ink);text-decoration:none}
+a.oml-wa-browse,.oml-wa-browse>summary{list-style:none;cursor:pointer;display:flex;flex-direction:row;align-items:center;gap:var(--space-2);min-height:var(--control-h);padding:0 var(--space-3);font:var(--t-button-weight) var(--t-button-size)/var(--t-button-line) var(--font-body);color:var(--ink);text-decoration:none}
 .oml-wa-browse>summary::-webkit-details-marker{display:none}
 a.oml-wa-browse::after,.oml-wa-browse>summary::after{content:"";width:var(--space-2);height:var(--space-2);border-right:var(--stroke-strong) solid currentColor;border-bottom:var(--stroke-strong) solid currentColor;transform:translateY(-25%) rotate(45deg)}
 .oml-wa-browse[open]>summary::after{transform:translateY(25%) rotate(225deg)}
