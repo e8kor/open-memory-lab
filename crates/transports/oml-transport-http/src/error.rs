@@ -966,7 +966,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             StatusCode::NOT_FOUND,
             "access.not_found",
             "Every page act runs as one of the person's session keys (ADR-0045 d6).",
-            format!("you hold no {capacity} key on this organisation"),
+            format!("this session holds no {capacity} key on this organisation"),
         )
         .with_details(json!({ "capacity": capacity })),
         AppError::WebField { field, message } => {
@@ -998,7 +998,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "limit.quota",
             "An account holds at most its profile's memories, text bytes, monthly writes, keys and connections; an administrator can raise one (ADR-0068 d5; ADR-0071 d5).",
             format!(
-                "your {} quota of {} is reached",
+                "the {} quota of {} is reached",
                 reached.quota.as_str(),
                 reached.limit
             ),

@@ -213,7 +213,7 @@ where
         };
         let sealed = self.pages().signup_sealer.seal(&pending.encode());
         let body = format!(
-            r#"<div class="signin"><p class="label">Create your account</p><h1>One step left</h1><p class="desc">A private space for your memories, a key for each agent, and a review page. Your agents' writes wait for your review; the operator of this server can read what you store.</p><form method="post" action="/web/sign-up"><input type="hidden" name="terms_version" value="{}"><label><input type="checkbox" name="accept_terms" value="yes" required> I accept the <a href="{}">terms</a> (version {}) and have read the <a href="{}">privacy notice</a>.</label><p class="oml-consequence">Creates your account and signs you in.</p><button type="submit" class="primary">Create my account</button></form></div>"#,
+            r#"<div class="signin"><p class="label">Create an account</p><h1>One step left</h1><p class="desc">A private space for memories, a key for each agent, and a review page. The agents' writes wait for the user's review; the operator of this server can read what is stored.</p><form method="post" action="/web/sign-up"><input type="hidden" name="terms_version" value="{}"><label><input type="checkbox" name="accept_terms" value="yes" required> I accept the <a href="{}">terms</a> (version {}) and have read the <a href="{}">privacy notice</a>.</label><p class="oml-consequence">Creates the account and signs in.</p><button type="submit" class="primary">Create account</button></form></div>"#,
             attr(&policy.terms_version),
             attr(&policy.terms_url),
             short(&policy.terms_version),
@@ -288,7 +288,7 @@ where
         };
         if fields.get("accept_terms").map(String::as_str) != Some("yes") {
             return Self::start_refused(
-                &field_error("accept_terms", "accept the terms to create your account"),
+                &field_error("accept_terms", "accept the terms to create the account"),
                 line,
             );
         }

@@ -4560,9 +4560,7 @@ pub(crate) fn parse_expected_version(sent: Option<Value>) -> Result<u32, ApiErro
             .with_details(json!({ "field": "/expected_version" }))
     };
     let Some(sent) = sent else {
-        return Err(refused(
-            "required: the claim's latest version as you last read it",
-        ));
+        return Err(refused("required: the claim's latest version as last read"));
     };
     sent.as_u64()
         .and_then(|v| u32::try_from(v).ok())

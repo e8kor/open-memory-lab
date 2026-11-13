@@ -3264,7 +3264,7 @@ async fn the_start_page_shows_a_credential_once_and_carries_its_one_script() {
     let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
     assert_eq!(csp, oml_web::start::start_csp());
     assert!(
-        page.contains("<script>") && page.contains("Issue my credential"),
+        page.contains("<script>") && page.contains("Issue credential"),
         "{page}"
     );
     let csrf = csrf_of(&page);
@@ -3476,7 +3476,7 @@ async fn a_deletion_request_needs_the_word_delete_and_is_shown_as_pending() {
     assert_eq!(headers[header::LOCATION], "/web/start?done=requested");
     let (_, _, page) = send(&rig.router, get("/web/start?done=requested", Some(&cookie))).await;
     assert!(
-        page.contains("Your deletion request is with the administrator"),
+        page.contains("The deletion request is with the administrator"),
         "{page}"
     );
     assert!(!page.contains("Type delete to confirm"), "{page}");
@@ -5452,9 +5452,9 @@ async fn the_keys_pages_show_a_keys_expiry_expired_mark_and_rate_as_the_api_serv
 
 /// The sentence the Keys and Start pages draw for a person whose session
 /// key carries a denial, and the muted line beneath it.
-const DENIED_SESSION: &str = "Your web session is restricted: you cannot issue keys, get connect codes or cut off keys. An administrator can do these for you.";
+const DENIED_SESSION: &str = "This web session is restricted: it cannot issue keys, get connect codes or cut off keys. An administrator can.";
 const DENIED_STILL_WORKS: &str =
-    "Exporting your memories, requesting deletion and signing out still work.";
+    "Exporting memories, requesting deletion and signing out still work.";
 
 /// The forms the Keys page and the Start page draw for the three acts a
 /// denied session key is refused.

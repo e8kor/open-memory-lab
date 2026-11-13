@@ -245,7 +245,7 @@ async fn the_keys_page_reads_the_persons_usage_beside_the_key_list() {
     let answered = page(script, "/web/keys").await;
     assert_eq!(answered.status, StatusCode::OK, "{}", answered.body);
     assert!(
-        answered.body.contains("<h2>Your usage</h2>") && answered.body.contains("4 / 1000"),
+        answered.body.contains("<h2>Usage</h2>") && answered.body.contains("4 / 1000"),
         "{}",
         answered.body
     );

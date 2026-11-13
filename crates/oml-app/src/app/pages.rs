@@ -505,7 +505,7 @@ where
         let grants = match role {
             Role::Writer => vec![grant(Role::Writer), grant(Role::Reader)],
             Role::Reader => vec![grant(Role::Reader)],
-            _ => return Err(field("role", "a key you issue is a reader or a writer")),
+            _ => return Err(field("role", "an issued key is a reader or a writer")),
         };
         let req = IssueKeyRequest {
             profile: None,

@@ -75,12 +75,12 @@ impl Side {
 /// key (`access.verb_ceiling`, reason `session_key_denied`; ADR-0070 d2).
 /// Only an admin key denies a session key, and an admin key still does the
 /// three for the person.
-pub(crate) const DENIED_SESSION: &str = "Your web session is restricted: you cannot issue keys, get connect codes or cut off keys. An administrator can do these for you.";
+pub(crate) const DENIED_SESSION: &str = "This web session is restricted: it cannot issue keys, get connect codes or cut off keys. An administrator can.";
 
 /// The muted line under it: the export, the deletion request and sign-out
 /// read nothing of the key, so they still work (#335).
 const DENIED_STILL_WORKS: &str =
-    "Exporting your memories, requesting deletion and signing out still work.";
+    "Exporting memories, requesting deletion and signing out still work.";
 
 /// The word [`DENIED_SESSION`] uses, which marks the session's own key in
 /// the table.
@@ -394,7 +394,7 @@ fn secret_card(secret: &Secret) -> (&'static str, String) {
             (
                 "Key issued",
                 format!(
-                    r#"<h1>{}</h1><p class="desc">Shown once: copy it now. Then <a href="/web/setup">set up</a> your agent.</p>{note}<div class="card secret"><p class="label">For your agent</p><pre>{url}OML_API_KEY={}</pre></div><p><a href="{USER_KEYS_PATH}">Back to your keys</a></p>"#,
+                    r#"<h1>{}</h1><p class="desc">Shown once: copy it now. Then <a href="/web/setup">set up</a> the agent.</p>{note}<div class="card secret"><p class="label">For the agent</p><pre>{url}OML_API_KEY={}</pre></div><p><a href="{USER_KEYS_PATH}">Back to Keys</a></p>"#,
                     short(name),
                     attr(value)
                 ),
@@ -408,7 +408,7 @@ fn secret_card(secret: &Secret) -> (&'static str, String) {
         } => (
             "Connect code",
             format!(
-                r#"<p class="label">Connect code</p><h1>{}</h1><p class="desc">Shown once; works once and {}. Add a custom connector in Claude with this URL, then enter the code.</p><div class="card secret"><p class="label">Connector URL</p><pre>{}</pre><p class="label">Connect code</p><pre>{}</pre></div><p><a href="{USER_KEYS_PATH}">Back to your keys</a></p>"#,
+                r#"<p class="label">Connect code</p><h1>{}</h1><p class="desc">Shown once; works once and {}. Add a custom connector in Claude with this URL, then enter the code.</p><div class="card secret"><p class="label">Connector URL</p><pre>{}</pre><p class="label">Connect code</p><pre>{}</pre></div><p><a href="{USER_KEYS_PATH}">Back to Keys</a></p>"#,
                 short(name),
                 text(&expiry(expires_at, unix_now())),
                 attr(connector_url),
@@ -543,7 +543,7 @@ async fn user_view(
     };
     let _ = write!(
         body,
-        "<h2>Agent key</h2><p class=\"desc\">Your workarea only. The value is shown once. {EXPIRES_NOTE}</p>{}<h2>Connector key</h2><p class=\"desc\">For Claude on the web or a phone; its connect code is shown once. {EXPIRES_NOTE}</p>{}",
+        "<h2>Agent key</h2><p class=\"desc\">The user's workarea only. The value is shown once. {EXPIRES_NOTE}</p>{}<h2>Connector key</h2><p class=\"desc\">For Claude on the web or a phone; its connect code is shown once. {EXPIRES_NOTE}</p>{}",
         issue("issue_key", "Issue key", true),
         issue("connect_key", "Issue connector key", false)
     );
@@ -689,7 +689,7 @@ fn server_from(issuer: Option<String>, public_origin: Option<&str>) -> String {
 /// The line a page shows when no server address is known (ADR-0076 d8).
 pub(crate) const NO_SERVER: &str = "This server's address is not configured (no_server: set \
                                     web.public_url, or oauth.issuer on the lead); ask its \
-                                    operator for the URL to give your agents.";
+                                    operator for the URL to give the agents.";
 
 /// One act: the form checked as every act's is ([`acts::read`]), then its
 /// operation under the session's capacity credential and the form's
@@ -900,7 +900,7 @@ mod tests {
         assert!(
             unknown.contains(
                 "This server's address is not configured (no_server: set web.public_url, or \
-                 oauth.issuer on the lead); ask its operator for the URL to give your agents."
+                 oauth.issuer on the lead); ask its operator for the URL to give the agents."
             ),
             "{unknown}"
         );

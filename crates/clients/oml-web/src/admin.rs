@@ -451,7 +451,7 @@ pub async fn users_page(
     };
     let csrf = session.csrf();
     let mut body = String::from(
-        r#"<p class="label">Administration</p><h1>Quotas</h1><p class="lede">What each person holds against their quotas. Raising a quota, disabling a person and closing a deletion request are journalled under your admin key.</p><h2>Deletion requests</h2>"#,
+        r#"<p class="label">Administration</p><h1>Quotas</h1><p class="lede">What each person holds against their quotas. Raising a quota, disabling a person and closing a deletion request are journalled under the admin key.</p><h2>Deletion requests</h2>"#,
     );
     if listed.deletions.is_empty() {
         body.push_str(r#"<p class="dim">None pending.</p>"#);

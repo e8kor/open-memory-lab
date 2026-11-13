@@ -180,7 +180,7 @@ fn credential_card(client: Client, secret: &Secret, server: &str) -> String {
             ));
         }
         (Client::ClaudeCode, Secret::Key { value, .. }) => {
-            out.push_str(&copy_block("cred-key", "Your key, shown once", value));
+            out.push_str(&copy_block("cred-key", "Key, shown once", value));
             if server.is_empty() {
                 let _ = write!(out, r#"<p class="desc">{}</p>"#, keys::NO_SERVER);
             }
@@ -207,7 +207,7 @@ fn credential_card(client: Client, secret: &Secret, server: &str) -> String {
             }
             out.push_str(&copy_block(
                 "cred-key",
-                "Your key, shown once, as a Bearer token",
+                "Key, shown once, as a Bearer token",
                 value,
             ));
             let _ = write!(
@@ -223,7 +223,7 @@ fn credential_card(client: Client, secret: &Secret, server: &str) -> String {
 /// The notice the page's own act names, from a closed set.
 fn notice(fields: &Fields) -> Option<&'static str> {
     match fields.get("done")? {
-        "requested" => Some("Your deletion request is with the administrator."),
+        "requested" => Some("The deletion request is with the administrator."),
         _ => None,
     }
 }
@@ -262,11 +262,7 @@ fn render(
         body.push_str(&keys::denied_notice());
     }
     body.push_str(r#"<section class="card">"#);
-    body.push_str(&head(
-        "1. Choose your client",
-        "h2",
-        "Where will your agent run?",
-    ));
+    body.push_str(&head("1. Choose a client", "h2", "Where the agent runs."));
     body.push_str(r#"<nav class="toggle" aria-label="Client">"#);
     for c in Client::ALL {
         let on = if Some(c) == client {
@@ -284,29 +280,25 @@ fn render(
     body.push_str("</nav></section>");
     body.push_str(r#"<section class="card">"#);
     match (client, shown) {
-        (None, _) => body.push_str(&head(
-            "2. Get your credential",
-            "h2",
-            "Choose a client first.",
-        )),
+        (None, _) => body.push_str(&head("2. Get a credential", "h2", "Choose a client first.")),
         (Some(c), None) if denied => {
             // The API refuses the issue for this session's key, now and for
             // good, so no button is drawn (ADR-0070 d2).
             body.push_str(&head(
-                "2. Get your credential",
+                "2. Get a credential",
                 "h2",
                 &format!("No key can be issued for {} from this session.", c.shown()),
             ));
         }
         (Some(c), None) => {
             body.push_str(&head(
-                "2. Get your credential",
+                "2. Get a credential",
                 "h2",
                 &format!("One button issues a key for {}.", c.shown()),
             ));
             let _ = write!(
                 body,
-                r#"<details class="oml-help"><summary>?</summary><p>The key can write only into your own space, and every write waits for your review. A connect code works once, for ten minutes; a key's value is shown once and never again.</p></details><form method="post" action="{START_PATH}"><input type="hidden" name="action" value="{}"><input type="hidden" name="csrf_token" value="{}">{}<p class="oml-consequence">Issues one key; it counts against your limit of keys.</p><button type="submit" class="primary">Issue my credential</button></form>"#,
+                r#"<details class="oml-help"><summary>?</summary><p>The key can write only into the user's own space, and every write waits for the user's review. A connect code works once, for ten minutes; a key's value is shown once and never again.</p></details><form method="post" action="{START_PATH}"><input type="hidden" name="action" value="{}"><input type="hidden" name="csrf_token" value="{}">{}<p class="oml-consequence">Issues one key; it counts against the account's limit of keys.</p><button type="submit" class="primary">Issue credential</button></form>"#,
                 c.action(),
                 attr(csrf),
                 acts::nonce_field()
@@ -314,7 +306,7 @@ fn render(
         }
         (Some(c), Some((secret, server))) => {
             body.push_str(&head(
-                "2. Get your credential",
+                "2. Get a credential",
                 "h2",
                 "Shown once: copy it now.",
             ));
@@ -332,11 +324,11 @@ fn render(
     body.push_str(&head(
         "3. Wait for the first connection",
         "h2",
-        "Ask your agent to remember one thing about this project.",
+        "Ask the agent to remember one thing about this project.",
     ));
     let _ = write!(
         body,
-        r#"<ul aria-live="polite"><li id="st-wait"{}>{}Waiting for your first connection…</li><li id="st-conn"{}>{}Connected ✓</li><li id="st-held"{}>{}First memory held — <a href="{}">review it</a></li><li id="st-promoted"{}>{}First memory reviewed ✓</li></ul></section>"#,
+        r#"<ul aria-live="polite"><li id="st-wait"{}>{}Waiting for the first connection…</li><li id="st-conn"{}>{}Connected ✓</li><li id="st-held"{}>{}First memory held — <a href="{}">review it</a></li><li id="st-promoted"{}>{}First memory reviewed ✓</li></ul></section>"#,
         hide(!status.connected),
         glyph_svg("in-progress"),
         hide(status.connected),
@@ -352,20 +344,20 @@ fn render(
     }
     body.push_str(r#"<section class="card">"#);
     body.push_str(&head(
-        "Your account",
+        "Account",
         "h2",
         "The operator's admins can read every memory through a journalled read.",
     ));
     let _ = write!(
         body,
-        r#"<p class="oml-consequence">A JSON download of every memory in your space, held and rejected included, and your keys.</p><p><a href="{EXPORT_PATH}">Export my memories</a></p>"#
+        r#"<p class="oml-consequence">A JSON download of every memory in this account's space, held and rejected included, and its keys.</p><p><a href="{EXPORT_PATH}">Export memories</a></p>"#
     );
     if person.deletion_requested_at.is_some() {
-        body.push_str(r#"<p class="notice" role="status">Your deletion request is with the administrator. Your agents keep working until it is closed.</p>"#);
+        body.push_str(r#"<p class="notice" role="status">The deletion request is with the administrator. The account's agents keep working until it is closed.</p>"#);
     } else {
         let _ = write!(
             body,
-            r#"<form method="post" action="{START_PATH}"><input type="hidden" name="action" value="request_deletion"><input type="hidden" name="csrf_token" value="{}">{}<label>Type delete to confirm<input name="confirm" autocomplete="off" required></label><p class="oml-consequence">Your agents keep working until an admin acts. Closing the request disables your account and cuts off your keys; your memories stay on record until the operator erases them.</p><button type="submit">Request deletion</button></form>"#,
+            r#"<form method="post" action="{START_PATH}"><input type="hidden" name="action" value="request_deletion"><input type="hidden" name="csrf_token" value="{}">{}<label>Type delete to confirm<input name="confirm" autocomplete="off" required></label><p class="oml-consequence">The account's agents keep working until an admin acts. Closing the request disables the account and cuts off its keys; its memories stay on record until the operator erases them.</p><button type="submit">Request deletion</button></form>"#,
             attr(csrf),
             acts::nonce_field()
         );
