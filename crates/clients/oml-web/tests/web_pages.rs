@@ -570,7 +570,9 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
         page.contains("[must] Run the tests before every commit."),
         "{page}"
     );
-    assert!(page.contains("universe.alice"), "{page}");
+    // Its source by the reference the field takes, not by its path.
+    assert!(page.contains("(alice, auto-"), "{page}");
+    assert!(!page.contains("universe.alice"), "{page}");
     let (status, _, _) = act(
         &rig,
         &cookie,
@@ -5910,7 +5912,7 @@ async fn a_denied_persons_keys_and_start_pages_state_the_refusal_and_draw_no_key
         );
         // On the Keys page the sentence comes first, above the table.
         assert!(
-            keys.find(DENIED_SESSION) < keys.find("<table>"),
+            keys.find(DENIED_SESSION) < keys.find("<table"),
             "{target}: {keys}"
         );
         // The session's own key is the one row marked, in the sentence's
@@ -7912,6 +7914,11 @@ async fn the_admin_memory_page_reads_the_replaced_version_only_when_the_admin_as
     );
     assert!(page.contains("Change against v1"), "{page}");
     assert!(page.contains("<del>noon.</del>"), "{page}");
+    // Replaces names the claim and the version, as the person's page
+    // does, and Derives from does not name the same version again.
+    let replaces = between(&page, "<dt>Replaces</dt><dd>", "</dd>");
+    assert!(replaces.contains(" · v1</a>"), "{replaces}");
+    assert!(!page.contains(&format!(">{target}</a>")), "{page}");
 }
 
 /// Review's Browse link opens Browse on both sides, as on Memories (bulk D
@@ -7990,4 +7997,45 @@ async fn a_judge_form_resent_with_another_id_conflicts_and_judges_nothing() {
     let (status, _, _) = act(&rig, &cookie, "/web/review", &fields).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(rig.head().await, head, "a replay journals nothing");
+}
+
+/// The redesign's pages, as the fix round left them: the Atlas has its own
+/// line under its heading on both sides, the admin side's Memories and
+/// Atlas name the key that reads, the three wide tables stack below 600px,
+/// and the decision is a chip, not a button (bulk D fixes).
+#[tokio::test]
+async fn the_atlas_has_its_own_lede_and_the_admin_lists_name_the_key_that_reads() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let alice = signed_in(&rig, "sub-1", EMAIL).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (_, _, atlas) = send(&rig.router, get("/web/atlas", Some(&alice))).await;
+    let (_, _, list) = send(&rig.router, get("/web/memories", Some(&alice))).await;
+    let lede = |page: &str| between(page, "</h1></div><p class=\"desc\">", "</p>").to_owned();
+    assert_ne!(lede(&atlas), lede(&list), "{atlas}");
+    assert!(lede(&atlas).contains("workarea"), "{atlas}");
+    for path in ["/web/admin/memories", "/web/admin/atlas"] {
+        let (_, _, page) = send(&rig.router, get(path, Some(&boss))).await;
+        assert!(
+            lede(&page).starts_with("Read as <code>boss-admin</code>"),
+            "{path}: {page}"
+        );
+    }
+    let (_, _, admin_atlas) = send(&rig.router, get("/web/admin/atlas", Some(&boss))).await;
+    let (_, _, admin_list) = send(&rig.router, get("/web/admin/memories", Some(&boss))).await;
+    assert_ne!(lede(&admin_atlas), lede(&admin_list));
+    for (path, class) in [("/web/workareas", "t-wa"), ("/web/keys", "t-keys")] {
+        let (_, _, page) = send(&rig.router, get(path, Some(&alice))).await;
+        assert!(
+            page.contains(&format!(r#"<table class="oml-stack {class}">"#)),
+            "{path}: {page}"
+        );
+    }
+    let sheet = oml_page::web::STYLESHEET;
+    assert!(sheet.contains(".oml-stack.t-wa td:nth-child(2)::before{content:\"Inside\"}"));
+    let decision = between(sheet, ".oml-decision{", "}");
+    assert!(
+        decision.contains("border-radius:var(--radius-pill)"),
+        "{decision}"
+    );
 }

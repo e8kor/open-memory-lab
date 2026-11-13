@@ -299,6 +299,14 @@ async fn guardrails(
             shell("", &session.personal(), crate::GUARDRAILS_PATH, None, &body),
         );
     };
+    // Each rule's source by its reference, the name the field takes
+    // (design notes row 20); the lines are otherwise the frame's.
+    let mut set = set;
+    for g in &mut set.guardrails {
+        if let Some(path) = &g.workarea_path {
+            g.workarea_path = Some(names.reference(path));
+        }
+    }
     body.push_str("<ul>");
     for line in frame::lines(&set) {
         let _ = write!(body, "<li>{}</li>", text(line.trim_start_matches("- ")));

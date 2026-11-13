@@ -293,7 +293,7 @@ pub(crate) fn table(
     denied: Option<&str>,
 ) -> String {
     let mut out = String::from(
-        "<table><tr><th>Key</th><th>Role</th><th>Access</th><th>State</th><th></th></tr>",
+        "<table class=\"oml-stack t-keys\"><tr><th>Key</th><th>Role</th><th>Access</th><th>State</th><th></th></tr>",
     );
     for key in keys {
         out.push_str(&row(key, side, csrf, user, denied));

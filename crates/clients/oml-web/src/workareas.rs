@@ -507,7 +507,7 @@ fn table(
         Side::Admin => ADMIN_MEMORIES_PATH,
     };
     let mut out = String::from(
-        "<table><tr><th>Workarea</th><th>Inside</th><th>Status</th><th>Mode</th><th>Act</th></tr>",
+        "<table class=\"oml-stack t-wa\"><tr><th>Workarea</th><th>Inside</th><th>Status</th><th>Mode</th><th>Act</th></tr>",
     );
     for ((node, reference), row) in nodes[shown.clone()]
         .iter()

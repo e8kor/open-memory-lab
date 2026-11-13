@@ -92,12 +92,25 @@ impl Side {
         }
     }
 
-    fn lede(self) -> &'static str {
-        match self {
-            Self::User => {
-                "Newest first. A held memory waits for another identity's review. Its author and the agent's signed-in owner can read it; an in-progress workarea also serves it to readers."
-            }
-            Self::Admin => "Every memory, newest first. Each page read is journalled.",
+    /// The view's one line under its heading: on the admin side the
+    /// capacity line, which names the key that reads (BrandHeader,
+    /// MemoriesScreen, AtlasScreen).
+    fn lede(self, atlas: bool, session: &Session) -> String {
+        let admin = session.whoami.user.as_ref().map_or_else(
+            || "the admin key".to_owned(),
+            |u| format!("{}-admin", u.name),
+        );
+        match (self, atlas) {
+            (Self::User, false) => "Newest first. A held memory waits for another identity's review. Its author and the agent's signed-in owner can read it; an in-progress workarea also serves it to readers.".to_owned(),
+            (Self::User, true) => "Each workarea sized by the memories this account reads in it, by state.".to_owned(),
+            (Self::Admin, false) => format!(
+                "Read as <code>{}</code>: every memory of the tenant, newest first. Each page read is journalled. This key never recalls and never judges.",
+                text(&admin)
+            ),
+            (Self::Admin, true) => format!(
+                "Read as <code>{}</code>: every workarea of the tenant, sized by its memories, each row counted as structure. No text is read.",
+                text(&admin)
+            ),
         }
     }
 }
@@ -426,6 +439,7 @@ fn field(
 /// (ADR-0045 d22, d25, d27; design notes row 23).
 fn list_view(
     side: Side,
+    lede: &str,
     q: &ListQuery,
     page: Option<(&CardPage, &Roots)>,
     atlas: bool,
@@ -470,7 +484,7 @@ fn list_view(
     let mut out = format!(
         r#"<header class="oml-section-head"><div class="top"><h1>{}</h1></div><p class="desc">{}</p></header>"#,
         if atlas { "Atlas" } else { "Memories" },
-        side.lede(),
+        lede,
     );
     let _ = write!(
         out,
@@ -981,7 +995,14 @@ async fn list_page(
             side,
             &session,
             side.memories(),
-            &list_view(side, &q, cards.as_ref().map(|c| (c, &roots)), false, &field),
+            &list_view(
+                side,
+                &side.lede(false, &session),
+                &q,
+                cards.as_ref().map(|c| (c, &roots)),
+                false,
+                &field,
+            ),
         ),
         chosen.status(),
     )
@@ -1103,7 +1124,7 @@ async fn atlas_page(
     let browse = reused.or(browse);
     q.workarea = chosen.shown().map(str::to_owned);
     let field = field(side, &q, true, &chosen, &names, browse.as_ref());
-    let mut body = list_view(side, &q, None, true, &field);
+    let mut body = list_view(side, &side.lede(true, &session), &q, None, true, &field);
     body.push_str(&drawn);
     with_status(page(side, &session, side.atlas(), &body), chosen.status())
 }

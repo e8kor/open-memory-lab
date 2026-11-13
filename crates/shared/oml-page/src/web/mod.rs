@@ -567,8 +567,12 @@ pub fn refusal_page(
 /// `body`, and the footer.
 #[must_use]
 pub fn document(title: &str, body: &str) -> String {
-    page(title, body, JOURNALLED)
+    page(title, body, JOURNALLED_FOR_NO_ONE)
 }
+
+/// The footer's sentence on a page drawn for no one, where no account's
+/// keys act.
+const JOURNALLED_FOR_NO_ONE: &str = "Every act on these pages is journalled.";
 
 /// A whole page: the head with the one stylesheet and the `<title>`
 /// `<title> · OML`, `body`, and `footer`'s HTML.
@@ -908,5 +912,16 @@ mod tests {
             sheet.contains("header.top{position:sticky;top:0"),
             "the bar is pinned"
         );
+    }
+
+    /// A page drawn for no one, the sign-in page among them, speaks of no
+    /// account in its footer: nobody is signed in (bulk D fixes).
+    #[test]
+    fn a_page_for_no_one_names_no_account_in_its_footer() {
+        for page in [document("Sign in", "<main></main>"), bare("Terms", "")] {
+            let footer = &page[page.find("<footer").expect("a footer")..];
+            assert!(!footer.contains("account"), "{footer}");
+            assert!(footer.contains("journalled"), "{footer}");
+        }
     }
 }

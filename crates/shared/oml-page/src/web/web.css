@@ -113,6 +113,8 @@ td{padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--rule-soft
 td.mono{font-size:var(--t-meta-size)}
 tr:hover td{background:var(--panel)}
 @media (max-width:599px){table{display:block;overflow-x:auto}}
+/* Below 600px the Workareas, Keys and Quotas tables stack: one block per row, each cell on its own line under its column's word, so nothing breaks mid-word or clips (bulk D fixes). */
+@media (max-width:599px){table.oml-stack,.oml-stack tbody,.oml-stack tr,.oml-stack td{display:block;width:auto;overflow:visible}.oml-stack tr:first-child{display:none}.oml-stack tr{border-bottom:1px solid var(--rule-soft);padding:var(--space-2) 0}.oml-stack td{border:0;padding:var(--space-0\.5) 0;overflow-wrap:break-word}.oml-stack td:first-child{font-weight:var(--t-button-weight)}.oml-stack td::before{display:inline-block;min-width:var(--space-16);margin-right:var(--space-2);color:var(--ink-faint);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body)}.oml-stack select{max-width:100%}.oml-stack.t-wa td:nth-child(2)::before{content:"Inside"}.oml-stack.t-wa td:nth-child(3)::before{content:"Status"}.oml-stack.t-wa td:nth-child(4)::before{content:"Mode"}.oml-stack.t-keys td:nth-child(2)::before{content:"Role"}.oml-stack.t-keys td:nth-child(3)::before{content:"Access"}.oml-stack.t-keys td:nth-child(4)::before{content:"State"}.oml-stack.t-quota td:nth-child(2)::before{content:"memories"}.oml-stack.t-quota td:nth-child(3)::before{content:"text stored"}.oml-stack.t-quota td:nth-child(4)::before{content:"writes"}.oml-stack.t-quota td:nth-child(5)::before{content:"keys"}.oml-stack.t-quota td:nth-child(6)::before{content:"connections"}.oml-stack.t-quota td:nth-child(7)::before{content:"requests/min"}}
 
 /* forms and buttons */
 form{margin:0}
@@ -290,7 +292,7 @@ details.oml-more>summary{cursor:pointer;min-height:var(--target-min);display:inl
 .oml-mc .vb li[aria-current] i{outline:var(--stroke) solid var(--ink);outline-offset:1px}
 .oml-mc>.mc-body{display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-1) var(--space-4) var(--space-4);min-width:0}
 .oml-mc .mc-body .findings ul{margin:0;padding:0;list-style:none}
-.oml-decision{display:inline-flex;align-items:center;gap:var(--space-1);white-space:nowrap;font:var(--t-button-weight) var(--t-label-size)/var(--t-label-line) var(--font-body);color:var(--ink);border:var(--stroke) solid var(--ink);border-radius:var(--radius-sm);padding:var(--space-0\.5) var(--space-2)}
+.oml-decision{display:inline-flex;align-items:center;gap:var(--space-1);white-space:nowrap;vertical-align:middle;font:var(--t-state-weight) var(--t-state-size)/var(--t-state-line) var(--font-mono);font-variant-ligatures:none;color:var(--ink);border:1px solid var(--ink-dim);border-radius:var(--radius-pill);padding:var(--space-0\.5) var(--space-2);background:transparent}
 /* the change against what a version replaces: a removed word struck through, an added one underlined and heavier */
 .oml-diff{border:1px solid var(--rule);border-radius:var(--radius-md);min-width:0}
 .oml-diff>summary{cursor:pointer;display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1) var(--space-2);min-height:var(--control-h);padding:var(--space-1) var(--space-3);font:var(--t-button-weight) var(--t-button-size)/var(--t-button-line) var(--font-body);color:var(--ice)}

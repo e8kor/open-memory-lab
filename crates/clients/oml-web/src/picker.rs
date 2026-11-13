@@ -538,6 +538,24 @@ impl Names {
     }
 }
 
+/// The rows of `n` and of every node beneath it that `nodes` lists: the
+/// count the Atlas's tile shows for the same workarea, so Browse and the
+/// Atlas give one meaning to "readable".
+fn subtree_total(nodes: &[CountedNode], n: &CountedNode) -> u64 {
+    let mut total = Counts::of(&n.counts).total();
+    let mut stack: Vec<&str> = vec![n.id.as_str()];
+    while let Some(parent) = stack.pop() {
+        for child in nodes
+            .iter()
+            .filter(|c| c.parent_id.as_deref() == Some(parent) && c.id != parent)
+        {
+            total += Counts::of(&child.counts).total();
+            stack.push(child.id.as_str());
+        }
+    }
+    total
+}
+
 /// The edit distance of `a` and `b`, by characters.
 fn edits(a: &str, b: &str) -> usize {
     let b: Vec<char> = b.chars().collect();
@@ -977,7 +995,7 @@ impl Field<'_> {
                 ""
             },
             text(&r),
-            Counts::of(&n.counts).total(),
+            subtree_total(nodes, n),
             if n.user_root {
                 r#"<span class="oml-tag">user root</span>"#
             } else if n.parent_id.is_none() {
@@ -1169,6 +1187,49 @@ mod tests {
             "{html}"
         );
         assert!(html.contains(r#"aria-describedby="wa-hint""#), "{html}");
+    }
+
+    /// Browse counts each workarea as the Atlas's tile does: its own rows
+    /// and every row beneath it, in the same word (bulk D fixes).
+    #[test]
+    fn browse_counts_a_workarea_with_its_subtree_as_the_atlas_does() {
+        let node = |id: &str, name: &str, parent: Option<&str>, path: &str, n: u64, root: bool| {
+            serde_json::from_value::<CountedNode>(serde_json::json!({
+                "id": id, "name": name, "parent_id": parent, "path": path,
+                "status": "development", "mode": "standard", "user_root": root,
+                "counts": {"promoted": n, "held": 0, "in_progress": 0, "other": 0},
+            }))
+            .unwrap()
+        };
+        let browse = Browse::of(
+            vec![
+                node("u", "universe", None, "universe", 0, false),
+                node("a", "alice", Some("u"), "universe.alice", 1, true),
+                node("p", "proj", Some("a"), "universe.alice.proj", 3, false),
+            ],
+            false,
+        );
+        let names = Names::default();
+        let field = Field {
+            id: "wa",
+            action: "/web/memories",
+            keep: &[],
+            chosen: &Chosen::Every,
+            names: &names,
+            browse: Some(&browse),
+            admin: false,
+            standalone: false,
+            empty: "Empty: every readable workarea.",
+        };
+        let html = field.html();
+        assert!(
+            html.contains(r#">alice</a><span class="ct">4 readable</span>"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#">alice.proj</a><span class="ct">3 readable</span>"#),
+            "{html}"
+        );
     }
 
     #[test]

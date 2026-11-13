@@ -451,7 +451,7 @@ pub async fn users_page(
     };
     let csrf = session.csrf();
     let mut body = String::from(
-        r#"<p class="label">Administration</p><h1>Quotas</h1><p class="lede">What each person holds against their quotas. Raising a quota, disabling a person and closing a deletion request are journalled under the admin key.</p><h2>Deletion requests</h2>"#,
+        r#"<p class="label">Administration</p><h1>Quotas</h1><p class="desc">What each person holds against their quotas. Raising a quota, disabling a person and closing a deletion request are journalled under the admin key.</p><h2>Deletion requests</h2>"#,
     );
     if listed.deletions.is_empty() {
         body.push_str(r#"<p class="dim">None pending.</p>"#);
@@ -475,7 +475,7 @@ pub async fn users_page(
         }
         body.push_str("</table><p class=\"dim\">Closing disables the person and cuts off their keys; their memories stay until they are erased with <code>oml erase</code>.</p>");
     }
-    body.push_str("<h2>People</h2><p class=\"dim\">Each count against its limit. A mark shows at 80% of a limit and at the limit, on a row whose <code>under_quotas</code> is true. Writes count this UTC month.</p><table><tr><th>user</th><th>memories</th><th>text stored</th><th>writes</th><th>keys</th><th>connections</th><th>requests/min</th><th></th></tr>");
+    body.push_str("<h2>People</h2><p class=\"dim\">Each count against its limit. A mark shows at 80% of a limit and at the limit, for a person whose quotas are enforced. Writes count this UTC month.</p><table class=\"oml-stack t-quota\"><tr><th>user</th><th>memories</th><th>text stored</th><th>writes</th><th>keys</th><th>connections</th><th>requests/min</th><th></th></tr>");
     for u in &listed.users {
         let flags = match (u.signed_up, u.disabled) {
             (_, true) => r#" <span class="tag dim">disabled</span>"#,
@@ -512,7 +512,7 @@ pub async fn users_page(
     }
     body.push_str("</table>");
     let options: Vec<(&str, &str)> = QUOTAS.iter().map(|q| (*q, *q)).collect();
-    body.push_str("<h2>Set a quota</h2><p class=\"dim\">Text stored and writes are not set here: they follow the profile of the account, which an admin key sets with <code>PUT /v2/admin/accounts/{account}/profile</code>.</p>");
+    body.push_str("<h2>Set a quota</h2><p class=\"dim\">Text stored and writes are not set here: they follow the account's profile, which an admin sets through the API or the command line.</p>");
     body.push_str(&form(
         USERS_PATH,
         "set_quota",

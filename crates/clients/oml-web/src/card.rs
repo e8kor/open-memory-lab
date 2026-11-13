@@ -554,6 +554,15 @@ impl Card {
         }
     }
 
+    /// The card with the version it replaces named by `version`, where a
+    /// read the page made says it (the admin page's "Show the change").
+    pub(crate) fn with_replaced_version(mut self, version: Option<i64>) -> Self {
+        if let (Some((_, known)), Some(v)) = (&mut self.replaces, version) {
+            *known = Some(v);
+        }
+        self
+    }
+
     /// The text of the version, as served.
     pub(crate) fn body(&self) -> &str {
         &self.body
@@ -907,8 +916,12 @@ impl Card {
             );
         }
         if let Some((id, version)) = &self.replaces {
-            let shown =
-                version.map_or_else(|| id.clone(), |v| format!("{} · v{v}", self.claim_key));
+            // The admin read names the replaced version by id alone; the
+            // claim is the same, so the link says so.
+            let shown = version.map_or_else(
+                || format!("{} · the version it replaces", self.claim_key),
+                |v| format!("{} · v{v}", self.claim_key),
+            );
             fact(
                 if self.retirement {
                     "Retires"
@@ -918,8 +931,16 @@ impl Card {
                 &link(id, &shown),
             );
         }
-        if !self.derives_from.is_empty() {
-            let links: Vec<String> = self.derives_from.iter().map(|id| link(id, id)).collect();
+        // A successor derives from the version it replaces, which Replaces
+        // already names.
+        let replaced = self.replaces.as_ref().map(|(id, _)| id.as_str());
+        let links: Vec<String> = self
+            .derives_from
+            .iter()
+            .filter(|id| Some(id.as_str()) != replaced)
+            .map(|id| link(id, id))
+            .collect();
+        if !links.is_empty() {
             fact("Derives from", &links.join("<br>"));
         }
         let findings = findings_block(self.findings.as_deref(), self.scan.as_deref());

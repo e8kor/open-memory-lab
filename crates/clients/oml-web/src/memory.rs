@@ -183,14 +183,14 @@ fn changed_from(was: &Memory, now: &Memory) -> String {
 /// the one place the console names who judged (ADR-0077 d2; ADR-0045 d21).
 fn attribution(
     m: &AdminRead,
+    was_version: Option<i64>,
     drawing: &str,
     changed: &str,
-    admin: &str,
-    reviewer: &str,
+    (admin, reviewer): (&str, &str),
     policy: Option<u32>,
     roots: &Roots,
 ) -> String {
-    let card = Card::of_admin_read(m);
+    let card = Card::of_admin_read(m).with_replaced_version(was_version);
     let mut out = card.render(&View {
         open_link: false,
         drawing,
@@ -297,21 +297,27 @@ pub async fn admin_page(
         match read.replaces.as_deref() {
             Some(replaced) if fields.given("change").is_some() => {
                 match admin_read(&web, &session, &calls, replaced).await {
-                    Ok(was) => change(
-                        i64::from(was.version),
-                        &was.text,
-                        read.version,
-                        &read.text,
-                        false,
+                    Ok(was) => (
+                        change(
+                            i64::from(was.version),
+                            &was.text,
+                            read.version,
+                            &read.text,
+                            false,
+                        ),
+                        Some(i64::from(was.version)),
                     ),
-                    Err(_) => String::new(),
+                    Err(_) => (String::new(), None),
                 }
             }
-            Some(_) => format!(
-                r#"<p class="desc"><a href="{ADMIN_MEMORY_PATH}?id={}&amp;change=1">Show the change</a> against the version it replaces: one more admin read, journalled.</p>"#,
-                attr(&encode(&read.artifact_id))
+            Some(_) => (
+                format!(
+                    r#"<p class="desc"><a href="{ADMIN_MEMORY_PATH}?id={}&amp;change=1">Show the change</a> against the version it replaces: one more admin read, journalled.</p>"#,
+                    attr(&encode(&read.artifact_id))
+                ),
+                None,
             ),
-            None => String::new(),
+            None => (String::new(), None),
         }
     };
     // The kinds of the workarea's top label: the author's own root, and
@@ -331,7 +337,7 @@ pub async fn admin_page(
             .and_then(|w| w.policy)
             .and_then(|p| p.k)
     };
-    let (changed, policy) = tokio::join!(replaced, policy);
+    let ((changed, was_version), policy) = tokio::join!(replaced, policy);
     let user = session
         .whoami
         .user
@@ -342,10 +348,10 @@ pub async fn admin_page(
         r#"<p class="label">Memories</p><h1>One memory</h1><p><a href="{ADMIN_MEMORIES_PATH}">Back to the list</a></p>{}<h2>Replace it</h2><p class="desc">Proposed under <code>{}</code> and held until someone else reviews it: a reviewer key cannot judge its own version.</p>"#,
         attribution(
             &read,
+            was_version,
             drawing.as_deref().unwrap_or_default(),
             &changed,
-            &format!("{user}-admin"),
-            &format!("{user}-review"),
+            (&format!("{user}-admin"), &format!("{user}-review")),
             policy,
             &roots,
         ),
@@ -637,10 +643,10 @@ mod tests {
         .unwrap();
         let page = attribution(
             &read,
+            None,
             "",
             "",
-            "alice-admin",
-            "alice-review",
+            ("alice-admin", "alice-review"),
             None,
             &Roots::default(),
         );
@@ -657,10 +663,10 @@ mod tests {
         .unwrap();
         let page = attribution(
             &named,
+            None,
             "",
             "",
-            "alice-admin",
-            "alice-review",
+            ("alice-admin", "alice-review"),
             None,
             &Roots::default(),
         );
