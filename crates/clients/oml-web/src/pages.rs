@@ -14,7 +14,7 @@ use axum::Extension;
 use axum::extract::{Query, State};
 use axum::response::Response;
 use http::{StatusCode, Uri};
-use oml_page::web::{shell, text, user_tabs};
+use oml_page::web::{shell, text};
 use oml_sdk::WorkareaNode;
 
 use crate::picker::{self, Browse, Chosen, Field, Names};
@@ -85,10 +85,7 @@ pub(crate) fn refused(
     message: &str,
     calls: &PageCalls,
 ) -> Response {
-    outcome::html(
-        status,
-        oml_page::web::refusal_page(code, message, Some(calls.page_id()), calls.csrf()),
-    )
+    outcome::html(status, outcome::refusal_page(code, message, calls))
 }
 
 /// `GET /web/guardrails`: the user page's Guardrails view.
@@ -292,15 +289,7 @@ async fn guardrails(
     let Some(set) = set else {
         return outcome::html(
             chosen.status(),
-            shell(
-                "Your page",
-                &session.who(),
-                Some(&session.csrf()),
-                &user_tabs(session.admin),
-                crate::GUARDRAILS_PATH,
-                None,
-                &body,
-            ),
+            shell("", &session.personal(), crate::GUARDRAILS_PATH, None, &body),
         );
     };
     body.push_str("<ul>");
@@ -311,10 +300,8 @@ async fn guardrails(
     outcome::html(
         StatusCode::OK,
         shell(
-            "Your page",
-            &session.who(),
-            Some(&session.csrf()),
-            &user_tabs(session.admin),
+            "",
+            &session.personal(),
             crate::GUARDRAILS_PATH,
             fields.get("done"),
             &body,

@@ -22,8 +22,8 @@ use axum::extract::State;
 use axum::response::{IntoResponse as _, Response};
 use http::{HeaderMap, StatusCode, Uri};
 use oml_page::web::{
-    ADMIN_ATLAS_PATH, ADMIN_MEMORIES_PATH, ADMIN_TABS, USER_ATLAS_PATH, USER_MEMORIES_PATH, attr,
-    glyph_svg, input, select, shell, state_tag, text, user_tabs,
+    ADMIN_ATLAS_PATH, ADMIN_MEMORIES_PATH, USER_ATLAS_PATH, USER_MEMORIES_PATH, attr, glyph_svg,
+    input, select, shell, state_tag, text,
 };
 use oml_sdk::{AdminMemory, AdminSearch, CountedNode, Memory, MemoryQuery, RecallQuery};
 use serde_json::{Value, json};
@@ -787,7 +787,8 @@ fn list_view(
         origin,
     );
     let mut out = format!(
-        r#"<header class="oml-section-head"><div class="top"><h1>Memories</h1></div><p class="desc">{}</p></header>"#,
+        r#"<header class="oml-section-head"><div class="top"><h1>{}</h1></div><p class="desc">{}</p></header>"#,
+        if atlas { "Atlas" } else { "Memories" },
         side.lede(),
     );
     let _ = write!(
@@ -1108,22 +1109,11 @@ fn admin_only(side: Side, session: &Session, calls: &PageCalls) -> Option<Respon
 
 /// The page's chrome around `body`, with `active` the tab marked.
 fn page(side: Side, session: &Session, active: &str, body: &str) -> Response {
-    let (title, tabs) = match side {
-        Side::User => ("Your page", user_tabs(session.admin)),
-        Side::Admin => ("Administration", ADMIN_TABS.to_vec()),
+    let bar = match side {
+        Side::User => session.personal(),
+        Side::Admin => session.administration(),
     };
-    outcome::html(
-        StatusCode::OK,
-        shell(
-            title,
-            &session.who(),
-            Some(&session.csrf()),
-            &tabs,
-            active,
-            None,
-            body,
-        ),
-    )
+    outcome::html(StatusCode::OK, shell("", &bar, active, None, body))
 }
 
 fn failed_page(failed: Failed, calls: &PageCalls, next: &str) -> Response {
@@ -1409,12 +1399,7 @@ async fn atlas_page(
     let field = field(side, &q, true, &chosen, &names, browse.as_ref());
     let mut body = list_view(side, &q, None, true, &field);
     body.push_str(&drawn);
-    // The admin page has no Atlas tab: its list's tab stays marked.
-    let active = match side {
-        Side::User => USER_ATLAS_PATH,
-        Side::Admin => ADMIN_MEMORIES_PATH,
-    };
-    with_status(page(side, &session, active, &body), chosen.status())
+    with_status(page(side, &session, side.atlas(), &body), chosen.status())
 }
 
 /// `GET /web/memories`: the user page's Memories list.

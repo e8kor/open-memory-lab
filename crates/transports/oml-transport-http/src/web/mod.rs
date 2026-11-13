@@ -321,8 +321,23 @@ where
     /// A refusal answered once the cookie named the live session `token`
     /// opens: the page carries that session's sign-out control, so a
     /// person a page refuses still ends their session (ADR-0070 d2; #327).
-    fn refused_in_session(&self, error: &ApiError, line: WebLine, token: &str) -> Answer {
-        let html = page::refusal_page(error.code, &error.message, None, Some(&csrf_token(token)));
+    /// It is drawn in the Personal bar, with the switch where the session
+    /// holds the admin capacity, and links back to the side's first page.
+    fn refused_in_session(
+        &self,
+        error: &ApiError,
+        line: WebLine,
+        token: &str,
+        session: &WebSessionRecord,
+    ) -> Answer {
+        let bar = page::Bar {
+            scope: page::Scope::Personal {
+                admin: session.admin,
+            },
+            who: session.user.as_str().to_owned(),
+            csrf: csrf_token(token),
+        };
+        let html = page::refusal_page(error.code, &error.message, None, Some(&bar), "/web");
         self.refused_with(self.page(error.status, html), error, line)
     }
 
@@ -419,7 +434,7 @@ where
                 }
                 // Every view the page had is oml-web's (ADR-0070 d7 (b)),
                 // and an old `?view=` URL no longer redirects there.
-                self.refused_in_session(&ApiError::not_found(), line, &token)
+                self.refused_in_session(&ApiError::not_found(), line, &token, &session)
             }
         }
     }
@@ -489,6 +504,7 @@ where
                     .with_details(json!({"field": "csrf_token"})),
                 line,
                 &token,
+                &session,
             );
         }
         let Some(action) = fields
@@ -501,6 +517,7 @@ where
                     .with_details(json!({"field": "action"})),
                 line,
                 &token,
+                &session,
             );
         };
         line.action = Some(action);
@@ -514,10 +531,16 @@ where
                     .with_details(json!({"field": name})),
                 line,
                 &token,
+                &session,
             );
         }
         if let Err(e) = self.app.web_sign_out(&session).await {
-            return self.refused_in_session(&map_app_error(e, ErrorContext::Write), line, &token);
+            return self.refused_in_session(
+                &map_app_error(e, ErrorContext::Write),
+                line,
+                &token,
+                &session,
+            );
         }
         Answer {
             response: self.redirect("/web", Some(clear_cookie(SESSION_COOKIE))),

@@ -15,6 +15,7 @@ use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
 use http::{HeaderMap, header};
+use oml_page::web::{Bar, Scope};
 use oml_sdk::{Call, Whoami};
 use oml_web_credential::capacity_credential;
 
@@ -46,6 +47,8 @@ pub struct PageCalls {
     acting: Mutex<Option<String>>,
     action: Mutex<Option<String>>,
     csrf: OnceLock<Csrf>,
+    path: OnceLock<String>,
+    signed_in: OnceLock<(String, bool)>,
 }
 
 /// The CSRF token of the session a request's cookie names.
@@ -76,6 +79,8 @@ impl PageCalls {
             acting: Mutex::new(None),
             action: Mutex::new(None),
             csrf: OnceLock::new(),
+            path: OnceLock::new(),
+            signed_in: OnceLock::new(),
         }
     }
 
@@ -129,10 +134,39 @@ impl PageCalls {
         self.action.lock().expect("unpoisoned").clone()
     }
 
-    /// Records the session cookie the request carries, so a refusal page
-    /// answered to it draws that session's sign-out control (#327).
-    pub fn carries_session(&self, token: &str) {
+    /// Records the session cookie the request carries and the page's
+    /// `path`, so a refusal page answered to it draws that session's
+    /// sign-out control (#327) and its link back.
+    pub fn carries_session(&self, token: &str, path: &str) {
         let _ = self.csrf.set(Csrf(oml_web_credential::csrf_token(token)));
+        let _ = self.path.set(path.to_owned());
+    }
+
+    /// Records who the session is and whether it holds the admin capacity,
+    /// once it resolved, so a refusal page is drawn on its side's bar.
+    pub fn signed_in(&self, session: &Session) {
+        let _ = self.signed_in.set((session.who(), session.admin));
+    }
+
+    /// The page's path, `/web` until the request carried a session.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        self.path.get().map_or("/web", String::as_str)
+    }
+
+    /// The bar a refusal page is drawn in: none for a request without a
+    /// session cookie; for one whose session the API did not answer, the
+    /// Personal bar with no name and no switch; else the side of the page
+    /// asked for where the session holds it, the Personal side where not.
+    #[must_use]
+    pub fn bar(&self) -> Option<Bar> {
+        let csrf = self.csrf()?.to_owned();
+        let (who, admin) = self.signed_in.get().cloned().unwrap_or_default();
+        Some(Bar {
+            scope: Scope::of_path(self.path(), admin),
+            who,
+            csrf,
+        })
     }
 
     /// The CSRF token of the session the request's cookie names; `None`
@@ -174,6 +208,28 @@ impl Session {
     /// ([`crate::once`]); never shown or logged.
     pub(crate) fn token(&self) -> &str {
         &self.token
+    }
+
+    /// The Personal side's bar for this session, with the switch to
+    /// Administration where it holds the admin capacity.
+    #[must_use]
+    pub fn personal(&self) -> Bar {
+        self.bar(Scope::Personal { admin: self.admin })
+    }
+
+    /// The Administration side's bar for this session; drawn only once a
+    /// page checked that it holds the admin capacity.
+    #[must_use]
+    pub fn administration(&self) -> Bar {
+        self.bar(Scope::Administration)
+    }
+
+    fn bar(&self, scope: Scope) -> Bar {
+        Bar {
+            scope,
+            who: self.who(),
+            csrf: self.csrf(),
+        }
     }
 
     /// The session's CSRF token, which every form of its pages carries
@@ -233,11 +289,12 @@ pub async fn load(State(web): State<Web>, mut req: Request, next: Next) -> Respo
     let Some(token) = cookie(req.headers(), SESSION_COOKIE) else {
         return outcome::sign_in(&page);
     };
-    calls.carries_session(&token);
+    calls.carries_session(&token, req.uri().path());
     let session = match resolve(&web, &calls, token).await {
         Ok(session) => session,
         Err(e) => return outcome::page(&e, &calls, &page),
     };
+    calls.signed_in(&session);
     req.extensions_mut().insert(session);
     next.run(req).await
 }

@@ -1,8 +1,8 @@
 /* The web pages' stylesheet (ADR-0069 d3): only var(--…) from tokens.css, which
    scripts/gen_design_tokens.py writes from design/tokens.json. Literals are 0, 1px hairlines,
-   percentages, ratios, the 600px header breakpoint, the 480px container breakpoint (bp-card) and
+   percentages, ratios, the 600px and 1100px header breakpoints, the 480px container breakpoint (bp-card) and
    a few control widths kept from the earlier sheet. Classes follow the design system's
-   components: BrandHeader (header.top), SectionHeader (.oml-section-head), StateChip
+   components: BrandHeader (header.top, .scope, .switch), SectionHeader (.oml-section-head), StateChip
    (.oml-chip), Button (button, .primary), the card, the table and the form controls. */
 *{box-sizing:border-box}
 html{scroll-padding-top:calc(var(--header-h) + var(--space-4))}
@@ -13,21 +13,40 @@ a:hover{text-decoration-thickness:var(--stroke-strong)}
 .wrap{max-width:var(--wrap-app);margin:0 auto;padding-left:var(--space-4);padding-right:var(--space-4)}
 @media (min-width:600px){.wrap{padding-left:var(--space-6);padding-right:var(--space-6)}}
 
-/* BrandHeader: one line, never wrapping; a long nav scrolls inside itself */
-header.top{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:var(--space-4);height:var(--header-h);padding:0 var(--space-4);background:var(--ground);border-bottom:1px solid var(--rule)}
-header.top .brand{flex:none;display:flex;align-items:center;line-height:0;color:var(--ink);text-decoration:none}
+/* BrandHeader, variant A: the bar names its side. Personal is the plain bar; the admin bar
+   changes ground and ink places and closes with a heavy star-fill rule. Pinned at every width;
+   from 1100px (bp-rail) one row; below it the nav and the switch take a second row; below 600px
+   the mark replaces the wordmark and the first row holds the mark, the scope word, who and the
+   switch, with Sign out ending the nav's rows. The nav wraps; it never scrolls inside itself. */
+header.top{position:sticky;top:0;z-index:3;display:flex;flex-wrap:wrap;align-items:center;gap:0 var(--space-3);min-height:var(--header-h);padding:0 var(--space-4);background:var(--ground);color:var(--ink);border-bottom:1px solid var(--rule)}
+header.top .brand{flex:none;display:flex;align-items:center;line-height:0;color:inherit;text-decoration:none}
 header.top .brand svg{display:block;height:var(--space-6);width:auto}
 header.top .brand .mk{height:var(--space-8)}
 header.top .brand .mk{display:none}
 .lg-ring{stroke:var(--logo-ring)}.lg-star{fill:var(--logo-star)}.lg-ink{fill:var(--logo-ink)}
-header.top nav{display:flex;gap:var(--space-1);min-width:0;overflow-x:auto;scrollbar-width:none}
-header.top nav a{flex:none;color:var(--ink-dim);text-decoration:none;padding:var(--space-2) var(--space-3);border-radius:var(--radius-sm);font:var(--t-button-weight) var(--t-button-size)/var(--t-button-line) var(--font-body)}
+header.top .scope{display:inline-flex;align-items:center;gap:var(--space-1);flex:none;min-height:var(--target-min);padding-left:var(--space-3);border-left:1px solid var(--control-border);font:var(--t-button-weight) var(--t-button-size)/var(--t-button-line) var(--font-body);white-space:nowrap}
+.scope .glyph{width:var(--glyph-lg);height:var(--glyph-lg)}
+header.top nav{display:flex;flex-wrap:wrap;flex:1 1 0;min-width:0}
+header.top nav a{flex:none;color:var(--ink-dim);text-decoration:none;padding:var(--space-2);border-radius:var(--radius-sm);font:var(--t-button-weight) var(--t-button-size)/var(--t-button-line) var(--font-body)}
 header.top nav a:hover{color:var(--ink)}
 header.top nav a[aria-current]{color:var(--ink);box-shadow:inset 0 calc(-1 * var(--stroke-strong)) 0 var(--star)}
+header.top .switch{margin-left:auto;flex:none;display:inline-flex;align-items:center;gap:var(--space-1);min-height:var(--control-h-sm);padding:0 var(--space-3);border:1px solid var(--control-border);border-radius:var(--radius-md);color:inherit;text-decoration:none;font:var(--t-button-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);white-space:nowrap}
+header.top .switch:hover{border-color:var(--ice)}
 header.top .end{margin-left:auto;flex:none;display:flex;align-items:center;gap:var(--space-2)}
-header.top .end form{margin:0}
+header.top .end form{margin:0;display:flex}
 .who{display:inline-flex;align-items:center;gap:var(--space-1);font:var(--t-meta-weight) var(--t-meta-size)/var(--t-meta-line) var(--font-mono);color:var(--ink-dim)}
-@media (max-width:599px){header.top{gap:var(--space-2);padding:0 var(--space-3)}header.top .brand .wm{display:none}header.top .brand .mk{display:block}header.top .who{display:none}}
+header.top .who{min-width:0;white-space:nowrap;font-variant-ligatures:none}
+header.top .who .name{color:var(--ink);overflow:hidden;text-overflow:ellipsis}
+header.top.admin{background:var(--ink);color:var(--ground);border-bottom:var(--space-1) solid var(--star-fill)}
+header.top.admin .scope{border-left-color:var(--ground)}
+header.top.admin nav a,header.top.admin nav a:hover,header.top.admin .who,header.top.admin .who .name,header.top.admin button.linkish{color:var(--ground)}
+header.top.admin nav a:hover{text-decoration:underline;text-underline-offset:var(--space-1)}
+header.top.admin nav a[aria-current]{box-shadow:inset 0 calc(-1 * var(--stroke-strong)) 0 var(--ground)}
+header.top.admin .switch{border-color:var(--ground)}
+header.top.admin :focus-visible{outline-color:var(--ground)}
+header.top.admin .lg-ring{stroke:var(--logo-ring-inverse)}header.top.admin .lg-star{fill:var(--logo-star-inverse)}header.top.admin .lg-ink{fill:var(--logo-ink-inverse)}
+@media (max-width:1099px){header.top.personal,header.top.admin{padding-top:var(--space-2);padding-bottom:var(--space-2);row-gap:var(--space-1)}header.top .end{order:1}header.top.personal::after,header.top.admin::after{content:"";order:2;flex-basis:100%;height:0}header.top nav{order:3}header.top .switch{order:4}}
+@media (max-width:599px){header.top{gap:var(--space-1) var(--space-2);padding:0 var(--space-3)}header.top.personal,header.top.admin{padding:var(--space-2) var(--space-3)}header.top .brand .wm{display:none}header.top .brand .mk{display:block;height:var(--space-6)}header.top .scope{padding-left:var(--space-2)}header.top nav a{padding:var(--space-1) var(--space-2)}header.top .end{display:contents}header.top .who{order:1;flex:1 1 0}header.top .switch{order:1;margin-left:0}header.top .end form{order:4;align-self:flex-start}}
 
 /* type */
 main{padding:var(--space-8) 0 var(--space-16)}
@@ -112,6 +131,10 @@ button.linkish{border:0;min-height:0;padding:var(--space-0\.5) 0;color:var(--ice
 .wide{flex:1 1 100%}
 
 /* notices: a refusal names its code; a notice reports what was recorded */
+.refusal{display:flex;flex-direction:column;gap:var(--space-3);max-width:var(--card-max)}
+.refusal>*{margin:0}
+.refusal .error{color:var(--ink);font-weight:var(--t-body-weight)}
+.refusal .error code{font:var(--t-state-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-mono);color:var(--error);background:none;padding:0}
 .error{color:var(--error);font-weight:var(--t-button-weight);border-left:var(--space-1) solid var(--error);padding-left:var(--space-3);max-width:var(--card-max)}
 .notice{color:var(--ink);background:var(--ground-alt);border:1px solid var(--rule);border-left:var(--space-1) solid var(--promoted);border-radius:var(--radius-md);padding:var(--space-2) var(--space-3);max-width:var(--card-max);font:var(--t-body-dense-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-body)}
 
@@ -143,6 +166,7 @@ nav.toggle a.on,nav.toggle a[aria-current]{background:var(--panel);color:var(--i
 iframe{border:1px solid var(--rule);border-radius:var(--radius-md);background:var(--ground-alt);max-width:100%}
 
 footer{border-top:1px solid var(--rule-soft);padding:var(--space-6) 0;font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+footer .scope{display:inline-flex;align-items:center;gap:var(--space-1);margin-right:var(--space-2)}
 @media (forced-colors:active){.oml-chip,.card,button{border:1px solid CanvasText}.glyph{color:CanvasText}}
 @media print{header.top{position:static}}
 .label .oml-chip{text-transform:none;letter-spacing:0}
