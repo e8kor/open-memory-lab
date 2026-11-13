@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Open Memory Lab HTTP API
-  version: 0.7.2-design
+  version: 0.7.3-design
   summary: >-
     The two-ring JSON API of OML, an agentic external memory provider: /v1 the provider ring,
     /v2 the memory lab.
@@ -3717,9 +3717,9 @@ components:
         held_expires_at: { type: [string, 'null'], format: date-time, description: 'For a held row, when held-item expiry dead-letters it under the workarea''s review policy; null on every other row, and on every row while held-item expiry is unbuilt (ADR-0025 d13).' }
         created_at: { type: string, format: date-time }
         promoted_at: { type: [string, 'null'], format: date-time }
-        approved_at: { type: [string, 'null'], format: date-time, description: "When the approving verdict that ratified the version was given: the verdict's own time, at or just before promoted_at. Null on a version that is not promoted, wherever principal is null (ADR-0044 d9), and on a version ratified before the journal named its verdict (ADR-0077 d1, d3, d4). Since v0.7.2." }
+        approved_at: { type: [string, 'null'], format: date-time, description: "When the approving verdict that ratified the version was given: the verdict's own time, at or just before promoted_at. Null on a version that is not promoted, wherever principal is null (ADR-0044 d9), and on a version ratified before the journal named its verdict (ADR-0077 d1, d3, d4). Since v0.7.3." }
         approver:
-          description: "What kind of reviewer gave the approving verdict that ratified the version, never who; null wherever approved_at is (ADR-0077 d2, d4). Since v0.7.2."
+          description: "What kind of reviewer gave the approving verdict that ratified the version, never who; null wherever approved_at is (ADR-0077 d2, d4). Since v0.7.3."
           oneOf:
             - { $ref: '#/components/schemas/Approver' }
             - { type: 'null' }

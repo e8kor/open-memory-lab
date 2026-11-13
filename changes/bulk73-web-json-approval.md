@@ -1,1 +1,0 @@
-**Web console.** The Memories JSON routes (`/web/data/memories`, `/web/admin/data/memories`) carry `approved_at` (the timestamp, as on the API) and `approver` (`kind` person, agent or service, and `same_user`) for each row, null where the HTML card says only "approved" or is unreviewed, so the data and the page cannot differ (ADR-0077 d2).
