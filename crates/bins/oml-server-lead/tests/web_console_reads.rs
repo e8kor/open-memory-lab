@@ -771,7 +771,7 @@ async fn held_in_workareas(rig: &Rig, n: usize) {
 /// same calls, since each row's workarea path comes from the walk that
 /// found the reviewer's dreamer nodes, not from a read per workarea. The
 /// web bench measured 13 and 55 before (ADR-0070 d8, 2026-11-13). Every
-/// row is listed, and none is the reviewer's own.
+/// row is listed and held.
 #[tokio::test]
 async fn the_held_listings_store_calls_do_not_grow_with_the_workareas() {
     let mut calls = Vec::new();

@@ -655,9 +655,6 @@ fn base62_43(bytes: &[u8; 32]) -> String {
     String::from_utf8(digits).expect("base62 alphabet is ASCII")
 }
 
-/// A node's derived path from its ancestry, listed node to root: the names
-/// from `universe` down to the node, joined with `.` (ADR-0025 d14). Every
-/// path the app serves is this derivation.
 /// The ancestry of `node` as `workarea_ancestry` serves it, the node then
 /// each parent in turn to the root, from records already read; `None` where
 /// they do not reach the root, and the caller reads it instead.
@@ -676,6 +673,9 @@ fn ancestry_of(walked: &BTreeMap<Uuid, WorkareaRecord>, node: Uuid) -> Option<Ve
     Some(ancestry)
 }
 
+/// A node's derived path from its ancestry, listed node to root: the names
+/// from `universe` down to the node, joined with `.` (ADR-0025 d14). Every
+/// path the app serves is this derivation.
 fn derived_path(ancestry: &[WorkareaRecord]) -> String {
     ancestry
         .iter()
