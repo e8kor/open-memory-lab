@@ -14,9 +14,10 @@ use axum::Extension;
 use axum::extract::{Query, State};
 use axum::response::Response;
 use http::{StatusCode, Uri};
-use oml_page::web::{attr, shell, text, user_tabs, workarea_label};
+use oml_page::web::{shell, text};
 use oml_sdk::WorkareaNode;
 
+use crate::picker::{self, Browse, Chosen, Field, Names};
 use crate::session::{PageCalls, Session, call};
 use crate::{Capacity, Web, frame, outcome};
 
@@ -84,10 +85,7 @@ pub(crate) fn refused(
     message: &str,
     calls: &PageCalls,
 ) -> Response {
-    outcome::html(
-        status,
-        oml_page::web::refusal_page(code, message, Some(calls.page_id()), calls.csrf()),
-    )
+    outcome::html(status, outcome::refusal_page(code, message, calls))
 }
 
 /// `GET /web/guardrails`: the user page's Guardrails view.
@@ -203,53 +201,97 @@ async fn guardrails(
             calls,
         );
     };
+    let user = session.whoami.user.as_ref().map(|u| u.name.clone());
     let credential = session.credential(Capacity::Web);
+    // The field's value, checked before any call: a path is refused here,
+    // and the set is not read for it.
+    let chosen = Chosen::of(fields.get("workarea"));
+    let browse_asked = picker::browse_asked(fields.get(picker::BROWSE));
     let set_ids = calls.next_ids();
     let set_call = call(&credential, &set_ids);
-    let (set, tree) = tokio::join!(
-        web.api.guardrails(&set_call, fields.get("workarea")),
-        workareas(web, &credential, calls, &root),
-    );
-    let set = match set {
-        Ok(set) => set,
-        Err(e) => return outcome::page(&e, calls, next),
+    let set = async {
+        if chosen.refused() {
+            None
+        } else {
+            Some(web.api.guardrails(&set_call, chosen.value()).await)
+        }
     };
-    let scope = match set.guardrail_scope.as_str() {
-        "workarea" => "This workarea only.".to_owned(),
-        "ancestors" => "This workarea and its readable parent workareas.".to_owned(),
-        other => text(other),
+    let browse = async {
+        if browse_asked {
+            Some(Browse::read(web, &credential, calls, &root).await)
+        } else {
+            None
+        }
     };
-    let mut body = format!(
-        r#"<h1>Guardrails</h1><p class="desc">Read-only here; change them with the API or the CLI.</p><p>Rules in force at <code>{}</code>.</p><p><strong>Scope:</strong> {} Each rule names its source workarea.</p>"#,
-        text(&set.scope_path),
-        scope,
+    let (set, names, browse) = tokio::join!(
+        set,
+        Names::read(web, &credential, calls, &root, user.as_deref()),
+        browse,
     );
-    match tree {
-        Ok(workareas) => {
-            body.push_str(r#"<form class="row" method="get" action="/web/guardrails"><label>Workarea<select name="workarea">"#);
-            for node in &workareas {
-                let _ = write!(
-                    body,
-                    r#"<option value="{}"{}>{}</option>"#,
-                    attr(&node.id),
-                    if node.id == set.scope_node {
-                        " selected"
-                    } else {
-                        ""
-                    },
-                    text(workarea_label(&node.path))
-                );
+    let (chosen, set) = match set {
+        None => (names.settle(chosen), None),
+        Some(Ok(set)) => (names.settle(chosen), Some(set)),
+        Some(Err(e)) if picker::is_not_found(&e) => match names.not_found(&chosen) {
+            Some(Chosen::Place(place)) => {
+                let ids = calls.next_ids();
+                match web
+                    .api
+                    .guardrails(&call(&credential, &ids), Some(&place.id))
+                    .await
+                {
+                    Ok(set) => (Chosen::Place(place), Some(set)),
+                    Err(e) => return outcome::page(&e, calls, next),
+                }
             }
-            body.push_str("</select></label><button type=\"submit\">Show</button></form>");
-        }
-        Err((request_id, _)) => {
-            let _ = write!(
-                body,
-                r#"<p class="error" role="status">The workarea list is unavailable (request <code>{}</code>).</p>"#,
-                text(&request_id)
-            );
-        }
+            Some(miss) => (miss, None),
+            None => return outcome::page(&e, calls, next),
+        },
+        Some(Err(e)) => return outcome::page(&e, calls, next),
+    };
+    // The field names the workarea in force by its reference, the scope the
+    // set was read at when the field was empty.
+    let chosen = match (&chosen, &set) {
+        (Chosen::Every, Some(set)) => names
+            .places()
+            .iter()
+            .find(|p| p.id == set.scope_node)
+            .map_or(chosen.clone(), |p| Chosen::Place(p.clone())),
+        _ => chosen,
+    };
+    let field = Field {
+        id: "wa",
+        action: crate::GUARDRAILS_PATH,
+        keep: &[],
+        chosen: &chosen,
+        names: &names,
+        browse: browse.as_ref(),
+        admin: false,
+        standalone: true,
+        empty: "Empty: the user root.",
     }
+    .html();
+    let mut body = match &set {
+        Some(set) => {
+            let scope = match set.guardrail_scope.as_str() {
+                "workarea" => "This workarea only.".to_owned(),
+                "ancestors" => "This workarea and its readable parent workareas.".to_owned(),
+                other => text(other),
+            };
+            format!(
+                r#"<h1>Guardrails</h1><p class="desc">Read-only here; change them with the API or the CLI.</p><p>Rules in force at <code>{}</code>.</p><p><strong>Scope:</strong> {} Each rule names its source workarea.</p>"#,
+                text(&names.reference(&set.scope_path)),
+                scope,
+            )
+        }
+        None => r#"<h1>Guardrails</h1><p class="desc">Read-only here; change them with the API or the CLI.</p>"#.to_owned(),
+    };
+    body.push_str(&field);
+    let Some(set) = set else {
+        return outcome::html(
+            chosen.status(),
+            shell("", &session.personal(), crate::GUARDRAILS_PATH, None, &body),
+        );
+    };
     body.push_str("<ul>");
     for line in frame::lines(&set) {
         let _ = write!(body, "<li>{}</li>", text(line.trim_start_matches("- ")));
@@ -258,10 +300,8 @@ async fn guardrails(
     outcome::html(
         StatusCode::OK,
         shell(
-            "Your page",
-            &session.who(),
-            Some(&session.csrf()),
-            &user_tabs(session.admin),
+            "",
+            &session.personal(),
             crate::GUARDRAILS_PATH,
             fields.get("done"),
             &body,

@@ -177,7 +177,12 @@ fn offers_fail() -> Script {
 async fn the_atlas_draws_its_regions_and_marks_the_panel_unavailable_when_the_offers_fail() {
     let page = send(offers_fail(), get("/web/atlas")).await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.body);
-    assert!(page.body.contains("universe.alice"), "{}", page.body);
+    assert!(
+        page.body
+            .contains(r#"<h2 id="sel-h" class="mono">alice</h2>"#),
+        "the panel names the scope by its reference: {}",
+        page.body
+    );
     assert!(
         page.body
             .contains("The acts are unavailable (request <code>page-7."),

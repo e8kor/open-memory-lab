@@ -22,11 +22,11 @@ are fixed, word for word:
 - Above the code field: "Enter the code only if you opened this page yourself,
   by adding the connector in Claude, in the last few minutes. If someone sent you this link, close
   it."
-- Below it: "Get a connect code from your account page: Connect Claude on the web or a phone."
+- Below it: "Get a connect code from the account page: Connect Claude on the web or a phone."
   with the phrase linked to `/web` on the same origin, then "Codes are shown once; use New connect
-  code on the key's row if you lost it."
+  code on the key's row if it was lost."
 - A wrong code — unknown, expired, voided, spent, or a revoked or expired key's alike — with the attempts left: "This code
-  is not valid. Check it, or ask your administrator for a new one."
+  is not valid. Check it, or ask an administrator for a new one."
 
 After a correct code, the confirmation shows the tenant the key belongs to, by the name the
 operator gave it at `POST /v2/tenants`, which no tenant admin can set; the key's

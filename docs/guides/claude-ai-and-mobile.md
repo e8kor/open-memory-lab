@@ -73,9 +73,9 @@ memories of a fictional team: twenty approved, four approved and then replaced, 
 1. On claude.ai, open Customize > Connectors and add a custom connector with your server's
    address, `https://<your-server>/mcp`.
 2. Claude opens OML's connect page. Paste the code from step 1 into it. The page tells you where
-   the code comes from: "Get a connect code from your account page: Connect Claude on the web or a
+   the code comes from: "Get a connect code from the account page: Connect Claude on the web or a
    phone", with a link to `/web`, and "Codes are shown once; use New connect code on the key's row
-   if you lost it." If someone sent you a link to the page and you did not start the connection
+   if it was lost." If someone sent you a link to the page and you did not start the connection
    yourself, close it.
 3. The page shows the organization, the agent identity and the workareas the connection will use,
    and what it may do there. Where it may write, it says that nothing written reaches anyone else

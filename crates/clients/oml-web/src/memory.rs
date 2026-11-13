@@ -28,14 +28,14 @@ use axum::extract::{Form, State};
 use axum::response::Response;
 use http::{StatusCode, Uri};
 use oml_page::web::{
-    ADMIN_CURATE_PATH, ADMIN_MEMORIES_PATH, ADMIN_MEMORY_PATH, ADMIN_TABS, USER_MEMORIES_PATH,
+    ADMIN_CURATE_PATH, ADMIN_MEMORIES_PATH, ADMIN_MEMORY_PATH, USER_MEMORIES_PATH,
     USER_MEMORY_PATH, form, hidden, input, select, shell, short, state_tag, text, textarea,
-    user_tabs,
 };
+use oml_sdk::Memory;
 use oml_sdk::{AdminRead, Error};
 
 use crate::acts::Refusal;
-use crate::card::{anchor_line, card};
+use crate::card::{Card, View, change, reference_of};
 use crate::pages::{Fields, refused};
 use crate::review::is_id;
 use crate::session::{PageCalls, Session, call};
@@ -119,17 +119,37 @@ pub async fn user_page(
         &memory.artifact_id,
         memory.text.as_deref().unwrap_or_default(),
     );
+    let card = Card::of_memory(&memory, &Vec::new());
+    // The change against the version it replaces: one more read, as the
+    // same key (MemoryCard, page density; design notes row 4).
+    let changed = match memory.replaces.as_ref() {
+        Some(replaced) => {
+            let ids = calls.next_ids();
+            match web
+                .api
+                .get_memory(&call(&credential, &ids), &replaced.artifact_id)
+                .await
+            {
+                Ok(was) => changed_from(&was, &memory),
+                Err(_) => String::new(),
+            }
+        }
+        None => String::new(),
+    };
     let body = format!(
         r#"<p class="label">Memories</p><h1>One memory</h1><p><a href="{USER_MEMORIES_PATH}">Back to the list</a></p>{}"#,
-        card(&memory, drawing.as_deref().unwrap_or_default())
+        card.render(&View {
+            open_link: false,
+            drawing: drawing.as_deref().unwrap_or_default(),
+            change: &changed,
+            ..View::page(false)
+        })
     );
     page(
         &web,
         shell(
-            "Your page",
-            &session.who(),
-            Some(&session.csrf()),
-            &user_tabs(session.admin),
+            "One memory",
+            &session.personal(),
             USER_MEMORIES_PATH,
             None,
             &body,
@@ -138,104 +158,67 @@ pub async fn user_page(
     )
 }
 
-/// A link to one memory on the admin page.
-fn admin_link(id: &str) -> String {
-    format!(
-        r#"<a href="{ADMIN_MEMORY_PATH}?id={}">{}</a>"#,
-        text(id),
-        text(id)
+/// The change of `now` against `was`, the version it replaces.
+fn changed_from(was: &Memory, now: &Memory) -> String {
+    change(
+        i64::from(was.version),
+        was.text.as_deref().unwrap_or_default(),
+        now.version,
+        now.text.as_deref().unwrap_or_default(),
+        now.retirement,
     )
 }
 
-fn is_prose(format: Option<&str>) -> bool {
-    matches!(
-        format.unwrap_or("text/plain"),
-        "text/plain" | "text/markdown"
-    )
-}
-
-/// The admin read's card and its attribution and verdict tables, as the
-/// lead drew them.
-fn attribution(m: &AdminRead, drawing: &str) -> String {
-    let title = m.title.as_deref().map_or_else(String::new, |t| {
-        format!(r#"<p class="label">title</p><p>{}</p>"#, text(t))
+/// The admin read's card at page density, the line that says why there is
+/// no verdict here, and the attribution and verdict tables (MemoryScreen):
+/// the attribution says what the card does not, and the verdicts table is
+/// the one place the console names who judged (ADR-0077 d2; ADR-0045 d21).
+fn attribution(
+    m: &AdminRead,
+    drawing: &str,
+    changed: &str,
+    admin: &str,
+    reviewer: &str,
+    policy: Option<u32>,
+) -> String {
+    let card = Card::of_admin_read(m);
+    let mut out = card.render(&View {
+        open_link: false,
+        drawing,
+        change: changed,
+        ..View::page(true)
     });
-    let format_line = if is_prose(m.format.as_deref()) {
-        String::new()
-    } else {
-        format!(
-            r#"<p class="label">format</p><p class="mono">{}</p>"#,
-            text(m.format.as_deref().unwrap_or_default())
-        )
-    };
-    let mut out = format!(
-        r#"<div class="card"><p class="label">{} · {} · version {}</p>{title}<p class="text{}">{}</p>{drawing}{format_line}</div><h2>Attribution</h2><table><tr><th>Field</th><th>Value</th></tr>"#,
-        state_tag(&m.state),
-        short(&m.workarea_path),
-        m.version,
-        if is_prose(m.format.as_deref()) {
-            ""
-        } else {
-            " mono"
-        },
-        text(&m.text),
-    );
-    let ids = |v: &[String]| {
-        if v.is_empty() {
-            "—".to_owned()
-        } else {
-            v.iter()
-                .map(|id| admin_link(id))
-                .collect::<Vec<_>>()
-                .join("<br>")
-        }
-    };
-    // A key with no name is named by its id (#253).
-    let key = m.key.as_deref().or(m.key_id.as_deref()).unwrap_or_default();
-    let author = match &m.user {
-        Some(user) => format!("{} ({})", short(key), short(user)),
-        None => short(key),
-    };
-    let valid = if m.valid_from.is_none() && m.valid_until.is_none() {
-        "none declared".to_owned()
-    } else {
-        text(&format!(
-            "from {}, {}",
-            m.valid_from.as_deref().unwrap_or("any time"),
-            m.valid_until
-                .as_deref()
-                .map_or_else(|| "open".to_owned(), |u| format!("until {u}"))
-        ))
-    };
+    if m.state == "held" {
+        let _ = write!(
+            out,
+            r#"<p class="oml-noact">Read here as <code>{}</code>, which never judges. Judge it in Review as <code>{}</code>.</p>"#,
+            short(admin),
+            short(reviewer)
+        );
+    }
+    out.push_str("<h2>Attribution</h2><table><tr><th>Field</th><th>Value</th></tr>");
     for (field, value) in [
-        ("artifact id", text(&m.artifact_id)),
-        ("claim key", short(&m.claim_key)),
-        ("written by key", author),
-        (
-            "principal",
-            short(m.principal.as_deref().unwrap_or_default()),
-        ),
-        ("written at", short(&m.created_at)),
-        ("derives from", ids(&m.derives_from)),
-        (
-            "replaces",
-            m.replaces
-                .as_ref()
-                .map_or("—".to_owned(), |r| ids(std::slice::from_ref(r))),
-        ),
-        (
-            "text digest",
-            short(m.plaintext_digest.as_deref().unwrap_or_default()),
-        ),
-        ("source", anchor_line(m.anchor.as_ref())),
-        ("valid", valid),
+        ("Key id", short(m.key_id.as_deref().unwrap_or("—"))),
+        ("Principal", short(m.principal.as_deref().unwrap_or("—"))),
+        ("Held by", short(m.held_by.as_deref().unwrap_or("—"))),
     ] {
         let _ = write!(
             out,
             r#"<tr><td class="label">{field}</td><td class="mono">{value}</td></tr>"#
         );
     }
-    out.push_str("</table><h2>Verdicts</h2><table><tr><th>Verdict</th><th>Key</th><th>Principal</th><th>Reason</th><th>At</th></tr>");
+    out.push_str("</table><h2>Verdicts</h2>");
+    if let Some(k) = policy {
+        let approvals = m.verdicts.iter().filter(|v| v.verdict == "approve").count();
+        let _ = write!(
+            out,
+            r#"<p class="desc">{approvals} of the {k} {} this workarea's review policy asks for.</p>"#,
+            if k == 1 { "approval" } else { "approvals" }
+        );
+    }
+    out.push_str(
+        "<table><tr><th>Verdict</th><th>Key</th><th>Principal</th><th>Reason</th><th>At</th></tr>",
+    );
     if m.verdicts.is_empty() {
         out.push_str(r#"<tr><td colspan="5" class="dim">No verdict yet.</td></tr>"#);
     }
@@ -297,9 +280,53 @@ pub async fn admin_page(
         &read.artifact_id,
         &read.text,
     );
+    // The change against the version it replaces: one more admin read,
+    // journalled like any (MemoryScreen; design notes row 4).
+    // Beside it, the workarea's review policy, for the Verdicts note (row
+    // 16): one more call, in the same round.
+    let replaced = async {
+        match read.replaces.as_deref() {
+            Some(replaced) => match admin_read(&web, &session, &calls, replaced).await {
+                Ok(was) => change(
+                    i64::from(was.version),
+                    &was.text,
+                    read.version,
+                    &read.text,
+                    false,
+                ),
+                Err(_) => String::new(),
+            },
+            None => String::new(),
+        }
+    };
+    let policy = async {
+        let credential = session.credential(Capacity::Admin);
+        let ids = calls.next_ids();
+        web.api
+            .workarea(&call(&credential, &ids), &reference_of(&read.workarea_path))
+            .await
+            .ok()
+            .and_then(|w| w.policy)
+            .and_then(|p| p.k)
+    };
+    let (changed, policy) = tokio::join!(replaced, policy);
+    let user = session
+        .whoami
+        .user
+        .as_ref()
+        .map_or("", |u| u.name.as_str())
+        .to_owned();
     let mut body = format!(
-        r#"<p class="label">Memories</p><h1>One memory</h1><p><a href="{ADMIN_MEMORIES_PATH}">Back to the list</a></p>{}<h2>Replace it</h2>"#,
-        attribution(&read, drawing.as_deref().unwrap_or_default())
+        r#"<p class="label">Memories</p><h1>One memory</h1><p><a href="{ADMIN_MEMORIES_PATH}">Back to the list</a></p>{}<h2>Replace it</h2><p class="desc">Proposed under <code>{}</code> and held until someone else reviews it: a reviewer key cannot judge its own version.</p>"#,
+        attribution(
+            &read,
+            drawing.as_deref().unwrap_or_default(),
+            &changed,
+            &format!("{user}-admin"),
+            &format!("{user}-review"),
+            policy
+        ),
+        short(&format!("{user}-review"))
     );
     body.push_str(&form(
         ADMIN_MEMORY_PATH,
@@ -330,10 +357,8 @@ pub async fn admin_page(
     page(
         &web,
         shell(
-            "Administration",
-            &session.who(),
-            Some(&session.csrf()),
-            &ADMIN_TABS,
+            "One memory",
+            &session.administration(),
             ADMIN_MEMORIES_PATH,
             notice(&fields),
             &body,
@@ -358,7 +383,7 @@ fn curator_refused(e: &Error, calls: &PageCalls, next: &str) -> Response {
         Error::Api(api) if api.code == "auth.invalid" => refused(
             StatusCode::NOT_FOUND,
             "access.not_found",
-            "you hold no curate key on this session; a curator designation takes effect at your next sign-in",
+            "this session holds no curate key; a curator designation takes effect at the next sign-in",
             calls,
         ),
         _ => outcome::page(e, calls, next),
@@ -500,10 +525,8 @@ pub async fn curate_page(
     page(
         &web,
         shell(
-            "Administration",
-            &session.who(),
-            Some(&session.csrf()),
-            &ADMIN_TABS,
+            "",
+            &session.administration(),
             ADMIN_CURATE_PATH,
             notice(&fields),
             &body,
@@ -578,7 +601,7 @@ mod tests {
         assert!(!refuses_supersession(Some("derived_fact")));
     }
 
-    /// A key with no name is named by its id, so "written by key" is never
+    /// A key with no name is named by its id, so the card's author is never
     /// empty (#253, m5).
     #[test]
     fn the_attribution_names_a_nameless_authoring_key_by_its_id() {
@@ -589,7 +612,7 @@ mod tests {
             "principal": "alice", "user": "alice", "created_at": "2026-11-11T10:00:00Z",
         }))
         .unwrap();
-        let page = attribution(&read, "");
+        let page = attribution(&read, "", "", "alice-admin", "alice-review", None);
         assert!(
             page.contains("6f1c2d4e-0000-4000-8000-0000000000aa (alice)"),
             "{page}"
@@ -601,12 +624,13 @@ mod tests {
             "principal": "alice", "user": null, "created_at": "2026-11-11T10:00:00Z",
         }))
         .unwrap();
-        let page = attribution(&named, "");
-        assert!(page.contains("alice-laptop"), "{page}");
+        let page = attribution(&named, "", "", "alice-admin", "alice-review", None);
         assert!(
-            !page.contains("0000000000aa"),
+            page.contains(r#"<span class="who">alice-laptop</span>"#),
             "a named key shows its name: {page}"
         );
+        // Its id is the attribution's Key id row, and nowhere else.
+        assert_eq!(page.matches("0000000000aa").count(), 1, "{page}");
     }
 
     #[test]

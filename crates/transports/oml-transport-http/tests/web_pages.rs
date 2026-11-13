@@ -862,6 +862,19 @@ async fn the_leads_refusal_page_draws_the_sign_out_control_for_a_live_session_an
     let (status, _, page) = send(&rig.router, get("/web?view=keys", Some(&cookie))).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
     assert!(page.contains(&control), "{page}");
+    // It is drawn in the Personal bar, naming the person, with one link back
+    // to the side's first page; a person without the admin capacity is
+    // shown no switch (design notes row 25).
+    assert!(page.contains(r#"<header class="top personal">"#), "{page}");
+    assert!(
+        page.contains(r#"<span class="name">alice</span>"#),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<p><a href="/web/start">Back to Start</a></p>"#),
+        "{page}"
+    );
+    assert!(!page.contains(r#"class="switch""#), "{page}");
     for fields in [
         vec![("action", "sign_out")],
         vec![("action", "sign_out"), ("csrf_token", "0000")],

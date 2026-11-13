@@ -1285,7 +1285,7 @@ where
             .strip_prefix(&format!("{}-", user.as_str()))
             .filter(|s| !s.is_empty())
             .ok_or_else(|| {
-                ApiError::validation(format!("a key you issue is named {}-<name>", user.as_str()))
+                ApiError::validation(format!("an issued key is named {}-<name>", user.as_str()))
                     .with_details(json!({ "field": "/name" }))
             })?
             .to_owned();

@@ -75,9 +75,6 @@ pub const ADMIN_MEMORIES_PATH: &str = "/web/admin/memories";
 /// The admin page's Atlas, which `oml-web` serves.
 pub const ADMIN_ATLAS_PATH: &str = "/web/admin/atlas";
 
-/// The Atlas tab's link, which is also its active marker.
-pub const ATLAS_TAB: &str = USER_ATLAS_PATH;
-
 /// The user page's Workareas view, which `oml-web` serves (ADR-0070 d7 (b)).
 pub const USER_WORKAREAS_PATH: &str = "/web/workareas";
 
@@ -110,45 +107,146 @@ pub const ADMIN_MEMORY_PATH: &str = "/web/admin/memory";
 /// The admin page's Curate view, which `oml-web` serves.
 pub const ADMIN_CURATE_PATH: &str = "/web/admin/curate";
 
-/// The admin page's tabs, `(href, text)`; the lead's admin views and
-/// `oml-web`'s draw the same nav.
-pub const ADMIN_TABS: [(&str, &str); 8] = [
-    ("/web/admin/people", "People"),
-    ("/web/admin/users", "Quotas"),
-    (ADMIN_MEMORIES_PATH, "Memories"),
-    (ADMIN_WORKAREAS_PATH, "Workareas"),
-    (ADMIN_REVIEW_PATH, "Review"),
-    (ADMIN_KEYS_PATH, "Keys"),
-    (ADMIN_CURATE_PATH, "Curate"),
-    ("/web", "Your page"),
+/// The Start page, the Personal side's first page (ADR-0068 d10).
+pub const START_PATH: &str = "/web/start";
+
+/// The People page, the Administration side's first page (ADR-0045 d13).
+pub const ADMIN_PEOPLE_PATH: &str = "/web/admin/people";
+
+/// The Personal side's nav, `(href, word)`, in the order the design
+/// system's BrandHeader draws it; the lead's pages and `oml-web`'s draw the
+/// same nav. No tab leads to the other side: that is the switch.
+pub const PERSONAL_TABS: [(&str, &str); 7] = [
+    (START_PATH, "Start"),
+    (USER_MEMORIES_PATH, "Memories"),
+    (USER_REVIEW_PATH, "Review"),
+    (USER_ATLAS_PATH, "Atlas"),
+    (USER_KEYS_PATH, "Keys"),
+    (USER_WORKAREAS_PATH, "Workareas"),
+    ("/web/guardrails", "Guardrails"),
 ];
 
-/// The user page's tabs, `(href, text)`, with the administration tab for
-/// an admin's session; the lead's pages and `oml-web`'s draw the same nav.
-#[must_use]
-pub fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
-    // The design system's shared user nav (ADR-0069 d3): Start, Memories,
-    // Review, Atlas, Keys; then this page's Workareas and Guardrails.
-    let mut tabs = vec![
-        ("/web/start", "Start"),
-        (USER_MEMORIES_PATH, "Memories"),
-        (USER_REVIEW_PATH, "Review"),
-        (ATLAS_TAB, "Atlas"),
-        (USER_KEYS_PATH, "Keys"),
-        (USER_WORKAREAS_PATH, "Workareas"),
-        ("/web/guardrails", "Guardrails"),
-    ];
-    if admin {
-        tabs.push((ADMIN_TABS[0].0, "Administration"));
-    }
-    tabs
+/// The Administration side's nav, `(href, word)`, in the Personal side's
+/// order where the two share a page.
+pub const ADMIN_TABS: [(&str, &str); 8] = [
+    (ADMIN_PEOPLE_PATH, "People"),
+    ("/web/admin/users", "Quotas"),
+    (ADMIN_MEMORIES_PATH, "Memories"),
+    (ADMIN_REVIEW_PATH, "Review"),
+    (ADMIN_ATLAS_PATH, "Atlas"),
+    (ADMIN_KEYS_PATH, "Keys"),
+    (ADMIN_WORKAREAS_PATH, "Workareas"),
+    (ADMIN_CURATE_PATH, "Curate"),
+];
+
+/// The pages below a tab, each with the tab it sits under: a refusal on
+/// one leads back to that tab.
+const BELOW: [(&str, &str); 3] = [
+    (USER_MEMORY_PATH, USER_MEMORIES_PATH),
+    (ADMIN_MEMORY_PATH, ADMIN_MEMORIES_PATH),
+    ("/web/setup", START_PATH),
+];
+
+/// Which side of the console a page is on (the design system's
+/// BrandHeader, variant A): the person's own pages or the tenant's. The
+/// bar, its scope word and glyph, the nav and the switch follow from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// The person's own pages; `admin` is whether the session holds the
+    /// admin capacity, which alone draws the switch to Administration.
+    Personal { admin: bool },
+    /// The tenant's pages, drawn only for a session with the admin
+    /// capacity.
+    Administration,
 }
 
-/// The workarea name a person uses, with the tenant root removed and every
-/// intermediate parent retained.
-#[must_use]
-pub fn workarea_label(path: &str) -> &str {
-    path.strip_prefix("universe.").unwrap_or(path)
+impl Scope {
+    /// The side a page at `path` is drawn on: Administration for an admin
+    /// page and a session holding the admin capacity, else Personal, so a
+    /// person without it is never shown the other side (ADR-0045 d10).
+    #[must_use]
+    pub fn of_path(path: &str, admin: bool) -> Self {
+        if admin && (path == "/web/admin" || path.starts_with("/web/admin/")) {
+            Self::Administration
+        } else {
+            Self::Personal { admin }
+        }
+    }
+
+    /// The scope word, which also labels the side's nav.
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Personal { .. } => "Personal",
+            Self::Administration => "Administration",
+        }
+    }
+
+    fn glyph(self) -> &'static str {
+        match self {
+            Self::Personal { .. } => "personal",
+            Self::Administration => "admin",
+        }
+    }
+
+    /// The side's nav, `(href, word)`.
+    #[must_use]
+    pub fn tabs(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::Personal { .. } => &PERSONAL_TABS,
+            Self::Administration => &ADMIN_TABS,
+        }
+    }
+
+    /// The side's first page, where its brand leads.
+    #[must_use]
+    pub fn first(self) -> (&'static str, &'static str) {
+        self.tabs()[0]
+    }
+
+    /// The tab whose page is `path`, or under which it sits.
+    fn tab_of(self, path: &str) -> Option<(&'static str, &'static str)> {
+        let path = BELOW
+            .iter()
+            .find(|(below, _)| *below == path)
+            .map_or(path, |(_, tab)| *tab);
+        self.tabs().iter().find(|(href, _)| *href == path).copied()
+    }
+
+    /// The bar's class.
+    fn class(self) -> &'static str {
+        match self {
+            Self::Personal { .. } => "personal",
+            Self::Administration => "admin",
+        }
+    }
+
+    /// The one link to the other side, at the bar's fixed place: to
+    /// Administration only for a session that holds it, back to Personal
+    /// from Administration always.
+    fn switch(self) -> String {
+        let to = match self {
+            Self::Personal { admin: false } => return String::new(),
+            Self::Personal { admin: true } => Self::Administration,
+            Self::Administration => Self::Personal { admin: true },
+        };
+        format!(
+            r#"<a class="switch" href="{}">{}{}</a>"#,
+            to.first().0,
+            glyph_svg(to.glyph()),
+            to.word()
+        )
+    }
+}
+
+/// What the bar is drawn for: the side, who is signed in (the person and
+/// their organisation, as the session names them) and the session's CSRF
+/// token, which the sign-out control posts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bar {
+    pub scope: Scope,
+    pub who: String,
+    pub csrf: String,
 }
 
 /// A short string from a person, an agent, a provider or the store, as a
@@ -215,18 +313,23 @@ pub fn glyph_svg(name: &str) -> &'static str {
         .map_or("", |(_, svg)| svg)
 }
 
-/// The header's brand: the wordmark, and the mark alone below 600px.
+/// The header's brand for a page drawn for no one: the wordmark, and the
+/// mark alone below 600px.
 #[must_use]
-pub fn brand(link: bool) -> String {
-    if link {
-        format!(
-            r#"<a class="brand" href="/web" aria-label="Open Memory Lab home">{WORDMARK}{MARK}</a>"#
-        )
-    } else {
-        format!(
-            r#"<span class="brand" role="img" aria-label="Open Memory Lab">{WORDMARK}{MARK}</span>"#
-        )
-    }
+pub fn brand() -> String {
+    format!(
+        r#"<span class="brand" role="img" aria-label="Open Memory Lab">{WORDMARK}{MARK}</span>"#
+    )
+}
+
+/// The brand on a side's bar: a link to the side's first page, never to
+/// `/web`.
+fn brand_of(scope: Scope) -> String {
+    let (href, word) = scope.first();
+    format!(
+        r#"<a class="brand" href="{href}" aria-label="Open Memory Lab: {}, {word}">{WORDMARK}{MARK}</a>"#,
+        scope.word()
+    )
 }
 
 /// One form posting `action` to `path` with the session's CSRF token, its
@@ -309,40 +412,98 @@ fn sign_out(csrf: &str) -> String {
     )
 }
 
-/// A page's chrome: the brand, who is signed in, the sign-out control where
-/// `csrf` is a signed-in session's CSRF token, the tabs of `tabs`
-/// (`(href, text)`, the active one marked), a notice, and `body`.
-#[must_use]
-pub fn shell(
-    title: &str,
-    who: &str,
-    csrf: Option<&str>,
-    tabs: &[(&str, &str)],
-    active: &str,
-    notice: Option<&str>,
-    body: &str,
-) -> String {
-    let mut nav = String::from(r#"<nav aria-label="Main">"#);
-    for (href, shown) in tabs {
+/// The bar of `bar`'s side (the design system's BrandHeader, variant A),
+/// with `active` the current tab: the brand, the scope word and its glyph,
+/// the side's nav labelled with that word, the switch where the session
+/// holds the other side, who is signed in and the sign-out control.
+fn header(bar: &Bar, active: &str) -> String {
+    let scope = bar.scope;
+    let mut nav = format!(r#"<nav aria-label="{}">"#, scope.word());
+    for (href, shown) in scope.tabs() {
         let on = if *href == active {
             r#" class="on" aria-current="page""#
         } else {
             ""
         };
-        let _ = write!(nav, r#"<a href="{href}"{on}>{}</a>"#, escape(shown));
+        let _ = write!(nav, r#"<a href="{href}"{on}>{shown}</a>"#);
     }
     nav.push_str("</nav>");
+    let who = if bar.who.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<span class="who">{}<span class="name">{}</span></span>"#,
+            glyph_svg("person"),
+            short(&bar.who)
+        )
+    };
+    format!(
+        r#"<header class="top {}">{}<span class="scope">{}{}</span>{nav}{}<div class="end">{who}{}</div></header>"#,
+        scope.class(),
+        brand_of(scope),
+        glyph_svg(scope.glyph()),
+        scope.word(),
+        scope.switch(),
+        sign_out(&bar.csrf)
+    )
+}
+
+/// The footer of a side's page: the scope word again, and whose keys
+/// journal what the pages do.
+fn footer(scope: Scope) -> String {
+    format!(
+        r#"<span class="scope">{}{}</span> {JOURNALLED}"#,
+        glyph_svg(scope.glyph()),
+        scope.word()
+    )
+}
+
+/// The footer's sentence.
+const JOURNALLED: &str = "Every act on these pages is journalled under one of this account's keys.";
+
+/// A page's chrome on `bar`'s side: the bar with `active` the current tab,
+/// a notice, `body`, and the side's footer. The `<title>` is the tab's word,
+/// after `title` where the page is one below its tab (`One memory`), and
+/// after `Admin` on Administration: `Admin · One memory · Memories · OML`.
+/// A tab's own page passes its word or nothing as `title`.
+#[must_use]
+pub fn shell(title: &str, bar: &Bar, active: &str, notice: Option<&str>, body: &str) -> String {
+    let tab = bar
+        .scope
+        .tabs()
+        .iter()
+        .find(|(href, _)| *href == active)
+        .map(|(_, word)| *word);
+    let mut name = match tab {
+        Some(tab) if title.is_empty() || title == tab => tab.to_owned(),
+        Some(tab) => format!("{title} · {tab}"),
+        None => title.to_owned(),
+    };
+    if bar.scope == Scope::Administration {
+        name = format!("Admin · {name}");
+    }
     let notice = notice.map_or(String::new(), |n| {
         format!(r#"<p class="notice" role="status">{}</p>"#, escape(n))
     });
+    page(
+        &name,
+        &format!(
+            r#"{}<main class="wrap">{notice}{body}</main>"#,
+            header(bar, active)
+        ),
+        &footer(bar.scope),
+    )
+}
+
+/// A page drawn for no one, such as the sign-up terms: the brand alone in
+/// the header.
+#[must_use]
+pub fn bare(title: &str, body: &str) -> String {
     document(
         title,
         &format!(
-            r#"<header class="top">{}{nav}<div class="end"><span class="who">{}{}</span>{}</div></header><main class="wrap">{notice}{body}</main>"#,
-            brand(true),
-            glyph_svg("person"),
-            short(who),
-            csrf.map_or_else(String::new, sign_out)
+            r#"<header class="top">{}</header><main class="wrap">{body}</main>"#,
+            brand()
         ),
     )
 }
@@ -351,42 +512,69 @@ pub fn shell(
 /// drawn for no one, so its header carries the brand alone.
 #[must_use]
 pub fn refusal(code: &str, message: &str) -> String {
-    refusal_page(code, message, None, None)
+    refusal_page(code, message, None, None, "/web")
 }
 
 /// [`refusal`], naming the request id a person can quote, as `oml-web`'s
-/// error pages do (ADR-0070 d3 layer 7), and carrying the header's
-/// sign-out control where `csrf` is a session's CSRF token, as [`shell`]
-/// draws it: a person a page refuses still ends their session (#327).
+/// error pages do (ADR-0070 d3 layer 7). Where `bar` names a session the
+/// page is drawn inside that side's bar, with its sign-out control (#327)
+/// and one link back named by the tab of `path`, the page that refused, or
+/// by the side's first page where `path` is under no tab of the side; for
+/// no one the header carries the brand alone and the link goes to `/web`.
 #[must_use]
 pub fn refusal_page(
     code: &str,
     message: &str,
     request_id: Option<&str>,
-    csrf: Option<&str>,
+    bar: Option<&Bar>,
+    path: &str,
 ) -> String {
     let request = request_id.map_or_else(String::new, |id| {
         format!(r#"<p class="desc">Request <code>{}</code></p>"#, escape(id))
     });
-    let end = csrf.map_or_else(String::new, |csrf| {
-        format!(r#"<div class="end">{}</div>"#, sign_out(csrf))
-    });
-    document(
-        "Not available",
-        &format!(
-            r#"<header class="top">{}{end}</header><main class="wrap"><h1>This cannot continue</h1><p class="error" role="alert">{}: {}</p>{request}<p><a href="/web">Back</a></p></main>"#,
-            brand(true),
-            escape(code),
-            escape(message)
+    let back = bar.map_or_else(
+        || r#"<a href="/web">Back</a>"#.to_owned(),
+        |bar| {
+            let (href, word) = bar.scope.tab_of(path).unwrap_or(bar.scope.first());
+            format!(r#"<a href="{href}">Back to {word}</a>"#)
+        },
+    );
+    let main = format!(
+        r#"<main class="wrap"><div class="refusal"><h1>This cannot continue</h1><p class="error" role="alert"><code>{}</code>: {}</p>{request}<p>{back}</p></div></main>"#,
+        escape(code),
+        escape(message)
+    );
+    match bar {
+        Some(bar) => {
+            let title = match bar.scope {
+                Scope::Administration => "Admin · Not available",
+                Scope::Personal { .. } => "Not available",
+            };
+            page(
+                title,
+                &format!("{}{main}", header(bar, "")),
+                &footer(bar.scope),
+            )
+        }
+        None => document(
+            "Not available",
+            &format!(r#"<header class="top">{}</header>{main}"#, brand()),
         ),
-    )
+    }
 }
 
-/// A whole page: the head with the one stylesheet, `body`, and the footer.
+/// A whole page drawn for no one: the head with the one stylesheet,
+/// `body`, and the footer.
 #[must_use]
 pub fn document(title: &str, body: &str) -> String {
+    page(title, body, JOURNALLED)
+}
+
+/// A whole page: the head with the one stylesheet and the `<title>`
+/// `<title> · OML`, `body`, and `footer`'s HTML.
+fn page(title: &str, body: &str, footer: &str) -> String {
     format!(
-        r##"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><meta name="color-scheme" content="dark light"><meta name="theme-color" content="{GROUND_DARK}" media="(prefers-color-scheme: dark)"><meta name="theme-color" content="{GROUND_LIGHT}" media="(prefers-color-scheme: light)"><title>Open Memory Lab: {}</title><style>{STYLESHEET}</style></head><body>{body}<footer><div class="wrap">Every act on these pages is journalled under one of your keys.</div></footer></body></html>"##,
+        r##"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><meta name="color-scheme" content="dark light"><meta name="theme-color" content="{GROUND_DARK}" media="(prefers-color-scheme: dark)"><meta name="theme-color" content="{GROUND_LIGHT}" media="(prefers-color-scheme: light)"><title>{} · OML</title><style>{STYLESHEET}</style></head><body>{body}<footer><div class="wrap">{footer}</div></footer></body></html>"##,
         escape(title)
     )
 }
@@ -417,14 +605,37 @@ mod tests {
         assert!(csp.contains(&style_source()));
     }
 
+    fn bar(scope: Scope) -> Bar {
+        Bar {
+            scope,
+            who: "alice · oml".to_owned(),
+            csrf: "c5".to_owned(),
+        }
+    }
+
+    /// A page without its stylesheet, whose comments and selectors name
+    /// words the markup must not.
+    fn markup(html: &str) -> String {
+        html.replace(STYLESHEET, "")
+    }
+
+    /// The `<nav>` of a page, whole.
+    fn nav(html: &str) -> &str {
+        let start = html.find("<nav").expect("a nav");
+        let end = html[start..].find("</nav>").expect("a closed nav") + start + 6;
+        &html[start..end]
+    }
+
     #[test]
     fn a_page_escapes_what_a_person_or_the_store_supplied() {
         let html = shell(
             "t",
-            "<script>",
-            Some("\"x"),
-            &[("/web", "Keys")],
-            "/web",
+            &Bar {
+                scope: Scope::Personal { admin: false },
+                who: "<script>".to_owned(),
+                csrf: "\"x".to_owned(),
+            },
+            START_PATH,
             None,
             &text("a\u{202E}b <img>"),
         );
@@ -436,17 +647,19 @@ mod tests {
         assert!(f.contains("&quot;x"));
     }
 
-    /// The header carries the sign-out control exactly where a session's
-    /// CSRF token is given: a `POST` form to the lead's sign-out, never a
-    /// link (#327).
+    /// The header carries the sign-out control on every page drawn for a
+    /// session: a `POST` form to the lead's sign-out, never a link; a page
+    /// drawn for no one carries none (#327).
     #[test]
     fn the_header_draws_the_sign_out_control_only_for_a_signed_in_session() {
-        let signed_in = shell("t", "alice", Some("c5"), &[], "", None, "");
-        assert!(signed_in.contains(
-            r#"<form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="c5"><button type="submit" class="linkish">Sign out</button></form></div></header>"#
-        ), "{signed_in}");
-        assert!(!signed_in.contains(r#"href="/web?action=sign_out"#));
-        let no_one = shell("t", "", None, &[], "", None, "");
+        for scope in [Scope::Personal { admin: false }, Scope::Administration] {
+            let signed_in = shell("t", &bar(scope), "", None, "");
+            assert!(signed_in.contains(
+                r#"<form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="c5"><button type="submit" class="linkish">Sign out</button></form></div></header>"#
+            ), "{signed_in}");
+            assert!(!signed_in.contains(r#"href="/web?action=sign_out"#));
+        }
+        let no_one = bare("t", "");
         assert!(!no_one.contains("sign_out"), "{no_one}");
     }
 
@@ -454,19 +667,246 @@ mod tests {
     /// token is given, and none for no one (#327).
     #[test]
     fn a_refusal_page_draws_the_sign_out_control_only_for_a_signed_in_session() {
-        let control = r#"<div class="end"><form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="c5"><button type="submit" class="linkish">Sign out</button></form></div></header>"#;
-        let signed_in = refusal_page("access.not_found", "not found", Some("req-1"), Some("c5"));
-        assert!(signed_in.contains(control), "{signed_in}");
-        assert!(
-            shell("t", "alice", Some("c5"), &[], "", None, "").contains(&control[17..]),
-            "the control is the one shell draws"
+        let control = r#"<form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="c5"><button type="submit" class="linkish">Sign out</button></form></div></header>"#;
+        let signed_in = refusal_page(
+            "access.not_found",
+            "not found",
+            Some("req-1"),
+            Some(&bar(Scope::Personal { admin: false })),
+            "/web/keys",
         );
+        assert!(signed_in.contains(control), "{signed_in}");
         for no_one in [
             refusal("access.not_found", "not found"),
-            refusal_page("access.not_found", "not found", Some("req-1"), None),
+            refusal_page("access.not_found", "not found", Some("req-1"), None, "/web"),
         ] {
             assert!(!no_one.contains("sign_out"), "{no_one}");
             assert!(!no_one.contains(r#"class="end""#), "{no_one}");
         }
+    }
+
+    /// Each side's nav holds that side's pages alone, in the BrandHeader's
+    /// order, under a label that is the scope word; the switch sits
+    /// outside it (design notes row 13).
+    #[test]
+    fn each_side_draws_its_own_nav_exactly() {
+        let personal = shell(
+            "",
+            &bar(Scope::Personal { admin: true }),
+            USER_KEYS_PATH,
+            None,
+            "",
+        );
+        assert_eq!(
+            nav(&personal),
+            r#"<nav aria-label="Personal"><a href="/web/start">Start</a><a href="/web/memories">Memories</a><a href="/web/review">Review</a><a href="/web/atlas">Atlas</a><a href="/web/keys" class="on" aria-current="page">Keys</a><a href="/web/workareas">Workareas</a><a href="/web/guardrails">Guardrails</a></nav>"#
+        );
+        let admin = shell("", &bar(Scope::Administration), ADMIN_ATLAS_PATH, None, "");
+        assert_eq!(
+            nav(&admin),
+            r#"<nav aria-label="Administration"><a href="/web/admin/people">People</a><a href="/web/admin/users">Quotas</a><a href="/web/admin/memories">Memories</a><a href="/web/admin/review">Review</a><a href="/web/admin/atlas" class="on" aria-current="page">Atlas</a><a href="/web/admin/keys">Keys</a><a href="/web/admin/workareas">Workareas</a><a href="/web/admin/curate">Curate</a></nav>"#
+        );
+        assert!(
+            personal.contains(r#"<header class="top personal">"#),
+            "{personal}"
+        );
+        assert!(admin.contains(r#"<header class="top admin">"#), "{admin}");
+        assert!(
+            personal.contains(r#"<a class="brand" href="/web/start" aria-label="Open Memory Lab: Personal, Start">"#),
+            "{personal}"
+        );
+        assert!(
+            admin.contains(r#"<a class="brand" href="/web/admin/people" aria-label="Open Memory Lab: Administration, People">"#),
+            "{admin}"
+        );
+        assert!(personal.contains(&format!(
+            r#"<span class="scope">{}Personal</span>"#,
+            glyph_svg("personal")
+        )));
+        assert!(admin.contains(&format!(
+            r#"<span class="scope">{}Administration</span>"#,
+            glyph_svg("admin")
+        )));
+        // One switch, after the nav, to the other side's first page.
+        assert!(personal.contains(&format!(
+            r#"</nav><a class="switch" href="/web/admin/people">{}Administration</a><div class="end">"#,
+            glyph_svg("admin")
+        )), "{personal}");
+        assert!(
+            admin.contains(&format!(
+                r#"</nav><a class="switch" href="/web/start">{}Personal</a><div class="end">"#,
+                glyph_svg("personal")
+            )),
+            "{admin}"
+        );
+        assert!(!personal.contains("Your page") && !admin.contains("Your page"));
+    }
+
+    /// A person without the admin capacity is shown no word, link or
+    /// address of the other side, on a page or on a refusal (ADR-0045 d10).
+    #[test]
+    fn a_session_without_the_admin_capacity_sees_nothing_of_administration() {
+        let bar = bar(Scope::of_path("/web/admin/people", false));
+        assert_eq!(bar.scope, Scope::Personal { admin: false });
+        for html in [
+            shell("", &bar, USER_REVIEW_PATH, None, ""),
+            refusal_page(
+                "access.not_found",
+                "no such page here",
+                Some("r"),
+                Some(&bar),
+                "/web/admin/people",
+            ),
+        ] {
+            let html = markup(&html);
+            for word in [
+                "Administration",
+                "/web/admin",
+                "Admin ·",
+                r#"class="switch""#,
+            ] {
+                assert!(!html.contains(word), "{word}: {html}");
+            }
+        }
+    }
+
+    /// The `<title>` names the page, its tab and the side; a page below a
+    /// tab puts its own name first.
+    #[test]
+    fn the_title_names_the_page_its_tab_and_the_side() {
+        let title = |html: &str| {
+            let start = html.find("<title>").unwrap() + 7;
+            html[start..start + html[start..].find("</title>").unwrap()].to_owned()
+        };
+        let personal = bar(Scope::Personal { admin: false });
+        let admin = bar(Scope::Administration);
+        assert_eq!(
+            title(&shell("", &personal, USER_MEMORIES_PATH, None, "")),
+            "Memories · OML"
+        );
+        assert_eq!(
+            title(&shell("Memories", &personal, USER_MEMORIES_PATH, None, "")),
+            "Memories · OML"
+        );
+        assert_eq!(
+            title(&shell(
+                "One memory",
+                &personal,
+                USER_MEMORIES_PATH,
+                None,
+                ""
+            )),
+            "One memory · Memories · OML"
+        );
+        assert_eq!(
+            title(&shell("", &admin, "/web/admin/users", None, "")),
+            "Admin · Quotas · OML"
+        );
+        assert_eq!(
+            title(&shell("Confirm", &admin, ADMIN_REVIEW_PATH, None, "")),
+            "Admin · Confirm · Review · OML"
+        );
+        assert_eq!(
+            title(&refusal("access.not_found", "x")),
+            "Not available · OML"
+        );
+        assert_eq!(
+            title(&refusal_page(
+                "access.not_found",
+                "x",
+                None,
+                Some(&admin),
+                ADMIN_KEYS_PATH
+            )),
+            "Admin · Not available · OML"
+        );
+    }
+
+    /// A refusal is drawn inside the bar of the side it happened on, with
+    /// one link back named by the page's tab, or by the side's first page
+    /// where the path is under none (design notes row 25).
+    #[test]
+    fn a_refusal_page_is_drawn_in_its_sides_bar_with_a_named_link_back() {
+        let admin = bar(Scope::Administration);
+        let page = markup(&refusal_page(
+            "limit.quota",
+            "the memories quota of 1000 is reached",
+            Some("req-9"),
+            Some(&admin),
+            ADMIN_MEMORY_PATH,
+        ));
+        assert!(page.contains(r#"<header class="top admin">"#), "{page}");
+        assert!(
+            page.contains(r#"<nav aria-label="Administration">"#),
+            "{page}"
+        );
+        assert!(!page.contains("aria-current"), "{page}");
+        assert!(page.contains(r#"<p class="error" role="alert"><code>limit.quota</code>: the memories quota of 1000 is reached</p>"#), "{page}");
+        assert!(
+            page.contains(r#"<p><a href="/web/admin/memories">Back to Memories</a></p>"#),
+            "{page}"
+        );
+        let personal = bar(Scope::Personal { admin: false });
+        let page = refusal_page(
+            "access.not_found",
+            "no such page here",
+            None,
+            Some(&personal),
+            "/web/admin/review",
+        );
+        assert!(page.contains(r#"<header class="top personal">"#), "{page}");
+        assert!(
+            page.contains(r#"<p><a href="/web/start">Back to Start</a></p>"#),
+            "{page}"
+        );
+        let page = refusal_page(
+            "request.validation",
+            "x",
+            None,
+            Some(&personal),
+            "/web/keys",
+        );
+        assert!(
+            page.contains(r#"<p><a href="/web/keys">Back to Keys</a></p>"#),
+            "{page}"
+        );
+        assert!(refusal("access.not_found", "x").contains(r#"<p><a href="/web">Back</a></p>"#));
+    }
+
+    /// Who is signed in stays in the bar at every width: no rule of the
+    /// stylesheet hides the name, the tenant or the scope word, and the
+    /// nav wraps instead of scrolling inside itself (BrandHeader, Widths).
+    #[test]
+    fn the_bar_keeps_the_side_and_the_person_at_every_width() {
+        let page = shell(
+            "",
+            &bar(Scope::Administration),
+            ADMIN_MEMORIES_PATH,
+            None,
+            "",
+        );
+        assert!(
+            page.contains(r#"<span class="name">alice · oml</span>"#),
+            "{page}"
+        );
+        let sheet = include_str!("web.css");
+        // Each rule, its selector and its declarations, inside a media
+        // query or not.
+        for rule in sheet.split('}') {
+            let Some((selector, declarations)) = rule.rsplit_once('{') else {
+                continue;
+            };
+            if [".who", ".name", ".scope", "header.top nav"]
+                .iter()
+                .any(|kept| selector.contains(kept))
+            {
+                assert!(!declarations.contains("display:none"), "{rule}");
+                assert!(!declarations.contains("overflow-x:auto"), "{rule}");
+            }
+        }
+        assert!(
+            sheet.contains("header.top{position:sticky;top:0"),
+            "the bar is pinned"
+        );
     }
 }
