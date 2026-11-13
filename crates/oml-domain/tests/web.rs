@@ -105,6 +105,37 @@ fn a_google_token_for_another_client_another_issuer_or_past_its_expiry_is_refuse
 }
 
 #[test]
+fn a_google_token_whose_aud_array_names_any_audience_besides_the_client_is_refused() {
+    for aud in [
+        json!([CLIENT, "another-client.apps.googleusercontent.com"]),
+        json!(["another-client.apps.googleusercontent.com", CLIENT]),
+        json!([CLIENT, CLIENT, "x"]),
+        json!(["someone-else"]),
+        json!([CLIENT, 7]),
+        json!([]),
+    ] {
+        let mut c = claims();
+        c["aud"] = aud.clone();
+        assert_eq!(
+            admit_google_id_token(&id_token(&c), CLIENT, NONCE, NOW),
+            Err(SignInRefusal::ProviderRefused),
+            "{aud}"
+        );
+    }
+}
+
+#[test]
+fn a_google_token_whose_aud_is_the_client_id_alone_as_a_string_or_a_one_element_array_signs_in() {
+    for aud in [json!(CLIENT), json!([CLIENT])] {
+        let mut c = claims();
+        c["aud"] = aud.clone();
+        let identity = admit_google_id_token(&id_token(&c), CLIENT, NONCE, NOW)
+            .unwrap_or_else(|refusal| panic!("{aud}: {refusal:?}"));
+        assert_eq!(identity.subject, "1234567890", "{aud}");
+    }
+}
+
+#[test]
 fn a_google_token_with_another_nonce_is_a_state_mismatch() {
     assert_eq!(
         admit_google_id_token(&id_token(&claims()), CLIENT, "other", NOW),
