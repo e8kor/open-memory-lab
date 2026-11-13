@@ -17,7 +17,7 @@
 //!   never reads the serve id, which the contract leaves opaque; the
 //!   verdict (`postVerdict`) redirects to the next item;
 //! - on both pages, the held listing as cards (`MemoryCard` and
-//!   `ReviewCard`, [`crate::card`]): on the user page grouped by workarea
+//!   `ReviewCard`, `card.rs`): on the user page grouped by workarea
 //!   from one read, each row with "Open to judge", which draws the item's
 //!   card with a verdict form whose act, `judge`, records a one-id
 //!   listed-set verdict (`postBulkVerdict`; ADR-0055 d4, as the operator

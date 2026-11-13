@@ -4,7 +4,7 @@
 //! field, one bordered unit, with no script. It stands on Memories, the
 //! Atlas and Review on both sides, and alone on Guardrails.
 //!
-//! Every workarea is named by its **reference** ([`reference`]): its bare
+//! Every workarea is named by its **reference** ([`reference()`]): its bare
 //! name in the shared namespace (`platform`), `<user>.<name>` inside a
 //! person's root (`alice.docs`, whatever its depth), the root's own name
 //! (`alice`), or `universe`. Every field takes it on both sides, since a
