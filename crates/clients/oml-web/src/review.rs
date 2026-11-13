@@ -692,6 +692,13 @@ async fn view(
         (None, None) => None,
     };
     if let Some(act) = act {
+        if let (Act::Serve(_), Some(at)) = (act, expiry(&fields)) {
+            let _ = write!(
+                body,
+                r#"<p class="desc">Served for review until {}. Held text is read by its author, the reviewer it is served to, an admin through the journalled admin read, and readers inside an in-progress workarea.</p>"#,
+                text(at)
+            );
+        }
         match item(&ctx, fields.given("memory"), act).await {
             Ok((card, drawn)) => {
                 body.push_str(&card);
@@ -813,6 +820,31 @@ fn served_location(page: &str, serve: &oml_sdk::Serve) -> String {
     )
 }
 
+/// [`served_location`] with the serve's expiry, which the page shows
+/// (design notes row 18). The claim a verdict chains goes without it: a
+/// replayed claim answers its serve with a later expiry, and a resubmitted
+/// verdict must land where the first did.
+fn served_location_until(page: &str, serve: &oml_sdk::Serve) -> String {
+    format!(
+        "{}&expires={}",
+        served_location(page, serve),
+        encode(&serve.expires_at)
+    )
+}
+
+/// The serve's expiry the redirect carried (design notes row 18), read as
+/// an instant's characters only, so a crafted link puts no other text on
+/// the page.
+fn expiry(fields: &Fields) -> Option<&str> {
+    fields.given("expires").filter(|at| {
+        at.len() <= 40
+            && at.bytes().next().is_some_and(|b| b.is_ascii_digit())
+            && at
+                .bytes()
+                .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b':' | b'.' | b'T' | b'Z' | b'+'))
+    })
+}
+
 /// One act of the view, as the person's reviewer key.
 async fn act(
     web: Web,
@@ -840,7 +872,7 @@ async fn act(
             let _in_flight = acts::hold(&key).await;
             let ids = calls.next_ids();
             match web.api.review_next(&call(&credential, &ids), &key).await {
-                Ok(Some(serve)) => acts::see_other(&served_location(page, &serve), &[]),
+                Ok(Some(serve)) => acts::see_other(&served_location_until(page, &serve), &[]),
                 Ok(None) => acts::see_other(&format!("{page}?done=empty"), &[]),
                 Err(e) => outcome::page(&e, &calls, page),
             }
@@ -1193,5 +1225,16 @@ mod tests {
             Some("Recorded: 0 approved, 0 rejected, 0 skipped.")
         );
         assert_eq!(notice(&fields("done=hello")), None);
+    }
+
+    #[test]
+    fn a_serves_expiry_is_shown_only_as_an_instants_characters() {
+        let fields = |q: &str| Fields::of(&format!("/web/review?{q}").parse().unwrap()).unwrap();
+        assert_eq!(
+            expiry(&fields("expires=2026-11-12T17%3A10%3A00.000000Z")),
+            Some("2026-11-12T17:10:00.000000Z")
+        );
+        assert_eq!(expiry(&fields("expires=%3Cb%3E")), None);
+        assert_eq!(expiry(&fields("expires=soon")), None);
     }
 }

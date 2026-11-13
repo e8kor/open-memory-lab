@@ -4909,6 +4909,10 @@ async fn the_admin_memory_page_shows_the_scan_finding_the_persons_page_shows() {
     assert!(page.contains(r#"<div class="findings">"#), "{page}");
     assert!(page.contains("scan findings · 1"), "{page}");
     assert!(
+        page.contains("0 of the 1 approval this workarea's review policy asks for."),
+        "{page}"
+    );
+    assert!(
         page.contains("Read here as <code>boss-admin</code>, which never judges. Judge it in Review as <code>boss-review</code>."),
         "{page}"
     );
@@ -4933,6 +4937,9 @@ async fn the_served_card_is_read_by_the_memory_the_redirect_names_never_by_the_s
         "{location}"
     );
     let serve_id = query_param(&location, "serve").expect("the serve id");
+    // The redirect carries the serve's expiry, and the page says it (row 18).
+    let (_, _, served) = send(&rig.router, get(&location, Some(&cookie))).await;
+    assert!(served.contains("Served for review until 20"), "{served}");
     let (status, _, page) = send(
         &rig.router,
         get(

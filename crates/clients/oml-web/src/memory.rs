@@ -36,7 +36,7 @@ use oml_sdk::Memory;
 use oml_sdk::{AdminRead, Error};
 
 use crate::acts::Refusal;
-use crate::card::{Card, View, change};
+use crate::card::{Card, View, change, reference_of};
 use crate::pages::{Fields, refused};
 use crate::review::is_id;
 use crate::session::{PageCalls, Session, call};
@@ -176,7 +176,14 @@ fn changed_from(was: &Memory, now: &Memory) -> String {
 /// no verdict here, and the attribution and verdict tables (MemoryScreen):
 /// the attribution says what the card does not, and the verdicts table is
 /// the one place the console names who judged (ADR-0077 d2; ADR-0045 d21).
-fn attribution(m: &AdminRead, drawing: &str, changed: &str, admin: &str, reviewer: &str) -> String {
+fn attribution(
+    m: &AdminRead,
+    drawing: &str,
+    changed: &str,
+    admin: &str,
+    reviewer: &str,
+    policy: Option<u32>,
+) -> String {
     let card = Card::of_admin_read(m);
     let mut out = card.render(&View {
         open_link: false,
@@ -203,7 +210,18 @@ fn attribution(m: &AdminRead, drawing: &str, changed: &str, admin: &str, reviewe
             r#"<tr><td class="label">{field}</td><td class="mono">{value}</td></tr>"#
         );
     }
-    out.push_str("</table><h2>Verdicts</h2><table><tr><th>Verdict</th><th>Key</th><th>Principal</th><th>Reason</th><th>At</th></tr>");
+    out.push_str("</table><h2>Verdicts</h2>");
+    if let Some(k) = policy {
+        let approvals = m.verdicts.iter().filter(|v| v.verdict == "approve").count();
+        let _ = write!(
+            out,
+            r#"<p class="desc">{approvals} of the {k} {} this workarea's review policy asks for.</p>"#,
+            if k == 1 { "approval" } else { "approvals" }
+        );
+    }
+    out.push_str(
+        "<table><tr><th>Verdict</th><th>Key</th><th>Principal</th><th>Reason</th><th>At</th></tr>",
+    );
     if m.verdicts.is_empty() {
         out.push_str(r#"<tr><td colspan="5" class="dim">No verdict yet.</td></tr>"#);
     }
@@ -267,19 +285,34 @@ pub async fn admin_page(
     );
     // The change against the version it replaces: one more admin read,
     // journalled like any (MemoryScreen; design notes row 4).
-    let changed = match read.replaces.as_deref() {
-        Some(replaced) => match admin_read(&web, &session, &calls, replaced).await {
-            Ok(was) => change(
-                i64::from(was.version),
-                &was.text,
-                read.version,
-                &read.text,
-                false,
-            ),
-            Err(_) => String::new(),
-        },
-        None => String::new(),
+    // Beside it, the workarea's review policy, for the Verdicts note (row
+    // 16): one more call, in the same round.
+    let replaced = async {
+        match read.replaces.as_deref() {
+            Some(replaced) => match admin_read(&web, &session, &calls, replaced).await {
+                Ok(was) => change(
+                    i64::from(was.version),
+                    &was.text,
+                    read.version,
+                    &read.text,
+                    false,
+                ),
+                Err(_) => String::new(),
+            },
+            None => String::new(),
+        }
     };
+    let policy = async {
+        let credential = session.credential(Capacity::Admin);
+        let ids = calls.next_ids();
+        web.api
+            .workarea(&call(&credential, &ids), &reference_of(&read.workarea_path))
+            .await
+            .ok()
+            .and_then(|w| w.policy)
+            .and_then(|p| p.k)
+    };
+    let (changed, policy) = tokio::join!(replaced, policy);
     let user = session
         .whoami
         .user
@@ -293,7 +326,8 @@ pub async fn admin_page(
             drawing.as_deref().unwrap_or_default(),
             &changed,
             &format!("{user}-admin"),
-            &format!("{user}-review")
+            &format!("{user}-review"),
+            policy
         ),
         short(&format!("{user}-review"))
     );
@@ -585,7 +619,7 @@ mod tests {
             "principal": "alice", "user": "alice", "created_at": "2026-11-11T10:00:00Z",
         }))
         .unwrap();
-        let page = attribution(&read, "", "", "alice-admin", "alice-review");
+        let page = attribution(&read, "", "", "alice-admin", "alice-review", None);
         assert!(
             page.contains("6f1c2d4e-0000-4000-8000-0000000000aa (alice)"),
             "{page}"
@@ -597,7 +631,7 @@ mod tests {
             "principal": "alice", "user": null, "created_at": "2026-11-11T10:00:00Z",
         }))
         .unwrap();
-        let page = attribution(&named, "", "", "alice-admin", "alice-review");
+        let page = attribution(&named, "", "", "alice-admin", "alice-review", None);
         assert!(
             page.contains(r#"<span class="who">alice-laptop</span>"#),
             "a named key shows its name: {page}"

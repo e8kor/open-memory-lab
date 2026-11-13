@@ -266,6 +266,20 @@ pub struct WorkareaView {
     pub status: String,
     #[serde(default)]
     pub pending_transitions: Vec<Transition>,
+    /// The review policy in force (ADR-0009 d3); `None` from an API that
+    /// does not serve it.
+    #[serde(default)]
+    pub policy: Option<ReviewPolicy>,
+}
+
+/// A workarea's review policy (openapi.yaml `ReviewPolicy`): how many
+/// approving verdicts promote a version, and from which roles.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ReviewPolicy {
+    #[serde(default)]
+    pub k: Option<u32>,
+    #[serde(default)]
+    pub required_roles: Vec<String>,
 }
 
 /// A transition a workarea's offers name: `propose` the next rung, or
