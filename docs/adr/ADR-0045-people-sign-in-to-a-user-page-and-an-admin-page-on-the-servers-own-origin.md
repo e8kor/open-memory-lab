@@ -846,8 +846,9 @@ build's.
 
 ## The two provider points as checked against the providers' documentation (2026-11-13, #119)
 
-d4 left two provider points unverified: whether Google's ID token may be accepted without a
-signature check, and whether GitHub's token endpoint enforces the PKCE challenge. Each provider's
+d4 decided that Google's ID token is accepted without a signature check and left the source it
+cites to be quoted when built, and it marked unverified whether GitHub's token endpoint enforces
+the PKCE challenge. Each provider's
 documentation was fetched on 2026-11-13 and is quoted below; the code that relies on each point
 is cited by file and line at `main` 053f439e. The sign-in runs in the lead, not in `oml-web`:
 `crates/adapters/oml-fetch/src/signin.rs` makes the provider calls,
