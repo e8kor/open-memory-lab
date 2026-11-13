@@ -582,3 +582,36 @@ async fn an_issue_answered_without_a_value_and_not_as_a_replay_is_refused_by_nam
     assert!(answer.body.contains("unavailable"), "{}", answer.body);
     assert!(answer.headers.get(header::SET_COOKIE).is_none());
 }
+
+/// The Memories hints read one page of the uncounted tree (bulk D fixes,
+/// ADR-0070's as-built rows): where the tree has more, the field says the
+/// hints are partial and that Browse and a typed name still work, and the
+/// page makes no second tree call.
+#[tokio::test]
+async fn the_memories_hints_read_one_tree_page_and_say_when_they_are_partial() {
+    let script: Script = Arc::new(|_, path| {
+        if path.starts_with("/v2/workareas/universe/tree") {
+            let page = json!({"items": [
+                {"id": "00000000-0000-4000-8000-0000000000a1", "name": "universe", "path": "universe", "parent_id": null, "user_root": false},
+                {"id": "00000000-0000-4000-8000-0000000000a2", "name": "alice", "path": "universe.alice", "parent_id": "00000000-0000-4000-8000-0000000000a1", "user_root": true},
+            ], "next_cursor": "more"});
+            (200, page, Vec::new())
+        } else {
+            (200, empty_page(), Vec::new())
+        }
+    });
+    let page = send(script, get("/web/memories")).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    assert_eq!(
+        calls_to(&page, "GET /v2/workareas/universe/tree"),
+        1,
+        "{:?}",
+        page.calls
+    );
+    assert!(
+        page.body
+            .contains("The hints hold the first 2 workareas: the list is partial. Browse and a typed name still work."),
+        "{}",
+        page.body
+    );
+}

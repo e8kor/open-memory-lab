@@ -839,7 +839,15 @@ async fn picker_reads(
     tokio::join!(
         async {
             if names {
-                Names::read(web, &credential, calls, "universe", own.as_deref()).await
+                Names::read(
+                    web,
+                    &credential,
+                    calls,
+                    "universe",
+                    own.as_deref(),
+                    picker::LIST_HINTS_PAGES,
+                )
+                .await
             } else {
                 Names::default()
             }

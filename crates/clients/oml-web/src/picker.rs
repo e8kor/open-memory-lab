@@ -12,8 +12,9 @@
 //! never is (ADR-0026 d7).
 //!
 //! The hints are names only, from the uncounted tree read
-//! (`GET /v2/workareas/{root}/tree`, [`Names::read`]), capped at
-//! [`HINTS_MAX`]. Counts and marks appear only inside an opened Browse,
+//! (`GET /v2/workareas/{root}/tree`, [`Names::read`]): one page of 200
+//! on Memories and the Atlas ([`LIST_HINTS_PAGES`]), up to [`HINTS_MAX`] on
+//! Guardrails. Counts and marks appear only inside an opened Browse,
 //! which the page draws when its query carries `browse=1` and which then
 //! makes the counted read (`?counts=true`, [`Browse::read`]); a closed
 //! Browse is a link, so a page that does not ask for it makes no counted
@@ -38,10 +39,16 @@ use crate::session::{PageCalls, call};
 /// The page size of the tree read, the API's maximum.
 const TREE_PAGE: u32 = 200;
 
-/// The most tree pages the hints read: 10 pages of 200, the counted
-/// read's own cap of 2,000 nodes, so the hints and Browse hold the same
-/// set. Past it the hint says so.
+/// The most tree pages the Guardrails hints read: 10 pages of 200, the
+/// counted read's own cap of 2,000 nodes, so the hints and Browse hold the
+/// same set. Past it the hint says so.
 pub const HINTS_PAGES: usize = 10;
+
+/// The tree pages the Memories and Atlas hints read: one, so the list's
+/// page adds one call of a bounded cost (ADR-0070's as-built rows for the
+/// redesign); past it the hint says the list is partial and that Browse
+/// and a typed name still work.
+pub const LIST_HINTS_PAGES: usize = 1;
 
 /// The most names the hints hold.
 pub const HINTS_MAX: usize = HINTS_PAGES * TREE_PAGE as usize;
@@ -216,7 +223,7 @@ pub struct Place {
 
 /// The names the viewer may choose, from the uncounted tree read: each
 /// node's id, name, path and reference, and whether the read stopped at
-/// [`HINTS_MAX`].
+/// its page cap.
 #[derive(Debug, Clone, Default)]
 pub struct Names {
     places: Vec<Place>,
@@ -231,7 +238,7 @@ pub struct Names {
 
 impl Names {
     /// The names under `root` as `credential` reads them: the tree a page
-    /// at a time, at most [`HINTS_PAGES`] pages. A failed call, or a
+    /// at a time, at most `pages` pages. A failed call, or a
     /// cursor the API repeats, leaves the names unavailable with the
     /// request id of the call that ended the read; `own_root` names the
     /// person's root where the page knows it, so a path under it gets its
@@ -242,12 +249,13 @@ impl Names {
         calls: &PageCalls,
         root: &str,
         own_root: Option<&str>,
+        pages: usize,
     ) -> Self {
         let mut nodes = Vec::new();
         let mut cursor: Option<String> = None;
         let mut seen = BTreeSet::new();
         let mut more = false;
-        for page in 0..HINTS_PAGES {
+        for page in 0..pages {
             let ids = calls.next_ids();
             let request_id = ids.request_id.clone().unwrap_or_default();
             let read = web
@@ -264,7 +272,7 @@ impl Names {
                 Some(next) if !seen.insert(next.clone()) => {
                     return Self::unavailable(request_id);
                 }
-                Some(_) if page + 1 == HINTS_PAGES => more = true,
+                Some(_) if page + 1 == pages => more = true,
                 Some(next) => cursor = Some(next),
             }
         }
@@ -848,7 +856,8 @@ impl Field<'_> {
         if self.names.more {
             let _ = write!(
                 hint,
-                " More than {HINTS_MAX} workareas: the hints hold the first {HINTS_MAX}. Type the whole reference."
+                " The hints hold the first {} workareas: the list is partial. Browse and a typed name still work.",
+                self.names.places.len()
             );
         }
         hint

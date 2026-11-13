@@ -225,7 +225,14 @@ async fn guardrails(
     };
     let (set, names, browse) = tokio::join!(
         set,
-        Names::read(web, &credential, calls, &root, user.as_deref()),
+        Names::read(
+            web,
+            &credential,
+            calls,
+            &root,
+            user.as_deref(),
+            picker::HINTS_PAGES
+        ),
         browse,
     );
     let (chosen, set) = match set {
