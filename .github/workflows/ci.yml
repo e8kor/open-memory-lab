@@ -122,6 +122,19 @@ jobs:
       - run: cargo test --workspace --locked
         env:
           OML_TEST_REQUIRE_SPLIT: "1"
+      # The connect flow's sign-in calls timed against Claude's limits, 10 s
+      # for discovery, registration and token calls and 30 s for a refresh
+      # (ADR-0031, #115); the workspace run above asserts them, this one
+      # prints each step's time into the log. --workspace keeps the feature
+      # set of the run above, so the binary is reused, not rebuilt; the step
+      # fails unless exactly that one test ran and passed.
+      - name: Sign-in response times (connect flow)
+        shell: bash  # -eo pipefail: a failing cargo test is not hidden by tee
+        run: |
+          cargo test --workspace --locked --test connect_flow every_sign_in_call_answers_within_claudes_ten_seconds_and_a_refresh_within_its_thirty -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/sign-in-times.txt"
+          grep -q "test result: ok. 1 passed" "$RUNNER_TEMP/sign-in-times.txt"
+        env:
+          OML_TEST_REQUIRE_SPLIT: "1"
       # The adapter's real-model tests are ignored without the model; here
       # they run against the cached pinned files (ADR-0053 d10).
       - run: cargo test --locked -p oml-rerank -- --ignored
