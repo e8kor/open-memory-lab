@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core
 tier: engineering
-status: accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11 and 2026-11-12; two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325), the one that keeps its export and deletion request open (#335), the three on sign-out (#327) and the two on a denied session key's pages that state the absent forms and the `whoami` boolean (#343) were accepted on 2026-11-12, the build's wording and the third row's store-call counts not having been put to the operator
+status: accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11, 2026-11-12 and 2026-11-13 (accepted by the operator the same day); two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325), the one that keeps its export and deletion request open (#335), the three on sign-out (#327) and the two on a denied session key's pages that state the absent forms and the `whoami` boolean (#343) were accepted on 2026-11-12, the build's wording and the third row's store-call counts not having been put to the operator
 answers: why the web pages stop calling oml-app's use cases and call the public HTTP API instead; which crate serves the pages and what it may depend on; how a signed-in person's session becomes an API credential without a key value at rest or in the browser; which middleware layer owns the request id, the session, CSRF, CSP, rate limits, audit and error mapping; how oml-web, always its own process, reaches the API; which existing operation serves each web call and which operations are new; what stays in the auth context; the bounded contexts; the migration phases and the test that proves parity; the overhead budget; what it amends in ADR-0042 and ADR-0045
 -->
 
 # ADR-0070 — The web console is a client of the public HTTP API, in a crate that cannot reach the application core
 
-**Status:** accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11 and 2026-11-12; two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325), the one that keeps its export and deletion request open (#335), the three on sign-out (#327) and the two on a denied session key's pages that state the absent forms and the `whoami` boolean (#343) were accepted on 2026-11-12, the build's wording and the third row's store-call counts not having been put to the operator
+**Status:** accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11, 2026-11-12 and 2026-11-13 (the person's Review lists what waits and judges one item, d7 (b) and d4; the picker's budget, d8: see [the console redesign](#the-console-redesign-of-2026-11-13-the-person-judges-from-a-list-and-the-picker-reads-names-only), accepted by the operator the same day); two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325), the one that keeps its export and deletion request open (#335), the three on sign-out (#327) and the two on a denied session key's pages that state the absent forms and the `whoami` boolean (#343) were accepted on 2026-11-12, the build's wording and the third row's store-call counts not having been put to the operator
 
 **Amends:** ADR-0045 (d1: the page routes move to `oml-web` and the sign-in routes to the auth
 context; d6: a session key gains a per-session credential; d7: that credential, never the
@@ -59,7 +59,8 @@ revised); sign-out on every
 page (#327; d2, d3 layer 4 and d5 revised): see
 [Sign-out on every page](#sign-out-on-every-page-2026-11-12-327); and a denied session key's
 pages (#343; d2, d5 and d8 revised, and ADR-0039 d15 amended): see
-[A denied session key's pages](#a-denied-session-keys-pages-2026-11-12-343).
+[A denied session key's pages](#a-denied-session-keys-pages-2026-11-12-343). Amended on 2026-11-13, and accepted by the operator the same day: the person's Review page (d7 (b) and d4 revised) and the workarea picker's reads (d8 kept): see
+[The console redesign of 2026-11-13](#the-console-redesign-of-2026-11-13-the-person-judges-from-a-list-and-the-picker-reads-names-only).
 
 ## Context
 
@@ -1031,6 +1032,22 @@ person's root, on a workarea inside it and on one outside it: `false` and an iss
 page equal to the API's answer: each act posted anyway is the `403` the page drew no form for;
 it also holds the sentence to 25 words, above the table on the Keys page, and the one row
 marked `restricted`. The pages were not looked at in a browser.
+
+## The console redesign of 2026-11-13: the person judges from a list, and the picker reads names only
+
+On 2026-11-13 the operator, after seeing the published mockups of the console, decided two things
+that touch this record: that "Open to judge" is on the Personal Review page ("yes, amend the
+records"), and that the workarea picker's hints are "names only, counts only inside an opened
+Browse". Both rows below are accepted with that decision; the operator decided the two sentences
+and that the build ships in v0.7.3. What the build chooses beyond them is the build's. The first
+row follows
+[ADR-0055](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)'s
+amendment of the same date, which holds the decision, R2 and what is not changed.
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d7 (b), d4 | the Review view of the user page holds review next only, "bulk review staying the admin page's (ADR-0055 d1), so the person's page refuses its acts as no action of the page" | the person's Review view holds review next, the held listing (`GET /v2/review/held`) and a one-id verdict from it (`POST /v2/review/verdicts/bulk` with one id). The page's closed action set gains that one verdict; the admin page's queue and bulk review are unchanged, and no selection of many is added on the person's side. A `GET` of the view gains the listing's reads, and `web_console_reads.rs` is updated to the new count with this reason; the post-redirect-get of d3 layer 4 holds for the verdict | the decision is "Open to judge", and the listing and the verdict are operations the API serves to `<user>-review` already |
+| d8 | the budget is p95 page time no more than 5 ms above today's; the counted tree, `GET /v2/workareas/{workarea}/tree?counts=true`, is the costly read of the pages that make it, the Atlas against Memories and Review, which do not ([web.md](../benchmarks/web.md)), and a picker with counts on every page would add it to Memories and both Reviews | the budget is kept for the picker and is not widened. A picker's hints name workareas only, from the uncounted tree or from data the page already reads, on Memories, Atlas and both Reviews of both sides; a count is shown only inside an opened Browse, the one place a page makes the counted read (the mockups' `?browse=1`; the mechanism is the build's). The build measures what the hints add against d8 and states any miss as the rows of [#286](#the-re-measurement-of-2026-11-12-286) do, and records the reads of each changed `GET` in `web_console_reads.rs` | the cost of a picker is where its counts are, not its names; a count is asked for by opening Browse. The cost: a hint carries no count until Browse is opened |
 
 ## Consequences
 
