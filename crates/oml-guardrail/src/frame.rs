@@ -83,7 +83,7 @@ pub fn render_frame(set: &Value, options: &FrameOptions<'_>) -> Result<Frame, &'
             })
             .collect();
         lines.push(format!(
-            "Held, not in force (your own, awaiting review, never served as a rule): {}",
+            "Held, not in force (this key's own, awaiting review, never served as a rule): {}",
             named.join(", ")
         ));
     }
