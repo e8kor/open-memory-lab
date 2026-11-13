@@ -238,6 +238,13 @@ pub struct WorkareaNode {
     pub id: String,
     pub name: String,
     pub path: String,
+    /// The node it sits in; `None` for the tree's own root.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// Whether the node is a person's root (ADR-0044 d1), which makes the
+    /// names beneath it `<user>.<name>` (d5).
+    #[serde(default)]
+    pub user_root: bool,
 }
 
 /// `GET /v2/workareas/{workarea}/tree`: one page of nodes.
@@ -733,6 +740,9 @@ pub struct CountedNode {
     pub status: String,
     pub mode: String,
     pub counts: NodeCounts,
+    /// Whether the node is a person's root (ADR-0044 d1).
+    #[serde(default)]
+    pub user_root: bool,
 }
 
 /// `GET /v2/workareas/{workarea}/tree?counts=true`: the subtree, a parent

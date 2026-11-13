@@ -220,3 +220,39 @@ details.oml-more>summary{cursor:pointer;min-height:var(--target-min);display:inl
 .oml-lifebar .promoted{background:var(--promoted)}.oml-lifebar .held{background:var(--held)}.oml-lifebar .superseded{background:var(--superseded)}.oml-lifebar .rejected{background:var(--rejected)}.oml-lifebar .retired{background:var(--retired)}.oml-lifebar .unreviewed{background:var(--unreviewed)}
 .oml-legend{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:var(--space-1) var(--space-3);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
 .oml-legend li{display:inline-flex;align-items:center;gap:var(--space-1)}.oml-legend b{color:var(--ink);font-variant-numeric:tabular-nums}
+
+/* WorkareaField (the picker lane, bulk D): the field, its hint or refusal, the chosen line
+   and Browse as one bordered unit. A closed Browse is a link (a.oml-wa-ask) that asks the page
+   for the counted read; an open one is a details. The unit is a filter form's first row. */
+.oml-wa{display:flex;flex-direction:column;gap:var(--space-1);min-width:0;max-width:var(--tile-max);margin:0 0 var(--space-3);border:1px solid var(--rule);border-radius:var(--radius-md);background:var(--ground-alt);padding:var(--space-3) var(--space-3) 0}
+.filters>.oml-wa{flex:1 1 100%;margin:0}
+.oml-wa>label{font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);letter-spacing:normal;text-transform:none;color:var(--ink-dim)}
+.oml-wa .ctl{display:flex;gap:var(--space-2);min-width:0}
+.oml-wa .ctl .oml-input{flex:1 1 0;min-width:0;width:100%;font-family:var(--font-mono);font-variant-ligatures:none}
+.oml-wa .oml-input[aria-invalid="true"]{border-color:var(--error);box-shadow:inset 0 0 0 1px var(--error)}
+.oml-wa .oml-hint{margin:0;font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.oml-wa-on{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1) var(--space-3);margin:var(--space-1) 0 0;font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.oml-wa-on .ref{font:var(--t-state-weight) var(--t-meta-size)/var(--t-meta-line) var(--font-mono);color:var(--ink);font-variant-ligatures:none}
+.oml-wa-browse{display:flex;flex-direction:column;margin:var(--space-2) calc(-1 * var(--space-3)) 0;border-top:1px solid var(--rule-soft)}
+a.oml-wa-browse,.oml-wa-browse>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:var(--space-2);min-height:var(--control-h);padding:0 var(--space-3);font:var(--t-button-weight) var(--t-button-size)/var(--t-button-line) var(--font-body);color:var(--ink);text-decoration:none}
+.oml-wa-browse>summary::-webkit-details-marker{display:none}
+a.oml-wa-browse::after,.oml-wa-browse>summary::after{content:"";width:var(--space-2);height:var(--space-2);border-right:var(--stroke-strong) solid currentColor;border-bottom:var(--stroke-strong) solid currentColor;transform:translateY(-25%) rotate(45deg)}
+.oml-wa-browse[open]>summary::after{transform:translateY(25%) rotate(225deg)}
+.oml-wa-browse>summary .n{order:2;font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.oml-wa-browse>.panel{display:flex;flex-direction:column;gap:var(--space-2);padding:var(--space-2) var(--space-3) var(--space-3);border-top:1px solid var(--rule-soft)}
+.oml-wa-tree,.oml-wa-tree ul{list-style:none;margin:0;padding:0}
+.oml-wa-tree ul{margin-left:var(--space-2);padding-left:var(--space-3);border-left:1px solid var(--edge)}
+.oml-wa-tree ul.ip{border-left:var(--stroke-strong) dotted var(--in-progress)}
+.oml-wa-tree .n{display:flex;flex-wrap:wrap;align-items:center;gap:0 var(--space-3);min-height:var(--control-h-sm)}
+.oml-wa-tree .ref{font:var(--t-code-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-mono);font-variant-ligatures:none;display:inline-flex;align-items:center;min-height:var(--target-min)}
+.oml-wa-tree .ref[aria-current]{color:var(--ink);font-weight:var(--t-button-weight);background:var(--panel);border-radius:var(--radius-sm);padding:0 var(--space-1);text-decoration:none}
+.oml-wa-tree .ct{font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim);font-variant-numeric:tabular-nums}
+.oml-wa-tree .oml-tag{font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-faint)}
+.oml-wa-miss{display:flex;flex-direction:column;gap:var(--space-2);margin:var(--space-1) 0 0;border:1px solid var(--error);border-radius:var(--radius-md);background:var(--ground);padding:var(--space-3) var(--space-4)}
+.oml-wa-miss p{margin:0}
+.oml-wa-miss .code{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2);color:var(--error);font:var(--t-state-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-mono)}
+.oml-wa-miss .code svg{width:var(--glyph);height:var(--glyph)}
+.oml-wa-close{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:var(--space-2)}
+.oml-wa-close a{display:inline-flex;align-items:center;min-height:var(--target-min);font:var(--t-code-weight) var(--t-meta-size)/var(--t-meta-line) var(--font-mono);font-variant-ligatures:none}
+.oml-atlas-up{margin:0 0 var(--space-2);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+@media (max-width:599px){.oml-wa{max-width:none}}
