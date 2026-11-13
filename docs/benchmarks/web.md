@@ -10,7 +10,7 @@ answers: "how much time the web console's hop over the API adds to each page aga
 
 [All suites](index.md)
 
-Each page a signed-in admin can load, timed twice on the same data: served in process by the lead from before the pages moved, and served by `oml-web` over the public API on loopback. The budget is the second's p95 no more than 5 ms above the first's (ADR-0070 d8). The time is the client's, request sent to answer read over a keep-alive loopback connection; the health probe's time, given under each table, is the floor of that exchange.
+Each page a signed-in admin can load, timed twice on the same data: served in process by the lead from before the pages moved, and served by `oml-web` over the public API on loopback. The budget is the second's p95 no more than 5 ms above the first's (ADR-0070 d8). The time is the client's, request sent to answer read over a keep-alive loopback connection; the health probe's time, given under each table, is the floor of that exchange. A page marked *re-baselined* is held to its own measured `oml-web` p95 instead, by the operator's decision of 2026-11-13: the person's Review page, which now reads the held listing and draws up to 80 cards where the in-process page listed nothing (ADR-0070's as-built rows).
 
 *API calls* and *rounds* are read from the lead's request lines: the calls the page made and the longest chain of them that did not overlap, which is the round trips a LAN adds. *Outside the lead* is the page's time less the time at least one of its calls was in the lead's handler: `oml-web`'s own work, the hop's serialization and the loopback exchanges.
 
@@ -31,7 +31,7 @@ Each page a signed-in admin can load, timed twice on the same data: served in pr
 | `memory` | 9.6 | 12.4 | 9.9 | 11.7 | -0.7 | yes | 3 | 2 | 2.0 |
 | `admin/memory` | 48.5 | 83.1 | 61.8 | 84.3 | +1.2 | yes | 4 | 3 | 2.5 |
 | `admin/curate` | 4.6 | 6.0 | 4.6 | 5.6 | -0.4 | yes | 2 | 1 | 1.3 |
-| `review` | 5.7 | 7.3 | 18.5 | 21.4 | +14.1 | no | 3 | 2 | 5.7 |
+| `review` | 5.7 | 7.3 | 18.5 | 21.4 | +14.1 | yes, re-baselined at 21.4 | 3 | 2 | 5.7 |
 | `admin/review` | – | – | 24.3 | 28.0 | – | – | 5 | 3 | 4.9 |
 | `keys` | 17.1 | 21.6 | 20.2 | 23.5 | +1.9 | yes | 4 | 2 | 2.0 |
 | `admin/keys` | – | – | 11.5 | 13.6 | – | – | 3 | 2 | 1.8 |
@@ -63,7 +63,7 @@ Health probe: in-process 0.4 ms p50, 0.6 ms p95; oml-web 0.4 ms p50, 0.5 ms p95.
 | `memory` | 10.4 | 12.1 | 9.9 | 11.9 | -0.2 | yes | 3 | 2 | 2.0 |
 | `admin/memory` | 41.2 | 54.0 | 48.0 | 60.5 | +6.5 | no | 4 | 3 | 2.5 |
 | `admin/curate` | 4.7 | 5.5 | 4.6 | 5.5 | -0.1 | yes | 2 | 1 | 1.3 |
-| `review` | 6.0 | 7.1 | 20.1 | 23.3 | +16.2 | no | 3 | 2 | 5.6 |
+| `review` | 6.0 | 7.1 | 20.1 | 23.3 | +16.2 | yes, re-baselined at 23.3 | 3 | 2 | 5.6 |
 | `admin/review` | – | – | 57.5 | 67.0 | – | – | 5 | 3 | 5.3 |
 | `keys` | 18.6 | 21.2 | 19.8 | 23.1 | +1.9 | yes | 4 | 2 | 1.9 |
 | `admin/keys` | – | – | 11.5 | 13.7 | – | – | 3 | 2 | 1.8 |

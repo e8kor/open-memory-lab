@@ -152,8 +152,8 @@ was measured; and one client on a shared host makes every figure an upper bound.
 
 `oml-web-6` and `oml-web-48` again after the held listing stopped reading an ancestry per workarea
 (branch `perf/review-held-listing`, from main at `e40b31a6`), against the runs of PR #360 on
-`e40b31a6`. Same seed, harness and host, with `--quota 1000000`, the lead's ceiling since
-ADR-0071 d5. A run started only below a one-minute load of 1.0, and the load was sampled every
+`e40b31a6`, which this branch supersedes. Same seed, harness and host, with `--quota 1000000`,
+the lead's ceiling since ADR-0071 d5 and `run.py`'s default since #360. A run started only below a one-minute load of 1.0, and the load was sampled every
 5 seconds: at 6 workareas 0.63 at the start, mean 1.78, highest 2.25, none of 168 samples over 3;
 at 48, 0.82 at the start, mean 2.37, highest 3.56, 13 of 92 samples over 3, ending at 3.13.
 
@@ -170,7 +170,8 @@ at 48, 0.82 at the start, mean 2.37, highest 3.56, 13 of 92 samples over 3, endi
 3. **The admin memory page did not change** and reads 60.5 ms p95 at 48 workareas (+6.5, was
    +9.6) and 84.3 at 6 (+1.2). Its review policy read, 5.7 ms p50 in 6 store calls, is a third
    round, since the page learns the workarea from the admin read it follows.
-4. **The admin Workareas view at 6 workareas** reads +10.7 ms p95 where #360 read +6.2, its code
+4. **The operator's decisions of 2026-11-13.** Review is re-baselined at its measured p95, 21.4 ms at 6 workareas and 23.3 at 48, and `docs/benchmarks/web.md` judges it against that; the admin memory page's miss at 48 workareas is recorded, fixed later by [#362](https://github.com/e8kor/open-memory-lab/issues/362).
+5. **The admin Workareas view at 6 workareas** reads +10.7 ms p95 where #360 read +6.2, its code
    unchanged: the miss its bounded fan-out has shown in every run at that size.
 
 ## Files
