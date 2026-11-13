@@ -1,6 +1,6 @@
 [project]
 name = "open-memory-lab-sdk"
-version = "0.7.2"
+version = "0.7.3"
 description = "Python client for the Open Memory Lab HTTP API: a client generated from openapi.yaml and a thin hand-written wrapper."
 readme = "README.md"
 license = "Apache-2.0"
