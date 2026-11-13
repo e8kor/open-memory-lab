@@ -4195,10 +4195,10 @@ async fn the_review_page_shows_a_held_guardrails_load_warning() {
 
 /// A reviewer sees what a verdict makes true: the held version's own valid
 /// time and, on a supersession, the end approving it gives the version it
-/// replaces, on the review card and in the bulk table (ADR-0059
+/// replaces, on the review card and on the bulk review's card (ADR-0059
 /// d2, d4).
 #[tokio::test]
-async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_card_and_the_bulk_table()
+async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_card_and_the_bulk_review_card()
  {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
@@ -4286,7 +4286,6 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
     .await;
     let (_, _, page) = send(&rig.router, get("/web/admin/review", Some(&admin))).await;
     assert!(page.contains("the api is at version 4"), "{page}");
-    assert!(page.contains("<th>Valid</th>"), "{page}");
     assert!(
         page.contains(
             "from 2026-06-01, open; approving ends version 1 at 2026-06-01T00:00:00.000000Z"
@@ -4305,7 +4304,7 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
 
 /// The review card names every finding stored on the version, one line
 /// each with its verdict, its class and rule and where it fired, and the
-/// bulk table counts them by verdict (ADR-0074 d17, d18 phase 1, d23). The
+/// bulk review's card counts them by verdict (ADR-0074 d17, d18 phase 1, d23). The
 /// double holds on its marker in the body and in the title alike, so the
 /// version carries two findings where the single stored `scan_finding`
 /// named one.
@@ -4338,7 +4337,7 @@ async fn the_review_card_names_every_scan_finding() {
         )
         .await
         .expect("the agent writes");
-    // The bulk table first: a serve claims the item for its reviewer.
+    // The bulk review first: a serve claims the item for its reviewer.
     rig.allow("boss@example.com", "boss", true).await;
     let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
     act(
@@ -4353,10 +4352,9 @@ async fn the_review_card_names_every_scan_finding() {
     )
     .await;
     let (_, _, page) = send(&rig.router, get("/web/admin/review", Some(&admin))).await;
-    assert!(page.contains("<th>Findings</th>"), "{page}");
     assert!(
-        page.contains(r#"<td class="mono findings">2 hold</td>"#),
-        "{page}"
+        page.contains(r#"<span class="k">scan</span><span class="v">2 hold</span>"#),
+        "the card's scan fact counts them by verdict: {page}"
     );
     let (status, _, page) =
         act_and_follow(&rig, &cookie, "/web/review", &[("action", "review_next")]).await;
@@ -4593,7 +4591,12 @@ async fn a_bulk_confirmation_records_nothing_and_its_verdict_lands_on_the_view_a
         page.contains(&format!(r#"name="pick_000" value="{a}">"#)),
         "{page}"
     );
-    assert!(page.contains("(you)"), "{page}");
+    // Its own agent's writes are marked same user on the card (row 32).
+    assert!(
+        page.contains(r#"<span class="tag oml-chip is-quiet">same user</span>"#),
+        "{page}"
+    );
+    assert!(!page.contains("(you)"), "{page}");
     let (status, _, confirm) = act(
         &rig,
         &cookie,
@@ -4696,6 +4699,219 @@ async fn the_persons_review_page_holds_no_bulk_review_and_refuses_its_acts() {
         .unwrap()
         .unwrap();
     assert_eq!(held.status.as_str(), "held");
+}
+
+/// The person's Review lists what waits, by workarea, from the held
+/// listing their reviewer key reads (design notes rows 1, 6, 15); a write
+/// by one of their own agents is listed marked same user; "Open to judge"
+/// draws the item with its verdict form, and the verdict is recorded as a
+/// listed-set verdict of one id, under the person's reviewer key, as a
+/// single approve journals it (ADR-0055 d4; the operator's decision of
+/// 2026-11-13).
+#[tokio::test]
+async fn a_person_judges_one_listed_item_from_the_review_page_as_a_one_id_verdict() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let memory = agent_writes(&rig, &value, "Deploys pause on Fridays.").await;
+    let (status, _, page) = send(&rig.router, get("/web/review", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Waiting for review · 1"), "{page}");
+    assert!(page.contains("Deploys pause on Fridays."), "{page}");
+    assert!(
+        page.contains(r#"<span class="oml-decision">New memory</span>"#),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<span class="tag oml-chip is-quiet">same user</span>"#),
+        "{page}"
+    );
+    let open = format!(r#"href="/web/review?memory={memory}">Open to judge</a>"#);
+    assert!(page.contains(&open), "{page}");
+    assert!(
+        !page.contains("pick_000"),
+        "no bulk pick on the person's page: {page}"
+    );
+    let (status, _, item) = send(
+        &rig.router,
+        get(&format!("/web/review?memory={memory}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{item}");
+    assert!(item.contains(r#"name="action" value="judge""#), "{item}");
+    assert_eq!(field_of(&item, "artifact_id"), memory.to_string());
+    assert!(item.contains("Record verdict"), "{item}");
+    assert!(
+        item.contains("approving is a self-review, marked same user"),
+        "{item}"
+    );
+    let head = rig.head().await;
+    let form = [
+        ("action", "judge"),
+        ("artifact_id", &memory.to_string()),
+        ("verdict", "approve"),
+        ("reason", ""),
+        ("nonce", &field_of(&item, "nonce")),
+    ];
+    let (status, headers, _) = act(&rig, &cookie, "/web/review", &form).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        headers[header::LOCATION].to_str().unwrap(),
+        "/web/review?done=verdict&version=1&state=promoted"
+    );
+    let promoted = rig
+        .store
+        .memory(rig.boot.tenant_id, memory)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(promoted.status.as_str(), "promoted");
+    let events = rig
+        .store
+        .events_range(rig.boot.tenant_id, head + 1, 500)
+        .await
+        .unwrap();
+    let verdicts: Vec<_> = events
+        .iter()
+        .filter(|e| e.envelope.event_type == "review.approve")
+        .collect();
+    assert_eq!(verdicts.len(), 1, "one verdict");
+    assert_eq!(
+        verdicts[0].envelope.api_key_id,
+        Some(key_named(&rig, "alice-review").await.key_id)
+    );
+    let (_, _, page) = send(&rig.router, get("/web/review", Some(&cookie))).await;
+    assert!(page.contains("Waiting for review · 0"), "{page}");
+    assert!(page.contains("Nothing waits for review."), "{page}");
+}
+
+/// R2 on the person's page: a version the person's reviewer key wrote is
+/// never listed to it, and a judge naming its id is refused with
+/// `review.author_in_lineage` and records nothing (ADR-0055 d5).
+#[tokio::test]
+async fn a_version_the_reviewer_key_wrote_is_never_listed_and_judging_it_is_refused() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let memory = agent_writes(&rig, &value, "The backup runs at two.").await;
+    let (_, _, item) = send(
+        &rig.router,
+        get(&format!("/web/review?memory={memory}"), Some(&cookie)),
+    )
+    .await;
+    let (status, _, _) = act(
+        &rig,
+        &cookie,
+        "/web/review",
+        &[
+            ("action", "judge"),
+            ("artifact_id", &memory.to_string()),
+            ("verdict", "approve"),
+            ("nonce", &field_of(&item, "nonce")),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    // boss, an admin with review on alice's root, proposes its next
+    // version: boss-review writes it.
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    act(
+        &rig,
+        &boss,
+        "/web/admin/people",
+        &[
+            ("action", "grant_review"),
+            ("user", "boss"),
+            ("workarea", "alice"),
+        ],
+    )
+    .await;
+    let (status, _, page) = act(
+        &rig,
+        &boss,
+        "/web/admin/memory",
+        &[
+            ("action", "supersede"),
+            ("memory", &memory.to_string()),
+            ("expected_version", "1"),
+            ("text", "The backup runs at three."),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+    // alice's reviewer key may judge it; boss's never sees it listed.
+    let (_, _, alice_list) = send(&rig.router, get("/web/review", Some(&cookie))).await;
+    assert!(
+        alice_list.contains("The backup runs at three."),
+        "{alice_list}"
+    );
+    assert!(
+        alice_list
+            .contains(r#"<span class="oml-decision">Edit <span class="of">of v1</span></span>"#),
+        "{alice_list}"
+    );
+    let marker = "/web/review?memory=";
+    let at = alice_list.find(marker).expect("a row") + marker.len();
+    let successor = alice_list[at..at + 36].to_owned();
+    for path in ["/web/review", "/web/admin/review"] {
+        let (_, _, listed) = send(&rig.router, get(path, Some(&boss))).await;
+        assert!(
+            !listed.contains("The backup runs at three."),
+            "{path}: {listed}"
+        );
+    }
+    let (status, _, refused) = act(
+        &rig,
+        &boss,
+        "/web/review",
+        &[
+            ("action", "judge"),
+            ("artifact_id", &successor),
+            ("verdict", "approve"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert!(refused.contains("review.author_in_lineage"), "{refused}");
+    let held = rig
+        .store
+        .memory(rig.boot.tenant_id, successor.parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(held.status.as_str(), "held", "nothing recorded");
+}
+
+/// The admin's One memory page draws the same card as the person's, with
+/// the scan finding the admin read serves, and says why it offers no
+/// verdict (MemoryScreen).
+#[tokio::test]
+async fn the_admin_memory_page_shows_the_scan_finding_the_persons_page_shows() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let memory = agent_writes(&rig, &value, "Keys rotate quarterly. [needs-human]").await;
+    let (_, _, person) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={memory}"), Some(&cookie)),
+    )
+    .await;
+    assert!(person.contains(r#"<div class="findings">"#), "{person}");
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, page) = send(
+        &rig.router,
+        get(&format!("/web/admin/memory?id={memory}"), Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains(r#"<div class="findings">"#), "{page}");
+    assert!(page.contains("scan findings · 1"), "{page}");
+    assert!(
+        page.contains("Read here as <code>boss-admin</code>, which never judges. Judge it in Review as <code>boss-review</code>."),
+        "{page}"
+    );
 }
 
 #[tokio::test]

@@ -220,3 +220,76 @@ details.oml-more>summary{cursor:pointer;min-height:var(--target-min);display:inl
 .oml-lifebar .promoted{background:var(--promoted)}.oml-lifebar .held{background:var(--held)}.oml-lifebar .superseded{background:var(--superseded)}.oml-lifebar .rejected{background:var(--rejected)}.oml-lifebar .retired{background:var(--retired)}.oml-lifebar .unreviewed{background:var(--unreviewed)}
 .oml-legend{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:var(--space-1) var(--space-3);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
 .oml-legend li{display:inline-flex;align-items:center;gap:var(--space-1)}.oml-legend b{color:var(--ink);font-variant-numeric:tabular-nums}
+
+/* ==== MemoryCard and ReviewCard (the review lane, bulk D): one card, two densities. ====
+   article.oml-mc holds a details.mc-d whose summary is the head line only; the facts follow the
+   details, outside the summary, and stay visible; the body and the review strip follow them and
+   show only while the details is open, by a sibling rule, with no script. article.oml-mc.page
+   draws everything. Only var(--…) from tokens.css. */
+.oml-mcs{list-style:none;margin:0 0 var(--space-4);padding:0;display:flex;flex-direction:column;gap:var(--space-2);max-width:var(--card-max)}
+.oml-mlist>li{list-style:none}
+.oml-mc{display:flex;flex-direction:column;background:var(--ground-alt);border:1px solid var(--rule);border-radius:var(--radius-md);container-type:inline-size;min-width:0;width:100%;max-width:var(--card-max)}
+.oml-mc:has(>.mc-d[open]){border-color:var(--control-border)}
+.oml-mc>.mc-d>summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--space-2) var(--space-3);align-items:start;padding:var(--space-3) var(--space-4) var(--space-2);min-height:var(--target-min)}
+.oml-mc>.mc-d>summary::-webkit-details-marker{display:none}
+.oml-mc>.mc-d>summary:hover{background:var(--panel)}
+.oml-mc>.mc-d>summary>.mc-top{grid-column:1}
+.oml-mc>.mc-d>summary>.mc-more{grid-column:2;grid-row:1}
+.oml-mc>.mc-d>summary>.mc-tx{grid-column:1/-1}
+.oml-mc>.mc-head{display:flex;flex-direction:column;gap:var(--space-2);padding:var(--space-3) var(--space-4)}
+.oml-mc>.mc-d:not([open])~.mc-body,.oml-mc>.mc-d:not([open])~.oml-strip{display:none}
+.oml-mc>ul.mc-facts{padding:0 var(--space-4) var(--space-3)}
+.oml-mc .mc-top{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2)}
+.oml-mc .mc-more{display:inline-flex;align-items:center;gap:var(--space-1);color:var(--ice);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body)}
+.oml-mc .mc-more::after{content:"";width:var(--space-2);height:var(--space-2);border-right:var(--stroke-strong) solid currentColor;border-bottom:var(--stroke-strong) solid currentColor;transform:translateY(-25%) rotate(45deg)}
+.oml-mc>.mc-d[open]>summary .mc-more::after{transform:translateY(25%) rotate(225deg)}
+.oml-mc>.mc-d[open]>summary .mc-more .cl,.oml-mc>.mc-d:not([open])>summary .mc-more .op{display:none}
+.oml-mc .mc-tx{margin:0;max-width:var(--measure);font:var(--t-body-dense-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-body);color:var(--ink);overflow-wrap:anywhere;white-space:pre-line;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2}
+.oml-mc .mc-tx b{font-weight:var(--t-button-weight)}
+.oml-mc .mc-tx.mono{font-family:var(--font-mono);font-variant-ligatures:none;white-space:pre-wrap}
+.oml-mc>.mc-d[open]>summary .mc-tx,.oml-mc.page .mc-tx{display:block;-webkit-line-clamp:unset;line-clamp:unset;font-size:var(--t-body-size);line-height:var(--t-body-line)}
+.oml-mc.quiet .mc-tx{color:var(--ink-dim)}
+.oml-mc .mc-facts{list-style:none;margin:0;display:flex;flex-wrap:wrap;gap:var(--space-1) var(--space-4);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.oml-mc .mc-facts li{display:inline-flex;flex-wrap:wrap;align-items:center;gap:0 var(--space-1);min-width:0}
+.oml-mc .mc-facts .k{color:var(--ink-faint)}
+.oml-mc .mc-facts .v{font:var(--t-meta-weight) var(--t-meta-size)/var(--t-meta-line) var(--font-mono);color:var(--ink);overflow-wrap:anywhere;font-variant-ligatures:none}
+.oml-mc .mc-facts .v.t{white-space:nowrap}
+.oml-mc .mc-facts a.v{color:var(--ice);display:inline-flex;align-items:center;min-height:var(--target-min)}
+.oml-mc .vb{display:inline-flex;align-items:center;margin-left:var(--space-1)}
+.oml-mc .vb ol{display:inline-flex;gap:var(--space-0\.5);list-style:none;margin:0;padding:0}
+.oml-mc .vb ol i{display:block;width:var(--space-4);height:var(--bar-h);border-radius:var(--radius-sm)}
+.oml-mc .vb .promoted{background:var(--promoted)}
+.oml-mc .vb .superseded{background:var(--superseded)}
+.oml-mc .vb .held{box-shadow:inset 0 0 0 var(--stroke-strong) var(--held)}
+.oml-mc .vb .rejected{background:var(--rejected)}
+.oml-mc .vb .retired{box-shadow:inset 0 0 0 var(--stroke-strong) var(--retired)}
+.oml-mc .vb li[aria-current] i{outline:var(--stroke) solid var(--ink);outline-offset:1px}
+.oml-mc>.mc-body{display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-1) var(--space-4) var(--space-4);min-width:0}
+.oml-mc .mc-body .findings ul{margin:0;padding:0;list-style:none}
+.oml-decision{display:inline-flex;align-items:center;gap:var(--space-1);white-space:nowrap;font:var(--t-button-weight) var(--t-label-size)/var(--t-label-line) var(--font-body);color:var(--ink);border:var(--stroke) solid var(--ink);border-radius:var(--radius-sm);padding:var(--space-0\.5) var(--space-2)}
+/* the change against what a version replaces: a removed word struck through, an added one underlined and heavier */
+.oml-diff{border:1px solid var(--rule);border-radius:var(--radius-md);min-width:0}
+.oml-diff>summary{cursor:pointer;display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1) var(--space-2);min-height:var(--control-h);padding:var(--space-1) var(--space-3);font:var(--t-button-weight) var(--t-button-size)/var(--t-button-line) var(--font-body);color:var(--ice)}
+.oml-diff>summary .n{font-weight:var(--t-caption-weight);color:var(--ink-dim);font-size:var(--t-caption-size)}
+.oml-diff>.sides{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-3);padding:var(--space-3);border-top:1px solid var(--rule-soft)}
+@container (max-width:559px){.oml-diff>.sides{grid-template-columns:minmax(0,1fr)}}
+.oml-diff .side{display:flex;flex-direction:column;gap:var(--space-1);min-width:0}
+.oml-diff .side p{margin:0;overflow-wrap:anywhere}
+.oml-diff .side .t{background:var(--panel);border-radius:var(--radius-sm);padding:var(--space-2) var(--space-3);color:var(--ink);white-space:pre-line}
+.oml-diff del{color:var(--ink-dim);text-decoration:line-through;text-decoration-thickness:var(--stroke)}
+.oml-diff ins{text-decoration:underline;text-decoration-thickness:var(--stroke-strong);text-underline-offset:var(--space-0\.5);font-weight:var(--t-button-weight)}
+/* the review strip under a card: the checks as words, what each verdict does, then the act or why there is none */
+.oml-strip{display:flex;flex-direction:column;gap:var(--space-3);margin:0;padding:var(--space-3) var(--space-4) var(--space-4);border-top:var(--stroke-strong) solid var(--control-border);background:var(--panel);min-width:0}
+.oml-strip>p,.oml-strip form{margin:0}
+.oml-checks{list-style:none;margin:0;padding:0;display:grid;gap:var(--space-1);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.oml-checks li{display:grid;grid-template-columns:calc(var(--space-16) + var(--space-2)) minmax(0,1fr);gap:var(--space-2);align-items:baseline}
+.oml-checks .k{color:var(--ink);font-weight:var(--t-button-weight)}
+.oml-checks code,.oml-strip code,.oml-noact code{font-size:var(--t-meta-size)}
+.oml-noact{margin:0;font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.oml-noact code{color:var(--ink)}
+/* the review lists: a pick box beside each card, the bulk bar, the waiting table */
+.oml-pick{display:grid;grid-template-columns:auto minmax(0,1fr);gap:var(--space-2);align-items:start}
+.oml-pick>.box{display:flex;align-items:center;min-height:calc(var(--target-min) + var(--space-6))}
+.oml-bulkbar{display:flex;flex-direction:column;gap:var(--space-2);border:1px solid var(--control-border);border-radius:var(--radius-md);background:var(--panel);padding:var(--space-3) var(--space-4);max-width:var(--card-max)}
+@container (max-width:479px){.oml-checks li{grid-template-columns:minmax(0,1fr)}}
+/* ==== end MemoryCard and ReviewCard ==== */

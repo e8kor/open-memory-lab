@@ -909,6 +909,14 @@ pub struct BulkItem {
     pub replayed: Option<bool>,
     #[serde(default)]
     pub code: Option<String>,
+    /// A skipped item's refusal message, as the single verdict answers it.
+    #[serde(default)]
+    pub message: Option<String>,
+    /// A decided item's state, `promoted` or `rejected`, and its version.
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub version: Option<i64>,
 }
 
 /// The bulk verdict's counts.

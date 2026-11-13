@@ -612,3 +612,72 @@ async fn the_counted_trees_offers_serve_only_where_the_tree_and_the_offers_opera
         admin_on_root.body
     );
 }
+
+// ---------------------------------------------------------------------------
+// The Review pages' reads (bulk D, the review lane)
+// ---------------------------------------------------------------------------
+
+/// The reads the person's Review page and its one-item page add (design
+/// notes rows 1, 4, 6, 15), each a read the API already serves, so each
+/// costs the gate's one store call and the verb's own: the held listing as
+/// `<user>-review` at the API's largest page (the list and "Waiting for
+/// review" from one read), the person's key list as `<user>-web` (whether
+/// an item's author is one of the person's keys), and the replaced
+/// version as `<user>-review` (the change at page density). Printed, so
+/// the counts the report states are the ones measured.
+#[tokio::test]
+async fn the_review_pages_reads_cost_the_gate_and_their_own_verbs_store_calls() {
+    let rig = rig().await;
+    let held = get(
+        &rig.router,
+        "/v2/review/held?limit=200",
+        &web(&rig.alice, "review"),
+        true,
+    )
+    .await;
+    assert_eq!(held.status, StatusCode::OK, "{}", held.body);
+    let keys = get(
+        &rig.router,
+        "/v2/keys?limit=200",
+        &web(&rig.alice, "web"),
+        true,
+    )
+    .await;
+    assert_eq!(keys.status, StatusCode::OK, "{}", keys.body);
+    let named = get(
+        &rig.router,
+        "/v2/review/held?ids=00000000-0000-4000-8000-000000000001",
+        &web(&rig.alice, "review"),
+        true,
+    )
+    .await;
+    assert_eq!(named.status, StatusCode::OK, "{}", named.body);
+    println!(
+        "store calls: held listing {}, key list {}, named held {}",
+        held.store_calls(),
+        keys.store_calls(),
+        named.store_calls()
+    );
+    // Measured 2026-11-13 over the in-memory store: the gate's one call
+    // and the listing's three; the key list's eleven, as the Keys page
+    // pays them; the named read's three.
+    assert_eq!(held.store_calls(), 4, "{}", held.line);
+    assert_eq!(keys.store_calls(), 12, "{}", keys.line);
+    assert_eq!(named.store_calls(), 4, "{}", named.line);
+    // The held listing at 200 a page costs what it costs at 50: the page
+    // size changes no store call.
+    let fifty = get(
+        &rig.router,
+        "/v2/review/held?limit=50",
+        &web(&rig.alice, "review"),
+        true,
+    )
+    .await;
+    assert_eq!(held.store_calls(), fifty.store_calls(), "{}", held.line);
+    assert_eq!(
+        keys.store_calls(),
+        get(&rig.router, "/v2/keys", &web(&rig.alice, "web"), true)
+            .await
+            .store_calls()
+    );
+}
