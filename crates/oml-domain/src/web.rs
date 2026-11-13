@@ -334,7 +334,7 @@ pub struct ProviderIdentity {
 /// The claims of a Google ID token received from Google's token endpoint
 /// over the TLS connection the server opened, which OpenID Connect Core 1.0
 /// §3.1.3.7 item 6 lets the client accept without checking its signature:
-/// `iss` Google's, `aud` the client id, `exp` after `now`, `nonce` the
+/// `iss` Google's, `aud` the client id and no other audience, `exp` after `now`, `nonce` the
 /// sealed one, and `email_verified` true (ADR-0045 d4).
 pub fn admit_google_id_token(
     id_token: &str,
@@ -356,9 +356,16 @@ pub fn admit_google_id_token(
     if !GOOGLE_ISSUERS.contains(&issuer) {
         return Err(refused);
     }
+    // An array is admitted only when every element is the client id: OpenID
+    // Connect Core 1.0 §3.1.3.7 item 3 rejects a token "if it contains
+    // additional audiences not trusted by the Client", and the lead trusts
+    // no audience but its own (ADR-0045 d4 and "The two provider points as
+    // checked against the providers' documentation", #366).
     let audience_matches = match claims.get("aud") {
         Some(Value::String(aud)) => aud == client_id,
-        Some(Value::Array(auds)) => auds.iter().any(|a| a.as_str() == Some(client_id)),
+        Some(Value::Array(auds)) => {
+            !auds.is_empty() && auds.iter().all(|a| a.as_str() == Some(client_id))
+        }
         _ => false,
     };
     if !audience_matches {
