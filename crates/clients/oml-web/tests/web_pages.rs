@@ -7904,3 +7904,30 @@ async fn the_admin_memory_page_reads_the_replaced_version_only_when_the_admin_as
     assert!(page.contains("Change against v1"), "{page}");
     assert!(page.contains("<del>noon.</del>"), "{page}");
 }
+
+/// Review's Browse link opens Browse on both sides, as on Memories (bulk D
+/// fixes): the link the closed field draws leads to a page that draws it
+/// open.
+#[tokio::test]
+async fn the_review_pages_browse_link_opens_browse() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let alice = signed_in(&rig, "sub-1", EMAIL).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    for (cookie, path) in [(&alice, "/web/review"), (&boss, "/web/admin/review")] {
+        let (_, _, page) = send(&rig.router, get(path, Some(cookie))).await;
+        let marker = r#"<a class="oml-wa-browse oml-wa-ask" href=""#;
+        let at = page
+            .find(marker)
+            .unwrap_or_else(|| panic!("{path}: {page}"))
+            + marker.len();
+        let link = page[at..at + page[at..].find('"').unwrap()].replace("&amp;", "&");
+        assert!(link.contains("browse=1"), "{link}");
+        let (status, _, opened) = send(&rig.router, get(&link, Some(cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{link}: {opened}");
+        assert!(
+            opened.contains(r#"<details class="oml-wa-browse" open>"#),
+            "{link}: {opened}"
+        );
+    }
+}

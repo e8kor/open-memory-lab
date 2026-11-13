@@ -46,7 +46,7 @@ use oml_sdk::{HeldPage, Memory, encode};
 use crate::acts::Refusal;
 use crate::card::{Card, View, change};
 use crate::pages::{Fields, refused};
-use crate::picker::{self, Chosen, Field, Names, Roots};
+use crate::picker::{self, Browse, Chosen, Field, Names, Roots};
 use crate::session::{PageCalls, Session, call};
 use crate::{Capacity, Web, acts, outcome};
 
@@ -484,7 +484,13 @@ async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
 /// own read names (the held listing on the user page, the queue on the
 /// admin page), so the field costs no read (design notes row 21); then the
 /// author key and the claim key prefix.
-fn filters(view: &ViewCtx<'_>, fields: &Fields, names: &Names, chosen: &Chosen) -> String {
+fn filters(
+    view: &ViewCtx<'_>,
+    fields: &Fields,
+    names: &Names,
+    chosen: &Chosen,
+    browse: Option<&Browse>,
+) -> String {
     let page = view.side.path();
     let value = |name: &str| fields.given(name).unwrap_or("");
     let mut keep: Vec<(&str, String)> = vec![("held", "1".to_owned())];
@@ -499,7 +505,7 @@ fn filters(view: &ViewCtx<'_>, fields: &Fields, names: &Names, chosen: &Chosen) 
         keep: &keep,
         chosen,
         names,
-        browse: None,
+        browse,
         admin: view.side == Side::Admin,
         standalone: false,
         empty: "Empty: every workarea with something waiting.",
@@ -615,7 +621,11 @@ fn settled(listing: Option<HeldPage>, chosen: Chosen, names: &Names) -> (HeldPag
 /// the filters, and every row the person's reviewer key may judge, as
 /// review cards, from one read of the held listing (design notes rows 1,
 /// 6, 15).
-async fn person_list(view: &ViewCtx<'_>, fields: &Fields) -> Result<String, Refusal> {
+async fn person_list(
+    view: &ViewCtx<'_>,
+    fields: &Fields,
+    browse: Option<&Browse>,
+) -> Result<String, Refusal> {
     let page = view.side.path();
     let chosen = Chosen::of(fields.get("workarea"));
     let read = listing(view, fields, &chosen, WAITING_PAGE).await?;
@@ -663,7 +673,7 @@ async fn person_list(view: &ViewCtx<'_>, fields: &Fields) -> Result<String, Refu
     let _ = write!(
         body,
         r#"<h2>Held memories</h2><p class="desc">Oldest first, {WAITING_PAGE} a page.</p>{}"#,
-        filters(view, fields, &names, &chosen)
+        filters(view, fields, &names, &chosen, browse)
     );
     if chosen.refused() {
         // The field's refusal stands in for the rows.
@@ -695,7 +705,12 @@ async fn person_list(view: &ViewCtx<'_>, fields: &Fields) -> Result<String, Refu
 /// judge, filtered, each a review card with a box to pick it; "select all"
 /// draws the page with every box checked, since the page carries no
 /// script. The picker's names are the queue's workareas.
-async fn held(view: &ViewCtx<'_>, fields: &Fields, names: &Names) -> Result<String, Refusal> {
+async fn held(
+    view: &ViewCtx<'_>,
+    fields: &Fields,
+    names: &Names,
+    browse: Option<&Browse>,
+) -> Result<String, Refusal> {
     let page = view.side.path();
     let chosen = names.resolve(Chosen::of(fields.get("workarea")));
     let read = listing(view, fields, &chosen, HELD_PAGE).await?;
@@ -722,7 +737,7 @@ async fn held(view: &ViewCtx<'_>, fields: &Fields, names: &Names) -> Result<Stri
     });
     let mut body = format!(
         r#"<h2>Bulk review</h2><p class="desc">Oldest first, {HELD_PAGE} a page. A memory this reviewer key wrote, or that derives from one, is never listed.</p>{}<p><a href="{page}?held=1{kept}{cursor}&amp;select=all">Select all on this page</a> · <a href="{page}?held=1{kept}{cursor}">Clear</a></p>"#,
-        filters(view, fields, names, &chosen)
+        filters(view, fields, names, &chosen, browse)
     );
     let mut rows = String::new();
     if chosen.refused() {
@@ -861,12 +876,23 @@ async fn view(
         let _ = write!(body, r#"<p><a href="{page}">Back to the list</a></p>"#);
     } else {
         body.push_str(&review_next(&ctx, &fields, true));
+        // Browse, opened by the field's link: the counted tree as the
+        // side's reading key, made only when asked (design notes row 14).
+        let browse = if picker::browse_asked(fields.get(picker::BROWSE)) {
+            let capacity = match side {
+                Side::User => Capacity::Web,
+                Side::Admin => Capacity::Admin,
+            };
+            Some(Browse::read(&web, &session.credential(capacity), &calls, "universe").await)
+        } else {
+            None
+        };
         let listed = match side {
-            Side::User => person_list(&ctx, &fields).await,
+            Side::User => person_list(&ctx, &fields, browse.as_ref()).await,
             Side::Admin => match queue(&ctx).await {
                 Ok(queue) => {
                     body.push_str(&queue.0);
-                    held(&ctx, &fields, &queue.1).await
+                    held(&ctx, &fields, &queue.1, browse.as_ref()).await
                 }
                 Err(response) => Err(response),
             },
