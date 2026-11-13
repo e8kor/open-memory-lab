@@ -29,6 +29,14 @@ SOURCES = [ROOT / "eval" / "bench" / "results", ROOT / "bench" / "scale" / "resu
 WEB_SOURCE = ROOT / "bench" / "web" / "results"
 WEB_SCHEMA = "oml-web-bench/1"
 WEB_BUDGET_MS = 5
+# Pages whose baseline the operator re-set to a measured oml-web p95, by
+# workareas: the page's budget is then that p95 plus WEB_BUDGET_MS, not the
+# in-process page's (ADR-0070 d8, the as-built rows of 2026-11-13). Only the
+# build over the committed results passes it to `web_page`; any other input
+# is judged by the plain rule.
+WEB_REBASELINED = {
+    "review": {6: 21.4, 48: 23.3},
+}
 OUT = ROOT / "docs" / "benchmarks"
 DEFAULT_SOURCE = ROOT / "crates" / "bins" / "oml-server-lead" / "src" / "lib.rs"
 SCHEMA = "oml-bench/1"
@@ -436,8 +444,11 @@ def load_web():
     return runs
 
 
-def web_page(runs):
-    """Each page's time in process (before phase (b)) and through oml-web."""
+def web_page(runs, rebaselined=None):
+    """Each page's time in process (before phase (b)) and through oml-web;
+    `rebaselined` holds the pages judged against a re-set baseline, by
+    label and workareas, and nothing is when it is omitted."""
+    rebaselined = rebaselined or {}
     lines = [header("benchmarks/web", "how much time the web console's hop over the API adds "
                     "to each page against ADR-0070's 5 ms p95 budget, how many API calls and "
                     "sequential rounds each page makes, and where the added time goes"),
@@ -450,7 +461,11 @@ def web_page(runs):
              "public API on loopback. The budget is the second's p95 no more than "
              f"{WEB_BUDGET_MS} ms above the first's (ADR-0070 d8). The time is the client's, "
              "request sent to answer read over a keep-alive loopback connection; the health "
-             "probe's time, given under each table, is the floor of that exchange.\n",
+             "probe's time, given under each table, is the floor of that exchange. A page "
+             "marked *re-baselined* is held to its own measured `oml-web` p95 instead, by the "
+             "operator's decision of 2026-11-13: the person's Review page, which now reads the "
+             "held listing and draws up to 80 cards where the in-process page listed nothing "
+             "(ADR-0070's as-built rows).\n",
              "*API calls* and *rounds* are read from the lead's request lines: the calls the page "
              "made and the longest chain of them that did not overlap, which is the round trips "
              "a LAN adds. *Outside the lead* is the page's time less the time at least one of "
@@ -472,7 +487,13 @@ def web_page(runs):
             b = (web or {}).get("pages", {}).get(label)
             cells = [ms(a["page_ms"]["p50"]) if a else "–", ms(a["page_ms"]["p95"]) if a else "–",
                      ms(b["page_ms"]["p50"]) if b else "–", ms(b["page_ms"]["p95"]) if b else "–"]
-            if a and b:
+            base = rebaselined.get(label, {}).get(workareas)
+            if b and base is not None:
+                over = b["page_ms"]["p95"] - base
+                added = f"{b['page_ms']['p95'] - a['page_ms']['p95']:+.1f}" if a else "–"
+                cells += [added, f"{'yes' if over <= WEB_BUDGET_MS else 'no'}, "
+                                 f"re-baselined at {ms(base)}"]
+            elif a and b:
                 added = b["page_ms"]["p95"] - a["page_ms"]["p95"]
                 cells += [f"{added:+.1f}", "yes" if added <= WEB_BUDGET_MS else "no"]
             else:
@@ -522,7 +543,7 @@ def pages():
         out["scale.md"] = scale_page(current)
     web = load_web()
     if web:
-        out["web.md"] = web_page(web)
+        out["web.md"] = web_page(web, WEB_REBASELINED)
     return out
 
 

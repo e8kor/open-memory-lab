@@ -504,7 +504,7 @@ def main():
     ap.add_argument("--memories", type=int, default=240)
     ap.add_argument("--iterations", type=int, default=500)
     ap.add_argument("--warmup", type=int, default=50)
-    ap.add_argument("--quota", type=int, default=10_000_000,
+    ap.add_argument("--quota", type=int, default=1_000_000,
                     help="quota.requests_per_minute, high so the run never meets limit.rate")
     ap.add_argument("--in-process", action="store_true",
                     help="a lead from before phase (b), which serves the pages itself; "

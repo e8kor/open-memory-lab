@@ -148,6 +148,32 @@ at 9.8 also put the admin Memories list over it, and no run put any other page o
 What these runs do not show: the commits main gained after `47ef9ffa` are in neither side; no LAN
 was measured; and one client on a shared host makes every figure an upper bound.
 
+## Findings of 2026-11-13 (the held listing)
+
+`oml-web-6` and `oml-web-48` again after the held listing stopped reading an ancestry per workarea
+(branch `perf/review-held-listing`, from main at `e40b31a6`), against the runs of PR #360 on
+`e40b31a6`, which this branch supersedes. Same seed, harness and host, with `--quota 1000000`,
+the lead's ceiling since ADR-0071 d5 and `run.py`'s default since #360. A run started only below a one-minute load of 1.0, and the load was sampled every
+5 seconds: at 6 workareas 0.63 at the start, mean 1.78, highest 2.25, none of 168 samples over 3;
+at 48, 0.82 at the start, mean 2.37, highest 3.56, 13 of 92 samples over 3, ending at 3.13.
+
+1. **`GET /v2/review/held` makes 7 store calls at both sizes**, where it made 13 at 6 workareas
+   and 55 at 48: one ancestry read per workarea a listed row sits in, now taken from the records
+   of the dreamer walk. It takes 10.5 ms p50 at the lead at 6 workareas and 12.4 at 48, where it
+   took 14.2 and 49.9.
+2. **The person's Review page is still over the budget at both sizes**: 21.4 ms p95 at 6
+   workareas (+14.1, was +18.4) and 23.3 at 48 (+16.2, was +60.2), against an in-process page of
+   7.3 and 7.1 that listed nothing. Of its 18.5 ms p50 at 6 workareas, 13.7 is store time across the
+   session check and the listing's 7 calls, and 4.7 is outside the lead, where the page spent 0.9 before it
+   drew the listing: drawing the 80 held rows as review cards. Its calls and rounds
+   are unchanged, 3 in 2.
+3. **The admin memory page did not change** and reads 60.5 ms p95 at 48 workareas (+6.5, was
+   +9.6) and 84.3 at 6 (+1.2). Its review policy read, 5.7 ms p50 in 6 store calls, is a third
+   round, since the page learns the workarea from the admin read it follows.
+4. **The operator's decisions of 2026-11-13.** Review is re-baselined at its measured p95, 21.4 ms at 6 workareas and 23.3 at 48, and `docs/benchmarks/web.md` judges it against that; the admin memory page's miss at 48 workareas is recorded, fixed later by [#362](https://github.com/e8kor/open-memory-lab/issues/362).
+5. **The admin Workareas view at 6 workareas** reads +10.7 ms p95 where #360 read +6.2, its code
+   unchanged: the miss its bounded fan-out has shown in every run at that size.
+
 ## Files
 
 | file | what it does |

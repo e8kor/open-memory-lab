@@ -48,6 +48,19 @@ class WebPage(unittest.TestCase):
                                                "oml-web": self.doc("oml-web", 11.0)}})
         self.assertIn("| +5.0 | yes |", within)
 
+    def test_a_re_baselined_page_is_judged_against_its_re_set_baseline_only_where_it_is_passed(self):
+        runs = {6: {"in-process": self.doc("in-process", 6.0),
+                    "oml-web": self.doc("oml-web", 21.4)}}
+        plain = gen_bench_pages.web_page(runs)
+        self.assertIn("| `review` | 5.0 | 6.0 | 20.4 | 21.4 | +15.4 | no |", plain)
+        rebased = gen_bench_pages.web_page(runs, {"review": {6: 21.4}})
+        self.assertIn("| +15.4 | yes, re-baselined at 21.4 |", rebased)
+
+    def test_the_recorded_runs_review_page_is_re_baselined_in_the_built_page(self):
+        built = gen_bench_pages.pages()["web.md"]
+        for base in gen_bench_pages.WEB_REBASELINED["review"].values():
+            self.assertIn(f"re-baselined at {base}", built)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -645,15 +645,16 @@ fn settled(listing: Option<HeldPage>, chosen: Chosen, names: &Names) -> (HeldPag
 /// The user page's list (ReviewScreen): "Waiting for review" by workarea,
 /// the filters, and every row the person's reviewer key may judge, as
 /// review cards, from one read of the held listing (design notes rows 1,
-/// 6, 15).
+/// 6, 15), `read`, which the view makes beside Browse's.
 async fn person_list(
     view: &ViewCtx<'_>,
     fields: &Fields,
+    chosen: Chosen,
+    read: Result<Option<HeldPage>, Refusal>,
     browse: Option<&Browse>,
 ) -> Result<String, Refusal> {
     let page = view.side.path();
-    let chosen = Chosen::of(fields.get("workarea"));
-    let read = listing(view, fields, &chosen, WAITING_PAGE).await?;
+    let read = read?;
     let roots = view
         .roots(
             Capacity::Review,
@@ -903,23 +904,31 @@ async fn view(
         body.push_str(&review_next(&ctx, &fields, true));
         // Browse, opened by the field's link: the counted tree as the
         // side's reading key, made only when asked (design notes row 14).
-        let browse = if picker::browse_asked(fields.get(picker::BROWSE)) {
-            let capacity = match side {
-                Side::User => Capacity::Web,
-                Side::Admin => Capacity::Admin,
-            };
-            Some(Browse::read(&web, &session.credential(capacity), &calls, "universe").await)
-        } else {
-            None
+        // It runs beside the page's first read, in the same round.
+        let browse = async {
+            if picker::browse_asked(fields.get(picker::BROWSE)) {
+                let capacity = match side {
+                    Side::User => Capacity::Web,
+                    Side::Admin => Capacity::Admin,
+                };
+                Some(Browse::read(&web, &session.credential(capacity), &calls, "universe").await)
+            } else {
+                None
+            }
         };
         let listed = match side {
-            Side::User => person_list(&ctx, &fields, browse.as_ref()).await,
-            Side::Admin => match queue(&ctx).await {
-                Ok(queue) => {
+            Side::User => {
+                let chosen = Chosen::of(fields.get("workarea"));
+                let (browse, read) =
+                    tokio::join!(browse, listing(&ctx, &fields, &chosen, WAITING_PAGE));
+                person_list(&ctx, &fields, chosen, read, browse.as_ref()).await
+            }
+            Side::Admin => match tokio::join!(browse, queue(&ctx)) {
+                (browse, Ok(queue)) => {
                     body.push_str(&queue.0);
                     held(&ctx, &fields, &queue.1, browse.as_ref()).await
                 }
-                Err(response) => Err(response),
+                (_, Err(response)) => Err(response),
             },
         };
         match listed {
