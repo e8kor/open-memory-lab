@@ -29,10 +29,10 @@ use axum::response::Response;
 use http::{StatusCode, Uri};
 use oml_page::web::{
     ADMIN_CURATE_PATH, ADMIN_MEMORIES_PATH, ADMIN_MEMORY_PATH, USER_MEMORIES_PATH,
-    USER_MEMORY_PATH, form, hidden, input, select, shell, short, state_tag, text, textarea,
+    USER_MEMORY_PATH, attr, form, hidden, input, select, shell, short, state_tag, text, textarea,
 };
-use oml_sdk::Memory;
 use oml_sdk::{AdminRead, Error};
+use oml_sdk::{Memory, encode};
 
 use crate::acts::Refusal;
 use crate::card::{Card, View, change};
@@ -289,22 +289,28 @@ pub async fn admin_page(
         &read.artifact_id,
         &read.text,
     );
-    // The change against the version it replaces: one more admin read,
-    // journalled like any (MemoryScreen; design notes row 4).
-    // Beside it, the workarea's review policy, for the Verdicts note (row
-    // 16): one more call, in the same round.
+    // The change against the version it replaces is one more admin read,
+    // journalled like any, so the page makes it only when the admin asks
+    // for it by the link (`&change=1`, a GET), never on load (bulk D
+    // fixes; MemoryScreen; design notes row 4).
     let replaced = async {
         match read.replaces.as_deref() {
-            Some(replaced) => match admin_read(&web, &session, &calls, replaced).await {
-                Ok(was) => change(
-                    i64::from(was.version),
-                    &was.text,
-                    read.version,
-                    &read.text,
-                    false,
-                ),
-                Err(_) => String::new(),
-            },
+            Some(replaced) if fields.given("change").is_some() => {
+                match admin_read(&web, &session, &calls, replaced).await {
+                    Ok(was) => change(
+                        i64::from(was.version),
+                        &was.text,
+                        read.version,
+                        &read.text,
+                        false,
+                    ),
+                    Err(_) => String::new(),
+                }
+            }
+            Some(_) => format!(
+                r#"<p class="desc"><a href="{ADMIN_MEMORY_PATH}?id={}&amp;change=1">Show the change</a> against the version it replaces: one more admin read, journalled.</p>"#,
+                attr(&encode(&read.artifact_id))
+            ),
             None => String::new(),
         }
     };

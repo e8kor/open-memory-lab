@@ -7857,3 +7857,50 @@ async fn the_admin_review_page_has_no_open_to_judge_and_refuses_the_judge_act() 
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(rig.head().await, head, "nothing is journalled");
 }
+
+/// The `memory.admin_read` events journalled after `head`.
+async fn admin_reads_since(rig: &Rig, head: u64) -> usize {
+    rig.store
+        .events_range(rig.boot.tenant_id, head + 1, 500)
+        .await
+        .unwrap()
+        .iter()
+        .filter(|e| e.envelope.event_type == "memory.admin_read")
+        .count()
+}
+
+/// The admin's One memory page makes one journalled admin read on load:
+/// the change against the replaced version is a second admin read, which
+/// the admin chooses through "Show the change" (bulk D fixes).
+#[tokio::test]
+async fn the_admin_memory_page_reads_the_replaced_version_only_when_the_admin_asks() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let (_, agent) = person_with_agent(&rig, "sub-1", EMAIL).await;
+    let target = agent_writes(&rig, &agent, "The relay closes at noon.").await;
+    let helper = reviewer_in_alices_root(&rig).await;
+    reviewer_holds_a_successor(&rig, &helper.value, target, "The relay closes at one.").await;
+    let [successor] = memories_reading(&rig, "The relay closes at one.").await[..] else {
+        panic!("one successor");
+    };
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let head = rig.head().await;
+    let path = format!("/web/admin/memory?id={successor}");
+    let (status, _, page) = send(&rig.router, get(&path, Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(admin_reads_since(&rig, head).await, 1, "one admin read");
+    assert!(!page.contains("Change against"), "{page}");
+    let show =
+        format!(r#"<a href="/web/admin/memory?id={successor}&amp;change=1">Show the change</a>"#);
+    assert!(page.contains(&show), "{page}");
+    let head = rig.head().await;
+    let (status, _, page) = send(&rig.router, get(&format!("{path}&change=1"), Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(
+        admin_reads_since(&rig, head).await,
+        2,
+        "the asked-for second read"
+    );
+    assert!(page.contains("Change against v1"), "{page}");
+    assert!(page.contains("<del>noon.</del>"), "{page}");
+}
