@@ -46,6 +46,7 @@ use oml_sdk::{HeldPage, Memory, encode};
 use crate::acts::Refusal;
 use crate::card::{Card, View, change, reference_of};
 use crate::pages::{Fields, refused};
+use crate::picker::{self, Chosen, Field, Names};
 use crate::session::{PageCalls, Session, call};
 use crate::{Capacity, Web, acts, outcome};
 
@@ -392,7 +393,7 @@ enum Act<'a> {
 /// The tenant's queue, as the admin key reads it; each workarea links to
 /// its held rows in the list below, by reference. Beside it, the queue's
 /// references, the bulk filter's hints.
-async fn queue(view: &ViewCtx<'_>) -> Result<(String, Vec<String>), Refusal> {
+async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
     let credential = view.session.credential(Capacity::Admin);
     let ids = view.calls.next_ids();
     let rows = view
@@ -420,25 +421,44 @@ async fn queue(view: &ViewCtx<'_>) -> Result<(String, Vec<String>), Refusal> {
         );
     }
     body.push_str("</table>");
-    let hints = rows.items.iter().map(|r| reference_of(&r.path)).collect();
-    Ok((body, hints))
+    let names = names_of(
+        rows.items
+            .iter()
+            .map(|r| (r.workarea_id.clone(), r.path.clone()))
+            .collect(),
+    );
+    Ok((body, names))
 }
 
-/// The filters, in the order both pages draw them: the workarea first,
-/// then the author key and the claim key prefix. The workarea is a text
-/// field whose hints are the workareas the page's own read names, so the
-/// field costs no read (design notes row 21); the picker lane's
-/// `WorkareaField` takes its place at integration.
-fn filters(page: &str, fields: &Fields, hints: &[String]) -> String {
+/// The filters, in the order both pages draw them: the workarea first, as
+/// the picker's `WorkareaField`, whose hints are the workareas the page's
+/// own read names (the held listing on the user page, the queue on the
+/// admin page), so the field costs no read (design notes row 21); then the
+/// author key and the claim key prefix.
+fn filters(view: &ViewCtx<'_>, fields: &Fields, names: &Names, chosen: &Chosen) -> String {
+    let page = view.side.path();
     let value = |name: &str| fields.given(name).unwrap_or("");
-    let options: String = hints
-        .iter()
-        .map(|h| format!(r#"<option value="{}">"#, attr(h)))
-        .collect();
+    let mut keep: Vec<(&str, String)> = vec![("held", "1".to_owned())];
+    for name in ["author_key", "claim_key_prefix"] {
+        if let Some(v) = fields.given(name) {
+            keep.push((name, v.to_owned()));
+        }
+    }
+    let field = Field {
+        id: "review-workarea",
+        action: page,
+        keep: &keep,
+        chosen,
+        names,
+        browse: None,
+        admin: view.side == Side::Admin,
+        standalone: false,
+        empty: "Empty: every workarea with something waiting.",
+    }
+    .html();
     format!(
-        r#"<form class="row filters" method="get" action="{page}">{}<label>workarea<input name="workarea" value="{}" list="review-workareas" autocapitalize="none" spellcheck="false"></label><datalist id="review-workareas">{options}</datalist>{}{}<button type="submit">Filter</button></form>"#,
+        r#"<form class="row filters" method="get" action="{page}">{field}{}{}{}<button type="submit">Filter</button></form>"#,
         hidden("held", "1"),
-        attr(value("workarea")),
         input("author_key", "author key", value("author_key"), false),
         input(
             "claim_key_prefix",
@@ -449,28 +469,77 @@ fn filters(page: &str, fields: &Fields, hints: &[String]) -> String {
     )
 }
 
-/// The filters the listing is read with.
-fn listing_filters(fields: &Fields) -> Vec<(&str, &str)> {
+/// The names a page's own read gives the picker: `(id, path)` of each
+/// workarea, and as user roots the top label of every path below one, the
+/// reading [`reference_of`] takes.
+fn names_of(places: Vec<(String, String)>) -> Names {
+    let roots: Vec<String> = places
+        .iter()
+        .filter_map(|(_, path)| {
+            let mut labels = path.split('.');
+            match (labels.next(), labels.next(), labels.next()) {
+                (Some("universe"), Some(top), Some(_)) => Some(top.to_owned()),
+                _ => None,
+            }
+        })
+        .collect();
+    Names::of_places(places, roots)
+}
+
+/// The filters the listing is read with: the chosen workarea as the
+/// picker sends it (its id where the page's names hold it), and the
+/// others as typed.
+fn listing_filters<'a>(fields: &'a Fields, chosen: &'a Chosen) -> Vec<(&'a str, &'a str)> {
+    let mut out: Vec<(&str, &str)> = chosen
+        .value()
+        .map(|w| ("workarea", w))
+        .into_iter()
+        .collect();
+    out.extend(
+        ["author_key", "claim_key_prefix"]
+            .into_iter()
+            .filter_map(|name| fields.given(name).map(|v| (name, v))),
+    );
+    out
+}
+
+/// The filters a link keeps, as typed.
+fn kept_filters(fields: &Fields) -> String {
     ["workarea", "author_key", "claim_key_prefix"]
         .into_iter()
         .filter_map(|name| fields.given(name).map(|v| (name, v)))
+        .map(|(k, v)| format!("&amp;{k}={}", attr(&encode(v))))
         .collect()
 }
 
-/// The held listing as the person's reviewer key reads it.
-async fn listing(view: &ViewCtx<'_>, fields: &Fields, limit: u32) -> Result<HeldPage, Refusal> {
+/// The held listing as the person's reviewer key reads it; `None` where
+/// the picker refused the workarea before any call.
+async fn listing(
+    view: &ViewCtx<'_>,
+    fields: &Fields,
+    chosen: &Chosen,
+    limit: u32,
+) -> Result<Option<HeldPage>, Refusal> {
+    if chosen.refused() {
+        return Ok(None);
+    }
     let credential = view.session.credential(Capacity::Review);
     let ids = view.calls.next_ids();
-    view.web
+    match view
+        .web
         .api
         .review_held(
             &call(&credential, &ids),
-            &listing_filters(fields),
+            &listing_filters(fields, chosen),
             limit,
             fields.given("cursor"),
         )
         .await
-        .map_err(|e| Box::new(outcome::page(&e, view.calls, view.side.path())))
+    {
+        Ok(page) => Ok(Some(page)),
+        Err(e) if picker::is_not_found(&e) => Ok(None),
+        Err(e) => Err(Box::new(outcome::page(&e, view.calls, view.side.path()))),
+    }
 }
 
 /// The workareas of a listing, each with its count and the instant its
@@ -487,14 +556,48 @@ fn waiting(page: &HeldPage) -> Vec<(String, usize, String)> {
     groups
 }
 
+/// The picker's answer to the listing: the rows, or the field's refusal
+/// where the picker refused the workarea before any call or the API
+/// answered `access.not_found` for it.
+fn settled(listing: Option<HeldPage>, chosen: Chosen, names: &Names) -> (HeldPage, Chosen) {
+    match listing {
+        Some(page) => (page, names.settle(chosen)),
+        None => {
+            let chosen = if chosen.refused() {
+                names.settle(chosen)
+            } else {
+                names.not_found(&chosen).unwrap_or(chosen)
+            };
+            (
+                HeldPage {
+                    items: Vec::new(),
+                    next_cursor: None,
+                },
+                chosen,
+            )
+        }
+    }
+}
+
 /// The user page's list (ReviewScreen): "Waiting for review" by workarea,
 /// the filters, and every row the person's reviewer key may judge, as
 /// review cards, from one read of the held listing (design notes rows 1,
 /// 6, 15).
 async fn person_list(view: &ViewCtx<'_>, fields: &Fields) -> Result<String, Refusal> {
     let page = view.side.path();
-    let listing = listing(view, fields, WAITING_PAGE).await?;
-    let groups = waiting(&listing);
+    let chosen = Chosen::of(fields.get("workarea"));
+    let read = listing(view, fields, &chosen, WAITING_PAGE).await?;
+    let groups = read.as_ref().map(waiting).unwrap_or_default();
+    let names = names_of(
+        read.iter()
+            .flat_map(|p| p.items.iter())
+            .filter_map(|i| {
+                let m = i.memory();
+                Some((m.workarea_id.clone()?, m.workarea_path.clone()?))
+            })
+            .collect(),
+    );
+    let (listing, chosen) = settled(read, chosen, &names);
     let total = if listing.next_cursor.is_some() {
         format!("{WAITING_PAGE} or more")
     } else {
@@ -516,13 +619,14 @@ async fn person_list(view: &ViewCtx<'_>, fields: &Fields) -> Result<String, Refu
         );
     }
     body.push_str("</table>");
-    let hints: Vec<String> = groups.into_iter().map(|(r, _, _)| r).collect();
     let _ = write!(
         body,
         r#"<h2>Held memories</h2><p class="desc">Oldest first, {WAITING_PAGE} a page.</p>{}"#,
-        filters(page, fields, &hints)
+        filters(view, fields, &names, &chosen)
     );
-    if listing.items.is_empty() {
+    if chosen.refused() {
+        // The field's refusal stands in for the rows.
+    } else if listing.items.is_empty() {
         body.push_str(r#"<p class="dim">Nothing waits for review.</p>"#);
     } else {
         body.push_str(r#"<ul class="oml-mcs">"#);
@@ -536,13 +640,10 @@ async fn person_list(view: &ViewCtx<'_>, fields: &Fields) -> Result<String, Refu
         body.push_str("</ul>");
     }
     if let Some(next) = &listing.next_cursor {
-        let kept: String = listing_filters(fields)
-            .iter()
-            .map(|(k, v)| format!("&amp;{k}={}", attr(&encode(v))))
-            .collect();
         let _ = write!(
             body,
-            r#"<p><a href="{page}?held=1{kept}&amp;cursor={}">Next page</a></p>"#,
+            r#"<p><a href="{page}?held=1{}&amp;cursor={}">Next page</a></p>"#,
+            kept_filters(fields),
             attr(&encode(next))
         );
     }
@@ -552,24 +653,25 @@ async fn person_list(view: &ViewCtx<'_>, fields: &Fields) -> Result<String, Refu
 /// The bulk listing (AdminReviewScreen): the rows the reviewer key may
 /// judge, filtered, each a review card with a box to pick it; "select all"
 /// draws the page with every box checked, since the page carries no
-/// script.
-async fn held(view: &ViewCtx<'_>, fields: &Fields, hints: &[String]) -> Result<String, Refusal> {
+/// script. The picker's names are the queue's workareas.
+async fn held(view: &ViewCtx<'_>, fields: &Fields, names: &Names) -> Result<String, Refusal> {
     let page = view.side.path();
-    let listing = listing(view, fields, HELD_PAGE).await?;
+    let chosen = names.resolve(Chosen::of(fields.get("workarea")));
+    let read = listing(view, fields, &chosen, HELD_PAGE).await?;
+    let (listing, chosen) = settled(read, chosen, names);
     let all = fields.get("select") == Some("all");
-    let kept: String = listing_filters(fields)
-        .iter()
-        .map(|(k, v)| format!("&amp;{k}={}", attr(&encode(v))))
-        .collect();
+    let kept = kept_filters(fields);
     let cursor = fields.given("cursor").map_or(String::new(), |c| {
         format!("&amp;cursor={}", attr(&encode(c)))
     });
     let mut body = format!(
         r#"<h2>Bulk review</h2><p class="desc">Oldest first, {HELD_PAGE} a page. A memory this reviewer key wrote, or that derives from one, is never listed.</p>{}<p><a href="{page}?held=1{kept}{cursor}&amp;select=all">Select all on this page</a> · <a href="{page}?held=1{kept}{cursor}">Clear</a></p>"#,
-        filters(page, fields, hints)
+        filters(view, fields, names, &chosen)
     );
     let mut rows = String::new();
-    if listing.items.is_empty() {
+    if chosen.refused() {
+        // The field's refusal stands in for the rows.
+    } else if listing.items.is_empty() {
         rows.push_str(r#"<p class="dim">Nothing waits for review here.</p>"#);
     } else {
         rows.push_str(r#"<ul class="oml-mcs">"#);

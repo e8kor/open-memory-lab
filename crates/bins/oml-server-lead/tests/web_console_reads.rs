@@ -681,3 +681,53 @@ async fn the_review_pages_reads_cost_the_gate_and_their_own_verbs_store_calls() 
             .store_calls()
     );
 }
+
+// ---------------------------------------------------------------------------
+// The workarea picker's reads (design notes row 14, decided 2026-11-13)
+// ---------------------------------------------------------------------------
+
+/// The picker's hints are names only, from the uncounted tree read, which
+/// every page that draws the field makes once; the counted read is made
+/// only for an opened Browse. Each read's store calls over the rig's
+/// tenant (`universe`, alice's root and bob's), for the two session keys
+/// the pages read with: as `alice-web`, which reads `universe` and her root,
+/// the uncounted read is 8 calls and the counted one 28; as `alice-admin`,
+/// which reads the structure, 4 and 7. A page whose Browse is closed pays
+/// the uncounted read alone, and the Atlas of `universe` takes its names
+/// from its own counted read and pays neither.
+#[tokio::test]
+async fn the_pickers_hint_read_costs_less_than_browses_counted_read() {
+    let rig = rig().await;
+    for (capacity, nodes, names_calls, counted_calls) in [("web", 2, 8, 28), ("admin", 3, 4, 7)] {
+        let bearer = web(&rig.alice, capacity);
+        let names = get(
+            &rig.router,
+            "/v2/workareas/universe/tree?limit=200",
+            &bearer,
+            true,
+        )
+        .await;
+        let counted = get(
+            &rig.router,
+            "/v2/workareas/universe/tree?counts=true",
+            &bearer,
+            true,
+        )
+        .await;
+        assert_eq!(names.status, StatusCode::OK, "{}", names.body);
+        assert_eq!(counted.status, StatusCode::OK, "{}", counted.body);
+        assert_eq!(names.body["items"].as_array().map(Vec::len), Some(nodes));
+        assert_eq!(
+            names.store_calls(),
+            names_calls,
+            "{capacity}: {}",
+            names.line
+        );
+        assert_eq!(
+            counted.store_calls(),
+            counted_calls,
+            "{capacity}: {}",
+            counted.line
+        );
+    }
+}

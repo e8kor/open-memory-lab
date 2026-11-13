@@ -238,6 +238,13 @@ pub struct WorkareaNode {
     pub id: String,
     pub name: String,
     pub path: String,
+    /// The node it sits in; `None` for the tree's own root.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// Whether the node is a person's root (ADR-0044 d1), which makes the
+    /// names beneath it `<user>.<name>` (d5).
+    #[serde(default)]
+    pub user_root: bool,
 }
 
 /// `GET /v2/workareas/{workarea}/tree`: one page of nodes.
@@ -364,6 +371,9 @@ pub struct Memory {
     pub claim_key: String,
     pub version: u32,
     pub tip: bool,
+    /// The workarea's id; `None` where the key holds no role on it.
+    #[serde(default)]
+    pub workarea_id: Option<String>,
     pub workarea_path: Option<String>,
     pub state: String,
     pub principal: Option<String>,
@@ -837,6 +847,9 @@ pub struct CountedNode {
     pub status: String,
     pub mode: String,
     pub counts: NodeCounts,
+    /// Whether the node is a person's root (ADR-0044 d1).
+    #[serde(default)]
+    pub user_root: bool,
 }
 
 /// `GET /v2/workareas/{workarea}/tree?counts=true`: the subtree, a parent

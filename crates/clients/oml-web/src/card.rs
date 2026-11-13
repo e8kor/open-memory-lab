@@ -42,30 +42,14 @@ use serde_json::{Value, json};
 /// The states the admin read names a version by.
 const ADMIN_STATES: &[&str] = &["held", "promoted", "rejected", "superseded", "demoted"];
 
-/// A workarea's reference from its path: what every field takes and every
-/// link carries (`platform`, `alice.docs`, `alice`, `universe`), never the
-/// path (design notes row 20). `is_user_root` says which top labels are a
-/// person's root.
-///
-/// The same signature as the picker lane's `picker::reference`, which this
-/// stands in for until that lane's branch is integrated; the integration
-/// replaces this function with that one.
-pub(crate) fn reference(path: &str, is_user_root: impl Fn(&str) -> bool) -> String {
-    let labels: Vec<&str> = path.split('.').collect();
-    match labels.as_slice() {
-        [] | [""] => String::new(),
-        ["universe"] => "universe".to_owned(),
-        ["universe", only] => (*only).to_owned(),
-        ["universe", top, .., last] if is_user_root(top) => format!("{top}.{last}"),
-        [.., last] => (*last).to_owned(),
-    }
-}
-
-/// The reference of `path` on the pages this module draws: a person's keys
-/// read their own root and the `universe` node alone, so every top label
-/// below `universe` they meet is a root.
+/// The reference of `path` on the pages this module draws, by the picker's
+/// one function (design notes row 20): a person's keys read their own root
+/// and the `universe` node alone, so every top label below `universe` they
+/// meet is a root; on the admin page the same reading holds for every
+/// person's root, and a shared workarea nested under another reads as
+/// `top.name` where the page has no tree read to tell it apart.
 pub(crate) fn reference_of(path: &str) -> String {
-    reference(path, |_| true)
+    crate::picker::reference(path, |_| true)
 }
 
 /// An anchor as one line for a reviewer (ADR-0057 d2): the repository, the
@@ -1170,16 +1154,6 @@ pub(crate) fn change(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_reference_is_a_bare_name_or_a_roots_name_and_never_a_path() {
-        let root = |l: &str| l == "alice";
-        assert_eq!(reference("universe", root), "universe");
-        assert_eq!(reference("universe.platform", root), "platform");
-        assert_eq!(reference("universe.alice", root), "alice");
-        assert_eq!(reference("universe.alice.proj.docs", root), "alice.docs");
-        assert_eq!(reference("universe.platform.oncall", root), "oncall");
-    }
 
     #[test]
     fn the_change_strikes_a_removed_word_and_underlines_an_added_one() {

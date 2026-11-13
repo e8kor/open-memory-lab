@@ -21,6 +21,7 @@ pub mod middleware;
 pub mod once;
 pub mod outcome;
 pub mod pages;
+pub mod picker;
 pub mod render;
 pub mod review;
 pub mod session;
