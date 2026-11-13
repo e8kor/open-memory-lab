@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up
 tier: engineering
-status: proposed · amended 2026-11-13 (d10), accepted by the operator the same day
+status: proposed · amended 2026-11-13 (d10: the Start page's heading and step wording follow the voice rule and ADR-0045's header amendment, accepted by the operator on 2026-11-13); the ADR remains proposed
 answers: how a deployment opens sign-up to anyone with a Google or GitHub account and keeps self-hosters unchanged; how a self-signed-up person accepts the terms and which version is recorded; which tenant and which admin key a sign-up lands under; why a person's space is a user root and not a tenant of their own, and what proves no second person can see, count or recall it; how a person reviews their agents' writes without breaking R2; which quotas and rate limits hold, what they refuse and how an admin raises them; how a person exports their memories and asks for their account to be deleted, and what deletion does while erasure is unbuilt; the per-address sign-up limit, the disable switch and the absence of anonymous access; the onboarding page and its status poll; what it amends in ADR-0045 and ADR-0058
 -->
 
 # ADR-0068 — When the operator opens sign-up, anyone signs in with Google or GitHub and gets a private root under quotas, and leaves through a journalled request
 
-**Status:** proposed · 2026-11-06 · amended by ADR-0071, ADR-0079 · amended 2026-11-13 by [the amendment](#the-amendment-of-2026-11-13-the-start-pages-heading-is-start) (d10: the Start page's heading), which the operator accepted the same day
+**Status:** proposed · 2026-11-06 · amended by ADR-0071, ADR-0079 · amended 2026-11-13 by [the amendment](#the-amendment-of-2026-11-13-the-start-pages-heading-is-start) (d10: the Start page's heading and step wording, which follow the voice rule and ADR-0045's header amendment, both accepted by the operator on 2026-11-13); the ADR itself remains proposed
 
 **Amends:** ADR-0045 (d1: three routes join `WEB_ROUTES`; d2: in open mode a sign-in adds its own entry; d8: one page carries one hashed script; d15: sign-ups are limited per client address), ADR-0058 (d5 is the gate that opening sign-up on the public server waits for)
 
