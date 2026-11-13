@@ -409,7 +409,7 @@ def scale_page(current):
              "# Latency at scale\n", GENERATED,
              "[All suites](index.md)\n",
              "The ten-fold SciFact corpus (about 50,000 memories) is the largest suite. "
-             "We have not run the default pipeline, `bm25-postings`, at that size in this suite. "
+             "The default pipeline, `bm25-postings`, has not been run at that size in this suite. "
              "At the database it measured 25.5 ms p95 at 99,721 readable memories (`bench/scale/REPORT.md`).\n",
              "Each point is one suite's run: the rows in the recall's scope (for LoCoMo, all "
              "conversations together, though each query reads one) and the client's p50 and "
