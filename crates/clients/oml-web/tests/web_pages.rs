@@ -7756,7 +7756,7 @@ async fn a_nested_shared_workarea_is_named_by_its_bare_name_on_both_review_pages
     );
     // Its oldest row's instant is to the second, in UTC, as on every page.
     assert!(page.contains(" UTC</time></td></tr>"), "{page}");
-    assert!(!page.contains(".000"), "{page}");
+    assert!(!page.contains("Z</td>"), "no raw instant: {page}");
     assert!(
         page.contains(r#"href="/web/memories?workarea=oncall">oncall</a>"#),
         "{page}"
