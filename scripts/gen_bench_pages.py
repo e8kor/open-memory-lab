@@ -31,7 +31,9 @@ WEB_SCHEMA = "oml-web-bench/1"
 WEB_BUDGET_MS = 5
 # Pages whose baseline the operator re-set to a measured oml-web p95, by
 # workareas: the page's budget is then that p95 plus WEB_BUDGET_MS, not the
-# in-process page's (ADR-0070 d8, the as-built rows of 2026-11-13).
+# in-process page's (ADR-0070 d8, the as-built rows of 2026-11-13). Only the
+# build over the committed results passes it to `web_page`; any other input
+# is judged by the plain rule.
 WEB_REBASELINED = {
     "review": {6: 21.4, 48: 23.3},
 }
@@ -442,8 +444,11 @@ def load_web():
     return runs
 
 
-def web_page(runs):
-    """Each page's time in process (before phase (b)) and through oml-web."""
+def web_page(runs, rebaselined=None):
+    """Each page's time in process (before phase (b)) and through oml-web;
+    `rebaselined` holds the pages judged against a re-set baseline, by
+    label and workareas, and nothing is when it is omitted."""
+    rebaselined = rebaselined or {}
     lines = [header("benchmarks/web", "how much time the web console's hop over the API adds "
                     "to each page against ADR-0070's 5 ms p95 budget, how many API calls and "
                     "sequential rounds each page makes, and where the added time goes"),
@@ -482,7 +487,7 @@ def web_page(runs):
             b = (web or {}).get("pages", {}).get(label)
             cells = [ms(a["page_ms"]["p50"]) if a else "–", ms(a["page_ms"]["p95"]) if a else "–",
                      ms(b["page_ms"]["p50"]) if b else "–", ms(b["page_ms"]["p95"]) if b else "–"]
-            base = WEB_REBASELINED.get(label, {}).get(workareas)
+            base = rebaselined.get(label, {}).get(workareas)
             if b and base is not None:
                 over = b["page_ms"]["p95"] - base
                 added = f"{b['page_ms']['p95'] - a['page_ms']['p95']:+.1f}" if a else "–"
@@ -538,7 +543,7 @@ def pages():
         out["scale.md"] = scale_page(current)
     web = load_web()
     if web:
-        out["web.md"] = web_page(web)
+        out["web.md"] = web_page(web, WEB_REBASELINED)
     return out
 
 
