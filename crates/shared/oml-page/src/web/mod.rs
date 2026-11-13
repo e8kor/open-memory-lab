@@ -144,13 +144,6 @@ pub fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
     tabs
 }
 
-/// The workarea name a person uses, with the tenant root removed and every
-/// intermediate parent retained.
-#[must_use]
-pub fn workarea_label(path: &str) -> &str {
-    path.strip_prefix("universe.").unwrap_or(path)
-}
-
 /// A short string from a person, an agent, a provider or the store, as a
 /// page shows it: escaped, control and bidirectional characters replaced,
 /// cut at the connect page's length.

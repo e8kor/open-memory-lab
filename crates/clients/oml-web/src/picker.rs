@@ -165,6 +165,32 @@ impl Names {
         }
     }
 
+    /// Names from a counted tree the page already read under `universe`:
+    /// every workarea the viewer reads unless the read was cut at its cap.
+    #[must_use]
+    pub fn of_counted(nodes: &[CountedNode], truncated: bool) -> Self {
+        let roots: BTreeSet<String> = nodes
+            .iter()
+            .filter(|n| n.user_root)
+            .map(|n| n.name.clone())
+            .collect();
+        let places = nodes
+            .iter()
+            .map(|n| Place {
+                reference: reference(&n.path, |l| roots.contains(l)),
+                id: n.id.clone(),
+                name: n.name.clone(),
+                path: n.path.clone(),
+            })
+            .collect();
+        Self {
+            places,
+            roots,
+            more: truncated,
+            ..Self::default()
+        }
+    }
+
     /// Names from a read the page already made, `(id, path)` each, with
     /// the user roots it knows, and no call. Such a set is never taken as
     /// every workarea the viewer reads, so a name it lacks is left to the
@@ -339,20 +365,23 @@ impl Names {
         }
     }
 
-    /// What a page does when the API answered `access.not_found` to
-    /// `chosen`: a bare name the read holds under a person's root is asked
-    /// again by its place (`Some`), anything else is the refusal.
+    /// What a page does when the API answered `access.not_found` to the
+    /// read it made with `chosen`'s value: a bare name the read holds
+    /// under a person's root is asked again by its place
+    /// (`Some(Chosen::Place)`), a value the read lacks is the field's miss,
+    /// and a value the read holds as sent is readable, so the refusal was
+    /// for another field of the request (`None`).
     #[must_use]
-    pub fn not_found(&self, chosen: &Chosen) -> Chosen {
+    pub fn not_found(&self, chosen: &Chosen) -> Option<Chosen> {
         match chosen {
             Chosen::Ask(typed) => match self.find(typed) {
                 Some(place) if place.reference != *typed && place.id != *typed => {
-                    Chosen::Place(place.clone())
+                    Some(Chosen::Place(place.clone()))
                 }
-                _ => self.miss(typed),
+                Some(_) => None,
+                None => Some(self.miss(typed)),
             },
-            Chosen::Place(place) => self.miss(&place.reference),
-            other => other.clone(),
+            _ => None,
         }
     }
 

@@ -534,14 +534,19 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
     let (_, _, page) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
     assert!(page.contains("Guardrails"), "{page}");
     assert!(
-        page.contains("Rules in force at <code>universe.alice</code>"),
+        page.contains("Rules in force at <code>alice</code>"),
         "{page}"
     );
     assert!(
         page.contains("This workarea and its readable parent workareas."),
         "{page}"
     );
-    assert!(page.contains("<select name=\"workarea\">"), "{page}");
+    // The picker names the scope in force by its reference (design notes
+    // row 20).
+    assert!(
+        page.contains(r#"name="workarea" type="text" value="alice""#),
+        "{page}"
+    );
     // Held, it is no rule yet: the set holds none (d3); the memories view
     // lists the agents' held rows.
     assert!(page.contains("No guardrail applies here."), "{page}");
@@ -612,11 +617,11 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
     .await;
     assert_eq!(status, StatusCode::OK, "{nested}");
     assert!(
-        nested.contains("Rules in force at <code>universe.alice.proj.docs</code>"),
+        nested.contains("Rules in force at <code>alice.docs</code>"),
         "{nested}"
     );
     assert!(
-        nested.contains(&format!("value=\"{docs}\" selected")),
+        nested.contains(r#"name="workarea" type="text" value="alice.docs""#),
         "{nested}"
     );
     assert!(
@@ -666,8 +671,12 @@ async fn the_guardrail_selector_includes_workareas_after_the_first_tree_page() {
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(
-        page.contains(&format!("value=\"{last}\" selected")),
-        "the selected workarea is present beyond the first page: {page}"
+        page.contains(r#"name="workarea" type="text" value="alice.w199""#),
+        "the chosen workarea is named beyond the first page: {page}"
+    );
+    assert!(
+        page.contains(r#"<option value="alice.w199"></option>"#),
+        "the hints hold the workarea beyond the first page: {page}"
     );
 }
 
@@ -709,9 +718,13 @@ async fn a_workarea_act_is_confirmed_before_it_runs() {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     let (_, _, page) = send(&rig.router, get("/web/workareas", Some(&cookie))).await;
-    assert!(page.contains("universe.alice.proj.child"), "{page}");
-    assert!(page.contains(">alice.proj.child<"), "{page}");
-    assert!(!page.contains(">alice.child<"), "{page}");
+    // Each workarea by the reference every field takes, and the one it
+    // sits in (design notes row 20).
+    assert!(!page.contains("alice.proj.child"), "{page}");
+    assert!(
+        page.contains(">alice.child</a></td><td class=\"mono\">alice.proj</td>"),
+        "{page}"
+    );
     assert!(page.contains("<select name=\"op\""), "{page}");
     assert!(page.contains("value=\"propose:committed\""), "{page}");
     assert!(page.contains("value=\"mode:in_progress\""), "{page}");
@@ -6318,15 +6331,22 @@ async fn the_atlas_view_is_a_treemap_drawn_on_the_server_with_no_script() {
         .find(|w| w.name.as_str() == "proj")
         .unwrap()
         .workarea_id;
+    // Each region links and is named by its reference (design notes row
+    // 20), and the scope's panel links up to its parent instead of a
+    // breadcrumb (AtlasScreen).
     assert!(
-        page.contains(&format!(
-            "<a href=\"/web/atlas?workarea={proj}\" aria-label=\"proj, 1 readable: 1 held\"><title>proj, 1 readable: 1 held</title>"
-        )),
+        page.contains(
+            "<a href=\"/web/atlas?workarea=alice.proj\" aria-label=\"alice.proj, 1 readable: 1 held\"><title>alice.proj, 1 readable: 1 held</title>"
+        ),
         "{page}"
     );
     assert!(page.contains("id=\"atlas-table\""), "{page}");
     assert!(page.contains("<td class=\"num\">1</td>"), "{page}");
-    assert!(page.contains("aria-label=\"Breadcrumb\""), "{page}");
+    assert!(!page.contains("aria-label=\"Breadcrumb\""), "{page}");
+    assert!(
+        page.contains(r#"Up to <a href="/web/atlas?workarea=universe">universe</a>"#),
+        "{page}"
+    );
     // The vendored scripts are gone with the script.
     let (status, _, _) = send(
         &rig.router,
@@ -6345,7 +6365,7 @@ async fn the_atlas_view_is_a_treemap_drawn_on_the_server_with_no_script() {
     )
     .await;
     assert!(
-        zoomed.contains("<span aria-current=\"page\">proj</span>"),
+        zoomed.contains(r#"<h2 id="sel-h" class="mono">alice.proj</h2><p class="oml-atlas-up">Up to <a href="/web/atlas?workarea=alice">alice</a></p>"#),
         "{zoomed}"
     );
     assert!(zoomed.contains("<select name=\"op\""), "{zoomed}");
@@ -6355,9 +6375,13 @@ async fn the_atlas_view_is_a_treemap_drawn_on_the_server_with_no_script() {
         zoomed.contains(r#"<form class="row act" method="get" action="/web/workareas">"#),
         "{zoomed}"
     );
-    // The list links to the Atlas of the same page, filters kept.
+    // The list links to the Atlas of the same page, filters kept, in one
+    // link (design notes row 23).
     let (_, _, list) = send(&rig.router, get("/web/memories?state=held", Some(&cookie))).await;
-    assert!(list.contains("href=\"/web/atlas?state=held\""), "{list}");
+    assert!(
+        list.contains(r#"<a href="/web/atlas?state=held">The same filters on the Atlas</a>"#),
+        "{list}"
+    );
 }
 
 #[tokio::test]
@@ -6629,7 +6653,7 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
     let (_, _, atlas) = send(&rig.router, get("/web/atlas", Some(&alice))).await;
     assert!(!atlas.contains("bob"), "{atlas}");
     assert!(
-        atlas.contains("aria-label=\"proj, 2 readable: 1 promoted, 1 unreviewed in progress"),
+        atlas.contains("aria-label=\"alice.proj, 2 readable: 1 promoted, 1 unreviewed in progress"),
         "the served row and the helper's held successor of it: {atlas}"
     );
     let (status, _, _) = send(
@@ -6832,4 +6856,149 @@ async fn a_lead_mid_rotation_accepts_the_old_and_new_secret_and_the_doctor_tells
     assert_eq!(probe(closed, WEB_CLIENT_SECRET).await.0, Level::Ok);
     let (level, text) = probe(closed, OLD).await;
     assert_eq!(level, Level::Fail, "the window closed: {text}");
+}
+
+// -- the workarea picker and its reference (design notes rows 14, 20, 21) --
+
+/// alice with `proj` and `docs` inside it, a memory in each, and boss, an
+/// admin: alice's cookie, boss's cookie.
+async fn alice_proj_docs(rig: &Rig) -> (String, String) {
+    rig.allow("boss@example.com", "boss", true).await;
+    let (alice, agent) = person_with_agent(rig, "sub-1", EMAIL).await;
+    alice_proj(rig, &alice).await;
+    let (status, _, _) = act(
+        rig,
+        &alice,
+        "/web/workareas",
+        &[
+            ("action", "create_workarea"),
+            ("name", "docs"),
+            ("parent", "alice.proj"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    agent_writes_in(rig, &agent, "inside proj", "alice.proj").await;
+    agent_writes_in(rig, &agent, "inside docs", "alice.docs").await;
+    let boss = signed_in(rig, "sub-boss", "boss@example.com").await;
+    (alice, boss)
+}
+
+#[tokio::test]
+async fn the_workareas_pages_name_a_workarea_by_the_reference_every_field_takes() {
+    let rig = rig().await;
+    let (alice, boss) = alice_proj_docs(&rig).await;
+    for (cookie, path, memories) in [
+        (&alice, "/web/workareas", "/web/memories"),
+        (&boss, "/web/admin/workareas", "/web/admin/memories"),
+    ] {
+        let (status, _, page) = send(&rig.router, get(path, Some(cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        assert!(
+            !page.contains("alice.proj.docs"),
+            "{path} prints a path no field takes: {page}"
+        );
+        assert!(page.contains(">alice.docs<"), "{path}: {page}");
+        // The name the page prints is one the Memories field takes.
+        let (status, _, listed) = send(
+            &rig.router,
+            get(&format!("{memories}?workarea=alice.docs"), Some(cookie)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{listed}");
+        assert!(listed.contains("inside docs"), "{listed}");
+    }
+}
+
+#[tokio::test]
+async fn a_bare_name_resolves_on_the_admin_pages_as_on_the_persons() {
+    let rig = rig().await;
+    let (alice, boss) = alice_proj_docs(&rig).await;
+    for (cookie, path) in [
+        (&alice, "/web/memories?workarea=docs"),
+        (&boss, "/web/admin/memories?workarea=docs"),
+        (&alice, "/web/atlas?workarea=docs"),
+        (&boss, "/web/admin/atlas?workarea=docs"),
+    ] {
+        let (status, _, page) = send(&rig.router, get(path, Some(cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {page}");
+        assert!(
+            page.contains(r#"name="workarea" type="text" value="alice.docs""#),
+            "{path} shows the reference it resolved: {page}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_admin_atlas_links_up_by_a_reference_that_resolves_below_a_user_root() {
+    let rig = rig().await;
+    let (_alice, boss) = alice_proj_docs(&rig).await;
+    let (status, _, page) = send(
+        &rig.router,
+        get("/web/admin/atlas?workarea=alice.docs", Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let links: Vec<String> = page
+        .match_indices("href=\"/web/admin/atlas?workarea=")
+        .map(|(at, m)| {
+            let start = at + "href=\"".len();
+            page[start..at + m.len() + page[at + m.len()..].find('"').unwrap()]
+                .replace("&amp;", "&")
+        })
+        .collect();
+    assert!(
+        links
+            .iter()
+            .any(|l| l == "/web/admin/atlas?workarea=alice.proj"),
+        "the scope links up to its parent by reference: {links:?}"
+    );
+    for link in &links {
+        let (status, _, answer) = send(&rig.router, get(link, Some(&boss))).await;
+        assert_eq!(status, StatusCode::OK, "{link}: {answer}");
+    }
+}
+
+#[tokio::test]
+async fn an_unknown_and_an_unreadable_workarea_get_one_refusal_naming_only_readable_names() {
+    let rig = rig().await;
+    let (alice, _boss) = alice_proj_docs(&rig).await;
+    rig.allow("bob@example.com", "bob", false).await;
+    signed_in(&rig, "sub-bob", "bob@example.com").await;
+    for (typed, said) in [("bob", "bob"), ("nosuch", "nosuch"), ("BOB", "bob")] {
+        for path in ["/web/memories", "/web/atlas"] {
+            let (status, _, page) = send(
+                &rig.router,
+                get(&format!("{path}?workarea={typed}"), Some(&alice)),
+            )
+            .await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path} {typed}: {page}");
+            let sentence = format!("No readable workarea is named <code>{said}</code>.");
+            assert!(page.contains(&sentence), "{path} {typed}: {page}");
+            assert!(page.contains(r#"aria-invalid="true""#), "{page}");
+            assert!(!page.contains("<option value=\"bob"), "{page}");
+            assert!(
+                !page.contains("oml-mlist\"><li"),
+                "nothing is listed: {page}"
+            );
+            assert!(page.contains("No close name"), "{page}");
+        }
+    }
+    // A name near a readable one is offered by its reference.
+    let (status, _, page) =
+        send(&rig.router, get("/web/memories?workarea=prj", Some(&alice))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
+    assert!(
+        page.contains(r#"<a href="/web/memories?workarea=alice.proj">alice.proj</a>"#),
+        "{page}"
+    );
+    // A typed name is trimmed and lower-cased.
+    let (status, _, page) = send(
+        &rig.router,
+        get("/web/memories?workarea=%20ALICE.PROJ%20", Some(&alice)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains(r#"type="text" value="alice.proj""#), "{page}");
+    assert!(page.contains("inside proj"), "{page}");
 }
