@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict
 tier: engineering
-status: accepted design · 2026-11-05
+status: accepted design · 2026-11-05 · amended 2026-11-13 (d1, d10), accepted by the operator the same day
 answers: who may review in bulk and on which surfaces; why agent keys and MCP never reach it; what a reviewer is shown and how the selection is named; why the verdict names ids and never a filter; the cap per request; how each item is judged, journalled and signed; how R2 is held per item and what a skipped item answers; what a stale id answers; whether a claim approval is marked same_user; bulk reject and its reason; idempotency and retry; why the queue slowed with tens of thousands held and what fixed it, measured; the routes, the admin page's view and actions, the CLI verbs, the metric and the doctor line; the laws and their tests; the rejected alternatives
 -->
 
 # ADR-0055 — A person reviews a listed set of held items in one act, each item judged and signed as one verdict
 
-**Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.7
+**Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.7 · amended 2026-11-13 by [the amendment](#the-amendment-of-2026-11-13-the-persons-review-page-lists-what-waits-and-judges-one-item-from-the-list) (d1 and d10: the person's Review page lists what waits and judges one item from the list; ADR-0045 d9 and d11 and ADR-0070 d7 (b) follow), which the operator accepted the same day
 
 **Release:** introduced in v0.5.7 ([releases](../changelog.md))
 
@@ -43,7 +43,7 @@ Decided, built on `feat/bulk-review`, and accepted and introduced with release v
 
 ## Decision
 
-- **d1 — Bulk review is a person's act, on the admin page and the CLI only.** The listing and the
+- **d1 — Bulk review is a person's act, on the admin page and the CLI only.** *(Amended 2026-11-13: the person's Review page also lists what waits and judges one item from the list; see [the amendment](#the-amendment-of-2026-11-13-the-persons-review-page-lists-what-waits-and-judges-one-item-from-the-list).)* The listing and the
   bulk verdict admit a key whose role is `dreamer` and whose `held_by` is `human`, the reviewer
   keys a person holds: the `<user>-review` session key the admin page acts through (ADR-0045 d6)
   and a dreamer key issued `--held-by human`, such as `oml quickstart`'s reviewer. Every other
@@ -152,7 +152,7 @@ Decided, built on `feat/bulk-review`, and accepted and introduced with release v
   and each chosen item's claim key and first line, with a form for `bulk_verdict` carrying the
   same fields and an idempotency key minted at confirmation. Action `bulk_verdict` runs d4 and
   renders the per-item outcome table. Both forms carry `csrf_token` and pass the same-origin
-  check; neither is on the user page, whose bulk review is open.
+  check; neither is on the user page, whose bulk review is open. *(Amended 2026-11-13: the user page lists and judges one item per act; bulk selection stays the admin page's.)*
 
 - **d11 — The CLI lists to a file and judges from one.** `oml review list [--workarea]
   [--author-key] [--claim-key-prefix] [--limit] [--all] [--ids-only]` prints the listing, every
@@ -189,7 +189,7 @@ Decided, built on `feat/bulk-review`, and accepted and introduced with release v
   requests of 200 instead of a crew of keys one row at a time, and the queue statement no longer
   sorts the whole queue. Serving one key several claimed rows, #98's other option, is not
   built.
-- The user page keeps one-at-a-time review; bulk on it waits for a person to ask.
+- The user page keeps one-at-a-time review; bulk on it waits for a person to ask. *(Amended 2026-11-13: it also lists what waits and judges one listed item per act; bulk selection on it still waits for a person to ask.)*
 
 ## Laws and their tests
 
@@ -205,6 +205,58 @@ Decided, built on `feat/bulk-review`, and accepted and introduced with release v
 | The verdict names ids, capped | `a_bulk_request_over_the_cap_or_with_a_repeated_id_is_refused` |
 | Bulk reject journals one reason per item | `a_bulk_reject_journals_each_item_with_the_one_reason` |
 | The admin page confirms before it acts | `the_admin_page_lists_confirms_and_shows_each_outcome` |
+
+## The amendment of 2026-11-13: the person's Review page lists what waits and judges one item from the list
+
+**Status of this amendment:** accepted design · 2026-11-13, by the operator, before it is built · built in v0.7.3 with the console redesign
+
+On 2026-11-12 and 2026-11-13 the operator asked for a console round that includes a Review tab
+showing every fact the way Memories does. After seeing the published mockups, the operator decided
+on 2026-11-13 that the Personal Review page offers "Open to judge", answering "yes, amend the
+records". d1, d10 and the last Consequence kept the listing and the listed-set verdict off the
+user page, and the person's page served review next alone
+([ADR-0070](ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core.md)
+Phase (b) as built, d7 (b)). The mockups draw the person's Review as a list of what waits, by
+workarea, with "Open to judge" on each row. This amendment records that decision and nothing
+beyond it: what the build draws and how it groups the list are the build's, and are named below.
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d1 | the listing and the bulk verdict are the admin page's and the CLI's: "Bulk review is a person's act, on the admin page and the CLI only" | a person's `<user>-review` session key, the `dreamer` key of `held_by: human` that d1 already admits, lists the held items it may judge on the Personal Review page (`GET /v2/review/held`, the listing of d2 as it is) and records a verdict on one item from that list (`POST /v2/review/verdicts/bulk`, `artifact_ids` holding that one id, d3). Every other key is refused as d1 states, `bulk_review_is_human_only`, and `/mcp` names neither route | the person already reviews through that key, one served item at a time (ADR-0045 d11); the listing shows what that key may be served; one id in d3's request is one verdict, judged and signed as d4 says. No route, member, event or migration is added. The cost: a `GET` of the person's Review page makes the listing's reads, which the page did not make; the build records the new store-call count in `web_console_reads.rs` with this reason (ADR-0070 d8) |
+| d10 | the admin page lists, selects, confirms and shows each outcome; neither form "is on the user page, whose bulk review is open" | the admin page is unchanged. The person's page gains the listing and the one-id verdict, with no pick box, no "select all", no confirmation of a set and no `bulk_confirm`; whether its verdict runs under `bulk_verdict`'s action name or one of its own is the build's | the operator's decision is "Open to judge" on a row, one id; a selection of many on the person's side is not part of it |
+| ADR-0045 d9, d11 | Review is `review_next` and `verdict`, the served ceremony, and "the form carries the `serve_id`" | Review is those two and the listing with its one-id verdict. `review_next` and its serve-bound verdict stay as d11 states. An "Open to judge" verdict carries no `serve_id`: the id the form names is what it judges, as in d3, and the server's checks of d4 to d6 decide whether it may | the listing claims nothing (d2), so there is no serve to carry. The cost: for this act the serve binding does not decide what is judged, and the id comes from the browser as the admin page's bulk ids do. The server refuses what the key may not judge as d4 to d6 state: `review.author_in_lineage` skipped, `access.not_found` for an id the key cannot see, `access.grant_refused`, `workarea.frozen`, `review.serve_invalid` with `details.reason: consumed` for a decided row. A row another key has claimed with `review next` is judged as a single verdict naming it would be, and the first verdict wins (d6) |
+| Consequences | "The user page keeps one-at-a-time review; bulk on it waits for a person to ask." | the user page lists what waits and judges one listed item per act; bulk selection of many on it still waits for a person to ask | the decision covers one id |
+
+**R2 is unchanged.** The listing never shows the reviewer's own writes or anything whose lineage
+closure holds the reviewing key or its principal (d2), and the check at verdict time decides what a
+listing could not (d5). The person's own agents' writes appear in the listing, marked `same_user`,
+and an approval of one journals `same_user: true` (d7), as
+[ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
+d11 allows: the reviewing key is never in the row's closure, and the journal shows the reviewing
+key beside the authoring one. That mark says what the step is worth to an auditor, and it is not
+`self_signed` (ADR-0001 d5). The development exception of ADR-0001 d5 is untouched: the page
+offers no self-signature.
+
+**What is not changed.**
+
+- Bulk selection of many items on the Personal side is not added. A person who wants a selected
+  set judges it on the admin page or with `oml review approve --ids`, as before.
+- The admin page's queue and bulk review (d10), the CLI (d11), the refusal of every key that is
+  not a person's reviewer key (d1), the cap and the idempotency of d3 and d12, and the metric and
+  the doctor line of d13 are as they were. The MCP catalog gains nothing.
+- The listing is not a claim: nothing is held for the reader, so a listed item waits for any
+  reviewer until a verdict lands.
+
+**What the build chooses**, and says it chose: how the list is grouped (by workarea, as the
+mockups draw it), the page size within d2's 1 to 200, which filters the page offers, what each row
+shows, and the one-id verdict's idempotency key (minted per form, as every act's is).
+
+**Rejected, for this amendment:**
+
+| Alternative | Why not |
+|---|---|
+| **The list read-only, with review next serving the oldest, as the person's page does today** | The fallback the mockups name. A person who reads a row in the list cannot judge it, only the oldest; the operator chose the act. |
+| **Bulk selection on the Personal page, the admin page's `bulk_confirm` and `bulk_verdict`** | Not part of the decision, and d1's reasoning that a bulk verdict is a person's attestation that they read a list is carried by the admin page; it waits for a person to ask. |
 
 ## Rejected alternatives
 

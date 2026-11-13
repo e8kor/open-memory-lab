@@ -31,9 +31,22 @@ pair drops below its floor.
 
 ## Voice
 
-Technical, plain, present tense, active voice, "you" for the reader. Sentence-case titles, no
-emoji, no exclamation marks. Banned: seamless, powerful, simply, just, magic, revolutionary.
-"Open Memory Lab" at first mention, "OML" after.
+Technical, plain, present tense, active voice, neutral. UI copy is impersonal: no first or second
+person ("you", "your", "my", "me", "we") in a heading, label, hint, button, notice, refusal, empty
+state, caption, chip, header or footer. A sentence names the thing, not the reader: "Waiting for
+review · 6", "Empty: every readable workarea", "Held writes by this account's keys". Where an actor
+must be named it is "the user" on the personal side and "the admin" on the administration side, or
+the person or key as the data shows it (`alice`, `alice-laptop`); never "client", which is an MCP
+client or the CLI. The scope words are **Personal** and **Administration**. Neutral tone: no
+exclamations, no reassurance or apology, no "please", no rhetorical questions; a refusal states its
+code and the fact. Product codes, verbs and states are kept exactly. Sentence-case titles, no
+emoji, no exclamation marks. Banned: seamless, powerful, simply, just, magic, revolutionary; "you",
+"your", "my" and "me" in UI copy; "client" for a person. "Open Memory Lab" at first mention, "OML"
+after.
+
+*Voice changed on 2026-11-13 at the operator's request: the reader was "you" until then.* The
+rule is the console's. The documentation and the landing page keep their wording until the
+rewrite of [#357](https://github.com/e8kor/open-memory-lab/issues/357) changes it.
 
 ## The content rule
 
@@ -48,8 +61,8 @@ API and docs: Remember, Recall, Approve, Reject, Supersede, Propose retirement, 
 | "A connect code lets you connect claude.ai to one of your agent keys. Please note that the code will only be shown to you one time." | **Connect code** · [New code] · "Shown once · works once · expires 12:10Z" |
 
 Proposals say so: a supersede or a retirement waits for review by someone else and is never
-called done before that. Errors name the code and the fix: "You can't review this: your key
-wrote it. `review.author_in_lineage`".
+called done before that. Errors name the code and the fact: "`review.author_in_lineage`:
+this reviewer key wrote this version."
 
 ## States and glyphs
 

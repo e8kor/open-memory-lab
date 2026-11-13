@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin
 tier: engineering
-status: accepted design · 2026-11-04
+status: accepted design · 2026-11-04 · amended 2026-11-13 (d9, d11, d27, d32), accepted by the operator the same day
 answers: why OML now serves a web console after ADR-0015 declined one, and how each of ADR-0015's reasons is answered; which pages and routes the lead serves and why so few; how a person signs in with Google or GitHub and what the server checks; what the email allowlist holds, who maintains it, how the first admin gets in and what removing an email ends; how a signed-in person maps to ADR-0044's user; which identity signs each act a page performs and how R1 keeps the pages out of every agent's reach; what the user page and the admin page do; how review, curation, demotion and supersession run from a page without the admin key; what the admin reads and how that read is journalled; the session, CSRF, clickjacking, CSP, rate-limit and logging rules; the request-line fields for web requests; the doctor lines; how the Memories view lists, filters and pages, what each page's list may show, how the Atlas view draws the same page from a JSON route and what its script changes in the CSP and in risk, and how a workarea's acts become a dropdown of what the key may do; what it amends in ADR-0010, ADR-0015, ADR-0025, ADR-0026, ADR-0031, ADR-0042 and ADR-0044
 -->
 
 # ADR-0045 — People sign in with Google or GitHub to a user page and an admin page that the lead serves on its own origin, and every act there is a session key's
 
-**Status:** accepted design · 2026-11-04 · revised the same day with the maintainer's answers to its open choices (d20) · amended by [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-06 with the Memories list, the Atlas view, the workarea dropdowns and the pages' copy (d22–d32)
+**Status:** accepted design · 2026-11-04 · revised the same day with the maintainer's answers to its open choices (d20) · amended by [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-06 with the Memories list, the Atlas view, the workarea dropdowns and the pages' copy (d22–d32) · amended 2026-11-13 by [the review amendment](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md#the-amendment-of-2026-11-13-the-persons-review-page-lists-what-waits-and-judges-one-item-from-the-list) (d9 and d11: the person's Review lists what waits and judges one item from the list) and by [the header amendment](#the-amendment-of-2026-11-13-the-two-sides-are-told-apart-by-their-header-and-each-has-its-own-nav) (d27 and d32: the two sides, their navs and the Atlas), which the operator accepted the same day
 
 **Release:** introduced in v0.5.0 — sign-in, sessions, the email allowlist, the user page with review of the person's own agents' work, and on the admin page review, curation, supersession and the admin read of every memory's text and attribution; demotion is planned for v0.6.0, since it rests on a verb not built ([releases](../changelog.md))
 
@@ -710,7 +710,7 @@ Decided; introduced in v0.5.0 demotion (d12) followed in v0.6.0 with its verb.
   and a 4:3 one below 600px. **Risk:** none added; injected markup still runs nothing anywhere,
   and the session's origin serves no script but the Mermaid frame's sandboxed one (ADR-0056 d9).
 
-- **d27 — The list is the accessible default, and the Atlas has a table twin.** The view opens
+- **d27 — The list is the accessible default, and the Atlas has a table twin.** *(Amended 2026-11-13: the Atlas is also a nav item on both sides; see [the header amendment](#the-amendment-of-2026-11-13-the-two-sides-are-told-apart-by-their-header-and-each-has-its-own-nav).)* The view opens
   as the list; the Atlas is reached only by its link. Every region carries a `title` and an
   `aria-label` that spell its name, count and states, and keeps at least a cut name when it is
   too small for its whole name; below the map a table holds the same rows (workarea, status,
@@ -808,10 +808,41 @@ Decided; introduced in v0.5.0 demotion (d12) followed in v0.6.0 with its verb.
   words (Text, State, Workarea, Source, Author). The Atlas is AtlasScreen's treemap (d25, d30)
   in the shared rail layout. The shared stylesheet (`tokens.css`, `web.css`) styles the row,
   the rail, the panel, the lifebar and the legend; the filters and the treemap have their own
-  `memories.css` after it, `var(--…)` only. The user page's nav is the design system's (Start,
+  `memories.css` after it, `var(--…)` only. *(Amended 2026-11-13: each side has its own nav and a scope word; see [the header amendment](#the-amendment-of-2026-11-13-the-two-sides-are-told-apart-by-their-header-and-each-has-its-own-nav).)* The user page's nav is the design system's (Start,
   Memories, Review, Atlas, Keys), then Workareas and Guardrails. The design system
   places no lifecycle acts on the Atlas; the operator's d30 does, so the scope's panel carries
   d28's dropdown.
+
+## The amendment of 2026-11-13: the two sides are told apart by their header, and each has its own nav
+
+**Status of this amendment:** accepted design · 2026-11-13, by the operator, before it is built · built in v0.7.3 with the console redesign
+
+On 2026-11-12 and 2026-11-13 the operator asked for "an unmistakable separation of the personal and
+admin sides". The mockups drew two headers, and on 2026-11-13 the operator chose
+**variant A**: "two distinct bars: "Personal" plain, "Administration" inverted with a heavy rule,
+word and glyph". The other variant, one identical bar and a strip under it, was not chosen. The
+mockups also draw the navigation, the titles and the headings recorded below; those are the
+design system's words, taken by the build, and the operator's decision is the variant and that the
+build ships in v0.7.3. The glyphs, the order of the tabs, the footer and the refusal page are as
+the design system draws them and are the build's. The records keep their own
+words for the two sides, "the user page" and "the admin page", which are engineering vocabulary;
+the console's words for them are **Personal** and **Administration**, the scope words of the
+voice rule in [design/README.md](../../design/README.md).
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d32 | the nav is the design system's (Start, Memories, Review, Atlas, Keys, then Workareas and Guardrails) on the user page, with a tab to the admin page; the admin page has its own tabs, one of them "Your page" | two sides, drawn once each by the header (the design system's `BrandHeader`, variant A). The brand leads to the side's first page; the scope word, a glyph and "Personal" or "Administration", follows it at every width; one `<nav>`, labelled with the scope word, holds only that side's pages. Personal is the plain bar. Administration swaps ground and ink, closes with a heavy rule, and keeps the word and the glyph. Three signals carry the side without colour: the word, its glyph and the inverted bar | the side was told apart by a tab and a heading, and on a phone the person's name was hidden. The design system's rule is that a hue alone never tells the sides apart |
+| d32 | (silent) the other side is a tab in each nav | one switch outside the nav: **Administration** on the Personal side, drawn only for a person who holds the admin capacity, and **Personal** on the Administration side. "Your page" leaves the nav. Neither nav holds a link to the other side. A person without the capacity who asks for an admin address still gets `access.not_found` (d10), and the build draws it inside the Personal bar with no switch | a link to the other side inside a nav is read as one of its pages |
+| d32 | the admin page's tabs are its own | the Administration nav takes the Personal side's order: People, Quotas, Memories, Review, Atlas, Keys, Workareas, Curate | the build's, from the design system; the two navs read in one order where their pages are twins |
+| d27 | "the Atlas is reached only by its link" | the Atlas is a nav item on both sides, so the Administration nav gains it, and its page's `<h1>` is "Atlas" (it was "Memories"). The link from the Memories list stays. The list is still the accessible default and the table twin is unchanged | every tab has a page headed by its word |
+| (silent) | `<h1>` and `<title>` follow no rule: the Quotas page is headed "Users", the Atlas "Memories", one title per side | the `<h1>` is the nav item's own word, once per page: "Quotas" for "Users", "Atlas" for the Atlas, "Start" for the Start page ([ADR-0068](ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d10, amended below). `<title>` is `Memories · OML` on the Personal side and `Admin · Memories · OML` on the Administration side; a page under a tab puts its own name first (`One memory · Memories · OML`) | a title that names the side and the page is what a person reads in a tab list and a screen reader announces first |
+
+No API changes, no route is added and none changes its address. The stylesheet changes, so the
+digest and the pages' `style-src` hash are regenerated
+([ADR-0069](ADR-0069-oml-s-design-system-is-the-source-of-truth-for-every-surface.md) d3).
+Both bars stick at every width and the nav wraps and never scrolls inside itself. The tests that
+assert the scope word, the nav's label, the switch for each capacity and the titles are the
+build's.
 
 ## Consequences
 
