@@ -20,6 +20,7 @@ Standard library only.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import re
 import sys
@@ -39,6 +40,8 @@ DOCS_BRAND = (
     "oml-lockup-dark.svg", "oml-lockup-light.svg", "readme-hero-dark.svg",
     "readme-hero-light.svg", "social-preview.svg", "social-preview.png",
 )
+# Where the landing's own repository keeps the files site_inputs() returns; nothing here writes them.
+SITE_DESIGN = ROOT / "site/design"
 # The glyphs the web pages draw inline: the states and markers, and the actors.
 WEB_GLYPHS = (
     "held", "promoted", "superseded", "retired", "rejected", "unreviewed", "in-progress",
@@ -273,6 +276,46 @@ def diagram(src: Path, t: dict, theme: str) -> str:
         return vals[m.group(1).replace("\\.", ".")]
     svg = re.sub(r"var\(--([\w\\.-]+)\)", sub, svg)
     return svg
+
+
+def inline_diagram(src: Path, cls: str) -> str:
+    """A diagram for a page that styles it: no <style>, no plate, hidden from assistive tech
+    (the page carries its "As text" list)."""
+    svg = re.sub(r"^<!--.*?-->\n", "", src.read_text(), flags=re.S)
+    svg = re.sub(r"<title>.*?</title><style>.*?</style><rect class=\"bg\"[^>]*/>", "", svg, flags=re.S)
+    svg = re.sub(r' width="\d+" height="\d+" role="img" aria-label="[^"]*"', f' class="{cls}" aria-hidden="true"', svg, count=1)
+    return svg.replace(' xmlns="http://www.w3.org/2000/svg"', "").strip()
+
+
+def site_inputs(t: dict) -> dict[Path, bytes]:
+    """What the landing takes from the design system, as the files it keeps under site/design/.
+
+    Public, and written nowhere by this repository (outputs() and --check leave it out): the
+    landing lives in the operator's own repository (ADR-0070 d12, as amended 2026-11-14), which
+    vendors these files and checks its copy against this function at a tagged revision of this
+    repository."""
+    ground = next(tok["value"] for tok in t["color"]["tokens"] if tok["name"] == "ground")
+    newsreader = next(f for f in t["type"]["fonts"] if f["family"] == "Newsreader")
+    b64 = base64.b64encode((DESIGN / "fonts" / Path(newsreader["file"]).name).read_bytes()).decode()
+    font = (f'@font-face{{font-family:"Newsreader";src:url(data:font/woff2;base64,{b64}) format("woff2");'
+            f'font-weight:{newsreader["weight"]};font-style:normal;font-display:swap}}')
+    fav = (DESIGN / "assets/favicon.svg").read_text().strip()
+    brand = {
+        "_generated": HEAD,
+        "ground": {"dark": ground["dark"], "light": ground["light"]},
+        # The data URI sits in a double-quoted href, so a double quote must be percent-encoded.
+        "favicon": "data:image/svg+xml," + urllib.parse.quote(fav, safe=" =:/.,-"),
+        "wordmark": inline_mark("oml-wordmark-dark.svg", "wm"),
+        "mark": inline_mark("oml-mark.svg", "mk"),
+        "gate_wide": inline_diagram(DESIGN / "diagrams/review-gate.svg", "v-wide"),
+        "gate_tall": inline_diagram(DESIGN / "diagrams/review-gate-tall.svg", "v-tall"),
+        "glyphs": {p.stem: inline_glyph(p.stem) for p in sorted((DESIGN / "glyphs").glob("*.svg"))},
+    }
+    return {
+        SITE_DESIGN / "tokens.css": tokens_css(t).encode(),
+        SITE_DESIGN / "fonts.css": (f"/* {HEAD} */\n" + font + "\n").encode(),
+        SITE_DESIGN / "brand.json": (json.dumps(brand, indent=1, sort_keys=True, ensure_ascii=False) + "\n").encode(),
+    }
 
 
 def outputs() -> dict[Path, bytes]:
