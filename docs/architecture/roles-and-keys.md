@@ -6,7 +6,7 @@ answers: "which verbs each of the five roles may perform; how a key is issued, s
 
 # Roles and keys
 
-An agent holds a key with one role. Grants give that key access to workarea subtrees. OML works out what the key may do from its effective access at call time.
+An agent holds a key with one role. Grants give that key access to workarea subtrees. OML works out what the key may do from its effective access at call time. The [serving view](views.md#logical-one-agent-key-and-everything-it-is-served) draws one key's reach, and [producers and reviewers](../concepts/producers-and-reviewers.md) lists which reviewer pairs count.
 
 The four rules, R1 to R4, are declared once, in [the constitution](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md). This page holds the role matrix that R1's verb ceiling refers to and the independence check that enforces R2.
 

@@ -6,7 +6,7 @@ answers: "where the transactional commit point is; how the per-tenant signed has
 
 # Storage: commit point, chain, outbox, lake
 
-PostgreSQL is the system of record. The journal's hash chain makes its history tamper-evident. The lake is a copy that nothing reads online. This page explains how those three fit together. Column-level detail is in the [Delta tables](../data/delta-tables.md) and the [event catalog](../data/event-catalog.md). The byte-level chain rules are in the [chain format](../data/chain-format.md). Erasure and copies are in [audit and lineage](audit-and-lineage.md), and the read path that never touches the lake is in [retrieval](retrieval.md).
+PostgreSQL is the system of record, drawn in the [deployment view](views.md#deployment-a-request-from-the-client-to-the-disk). The journal's hash chain makes its history tamper-evident. The lake is a copy that nothing reads online. This page explains how those three fit together. Column-level detail is in the [Delta tables](../data/delta-tables.md) and the [event catalog](../data/event-catalog.md). The byte-level chain rules are in the [chain format](../data/chain-format.md). Erasure and copies are in [audit and lineage](audit-and-lineage.md), and the read path that never touches the lake is in [retrieval](retrieval.md).
 
 ## The commit point
 

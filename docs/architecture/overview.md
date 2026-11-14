@@ -6,7 +6,7 @@ answers: "how OML fits together: the clients and what each starts from, the acto
 
 # How OML is put together
 
-Open Memory Lab (OML) is an external memory provider for AI agents and crews. Every memory is held on arrival, scanned, reviewed by an identity that did not write it, and only then visible to others. This page maps the pieces. Contracts live on the pages that own them, and this page links to them.
+Open Memory Lab (OML) is an external memory provider for AI agents and crews. Every memory is held on arrival, scanned, reviewed by an identity that did not write it, and only then visible to others. This page maps the pieces. The [architecture views](views.md) draw them first, and the [workarea lifecycle](lifecycle.md) draws how a workarea moves toward production. Contracts live on the pages that own them, and this page links to them.
 
 ## Clients and how they start
 

@@ -6,7 +6,7 @@ answers: "the four architecture views of OML as built: who uses it and what it d
 
 # Architecture views
 
-Four views of one system, each answering one question. The context view says who and what OML talks to. The deployment view follows a request from the client to the disk. The two logical views follow a single memory through the review gate, and a single agent key to everything it is served. Every element is built; one drawn dashed is built and not installed. Proposed designs appear only in the table at the end.
+Four views of one system, each answering one question. The context view says who and what OML talks to. The deployment view follows a request from the client to the disk. The two logical views follow a single memory through the review gate, and a single agent key to everything it is served. Every element is built; one drawn dashed is built and not installed. Proposed designs appear only in the table at the end, and the [workarea lifecycle](lifecycle.md) draws them, each tagged designed.
 
 In the figures, a solid box is a process or component, and a dashed box is built and not installed. A dashed arrow is a path taken only in one mode. A tinted box with an amber edge is the element the view turns on, and an amber dashed outline is a trust boundary. The pages linked under each view hold the contracts; the views hold no rule of their own.
 
@@ -73,6 +73,7 @@ None of this is built. Each row names the view it changes, so the views above st
 | Releases and key binding | ADR-0085 ([#377](https://github.com/e8kor/open-memory-lab/pull/377)) | serving | A key follows the live tip, the latest release or a pinned release; a bound key keeps its release while the workarea is in progress. |
 | Tests and promotion gates | ADR-0086, ADR-0087 ([#377](https://github.com/e8kor/open-memory-lab/pull/377)) | gate | Gates before a release: scan, test suites, impact report, review, ratification by a second person. |
 | Admin production fix | ADR-0089 ([#377](https://github.com/e8kor/open-memory-lab/pull/377)) | gate | An admin's demote, edit or rollback is served at once, marked and journaled, then confirmed or reverted by a person. |
-| Export and import | ADR-0084, ADR-0088 ([#377](https://github.com/e8kor/open-memory-lab/pull/377)) | context, deployment | A signed workarea bundle between servers; an import lands held and is reviewed again on the target unless its source server is pinned. |
+| Export and import | ADR-0084, ADR-0088 ([#377](https://github.com/e8kor/open-memory-lab/pull/377)) | context, deployment | A signed workarea bundle between servers; an import lands held and is reviewed again on the target. A pinned source server, ADR-0088, is deferred. See [import and export](../scenarios/import-export.md). |
+| Vertical sharing | ADR-0080 d16 ([#375](https://github.com/e8kor/open-memory-lab/pull/375)) | gate, serving | Held items of every kind reach `tip` keys on an in-progress subtree's ancestor chain, marked. See [workarea lifecycle](lifecycle.md#sharing-vertical-and-horizontal). |
 
 The figures' sources are `design/diagrams/arch-*.svg`; `python scripts/gen_design_tokens.py` writes the files this page shows, in the paper and night themes.
