@@ -23,7 +23,7 @@ memory": the mark travels with the row through every store, and the question "wh
 simulation touch" has a mechanical answer. The containment predicate's placement in each read
 path is owned by [simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md) and
 [retrieval](../architecture/retrieval.md); this record makes the decisions. Everything here is
-decided, not built.
+decided, not built. *(Amended 2026-11-14: the development self-signing exception is retired (ADR-0001 d5); the build never sets `self_signed`, so this text describes nothing that is served.)*
 
 ## Decision
 

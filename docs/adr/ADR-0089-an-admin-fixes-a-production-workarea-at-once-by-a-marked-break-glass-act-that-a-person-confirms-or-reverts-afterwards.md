@@ -126,14 +126,18 @@ Decided, not built.
     for a version served because of a fix (an edit or retirement, or a version a demotion or
     rollback made the tip again).
   - It also gains `confirmed`: `false` until confirmed, `null` when `act` is `verdict`.
-  - For a fix, `held_by` is `human` and `same_user` is `false`. No reader learns which admin.
+  - For a fix, `held_by` is `human`. `approver.same_user` is `false` until the fix is confirmed,
+    and `true` once a development-scope confirmation is by the admin's own person (d8). No reader
+    learns which admin.
   - A release re-pointed by an admin reads `latest_by: "admin_fix"`.
   - Agents see the mark on every surface, MCP included.
 
-- **d8 — A person of another principal confirms or reverts the fix. A revert is authored by the
-  server and may not revert a superseded fix.**
-  - **Who.** A person's dreamer key (`held_by: human`) with dreamer on the workarea, whose
-    principal differs from the admin key's.
+- **d8 — In a production scope, a person other than the admin's own confirms or reverts the fix;
+  in a development scope the admin's own person may. A revert is authored by the server and may
+  not revert a superseded fix.**
+  - **Who, in a production scope.** A person's dreamer key (`held_by: human`) with dreamer on the
+    workarea, of a person other than the admin's own (never `same_user`). In a development scope, the rule below lets the admin's own person confirm,
+    marked `same_user`.
   - **Confirm** journals `admin.fix_confirmed`.
   - **Revert** journals `admin.fix_reverted` and writes the inverse as new state:
     - a demoted version returns as a new version carrying its text;
@@ -152,7 +156,7 @@ Decided, not built.
     production"). On a target in a `development` workarea or an in-progress subtree, a dreamer
     key of the admin's own person may confirm or revert the fix, the confirmation marked
     `same_user`. On a target in a `committed` or `validated` workarea, and for the overlay a fix
-    places on a published release (d5), only a person of another principal confirms or reverts.
+    places on a published release (d5), only a person other than the admin's own (never `same_user`) confirms or reverts.
     The cost: a one-person tenant confirms its own fixes in development, but a fixed item stays
     unconfirmed in a production scope, excluded from every cut (ADR-0085 d1), until a second
     person confirms it.
@@ -163,8 +167,9 @@ Decided, not built.
   - its approving verdict is by another key and principal than its author's;
   - it carries `approver.act: "admin_fix"`, and an `admin.fix` event names it.
 
-  A hit with `confirmed: true` also has an `admin.fix_confirmed` by a principal other than the
-  admin's.
+  A hit with `confirmed: true` also has an `admin.fix_confirmed`: in a production scope by a person
+  other than the admin's own; in a development scope it may be by the admin's own person, and the
+  hit's `approver.same_user` is then `true`.
 
 - **d10 — An admin reads claim text tenant-wide, as ADR-0045 d21 already serves it, with one
   reason per investigation.**
@@ -202,14 +207,14 @@ Decided, not built.
     keys already demote and erase under ADR-0010 d6, and no agent key gains anything here.
   - **R2 changes in its order:**
     - an admin edit is served before any identity other than its author has reviewed it;
-    - it is reviewed afterwards: by a person of another principal in a production scope, and in a
+    - it is reviewed afterwards: by a person other than the admin's own (never `same_user`) in a production scope, and in a
       development scope by any person holding dreamer there, its own person's key marked
       `same_user` (d8).
   - **R3 changes in its first sentence:** an admin's edit is readable by others before it is
     ratified.
   - **ADR-0045 d21 already relaxed R3** for admin reads of held rows, without recording it in
     ADR-0001. This exception records it.
-  - **ADR-0001 d5's "Outside them R2 and R3 hold without exception"** names this exception
+  - **ADR-0001 d5's "Outside the three exceptions R2 and R3 hold without exception"** names this exception
     among the three, so it holds in `committed` and `validated` workareas too, for exactly this.
   - **Conditions.** The exception holds only when all of these are true:
     - the admin key is `held_by: human`;
@@ -217,8 +222,7 @@ Decided, not built.
     - the act is one of d2's, and in a `validated` workarea not an edit or a retirement (d12);
     - every reader sees the fix's mark (d7), a release rollback's `latest_by` and an erasure's
       record included;
-    - the act is queued for confirmation by a person, of another principal in a production scope
-      (d8);
+    - the act is queued for confirmation, by a person other than the admin's own (never `same_user`) in a production scope (d8);
     - while unconfirmed, the version is excluded from every cut (ADR-0085 d1).
   - **Numbering.** It is the third exception. ADR-0088, if accepted, would be the fourth.
   - **The admin read is separate from these conditions.** Any admin key may read claim text with
@@ -272,9 +276,9 @@ Decided, not built.
 - The operator's answers of 2026-11-14, each the recommendation: an admin key that fixes is
   `held_by: human` (d1); a frozen workarea refuses an admin edit or retirement (d12); a `universe`
   fix carries the mark (d13); a fix in a development scope may be confirmed by the admin's own
-  person, marked `same_user`, and one in a production scope only by another principal (d8, which
+  person, marked `same_user`, and one in a production scope only by a person other than the admin's own (never `same_user`) (d8, which
   replaced the one-person `self_signed` confirmation the same day); an unconfirmed fix never expires, and stays served and marked until a
-  person confirms or reverts it.
+  person confirms or reverts it. *(Amended 2026-11-14: the development self-signing exception is retired (ADR-0001 d5); the build never sets `self_signed`, so this text describes nothing that is served.)*
 
 ## Rejected alternatives
 

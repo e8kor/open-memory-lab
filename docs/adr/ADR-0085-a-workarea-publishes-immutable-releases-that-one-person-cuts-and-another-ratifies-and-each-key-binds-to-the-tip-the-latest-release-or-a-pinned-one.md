@@ -123,8 +123,8 @@ Decided, not built.
 - **d4 — One person cuts and another publishes, each with a person's tenant dreamer key.**
   - Both keys are tenant keys `held_by: human` with dreamer on the release node, such as
     `alice-dev-review` and `bob-dev-review`, and they belong to different principals.
-  - Inside a user root, the same user's second dreamer key may publish, and the release is
-    marked `same_user` (as ADR-0046 d2 marks a status move).
+  - A published release is a production scope (ADR-0001 d5), so the publisher is a person other
+    than the proposer, inside a user root too: the same user's second dreamer key never publishes.
   - No agent key, admin key or service key cuts or publishes.
   - A CI service key learns of a proposal from `GET /v2/workareas/{w}/releases?state=proposed`
     or from the events tail (`workarea.release_proposed`). It runs tests and attaches the runs

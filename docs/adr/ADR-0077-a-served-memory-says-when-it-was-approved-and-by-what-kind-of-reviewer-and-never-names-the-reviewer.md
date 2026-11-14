@@ -112,7 +112,7 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   path: for every hit not served unreviewed, the journal's approving verdict is by another key
   and another principal than the author's, and the served `approved_at` is that verdict's. The
   build marks no row `self_signed`: ADR-0025 d17's development exception is not built. So the
-  law has no exception today, and a build of that exception states its own.
+  law has no exception today, and a build of that exception states its own. *(Amended 2026-11-14: the development self-signing exception is retired (ADR-0001 d5); the build never sets `self_signed`, so this text describes nothing that is served.)*
 
 - **d6 — What a read serves of the approval is stored on the version's row when it is
   promoted, and the reviewer is not.** The fold of `lifecycle.promote` and

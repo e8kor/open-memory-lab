@@ -387,7 +387,7 @@ Decided; introduced in v0.5.0 demotion (d12) followed in v0.6.0 with its verb.
   `no-store` keeps the item out of the browser cache, which answers ADR-0015's fifth reason.
   The development exception of ADR-0001 d5 is untouched: the page offers no self-signature.
   The cost is that a reviewer reaches beyond their own root only where an admin granted it, per
-  workarea.
+  workarea. *(Amended 2026-11-14: the development self-signing exception is retired (ADR-0001 d5); the build never sets `self_signed`, so this text describes nothing that is served.)*
 
 - **d12 — Curation, supersession and demotion run as ordinary acts of the person's own keys, and
   none of them deletes.**

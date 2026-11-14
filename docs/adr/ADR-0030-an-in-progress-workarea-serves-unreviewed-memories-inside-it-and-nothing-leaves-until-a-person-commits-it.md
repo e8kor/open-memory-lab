@@ -133,7 +133,7 @@ Questions revision 1 left open are settled below at their recommended answers, e
   access scoped in the in-progress subtree or on its ancestor chain and bound to `tip`; a held
   retirement, and a version the scan held or has not scanned, stay author-only for every kind.
   Held instruction versions only add beside the approved one and a held rule asks and never
-  denies (ADR-0080 d16). ADR-0001 d5 records the widened exception.)*
+  denies (ADR-0080 d16). ADR-0001 d5 records the widened exception.)* *(Amended 2026-11-14: the development self-signing exception is retired (ADR-0001 d5); the build never sets `self_signed`, so this text describes nothing that is served.)*
 
 - **d4 — Every claim item carries `unreviewed`, and inside an in-progress scope
   `include_unreviewed` defaults to `true`.** `unreviewed` is `true` exactly when the served

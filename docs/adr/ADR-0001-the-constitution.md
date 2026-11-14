@@ -73,10 +73,12 @@ rest is not built; [releases](../changelog.md) says which part each release buil
      d20; ADR-0046 d2; ADR-0055 d7; ADR-0082 d7). Of R2 at the person level: R2 excludes the keys
      and principals of a row's lineage, not its person, so in the development and in-progress
      parts of a person's own root their review key may approve a write by any of their own keys,
-     agents' included. Every such approval is marked `same_user` to every reader (ADR-0077 d2). A
+     agents' included, and may clear a scan hold finding on such a write (ADR-0074 d26, accepted
+     2026-11-14 within this scope). Every such approval is marked `same_user` to every reader
+     (ADR-0077 d2). A
      `committed` or `validated` workarea inside that root is a production scope, where another
-     person approves. Outside the root, a version any key of a person wrote counts no verdict
-     from any key of the same person (ADR-0082 d7).
+     person approves and clears holds. Outside the root, a version any key of a person wrote
+     counts no verdict and no hold clearance from any key of the same person (ADR-0082 d7).
   3. **Admin fixes, with the admin read** ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d14;
      [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21). Of R2's order and R3's first sentence, for admin keys
      only. A fix holds only while every one of these is true: the admin key is `held_by: human`;
@@ -87,7 +89,7 @@ rest is not built; [releases](../changelog.md) says which part each release buil
      every release cut. Such a fix is served before any non-author review and is confirmed or
      reverted afterwards: in a development scope by any person holding dreamer there, the admin's
      own person included, marked `same_user`; in a production scope, and for a published
-     release's overlay, only by a person of another principal (ADR-0089 d8). The conditions above
+     release's overlay, only by a person other than the admin's own (never `same_user`) (ADR-0089 d8). The conditions above
      govern fixes. Separately, any admin key reads claim text, held rows included, tenant-wide, on
      the admin routes alone, never on an agent surface, each read journalled and bound to an
      investigation's reason (ADR-0089 d10). That read is the relaxation of R3 that ADR-0045 d21
@@ -111,8 +113,9 @@ rest is not built; [releases](../changelog.md) says which part each release buil
   workarea mechanics bind [workareas](../architecture/workareas.md).
 - Each exception's mark is a schema commitment: `unreviewed` on every served held item,
   `same_user` on every own-root approval and every development-scope confirmation of a fix, and
-  the fix's mark (ADR-0089 d7) on every fix. The records
-  that still describe `self_signed` rows are amended in a later pass; the mark is never set.
+  the fix's mark (ADR-0089 d7) on every fix. The `self_signed` mark is never set; every record
+  that described it carries a dated note that the development self-signing exception is retired
+  (swept 2026-11-14).
 - R2's cost is liveness: review is a dependency, and the system fails closed when no eligible
   reviewer exists — a held item waits or expires under its workarea's review policy
   ([admission](../architecture/admission.md)). Review throughput is unmeasured; the

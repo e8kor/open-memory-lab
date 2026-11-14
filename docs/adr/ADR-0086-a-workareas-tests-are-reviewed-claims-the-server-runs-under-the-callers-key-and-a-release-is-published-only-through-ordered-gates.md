@@ -45,9 +45,10 @@ release is held to, so it is reviewed content) and R3 (a run reads only what its
   | `document` | a document key | it parses, its passages fit ADR-0081 d3's limits, and its `doc/` links resolve |
 
   A case is reviewed like any claim (R2): one written with the change it tests is held with it.
-  Inside the author's own user root, the author's second dreamer key may approve it, marked
-  `same_user` ([ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d2);
-  elsewhere another person approves it. A test case is never served as a hit, a prompt or a resource.
+  In the development and in-progress parts of the author's own user root, the author's second
+  dreamer key may approve it, marked `same_user` ([ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d2);
+  elsewhere, a `committed` or `validated` workarea in that root included, another person approves
+  it. A test case is never served as a hit, a prompt or a resource.
 
 - **d2 — The server runs a suite under the caller's key and records the caller's read scope.**
   `POST /v2/workareas/{workarea}/test-runs {against}` evaluates every promoted `test` claim in the
@@ -99,7 +100,7 @@ release is held to, so it is reviewed content) and R3 (a run reads only what its
   (#384), with `gate` `tests` or `impact` and the body naming the one case or finding it waives;
   the reason is required, stored in clear and scanned. Any ratifier may override (the operator,
   2026-11-14): a person's dreamer key (`held_by: human`) that may publish the proposal under
-  ADR-0085 d4. The proposer's key, or any key of the proposer's principal, is refused
+  ADR-0085 d4. The proposer's key, or any key of the proposer's person or principal, is refused
   `gate.override_not_ratifier`, as are agent, admin and service keys. Every override is journalled
   and shown on the release's page and in its gate records, with its key and reason; the publish
   does not require that its own key made the overrides. The scan and review gates answer

@@ -235,7 +235,7 @@ and an approval of one journals `same_user: true` (d7), as
 d11 allows: the reviewing key is never in the row's closure, and the journal shows the reviewing
 key beside the authoring one. That mark says what the step is worth to an auditor, and it is not
 `self_signed` (ADR-0001 d5). The development exception of ADR-0001 d5 is untouched: the page
-offers no self-signature.
+offers no self-signature. *(Amended 2026-11-14: the development self-signing exception is retired (ADR-0001 d5); the build never sets `self_signed`, so this text describes nothing that is served.)*
 
 **What is not changed.**
 

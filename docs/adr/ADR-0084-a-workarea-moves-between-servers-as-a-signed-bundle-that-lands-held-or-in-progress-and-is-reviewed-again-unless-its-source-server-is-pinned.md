@@ -102,7 +102,7 @@ Decided, not built.
 
 - **d4 — Authors and reviewers travel as provenance under per-bundle pseudonyms; the importer is
   the author on the target.**
-  - Each version and verdict carries the source key's `held_by`, `same_user`, `self_signed` and
+  - Each version and verdict carries the source key's `held_by`, `same_user` and
     `approved_at`, plus a pseudonym: HMAC-SHA-256 of the source key id under a salt drawn fresh for
     each bundle and never exported. Inside one bundle an author is recognisable as one author;
     across bundles, never. A reader never learns who the reviewer was

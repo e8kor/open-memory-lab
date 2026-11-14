@@ -915,7 +915,7 @@ sourced to the code that has them; nothing decided below is built.
   needs full non-author ratification even there: the review policy does not admit self-sign for
   that row, which waits for a non-author verdict like a row in a `committed` workarea. The rule is
   declared on
-  [audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip).
+  [audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip). *(Amended 2026-11-14: the development self-signing exception is retired (ADR-0001 d5); the build never sets `self_signed`, so this text describes nothing that is served.)*
 
     A self-signed replacement of a reviewed tip would retire or replace reviewed content with no
     second identity, and since `self_signed` rows are served only to reads whose scope node is
