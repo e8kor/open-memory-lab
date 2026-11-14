@@ -1,21 +1,27 @@
 <!--
 id: adr/ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map
 tier: engineering
-status: proposed
-answers: what the role that proposes and reviews is called from v0.8.0 and why not curator; what the governed node of a tenant's tree is called from v0.8.0 and how the docs define the word against its meaning elsewhere; which names change on the HTTP API, MCP, the CLI, the environment, the plugin settings, error codes, metrics, the request log, spans, the console and the lake; what a v0.7 client sees; how signed journal events that carry the former names are read by replay, the lake twin's fold_of, chain verification and oml events; why a rebuild still equals the database it was drained from; how the database is migrated without editing an applied migration; how a design record's file name may change and how links to the former name resolve; what never changes; how production is upgraded and what clients are told
+status: accepted design · 2026-11-14
+answers: what the statuses committed and validated and the key field held_by are called from v0.8.0, and whether human becomes person; which lifecycle display names change copy only; what the role that proposes and reviews is called from v0.8.0 and why not curator; what the governed node of a tenant's tree is called from v0.8.0 and how the docs define the word against its meaning elsewhere; which names change on the HTTP API, MCP, the CLI, the environment, the plugin settings, error codes, metrics, the request log, spans, the console and the lake; what a v0.7 client sees; how signed journal events that carry the former names are read by replay, the lake twin's fold_of, chain verification and oml events; why a rebuild still equals the database it was drained from; how the database is migrated without editing an applied migration; how a design record's file name may change and how links to the former name resolve; what never changes; how production is upgraded and what clients are told
 -->
 
 # ADR-0091 — Workareas become workspaces and the dreamer role becomes reviewer on every surface in one cut, and the journal's former names are read through one map
 
-**Status:** proposed · 2026-11-14 · requested by the operator on 2026-11-14 ("lets do renaming of
+**Status:** accepted design · 2026-11-14, by the operator, as a pure cut: retired names are unknown
+input, never refused by name (d2); the lake columns renamed by Delta column mapping after a spike,
+the physical name kept behind a mapped one if it fails (d7); no redirects for renamed pages or
+records, only the register's list of former file names (d10) · proposed the same day, requested by the operator on 2026-11-14 ("lets do renaming of
 workareas to workspaces across whole project, sourcecode, documents, web, landing, everything"),
 with four decisions the operator took the same day: a hard cut with no aliases (d2), former event
 names read as the new ones (d4), every file renamed, design records included (d10), and the
 release, v0.8.0 (d12). The operator added the role rename the same day ("Use 'reviewer'
 instead"; asked whether it joins this record and release: "Yes, same ADR and v0.8.0"), under the
-same rules (d13). Drafted for acceptance as of 2026-11-14.
+same rules (d13). The operator then folded three more stored names into the same cut ("Fold
+into v0.8.0", so that clients take one breaking upgrade): the statuses `committed` and
+`validated` become `protected` and `frozen` (d14), and the key field `held_by` becomes `used_by`
+(d15); and accepted decision 3 of the lifecycle review, its display names (d16).
 
-**Release:** planned for v0.8.0
+**Release:** planned for v0.8.0; not built
 
 **Twin parts** (ADR-0090 d18): this record adds no state. It changes the names the twin's parts
 carry from the release on and adds the former-name map (d4) to `fold_of`; d5 shows the twin's
@@ -26,6 +32,9 @@ equality survives the cut.
   column, outside the former names d4 lists. The roles row reads `reader`, `writer`, `reviewer`,
   `admin`, `operator`, and `dreamer` joins the never column (d13).
 - ADR-0010 (d1, d5): the role `dreamer` is `reviewer`, with the same two capability classes (d13).
+- ADR-0009 (d1, d4, d5): the statuses are `development`, `protected` and `frozen` (d14).
+- ADR-0025 (d2) and ADR-0077 (d2): the key's and the approver's `held_by` is `used_by`, valued
+  `agent`, `person` or `service` (d15).
 - ADR-0026 (d1, d5): the kinds are workspaces, crews, keys and tenants; `name.taken`'s
   `details.kind` spells `workspace`. Names stay immutable keys: no instance is renamed (d11).
 - ADR-0037 (d4): the key's guardrail scope value `workarea` becomes `workspace`.
@@ -98,17 +107,19 @@ Decided, not built.
   is a node in a tree, not an account or environment; the tenant is the boundary", and the
   workspaces page opens with the same sentence and the tree.
 
-- **d2 — The cut is hard: no alias on any surface, and a retired name is refused, never
-  ignored.** Every name below changes in v0.8.0 and the former one stops working in the same
-  release. A retired name that would otherwise be silently dropped is refused naming its
-  replacement, so that a v0.7 client's write never lands in its key's default workspace instead
-  of the one it named: the header `X-OML-Workarea`, the query parameter `workarea`, the MCP
-  argument `workarea` and a JSON field spelled with `workarea` answer `request.validation` with
-  `details: {field, reason: "renamed", use}`; a retired path answers as any unknown path does
-  (404); the CLI refuses at start when `OML_CHAT_WORKAREA` or `OML_WORKAREA_NAME` is set and its
-  successor is not, naming the successor. These refusals are not aliases: nothing they name
-  works. They are removed in the first release after v0.8.0 that the operator names, tracked as an
-  issue. The renames:
+- **d2 — The cut is pure: no alias on any surface, and a retired name is unknown input
+  (decided by the operator, 2026-11-14).** Every name below changes in v0.8.0 and the former one
+  stops working in the same release. A retired name answers exactly as any unknown input answers
+  today, with no rule of its own: a retired path is 404; a retired JSON field or enum value is
+  `request.validation` as an unknown field or value, with no `details.renamed_to` entry
+  ([errors](../api/errors.md)); a retired header (`X-OML-Workarea`), query parameter or
+  environment variable (`OML_CHAT_WORKAREA`, `OML_WORKAREA_NAME`) is ignored, as an unknown one
+  is today. The cost is stated openly: a v0.7 client that names its target only by the retired
+  header or query parameter is not refused, so its write can land silently in its key's default
+  workspace instead of the one it meant, held there under review like any write. The guard is
+  the order of the upgrade: the v0.8.0 upgrade note (d12) tells every client to upgrade its CLI,
+  plugins and SDKs before the server is upgraded, and a v0.8.0 client already speaks only the new
+  names. The renames:
 
     | Surface | Former | From v0.8.0 |
     |---|---|---|
@@ -152,7 +163,12 @@ Decided, not built.
      that records it;
   4. a closed list of (event type, field) values that hold a role has the value `dreamer`
      replaced by `reviewer`: `role` of `key.issued` and `grant.issued`, `required_roles` inside
-     a `policy_snapshot`, and every other field the catalog types as a role (d13).
+     a `policy_snapshot`, and every other field the catalog types as a role (d13);
+  5. a status value `committed` or `validated`, in `status` of `workarea.create` and `from` and
+     `to` of `workarea.status_proposed` and `workarea.status_transition`, becomes `protected` or
+     `frozen` (d14);
+  6. the payload key `held_by` becomes `used_by`, and its value `human` becomes `person`, in
+     `key.issued` and every event that records a key's holder (d15).
 
   The map is the identity on every event the new server writes, so applying it twice changes
   nothing and the readers need no cut-over date. Replay, the lake twin's `fold_of` (ADR-0090 d12),
@@ -198,7 +214,13 @@ Decided, not built.
   - rewrites the role value `dreamer` to `reviewer` wherever a column holds a role
     (`api_keys.role`, `grants.role`, and stored policy and transition snapshots), and replaces
     the role check constraints of migrations 0001 and 0004 and the curator-profile check of
-    migration 0028 (`profile = 'curator' AND role = 'reviewer'`) (d13).
+    migration 0028 (`profile = 'curator' AND role = 'reviewer'`) (d13);
+  - rewrites the statuses `committed` and `validated` to `protected` and `frozen` in the
+    workspaces and their transitions, and replaces the status check constraints of migrations
+    0001 and 0017 (d14);
+  - renames the columns `held_by` and `approver_held_by` to `used_by` and `approver_used_by`,
+    rewrites the value `human` to `person` in them, and replaces the check of migration 0001
+    (d15).
 
   The law `the_schema_names_no_workarea_after_the_rename_migration` reads `pg_class`,
   `pg_attribute`, `pg_constraint`, `pg_policy`, `pg_proc.prosrc`, `pg_trigger` and
@@ -208,15 +230,16 @@ Decided, not built.
   The renames take an `ACCESS EXCLUSIVE` lock for their transaction, which the upgrade's stopped
   server makes free (d12).
 
-- **d7 — The lake renames its two columns by Delta column mapping, or keeps them named.** The
+- **d7 — The lake renames its two columns by Delta column mapping after a spike, or keeps the
+  physical name behind a mapped one (decided by the operator, 2026-11-14).** The
   lake is append-only with no retention cut (ADR-0090 d16), so its data files are never
   rewritten. `bronze.events.workarea_id` and `silver.claims.workarea_id` become `workspace_id` by
   Delta's column mapping in `name` mode, a metadata-only rename, if a spike shows the pinned
   `deltalake` (1.1.2) writes and reads such a table and `oml sync`'s Delta reader, which already
   accepts the `columnMapping` feature, reads it. If the spike fails, the physical name stays
   `workarea_id`, the lake's schema page names the column `workspace_id` with that physical name,
-  and the readers map it; the operator decides which before the lake lane starts (plan, operator
-  decisions).
+  and the readers map it. The spike runs first in the surfaces lane, and its result names which
+  of the two the lane builds; both are decided here, so neither needs a new decision.
 
 - **d8 — Operations read the new names; dashboards read both for one log window.** The metric,
   the request-log field and the span values of d2 change in the release. Prometheus series of the
@@ -232,26 +255,27 @@ Decided, not built.
   `create_workspace`). The SDK packages take the version of the release, and their changelogs say
   that v0.7 code naming a workarea type does not compile or import against them.
 
-- **d10 — A design record's number is its key; its slug may change, and the register keeps the
-  redirect.** A record is cited by `ADR-nnnn`, and its file name is `ADR-nnnn-<slug>.md`. A slug
-  changes only by a record that decides it, and the register gains a table, "Renamed records",
-  of former file name → current file name, one row per rename, never pruned. The twelve records
-  whose file names say `workarea` (ADR-0008, 0030, 0057, 0067, 0072, 0073, 0082, 0084, 0085,
-  0086, 0087 and 0089) are renamed by this record, and so are the pages `architecture/workareas.md`
+- **d10 — A design record's number is its key; its slug may change, and the register lists the
+  former file name; nothing redirects (decided by the operator, 2026-11-14).** A record is cited by
+  `ADR-nnnn`, and its file name is `ADR-nnnn-<slug>.md`. A slug changes only by a record that
+  decides it, and the register gains a list, "Renamed records", of former file name beside current
+  file name, one row per rename, never pruned. It is a list for readers, not a redirect.
+  The twelve records whose file names say `workarea` (ADR-0008, 0030, 0057, 0067, 0072, 0073,
+  0082, 0084, 0085, 0086, 0087 and 0089) are renamed by this record, and so are the pages `architecture/workareas.md`
   and `use/workareas.md`, the design note `design/workarea-lifecycle.md` and every other tracked
   file whose path holds the word. How each link resolves:
   - Relative links inside the docs are rewritten in the same change. `hooks/adr_links.py` turns a
     relative link to a record into its GitHub blob URL; it gains a check that the target file
-    exists, so a link to a former name fails `mkdocs build --strict` and names the redirect row.
+    exists, so a link to a former name fails `mkdocs build --strict` and names the listed row.
   - GitHub does not redirect a blob URL whose file was renamed; a link to a former name on
     `main` answers 404, and a permalink pinned to a commit keeps working. No stub file is left
     at a former name: `scripts/gen_design_records.py`, `check_numbers` and `oml sync` all take
-    every `ADR-*.md` as a record. The redirect table is where a reader holding an old link finds
+    every `ADR-*.md` as a record. The register's list is where a reader holding an old link finds
     the new one, and `gen_design_records.py` prints it on the design records page.
-  - The site has no redirect plugin today (`requirements.txt` pins only `mkdocs-material`), and
-    the landing site links `use/workareas/`. The docs lane adds `mkdocs-redirects`, pinned, with
-    one entry per renamed page, so a bookmarked page URL still lands; this is a page redirect, not
-    an API alias, and the operator confirms it (plan, operator decisions).
+  - The site gains no redirect plugin (`requirements.txt` pins only `mkdocs-material`, and stays
+    so): a bookmarked URL of a renamed page, such as `use/workareas/`, answers 404 from the
+    release. The landing site, which links `use/workareas/`, moves to the new paths in the same
+    release window.
   - `oml sync` anchors a record's claims to its path and keeps each claim's key once written
     (ADR-0057 d18): a span whose text is unchanged while its file moved is `moved` and needs no
     review, while a span moved and edited in one commit reads `removed` and `new`. So the twelve
@@ -281,18 +305,24 @@ Decided, not built.
   - instance names and stored content: no workspace, key, crew or tenant name is renamed
     (ADR-0026 d1, d10), the prefix `wa` of the names ADR-0026 d11 derived stays, and no memory's
     text or attachment is touched;
-  - this record and the register's redirect table, which name the former files;
+  - this record and the register's list of renamed records, which name the former files;
+  - for the statuses and the key field, the map's rules 5 and 6 and their tests, and the senses
+    d14 and d15 leave alone (`committed_at`, a committed transaction, `commit`, `commit_first`,
+    `held_by_key`, `held_since`, `human_required`, "AI+Human" in ADR-0021's title);
   - for the role, the map's rule 4 and its tests, and ADR-0010's rejected alternative, whose
     sentence about splitting the role into proposer and reviewer keeps its sense by naming the
     role `dreamer` as it was when the alternative was weighed.
 
-  The allow-list and the vocabulary lint cover both words, `workarea` and `dreamer`.
+  The allow-list and the vocabulary lint cover `workarea` and `dreamer` as words, and
+  `committed`, `validated`, `held_by` and `human` as literals and identifiers, since the first
+  two stay ordinary English.
 
 - **d12 — v0.8.0 ships the cut, all nodes at once, and clients are told before.** The upgrade is
   not rolling: a v0.7 binary cannot read the renamed schema, and a v0.8.0 binary cannot serve a
   v0.7 client. The runbook, in the operations repository, is:
-  1. announce the date to every key holder with the client notice below, at least the notice
-     period the terms promise before a change that breaks a client;
+  1. announce the date to every key holder with the client notice below, which is also the
+     upgrade note in `docs/operations/upgrades.md`, and ask them to upgrade their clients before
+     the server;
   2. take a backup and verify it restores (the backup runbook);
   3. stop `oml-web` and the lead; the deployer installs v0.8.0 of both from one tag, its Caddy
      route read from `deploy/caddy/Caddyfile` at that tag, which names `/web/workspaces`;
@@ -306,17 +336,22 @@ Decided, not built.
   The client notice: "OML v0.8.0 renames workareas to workspaces. A v0.7 CLI, plugin, SDK or
   console bookmark stops working against a v0.8.0 server: paths, fields, the MCP tool
   `oml_workarea` (now `oml_workspace`), the CLI noun, `OML_CHAT_WORKAREA` and the plugin setting
-  `chat_workarea` all change. Upgrade the CLI and plugins, set `chat_workspace`, and update saved
+  `chat_workarea` all change. Upgrade the CLI, plugins and SDKs before the server is upgraded:
+  v0.8.0 ignores an old client's workarea header or query parameter, so a write it sends can
+  land in the key's default workspace. Set `chat_workspace`, and update saved
   permission rules that name `oml_workarea`. Memories, keys, grants and workspace names are
   unchanged. The role `dreamer` is now `reviewer`: `--role reviewer` and grants such as
-  `dev:reviewer`; existing keys and grants are converted by the upgrade."
+  `dev:reviewer`. The statuses `committed` and `validated` are now `protected` and `frozen`, and
+  a key's `held_by` is now `used_by`, with `human` now `person`. Existing keys, grants and
+  workspaces are converted by the upgrade."
 
 - **d13 — The role `dreamer` becomes `reviewer`, under d2 to d12's rules.** The role keeps both
   capability classes of ADR-0010 d5, propose and review, its ceiling and its refusals; only its
   name changes, so a "reviewer key" on every page is a key whose role is `reviewer`, and the
-  session key `<user>-review` already matches it. It is a hard cut with no alias (d2): a request,
-  flag or grant spelling `dreamer` is refused by `request.validation` with
-  `details: {field, reason: "renamed", use: "reviewer"}`, never read as another role. The
+  session key `<user>-review` already matches it. It is a pure cut with no alias (d2): `dreamer`
+  is an unknown role value, so a request naming it is `request.validation` as any unknown enum
+  value is, and the CLI rejects `--role dreamer` or a `:dreamer` grant as it rejects any unknown
+  role; it is never read as another role. The
   server writes `reviewer` from the release on (d3); signed payloads keep `dreamer` and every
   reader maps it through d4 rule 4; the twin's equality holds by d5's argument with the value
   rewrite of d6 in `M`; d6's migration converts every stored role. The renames:
@@ -340,6 +375,52 @@ Decided, not built.
   act. Instance names that hold the word, such as a key named `the-dreamer`, are names and keep
   their spelling (ADR-0026 d10).
 
+- **d14 — The statuses `committed` and `validated` become `protected` and `frozen`, under d2 to
+  d12's rules (decided by the operator, 2026-11-14).** The ladder of ADR-0009 keeps its three
+  rungs, its forward-only transitions, its two identities per step and its child constraint; only
+  two names change. `protected`: two persons reach it, it is never undone, and it refuses shared
+  drafts, the in-progress mode of ADR-0030, as `committed` does today. `frozen`: what
+  `validated` means today, matching the error code that already refuses a write there, which
+  becomes `workspace.frozen` (d2). The universe root is permanently `protected`. "Validated" no
+  longer collides with ADR-0086's tests and gates, the lifecycle review's finding. The words keep
+  their other senses: an idempotency row or a transaction is still committed (`committed_at`),
+  and the in-progress API's `commit` field and `commit_first` reason are not this rename and stay.
+  The renames reach the status enum and its strings, the check constraints and the constraint
+  name `workareas_universe_committed`, the API and OpenAPI enums, the CLI's `status propose
+  --to`, the console's badges, the SDKs and the docs; events follow d4 rule 5.
+
+- **d15 — The key field `held_by` becomes `used_by`, valued `agent`, `person` or `service`
+  (decided by the operator, 2026-11-14; `person` decided here).** The attestation of who holds a
+  key keeps its meaning and its rules (ADR-0025 d2, ADR-0037 d5, ADR-0077 d2); the field and one
+  value change. `human` becomes `person`, because the pages already say "a person's key",
+  "a person's verdict" and "a different person" for this attestation, and a field spelling a
+  different word from every sentence about it is the drift ADR-0018 d4 forbids. The rename reaches
+  `held_by` on key issuance, whoami, key listings and served guardrail verdicts, `approver.held_by`
+  (now `approver.used_by`), the reason `held_by_service` of `oauth.connect_refused` (now
+  `used_by_service`), the `HeldBy` types (now `UsedBy`), the CLI's `--held-by` and its output,
+  the SDKs and the docs; events follow d4 rule 6. It does not reach the review lease: a review
+  item is still held by one key at a time, `review_queue.held_by_key` and `held_since` keep their
+  names, because there "held" is the state a write is in and not who holds a key. It does not
+  reach `human_required` in a review policy, which this record leaves as it is.
+
+- **d16 — The lifecycle review's display names change copy only (decision 3 of the lifecycle
+  review, 2026-11-14, accepted by the operator the same day).** These change console copy, CLI
+  help and output wording and the docs, and no stored value, field, event or error code:
+  - **approve, approved** for a non-author verdict that makes a version readable, with "1 of 2
+    approvals" where a policy needs more than one, and "approved by a person" on instruction
+    surfaces. The stored state `promoted` and the verdict values are unchanged.
+  - **take** for the review lease: a reviewer takes one held item. The API's verb and fields for
+    the lease are unchanged.
+  - **the drafts-visibility toggle** in place of "put in progress" and "commit": "drafts visible
+    to: the writing key · everyone working here". The API's `mode` values, its `commit` field and
+    the reason `commit_first` are unchanged.
+  - **development rules / production rules** for the two rule classes, in place of "scope" for
+    them.
+
+  The lifecycle review's decisions 1, 2, 4, 5 and 6 are not decided here. Its decision 3 also
+  named reviewer, protected, frozen and used by as display names; this record makes those four
+  stored renames instead (d13, d14, d15).
+
 ## Consequences
 
 - The plan beside this record lists every hit by group, the lanes, the check that closes each
@@ -349,12 +430,10 @@ Decided, not built.
   table), the chain format (a new vector), errors, the HTTP API, the MCP catalog, the CLI
   reference, the settings reference, metrics, the lake tables page, the glossary, concepts and
   the workspaces pages.
-- Two decisions belong to the operator before their lanes start: d7's lake fallback and d10's
-  page redirects. The removal release for d2's refusals is opened as an issue when the build
-  starts.
+- The v0.8.0 upgrade note tells clients to upgrade before the server, since d2 refuses nothing by
+  name.
 - The landing site (`e8kor/oml-web`) and the operations scripts (`e8kor/oml-devops`) change in
-  the same release window; their privacy and terms pages use the word, and the operator decides
-  whether a vocabulary edit there needs the terms' notice period.
+  the same release window; the landing site's lane also takes the legal pages' wording.
 - The role rename (d13) changes the roles page, ADR-0010's text, the console's role labels and
   every `--role` and `--grant` example; no operations script names the role today.
 - The connector directory submission names the tool `Workarea`; the directory listing is updated
@@ -365,10 +444,12 @@ Decided, not built.
 | Alternative | Why not |
 |---|---|
 | **Rename only what a person reads (display-only)** | The console, docs and landing site would say "workspace" while the API, CLI, MCP tool, errors and schema say `workarea`, so every reader crosses from one word to the other at the first command or error. It costs less now, and it keeps two words for one thing on the engineering surfaces, which ADR-0018 d4 exists to prevent. The operator chose the full rename. |
-| **Aliases until 1.0: accept both names, serve the new one** | No v0.7 client breaks, at the price of two names on every route, field, tool, flag and error until 1.0, each a branch to test, and responses that can never say which name a client should use. Pre-release, the house rule is to rewrite an obsolete contract rather than shim it. The operator chose the hard cut; d2's refusals are the one transition aid, and they make the old name fail, never work. |
+| **Aliases until 1.0: accept both names, serve the new one** | No v0.7 client breaks, at the price of two names on every route, field, tool, flag and error until 1.0, each a branch to test, and responses that can never say which name a client should use. Pre-release, the house rule is to rewrite an obsolete contract rather than shim it. The operator chose a pure cut, with no transition aid on the server; the upgrade order of d12 is the aid. |
 | **Name the role `curator`** | "Curator" already names three things that are not a role: the in-progress curator key profile, the ontology crew's curator grant profile, and a universe curator with its `<user>-curate` key. A role called curator would make every one of those sentences ambiguous. The operator chose `reviewer` ("Use 'reviewer' instead"), which matches "reviewer key" and `<user>-review` already on the pages. |
 | **A separate record and a later release for the role** | Clients would break twice, once for each rename, and the former-name map and migration would be built twice. The operator put both in this record and v0.8.0 ("Yes, same ADR and v0.8.0"). |
+| **Refuse retired names by name for one release** | A retired header, query parameter or environment variable would answer `request.validation` naming its successor, so no v0.7 write lands in a default workspace. It adds a rule per retired name to build, test and later remove. The operator chose the pure cut and the upgrade order instead (2026-11-14). |
+| **Redirect renamed site pages with `mkdocs-redirects`** | Bookmarks of the two renamed pages would keep landing, at the price of a new pinned dependency for two pages. The operator chose no redirects (2026-11-14); old page URLs answer 404 and the landing site moves to the new paths. |
 | **Rewrite the journal into the new names** | Every rewritten row would need a new signature and hash, breaking the chain an auditor verified and R4's append-only rule. The map of d4 costs one function and a closed list. |
 | **Keep the former names in the journal forever, new events included** | Readers would need no map, but every new event would carry the retired word, and the catalog would document two vocabularies for one release onward. |
 | **Edit the applied migrations to the new names** | sqlx refuses a migration whose checksum changed, and a database migrated with the old text would differ from one migrated with the new. |
-| **Stub files at the former design-record names** | Keeps old GitHub links working, but every tool that reads `ADR-*.md` would take each stub as a record. The redirect table and commit permalinks serve the same reader without that. |
+| **Stub files at the former design-record names** | Keeps old GitHub links working, but every tool that reads `ADR-*.md` would take each stub as a record. The register's list and commit permalinks serve the same reader without that. |

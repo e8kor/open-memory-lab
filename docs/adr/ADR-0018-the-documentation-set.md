@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0018-the-documentation-set
 tier: engineering
-status: accepted design · amended by ADR-0025
+status: accepted design · amended by ADR-0025, ADR-0091
 answers: what the documentation set commits — the two tiers, the honesty discipline, the fixed vocabulary, one declaration site per rule, and the llms.txt and frontmatter contract
 -->
 
 # ADR-0018 — The documentation set: tiers, honesty discipline, llms.txt, frontmatter
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0066](ADR-0066-open-work-is-tracked-as-github-issues-and-the-roadmap-fr-numbers-and-design-draft-status-lines-are-retired.md), [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0066](ADR-0066-open-work-is-tracked-as-github-issues-and-the-roadmap-fr-numbers-and-design-draft-status-lines-are-retired.md), [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d4, 2026-11-14)
 
 **Release:** in force since spec-v0.1; no release ships it ([releases](../changelog.md))
 
