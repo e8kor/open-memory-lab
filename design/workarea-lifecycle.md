@@ -1,14 +1,15 @@
 <!--
 id: engineering/workarea-lifecycle
 tier: engineering
-status: design draft for review · proposed, not decided
-answers: what a full development lifecycle for a workarea looks like from a developer's standpoint; what OML offers today at each stage, with the decision and the line of code that offers it; what is missing or causes friction; which of the four constitutional rules constrains each stage; which proposed record answers each gap; how development, staging and production map onto one server or two; the operator's decisions of 2026-11-14; and the questions still open
+status: design review · decided, not built
+answers: what a full development lifecycle for a workarea looks like from a developer's standpoint; what OML offers today at each stage, with the decision and the line of code that offers it; what is missing or causes friction; which of the four constitutional rules constrains each stage; which proposed record answers each gap; how development, staging and production map onto one server or two; the operator's decisions of 2026-11-14; and how each question it raised was answered
 -->
 
 # The workarea lifecycle: develop, test, verify, publish, move and roll back
 
-**Status:** design draft for review · proposed, not decided · 2026-11-14, revised the same day
-after review and the operator's four decisions
+**Status:** design review · decided, not built · 2026-11-14, revised the same day after review
+and the operator's four decisions; the operator accepted ADR-0084 to ADR-0087 and ADR-0089 the
+same day, with every recommendation below, and kept ADR-0088 deferred
 
 On 2026-11-14 the operator asked to "review policy from development stand point so we can develop
 workarea first, test it, verify against other in progress and published workareas and then promote
@@ -22,9 +23,9 @@ stage it says:
 - what exists today, citing the decision and the code that hold it;
 - what is missing;
 - which constitutional rule constrains the stage;
-- which proposed record answers the gap.
+- which record answers the gap.
 
-The decisions themselves are in six records, all proposed:
+The decisions themselves are in six records, five accepted on 2026-11-14 and one deferred:
 
 | Record | Decides | Order |
 |---|---|---|
@@ -36,8 +37,8 @@ The decisions themselves are in six records, all proposed:
 | [ADR-0088](../docs/adr/ADR-0088-an-imported-version-counts-as-reviewed-only-from-a-trusted-source-a-tenant-pinned-and-never-for-instructions.md) | verdicts from a trusted source server | deferred |
 
 Citations are `ADR-nnnn dN :line` for a decision record in `docs/adr/` and `path:line` for code, at
-`origin/main` 198bb6d8. ADR-0080 to ADR-0083 are proposed on the branch `design/workarea-builder`
-(#374) and are cited by number only.
+`origin/main` 198bb6d8. ADR-0080 to ADR-0083, accepted the same day on the branch
+`design/workarea-builder` (#374), are cited by number only.
 
 ## The operator's decisions of 2026-11-14
 
@@ -143,9 +144,9 @@ so it adds no second verdict path.
 - Inside it, keys with reader access recall the others' held memories, marked unreviewed
   (ADR-0030 d3 :105; `app.rs:464`). Rows held by the scan stay author-only (ADR-0074 d20 :1073).
 - Held skills and guardrails are served there too, and a held rule asks and never denies
-  (ADR-0080 d10, proposed).
+  (ADR-0080 d10).
 - Curators reject or retire there and never approve (ADR-0030 d9 :187).
-- The builder previews a write without storing it (ADR-0082 d5, proposed).
+- The builder previews a write without storing it (ADR-0082 d5).
 
 **Missing.**
 - A `committed` workarea cannot be marked, because the whole subtree must be `development`
@@ -219,7 +220,7 @@ person's act.
   back as a fix (ADR-0089).
 - **d14:** ADR-0047 d10 is answered without a frozen child.
 - **d15, d16:** a released in-progress workarea federates at its latest release, and the console acts
-  with linked tenant keys (both operator to confirm).
+  with linked tenant keys (both decided by the operator on 2026-11-14).
 
 ## Stage 5. Tests
 
@@ -255,7 +256,7 @@ person's act.
   (ADR-0050 d1 :115; `app.rs:5040`).
 - Guardrail conflicts are found only between rows that share a claim key
   (`crates/oml-domain/src/guardrail/mod.rs:190`; ADR-0037 :124).
-- The doctor reports skill shadowing along a chain (ADR-0080 d5, proposed).
+- The doctor reports skill shadowing along a chain (ADR-0080 d5).
 
 **Rule.** R3 and ADR-0072 d6: verification reads only what the caller reads. Another person's held
 or in-progress work is not shown, not even as a count.
@@ -383,10 +384,11 @@ follows the new `refund-flow` skill and asks to refund twice: the skill's step 3
 | 7 | Opt-in guardrail-hit report | a later record or an ADR-0037 amendment |
 | 8 | Erasure built | none needed: ADR-0005 decides it; demotion is built with ADR-0089 |
 
-## Questions still open
+## The questions, answered
 
-The operator's eight decisions are recorded above. These questions remain, each with the
-recommendation first:
+The operator's eight decisions are recorded above. The questions that remained were each put with
+the recommendation first, and on 2026-11-14 the operator accepted every recommendation with the
+records; question 10 stays open with the deferred ADR-0088:
 
 1. **Default binding:** `latest` for agent keys and `tip` for person keys (ADR-0085), or `tip`
    everywhere?

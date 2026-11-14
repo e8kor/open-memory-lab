@@ -1,15 +1,18 @@
 <!--
 id: adr/ADR-0087-an-impact-report-shows-under-the-callers-own-reads-what-a-candidate-release-changes-for-the-workareas-that-receive-it
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-14
 answers: what a person sees before publishing a release about its effect on other workareas; whose reads the report runs under and what it says about that; how near-copies, skill and document name collisions and guardrail overlaps are found and in which scopes; what the per-scope diff of skills, guardrails and steering holds; which findings block; what it costs; and what it never reports
 -->
 
 # ADR-0087 — An impact report shows, under the caller's own reads, what a candidate release changes for the workareas that receive it
 
-**Status:** proposed · 2026-11-14
+**Status:** accepted design · 2026-11-14, by the operator, before it is built, every default as drafted · proposed the same
+day
 
 **Release:** not scheduled; after ADR-0085, beside ADR-0086
+
+**Twin parts** (ADR-0090 d18, PR #388): none. The report is computed under the caller's key and stores nothing beyond the gate record ADR-0086 keeps.
 
 **Amends:** ADR-0050 (d1: the near-copy check may run over every workarea the caller reads, for this
 report only)

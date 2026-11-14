@@ -1,16 +1,19 @@
 <!--
 id: adr/ADR-0084-a-workarea-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-14
 answers: what a workarea export carries and what it never carries; the bundle's fixed layout, signature, encryption and hard limits, each with its refusal code; how authors and reviewers who do not exist on the target are represented; where an import lands and why every imported version is held; how a repeated import adds only what is new and refuses an older bundle; what happens when a name or claim key exists on the target; who may export under which tenant policy and who may import; how plaintext is staged; how import and export keep R4, and why an erasure marker reveals nothing; the flow for a new shared target; the same-server copy; which verbs, commands, events, doctor lines and meters it adds; and how it relates to oml-backup and to a tenant move
 -->
 
 # ADR-0084 — A workarea moves between servers as a signed bundle that lands held or in progress and is reviewed again unless its source server is pinned
 
-**Status:** proposed · 2026-11-14
+**Status:** accepted design · 2026-11-14, by the operator, before it is built, with its four questions decided at their
+recommendations and every other default as drafted · proposed the same day
 
 **Release:** not scheduled; after ADR-0085, whose release manifest `release` mode exports. A
 trusted source server, the "unless" of the title, is the deferred ADR-0088.
+
+**Twin parts** (ADR-0090 d18, PR #388): the import ledger, the staging keys, the erasure notices and the `export` policy are journal or part, never excluded; the build names each column's class under ADR-0090 d4.
 
 **Amends:** ADR-0071 (d2: an `exports` meter), ADR-0005 (the erasure inventory gains the class
 "import staging", d11), ADR-0063 (d1: `origin` is kept verbatim and an imported version gains a separate
@@ -110,7 +113,7 @@ Decided, not built.
     holds a dreamer key on the target is not recognisable there, and could approve their own work.
     So a reviewer approving an imported version attests "I did not author this on the source",
     journalled with the verdict (`attests_not_source_author: true`); an opt-in link of a person
-    across servers is later work (*operator to confirm*).
+    across servers is later work (the operator, 2026-11-14).
 
 - **d5 — The manifest is signed by the source's journal key under a domain prefix; the bundle is
   encrypted to named recipients.**
@@ -311,13 +314,11 @@ Decided, not built.
   format version.
 - A migration adds import ledgers, staging keys, erasure notices and the `export` tenant policy.
   `import_provenance` is a new column; `origin.kind`'s list is unchanged.
-- Questions for the operator, recommendation first:
-  1. Who exports: a person's key only (recommended), or also a CI service key under an `exporter`
-     profile?
-  2. Encryption: always (recommended), or a plaintext bundle allowed for a same-host move?
-  3. The default export policy: `own_root` (recommended), `off`, or `allowed`?
-  4. Should a person's identity be carried across servers to close d4's honest limit? No
-     (recommended).
+- The operator's answers of 2026-11-14, each the recommendation:
+  1. A person's key exports; no CI service key and no `exporter` profile.
+  2. A bundle is always encrypted, a same-host move included.
+  3. The default export policy is `own_root`.
+  4. A person's identity is not carried across servers; d4's attestation stands in for it.
 
 ## Rejected alternatives
 

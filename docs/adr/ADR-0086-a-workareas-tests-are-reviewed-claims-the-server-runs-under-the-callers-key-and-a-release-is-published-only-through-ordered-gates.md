@@ -1,15 +1,19 @@
 <!--
 id: adr/ADR-0086-a-workareas-tests-are-reviewed-claims-the-server-runs-under-the-callers-key-and-a-release-is-published-only-through-ordered-gates
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-14
 answers: what a workarea test case is and how it is reviewed; who runs a suite, under which key and against which content; what a run records and what it must never record or count; how a guardrail case reads a rule served inside an in-progress workarea; which runs count as a gate and which are advisory; the order of the gates before a release is published, who passes each and who may override it; what CI may do; and the questions left for the operator
 -->
 
 # ADR-0086 — A workarea's tests are reviewed claims the server runs under the caller's key, and a release is published only through ordered gates
 
-**Status:** proposed · 2026-11-14
+**Status:** accepted design · 2026-11-14, by the operator, before it is built, with its two questions decided at their
+recommendations, the override route added (#384), and every other default as drafted · proposed
+the same day
 
 **Release:** not scheduled; after ADR-0085
+
+**Twin parts** (ADR-0090 d18, PR #388): test runs, their case results and the gate records, overrides included, are journal or part, never excluded; the build names each column's class under ADR-0090 d4.
 
 **Amends:** ADR-0012 (d3: the review policy object gains the gate list), ADR-0054 (d6: a test run
 records no recall event and moves no rank)
@@ -90,7 +94,17 @@ release is held to, so it is reviewed content) and R3 (a run reads only what its
   | 5. Publish | ADR-0085 d4 | gates 3 and 4 recorded for this digest | not applicable: this is the person's act |
 
   An override is journalled as `workarea.gate_override {release, gate, case or finding, reason}`
-  under the ratifier's key. A workarea's review policy object (ADR-0012 d3) lists which of gates 1,
+  under the ratifier's key. Its route is
+  `POST /v2/workareas/{w}/releases/{proposal}/gates/{gate}/override {reason, case | finding}`
+  (#384), with `gate` `tests` or `impact` and the body naming the one case or finding it waives;
+  the reason is required, stored in clear and scanned. Only the ratifier overrides: a person's
+  dreamer key (`held_by: human`) that may publish the proposal under ADR-0085 d4, so never the
+  proposer's principal, an agent key, an admin key or a service key, and the publish of a
+  proposal with overrides is refused `workarea.release_refused`, reason `override_by_other`,
+  unless the key that publishes made every override on it. The scan and review gates answer
+  `request.validation`, `details.field: gate`: they have no override. The To do page lists a
+  blocking gate on a candidate the person's key would ratify as a Gate overrides row
+  (ADR-0083 d11). A workarea's review policy object (ADR-0012 d3) lists which of gates 1,
   3 and 4 apply; gates 2 and 5 always apply. The default is all of them where a suite exists, and
   gates 1 and 4 everywhere. Changing the list is a two-person act: one person's dreamer key on the
   node proposes it and another person's ratifies it, journalled as `workarea.gates_set`.
@@ -116,11 +130,9 @@ release is held to, so it is reviewed content) and R3 (a run reads only what its
   `oml_gate_overrides_total{gate}`.
 - Each run costs one recall per `recall` case and one decision per `guardrail` case; a cap on cases
   per suite and runs per hour is set at the build, unmeasured until then.
-- Questions for the operator, recommendation first:
-  1. May the ratifier override a failing test or a blocking finding with a reason (d6), or never,
-     or only with a second person?
-  2. Test cases as reviewed claims (d1), or files in a repository synced by `oml sync` and reviewed
-     in Git?
+- The operator's answers of 2026-11-14, each the recommendation: the ratifier overrides a failing
+  test or a blocking finding with a reason (d6), through the route d6 names; test cases are
+  reviewed claims (d1).
 
 ## Rejected alternatives
 

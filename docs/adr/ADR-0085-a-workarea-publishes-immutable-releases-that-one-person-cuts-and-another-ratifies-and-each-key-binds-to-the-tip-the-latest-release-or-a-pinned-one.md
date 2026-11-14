@@ -1,17 +1,20 @@
 <!--
 id: adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-14
 answers: what a workarea release is, when its manifest is fixed and what it may contain; how it is named, cut, published and withdrawn, and by whom; which kinds a release governs and what that costs; what a key binds to, how a binding resolves per workarea, and how it meets an in-progress workarea, a key's own writes and an admin's fix; who may widen or narrow a binding; which keys persons and agents use in a shared development workarea and how the console acts with them; who sees which keys a release reaches; what the release notes say and against which baseline; how a released in-progress workarea is read by federation; how this answers ADR-0047 d10; what it measures; and the questions left for the operator
 -->
 
 # ADR-0085 — A workarea publishes immutable releases that one person cuts and another ratifies, and each key binds to the tip, the latest release or a pinned one
 
-**Status:** proposed · 2026-11-14
+**Status:** accepted design · 2026-11-14, by the operator, before it is built, with its three questions decided at their
+recommendations and every other default as drafted · proposed the same day
 
 **Release:** not scheduled; the first record of the workarea lifecycle
 ([review](https://github.com/e8kor/open-memory-lab/blob/main/design/workarea-lifecycle.md)), before
 ADR-0086, ADR-0087 and ADR-0084, with ADR-0089
+
+**Twin parts** (ADR-0090 d18, PR #388): release manifests, their members, overlays, withdrawals and acknowledgements, and each key's `binding` are journal or part, never excluded; the build names each column's class under ADR-0090 d4.
 
 **Amends:**
 - ADR-0018 (d4: "published" is the word for a ratified release, and still never for a version).
@@ -90,8 +93,8 @@ Decided, not built.
     - a `self_signed` row (ADR-0001 d5 keeps those inside their development workarea);
     - a simulation row (ADR-0011 d4).
   - **Unconfirmed fixes block the cut.** A proposal is refused `workarea.release_refused`, reason
-    `unconfirmed_fix`, while any member would be a version an unconfirmed admin fix serves
-    (*operator to confirm*).
+    `unconfirmed_fix`, while any member would be a version an unconfirmed admin fix serves (the
+    operator, 2026-11-14).
   - **A member can drop out after the cut.** It drops out of every release that lists it when it
     is demoted, erased or retired. A demotion has to reach every reader, as `as_of` already
     behaves (ADR-0059 d15). The release then reads `degraded` and names the member.
@@ -292,7 +295,7 @@ Decided, not built.
 - **d15 — A released in-progress workarea is a federation source, read at its latest release.**
   - ADR-0072 d1 trusts only `committed` and `validated` nodes outside every in-progress subtree.
   - This record adds: an in-progress node with a published release is a trusted source, and a
-    federated read of it serves its latest release's members only (*operator to confirm*).
+    federated read of it serves its latest release's members only (the operator, 2026-11-14).
 
 - **d16 — In a shared workarea, the console acts with a person's tenant key linked to their
   sign-in.**
@@ -300,7 +303,7 @@ Decided, not built.
     (ADR-0044 d3).
   - An admin links a tenant key `held_by: human` to a signed-in person, journalled as
     `key.linked_person`. The console then offers that key for acts in the workareas it grants, one
-    key per act, named on the page (*operator to confirm*).
+    key per act, named on the page (the operator, 2026-11-14).
 
 ## Consequences
 
@@ -316,10 +319,10 @@ Decided, not built.
 - Key binding stays in this record rather than its own: a release with no bound reader decides
   nothing, and splitting would put the read rules of d5 and d6 in one record and the object they
   read in another.
-- Questions for the operator, recommendation first:
-  1. Is refusing a cut over an unconfirmed fix (d1) right?
-  2. Should a released in-progress workarea federate at its latest release (d15)?
-  3. Should the console act through linked tenant keys (d16)?
+- The operator's answers of 2026-11-14, each the recommendation: a cut over an unconfirmed fix is
+  refused (d1); a released in-progress workarea federates at its latest release (d15); the console
+  acts through linked tenant keys (d16). The To do page lists Releases to ratify and Withdrawal
+  alerts to acknowledge for a person's dreamer keys (ADR-0083 d11).
 
 ## Rejected alternatives
 

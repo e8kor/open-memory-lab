@@ -1,19 +1,23 @@
 <!--
 id: adr/ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-14
 answers: which acts an admin key may take on a workarea's content, on which targets, and with which key; why each takes effect at once and what makes it break-glass; how an admin edit is scanned; how a fix reaches keys bound to a release; how a fix that loosens a guardrail is alerted; what readers see; who confirms or reverts a fix, who authors a revert and what it may not revert; what an admin may read and on which surfaces; what happens in a frozen workarea and in universe; exactly which constitutional sentences this changes and which earlier record already changed one; the person-side read, doctor lines and metrics; and the questions left for the operator
 -->
 
 # ADR-0089 — An admin fixes a production workarea at once by a marked break-glass act that a person confirms or reverts afterwards
 
-**Status:** proposed · 2026-11-14
+**Status:** accepted design · 2026-11-14, by the operator, before it is built, with its five questions decided at their
+recommendations and every other default as drafted, and its amendment of ADR-0001 d5 accepted with
+it · proposed the same day
 
 **Release:** not scheduled; with ADR-0085, whose releases a fix overlays
 
+**Twin parts** (ADR-0090 d18, PR #388): an `admin.fix` and its reason, its confirmation or revert, and an investigation's reason are journal or part, never excluded; the build names each column's class under ADR-0090 d4.
+
 **Amends:**
-- ADR-0001: d5 gains its third bounded exception (d14), edited into ADR-0001's text in the same
-  change and accepted together with this record.
+- ADR-0001: d5 gains its third bounded exception (d14), edited into ADR-0001's text and accepted
+  with this record on 2026-11-14.
 - ADR-0010: d6's admin verbs and its sentence "Edit or create by hand is this path and no other".
 - ADR-0026 (d15) and ADR-0045 (d21): admin reads carry a reason.
 - ADR-0077:
@@ -61,7 +65,7 @@ Decided, not built.
 - **d1 — A fix is defined by its target, and is taken by an admin key held by a person.**
   - The target is any version, release or import of the admin key's tenant, whatever its
     workarea's status or mode, except as d12 and d13 restrict.
-  - The admin key must be `held_by: human` (*operator to confirm*). A service-held admin key is
+  - The admin key must be `held_by: human` (the operator, 2026-11-14). A service-held admin key is
     refused `admin.fix_requires_person`.
   - No agent key, service key or operator key takes a fix, on any transport.
 
@@ -137,8 +141,8 @@ Decided, not built.
     refused revert, `admin.fix_superseded`: the claim has moved on, and a person fixes it forward.
   - **Erasure** is confirmed and never reverted.
   - **A one-person development tenant.** In a tenant in `development` mode with one person
-    (ADR-0001 d5's home), that person may confirm their own fix, marked `self_signed`
-    (*operator to confirm*).
+    (ADR-0001 d5's home), that person may confirm their own fix, marked `self_signed` (the
+    operator, 2026-11-14).
   - Every row a fix touched stays (R4).
 
 - **d9 — ADR-0077 d5's read-path law gains the fix.** Every served hit must satisfy one of:
@@ -172,12 +176,12 @@ Decided, not built.
 
 - **d12 — In a frozen workarea an admin demotes and erases, and never edits or retires.**
   - A `validated` workarea admits demotion, erasure and crew metadata (ADR-0009 d5).
-  - An admin edit or retirement there is refused `workarea.frozen` (*operator to confirm*).
+  - An admin edit or retirement there is refused `workarea.frozen` (the operator, 2026-11-14).
 
 - **d13 — In `universe` an admin may edit and retire, marked.**
   - A `universe` row served because of a fix carries `approver.act: "admin_fix"` and nothing else.
-    This is an exception to ADR-0077 d4, which serves `universe` rows without an approver
-    (*operator to confirm*).
+    This is an exception to ADR-0077 d4, which serves `universe` rows without an approver (the
+    operator, 2026-11-14).
 
 - **d14 — The constitution changes in R2 and R3, for admin keys, as ADR-0001 d5's third bounded
   exception; R1 does not change.**
@@ -201,7 +205,7 @@ Decided, not built.
     - while unconfirmed, the version is excluded from every cut (ADR-0085 d1).
   - **Numbering.** It is the third exception. ADR-0088, if accepted, would be the fourth.
   - **No other record** widens it.
-  - **The text** is edited into ADR-0001 d5, marked proposed.
+  - **The text** is edited into ADR-0001 d5, accepted with this record on 2026-11-14.
   - **ADR-0010 d6's sentence** "Edit or create by hand is this path and no other" gains: "except
     an admin's marked fix (ADR-0089)".
 
@@ -212,8 +216,8 @@ Decided, not built.
     - `POST /v2/admin/investigations {reason}`, which opens d10's session.
   - **Person-side read:**
     - `GET /v2/review/fixes?count=true` takes a person's dreamer key: the `<user>-review` key the
-      Personal Review page reads with (ADR-0083 d8 places "Fixes to confirm" there), or a tenant
-      dreamer key.
+      Personal To do page reads with (ADR-0083 d8 makes "Admin fixes to confirm" a To do group,
+      one page per fix at `/web/todo/fix`), or a tenant dreamer key.
     - It serves the unconfirmed fixes on workareas where that key holds dreamer, and their count.
     - Each entry carries the act, the target version, the replaced version, the reason, the time
       and `loosens_guardrail`. It never names the admin key, principal or user.
@@ -242,12 +246,11 @@ Decided, not built.
 - ADR-0077's contract change is additive: two members.
 - In a tenant whose only person is the admin, fixes stay unconfirmed outside development mode
   (d8), and the doctor names them.
-- Questions for the operator, recommendation first:
-  1. Should an admin key that fixes be `held_by: human` (d1)?
-  2. Should a frozen workarea refuse an admin edit or retirement (d12)?
-  3. Should a `universe` fix carry the mark (d13)?
-  4. Should self-confirmation be allowed in a one-person development tenant (d8)?
-  5. Should an unconfirmed fix ever expire? The recommendation is no.
+- The operator's answers of 2026-11-14, each the recommendation: an admin key that fixes is
+  `held_by: human` (d1); a frozen workarea refuses an admin edit or retirement (d12); a `universe`
+  fix carries the mark (d13); a one-person development tenant's person may confirm their own fix,
+  marked `self_signed` (d8); an unconfirmed fix never expires, and stays served and marked until a
+  person confirms or reverts it.
 
 ## Rejected alternatives
 

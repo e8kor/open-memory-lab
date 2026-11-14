@@ -7,7 +7,8 @@ answers: whether a verdict given on another server may count on this one; what a
 
 # ADR-0088 — An imported version counts as reviewed only from a trusted source a tenant pinned, and never for instructions
 
-**Status:** proposed · deferred until ADR-0084 is built and the operator decides R2 on import · 2026-11-14
+**Status:** proposed · deferred · 2026-11-14: left out when the operator accepted ADR-0084 to ADR-0087
+and ADR-0089 the same day; it waits until ADR-0084 is built and the operator decides R2 on import
 
 **Amends:** ADR-0001 (d5: a fourth bounded exception, of R2, after ADR-0089's third; for verified verdicts from a trusted source
 server), ADR-0084 (d6: an import from a trusted source may land promoted members)
