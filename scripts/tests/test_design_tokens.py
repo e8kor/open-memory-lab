@@ -62,6 +62,17 @@ class ArchitectureViews(unittest.TestCase):
         for out in (light, dark, both):
             self.assertNotIn("var(--", out)
 
+    def test_every_architecture_source_in_design_diagrams_is_a_generated_view(self):
+        sources = sorted(p.stem.removeprefix("arch-") for p in (G.DESIGN / "diagrams").glob("arch-*.svg"))
+        self.assertEqual(sources, sorted(G.ARCH_VIEWS))
+
+    def test_a_view_that_draws_a_designed_element_says_so_in_its_text_alternative(self):
+        for view in G.ARCH_VIEWS:
+            text = (G.DESIGN / "diagrams" / f"arch-{view}.svg").read_text()
+            if ">designed</text>" in text:
+                desc = text.split("<desc", 1)[1].split("</desc>", 1)[0]
+                self.assertIn("designed", desc, view)
+
     def test_an_architecture_view_with_a_colour_outside_its_style_is_refused(self):
         src = self.view('<rect style="fill:var(--ground)"/>')
         with self.assertRaisesRegex(ValueError, "outside the style element"):
