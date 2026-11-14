@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "how to start a server, write a memory as an agent, see it held, approve it as a second identity and recall it from another key, with the output of each command and a measured time"
 ---
 
@@ -120,7 +120,7 @@ OML_API_KEY=$A oml read --query "deploy Friday"
 0 hit(s) — query digest sha256:8d376cdf…
 ```
 
-A held memory is invisible to every read, even its author's.
+A plain recall does not return a held memory, even to its author. The author reads it by asking for unreviewed memories (step 4), and readers inside an in-progress workarea see it marked unreviewed. Also, an admin of the tenant reads it through the journaled [admin read](../architecture/roles-and-keys.md#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
 
 ## 4. Ask for the key's own unreviewed memories
 

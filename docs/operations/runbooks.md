@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "the steps to take for each operational alert: a failed fork check, no available reviewer, a stalled review queue, a lagging lake, repeated lead takeovers, repeated 429 answers, a usage counter that drifts from its rows and key compromise"
 ---
 
@@ -201,11 +201,7 @@ Planned and emergency rotation are deployment steps. OML has no command for eith
 2. Rebuild the lead's host or pod from a trusted image.
 3. Rotate every credential the lead held: the Postgres role, the key-store grant and the object-store credentials.
 4. Replace the signing key at its custody point (the Kubernetes Secret or the mounted file) and start the lead.
-5. Verify the chain with the new public key.
-
-   ```bash
-   oml audit verify-chain --genesis --signing-key <new-64-hex-public-key> --tenant <tenant>
-   ```
+5. Verify the chain with the new public key, by the [chain format](../data/chain-format.md) procedure run against the journal table. `oml audit verify-chain --genesis --signing-key <new-64-hex-public-key> --tenant <tenant>` checks its arguments and then refuses, because the server serves no chain export yet.
 
 Rotation does not heal the past. Anything the attacker signed still verifies under the old key. The rotation event and the last head stored outside the deployment bound the span to review.
 

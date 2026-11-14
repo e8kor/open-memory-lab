@@ -1,0 +1,3 @@
+# Files the voice lint skips, each with its reason.
+docs/legal/*.md       # the operator's legal pages, which leave this repository with #373
+docs/changelog.md     # released notes as each release recorded them; new entries come from changes/

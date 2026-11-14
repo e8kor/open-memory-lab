@@ -1,16 +1,18 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "how a write moves from capture through the scan, the hold and the review to a readable memory; what the scan vetoes and holds; who reviews; and what happens when no reviewer is available"
 ---
 
 # How a write becomes readable
 
-Every write crosses one pipeline before anyone but its author can read it:
+The four rules, R1 to R4, are declared once, in [the constitution](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md). This page shows how admission enforces R2 and R3.
+
+Every write crosses one pipeline before recall serves it to keys other than its author's:
 
 > capture, scan, hold, non-author review, approval, journal entry, readable.
 
-A memory becomes visible once, at approval. The gate changes visibility. It never changes ranking.
+Recall serves a memory to other keys from its approval on, and approval does not change its rank. Before that, readers inside an [in-progress workarea](workareas.md#in-progress-workareas) recall it, marked unreviewed. Also, an admin of the tenant reads it through the journaled [admin read](roles-and-keys.md#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
 
 ## The states of a memory
 
@@ -21,27 +23,27 @@ stateDiagram-v2
     [*] --> held : capture (scan passed)
     held --> promoted : approved by a reviewer who did not write it
     held --> rejected : rejected, with a reason
-    promoted --> demoted : demoted, bytes kept
+    promoted --> demoted : demoted, bytes kept (designed, not built)
 ```
 
 | State | Who can read it |
 |---|---|
-| `held` | Its author only |
+| `held` | Its author; the reviewer it is served to; readers of an in-progress workarea that holds it, marked unreviewed; admin keys through the admin read |
 | `promoted` | Every key with read access to the workarea (state after approval) |
 | `rejected` | Its author, in its own listing |
-| `demoted` | Not served to recall |
+| `demoted` | Not served to recall. Designed, not built: no verb demotes in this build |
 
 The `erased` state exists in the API enum. This build has no erase verb.
 
 ## What happens to a write
 
 1. **Capture.** A person runs `oml write`, or an agent calls `oml_write`. The server normalizes the text to Unicode NFC, then scans it. If the scan passes, the server commits one transaction. It holds a signed journal event, the memory row in state `held` and an outbox row. The write is durable once that transaction commits.
-2. **Hold.** Only the author can see the held memory. Recall shows it to the author with `--include-unreviewed`.
+2. **Hold.** Recall shows the held memory to its author with `--include-unreviewed`, and to the readers of an in-progress workarea that holds it. Every other read path filters it out, except the review serve and the admin read.
 3. **Review.** A reviewer key (role `dreamer`) claims the memory with `oml review next`. The reviewer reads it and approves or rejects it.
 4. **Approval.** One approval from a reviewer who is not the author promotes the memory. The journal records the verdict and the review policy it was decided under. A supersession or a retirement passes the same pipeline. It changes the claim's current version only at approval.
 5. **Release.** The outbox drains to the lake after approval. A lagging lake delays analytics. It does not delay visibility, because reads come from PostgreSQL.
 
-The reviewer is never the author. The server checks the reviewing key and its person against the author and against every memory the author's `derives_from` names, including links still pending. If a memory's declared sources exclude every eligible reviewer, it stays held.
+For R2, the server checks the reviewing key and its person against the author and against every memory the author's `derives_from` names, including links still pending. If a memory's declared sources exclude every eligible reviewer, it stays held.
 
 ## The scan
 

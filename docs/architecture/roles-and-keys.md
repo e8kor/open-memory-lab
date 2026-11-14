@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "which verbs each of the five roles may perform; how a key is issued, scoped and denied; how the reviewer is kept from being the author; what a connector key, a connect code and a connection are, and why a connection is never more than its key"
 ---
 
@@ -8,10 +8,7 @@ answers: "which verbs each of the five roles may perform; how a key is issued, s
 
 An agent holds a key with one role. Grants give that key access to workarea subtrees. OML works out what the key may do from its effective access at call time.
 
-Two rules shape everything below.
-
-1. An agent never approves, signs, demotes or deletes.
-2. The reviewer is never the author. OML checks this when a memory is approved, against the author and the memory's derivation lineage.
+The four rules, R1 to R4, are declared once, in [the constitution](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md). This page holds the role matrix that R1's verb ceiling refers to and the independence check that enforces R2.
 
 ## The five roles
 
@@ -47,16 +44,17 @@ A dash means OML refuses the verb with a typed error. For content verbs, the col
 | Mint a connect code, revoke a connection | — | — | — | yes | — |
 | Create workareas and crews | — | writer in its own user root only | — | yes | — |
 | Create a tenant, issue its first admin key | — | — | — | — | yes |
+| Read any memory's text and attribution ([admin read](#the-admin-read)) | — | — | — | yes, journalled | — |
 | Read, write or review content | — | — | — | — | refused |
 
 Approve, sign and delete appear in no column: approval is an effect of review, `oml-server` signs, and deletion does not exist.
 
-- **A memory written by a key is that key's own.** A bearer key reads its own memories in any state. The signed-in user page also reads every key belonging to that user (ADR-0045 d16). Everyone else sees `promoted` memories only.
-- **An admin key reads workarea structure without grants**: names, ids, parents, statuses, crews, children and edges in its tenant. Never a memory's content.
+- **A memory written by a key is that key's own.** A bearer key reads its own memories in any state. The signed-in user page also reads every key belonging to that user (ADR-0045 d16). Other keys read `promoted` memories. A reviewer key is served the held memory it judges, and a person's reviewer key lists the held memories it may judge, with their text (`GET /v2/review/held`). A reader inside an [in-progress workarea](workareas.md#in-progress-workareas) recalls held memories there, marked unreviewed. Also, an admin of the tenant reads any memory through the journaled [admin read](#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
+- **An admin key reads workarea structure without grants**: names, ids, parents, statuses, crews, children and edges in its tenant. It reads a memory's content only through the [admin read](#the-admin-read).
 - **A global denial on an admin key is refused, `request.validation` with `details.field: key`.**
-- **Only a reader grant reads content, and no admin key can carry one.** An admin key that calls recall gets `access.verb_ceiling`.
+- **Recall, search and the read by id need a reader grant, and no admin key can carry one.** An admin key that calls recall gets `access.verb_ceiling`.
 
-A development workarea can let a writer approve its own memories, marked `self_signed` ([workareas](workareas.md)).
+A development workarea letting a writer approve its own memories, marked `self_signed`, is designed ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5) and not built: the server marks no approval `self_signed`.
 
 ## Issuing keys
 
@@ -132,9 +130,15 @@ OML limits which rows a dreamer may review, and checks it when approving.
 
 OML cannot see undeclared derivation or prove two principals do not collude.
 
+## The admin read
+
+An admin key reads any memory of its tenant with its text and attribution: every state, held included, in every workarea, user root and `universe`. The routes are `POST /v2/admin/memories/search` and `GET /v2/admin/memories/{artifact_id}`; `oml admin read` and the admin page's Memories and Atlas views call them. The single read shows every verdict with its reviewing key and principal. Each read is journaled as `memory.admin_read`, with the ids and a digest of the query, never the text ([event catalog](../data/event-catalog.md)). No other role reaches the routes, the operator included. So a tenant admin can read every person's memories before review; [security](security.md) lists that as a residual risk ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
+
 ## Admin limits
 
-An admin who needs to write uses a separate writer key; the write is held and reviewed like any other. Not available: bans, reassignment between workareas, demotion and erasure verbs.
+An admin key gives no verdict and writes no memory. An admin who needs to write uses a separate writer key; the write is held and reviewed like any other.
+
+Demotion ([ADR-0010](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0010-roles-and-keys.md) d6) and erasure by crypto-shredding ([ADR-0005](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0005-erasure-by-crypto-shredding.md)) are designed and not built: no key can demote or erase a memory in this build. A memory leaves recall only by an approved [retirement](audit-and-lineage.md#which-version-is-current), which keeps every version. Bans and reassignment between workareas are not built either.
 
 ## The operator and the first admin key
 
@@ -162,7 +166,7 @@ A **session key** has the credential `session`: no value, no connection. It acts
 | `<user>-curate` | Tenant writer key: writer on the `universe` node |
 | `<user>-admin` | Tenant admin key, no grants |
 
-`<user>-web` and `<user>-review` are created at first sign-in. Each session key's principal is its own name. `<user>-admin` reads memory text through the journaled admin read and gives no verdicts.
+`<user>-web` and `<user>-review` are created at first sign-in. Each session key's principal is its own name. `<user>-admin` reads memory text through the journaled [admin read](#the-admin-read) and gives no verdicts.
 
 A session key that carries a denial, on any workarea, runs none of its key acts: a denied `<user>-web` issues no key, mints no connect code and cuts no key off. Each act answers `access.verb_ceiling` with `details.reason: session_key_denied` and journals nothing. The key it would issue holds the person's whole root, which a key denied inside that root or on `universe` no longer does; a denial on any other workarea masks nothing the key reads and refuses the three acts all the same. The refusal is permanent: no route lifts a denial, and every sign-in finds the same `<user>-web`, also after the person's entry is removed and added back. The session still opens the pages, lists the person's keys, downloads their export, files their deletion request and ends by sign-out; the Keys and Start pages draw none of the three forms and say so, and `GET /v2/whoami` tells `<user>-web`, and no other key, whether it carries a denial (`denied`, a boolean).
 
