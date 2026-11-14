@@ -48,7 +48,7 @@ and select it with `OML_CLI_CREDENTIALS`.
 oml review next
 ```
 
-The command serves one held memory and claims it for the key, oldest first. It serves only
+The command serves one held memory, oldest first, and the key takes it. It serves only
 workspaces where the key holds `reviewer`. It skips any memory whose lineage names the key or
 principal. An empty queue prints `nothing in scope waits — the queue is empty (204).`
 
@@ -57,7 +57,7 @@ The output shows the artifact id and version, kind, writer, claim key and text, 
 the full version it replaces. Read each source with `oml read <artifact_id>`. A source that cannot be
 read is a reason to reject, not to guess.
 
-To read the queue without claiming anything, run `oml review list` (a reviewer key used by a person).
+To read the queue without taking anything, run `oml review list` (a reviewer key used by a person).
 
 ## Reviewing on the user page
 
@@ -67,7 +67,8 @@ state, newest first, 50 a page: filter by state, workspace, origin, author key o
 card says it is held until someone else reviews it. **Atlas** shows the workspaces as a map
 sized by readable count, with the same numbers in a table below it. **Workspaces** gives each workspace one dropdown
 of what the reviewer key may do there now: propose the next status, ratify another key's
-proposal, put it in progress, or commit it, which waits while any memory in it is held. Apply
+proposal, or set who sees its drafts: everyone working here, or the writing key only, which waits while
+any memory in it is held. Apply
 shows what will happen before anything is recorded
 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
 
@@ -94,7 +95,7 @@ oml review approve --note "matches quote ref AM-7741"
 oml review reject --reason "no source and no date; resubmit with the quote reference"
 ```
 
-Without a `serve_id`, the verdict applies to the one memory the key has claimed. After
+Without a `serve_id`, the verdict applies to the one memory the key has taken. After
 `oml review next` runs more than once, name it: `oml review approve <serve_id>`. Otherwise the verdict
 is refused with `request.validation` naming `serve_id`. `--reason` is required to reject. `--note`
 is optional and is journaled as the verdict's reason. Both answer
@@ -133,7 +134,7 @@ serving 1 held item
   serve_id: srv_4f9c2a7e0b314d8e9a551c6f3e2d8b10  (expires 2026-11-04T10:15:00Z)
   verdict with: oml review approve [--note …] | oml review reject --reason …
 
-$ oml review next --json          # derives_from and replaces of the same claimed item
+$ oml review next --json          # derives_from and replaces of the same taken item
 $ oml read 7a1d0c3b-5e62-4f19-8b07-2d4e6f8a9c31   # each source it names
 $ oml review approve --note "dated, sourced, one claim"
 verdict recorded — 4f9c2a7e-0b31-4d8e-9a55-1c6f3e2d8b10 is promoted (journal seq 212)

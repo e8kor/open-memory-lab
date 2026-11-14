@@ -18,8 +18,8 @@ the Memories list at `GET /web/memories` and `GET /web/admin/memories`; the Atla
 `GET /web/atlas` and `GET /web/admin/atlas`, with the list's JSON at `GET /web/data/memories` and
 `GET /web/admin/data/memories`; the Review view at `/web/review` and `/web/admin/review`; and the
 Keys view at `/web/keys` and `/web/admin/keys`. Every act on them runs through the API as the
-person's session keys, and a form sent twice runs once. Putting a workspace in progress, committing
-it, proposing or ratifying a status change, and a bulk verdict are confirmed first. Every page of
+person's session keys, and a form sent twice runs once. Making a workspace's drafts visible to everyone working here or to
+the writing key only, proposing or ratifying a status change, and a bulk verdict are confirmed first. Every page of
 the admin list is one journalled admin read, as before. The Review view holds review next, and on
 the admin page the queue of held memories per workspace and bulk review; the reviewer is never the
 author, and a verdict the API refuses is shown with its code. On the Keys view a key's value or a

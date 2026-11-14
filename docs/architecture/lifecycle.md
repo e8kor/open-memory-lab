@@ -6,7 +6,7 @@ answers: "how a workspace moves from development to production, where loose rule
 
 # Workspace lifecycle
 
-Two views extend the [four architecture views](views.md) from one memory to one workspace's life. They follow one principle: **frictionless in development, controlled toward production.** Development scopes are loose, so a team sees its own work at once. Production scopes are strict, so the author's own person never decides what agents receive.
+Two views extend the [four architecture views](views.md) from one memory to one workspace's life. They follow one principle: **frictionless in development, controlled toward production.** Development rules are loose, so a team sees its own work at once. Production rules are strict, so the author's own person never decides what agents receive.
 
 Much of this is designed and not built. Each figure draws a built element solid and an unbuilt one dashed, tagged `designed`. The records are accepted: [ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) to [ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) for skills, documents, the builder and the cockpit, [ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) to [ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) for releases, tests, impact, export and import and admin fixes; the [design records](../reference/design-records.md) list them.
 
@@ -20,7 +20,7 @@ Much of this is designed and not built. Each figure draws a built element solid 
 
 | Scope | Rule | Built |
 |---|---|---|
-| A `development` workspace, an in-progress subtree | A team reads its held work, marked unreviewed. In a person's own root, that person's review key approves their agents' work, marked `same_user`; the root is capped at `development` and never becomes a production scope (ADR-0085 d17; designed, not built: today the code still lets it climb to `protected`). An admin fix there is confirmed by the admin's own person, marked `same_user`. | In-progress sharing inside the subtree and own-root approval: yes. Fixes: no (ADR-0089 d8). |
+| A `development` workspace, an in-progress subtree | A team reads its held work, marked unreviewed. In a person's own root, that person's review key approves their agents' work, marked `same_user`; the root is capped at `development` and never comes under production rules (ADR-0085 d17; designed, not built: today the code still lets it climb to `protected`). An admin fix there is confirmed by the admin's own person, marked `same_user`. | In-progress sharing inside the subtree and own-root approval: yes. Fixes: no (ADR-0089 d8). |
 | A shared `protected` or `frozen` workspace, a published release, every read of a `latest` or pinned key | A key outside the item's lineage approves, never a key of the author's person; a reviewer crew may approve knowledge, and a person approves instructions. Another person publishes and confirms. Nothing unreviewed is served, except an admin fix's marked overlay. | Protected and frozen: yes. Releases and bindings: no (ADR-0085). |
 | Every scope | An agent never promotes, signs, demotes or deletes. | Yes: no such verb exists on any agent surface ([roles and keys](roles-and-keys.md)). |
 

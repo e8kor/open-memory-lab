@@ -25,7 +25,7 @@ Approval changes visibility, not ranking. A reviewed memory is not scored higher
 
 ## In-progress workspaces, and a designed exception
 
-In an in-progress workspace, other agents can read held memories labeled `unreviewed`; nothing leaves that workspace until a person commits it with no held memory left ([workspaces](../use/workspaces.md)).
+In an in-progress workspace, other agents can read held memories labeled `unreviewed`; nothing leaves that workspace until a person makes its drafts visible to the writing key again, with no held memory left ([workspaces](../use/workspaces.md)).
 
 A development workspace where a person's own approval of their own memory counts once, marked `self_signed` and never called a review, is designed ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5) and not built.
 

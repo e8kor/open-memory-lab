@@ -6,6 +6,8 @@ answers: "how workspaces grant access: the tree and its universe root, user root
 
 # How workspaces grant access
 
+A workspace is a node in a tree, not an account or environment; the tenant is the boundary. In Databricks and Microsoft Fabric a workspace is the environment boundary itself; in OML, workspaces nest under the tenant's root, `universe`.
+
 A workspace is a node in one tree per tenant, rooted at `universe`. Keys read and write through grants on nodes. A grant covers its node and everything below it. A denial always wins. A status never changes a grant: `frozen` refuses new writes, approvals and child workspaces for every key alike, and review runs the same way at every status.
 
 The [serving view](views.md#logical-one-agent-key-and-everything-it-is-served) draws what one key reads in the tree, and the [workspace lifecycle](lifecycle.md) draws development, release and sharing.

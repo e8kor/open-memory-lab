@@ -35,7 +35,7 @@ Each row below changes one of the inputs. Until one of them happens, the answer 
 |---|---|
 | A memory in a readable workspace is approved, superseded, retired or demoted | The approved set changed. See [the approved set changes](#when-the-approved-set-changes-between-two-calls). |
 | A source check is recorded on a hit | The hit's `stale` and `source_checked` change. The order does not. |
-| A grant or denial on the key changes, or a workspace is put in progress or protected | The recall reads a different set of workspaces. |
+| A grant or denial on the key changes, or a workspace's drafts visibility or status changes | The recall reads a different set of workspaces. |
 | The clock passes a memory's `valid_until`, and the request sent no `now` | The memory stops being a hit. |
 | The query names a relative date, such as "last week", and the request sent no `now` | `search.window` and the hits follow the clock. |
 | An admin changes the tenant's default pipeline, or an operator changes `search.default` or `search.enabled` | Another pipeline ranks the hits. `search.pipeline` names it. |

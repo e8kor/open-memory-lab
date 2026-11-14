@@ -62,7 +62,7 @@ pass `replaces` with its artifact id. Replacing a held version raises `submissio
 | `workspace` | Reads one workspace; omitted, the key's default. |
 | `events` | Tails the journal from `after_seq`. |
 | `review_next` (`reviewNext`) | Serves one held memory to a reviewer key. |
-| `approve`, `reject` | Record a verdict. Pass the `serve_id`, or none for the one item the key has claimed. |
+| `approve`, `reject` | Record a verdict. Pass the `serve_id`, or none for the one item the key has taken. |
 
 `write` takes the same fields as `oml_write`, and `read` the same as `oml_read`. Administration
 (bootstrap, workspaces, keys) stays in the `oml` CLI. The SDK adds no second administration surface.

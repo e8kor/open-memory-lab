@@ -16,7 +16,7 @@ The four rules, R1 to R4, are declared once, in [the constitution](https://githu
 |---|---|
 | `reader` | Recalls, reads, searches and reads the graph within its scope. Each recall is recorded in recall telemetry for 30 days. |
 | `writer` | Writes memories, held on arrival, and proposes a new version of its own. Never gives a verdict. |
-| `reviewer` | The reviewer role. Proposes edits and connections to other keys' memories, gives verdicts, ratifies connection proposals. |
+| `reviewer` | Proposes edits and connections and reviews other identities' writes, never on a lineage it proposed in: gives verdicts and ratifies connection proposals. Called `dreamer` before v0.8.0. |
 | `admin` | Governs a tenant: keys, workspaces, crews, grants and denials. Its verdicts on content are refused. |
 | `operator` | Designed and not built: would run the provider level, create tenants and issue each tenant's first admin key, and never write, read or review content. No path issues an operator key. |
 

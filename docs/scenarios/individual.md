@@ -10,7 +10,7 @@ One person, Dana, keeps the memory of a few agents in OML: Claude Code on a lapt
 
 The control in this flow is one review per fact, by Dana, marked `same_user` so every reader can tell. Nothing waits on a second person while the work stays in the root. The pair, an agent writes and the same person approves, is one row of [producers and reviewers](../concepts/producers-and-reviewers.md), whose reach view draws a user root apart from team workspaces.
 
-A personal root is a development scope for good. It is capped at `development` and never becomes `protected` or `frozen`; work meant for production moves to a shared workspace, where releases are cut; a personal root never publishes a release ([ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d17, amending [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1). Today the code still lets a user root climb to `protected`; lowering the ceiling is designed, not built.
+A personal root stays under development rules for good. It is capped at `development` and never becomes `protected` or `frozen`; work meant for production moves to a shared workspace, where releases are cut; a personal root never publishes a release ([ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d17, amending [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1). Today the code still lets a user root climb to `protected`; lowering the ceiling is designed, not built.
 
 ## 1. Sign in and connect
 
@@ -24,7 +24,7 @@ Each agent has its own key. Each key reads and writes in `universe.dana` and now
 ## 2. Capture
 
 - **Explicit.** In Claude Code, the agent stores a fact with `oml_write`. The answer says the fact is held.
-- **From chat.** `oml chat init` opens `universe.dana.chat`, puts it in progress and prints `OML_CHAT_WORKSPACE`. With `OML_CHAT_CAPTURE=1` set, the plugin's hooks ask the agent every few turns to write what the conversation established, at most 6 facts a time, each anchored to its turn ([capture chat memory](../use/chat-memory.md)).
+- **From chat.** `oml chat init` opens `universe.dana.chat`, makes its drafts visible to everyone working there and prints `OML_CHAT_WORKSPACE`. With `OML_CHAT_CAPTURE=1` set, the plugin's hooks ask the agent every few turns to write what the conversation established, at most 6 facts a time, each anchored to its turn ([capture chat memory](../use/chat-memory.md)).
 - **On the phone.** claude.ai calls the same `oml_write` through the connector.
 
 Every write is scanned in the same call. A leaked key is refused and nothing is stored.
@@ -32,7 +32,7 @@ Every write is scanned in the same call. A leaked key is refused and nothing is 
 ## 3. Recall held work before review
 
 - The agent that wrote a fact recalls it at once: `oml_read` with `include_unreviewed` serves the key's own held rows, marked `unreviewed`.
-- Dana's other agents see each other's held work only inside an in-progress workspace. `chat` is one already. For a project, Dana chooses "put it in progress" on the **Workspaces** page ([workspaces](../use/workspaces.md#in-progress-workspaces)).
+- Dana's other agents see each other's held work only inside an in-progress workspace. `chat` is one already. For a project, Dana sets "drafts visible to: everyone working here" on the **Workspaces** page ([workspaces](../use/workspaces.md#in-progress-workspaces)).
 - A recall from claude.ai on the phone that names the workspace `chat` reads the same held facts, marked. A recall scoped at the root reads only approved ones: today an in-progress subtree serves its held work only to reads scoped inside it, and its ancestors join that audience once [ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16 is built.
 
 ## 4. Approve the agents' work
@@ -41,7 +41,7 @@ Every write is scanned in the same call. A leaked key is refused and nothing is 
 - From a terminal, with a reviewer key an admin issued in the root (`oml keys issue dana-cli-review --role reviewer --used-by person --user dana --grant project:reviewer --grant project:reader`): `oml review list --workspace project --ids-only | oml review approve --ids -`.
 - An approved fact carries `approver.same_user: true` wherever it is served, so a reader never mistakes it for another person's review ([audit and lineage](../architecture/audit-and-lineage.md)).
 
-The rule is the constitution's second bounded exception: same-person approval counts only in the development parts of the person's own root, which with the cap is the whole root. Production scopes, where another person approves, are shared workspaces ([ADR-0001](../adr/ADR-0001-the-constitution.md) d5).
+The rule is the constitution's second bounded exception: same-person approval counts only in the development parts of the person's own root, which with the cap is the whole root. Production rules, where another person approves, hold in shared workspaces ([ADR-0001](../adr/ADR-0001-the-constitution.md) d5).
 
 ## 5. Correct and retire
 
@@ -66,4 +66,4 @@ Today, a held version leaves the queue only by a verdict: Dana's review key reje
 
 - One review per fact, by Dana. A fact never approved stays author-only outside in-progress workspaces.
 - An agent in an in-progress workspace can act on a fact nobody has judged; the mark says so.
-- Personal facts never reach the team by themselves, and the root never becomes a production scope. That is the point of the separate root.
+- Personal facts never reach the team by themselves, and the root never comes under production rules. That is the point of the separate root.

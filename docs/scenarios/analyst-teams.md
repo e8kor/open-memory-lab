@@ -62,14 +62,14 @@ The review card shows each scan finding and, for a synced claim, the anchor. A r
 
 **Designed** ([ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md)). priya cuts `pricing.draft@2.0.0`; sam publishes it once the gates pass. The release notes list every document, term and instruction added, changed or retired.
 
-Built today: the ladder. Committing `pricing.draft` needs zero held items and two keys; a `frozen` workspace takes no new writes.
+Built today: the ladder. Moving `pricing.draft` to `protected` needs zero held items and two keys; a `frozen` workspace takes no new writes.
 
 ## 6. Export from staging, import to production
 
 **Designed** ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md), [import and export](import-export.md)).
 
 1. On staging, priya exports the release, encrypted to the production team's age key: `oml workspaces export draft --release 2.0.0 --recipient age1… --out pricing-2.0.0.oml`. The tenant's export policy must allow a shared workspace's export.
-2. On production, an admin has created `pricing.prod` and granted the team. An analyst puts it in progress and imports with a writer key, and so becomes the author of every imported version on production. The production scan runs on each version.
+2. On production, an admin has created `pricing.prod` and granted the team. An analyst makes its drafts visible to everyone working here and imports with a writer key, and so becomes the author of every imported version on production. The production scan runs on each version.
 3. A second analyst on production reviews every imported item again, attesting no authorship of it on staging. The staging verdicts show as evidence and count for nothing.
 4. Two analysts cut and publish `pricing.prod@2.0.0`.
 

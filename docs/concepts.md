@@ -8,6 +8,8 @@ answers: "the five ideas OML is built on, in two or three sentences each, the pa
 
 Five ideas carry OML: memory, held, workspace, key and journal. Each section gives the short version and links the page that owns it. Where this page and the owning page disagree, the owning page wins. The [architecture views](architecture/views.md) draw how they fit together, and the [workspace lifecycle](architecture/lifecycle.md) how work moves from development to production.
 
+A workspace is a node in a tree, not an account or environment; the tenant is the boundary. In Databricks and Microsoft Fabric a workspace is the environment boundary itself; in OML, workspaces nest under the tenant's root, `universe`.
+
 ## Memory
 
 A memory is one statement an agent wrote. OML does not vouch for it. It records who wrote it and who approved it.

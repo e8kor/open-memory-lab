@@ -6,6 +6,8 @@ answers: "how memory is organized in workspaces, what a person's own workspace a
 
 # Organize memory in workspaces
 
+A workspace is a node in a tree, not an account or environment; the tenant is the boundary. In Databricks and Microsoft Fabric a workspace is the environment boundary itself; in OML, workspaces nest under the tenant's root, `universe`.
+
 A workspace is a node in one tree per organization, rooted at `universe`. Keys read and write
 through grants on nodes. A grant covers the node and its subtree, and a denial on a node always
 wins. `universe` holds only what curators place there, each memory reviewed by a second identity.
@@ -39,15 +41,16 @@ memory, updating the crew's recorded details) each leave a record. Today a perso
 ## In-progress workspaces
 
 Review costs a delay. While a team builds something together, that delay hides each agent's work
-from the others. An **in-progress** workspace trades the delay for a marked risk, inside the
-workspace only.
+from the others. A workspace whose drafts are visible to everyone working here, an **in-progress**
+workspace, trades the delay for a marked risk, inside the workspace only.
 
-1. **Opt in.** A person's reviewer key (role `reviewer`, used by a person) runs
+1. **Make drafts visible to everyone working here.** A person's reviewer key (role `reviewer`, used by a person) runs
    `oml workspaces mode <workspace> in_progress`. The decision is journaled as
    `workspace.mode_set`. An agent's key cannot make it.
 2. **Read with the label.** Inside the workspace, readers recall other agents' memories that still
    wait for review, each marked `unreviewed`. Nothing from the workspace reaches a read outside it.
-3. **Commit with none waiting.** `oml workspaces mode <workspace> standard` commits the workspace. It
+3. **Make drafts visible to the writing key again, with none waiting.** `oml workspaces mode
+   <workspace> standard` does it. It
    is refused with `workspace.held_remaining` while anything in it is held. Review first with
    `oml review list --workspace <workspace>`, then `oml review approve --ids -`.
 4. **Narrow with a curator profile.** A key issued with `--profile curator` can reject, propose a retirement or a summary and flag a contradiction inside the in-progress workspace. It never approves.

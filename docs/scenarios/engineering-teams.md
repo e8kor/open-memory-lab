@@ -31,7 +31,8 @@ Designed: in the console, the admin links `alice-dev` and `alice-dev-review` to 
 
 ## 2. Develop in progress
 
-alice puts the workspace in progress with the review key `alice-dev-review`. Built.
+alice makes the workspace's drafts visible to everyone working here, with the review key
+`alice-dev-review`. Built.
 
 ```sh
 OML_API_KEY=$(cat keys/alice-dev-review) oml workspaces mode dev in_progress
@@ -100,7 +101,7 @@ OML_API_KEY=$(cat keys/bob-dev-review)   oml workspaces release publish dev 1.4.
 - Gates run in order: scan, review, tests, impact, publish. Only the ratifier overrides the tests or impact gate, per case, with a reason. CI attaches test runs and does nothing else.
 - Release notes are generated; a removed skill or a weaker guardrail is flagged breaking and needs a new major label.
 
-Built today: the ladder. One key proposes `protected` and another ratifies it; committing needs zero held items, and a `frozen` workspace takes no new writes.
+Built today: the ladder. One key proposes `protected` and another ratifies it; moving there needs zero held items, and a `frozen` workspace takes no new writes.
 
 ```sh
 OML_API_KEY=$(cat keys/alice-dev-review) oml workspaces status propose dev --to protected
@@ -135,7 +136,7 @@ oml admin fix demote <artifact_id> --reason "refund-flow step 3 refunds twice"
 
 - `tip` keys get the previous promoted version at once. Every release that lists the bad version serves the previous one as a marked overlay, `approver.act: "admin_fix"`, `confirmed: false`, and reads `degraded`.
 - No one can cut 1.4.1 over an unconfirmed fix.
-- In the morning bob sees the fix under To do's "Admin fixes to confirm" (ADR-0083 d8), or with `oml review fixes`, reads the reason, and confirms or reverts it. The admin is never named to the reviewer. In a production scope only another person confirms, never the admin's own.
+- In the morning bob sees the fix under To do's "Admin fixes to confirm" (ADR-0083 d8), or with `oml review fixes`, reads the reason, and confirms or reverts it. The admin is never named to the reviewer. Under production rules only another person confirms, never the admin's own.
 
 Admin fixes are demote, edit, retire, release rollback, import rollback and erasure. Each takes an admin key used by a person and a reason, is marked to every reader, and is journalled. An admin key never reaches an agent surface.
 
