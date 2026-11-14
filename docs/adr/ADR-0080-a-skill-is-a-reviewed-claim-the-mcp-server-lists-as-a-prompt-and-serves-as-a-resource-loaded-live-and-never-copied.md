@@ -20,7 +20,7 @@ own (the operator: "Skills is another type of claim it should obey same rules as
 are parts and its fold is the journal's; the offered set, the index and the prompts are read from
 those rows and store nothing.
 
-**Amends:** ADR-0025 (d8: kind `skill` joins the kinds never served as a recall hit, and no
+**Amends:** ADR-0030 (d2, d4: an in-progress subtree's held items reach keys scoped at its ancestors, d16), ADR-0025 (d8: kind `skill` joins the kinds never served as a recall hit, and no
 instruction-class row is `self_signed`, d16), ADR-0030 (d3: held `steering`, `guardrail` and
 `skill` versions are served inside an in-progress workarea, marked unreviewed, d10, d16), ADR-0037
 (d3, d5, d6, d9: held guardrails are served inside an in-progress workarea, marked, and to their
@@ -214,11 +214,14 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
       node D exactly when D has an in-progress root, reader is in the key's effective access on D,
       and the read is scoped inside that root. For a skill or a guardrail the scope node is the
       key's default workarea (or the `workarea` field, d11; ADR-0037 d5), so "connected there
-      directly" means that node lies inside the in-progress root. A key whose scope node is
-      outside the root, at its parent included, gets no held item from inside it, as it gets no
-      row from inside it at all (ADR-0030 d2). ADR-0030 d3 is amended: its served held kinds become
+      directly" means that node lies inside the in-progress root. Reads (listing, get,
+      recall) follow d16's in-progress audience, so a key scoped at an ancestor of the root reads
+      and recalls the subtree's held items, marked; offering follows d4, which walks from a key's
+      own workarea up its ancestors, so a held skill, guardrail or steering row in the root is
+      offered only to keys whose scope node is inside the root, never to a parent's agent, which
+      can still read it. ADR-0030 d3 is amended: its served held kinds become
       every knowledge and instruction kind, `memory`, `derived_fact`, `document` (ADR-0081 d5),
-      `test`, `steering`, `guardrail` and `skill` (d16); the vocabulary kinds stay author-only. A version the scan held for a finding, or one not yet scanned, stays
+      `test`, `steering`, `guardrail`, `skill` and the vocabulary kinds: every kind (d16). A version the scan held for a finding, or one not yet scanned, stays
       author-only as ADR-0030 d3 and ADR-0074 d20 have it; a skill held only because every skill
       needs a person (d3, d16) is not held by a finding and is served, as is held steering.
     - **Who puts a workarea in progress.** A person's key, never an agent's (ADR-0030 d1), and
@@ -392,9 +395,25 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
   | **Who writes** | any writer key, agent or person, over HTTP and `oml_write` (`test` over HTTP, ADR-0086 d1) | any writer key, agent or person; `oml_write` admits `steering` and `skill`, a `guardrail` is written over HTTP (ADR-0037 d10) | any writer key, over HTTP only (ADR-0025 d12) | not by class: `oml_write`'s inputs stay flat, so a kind with its own required fields (a guardrail's `severity` and `rule`, the vocabulary fields) is written over HTTP; this is the one kind-level difference left, named below |
   | **Who approves** | a dreamer key outside the version's lineage (R2) under the workarea's review policy, a person or a crew; `self_signed` only in a `development` workarea (ADR-0001 d5) | the same, and only a person's verdict counts (`review.person_required`, `details.reason: instruction_needs_person`); never `self_signed`; in a person's root their own review key, marked `same_user` | as knowledge | an instruction is followed, not weighed as data, so it carries the weight of a person's look; this replaces three per-kind rules: ADR-0074 d24's for steering by an agent, this record's former skill rule, and ADR-0037 d10's "never self-signed" for guardrails |
   | **What its author sees while held** | its own held rows in the `own` listing and in recall with `include_own_held` (ADR-0025 d4), marked by state | the same rule, carried to where the kind is served: its own held steering, guardrail or skill, marked unreviewed, under the in-progress mechanics below (d14) | its own held rows in the listing | none: one read-your-writes rule, applied where each class is served |
-  | **What an in-progress workarea serves** | other authors' held versions to keys connected inside, marked unreviewed (ADR-0030 d3); not a held retirement, not a version the scan held or has not scanned | the same, with three serving mechanics: a held version only adds beside the approved one and never replaces it (a skill edit as `<name>-unreviewed`, steering after the promoted rows prefixed `[unreviewed]`, a guardrail as its own line); a held rule asks and never denies; a held retirement is not served, so what binds stays in force | author-only | instruction: a held version must never loosen or replace what review approved, so it can only add a question or a marked line; vocabulary: a held term would change how every reader's queries match, not add a row they can see marked |
+  | **Held, in progress** | every held version inside an in-progress root is served, marked unreviewed, to every key with reader access whose scope node is in the root's subtree or on its ancestor chain, a crew's and a team's keys alike; never a held retirement, never a version the scan held or has not scanned; never to a sibling, another branch, federation or a wide source | the same | the same | none: one audience for every kind (the operator, 2026-11-14) |
+  | **Serving mechanics while held** | a held version is a row of its own beside the promoted tip (ADR-0030) | a held version only adds beside the approved one and never replaces it (a skill edit as `<name>-unreviewed`, steering after the promoted rows prefixed `[unreviewed]`, a guardrail as its own line); a held rule asks and never denies; it is offered along d4's scope, the key's own workarea and its ancestors, so a parent reads a child's held instruction but is not offered it | a held version is listed and read, marked, and joins query matching only once promoted | instruction: a held version must never loosen or replace what review approved, so it can only add a question or a marked line; vocabulary: matching applies to every query at once, so a held term would change other readers' results rather than add a row they can see marked |
   | **What a release binding serves** | the manifest's members for every kind, the key's own held rows still (ADR-0085 d5), never another key's held version | as knowledge | as knowledge | none |
   | **What an admin fix may do** | ADR-0089 d2's six acts; an edit is scanned as its kind requires (ADR-0089 d4) | the same; an edit is scanned as an instruction (ADR-0074 d24), and a fix that removes or weakens an instruction of any of the three kinds raises ADR-0089 d6's alert | as knowledge | an instruction removed or weakened can let an agent do what it was told not to, so a person is told at once |
+
+  **The in-progress audience** (the operator, 2026-11-14: "anyone who directly works in that
+  workarea, it's shared item for whole ai crew, or team of people that develops workspace … team
+  hierarchically can access inprogress held items vertically, but only published, verified and
+  promoted horizontally"). ADR-0030 d2 is amended: a read scoped at N serves an in-progress
+  subtree whose root R lies under N, as well as one N lies in; from an ancestor of R it serves the
+  subtree's promoted rows as promoted and its held rows by ADR-0030 d3, marked unreviewed. A read
+  scoped at a sibling of R or on another branch still serves nothing of R's subtree until its
+  commit or a published release. ADR-0030 d4's default for `include_unreviewed` is `true` when the
+  served node set holds an in-progress subtree, and held rows come only from such subtrees.
+  Release binding wins (ADR-0085 d6): a key bound to `latest` or a pin reads the release and never
+  a held item, wherever it sits; only a key bound to `tip` gets the vertical held view.
+  Horizontal reads, federation and wide sources (ADR-0072, as ADR-0085 d15 amends it) serve only
+  promoted rows of committed or validated workareas or a published release. This widens ADR-0001
+  d5's in-progress exception from the subtree to the subtree and its ancestors, and adds no other.
 
   Kind-level mechanics that remain, each a matter of how the kind is served and not of who may
   see or approve it: a skill's command name and `-unreviewed` suffix (the prompt list has one name
@@ -403,7 +422,7 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
   and the HTTP-only writing of a guardrail named above. Removed as skill-only on 2026-11-14: a held
   skill served to every key of its author's person (d14 now follows the author rule); "only a
   person approves" and "never self-signed" as skill or guardrail rules (now the instruction class's);
-  held steering kept author-only inside an in-progress workarea (now served as the class is).
+  held steering and held vocabulary kept author-only inside an in-progress workarea (now served as every kind is).
   This amends ADR-0037 d10 (a guardrail needs a person's verdict), ADR-0025 d8 (a `self_signed`
   steering row no longer exists) and, on its acceptance, ADR-0074 d24 (a steering version from a
   person session needs a person's verdict too).
