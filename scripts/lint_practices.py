@@ -413,19 +413,30 @@ FORMER = re.compile(
 )
 
 
-def rename_allowed(root: Path, use: bool) -> list[str]:
-    """The globs of lint_allow/rename.txt; each line is `<glob>  # <reason>`."""
+def rename_allowed(root: Path, use: bool) -> list[tuple[str, str]]:
+    """The entries of lint_allow/rename.txt: `<glob>  # <reason>` allows a whole path, and
+    `<glob> | <text>  # <reason>` only the lines of that path holding the text."""
     f = root / "scripts" / "lint_allow" / "rename.txt"
     if not use or not f.exists():
         return []
-    globs = []
+    entries = []
     for line in f.read_text().splitlines():
-        glob, _, reason = line.partition("#")
-        if glob.strip():
-            if not reason.strip():
-                raise SystemExit(f"lint_allow/rename.txt: {glob.strip()} names no reason")
-            globs.append(glob.strip())
-    return globs
+        entry, _, reason = line.partition("  #")
+        if line.lstrip().startswith("#") or not entry.strip():
+            continue
+        if not reason.strip():
+            raise SystemExit(f"lint_allow/rename.txt: {entry.strip()} names no reason")
+        glob, _, needle = entry.partition(" | ")
+        entries.append((glob.strip(), needle.strip()))
+    return entries
+
+
+# Files that keep their names: an applied migration (ADR-0091 d6) and the record that decides the
+# rename (d10, d11), wherever a line names them.
+KEPT_FILE_NAMES = re.compile(
+    r"0017_workarea_transitions\.sql"
+    r"|ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer[a-z0-9-]*"
+)
 
 
 def tracked(root: Path) -> list[str]:
@@ -441,8 +452,9 @@ def lint_vocabulary(root: Path, use_allow: bool = True) -> list[str]:
     allow = rename_allowed(root, use_allow)
     problems = []
     for rel in tracked(root):
-        if any(fnmatch.fnmatch(rel, g) for g in allow):
+        if any(fnmatch.fnmatch(rel, g) and not n for g, n in allow):
             continue
+        needles = [n for g, n in allow if n and fnmatch.fnmatch(rel, g)]
         if FORMER.search(rel):
             problems.append(f"{rel}: the path names a former name")
         p = root / rel
@@ -451,8 +463,9 @@ def lint_vocabulary(root: Path, use_allow: bool = True) -> list[str]:
         except (UnicodeDecodeError, OSError):
             continue
         for i, line in enumerate(text.splitlines(), 1):
-            # An applied migration keeps its file name (ADR-0091 d6).
-            line = line.replace("0017_workarea_transitions.sql", "")
+            if any(n in line for n in needles):
+                continue
+            line = KEPT_FILE_NAMES.sub("", line)
             m = next((m for m in FORMER.finditer(line)
                       # `human` is also a claim's provenance, which ADR-0091 d15 leaves.
                       if not ("human" in m.group(0) and "provenance" in f"{rel} {line}".lower())),

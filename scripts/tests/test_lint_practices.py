@@ -359,3 +359,15 @@ class Vocabulary(unittest.TestCase):
     def test_a_path_holding_a_former_name_is_flagged(self):
         root = tree({"docs/use/workareas.md": "plain text\n"})
         self.assertTrue(any("the path" in p for p in L.lint_vocabulary(root, False)))
+
+    def test_a_line_entry_allows_only_the_lines_holding_its_text(self):
+        files = {"docs/adr/ADR-0001-x.md": 'the operator said "one workarea"\nour workarea\n'}
+        root = tree({**files, "scripts/lint_allow/rename.txt":
+                     'docs/adr/ADR-0001-x.md | "one workarea"  # quoted operator text\n'})
+        flagged = [p for p in L.lint_vocabulary(root, True) if p.startswith("docs/")]
+        self.assertEqual([p.split(":")[1] for p in flagged], ["2"])
+
+    def test_the_kept_file_names_are_not_former_names(self):
+        root = tree({"a.md": "[x](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every.md) "
+                             "migrations/0017_workarea_transitions.sql\n"})
+        self.assertEqual([], L.lint_vocabulary(root, False))
