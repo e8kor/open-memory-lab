@@ -47,7 +47,8 @@ release is held to, so it is reviewed content) and R3 (a run reads only what its
   A case is reviewed like any claim (R2): one written with the change it tests is held with it.
   Inside the author's own user root, which never leaves development (ADR-0085 d17), the author's
   second dreamer key may approve it, marked `same_user` ([ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d2);
-  elsewhere another person approves it. A test case is never served as a hit, a prompt or a resource.
+  elsewhere a reviewer outside its lineage that is not a key of the author's person approves it, a
+  reviewer crew's agent key included, since a test is knowledge (the operator, 2026-11-14: "Agents approve knowledge"). A test case is never served as a hit, a prompt or a resource.
 
 - **d2 — The server runs a suite under the caller's key and records the caller's read scope.**
   `POST /v2/workareas/{workarea}/test-runs {against}` evaluates every promoted `test` claim in the

@@ -81,8 +81,8 @@ Decided, not built.
   The files are JSON Lines, so export writes and import reads one line at a time. A reader refuses
   an unknown format version as `bundle.format_unknown`.
 
-- **d2 — `release` mode, the default, carries one published release; `history` mode carries one
-  workarea's record.**
+- **d2 — `release` mode, the default outside a user root, carries one published release; `history`
+  mode, the default in a user root, carries one workarea's record.**
   - **`release` mode** exports exactly the manifest of a release (ADR-0085 d1): the promoted
     versions with their lineage ids, without the superseded versions themselves.
   - **`history` mode**, for other people's claims, carries every version that was ever promoted,
@@ -92,6 +92,13 @@ Decided, not built.
   - Simulation rows keep their mark (ADR-0011 d8).
   - An erased version is carried as a marker, under d13.
   - `history` is for moving or archiving one workarea's record. It is not a backup (d16).
+  - **In a user root, `history` is the default** (the operator, 2026-11-14: "History by
+    default"). A user root never leaves development and has no release (ADR-0085 d4, d17), so an
+    export whose subtree lies in a user root takes `history` mode without a flag. Asking for
+    `release` mode there is refused `request.validation`, `details.field: mode`,
+    `details.reason: user_root`, and so is `--since` (d8), which compares two releases:
+    `details.field: since`, `details.reason: user_root`. A shared workarea keeps `release` as its
+    default.
 
 - **d3 — Claims of every kind ride as versions; grants, keys, crews and settings never do.**
   Memories, steering, terms, guardrails, skills, documents and tests travel as versions. Each
@@ -212,7 +219,8 @@ Decided, not built.
     cannot read refuses the whole export as `export.not_readable`.
   - The tenant policy `export` takes one of three values:
     - `off`;
-    - `own_root`, the default: a person exports only inside their own root;
+    - `own_root`, the default: a person exports only inside their own root, in `history` mode
+      (d2);
     - `allowed`: shared workarea subtrees too.
   - Under `own_root`, an admin may allow one shared workarea's export as a policy act,
     `export.allowance_set {workarea, until?}`, journalled. It is a policy change, not a fix
@@ -269,9 +277,15 @@ Decided, not built.
   - Bundle files are outside every server's erasure. The bound is the recipients' custody and the
     encryption of d5, and the export's output says so.
 
-- **d14 — The same-server copy is an import streamed from a release.**
+- **d14 — The same-server copy is an import streamed from a release, or from history out of a
+  personal root.**
   `oml workareas import --from <workarea>@<label> --into <path>` reads the release manifest as a
-  stream into an in-progress workarea, with no encryption and no staging. It keeps `derives_from`
+  stream into an in-progress workarea, with no encryption and no staging. From a personal root, or
+  part of it, which has no release (ADR-0085 d4, d17), the copy is one step too (the operator,
+  2026-11-14: "Yes, from history"): `oml workareas import --from <workarea> --into <path>` streams
+  the subtree's approved versions from its history and lands them held in the target, where they
+  are reviewed again under the same rules as any import. Shared workareas keep streaming from a
+  release. It keeps `derives_from`
   to each source version, since both are on one journal, so R2's lineage closure excludes the
   source's authors from reviewing the copy. There is no return path into a committed workarea: team
   work is delivered through a shared development workarea's releases (ADR-0085).

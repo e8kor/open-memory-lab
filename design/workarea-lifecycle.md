@@ -235,8 +235,9 @@ person's act.
 
 **Rule.**
 - R2: a test case decides what a release is held to, so the case is reviewed. Inside alice's own
-  root, her second key may approve her case, marked `same_user`; elsewhere another person approves
-  it.
+  root, her second key may approve her case, marked `same_user`; elsewhere a reviewer outside its
+  lineage that is not a key of the author's person approves it, a reviewer crew's agent key
+  included (ADR-0086 d1).
 - R3: a run reads only what its caller reads.
 
 **Answer.** ADR-0086:
