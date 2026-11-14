@@ -1,17 +1,19 @@
 <!--
-id: adr/ADR-0091-workareas-are-renamed-workspaces-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map
+id: adr/ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map
 tier: engineering
 status: proposed
-answers: what the governed node of a tenant's tree is called from v0.8.0 and how the docs define the word against its meaning elsewhere; which names change on the HTTP API, MCP, the CLI, the environment, the plugin settings, error codes, metrics, the request log, spans, the console and the lake; what a v0.7 client sees; how signed journal events that carry the former names are read by replay, the lake twin's fold_of, chain verification and oml events; why a rebuild still equals the database it was drained from; how the database is migrated without editing an applied migration; how a design record's file name may change and how links to the former name resolve; what never changes; how production is upgraded and what clients are told
+answers: what the role that proposes and reviews is called from v0.8.0 and why not curator; what the governed node of a tenant's tree is called from v0.8.0 and how the docs define the word against its meaning elsewhere; which names change on the HTTP API, MCP, the CLI, the environment, the plugin settings, error codes, metrics, the request log, spans, the console and the lake; what a v0.7 client sees; how signed journal events that carry the former names are read by replay, the lake twin's fold_of, chain verification and oml events; why a rebuild still equals the database it was drained from; how the database is migrated without editing an applied migration; how a design record's file name may change and how links to the former name resolve; what never changes; how production is upgraded and what clients are told
 -->
 
-# ADR-0091 — Workareas are renamed workspaces on every surface in one cut, and the journal's former names are read through one map
+# ADR-0091 — Workareas become workspaces and the dreamer role becomes reviewer on every surface in one cut, and the journal's former names are read through one map
 
 **Status:** proposed · 2026-11-14 · requested by the operator on 2026-11-14 ("lets do renaming of
 workareas to workspaces across whole project, sourcecode, documents, web, landing, everything"),
 with four decisions the operator took the same day: a hard cut with no aliases (d2), former event
 names read as the new ones (d4), every file renamed, design records included (d10), and the
-release, v0.8.0 (d12). Drafted for acceptance as of 2026-11-14.
+release, v0.8.0 (d12). The operator added the role rename the same day ("Use 'reviewer'
+instead"; asked whether it joins this record and release: "Yes, same ADR and v0.8.0"), under the
+same rules (d13). Drafted for acceptance as of 2026-11-14.
 
 **Release:** planned for v0.8.0
 
@@ -21,7 +23,9 @@ equality survives the cut.
 
 **Amends:**
 - ADR-0018 (d4): the vocabulary row's word becomes `workspace`; `workarea` moves to the "never"
-  column, outside the former names d4 lists.
+  column, outside the former names d4 lists. The roles row reads `reader`, `writer`, `reviewer`,
+  `admin`, `operator`, and `dreamer` joins the never column (d13).
+- ADR-0010 (d1, d5): the role `dreamer` is `reviewer`, with the same two capability classes (d13).
 - ADR-0026 (d1, d5): the kinds are workspaces, crews, keys and tenants; `name.taken`'s
   `details.kind` spells `workspace`. Names stay immutable keys: no instance is renamed (d11).
 - ADR-0037 (d4): the key's guardrail scope value `workarea` becomes `workspace`.
@@ -52,6 +56,20 @@ signed row breaks verification, and R4 keeps the journal append-only
 database equal to the one it was drained from ([ADR-0090](ADR-0090-the-lake-is-a-replayable-twin-of-postgresql-that-holds-every-signed-event-with-its-sealed-fold-inputs-and-rebuilds-it-into-an-empty-database.md)
 d12, d14). sqlx records a checksum of each applied migration, so an applied migration is never
 edited. Instance names are keys and never change ([ADR-0026](ADR-0026-names-are-keys.md) d1, d10).
+
+**The role.** [ADR-0010](ADR-0010-roles-and-keys.md) d1 names five roles; the one that
+proposes edits and connections and reviews other identities' writes is `dreamer`, and d5 gives it
+two capability classes, propose and review. The pages already call a key with that role "a
+reviewer key", and a person's session key for it is `<user>-review`, so the role's name is the one
+word on the surface that matches neither. On `main` at `3c21dc9f` `git grep -i dreamer` matches
+2,204 times in 194 files: the role enum and its string, the role check constraints of
+migrations 0001, 0004 and 0028, grants such as `dev:dreamer`, the CLI's `--role` and `--grant`,
+error details, the OpenAPI descriptions, the SDKs and the docs. Signed `key.issued` and
+`grant.issued` payloads carry `role: "dreamer"`, and a status transition's `policy_snapshot`
+carries `required_roles`. "Curator" already has three meanings, none of them a role: the
+in-progress curator key profile ([ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)),
+the ontology crew's curator grant profile, and a universe curator with its `<user>-curate` key
+([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)).
 
 **The word elsewhere.** In data platforms a workspace is usually the outer boundary, not a node
 of a tree. Databricks: "The Databricks workspace is your central hub for accessing all Databricks
@@ -131,7 +149,10 @@ Decided, not built.
      `workareas` has the token replaced by `workspace` or `workspaces`;
   3. a closed list of (event type, field) values that named the kind becomes `workspace`: the
      `kind` of `system.names_assigned` and the `guardrail_scope` of `key.issued` and of any event
-     that records it.
+     that records it;
+  4. a closed list of (event type, field) values that hold a role has the value `dreamer`
+     replaced by `reviewer`: `role` of `key.issued` and `grant.issued`, `required_roles` inside
+     a `policy_snapshot`, and every other field the catalog types as a role (d13).
 
   The map is the identity on every event the new server writes, so applying it twice changes
   nothing and the readers need no cut-over date. Replay, the lake twin's `fold_of` (ADR-0090 d12),
@@ -173,11 +194,16 @@ Decided, not built.
     column: PL/pgSQL bodies are stored as text and do not follow a rename, while policy
     expressions, views, indexes and constraints are stored parsed and do;
   - rewrites the unsigned values that spell the kind (`api_keys.guardrail_scope`, with its check
-    constraint, and the operation names of live `idempotency` rows) and nothing signed or sealed.
+    constraint, and the operation names of live `idempotency` rows) and nothing signed or sealed;
+  - rewrites the role value `dreamer` to `reviewer` wherever a column holds a role
+    (`api_keys.role`, `grants.role`, and stored policy and transition snapshots), and replaces
+    the role check constraints of migrations 0001 and 0004 and the curator-profile check of
+    migration 0028 (`profile = 'curator' AND role = 'reviewer'`) (d13).
 
   The law `the_schema_names_no_workarea_after_the_rename_migration` reads `pg_class`,
   `pg_attribute`, `pg_constraint`, `pg_policy`, `pg_proc.prosrc`, `pg_trigger` and
-  `pg_description` after migrating and finds no `workarea`. The applied migrations 0001 to 0046
+  `pg_description` after migrating and finds no `workarea`, and finds no `dreamer` in a role
+  column or check constraint. The applied migrations 0001 to 0046
   keep their text and their sqlx checksums, and stay exempt from the final vocabulary check (d11).
   The renames take an `ACCESS EXCLUSIVE` lock for their transaction, which the upgrade's stopped
   server makes free (d12).
@@ -245,6 +271,7 @@ Decided, not built.
     new spelling beside them;
   - the former-name map of d4, its tests, and the catalog's former-name table;
   - the applied migrations 0001 to 0046, and d6's migration, which names what it renames;
+    for the role, migrations 0001, 0002, 0004 and 0028 keep `dreamer`;
   - released history: the sections of `docs/changelog.md` for released versions, and upgrade
     notes for versions before v0.8.0;
   - measured results under `bench/*/results/` and `eval/*/results/`, and pages generated from
@@ -254,7 +281,12 @@ Decided, not built.
   - instance names and stored content: no workspace, key, crew or tenant name is renamed
     (ADR-0026 d1, d10), the prefix `wa` of the names ADR-0026 d11 derived stays, and no memory's
     text or attachment is touched;
-  - this record and the register's redirect table, which name the former files.
+  - this record and the register's redirect table, which name the former files;
+  - for the role, the map's rule 4 and its tests, and ADR-0010's rejected alternative, whose
+    sentence about splitting the role into proposer and reviewer keeps its sense by naming the
+    role `dreamer` as it was when the alternative was weighed.
+
+  The allow-list and the vocabulary lint cover both words, `workarea` and `dreamer`.
 
 - **d12 — v0.8.0 ships the cut, all nodes at once, and clients are told before.** The upgrade is
   not rolling: a v0.7 binary cannot read the renamed schema, and a v0.8.0 binary cannot serve a
@@ -276,7 +308,37 @@ Decided, not built.
   `oml_workarea` (now `oml_workspace`), the CLI noun, `OML_CHAT_WORKAREA` and the plugin setting
   `chat_workarea` all change. Upgrade the CLI and plugins, set `chat_workspace`, and update saved
   permission rules that name `oml_workarea`. Memories, keys, grants and workspace names are
-  unchanged."
+  unchanged. The role `dreamer` is now `reviewer`: `--role reviewer` and grants such as
+  `dev:reviewer`; existing keys and grants are converted by the upgrade."
+
+- **d13 — The role `dreamer` becomes `reviewer`, under d2 to d12's rules.** The role keeps both
+  capability classes of ADR-0010 d5, propose and review, its ceiling and its refusals; only its
+  name changes, so a "reviewer key" on every page is a key whose role is `reviewer`, and the
+  session key `<user>-review` already matches it. It is a hard cut with no alias (d2): a request,
+  flag or grant spelling `dreamer` is refused by `request.validation` with
+  `details: {field, reason: "renamed", use: "reviewer"}`, never read as another role. The
+  server writes `reviewer` from the release on (d3); signed payloads keep `dreamer` and every
+  reader maps it through d4 rule 4; the twin's equality holds by d5's argument with the value
+  rewrite of d6 in `M`; d6's migration converts every stored role. The renames:
+
+    | Surface | Former | From v0.8.0 |
+    |---|---|---|
+    | Role value (API, events, DB, SDK enums) | `dreamer` | `reviewer` |
+    | Rust and SDK identifiers | `Role::Dreamer`, `NotDreamer`, `dreamer_grants`, … | `Role::Reviewer`, `NotReviewer`, `reviewer_grants`, … |
+    | CLI | `--role dreamer`; `--grant <workspace>:dreamer` | `--role reviewer`; `--grant <workspace>:reviewer` |
+    | Error details | `details.role`, `details.needed_role` and `required_roles` values `dreamer` | `reviewer` |
+    | Policy objects | `required_roles: ["dreamer"]` | `required_roles: ["reviewer"]` |
+    | OpenAPI, the console and the docs | "dreamer", "a dreamer key" | "reviewer", "a reviewer key" |
+
+  The three curator meanings stay exactly as they are: the in-progress curator key profile
+  (whose check now reads `role = 'reviewer'`), the ontology crew's curator grant profile, and a
+  universe curator with its `<user>-curate` key. No metric or label names the role today, so none
+  changes. The cost: "reviewer" names class (b) only, while the role also proposes (class (a));
+  ADR-0010's text and the roles page say "a reviewer key proposes edits and connections and
+  reviews other identities' writes, never on a lineage it proposed in", and the constitution's
+  rule that the reviewer is never the author now reads as a sentence about a role as well as an
+  act. Instance names that hold the word, such as a key named `the-dreamer`, are names and keep
+  their spelling (ADR-0026 d10).
 
 ## Consequences
 
@@ -293,6 +355,8 @@ Decided, not built.
 - The landing site (`e8kor/oml-web`) and the operations scripts (`e8kor/oml-devops`) change in
   the same release window; their privacy and terms pages use the word, and the operator decides
   whether a vocabulary edit there needs the terms' notice period.
+- The role rename (d13) changes the roles page, ADR-0010's text, the console's role labels and
+  every `--role` and `--grant` example; no operations script names the role today.
 - The connector directory submission names the tool `Workarea`; the directory listing is updated
   when v0.8.0 is live.
 
@@ -302,6 +366,8 @@ Decided, not built.
 |---|---|
 | **Rename only what a person reads (display-only)** | The console, docs and landing site would say "workspace" while the API, CLI, MCP tool, errors and schema say `workarea`, so every reader crosses from one word to the other at the first command or error. It costs less now, and it keeps two words for one thing on the engineering surfaces, which ADR-0018 d4 exists to prevent. The operator chose the full rename. |
 | **Aliases until 1.0: accept both names, serve the new one** | No v0.7 client breaks, at the price of two names on every route, field, tool, flag and error until 1.0, each a branch to test, and responses that can never say which name a client should use. Pre-release, the house rule is to rewrite an obsolete contract rather than shim it. The operator chose the hard cut; d2's refusals are the one transition aid, and they make the old name fail, never work. |
+| **Name the role `curator`** | "Curator" already names three things that are not a role: the in-progress curator key profile, the ontology crew's curator grant profile, and a universe curator with its `<user>-curate` key. A role called curator would make every one of those sentences ambiguous. The operator chose `reviewer` ("Use 'reviewer' instead"), which matches "reviewer key" and `<user>-review` already on the pages. |
+| **A separate record and a later release for the role** | Clients would break twice, once for each rename, and the former-name map and migration would be built twice. The operator put both in this record and v0.8.0 ("Yes, same ADR and v0.8.0"). |
 | **Rewrite the journal into the new names** | Every rewritten row would need a new signature and hash, breaking the chain an auditor verified and R4's append-only rule. The map of d4 costs one function and a closed list. |
 | **Keep the former names in the journal forever, new events included** | Readers would need no map, but every new event would carry the retired word, and the catalog would document two vocabularies for one release onward. |
 | **Edit the applied migrations to the new names** | sqlx refuses a migration whose checksum changed, and a database migrated with the old text would differ from one migrated with the new. |
