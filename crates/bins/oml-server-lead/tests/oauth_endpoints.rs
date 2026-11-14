@@ -22,7 +22,7 @@ use oml_app::domain::name::Name;
 use oml_app::domain::oauth::{
     Issuer, UNUSED_REGISTRATIONS_MAX, authorization_server_document, protected_resource_document,
 };
-use oml_app::domain::{HeldBy, Role, Sha256Hash};
+use oml_app::domain::{Role, Sha256Hash, UsedBy};
 use oml_app::doubles::{
     FixedClock, MarkerScanner, MemDocuments, MemSigner, MemStore, PlainSealer, SeqIdGen,
 };
@@ -560,7 +560,7 @@ async fn registration_past_the_cap_answers_429_limit_rate() {
 // The authorization page (http-api.md "The authorization page"; ADR-0031 d9)
 // ---------------------------------------------------------------------------
 
-/// A tenant, its admin and one connector key, writer on the root workarea:
+/// A tenant, its admin and one connector key, writer on the root workspace:
 /// the key's connect code, shown once (ADR-0031 d7, d8).
 async fn issue_connector(rig: &Rig) -> String {
     let boot = rig
@@ -581,11 +581,11 @@ async fn issue_connector(rig: &Rig) -> String {
                 role: Role::Writer,
                 name: Name::parse("claude-mobile").expect("a name"),
                 principal: "crew/claude-mobile".to_owned(),
-                held_by: Some(HeldBy::Agent),
-                default_workarea: None,
+                used_by: Some(UsedBy::Agent),
+                default_workspace: None,
                 crew: None,
                 grants: vec![GrantRequest {
-                    node: boot.root_workarea_id.into(),
+                    node: boot.root_workspace_id.into(),
                     role: Role::Writer,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
@@ -1101,8 +1101,8 @@ async fn the_pages_sentences_match_connect_page_md_word_for_word() {
     // The confirmation, with every sentence kind present.
     let name = |n: &str| Name::parse(n).expect("a name");
     let grant = |n: &str, role| ConfirmationGrant {
-        workarea_id: uuid::Uuid::nil(),
-        workarea: name(n),
+        workspace_id: uuid::Uuid::nil(),
+        workspace: name(n),
         role,
     };
     let view = ConfirmationView {
@@ -1129,13 +1129,13 @@ async fn the_pages_sentences_match_connect_page_md_word_for_word() {
         (&wrong, sentences[5].clone()),
         (
             &confirmation,
-            sentences[6].replace("<workareas>", "alpha, gamma"),
+            sentences[6].replace("<workspaces>", "alpha, gamma"),
         ),
-        (&confirmation, sentences[7].replace("<workareas>", "beta")),
-        (&confirmation, sentences[8].replace("<workareas>", "delta")),
+        (&confirmation, sentences[7].replace("<workspaces>", "beta")),
+        (&confirmation, sentences[8].replace("<workspaces>", "delta")),
         (&confirmation, sentences[9].clone()),
-        (&confirmation, sentences[10].replace("<workarea>", "alpha")),
-        (&confirmation, sentences[10].replace("<workarea>", "gamma")),
+        (&confirmation, sentences[10].replace("<workspace>", "alpha")),
+        (&confirmation, sentences[10].replace("<workspace>", "gamma")),
         (&confirmation, sentences[11].clone()),
     ];
     // "verified by" is a document client's; the form names a registered one.
@@ -1365,7 +1365,7 @@ async fn no_log_line_of_a_full_flow_carries_a_code_token_verifier_handle_or_thei
 // ---------------------------------------------------------------------------
 
 /// `POST /v2/keys/{key}/connect-codes` takes `ttl_seconds`: a lifetime past
-/// the default is minted for a key confined to one workarea and refused
+/// the default is minted for a key confined to one workspace and refused
 /// `not_confined` for one that reaches the universe, a lifetime outside 1 to
 /// 2,592,000 seconds is `request.validation` naming `/ttl_seconds`, and
 /// `GET /v2/keys/{key}` names the live code as extended without showing it.
@@ -1384,23 +1384,23 @@ async fn a_reviewer_code_is_minted_for_a_confined_key_and_named_on_the_key() {
     let admin = boot.admin_key.value.clone();
     let demo = rig
         .app
-        .create_workarea(
+        .create_workspace(
             &admin,
             &Name::parse("demo").expect("a name"),
-            Some(boot.root_workarea_id.into()),
+            Some(boot.root_workspace_id.into()),
             None,
         )
         .await
-        .expect("a workarea")
-        .workarea
-        .workarea_id;
+        .expect("a workspace")
+        .workspace
+        .workspace_id;
     let connector = |name: &str, node| IssueKeyRequest {
         profile: None,
         role: Role::Writer,
         name: Name::parse(name).expect("a name"),
         principal: format!("crew/{name}"),
-        held_by: Some(HeldBy::Agent),
-        default_workarea: None,
+        used_by: Some(UsedBy::Agent),
+        default_workspace: None,
         crew: None,
         grants: vec![GrantRequest {
             node,
@@ -1419,7 +1419,7 @@ async fn a_reviewer_code_is_minted_for_a_confined_key_and_named_on_the_key() {
         .await
         .expect("a confined connector key");
     rig.app
-        .issue_key(&admin, &connector("wide", boot.root_workarea_id.into()))
+        .issue_key(&admin, &connector("wide", boot.root_workspace_id.into()))
         .await
         .expect("a connector key on the universe");
 

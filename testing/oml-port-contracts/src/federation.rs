@@ -8,7 +8,7 @@
 //! cluster.source_unavailable` and an unreachable candidate listed in
 //! `missing`, needs ADR-0073's nodes: on one database no source is ever
 //! unreachable, so phase 1 proves the half it can, that a list's answer is
-//! a function of the listed workareas alone.
+//! a function of the listed workspaces alone.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,9 +17,9 @@ use std::time::Instant;
 use oml_app::App;
 use oml_app::app::{WIDEN_SIGNAL_MAX_AGE_SECS, WIDEN_SIGNAL_REFRESH_SECS, WidenLimits};
 use oml_app::domain::access::Covers;
-use oml_app::domain::in_progress::{KeyProfile, WorkareaMode};
+use oml_app::domain::in_progress::{KeyProfile, WorkspaceMode};
 use oml_app::domain::name::{Name, Reference};
-use oml_app::domain::{HeldBy, MemoryKind, Role, WorkareaStatus};
+use oml_app::domain::{MemoryKind, Role, UsedBy, WorkspaceStatus};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::federation::{FederationPolicyChange, Sources, Via};
 use oml_app::ports::JournalStore;
@@ -58,7 +58,7 @@ fn grant(node: Uuid, role: Role, deny: Vec<Uuid>) -> GrantRequest {
     }
 }
 
-/// The tree every law starts from, all `committed` but `drafts`:
+/// The tree every law starts from, all `protected` but `drafts`:
 ///
 /// ```text
 /// universe
@@ -124,15 +124,15 @@ impl<S: JournalStore + Clone> FedWorld<S> {
             .await
             .expect("bootstrap");
         let admin = boot.admin_key.value.clone();
-        let root = boot.root_workarea_id;
-        let issue = |role: Role, held_by: HeldBy, principal: &str, grants: Vec<GrantRequest>| {
+        let root = boot.root_workspace_id;
+        let issue = |role: Role, used_by: UsedBy, principal: &str, grants: Vec<GrantRequest>| {
             let req = IssueKeyRequest {
                 profile: None,
                 role,
                 name: fresh("fed-key"),
                 principal: principal.to_owned(),
-                held_by: Some(held_by),
-                default_workarea: None,
+                used_by: Some(used_by),
+                default_workspace: None,
                 crew: None,
                 grants,
                 connect_code: false,
@@ -147,7 +147,7 @@ impl<S: JournalStore + Clone> FedWorld<S> {
         };
         let writer = issue(
             Role::Writer,
-            HeldBy::Agent,
+            UsedBy::Agent,
             "fed-writer",
             vec![
                 grant(root, Role::Writer, Vec::new()),
@@ -156,11 +156,11 @@ impl<S: JournalStore + Clone> FedWorld<S> {
         )
         .await;
         let reviewer = issue(
-            Role::Dreamer,
-            HeldBy::Human,
+            Role::Reviewer,
+            UsedBy::Person,
             "fed-reviewer",
             vec![
-                grant(root, Role::Dreamer, Vec::new()),
+                grant(root, Role::Reviewer, Vec::new()),
                 grant(root, Role::Reader, Vec::new()),
             ],
         )
@@ -214,16 +214,16 @@ impl<S: JournalStore + Clone> FedWorld<S> {
     pub async fn create(&mut self, node: &'static str, parent: &'static str) -> Uuid {
         let id = self
             .app
-            .create_workarea(
+            .create_workspace(
                 self.admin.as_str(),
                 &name(node),
                 Some(self.node(parent).into()),
                 None,
             )
             .await
-            .expect("create a workarea")
-            .workarea
-            .workarea_id;
+            .expect("create a workspace")
+            .workspace
+            .workspace_id;
         self.nodes.insert(node, id);
         self.parents.insert(node, parent);
         id
@@ -254,8 +254,8 @@ impl<S: JournalStore + Clone> FedWorld<S> {
                     role,
                     name: fresh("fed-key"),
                     principal: format!("fed-{}", NAMES.fetch_add(1, Ordering::Relaxed)),
-                    held_by: Some(HeldBy::Agent),
-                    default_workarea: None,
+                    used_by: Some(UsedBy::Agent),
+                    default_workspace: None,
                     crew: None,
                     grants: reads
                         .iter()
@@ -306,7 +306,7 @@ impl<S: JournalStore + Clone> FedWorld<S> {
                     verb: None,
                     kind: MemoryKind::Memory,
                     body: body.to_owned(),
-                    workarea: Some(self.node(node).into()),
+                    workspace: Some(self.node(node).into()),
                     derives_from: Vec::new(),
                     severity: None,
                     rule: None,
@@ -320,14 +320,14 @@ impl<S: JournalStore + Clone> FedWorld<S> {
             .memory_id
     }
 
-    /// `node` moves to `committed`: the admin proposes, the person ratifies.
+    /// `node` moves to `protected`: the admin proposes, the person ratifies.
     pub async fn commit(&self, node: &str) {
         let proposal = self
             .app
             .propose_transition(
                 self.admin.as_str(),
                 self.node(node).into(),
-                WorkareaStatus::Committed,
+                WorkspaceStatus::Protected,
             )
             .await
             .expect("propose committed");
@@ -400,7 +400,7 @@ impl<S: JournalStore + Clone> FedWorld<S> {
                 &RecallRequest {
                     query: query.to_owned(),
                     k,
-                    workarea: Some(self.node(scope).into()),
+                    workspace: Some(self.node(scope).into()),
                     kinds: Vec::new(),
                     include_text: true,
                     include_unreviewed: Some(held),
@@ -458,7 +458,7 @@ pub fn fingerprint(r: &RecallResult) -> String {
                 h.matched,
                 h.via,
                 h.source,
-                h.served.workarea_path,
+                h.served.workspace_path,
             )
         })
         .collect();
@@ -528,7 +528,7 @@ async fn answers<S: JournalStore + Clone>(w: &FedWorld<S>, key: &IssuedKey) -> V
 /// `considered`, `cut`, hits, scores, `did_you_mean`, the counts
 /// or the event's record, against W absent: an empty `development` node no
 /// key reads into, which is no source.
-pub async fn an_unreadable_workarea_changes_no_byte_of_any_answer<S: JournalStore + Clone>(
+pub async fn an_unreadable_workspace_changes_no_byte_of_any_answer<S: JournalStore + Clone>(
     store: S,
 ) {
     let mut w = FedWorld::seeded(store).await;
@@ -548,13 +548,13 @@ pub async fn an_unreadable_workarea_changes_no_byte_of_any_answer<S: JournalStor
     let present = answers(&w, &key).await;
     assert_eq!(
         absent, present,
-        "an unreadable committed workarea whose rows match every query changed an answer"
+        "an unreadable protected workspace whose rows match every query changed an answer"
     );
 }
 
 /// Test 2: W readable but `development`, in progress, or committed with
 /// `accept_federated` off changes no byte of an answer scoped elsewhere.
-pub async fn a_readable_workarea_that_is_no_source_changes_no_byte<S: JournalStore + Clone>(
+pub async fn a_readable_workspace_that_is_no_source_changes_no_byte<S: JournalStore + Clone>(
     store: S,
 ) {
     let mut w = FedWorld::seeded(store).await;
@@ -576,10 +576,10 @@ pub async fn a_readable_workarea_that_is_no_source_changes_no_byte<S: JournalSto
     // so this step holds whether or not the trust predicate checks the mark;
     // the predicate's own unit test holds the mark.
     w.app
-        .set_workarea_mode(
+        .set_workspace_mode(
             w.reviewer.value.as_str(),
             Reference::Id(w.node("draft-w")),
-            WorkareaMode::InProgress,
+            WorkspaceMode::InProgress,
         )
         .await
         .expect("mark in progress");
@@ -593,7 +593,7 @@ pub async fn a_readable_workarea_that_is_no_source_changes_no_byte<S: JournalSto
     w.promote("declining", body).await;
     w.commit("declining").await;
     w.app
-        .set_workarea_federation(
+        .set_workspace_federation(
             w.reviewer.value.as_str(),
             Reference::Id(w.node("declining")),
             false,
@@ -609,7 +609,7 @@ pub async fn a_readable_workarea_that_is_no_source_changes_no_byte<S: JournalSto
 
 /// Test 3: a key that reads the scope and not W never meets W's id or
 /// name, in any recall mode's whole answer or in the scope's read.
-pub async fn a_scope_reader_never_meets_an_unreadable_workarea<S: JournalStore + Clone>(store: S) {
+pub async fn a_scope_reader_never_meets_an_unreadable_workspace<S: JournalStore + Clone>(store: S) {
     let w = FedWorld::seeded(store).await;
     let key = w.key(Role::Reader, &["home"], &[]).await;
     let legal = w.node("legal");
@@ -627,13 +627,13 @@ pub async fn a_scope_reader_never_meets_an_unreadable_workarea<S: JournalStore +
             let body = format!("{answer:?}");
             assert!(
                 !body.contains(&legal.to_string()) && !body.contains("legal"),
-                "an answer named an unreadable workarea: {body}"
+                "an answer named an unreadable workspace: {body}"
             );
         }
     }
     let info = w
         .app
-        .workarea_info(key.value.as_str(), Some(Reference::Id(w.node("home"))))
+        .workspace_info(key.value.as_str(), Some(Reference::Id(w.node("home"))))
         .await
         .expect("the scope's read");
     let body = format!("{info:?}");
@@ -642,7 +642,7 @@ pub async fn a_scope_reader_never_meets_an_unreadable_workarea<S: JournalStore +
 
 /// Test 4's world: a key reading `crew`, `legal`, `product` and `drafts`
 /// and denied `secret`, `secret-dev` and `secret-declining`, three
-/// unreadable workareas the read check must refuse before a status or a
+/// unreadable workspaces the read check must refuse before a status or a
 /// policy is looked at, and a declining node inside the scope.
 pub struct RefusalWorld<S: JournalStore> {
     pub world: FedWorld<S>,
@@ -670,7 +670,7 @@ pub async fn refusal_world<S: JournalStore + Clone>(store: S) -> RefusalWorld<S>
     w.commit("home-annex").await;
     for node in ["secret-declining", "home-annex", "product"] {
         w.app
-            .set_workarea_federation(
+            .set_workspace_federation(
                 w.reviewer.value.as_str(),
                 Reference::Id(w.node(node)),
                 false,
@@ -723,7 +723,7 @@ pub async fn refusal_sample<S: JournalStore + Clone>(
 }
 
 /// Test 4's timing half: wall times of `runs` refusals of a list naming an
-/// unreadable workarea and of one naming an absent name, interleaved after
+/// unreadable workspace and of one naming an absent name, interleaved after
 /// four warm-ups of each, so neither pays the other's cold caches. A
 /// measurement run weekly by the bench workflow, not by the gating suite
 /// (#295).
@@ -879,7 +879,7 @@ pub async fn a_list_is_answered_whole_or_refused_in_d5s_order<S: JournalStore + 
         inside
             .hits
             .iter()
-            .all(|h| h.served.memory.workarea_id == w.node("home-annex"))
+            .all(|h| h.served.memory.workspace_id == w.node("home-annex"))
             && !inside.hits.is_empty()
     );
     // Refused whole: a list with one untrusted name answers nothing.
@@ -1009,8 +1009,8 @@ pub async fn a_revoked_source_is_absent_from_the_next_recall<S: JournalStore + C
     let named = |r: &RecallResult| {
         r.sources
             .as_ref()
-            .is_some_and(|s| s.searched.iter().any(|x| x.workarea_id == legal))
-            || r.hits.iter().any(|h| h.served.memory.workarea_id == legal)
+            .is_some_and(|s| s.searched.iter().any(|x| x.workspace_id == legal))
+            || r.hits.iter().any(|h| h.served.memory.workspace_id == legal)
     };
     let before = w
         .recall(
@@ -1105,11 +1105,11 @@ pub async fn a_hits_score_never_depends_on_selection_at<S: JournalStore + Clone>
                 .await
                 .expect("a capped wide");
             let report = capped.sources.clone().expect("a wide report");
-            let searched: Vec<Uuid> = report.searched.iter().map(|s| s.workarea_id).collect();
+            let searched: Vec<Uuid> = report.searched.iter().map(|s| s.workspace_id).collect();
             let restricted: Vec<(Uuid, u32)> = union
                 .hits
                 .iter()
-                .filter(|h| searched.contains(&h.served.memory.workarea_id))
+                .filter(|h| searched.contains(&h.served.memory.workspace_id))
                 .map(|h| (h.served.memory.memory_id, h.score.to_bits()))
                 .take(k)
                 .collect();
@@ -1130,8 +1130,11 @@ pub async fn a_hits_score_never_depends_on_selection_at<S: JournalStore + Clone>
                 capped
                     .federation
                     .as_ref()
-                    .map(|f| &f.reference_workarea_ids),
-                union.federation.as_ref().map(|f| &f.reference_workarea_ids),
+                    .map(|f| &f.reference_workspace_ids),
+                union
+                    .federation
+                    .as_ref()
+                    .map(|f| &f.reference_workspace_ids),
                 "the reference set moved with the selection"
             );
         }
@@ -1140,12 +1143,12 @@ pub async fn a_hits_score_never_depends_on_selection_at<S: JournalStore + Clone>
 }
 
 /// Test 7's world: a key reading `crew` and `legal`, and two committed
-/// workareas it does not read, each holding one matching row the caller
+/// workspaces it does not read, each holding one matching row the caller
 /// copies.
 pub struct TimingWorld<S: JournalStore> {
     pub world: FedWorld<S>,
     pub key: IssuedKey,
-    /// The template rows of the two unreadable workareas, each to be copied
+    /// The template rows of the two unreadable workspaces, each to be copied
     /// into its own by the store's bulk path: `vault`, outside every grant
     /// root, and `vault-denied`, a denied child of the readable `crew`,
     /// which the candidate loop walks past.
@@ -1206,7 +1209,7 @@ pub async fn timing_sample<S: JournalStore + Clone>(
             answer
                 .hits
                 .iter()
-                .all(|h| !t.w.contains(&h.served.memory.workarea_id))
+                .all(|h| !t.w.contains(&h.served.memory.workspace_id))
         );
         if i > 0 {
             out.push(elapsed);
@@ -1235,8 +1238,8 @@ pub async fn answer_sample<S: JournalStore + Clone>(
             answer
                 .hits
                 .iter()
-                .all(|h| !t.w.contains(&h.served.memory.workarea_id)),
-            "a row of an unreadable workarea was served"
+                .all(|h| !t.w.contains(&h.served.memory.workspace_id)),
+            "a row of an unreadable workspace was served"
         );
         out.push(fingerprint(&answer));
     }
@@ -1335,8 +1338,8 @@ pub async fn with_federation_off_scope_is_todays_answer_and_wider_is_refused<
 }
 
 /// Test 9a: a list's scores and answer are byte-identical whatever the
-/// unlisted workareas hold.
-pub async fn a_lists_answer_depends_on_the_listed_workareas_alone<S: JournalStore + Clone>(
+/// unlisted workspaces hold.
+pub async fn a_lists_answer_depends_on_the_listed_workspaces_alone<S: JournalStore + Clone>(
     store: S,
 ) {
     let mut w = FedWorld::seeded(store).await;
@@ -1375,7 +1378,7 @@ pub async fn a_lists_answer_depends_on_the_listed_workareas_alone<S: JournalStor
         );
         assert_eq!(
             before[i], after,
-            "an unlisted workarea moved a list's answer for {query:?}"
+            "an unlisted workspace moved a list's answer for {query:?}"
         );
     }
 }
@@ -1600,7 +1603,7 @@ pub async fn a_status_transition_drops_the_tenants_signals_at_once<S: JournalSto
         .propose_transition(
             w.admin.as_str(),
             w.node("orchard").into(),
-            WorkareaStatus::Validated,
+            WorkspaceStatus::Frozen,
         )
         .await
         .expect("propose validated");
@@ -1753,7 +1756,7 @@ pub async fn the_signals_counts_equal_the_reference_counts<S: JournalStore + Clo
                 verb: None,
                 kind: MemoryKind::Memory,
                 body: "an expiring invoice retry note".to_owned(),
-                workarea: Some(w.node("legal").into()),
+                workspace: Some(w.node("legal").into()),
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
@@ -1833,7 +1836,7 @@ pub async fn the_signals_counts_equal_the_reference_counts<S: JournalStore + Clo
 }
 
 /// A `wide` answer marks each hit's source: `scope` for the scope's
-/// workareas, `federated` for every other (d8).
+/// workspaces, `federated` for every other (d8).
 pub async fn a_wide_answer_marks_each_hits_source<S: JournalStore + Clone>(store: S) {
     let w = FedWorld::seeded(store).await;
     let key = w
@@ -1852,7 +1855,7 @@ pub async fn a_wide_answer_marks_each_hits_source<S: JournalStore + Clone>(store
         .expect("wide");
     assert!(wide.hits.iter().any(|h| h.source == Some(Via::Federated)));
     for h in &wide.hits {
-        let expected = if h.served.memory.workarea_id == w.node("home") {
+        let expected = if h.served.memory.workspace_id == w.node("home") {
             Via::Scope
         } else {
             Via::Federated
@@ -1952,7 +1955,7 @@ pub async fn a_held_row_scores_alike_on_the_scan_and_the_postings<S: JournalStor
 pub async fn the_policies_are_never_an_agents_act<S: JournalStore + Clone>(store: S) {
     let w = FedWorld::seeded(store).await;
     let root = w.node("universe");
-    let dreamer = |held_by: HeldBy, profile: Option<KeyProfile>| {
+    let reviewer = |used_by: UsedBy, profile: Option<KeyProfile>| {
         let w = &w;
         async move {
             w.app
@@ -1960,14 +1963,14 @@ pub async fn the_policies_are_never_an_agents_act<S: JournalStore + Clone>(store
                     w.admin.as_str(),
                     &IssueKeyRequest {
                         profile,
-                        role: Role::Dreamer,
-                        name: fresh("fed-dreamer"),
+                        role: Role::Reviewer,
+                        name: fresh("fed-reviewer"),
                         principal: format!("fed-{}", NAMES.fetch_add(1, Ordering::Relaxed)),
-                        held_by: Some(held_by),
-                        default_workarea: None,
+                        used_by: Some(used_by),
+                        default_workspace: None,
                         crew: None,
                         grants: vec![
-                            grant(root, Role::Dreamer, Vec::new()),
+                            grant(root, Role::Reviewer, Vec::new()),
                             grant(root, Role::Reader, Vec::new()),
                         ],
                         connect_code: false,
@@ -1978,13 +1981,16 @@ pub async fn the_policies_are_never_an_agents_act<S: JournalStore + Clone>(store
                     },
                 )
                 .await
-                .expect("issue a dreamer")
+                .expect("issue a reviewer")
         }
     };
     for (key, what) in [
-        (dreamer(HeldBy::Agent, None).await, "an agent's dreamer key"),
         (
-            dreamer(HeldBy::Agent, Some(KeyProfile::Curator)).await,
+            reviewer(UsedBy::Agent, None).await,
+            "an agent's reviewer key",
+        ),
+        (
+            reviewer(UsedBy::Agent, Some(KeyProfile::Curator)).await,
             "a curator key",
         ),
         (w.writer.clone(), "a writer key"),
@@ -1992,7 +1998,7 @@ pub async fn the_policies_are_never_an_agents_act<S: JournalStore + Clone>(store
     ] {
         let refused = w
             .app
-            .set_workarea_federation(key.value.as_str(), Reference::Id(w.node("legal")), false)
+            .set_workspace_federation(key.value.as_str(), Reference::Id(w.node("legal")), false)
             .await
             .expect_err(what);
         assert!(
@@ -2030,16 +2036,16 @@ pub async fn the_policies_are_never_an_agents_act<S: JournalStore + Clone>(store
                 .collect::<Vec<_>>()
         }
     };
-    let before = events("workarea.federation_set").await.len();
+    let before = events("workspace.federation_set").await.len();
     for (key, accept) in [(w.reviewer.value.as_str(), false), (w.admin.as_str(), true)] {
         for _ in 0..2 {
             w.app
-                .set_workarea_federation(key, Reference::Id(w.node("legal")), accept)
+                .set_workspace_federation(key, Reference::Id(w.node("legal")), accept)
                 .await
                 .expect("a person's key or an admin sets it");
         }
     }
-    let set = events("workarea.federation_set").await;
+    let set = events("workspace.federation_set").await;
     assert_eq!(set.len(), before + 2, "a repeat journalled: {set:?}");
     assert_eq!(set[before]["from"], true);
     assert_eq!(set[before]["value"], false);
@@ -2077,7 +2083,7 @@ pub async fn the_policies_are_never_an_agents_act<S: JournalStore + Clone>(store
 }
 
 /// The candidate-count report counts |C| with no scope set aside: the
-/// trusted workareas the key reads that accept federated reads, never a
+/// trusted workspaces the key reads that accept federated reads, never a
 /// `development` or a declining one (ADR-0072, "Who gains"; #205).
 pub async fn the_candidate_count_is_the_trusted_sources_a_key_reads<S: JournalStore + Clone>(
     store: S,
@@ -2098,7 +2104,7 @@ pub async fn the_candidate_count_is_the_trusted_sources_a_key_reads<S: JournalSt
     // crew, home, legal and product; drafts is development.
     assert_eq!(count(key.key_id).await, Some(4));
     w.app
-        .set_workarea_federation(
+        .set_workspace_federation(
             w.reviewer.value.as_str(),
             Reference::Id(w.node("product")),
             false,
@@ -2109,7 +2115,7 @@ pub async fn the_candidate_count_is_the_trusted_sources_a_key_reads<S: JournalSt
     assert_eq!(count(Uuid::nil()).await, None);
 }
 
-/// A world of `n` committed workareas under `fleet`, one memory each, and a
+/// A world of `n` protected workspaces under `fleet`, one memory each, and a
 /// key reading them all: d12's budget at 1,000 candidates is measured over
 /// it (ADR-0072 d12).
 pub async fn fleet_world<S: JournalStore + Clone>(store: S, n: usize) -> (FedWorld<S>, IssuedKey) {
@@ -2170,16 +2176,16 @@ where
     F: Fn() -> Fut,
     Fut: core::future::Future<Output = S>,
 {
-    an_unreadable_workarea_changes_no_byte_of_any_answer(make().await).await;
-    a_readable_workarea_that_is_no_source_changes_no_byte(make().await).await;
-    a_scope_reader_never_meets_an_unreadable_workarea(make().await).await;
+    an_unreadable_workspace_changes_no_byte_of_any_answer(make().await).await;
+    a_readable_workspace_that_is_no_source_changes_no_byte(make().await).await;
+    a_scope_reader_never_meets_an_unreadable_workspace(make().await).await;
     a_list_is_answered_whole_or_refused_in_d5s_order(make().await).await;
     a_revoked_source_is_absent_from_the_next_recall(make().await).await;
     for search in searches {
         a_hits_score_never_depends_on_which_sources_were_selected(make().await, search).await;
     }
     with_federation_off_scope_is_todays_answer_and_wider_is_refused(make().await).await;
-    a_lists_answer_depends_on_the_listed_workareas_alone(make().await).await;
+    a_lists_answer_depends_on_the_listed_workspaces_alone(make().await).await;
     a_wide_answer_marks_each_hits_source(make().await).await;
     a_held_row_is_never_federated(make().await).await;
     a_held_row_scores_alike_on_the_scan_and_the_postings(make().await).await;

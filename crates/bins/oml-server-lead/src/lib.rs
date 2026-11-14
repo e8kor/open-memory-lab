@@ -91,7 +91,7 @@ pub struct Config {
     /// capacity credential; unset, every capacity credential is refused
     /// and the doctor warns (ADR-0070 d2). Never logged.
     pub web_client: WebClient,
-    /// `brief.max_tokens`: the budget a workarea's brief is cut to, in
+    /// `brief.max_tokens`: the budget a workspace's brief is cut to, in
     /// budget tokens; 400 when unset, unmeasured (ADR-0046 d8; #145).
     pub brief_max_tokens: u64,
     /// `signup.*` and `quota.*`: open sign-up, its tenant, issuer and
@@ -1239,7 +1239,7 @@ async fn split_boot_on(store: &PgStore, owner: &PgPool) -> Result<SplitRoles, Sp
     if aligned > 0 {
         tracing::info!(
             aligned,
-            "stored the status v0.5.1 served on workareas whose column disagreed, before 0017"
+            "stored the status v0.5.1 served on workspaces whose column disagreed, before 0017"
         );
     }
     role_split_postflight(owner, store.pool()).await?;

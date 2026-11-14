@@ -1,4 +1,4 @@
-//! A workarea's brief: its members in ratification order, cut by a token
+//! A workspace's brief: its members in ratification order, cut by a token
 //! budget under recall's prefix rule (ADR-0046 d7, d8).
 
 use oml_domain::brief::{BRIEF_LABEL, BRIEF_MAX_TOKENS_DEFAULT, brief_cut, brief_order};

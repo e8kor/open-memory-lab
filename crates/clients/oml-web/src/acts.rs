@@ -1,5 +1,5 @@
 //! What every act of a moved page shares (ADR-0070 d3 layer 4), as the
-//! Workareas view's acts do it: the form read once with each field at most
+//! Workspaces view's acts do it: the form read once with each field at most
 //! once, an action from the page's closed set and no field it does not
 //! define, the form's nonce as the act's `Idempotency-Key`, a second send
 //! of the same form waiting for the first, and a success answered with a
@@ -12,7 +12,7 @@ use http::{HeaderValue, StatusCode, header};
 
 use crate::pages::{Fields, refused};
 use crate::session::{PageCalls, Session};
-use crate::workareas::{in_flight, is_nonce, nonce};
+use crate::workspaces::{in_flight, is_nonce, nonce};
 
 /// A page that ends an act or a view early, boxed, since a response is
 /// large beside what it stands in for.

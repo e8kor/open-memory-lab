@@ -4,7 +4,7 @@
 //! routes, inside these, so a form is refused before any API call; layer 7
 //! is [`crate::outcome`]. Layer 6, the per-session cap on calls in flight,
 //! is not built yet (#170); a page that fans out bounds its own calls
-//! ([`crate::workareas::FAN_OUT`]).
+//! ([`crate::workspaces::FAN_OUT`]).
 
 use std::sync::Arc;
 use std::time::Instant;

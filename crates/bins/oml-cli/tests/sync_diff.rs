@@ -27,7 +27,7 @@ struct Version {
     version: u64,
     state: String,
     retirement: bool,
-    workarea_id: String,
+    workspace_id: String,
     digest: String,
     anchor: Value,
     author: String,
@@ -38,14 +38,14 @@ struct Version {
 struct Fake {
     me: RefCell<Me>,
     /// name -> (id, parent id)
-    workareas: HashMap<String, (String, Option<String>)>,
+    workspaces: HashMap<String, (String, Option<String>)>,
     versions: RefCell<Vec<Version>>,
     edges: RefCell<Vec<EdgeRow>>,
     replays: RefCell<HashMap<(String, String), Value>>,
     writes: RefCell<Vec<(String, Value)>>,
     checks: RefCell<Vec<(String, Value)>>,
     /// Hide held rows from the listing, as a run that died before reading
-    /// its own writes would see the workarea.
+    /// its own writes would see the workspace.
     hide_held: RefCell<bool>,
     /// The size of each batch of source checks.
     batches: RefCell<Vec<usize>>,
@@ -63,9 +63,9 @@ fn refused(code: &str) -> CliError {
 
 impl Fake {
     fn new() -> Self {
-        let mut workareas = HashMap::new();
-        workareas.insert("design".to_owned(), ("wa-design".to_owned(), None));
-        workareas.insert(
+        let mut workspaces = HashMap::new();
+        workspaces.insert("design".to_owned(), ("wa-design".to_owned(), None));
+        workspaces.insert(
             "design-pr-7".to_owned(),
             ("wa-design-pr-7".to_owned(), Some("wa-design".to_owned())),
         );
@@ -74,7 +74,7 @@ impl Fake {
                 key_id: SYNC_KEY.into(),
                 name: "design-sync".into(),
             }),
-            workareas,
+            workspaces,
             versions: RefCell::new(Vec::new()),
             edges: RefCell::new(Vec::new()),
             replays: RefCell::new(HashMap::new()),
@@ -124,7 +124,7 @@ impl Fake {
                 return true;
             }
             cur = self
-                .workareas
+                .workspaces
                 .values()
                 .find(|(i, _)| *i == c)
                 .and_then(|(_, p)| p.clone());
@@ -132,11 +132,11 @@ impl Fake {
         false
     }
 
-    fn tip_version(&self, key: &str, workarea: &str) -> u64 {
+    fn tip_version(&self, key: &str, workspace: &str) -> u64 {
         self.versions
             .borrow()
             .iter()
-            .filter(|v| v.claim_key == key && v.workarea_id == workarea && v.state == "promoted")
+            .filter(|v| v.claim_key == key && v.workspace_id == workspace && v.state == "promoted")
             .map(|v| v.version)
             .max()
             .unwrap_or(0)
@@ -145,8 +145,8 @@ impl Fake {
     fn served(&self, v: &Version) -> Value {
         json!({
             "artifact_id": v.artifact_id, "claim_key": v.claim_key, "version": v.version,
-            "tip": v.state == "promoted" && v.version == self.tip_version(&v.claim_key, &v.workarea_id),
-            "state": v.state, "retirement": v.retirement, "workarea_id": v.workarea_id,
+            "tip": v.state == "promoted" && v.version == self.tip_version(&v.claim_key, &v.workspace_id),
+            "state": v.state, "retirement": v.retirement, "workspace_id": v.workspace_id,
             "plaintext_digest": v.digest, "anchor": v.anchor,
             "source_checked": v.checks.last().map(|c| json!({
                 "rev": c["rev"], "at": "2026-11-05T00:00:00Z", "result": c["result"],
@@ -168,8 +168,8 @@ impl Fake {
             .insert((self.me.borrow().key_id.clone(), key.to_owned()), v.clone());
     }
 
-    fn capture(&self, claim_key: &str, workarea: &str, version: u64, body: &Value) -> Value {
-        let artifact_id = format!("art-{claim_key}-{workarea}-v{version}");
+    fn capture(&self, claim_key: &str, workspace: &str, version: u64, body: &Value) -> Value {
+        let artifact_id = format!("art-{claim_key}-{workspace}-v{version}");
         let text = body["body"].as_str().unwrap_or_default();
         self.versions.borrow_mut().push(Version {
             artifact_id: artifact_id.clone(),
@@ -177,7 +177,7 @@ impl Fake {
             version,
             state: "held".into(),
             retirement: body["retirement"] == true,
-            workarea_id: workarea.to_owned(),
+            workspace_id: workspace.to_owned(),
             digest: oml_cli::sync::hash::text_digest(text),
             anchor: body["anchor"].clone(),
             author: self.me.borrow().key_id.clone(),
@@ -187,15 +187,15 @@ impl Fake {
     }
 
     /// Seeds a promoted version written by `author`.
-    fn seed(&self, author: &str, workarea: &str, claim_key: &str, text: &str, anchor: Value) {
-        let version = self.tip_version(claim_key, workarea) + 1;
+    fn seed(&self, author: &str, workspace: &str, claim_key: &str, text: &str, anchor: Value) {
+        let version = self.tip_version(claim_key, workspace) + 1;
         self.versions.borrow_mut().push(Version {
-            artifact_id: format!("art-{claim_key}-{workarea}-v{version}"),
+            artifact_id: format!("art-{claim_key}-{workspace}-v{version}"),
             claim_key: claim_key.into(),
             version,
             state: "promoted".into(),
             retirement: false,
-            workarea_id: workarea.into(),
+            workspace_id: workspace.into(),
             digest: oml_cli::sync::hash::text_digest(text),
             anchor,
             author: author.into(),
@@ -221,22 +221,22 @@ impl SyncApi for Fake {
         Ok(self.me.borrow().clone())
     }
 
-    fn workarea_id(&self, workarea: &str) -> Result<String, CliError> {
-        self.workareas
-            .get(workarea)
+    fn workspace_id(&self, workspace: &str) -> Result<String, CliError> {
+        self.workspaces
+            .get(workspace)
             .map(|(id, _)| id.clone())
             .ok_or_else(|| refused("access.not_found"))
     }
 
     fn list(&self, q: &ListQuery) -> Result<Vec<Listed>, CliError> {
-        let root = self.workarea_id(&q.workarea)?;
+        let root = self.workspace_id(&q.workspace)?;
         let me = self.me.borrow().key_id.clone();
         let hide = *self.hide_held.borrow();
         Ok(self
             .versions
             .borrow()
             .iter()
-            .filter(|v| self.in_subtree(&v.workarea_id, &root))
+            .filter(|v| self.in_subtree(&v.workspace_id, &root))
             .filter(|v| {
                 if q.own {
                     v.author == me && !(hide && v.state == "held")
@@ -264,20 +264,17 @@ impl SyncApi for Fake {
         if let Some(v) = self.replay(key) {
             return Ok(v);
         }
-        let workarea = self.workarea_id(body["workarea"].as_str().unwrap())?;
+        let workspace = self.workspace_id(body["workspace"].as_str().unwrap())?;
         let claim_key = body["claim_key"].as_str().unwrap();
-        if self
-            .versions
-            .borrow()
-            .iter()
-            .any(|v| v.claim_key == claim_key && v.workarea_id == workarea && v.state != "rejected")
-        {
+        if self.versions.borrow().iter().any(|v| {
+            v.claim_key == claim_key && v.workspace_id == workspace && v.state != "rejected"
+        }) {
             return Err(refused("submission.claim_key_conflict"));
         }
         self.writes
             .borrow_mut()
             .push(("submit".into(), body.clone()));
-        let answer = self.capture(claim_key, &workarea, 1, body);
+        let answer = self.capture(claim_key, &workspace, 1, body);
         self.remember(key, &answer);
         Ok(answer)
     }
@@ -286,7 +283,7 @@ impl SyncApi for Fake {
         if let Some(v) = self.replay(key) {
             return Ok(v);
         }
-        let (claim_key, workarea) = {
+        let (claim_key, workspace) = {
             let versions = self.versions.borrow();
             let t = versions
                 .iter()
@@ -295,13 +292,13 @@ impl SyncApi for Fake {
             if t.author != self.me.borrow().key_id {
                 return Err(refused("access.author_only"));
             }
-            (t.claim_key.clone(), t.workarea_id.clone())
+            (t.claim_key.clone(), t.workspace_id.clone())
         };
         let latest = self
             .versions
             .borrow()
             .iter()
-            .filter(|v| v.claim_key == claim_key && v.workarea_id == workarea)
+            .filter(|v| v.claim_key == claim_key && v.workspace_id == workspace)
             .filter(|v| matches!(v.state.as_str(), "held" | "promoted"))
             .map(|v| v.version)
             .max()
@@ -312,7 +309,7 @@ impl SyncApi for Fake {
         self.writes
             .borrow_mut()
             .push((format!("supersede {target}"), body.clone()));
-        let answer = self.capture(&claim_key, &workarea, latest + 1, body);
+        let answer = self.capture(&claim_key, &workspace, latest + 1, body);
         self.remember(key, &answer);
         Ok(answer)
     }
@@ -343,8 +340,8 @@ impl SyncApi for Fake {
             .collect()
     }
 
-    fn claim_edges(&self, workarea_id: &str) -> Result<Vec<EdgeRow>, CliError> {
-        let _ = workarea_id;
+    fn claim_edges(&self, workspace_id: &str) -> Result<Vec<EdgeRow>, CliError> {
+        let _ = workspace_id;
         Ok(self.edges.borrow().clone())
     }
 
@@ -418,7 +415,7 @@ fn source(files: &[(&str, &str)], commit: &str) -> Loaded {
 fn opts() -> Options {
     Options {
         source: "docs".into(),
-        workarea: "design".into(),
+        workspace: "design".into(),
         rev: "HEAD".into(),
         max_writes: 200,
         base: "origin/main".into(),
@@ -487,7 +484,7 @@ fn the_diff_writes_new_supersedes_changed_retires_removed_and_skips_unchanged() 
     assert_eq!(w[0].1["anchor"]["rev"], rev(1));
     assert_eq!(w[0].1["anchor"]["hasher"], "oml-md/1");
     assert_eq!(w[0].1["claim_key"], "doc/docs/guide/alpha");
-    assert_eq!(w[0].1["workarea"], "design");
+    assert_eq!(w[0].1["workspace"], "design");
     fake.promote_all();
 
     let second = run(
@@ -830,7 +827,7 @@ fn a_sync_of_a_parent_never_retires_a_childs_claims() {
         fake.versions
             .borrow()
             .iter()
-            .all(|v| v.workarea_id == "wa-design-pr-7")
+            .all(|v| v.workspace_id == "wa-design-pr-7")
     );
     let main = run(
         &fake,
@@ -858,7 +855,7 @@ fn retire_all_proposes_retiring_every_claim_the_key_wrote() {
         &draft,
     );
     fake.promote_all();
-    // Another key's claim in the same workarea is not this key's to retire.
+    // Another key's claim in the same workspace is not this key's to retire.
     fake.seed(
         "k-other",
         "wa-design-pr-7",
@@ -957,7 +954,7 @@ const ADR_1: &str = "# ADR-0001 — One\n\n**Status:** accepted\n\n## Context\n\
 const ADR_2: &str = "# ADR-0002 — Two\n\n**Status:** accepted\n\n**Amends:** ADR-0001 (d2), ADR-0099 (d1)\n\n## Context\n\nWhy two.\n\n## Decision\n\n- **d1 — First.** One.\n";
 
 #[test]
-fn edges_are_proposed_only_between_promoted_tips_under_a_dreamer_key() {
+fn edges_are_proposed_only_between_promoted_tips_under_a_reviewer_key() {
     let fake = Fake::new();
     let src = loaded(
         &[
@@ -976,7 +973,7 @@ fn edges_are_proposed_only_between_promoted_tips_under_a_dreamer_key() {
     );
     assert_eq!(
         edges[1]["state"], "unresolved",
-        "ADR-0099 is in neither the source nor the workarea"
+        "ADR-0099 is in neither the source nor the workspace"
     );
     // Before review, both ends are held: nothing to propose.
     fake.as_key("k-reviewer");
@@ -1315,7 +1312,7 @@ fn a_new_file_never_changes_the_recorded_adapter() {
         ("docs/guide.md", GUIDE_V1),
         ("docs/ADR-0001-one.md", record),
     ];
-    // Without --adapter the workarea's recorded adapter holds.
+    // Without --adapter the workspace's recorded adapter holds.
     let report = run(&fake, &source(&files, &rev(2)), &opts());
     assert_eq!(report.json["source"]["adapter"], "headings");
     assert_eq!(report.json["summary"]["removed"], 0, "{}", report.json);
@@ -1647,7 +1644,7 @@ fn an_unresolved_target_is_reported_and_not_proposed() {
     assert_eq!(
         states,
         ["unresolved", "unresolved"],
-        "ADR-0001 and ADR-0099 are in neither the source nor the workarea"
+        "ADR-0001 and ADR-0099 are in neither the source nor the workspace"
     );
     assert!(fake.edges.borrow().is_empty());
 }
@@ -1681,7 +1678,7 @@ fn an_excluded_path_is_out_of_the_source_never_read_or_retired() {
         ("docs/adr/ADR-0001-one.md", record),
     ];
     let fake = Fake::new();
-    // docs/ with headings, docs/adr/** left to the adr workarea.
+    // docs/ with headings, docs/adr/** left to the adr workspace.
     let headings = Loaded {
         exclude: vec!["docs/adr/**".into()],
         ..loaded(&files, Kind::Headings, &rev(1))
@@ -1920,7 +1917,7 @@ fn an_unsupported_or_unreadable_file_retires_none_of_its_claims() {
 }
 
 #[test]
-fn an_adr_or_headings_run_over_a_workarea_holding_only_rust_claims_never_touches_them() {
+fn an_adr_or_headings_run_over_a_workspace_holding_only_rust_claims_never_touches_them() {
     for kind in [Kind::Headings, Kind::Adr] {
         let fake = Fake::new();
         run(&fake, &rust_loaded(RS_M, &rev(1)), &rust_opts());
@@ -1936,7 +1933,7 @@ fn an_adr_or_headings_run_over_a_workarea_holding_only_rust_claims_never_touches
                 ..opts()
             },
         )
-        .unwrap_or_else(|e| panic!("{kind:?}: a rust-only workarea must not refuse: {e}"));
+        .unwrap_or_else(|e| panic!("{kind:?}: a rust-only workspace must not refuse: {e}"));
         assert_eq!(report.json["summary"]["removed"], 0, "{}", report.json);
         let keys: Vec<String> = fake
             .writes()

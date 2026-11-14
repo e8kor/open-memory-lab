@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use oml_app::App;
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
-use oml_app::domain::{HeldBy, MemoryKind, Role};
+use oml_app::domain::{MemoryKind, Role, UsedBy};
 use oml_app::doubles::{FakeReranker, FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::ports::RerankError;
 use oml_app::search::{MatchMode, Pipeline, RerankPolicy, SearchConfig};
@@ -68,8 +68,8 @@ async fn issue(app: &TestApp, admin: &str, role: Role, grants: Vec<GrantRequest>
             role,
             name: name(&format!("rerank-key-{n}")),
             principal: format!("principal-{n}"),
-            held_by: Some(HeldBy::Agent),
-            default_workarea: None,
+            used_by: Some(UsedBy::Agent),
+            default_workspace: None,
             crew: None,
             grants,
             connect_code: false,
@@ -84,12 +84,12 @@ async fn issue(app: &TestApp, admin: &str, role: Role, grants: Vec<GrantRequest>
     .value
 }
 
-/// A tenant with two sibling workareas: the writer, the dreamer and the
-/// reader hold `crew`; only the writer and the dreamer hold `other`.
+/// A tenant with two sibling workspaces: the writer, the reviewer and the
+/// reader hold `crew`; only the writer and the reviewer hold `other`.
 struct World {
     app: TestApp,
     writer: String,
-    dreamer: String,
+    reviewer: String,
     reader: String,
     other: Uuid,
 }
@@ -108,11 +108,11 @@ async fn world(reranker: Arc<FakeReranker>, policy: RerankPolicy) -> World {
     let mut nodes = Vec::new();
     for n in ["crew", "other"] {
         nodes.push(
-            app.create_workarea(&admin, &name(n), Some(boot.root_workarea_id.into()), None)
+            app.create_workspace(&admin, &name(n), Some(boot.root_workspace_id.into()), None)
                 .await
-                .expect("workarea")
-                .workarea
-                .workarea_id,
+                .expect("workspace")
+                .workspace
+                .workspace_id,
         );
     }
     let (crew, other) = (nodes[0], nodes[1]);
@@ -127,24 +127,24 @@ async fn world(reranker: Arc<FakeReranker>, policy: RerankPolicy) -> World {
         ],
     )
     .await;
-    let dreamer = issue(
+    let reviewer = issue(
         &app,
         &admin,
-        Role::Dreamer,
-        vec![grant(crew, Role::Dreamer), grant(other, Role::Dreamer)],
+        Role::Reviewer,
+        vec![grant(crew, Role::Reviewer), grant(other, Role::Reviewer)],
     )
     .await;
     let reader = issue(&app, &admin, Role::Reader, vec![grant(crew, Role::Reader)]).await;
     World {
         app,
         writer,
-        dreamer,
+        reviewer,
         reader,
         other,
     }
 }
 
-fn submit(idem: &str, body: &str, workarea: Option<Uuid>) -> SubmitRequest {
+fn submit(idem: &str, body: &str, workspace: Option<Uuid>) -> SubmitRequest {
     SubmitRequest {
         on_similar: Default::default(),
         anchor: None,
@@ -154,7 +154,7 @@ fn submit(idem: &str, body: &str, workarea: Option<Uuid>) -> SubmitRequest {
         verb: None,
         kind: MemoryKind::Memory,
         body: body.to_owned(),
-        workarea: workarea.map(Into::into),
+        workspace: workspace.map(Into::into),
         derives_from: Vec::new(),
         severity: None,
         rule: None,
@@ -166,19 +166,19 @@ fn submit(idem: &str, body: &str, workarea: Option<Uuid>) -> SubmitRequest {
 }
 
 impl World {
-    async fn held(&self, idem: &str, body: &str, workarea: Option<Uuid>) -> Uuid {
+    async fn held(&self, idem: &str, body: &str, workspace: Option<Uuid>) -> Uuid {
         self.app
-            .submit_memory(&self.writer, &submit(idem, body, workarea))
+            .submit_memory(&self.writer, &submit(idem, body, workspace))
             .await
             .expect("submit")
             .receipt
             .memory_id
     }
 
-    async fn promoted(&self, idem: &str, body: &str, workarea: Option<Uuid>) -> Uuid {
-        let id = self.held(idem, body, workarea).await;
+    async fn promoted(&self, idem: &str, body: &str, workspace: Option<Uuid>) -> Uuid {
+        let id = self.held(idem, body, workspace).await;
         self.app
-            .post_verdict(&self.dreamer, id, Verdict::Approve, None)
+            .post_verdict(&self.reviewer, id, Verdict::Approve, None)
             .await
             .expect("approve");
         id
@@ -196,7 +196,7 @@ fn recall(query: &str) -> RecallRequest {
         anchor: oml_app::types::AnchorFilter::default(),
         query: query.to_owned(),
         k: 10,
-        workarea: None,
+        workspace: None,
         kinds: Vec::new(),
         include_text: true,
         include_unreviewed: Some(false),
@@ -280,7 +280,7 @@ async fn the_reranker_is_handed_only_rows_the_core_would_serve() {
     let other = w.other;
     w.promoted(
         "c",
-        "deploy notes in a workarea the reader cannot read",
+        "deploy notes in a workspace the reader cannot read",
         Some(other),
     )
     .await;

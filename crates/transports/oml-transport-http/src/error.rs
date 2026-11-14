@@ -116,9 +116,9 @@ impl ApiError {
     /// `details.renamed_to`, a body field as its JSON pointer
     /// (`/include_own_held`) and a header by its name, the convention of
     /// every other `details.field`; no code is added for it (errors.md
-    /// `request.validation`; ADR-0039 d11). The key and workarea routes
+    /// `request.validation`; ADR-0039 d11). The key and workspace routes
     /// call it for ADR-0039 d7's admin renames, and the memory routes and
-    /// the events tail for its workarea and recall renames; the MCP
+    /// the events tail for its workspace and recall renames; the MCP
     /// arguments' renames are not built yet.
     pub fn renamed(field: &str, renamed_to: &str) -> Self {
         Self::validation(format!(
@@ -252,10 +252,10 @@ fn tip_conflict(message: &str) -> ApiError {
     )
 }
 
-/// `workarea.transition_refused` with its `{workarea_id, from, to, reason}`
-/// details (errors.md, workarea structure and status refusals).
+/// `workspace.transition_refused` with its `{workspace_id, from, to, reason}`
+/// details (errors.md, workspace structure and status refusals).
 fn transition_refused(
-    workarea_id: uuid::Uuid,
+    workspace_id: uuid::Uuid,
     from: &str,
     to: &str,
     reason: &str,
@@ -263,12 +263,12 @@ fn transition_refused(
 ) -> ApiError {
     ApiError::new(
         StatusCode::CONFLICT,
-        "workarea.transition_refused",
-        "The status ladder moves forward only — development → committed → validated — and an area becomes validated only when all its children are.",
+        "workspace.transition_refused",
+        "The status ladder moves forward only — development → protected → frozen — and an area becomes validated only when all its children are.",
         message,
     )
     .with_details(json!({
-        "workarea_id": workarea_id.to_string(),
+        "workspace_id": workspace_id.to_string(),
         "from": from,
         "to": to,
         "reason": reason,
@@ -403,29 +403,29 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             StatusCode::CONFLICT,
             "submission.user_root_refused",
             "A memory is started in a user root by its own user's keys only: a new memory, or a successor of a ratified retirement, which puts the claim back in service. A key granted there reads, reviews and proposes a successor or a retirement of a served memory (ADR-0044 d16).",
-            "this workarea lies in a user's root: only that user's keys start a memory there",
+            "this workspace lies in a user's root: only that user's keys start a memory there",
         ),
         AppError::UserRootInvalid => ApiError::auth_invalid("user_root"),
         AppError::RoleExclusive => ApiError::new(
             StatusCode::FORBIDDEN,
             "access.role_exclusive",
-            "Admin is never a reviewer (D9): a key never combines admin with dreamer verbs.",
-            "a key holding the admin role never carries dreamer-class grants",
+            "Admin is never a reviewer (D9): a key never combines admin with reviewer verbs.",
+            "a key holding the admin role never carries reviewer-class grants",
         ),
         AppError::GrantRefused {
-            workarea_id,
+            workspace_id,
             needed_role,
         } => ApiError::new(
             StatusCode::FORBIDDEN,
             "access.grant_refused",
             "Effective access is the union of grants, each attenuated by its denies, deny-wins for global denials; what a grant does not confer, the key does not have (D7).",
             format!(
-                "the key reads this workarea but holds no effective {} role on it",
+                "the key reads this workspace but holds no effective {} role on it",
                 needed_role.as_str()
             ),
         )
         .with_details(json!({
-            "workarea_id": workarea_id.to_string(),
+            "workspace_id": workspace_id.to_string(),
             "needed_role": needed_role.as_str(),
         })),
         AppError::DenyOutsideGrant {
@@ -434,8 +434,8 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         } => ApiError::validation(format!(
             "grant {grant_index}'s deny names {subtree_node}, which lies outside the grant's subtree"
         )),
-        AppError::DefaultUncovered { workarea } => ApiError::validation(format!(
-            "default_workarea_id {workarea} is covered by no grant of the key"
+        AppError::DefaultUncovered { workspace } => ApiError::validation(format!(
+            "default_workspace_id {workspace} is covered by no grant of the key"
         )),
         AppError::SearchUnavailable { name, served } => ApiError::validation(format!(
             "search {name:?} is not served here; served: {served}"
@@ -448,11 +448,11 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::BudgetWithoutBodies => ApiError::validation(
             "max_tokens is refused with include_text false: a budget counts text that would not be sent",
         ),
-        AppError::WorkareaUnresolved => ApiError::new(
+        AppError::WorkspaceUnresolved => ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "request.workarea_unresolved",
-            "The target workarea comes from the token (ADR-0022 d4); a key with neither a default nor a workarea field is refused, never guessed for (ADR-0039 d7).",
-            "the key has no default_workarea and the request names none",
+            "request.workspace_unresolved",
+            "The target workspace comes from the token (ADR-0022 d4); a key with neither a default nor a workspace field is refused, never guessed for (ADR-0039 d7).",
+            "the key has no default_workspace and the request names none",
         ),
         AppError::AfterSeqBeyondHead {
             after_seq,
@@ -526,10 +526,10 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ApiError::validation(format!("{field}: {reason}"))
                 .with_details(json!({ "field": field }))
         }
-        AppError::WorkareaNotTarget { workarea } => ApiError::validation(format!(
-            "workarea names {workarea}, but a supersession is captured in its target's workarea"
+        AppError::WorkspaceNotTarget { workspace } => ApiError::validation(format!(
+            "workspace names {workspace}, but a supersession is captured in its target's workspace"
         ))
-        .with_details(json!({ "field": "/workarea" })),
+        .with_details(json!({ "field": "/workspace" })),
         AppError::KindChangeRefused { target, sent } => ApiError::validation(format!(
             "a {} target admits no {} successor: a kind changes only within its class, and a retirement keeps the target's",
             target.as_str(),
@@ -590,71 +590,71 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ApiError::validation(reason.to_string()).with_details(json!({ "field": field.as_str() }))
         }
         // Bulk review is a person's act (ADR-0055 d1).
-        AppError::BulkReviewHumanOnly { role, held_by } => ApiError::new(
+        AppError::BulkReviewHumanOnly { role, used_by } => ApiError::new(
             StatusCode::FORBIDDEN,
             "access.verb_ceiling",
             "R1: the surface an agent can call never promotes, signs, demotes or deletes; bulk review is a person's act.",
             format!(
-                "bulk review needs a dreamer key held by a human, and this is a {} key held by {}",
+                "bulk review needs a reviewer key used by a person, and this is a {} key used by {}",
                 role.as_str(),
-                held_by.as_str()
+                used_by.as_str()
             ),
         )
         .with_details(json!({
             "reason": "bulk_review_is_human_only",
             "role": role.as_str(),
-            "held_by": held_by.as_str(),
+            "used_by": used_by.as_str(),
         })),
         AppError::OriginInvalid { field, reason } => {
             ApiError::validation(format!("{field}: {reason}"))
                 .with_details(json!({ "field": field }))
         }
-        // The chat workarea is a person's to open (ADR-0063 d8).
-        AppError::ChatScopeHumanOnly { held_by } => ApiError::new(
+        // The chat workspace is a person's to open (ADR-0063 d8).
+        AppError::ChatScopeHumanOnly { used_by } => ApiError::new(
             StatusCode::FORBIDDEN,
             "access.verb_ceiling",
             "R1: an agent never opens the scope that holds a person's own words; the person does.",
             format!(
-                "a workarea named chat under a user root is created by a key held by a human, and this key is held by {}",
-                held_by.as_str()
+                "a workspace named chat under a user root is created by a key used by a person, and this key is used by {}",
+                used_by.as_str()
             ),
         )
         .with_details(json!({
             "reason": "chat_scope_is_human_only",
-            "held_by": held_by.as_str(),
+            "used_by": used_by.as_str(),
         })),
-        // Only a person's key sets a workarea's mode (ADR-0030 d1).
-        AppError::ModeHumanOnly { role, held_by } => ApiError::new(
+        // Only a person's key sets a workspace's mode (ADR-0030 d1).
+        AppError::ModeHumanOnly { role, used_by } => ApiError::new(
             StatusCode::FORBIDDEN,
             "access.verb_ceiling",
-            "R1: the surface an agent can call never promotes, signs, demotes or deletes; a workarea's mode is set by a person.",
+            "R1: the surface an agent can call never promotes, signs, demotes or deletes; a workspace's mode is set by a person.",
             format!(
-                "setting a workarea's mode needs a dreamer key held by a human, and this is a {} key held by {}",
+                "setting a workspace's mode needs a reviewer key used by a person, and this is a {} key used by {}",
                 role.as_str(),
-                held_by.as_str()
+                used_by.as_str()
             ),
         )
         .with_details(json!({
             "reason": "mode_is_human_only",
             "role": role.as_str(),
-            "held_by": held_by.as_str(),
+            "used_by": used_by.as_str(),
         })),
-        // Only a person's dreamer key or a tenant admin sets a workarea's
+        // Only a person's reviewer key or a tenant admin sets a workspace's
         // federation field (ADR-0072 d5).
-        AppError::FederationHumanOnly { role, held_by } => ApiError::new(
+        AppError::FederationHumanOnly { role, used_by } => ApiError::new(
             StatusCode::FORBIDDEN,
             "access.verb_ceiling",
             "R1: a policy that changes what other keys' recalls search is a person's or an admin's act, never an agent's.",
             format!(
-                "setting a workarea's federation field needs a dreamer key held by a human or an admin key, and this is a {} key held by {}",
+                "setting a workspace's federation field needs a reviewer key used by a person or an admin key, and this is a {} key used by {}",
                 role.as_str(),
-                held_by.as_str()
+                used_by.as_str()
             ),
         )
         .with_details(json!({
             "reason": "federation_is_human_only",
             "role": role.as_str(),
-            "held_by": held_by.as_str(),
+            "used_by": used_by.as_str(),
         })),
         // The shape of `sources`, federation off, or a policy value out of
         // range (ADR-0072 d5).
@@ -674,7 +674,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "sources/{index} is not a usable source: {}",
             match reason {
                 oml_app::federation::SourceRefusal::Untrusted =>
-                    "it is not committed or validated, or lies inside an in-progress subtree",
+                    "it is not protected or frozen, or lies inside an in-progress subtree",
                 oml_app::federation::SourceRefusal::DeclinesFederation =>
                     "it declines federated reads from recalls scoped elsewhere",
             }
@@ -692,40 +692,40 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         )
         .with_details(json!({ "reason": refusal.as_str(), "verb": verb })),
         AppError::ProfileMismatch { profile } => ApiError::validation(format!(
-            "profile {profile} needs a dreamer key held by an agent"
+            "profile {profile} needs a reviewer key used by an agent"
         ))
         .with_details(json!({ "field": "/profile" })),
         // ADR-0030 d1, d6, d7.
         AppError::InProgressRefused {
-            workarea_id,
+            workspace_id,
             reason,
         } => ApiError::new(
             StatusCode::CONFLICT,
-            "workarea.in_progress_refused",
+            "workspace.in_progress_refused",
             "Until its commit, nothing crosses an in-progress subtree's boundary, and subtrees never nest.",
-            format!("workarea {workarea_id}: {reason}"),
+            format!("workspace {workspace_id}: {reason}"),
         )
-        .with_details(json!({ "workarea": workarea_id, "reason": reason.as_str() })),
+        .with_details(json!({ "workspace": workspace_id, "reason": reason.as_str() })),
         // ADR-0030 d6: no count, so a committer learns nothing of rows it
         // cannot read.
         // The use case maps the store's in-transaction refusal to
         // HeldRemaining with the root; reaching here unmapped still answers
-        // the code, naming no workarea (ADR-0030 d6).
+        // the code, naming no workspace (ADR-0030 d6).
         AppError::Store(StoreError::HeldRemaining) => ApiError::new(
             StatusCode::CONFLICT,
-            "workarea.held_remaining",
-            "Nothing leaves an in-progress workarea until every memory in it is reviewed.",
+            "workspace.held_remaining",
+            "Nothing leaves an in-progress workspace until every memory in it is reviewed.",
             "the subtree still holds unreviewed memories: review them, then commit".to_owned(),
         ),
-        AppError::HeldRemaining { workarea_id } => ApiError::new(
+        AppError::HeldRemaining { workspace_id } => ApiError::new(
             StatusCode::CONFLICT,
-            "workarea.held_remaining",
-            "Nothing leaves an in-progress workarea until every memory in it is reviewed.",
+            "workspace.held_remaining",
+            "Nothing leaves an in-progress workspace until every memory in it is reviewed.",
             format!(
-                "workarea {workarea_id} still holds unreviewed memories in its subtree: review them, then commit"
+                "workspace {workspace_id} still holds unreviewed memories in its subtree: review them, then commit"
             ),
         )
-        .with_details(json!({ "workarea": workarea_id })),
+        .with_details(json!({ "workspace": workspace_id })),
         AppError::BulkShape { field, reason } => {
             ApiError::validation(reason).with_details(json!({ "field": field }))
         }
@@ -754,8 +754,8 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::ClaimKeyConflict => ApiError::new(
             StatusCode::CONFLICT,
             "submission.claim_key_conflict",
-            "A claim_key names one live claim per (tenant, workarea); a claim whose every version is rejected or erased releases it (D7).",
-            "a held, promoted or demoted version already holds this claim_key in the workarea",
+            "A claim_key names one live claim per (tenant, workspace); a claim whose every version is rejected or erased releases it (D7).",
+            "a held, promoted or demoted version already holds this claim_key in the workspace",
         ),
         AppError::TimingsOff => ApiError::validation(
             "timings is refused: this deployment does not serve recall timings; an operator sets search.timings to serve them",
@@ -788,10 +788,10 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "An idempotency key names exactly one request; a different request under the same key is refused, never silently honored as new work (D13).",
             "this Idempotency-Key was already used for a different request",
         ),
-        AppError::Verdict(VerdictError::NotDreamer(role)) => ApiError::new(
+        AppError::Verdict(VerdictError::NotReviewer(role)) => ApiError::new(
             StatusCode::FORBIDDEN,
             "access.verb_ceiling",
-            "R1: verdicts are the dreamer surface.",
+            "R1: verdicts are the reviewer surface.",
             format!("a {} key cannot review", role.as_str()),
         ),
         AppError::Verdict(e) => ApiError::new(
@@ -819,28 +819,28 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             tip_conflict("the supersede target stopped being the served tip before ratification")
         }
         // The ratifying commit's re-checks refused it and journalled nothing
-        // (errors.md `workarea.transition_refused`, `review.ratifier_is_proposer`;
-        // workareas.md, ratification re-checks; ADR-0009 d3, d4).
+        // (errors.md `workspace.transition_refused`, `review.ratifier_is_proposer`;
+        // workspaces.md, ratification re-checks; ADR-0009 d3, d4).
         AppError::Store(StoreError::TransitionStale {
             transition_id,
-            workarea_id,
+            workspace_id,
             from,
             to,
         }) => transition_refused(
-            workarea_id,
+            workspace_id,
             from.as_str(),
             to.as_str(),
             "stale",
             format!("transition {transition_id} is no longer live on its node"),
         ),
-        AppError::Store(StoreError::ChildrenNotValidated {
+        AppError::Store(StoreError::ChildrenNotFrozen {
             transition_id,
-            workarea_id,
+            workspace_id,
         }) => transition_refused(
-            workarea_id,
-            "committed",
-            "validated",
-            "children_not_validated",
+            workspace_id,
+            "protected",
+            "frozen",
+            "children_not_frozen",
             format!("transition {transition_id}'s node has a child not validated"),
         ),
         AppError::Store(StoreError::RatifierIsProposer { transition_id }) => ApiError::new(
@@ -850,28 +850,28 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             format!("the key or principal ratifying transition {transition_id} proposed it"),
         ),
         // The ladder refused a proposal before anything was sealed
-        // (errors.md `workarea.transition_refused`; ADR-0009 d1, d3, d4).
+        // (errors.md `workspace.transition_refused`; ADR-0009 d1, d3, d4).
         AppError::TransitionRefused {
-            workarea_id,
+            workspace_id,
             from,
             to,
             reason,
         } => transition_refused(
-            workarea_id,
+            workspace_id,
             from.as_str(),
             to.as_str(),
             reason.reason(),
             format!(
-                "{} to {} is refused on workarea {workarea_id}: {reason}",
+                "{} to {} is refused on workspace {workspace_id}: {reason}",
                 from.as_str(),
                 to.as_str()
             ),
         ),
-        AppError::WorkareaFrozen { workarea_id, op } => ApiError::new(
+        AppError::WorkspaceFrozen { workspace_id, op } => ApiError::new(
             StatusCode::CONFLICT,
-            "workarea.frozen",
-            "`validated` is frozen: the only mutations it admits are demote, erasure, and crew-metadata update, each journalled.",
-            format!("workarea {workarea_id} is validated and refuses {op:?}"),
+            "workspace.frozen",
+            "`frozen` is frozen: the only mutations it admits are demote, erasure, and crew-metadata update, each journalled.",
+            format!("workspace {workspace_id} is validated and refuses {op:?}"),
         ),
         AppError::RatifierIsProposer => ApiError::new(
             StatusCode::FORBIDDEN,
@@ -1040,7 +1040,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         // and no denial cuts one off (ADR-0068 d8, d11; #277).
         AppError::AdminKeyUnderUserRoot { user, key } => ApiError::new(
             StatusCode::CONFLICT,
-            "workarea.admin_key_under_root",
+            "workspace.admin_key_under_root",
             "A person is disabled only when every key under their root can be cut off, and no denial cuts off an admin key (ADR-0068 d8).",
             format!(
                 "admin key {key} names the user root of {}, which no verb does; clear its row's user_root_id, then disable again",
@@ -1135,7 +1135,7 @@ fn oauth_refusal(refusal: Refusal) -> ApiError {
     let message = match refusal {
         Refusal::ConnectRefused(ConnectRefused::NotConfined) => format!(
             "{refusal} (reason: not_confined; a code that outlives ten minutes is minted only \
-             for a key whose grants sit on one workarea other than the universe and that names \
+             for a key whose grants sit on one workspace other than the universe and that names \
              no user root)"
         ),
         Refusal::ConnectRefused(why) => format!("{refusal} (reason: {})", why.as_str()),
@@ -1392,7 +1392,7 @@ mod tests {
 
 #[cfg(test)]
 mod ladder_tests {
-    use oml_app::domain::{FrozenOp, LadderRefusal, WorkareaStatus};
+    use oml_app::domain::{FrozenOp, LadderRefusal, WorkspaceStatus};
     use uuid::Uuid;
 
     use super::*;
@@ -1403,40 +1403,40 @@ mod ladder_tests {
 
     #[test]
     fn a_ratification_refused_by_its_commits_re_check_answers_transition_refused_with_its_reason() {
-        let (transition_id, workarea_id) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let (transition_id, workspace_id) = (Uuid::from_u128(1), Uuid::from_u128(2));
         let stale = mapped(StoreError::TransitionStale {
             transition_id,
-            workarea_id,
-            from: WorkareaStatus::Development,
-            to: WorkareaStatus::Committed,
+            workspace_id,
+            from: WorkspaceStatus::Development,
+            to: WorkspaceStatus::Protected,
         });
         assert_eq!(
             (stale.status, stale.code, stale.details),
             (
                 StatusCode::CONFLICT,
-                "workarea.transition_refused",
+                "workspace.transition_refused",
                 Some(json!({
-                    "workarea_id": workarea_id.to_string(),
+                    "workspace_id": workspace_id.to_string(),
                     "from": "development",
-                    "to": "committed",
+                    "to": "protected",
                     "reason": "stale",
                 }))
             )
         );
-        let children = mapped(StoreError::ChildrenNotValidated {
+        let children = mapped(StoreError::ChildrenNotFrozen {
             transition_id,
-            workarea_id,
+            workspace_id,
         });
         assert_eq!(
             (children.status, children.code, children.details),
             (
                 StatusCode::CONFLICT,
-                "workarea.transition_refused",
+                "workspace.transition_refused",
                 Some(json!({
-                    "workarea_id": workarea_id.to_string(),
-                    "from": "committed",
-                    "to": "validated",
-                    "reason": "children_not_validated",
+                    "workspace_id": workspace_id.to_string(),
+                    "from": "protected",
+                    "to": "frozen",
+                    "reason": "children_not_frozen",
                 }))
             )
         );
@@ -1445,12 +1445,12 @@ mod ladder_tests {
     #[test]
     fn a_proposal_the_ladder_refuses_answers_transition_refused_with_its_reason_and_freeze_answers_frozen()
      {
-        let workarea_id = Uuid::from_u128(2);
+        let workspace_id = Uuid::from_u128(2);
         let refused = map_app_error(
             AppError::TransitionRefused {
-                workarea_id,
-                from: WorkareaStatus::Development,
-                to: WorkareaStatus::Validated,
+                workspace_id,
+                from: WorkspaceStatus::Development,
+                to: WorkspaceStatus::Frozen,
                 reason: LadderRefusal::Skipped,
             },
             ErrorContext::Write,
@@ -1459,25 +1459,25 @@ mod ladder_tests {
             (refused.status, refused.code, refused.details),
             (
                 StatusCode::CONFLICT,
-                "workarea.transition_refused",
+                "workspace.transition_refused",
                 Some(json!({
-                    "workarea_id": workarea_id.to_string(),
+                    "workspace_id": workspace_id.to_string(),
                     "from": "development",
-                    "to": "validated",
+                    "to": "frozen",
                     "reason": "skipped",
                 }))
             )
         );
         let frozen = map_app_error(
-            AppError::WorkareaFrozen {
-                workarea_id,
+            AppError::WorkspaceFrozen {
+                workspace_id,
                 op: FrozenOp::Write,
             },
             ErrorContext::Write,
         );
         assert_eq!(
             (frozen.status, frozen.code),
-            (StatusCode::CONFLICT, "workarea.frozen")
+            (StatusCode::CONFLICT, "workspace.frozen")
         );
         let ratifier = map_app_error(AppError::RatifierIsProposer, ErrorContext::Review);
         assert_eq!(

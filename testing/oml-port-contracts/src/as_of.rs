@@ -12,9 +12,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use oml_app::App;
 use oml_app::domain::access::Covers;
-use oml_app::domain::in_progress::WorkareaMode;
+use oml_app::domain::in_progress::WorkspaceMode;
 use oml_app::domain::name::{Name, Reference};
-use oml_app::domain::{EventTime, HeldBy, MemoryKind, Role};
+use oml_app::domain::{EventTime, MemoryKind, Role, UsedBy};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::federation::Sources;
 use oml_app::ports::{Clock, JournalStore};
@@ -92,16 +92,16 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
             .await
             .expect("bootstrap");
         let admin = boot.admin_key.value.clone();
-        let root = boot.root_workarea_id;
+        let root = boot.root_workspace_id;
         let node = |name: &'static str| {
             let app = &app;
             let admin = admin.clone();
             async move {
-                app.create_workarea(admin.as_str(), &fresh(name), Some(root.into()), None)
+                app.create_workspace(admin.as_str(), &fresh(name), Some(root.into()), None)
                     .await
-                    .expect("create a workarea")
-                    .workarea
-                    .workarea_id
+                    .expect("create a workspace")
+                    .workspace
+                    .workspace_id
             }
         };
         let home = node("home").await;
@@ -110,23 +110,23 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
             &app,
             &admin,
             Role::Writer,
-            HeldBy::Agent,
+            UsedBy::Agent,
             vec![grant(root, Role::Writer), grant(root, Role::Reader)],
         )
         .await;
         let reviewer = issue(
             &app,
             &admin,
-            Role::Dreamer,
-            HeldBy::Human,
-            vec![grant(root, Role::Dreamer), grant(root, Role::Reader)],
+            Role::Reviewer,
+            UsedBy::Person,
+            vec![grant(root, Role::Reviewer), grant(root, Role::Reader)],
         )
         .await;
         let reader = issue(
             &app,
             &admin,
             Role::Reader,
-            HeldBy::Agent,
+            UsedBy::Agent,
             vec![grant(home, Role::Reader)],
         )
         .await;
@@ -151,7 +151,7 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
             &self.app,
             &self.admin,
             Role::Reader,
-            HeldBy::Agent,
+            UsedBy::Agent,
             vec![grant(node, Role::Reader)],
         )
         .await
@@ -186,7 +186,7 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
                     verb: None,
                     kind,
                     body: body.to_owned(),
-                    workarea: Some(node.into()),
+                    workspace: Some(node.into()),
                     derives_from: Vec::new(),
                     severity: None,
                     rule: None,
@@ -240,7 +240,7 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
                     retirement,
                     derives_from: Vec::new(),
                     reason: None,
-                    workarea: None,
+                    workspace: None,
                     refuse_vocabulary_target: false,
                     severity: None,
                     rule: None,
@@ -276,7 +276,7 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
                 &RecallRequest {
                     query: query.to_owned(),
                     k: 10,
-                    workarea: Some(self.home.into()),
+                    workspace: Some(self.home.into()),
                     kinds: Vec::new(),
                     include_text: true,
                     include_unreviewed: Some(held),
@@ -325,7 +325,7 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
                 key.value.as_str(),
                 &ListRequest {
                     own,
-                    workarea: (!own).then(|| Reference::from(self.home)),
+                    workspace: (!own).then(|| Reference::from(self.home)),
                     state: None,
                     kind: None,
                     claim_key: claim_key.map(ToOwned::to_owned),
@@ -373,7 +373,7 @@ async fn issue<S: JournalStore + Clone>(
     app: &AsOfApp<S>,
     admin: &str,
     role: Role,
-    held_by: HeldBy,
+    used_by: UsedBy,
     grants: Vec<GrantRequest>,
 ) -> IssuedKey {
     app.issue_key(
@@ -383,8 +383,8 @@ async fn issue<S: JournalStore + Clone>(
             role,
             name: fresh("asof-key"),
             principal: format!("asof-{}", NAMES.fetch_add(1, Ordering::Relaxed)),
-            held_by: Some(held_by),
-            default_workarea: None,
+            used_by: Some(used_by),
+            default_workspace: None,
             crew: None,
             grants,
             connect_code: false,
@@ -676,10 +676,10 @@ pub async fn inside_an_in_progress_scope_held_rows_at_an_instant_follow_todays_r
 ) {
     let w = AsOfWorld::new(store, searches).await;
     w.app
-        .set_workarea_mode(
+        .set_workspace_mode(
             w.reviewer.value.as_str(),
             w.home.into(),
-            WorkareaMode::InProgress,
+            WorkspaceMode::InProgress,
         )
         .await
         .expect("mark home in progress");
@@ -762,7 +762,7 @@ pub async fn an_as_of_after_the_leads_clock_is_refused<S: JournalStore + Clone>(
             &RecallRequest {
                 query: "later".to_owned(),
                 k: 10,
-                workarea: Some(w.home.into()),
+                workspace: Some(w.home.into()),
                 kinds: Vec::new(),
                 include_text: true,
                 include_unreviewed: None,

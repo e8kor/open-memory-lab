@@ -176,12 +176,12 @@ pub fn confirmation(view: &ConfirmationView) -> String {
     ] {
         let _ = write!(body, "<dt>{term}</dt><dd>{}</dd>", escape(value));
     }
-    body.push_str("</dl><h2>Workareas</h2><ul>");
+    body.push_str("</dl><h2>Workspaces</h2><ul>");
     for grant in &view.grants {
         let _ = write!(
             body,
             "<li>{}: {}</li>",
-            escape(grant.workarea.as_str()),
+            escape(grant.workspace.as_str()),
             grant.role.as_str()
         );
     }
@@ -209,11 +209,11 @@ pub fn confirmation(view: &ConfirmationView) -> String {
             "<p>Everything it writes is held until someone other than its author reviews it.</p>",
         );
     }
-    for workarea in &view.self_signed_in {
+    for workspace in &view.self_signed_in {
         let _ = write!(
             body,
             "<p>In {}, its writes may be self-signed and readable there without review.</p>",
-            escape(workarea.as_str())
+            escape(workspace.as_str())
         );
     }
     let _ = write!(

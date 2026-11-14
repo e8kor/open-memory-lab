@@ -271,7 +271,7 @@ async fn full_ceremony_through_the_cli() {
     );
     assert_eq!(code, 0, "bootstrap claim: {log}");
     let tenant_id = claim["tenant_id"].as_str().expect("tenant id").to_owned();
-    let root = claim["root_workarea_id"].as_str().expect("root workarea");
+    let root = claim["root_workspace_id"].as_str().expect("root workspace");
     assert!(claim["value"].as_str().expect("value").starts_with("oml_"));
     let stored = std::fs::read_to_string(&creds).expect("credentials written");
     let fields: toml::Table = toml::from_str(&stored).expect("the credentials parse");
@@ -326,7 +326,7 @@ async fn full_ceremony_through_the_cli() {
         (field("value"), field("key_id"))
     };
     let (writer, writer_id) = issue("writer", "crew/agent-1");
-    let (dreamer, _) = issue("dreamer", "crew/reviewer-1");
+    let (reviewer, _) = issue("reviewer", "crew/reviewer-1");
     let (reader, _) = issue("reader", "crew/recall-1");
 
     // The two-key rule travels through the CLI as a typed refusal.
@@ -341,7 +341,7 @@ async fn full_ceremony_through_the_cli() {
             "--role",
             "admin",
             "--grant",
-            &format!("{root}:dreamer"),
+            &format!("{root}:reviewer"),
         ],
     );
     assert_eq!(code, 1, "{log}");
@@ -361,14 +361,14 @@ async fn full_ceremony_through_the_cli() {
     );
     assert_eq!(code, 0, "write: {log}");
     assert_eq!(accepted["state"], "held", "{log}");
-    let (code, serve, log) = oml(&server, &creds, Some(&dreamer), &["review", "next"]);
+    let (code, serve, log) = oml(&server, &creds, Some(&reviewer), &["review", "next"]);
     assert_eq!(code, 0, "review next: {log}");
     assert_eq!(
         serve["item"]["artifact_id"], accepted["artifact_id"],
         "{log}"
     );
 
-    let (code, verdict, log) = oml(&server, &creds, Some(&dreamer), &["review", "approve"]);
+    let (code, verdict, log) = oml(&server, &creds, Some(&reviewer), &["review", "approve"]);
     assert_eq!(code, 0, "verdict: {log}");
     assert_eq!(verdict["state"], "promoted", "{log}");
 
@@ -428,7 +428,7 @@ async fn full_ceremony_through_the_cli() {
         &["deny", "set", &writer_id, root, "--reason", "incident 44"],
     );
     assert_eq!(code, 0, "deny set: {log}");
-    assert_eq!(denial["workarea_node_id"].as_str(), Some(root), "{log}");
+    assert_eq!(denial["workspace_node_id"].as_str(), Some(root), "{log}");
     assert!(denial["epoch"].as_u64().is_some(), "{log}");
     let (code, envelope, log) = oml(
         &server,
@@ -557,9 +557,9 @@ impl Lab {
             ENROLLMENT,
         );
         assert_eq!(code, 0, "bootstrap claim: {log}");
-        let root = claim["root_workarea_id"]
+        let root = claim["root_workspace_id"]
             .as_str()
-            .expect("root workarea")
+            .expect("root workspace")
             .to_owned();
         Some(Self {
             server,
@@ -674,7 +674,7 @@ impl Lab {
                     verb: None,
                     kind: oml_app::domain::MemoryKind::Memory,
                     body: body.to_owned(),
-                    workarea: None,
+                    workspace: None,
                     derives_from: Vec::new(),
                     severity: None,
                     rule: None,
@@ -698,10 +698,10 @@ impl Lab {
     }
 
     /// A fresh child of the root.
-    fn workarea(&self, name: &str) -> String {
-        let (code, created, log) = self.json(None, &["workareas", "create", &self.root, name]);
-        assert_eq!(code, 0, "workareas create: {log}");
-        created["id"].as_str().expect("workarea id").to_owned()
+    fn workspace(&self, name: &str) -> String {
+        let (code, created, log) = self.json(None, &["workspaces", "create", &self.root, name]);
+        assert_eq!(code, 0, "workspaces create: {log}");
+        created["id"].as_str().expect("workspace id").to_owned()
     }
 
     /// `oml keys issue <key-name> <args>` under the admin credentials; the
@@ -746,11 +746,11 @@ fn routes(seen: &[Seen]) -> Vec<String> {
         .collect()
 }
 
-fn grant(workarea: &str, role: &str) -> Value {
-    json!({ "workarea": workarea, "role": role })
+fn grant(workspace: &str, role: &str) -> Value {
+    json!({ "workspace": workspace, "role": role })
 }
 
-/// The (workarea, role) pairs a `201` lists, in its order.
+/// The (workspace, role) pairs a `201` lists, in its order.
 fn granted(issued: &Value) -> Vec<(String, String)> {
     issued["grants"]
         .as_array()
@@ -758,7 +758,7 @@ fn granted(issued: &Value) -> Vec<(String, String)> {
         .iter()
         .map(|g| {
             (
-                g["workarea_node_id"].as_str().expect("node").to_owned(),
+                g["workspace_node_id"].as_str().expect("node").to_owned(),
                 g["role"].as_str().expect("role").to_owned(),
             )
         })
@@ -776,11 +776,11 @@ fn mode_of(path: &Path) -> u32 {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn keys_issue_with_one_writer_grant_sends_a_reader_grant_on_the_same_workarea() {
+async fn keys_issue_with_one_writer_grant_sends_a_reader_grant_on_the_same_workspace() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     lab.take_requests();
 
     let issued = lab.issue(
@@ -824,7 +824,7 @@ async fn the_claim_and_keys_issue_send_their_positional_key_name_as_the_bodys_na
     let claim = lab.take_requests();
     assert_eq!(routes(&claim), ["POST /v2/bootstrap/claim"]);
     assert_eq!(claim[0].body["name"], "root-admin");
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     lab.take_requests();
 
     let issued = lab.issue(
@@ -850,7 +850,7 @@ async fn keys_issue_with_write_only_sends_only_the_writer_grant() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     lab.take_requests();
 
     let issued = lab.issue(
@@ -878,7 +878,7 @@ async fn issue_agent_sends_one_post_v2_keys_and_no_other_request() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     lab.take_requests();
 
     let (code, _, stderr) = lab.text(&[
@@ -887,7 +887,7 @@ async fn issue_agent_sends_one_post_v2_keys_and_no_other_request() {
         "agent-7",
         "--principal",
         "crew/agent-7",
-        "--workarea",
+        "--workspace",
         &wa,
     ]);
     assert_eq!(code, 0, "{stderr}");
@@ -899,9 +899,9 @@ async fn issue_agent_sends_one_post_v2_keys_and_no_other_request() {
         json!({
             "role": "writer",
             "name": "agent-7",
-            "held_by": "agent",
+            "used_by": "agent",
             "principal": "crew/agent-7",
-            "default_workarea": wa,
+            "default_workspace": wa,
             "grants": [grant(&wa, "writer"), grant(&wa, "reader")],
         })
     );
@@ -913,7 +913,7 @@ async fn issue_agent_prints_exactly_the_oml_url_and_oml_api_key_lines() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
 
     let (code, stdout, stderr) = lab.text(&[
         "keys",
@@ -921,7 +921,7 @@ async fn issue_agent_prints_exactly_the_oml_url_and_oml_api_key_lines() {
         "agent-7",
         "--principal",
         "crew/agent-7",
-        "--workarea",
+        "--workspace",
         &wa,
     ]);
     assert_eq!(code, 0, "{stderr}");
@@ -948,11 +948,15 @@ async fn issue_agent_prints_exactly_the_oml_url_and_oml_api_key_lines() {
         "the value is printed once: {stderr}"
     );
 
-    // The exported value is the key itself, and it writes to the workarea.
+    // The exported value is the key itself, and it writes to the workspace.
     let (code, accepted, log) = lab.json(Some(&value), &["write", "The exported key remembers."]);
     assert_eq!(code, 0, "{log}");
     assert_eq!(accepted["state"], "held", "{log}");
-    assert_eq!(accepted["workarea_id"].as_str(), Some(wa.as_str()), "{log}");
+    assert_eq!(
+        accepted["workspace_id"].as_str(),
+        Some(wa.as_str()),
+        "{log}"
+    );
     lab.stop().await;
 }
 
@@ -965,7 +969,7 @@ async fn keys_issue_agent_with_an_expiry_and_a_rate_prints_both_limits_and_the_k
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
 
     let (code, stdout, stderr) = lab.text(&[
         "keys",
@@ -973,7 +977,7 @@ async fn keys_issue_agent_with_an_expiry_and_a_rate_prints_both_limits_and_the_k
         "agent-7",
         "--principal",
         "crew/agent-7",
-        "--workarea",
+        "--workspace",
         &wa,
         "--expires",
         "2999-01-01T00:00:00Z",
@@ -1009,7 +1013,7 @@ async fn keys_issue_agent_with_an_expiry_and_a_rate_prints_both_limits_and_the_k
         "agent-8",
         "--principal",
         "crew/agent-8",
-        "--workarea",
+        "--workspace",
         &wa,
     ]);
     assert_eq!(code, 0, "{stderr}");
@@ -1036,7 +1040,7 @@ async fn keys_issue_agent_connect_code_with_an_expiry_and_a_rate_prints_both_lim
                         "name": "claude-mobile",
                         "role": "writer",
                         "principal": "crew/claude-mobile",
-                        "default_workarea_id": "00000000-0000-4000-8000-000000000007",
+                        "default_workspace_id": "00000000-0000-4000-8000-000000000007",
                         "expiry": "2999-01-01T00:00:00.000000Z",
                         "requests_per_minute": 600,
                         "grants": [],
@@ -1063,7 +1067,7 @@ async fn keys_issue_agent_connect_code_with_an_expiry_and_a_rate_prints_both_lim
             "claude-mobile",
             "--principal",
             "crew/claude-mobile",
-            "--workarea",
+            "--workspace",
             "00000000-0000-4000-8000-000000000007",
             "--connect-code",
             "--expires",
@@ -1106,14 +1110,14 @@ async fn write_reads_a_diagram_from_standard_input_and_signs_its_format() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     let (code, stdout, stderr) = lab.text(&[
         "keys",
         "issue-agent",
         "agent-7",
         "--principal",
         "crew/agent-7",
-        "--workarea",
+        "--workspace",
         &wa,
     ]);
     assert_eq!(code, 0, "{stderr}");
@@ -1158,7 +1162,7 @@ async fn issue_agent_out_writes_the_key_to_a_0600_file_and_prints_no_key_value()
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     let path = lab.dir.join("keys").join("crew-agent-7");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("key directory");
     let shown = path.to_str().expect("a UTF-8 path");
@@ -1169,7 +1173,7 @@ async fn issue_agent_out_writes_the_key_to_a_0600_file_and_prints_no_key_value()
         "agent-7",
         "--principal",
         "crew/agent-7",
-        "--workarea",
+        "--workspace",
         &wa,
         "--out",
         shown,
@@ -1215,7 +1219,7 @@ async fn issue_agent_out_prints_the_plugin_configure_line_and_the_setup_line_nam
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     let path = lab.dir.join("keys").join("crew-agent-8");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("key directory");
     let shown = path.to_str().expect("a UTF-8 path");
@@ -1226,7 +1230,7 @@ async fn issue_agent_out_prints_the_plugin_configure_line_and_the_setup_line_nam
         "agent-8",
         "--principal",
         "crew/agent-8",
-        "--workarea",
+        "--workspace",
         &wa,
         "--out",
         shown,
@@ -1265,7 +1269,7 @@ async fn issue_agent_out_prints_no_oml_cli_variable() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     let path = lab.dir.join("keys").join("crew-agent-9");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("key directory");
     let shown = path.to_str().expect("a UTF-8 path");
@@ -1276,7 +1280,7 @@ async fn issue_agent_out_prints_no_oml_cli_variable() {
         "agent-9",
         "--principal",
         "crew/agent-9",
-        "--workarea",
+        "--workspace",
         &wa,
         "--out",
         shown,
@@ -1304,7 +1308,7 @@ async fn issue_agent_out_refuses_an_existing_file_and_sends_nothing() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     let path = lab.dir.join("unrelated");
     std::fs::write(&path, "an unrelated file\n").expect("an existing file");
     lab.take_requests();
@@ -1315,7 +1319,7 @@ async fn issue_agent_out_refuses_an_existing_file_and_sends_nothing() {
         "agent-7",
         "--principal",
         "crew/agent-7",
-        "--workarea",
+        "--workspace",
         &wa,
         "--out",
         path.to_str().expect("a UTF-8 path"),
@@ -1340,7 +1344,7 @@ async fn issue_agent_out_with_json_is_refused() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     let path = lab.dir.join("crew-agent-7");
     lab.take_requests();
 
@@ -1352,7 +1356,7 @@ async fn issue_agent_out_with_json_is_refused() {
             "agent-7",
             "--principal",
             "crew/agent-7",
-            "--workarea",
+            "--workspace",
             &wa,
             "--out",
             path.to_str().expect("a UTF-8 path"),
@@ -1370,7 +1374,7 @@ async fn issue_agent_out_refuses_a_path_with_a_quote_or_a_newline_and_sends_noth
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     lab.take_requests();
 
     for name in ["it's", "say-\"hi\"", "two\nlines"] {
@@ -1381,7 +1385,7 @@ async fn issue_agent_out_refuses_a_path_with_a_quote_or_a_newline_and_sends_noth
             "agent-7",
             "--principal",
             "crew/agent-7",
-            "--workarea",
+            "--workspace",
             &wa,
             "--out",
             path.to_str().expect("a UTF-8 path"),
@@ -1423,7 +1427,7 @@ fn issue_agent_to_stub(server: &str, dir: &Path, path: &Path) -> (i32, String, S
             "agent-7",
             "--principal",
             "crew/agent-7",
-            "--workarea",
+            "--workspace",
             "00000000-0000-4000-8000-000000000007",
             "--out",
             path.to_str().expect("a UTF-8 path"),
@@ -1504,8 +1508,8 @@ async fn issue_agent_says_a_key_may_have_been_issued_when_the_connection_closes_
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `oml keys issue-agent` sends v0.4.0's spellings, `default_workarea` and
-/// each grant's `workarea`, and none of v0.3.0's, against a stub that needs
+/// `oml keys issue-agent` sends v0.4.0's spellings, `default_workspace` and
+/// each grant's `workspace`, and none of v0.3.0's, against a stub that needs
 /// no database and records the body it was sent (ADR-0039 d7).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn keys_issue_agent_sends_the_v0_4_0_field_names() {
@@ -1524,7 +1528,7 @@ async fn keys_issue_agent_sends_the_v0_4_0_field_names() {
                         "name": "agent-7",
                         "value": STUB_VALUE,
                         "role": "writer",
-                        "default_workarea_id": "00000000-0000-4000-8000-000000000007",
+                        "default_workspace_id": "00000000-0000-4000-8000-000000000007",
                         "grants": [],
                     })),
                 )
@@ -1548,12 +1552,12 @@ async fn keys_issue_agent_sends_the_v0_4_0_field_names() {
         [json!({
             "role": "writer",
             "name": "agent-7",
-            "held_by": "agent",
+            "used_by": "agent",
             "principal": "crew/agent-7",
-            "default_workarea": wa,
+            "default_workspace": wa,
             "grants": [
-                { "workarea": wa, "role": "writer" },
-                { "workarea": wa, "role": "reader" },
+                { "workspace": wa, "role": "writer" },
+                { "workspace": wa, "role": "reader" },
             ],
         })]
     );
@@ -1563,11 +1567,11 @@ async fn keys_issue_agent_sends_the_v0_4_0_field_names() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its_workarea() {
+async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its_workspace() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     let writer = lab.issue(
         "crew-agent-1",
         &[
@@ -1582,21 +1586,21 @@ async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its
         .as_str()
         .expect("writer value")
         .to_owned();
-    let dreamer = lab.issue(
+    let reviewer = lab.issue(
         "crew-reviewer-1",
         &[
             "--role",
-            "dreamer",
-            "--held-by",
-            "human",
+            "reviewer",
+            "--used-by",
+            "person",
             "--principal",
             "crew/reviewer-1",
             "--grant",
-            &format!("{wa}:dreamer"),
+            &format!("{wa}:reviewer"),
         ],
     )["value"]
         .as_str()
-        .expect("dreamer value")
+        .expect("reviewer value")
         .to_owned();
 
     let (code, accepted, log) = lab.json(
@@ -1610,7 +1614,7 @@ async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its
     );
     assert_eq!(code, 0, "write: {log}");
     let artifact = accepted["artifact_id"].as_str().expect("artifact id");
-    let (code, serve, log) = lab.json(Some(&dreamer), &["review", "next"]);
+    let (code, serve, log) = lab.json(Some(&reviewer), &["review", "next"]);
     assert_eq!(code, 0, "review next: {log}");
     assert_eq!(
         serve["item"]["artifact_id"].as_str(),
@@ -1618,7 +1622,7 @@ async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its
         "{log}"
     );
     let (code, verdict, log) = lab.json(
-        Some(&dreamer),
+        Some(&reviewer),
         &[
             "review",
             "approve",
@@ -1646,7 +1650,7 @@ async fn a_writer_key_issued_with_write_only_is_refused_recall_but_still_reads_i
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     let writer = lab.issue(
         "crew-agent-1",
         &[
@@ -1716,7 +1720,7 @@ fn exported_value(stdout: &str) -> String {
 }
 
 /// `oml keys issue-agent <key-name>` sends the name as the issuance's
-/// `name` and its `--workarea` and `--crew` as the operator spelled them,
+/// `name` and its `--workspace` and `--crew` as the operator spelled them,
 /// and the key it issues answers to that name on `oml keys show`
 /// (cli/reference.md `oml keys issue-agent`, `oml keys show`; ADR-0026 d4,
 /// d9, d12).
@@ -1725,7 +1729,7 @@ async fn issue_agent_takes_a_key_name_and_the_issued_key_answers_to_it() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     let (code, crew, log) = lab.json(None, &["crews", "create", "metals-crew"]);
     assert_eq!(code, 0, "crews create: {log}");
     lab.take_requests();
@@ -1736,7 +1740,7 @@ async fn issue_agent_takes_a_key_name_and_the_issued_key_answers_to_it() {
         "claude-laptop",
         "--principal",
         "claude/laptop",
-        "--workarea",
+        "--workspace",
         "metals",
         "--crew",
         "metals-crew",
@@ -1749,9 +1753,9 @@ async fn issue_agent_takes_a_key_name_and_the_issued_key_answers_to_it() {
         json!({
             "role": "writer",
             "name": "claude-laptop",
-            "held_by": "agent",
+            "used_by": "agent",
             "principal": "claude/laptop",
-            "default_workarea": "metals",
+            "default_workspace": "metals",
             "crew": "metals-crew",
             "grants": [grant("metals", "writer"), grant("metals", "reader")],
         }),
@@ -1764,7 +1768,7 @@ async fn issue_agent_takes_a_key_name_and_the_issued_key_answers_to_it() {
     assert_eq!(shown["principal"], "claude/laptop", "{log}");
     assert_eq!(shown["crew_id"], crew["crew_id"], "{log}");
     assert_eq!(
-        shown["default_workarea_id"].as_str(),
+        shown["default_workspace_id"].as_str(),
         Some(wa.as_str()),
         "{log}"
     );
@@ -1781,7 +1785,11 @@ async fn issue_agent_takes_a_key_name_and_the_issued_key_answers_to_it() {
     let value = exported_value(&stdout);
     let (code, accepted, log) = lab.json(Some(&value), &["write", "The named key remembers."]);
     assert_eq!(code, 0, "{log}");
-    assert_eq!(accepted["workarea_id"].as_str(), Some(wa.as_str()), "{log}");
+    assert_eq!(
+        accepted["workspace_id"].as_str(),
+        Some(wa.as_str()),
+        "{log}"
+    );
     lab.stop().await;
 }
 
@@ -1795,7 +1803,7 @@ async fn keys_show_names_a_revoked_key_as_revoked_in_its_human_layout() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     let issued = lab.issue(
         "agent-7-laptop",
         &[
@@ -1849,7 +1857,7 @@ async fn keys_limit_moves_a_keys_expiry_and_rate_and_doctor_names_an_expired_key
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     let issued = lab.issue(
         "reviewer",
         &[
@@ -2022,17 +2030,17 @@ async fn keys_issue_and_keys_limit_refuse_a_limit_on_an_admin_key() {
     lab.stop().await;
 }
 
-/// `oml workareas crew set <workarea> --crew <crew>` points a workarea at a
+/// `oml workspaces crew set <workspace> --crew <crew>` points a workspace at a
 /// crew record, each by id or name sent as typed, in one `POST
-/// /v2/workareas/{workarea_id}/crew {crew}`, and the workarea read then
-/// serves that record (cli/reference.md `oml workareas`; http-api.md
-/// workareas; ADR-0026 d4, d8).
+/// /v2/workspaces/{workspace_id}/crew {crew}`, and the workspace read then
+/// serves that record (cli/reference.md `oml workspaces`; http-api.md
+/// workspaces; ADR-0026 d4, d8).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn workareas_crew_set_points_a_workarea_at_a_crew_by_name() {
+async fn workspaces_crew_set_points_a_workspace_at_a_crew_by_name() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     let (code, crew, log) = lab.json(None, &["crews", "create", "metals-crew"]);
     assert_eq!(code, 0, "crews create: {log}");
     lab.take_requests();
@@ -2040,7 +2048,7 @@ async fn workareas_crew_set_points_a_workarea_at_a_crew_by_name() {
     let (code, updated, log) = lab.json(
         None,
         &[
-            "workareas",
+            "workspaces",
             "crew",
             "set",
             "metals",
@@ -2048,14 +2056,14 @@ async fn workareas_crew_set_points_a_workarea_at_a_crew_by_name() {
             "metals-crew",
         ],
     );
-    assert_eq!(code, 0, "workareas crew set: {log}");
+    assert_eq!(code, 0, "workspaces crew set: {log}");
     let seen = lab.take_requests();
-    assert_eq!(routes(&seen), ["POST /v2/workareas/metals/crew"]);
+    assert_eq!(routes(&seen), ["POST /v2/workspaces/metals/crew"]);
     assert_eq!(seen[0].body, json!({ "crew": "metals-crew" }));
     assert_eq!(updated["id"].as_str(), Some(wa.as_str()), "{log}");
     assert_eq!(updated["crew"], crew, "{log}");
 
-    let (code, shown, log) = lab.json(None, &["workareas", "show", &wa]);
+    let (code, shown, log) = lab.json(None, &["workspaces", "show", &wa]);
     assert_eq!(code, 0, "{log}");
     assert_eq!(
         shown["crew"], crew,
@@ -2063,7 +2071,7 @@ async fn workareas_crew_set_points_a_workarea_at_a_crew_by_name() {
     );
 
     let crew_id = crew["crew_id"].as_str().expect("crew id");
-    let (code, stdout, stderr) = lab.text(&["workareas", "crew", "set", &wa, "--crew", crew_id]);
+    let (code, stdout, stderr) = lab.text(&["workspaces", "crew", "set", &wa, "--crew", crew_id]);
     assert_eq!(code, 0, "{stderr}");
     assert!(
         stdout.contains("metals-crew") && stdout.contains(crew_id),
@@ -2072,15 +2080,15 @@ async fn workareas_crew_set_points_a_workarea_at_a_crew_by_name() {
     lab.stop().await;
 }
 
-/// A `--grant <workarea>:<role>` takes the workarea's id or its name, the
+/// A `--grant <workspace>:<role>` takes the workspace's id or its name, the
 /// CLI sends it as spelled, and the server issues the one grant either way
 /// (cli/reference.md `oml keys issue`; ADR-0026 d4).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_grant_by_workarea_name_issues_the_same_grant_as_by_id() {
+async fn a_grant_by_workspace_name_issues_the_same_grant_as_by_id() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     lab.take_requests();
 
     let by_id = lab.issue(
@@ -2092,7 +2100,7 @@ async fn a_grant_by_workarea_name_issues_the_same_grant_as_by_id() {
             "crew/agent-1",
             "--grant",
             &format!("{wa}:writer"),
-            "--default-workarea",
+            "--default-workspace",
             &wa,
         ],
     );
@@ -2105,7 +2113,7 @@ async fn a_grant_by_workarea_name_issues_the_same_grant_as_by_id() {
             "crew/agent-2",
             "--grant",
             "metals:writer",
-            "--default-workarea",
+            "--default-workspace",
             "metals",
         ],
     );
@@ -2117,7 +2125,7 @@ async fn a_grant_by_workarea_name_issues_the_same_grant_as_by_id() {
         json!([grant("metals", "writer"), grant("metals", "reader")]),
         "the name goes as spelled, with its reader grant beside it"
     );
-    assert_eq!(seen[1].body["default_workarea"], "metals");
+    assert_eq!(seen[1].body["default_workspace"], "metals");
     assert_eq!(
         granted(&by_id),
         [
@@ -2126,7 +2134,10 @@ async fn a_grant_by_workarea_name_issues_the_same_grant_as_by_id() {
         ]
     );
     assert_eq!(granted(&by_name), granted(&by_id));
-    assert_eq!(by_name["default_workarea_id"], by_id["default_workarea_id"]);
+    assert_eq!(
+        by_name["default_workspace_id"],
+        by_id["default_workspace_id"]
+    );
     lab.stop().await;
 }
 
@@ -2271,25 +2282,25 @@ async fn crews_create_and_show_by_name() {
     lab.stop().await;
 }
 
-/// Under the admin context `oml bootstrap claim` stores, `oml workareas
+/// Under the admin context `oml bootstrap claim` stores, `oml workspaces
 /// tree` lists the tenant tree from `universe` down, or from a positional
 /// root or `--root` given by name, in one tree read, with each node's name, path, status and
-/// crew record or null, and `oml workareas show` reads one node by name,
+/// crew record or null, and `oml workspaces show` reads one node by name,
 /// while recall under the same key
-/// still answers `access.verb_ceiling` (cli/reference.md `oml workareas`;
+/// still answers `access.verb_ceiling` (cli/reference.md `oml workspaces`;
 /// ADR-0026 d4, d8, d15).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn workareas_tree_under_an_admin_context_lists_the_tree_by_name() {
+async fn workspaces_tree_under_an_admin_context_lists_the_tree_by_name() {
     let Some(lab) = Lab::start().await else {
         return;
     };
     let (code, crew, log) = lab.json(None, &["crews", "create", "metals-crew"]);
     assert_eq!(code, 0, "crews create: {log}");
     let create = |args: &[&str]| {
-        let mut all = vec!["workareas", "create"];
+        let mut all = vec!["workspaces", "create"];
         all.extend_from_slice(args);
         let (code, created, log) = lab.json(None, &all);
-        assert_eq!(code, 0, "workareas create {args:?}: {log}");
+        assert_eq!(code, 0, "workspaces create {args:?}: {log}");
         created
     };
     let procurement = create(&["universe", "procurement"]);
@@ -2301,8 +2312,8 @@ async fn workareas_tree_under_an_admin_context_lists_the_tree_by_name() {
     create(&["universe", "research"]);
     lab.take_requests();
 
-    let (code, tree, log) = lab.json(None, &["workareas", "tree"]);
-    assert_eq!(code, 0, "workareas tree: {log}");
+    let (code, tree, log) = lab.json(None, &["workspaces", "tree"]);
+    assert_eq!(code, 0, "workspaces tree: {log}");
     let nodes = tree["items"].as_array().expect("items");
     let column = |name: &str| -> Vec<&str> {
         nodes
@@ -2328,7 +2339,7 @@ async fn workareas_tree_under_an_admin_context_lists_the_tree_by_name() {
     assert_eq!(
         column("status"),
         [
-            "committed",
+            "protected",
             "development",
             "development",
             "development",
@@ -2344,24 +2355,24 @@ async fn workareas_tree_under_an_admin_context_lists_the_tree_by_name() {
     assert_eq!(tree["next_cursor"], Value::Null, "{log}");
     assert_eq!(
         routes(&lab.take_requests()),
-        ["GET /v2/workareas/universe/tree"],
+        ["GET /v2/workspaces/universe/tree"],
         "one tree read, the root by its name"
     );
 
-    let (code, subtree, log) = lab.json(None, &["workareas", "tree", "--root", "metals"]);
-    assert_eq!(code, 0, "workareas tree --root by name: {log}");
+    let (code, subtree, log) = lab.json(None, &["workspaces", "tree", "--root", "metals"]);
+    assert_eq!(code, 0, "workspaces tree --root by name: {log}");
     assert_eq!(
         routes(&lab.take_requests()),
-        ["GET /v2/workareas/metals/tree"]
+        ["GET /v2/workspaces/metals/tree"]
     );
-    let (code, positional, log) = lab.json(None, &["workareas", "tree", "metals"]);
-    assert_eq!(code, 0, "workareas tree with positional root: {log}");
+    let (code, positional, log) = lab.json(None, &["workspaces", "tree", "metals"]);
+    assert_eq!(code, 0, "workspaces tree with positional root: {log}");
     assert_eq!(positional, subtree);
     assert_eq!(
         routes(&lab.take_requests()),
-        ["GET /v2/workareas/metals/tree"]
+        ["GET /v2/workspaces/metals/tree"]
     );
-    let (code, _, err) = lab.text(&["workareas", "tree", "metals", "--root", "metals"]);
+    let (code, _, err) = lab.text(&["workspaces", "tree", "metals", "--root", "metals"]);
     assert_eq!(code, 2, "the two root forms conflict: {err}");
     assert!(err.contains("cannot be used with"), "{err}");
     let paths: Vec<&str> = subtree["items"]
@@ -2378,7 +2389,7 @@ async fn workareas_tree_under_an_admin_context_lists_the_tree_by_name() {
         ]
     );
 
-    let (code, stdout, stderr) = lab.text(&["workareas", "tree"]);
+    let (code, stdout, stderr) = lab.text(&["workspaces", "tree"]);
     assert_eq!(code, 0, "{stderr}");
     for path in column("path") {
         assert!(stdout.contains(path), "{path} is listed: {stdout}");
@@ -2388,8 +2399,8 @@ async fn workareas_tree_under_an_admin_context_lists_the_tree_by_name() {
         "the crew is shown: {stdout}"
     );
 
-    let (code, shown, log) = lab.json(None, &["workareas", "show", "metals"]);
-    assert_eq!(code, 0, "workareas show by name: {log}");
+    let (code, shown, log) = lab.json(None, &["workspaces", "show", "metals"]);
+    assert_eq!(code, 0, "workspaces show by name: {log}");
     assert_eq!(shown["id"], metals["id"], "{log}");
     assert_eq!(shown["crew"], crew, "{log}");
     assert_eq!(
@@ -2429,7 +2440,7 @@ async fn a_reference_that_is_neither_an_id_nor_a_name_is_refused_by_the_server_a
         "%2e",
         "%2e%2e",
     ] {
-        let (code, envelope, log) = lab.json(None, &["workareas", "show", bad]);
+        let (code, envelope, log) = lab.json(None, &["workspaces", "show", bad]);
         assert_eq!(code, 1, "{bad:?}: {log}");
         assert_eq!(
             envelope["error"]["code"], "request.validation",
@@ -2455,9 +2466,9 @@ async fn a_reference_spelled_empty_dot_or_dot_dot_is_refused_before_anything_is_
         for args in [
             vec!["keys", "show", bad],
             vec!["deny", "set", bad, "universe"],
-            vec!["workareas", "show", bad],
-            vec!["workareas", "tree", "--root", bad],
-            vec!["workareas", "crew", "set", bad, "--crew", "metals-crew"],
+            vec!["workspaces", "show", bad],
+            vec!["workspaces", "tree", "--root", bad],
+            vec!["workspaces", "crew", "set", bad, "--crew", "metals-crew"],
             vec!["crews", "show", bad],
             vec![
                 "crews",
@@ -2596,14 +2607,14 @@ fn section(context: &str, header: &str) -> Vec<String> {
         .collect()
 }
 
-/// A lab with one crew workarea, an agent key issued as the plugin's one key
-/// and a human dreamer that reviews.
+/// A lab with one crew workspace, an agent key issued as the plugin's one key
+/// and a person reviewer that reviews.
 struct Crew {
     lab: Lab,
     wa: String,
     path: String,
     agent: String,
-    dreamer: String,
+    reviewer: String,
 }
 
 impl Crew {
@@ -2611,20 +2622,20 @@ impl Crew {
         Self::start_in(&["metals"]).await
     }
 
-    /// The crew in the last of `names`, each workarea a child of the one
+    /// The crew in the last of `names`, each workspace a child of the one
     /// before it and the first a child of the root.
     async fn start_in(names: &[&str]) -> Option<Self> {
         let lab = Lab::start().await?;
         let mut created = Value::Null;
         let mut parent = lab.root.clone();
         for name in names {
-            let (code, child, log) = lab.json(None, &["workareas", "create", &parent, name]);
-            assert_eq!(code, 0, "workareas create: {log}");
-            parent = child["id"].as_str().expect("workarea id").to_owned();
+            let (code, child, log) = lab.json(None, &["workspaces", "create", &parent, name]);
+            assert_eq!(code, 0, "workspaces create: {log}");
+            parent = child["id"].as_str().expect("workspace id").to_owned();
             created = child;
         }
-        let wa = created["id"].as_str().expect("workarea id").to_owned();
-        let path = created["path"].as_str().expect("workarea path").to_owned();
+        let wa = created["id"].as_str().expect("workspace id").to_owned();
+        let path = created["path"].as_str().expect("workspace path").to_owned();
         let (code, issued, log) = lab.json(
             None,
             &[
@@ -2633,38 +2644,38 @@ impl Crew {
                 "crew-agent-7",
                 "--principal",
                 "crew/agent-7",
-                "--workarea",
+                "--workspace",
                 &wa,
             ],
         );
         assert_eq!(code, 0, "issue-agent: {log}");
         let agent = issued["value"].as_str().expect("agent value").to_owned();
-        let dreamer = lab.issue(
+        let reviewer = lab.issue(
             "crew-reviewer-1",
             &[
                 "--role",
-                "dreamer",
-                "--held-by",
-                "human",
+                "reviewer",
+                "--used-by",
+                "person",
                 "--principal",
                 "crew/reviewer-1",
                 "--grant",
-                &format!("{wa}:dreamer"),
+                &format!("{wa}:reviewer"),
             ],
         )["value"]
             .as_str()
-            .expect("dreamer value")
+            .expect("reviewer value")
             .to_owned();
         Some(Self {
             lab,
             wa,
             path,
             agent,
-            dreamer,
+            reviewer,
         })
     }
 
-    /// A writer key on the crew workarea for another principal, with its
+    /// A writer key on the crew workspace for another principal, with its
     /// reader grant, named after the principal with `/` spelled `-`.
     fn writer(&self, principal: &str) -> String {
         self.lab.issue(
@@ -2693,15 +2704,15 @@ impl Crew {
         assert_eq!(accepted["state"], "held", "{log}");
     }
 
-    /// The dreamer is served the one held item and promotes it.
+    /// The reviewer is served the one held item and promotes it.
     fn approve_next(&self, claim_key: &str) {
-        let (code, serve, log) = self.lab.json(Some(&self.dreamer), &["review", "next"]);
+        let (code, serve, log) = self.lab.json(Some(&self.reviewer), &["review", "next"]);
         assert_eq!(code, 0, "review next: {log}");
         assert_eq!(serve["item"]["claim_key"], claim_key, "{log}");
         let serve_id = serve["serve_id"].as_str().expect("serve id");
         let (code, verdict, log) = self
             .lab
-            .json(Some(&self.dreamer), &["review", "approve", serve_id]);
+            .json(Some(&self.reviewer), &["review", "approve", serve_id]);
         assert_eq!(code, 0, "verdict: {log}");
         assert_eq!(verdict["state"], "promoted", "{log}");
     }
@@ -2862,7 +2873,7 @@ async fn the_session_start_hook_injects_the_steering_and_the_agents_own_recent_w
     assert_eq!(
         context,
         format!(
-            "OML memory for this session, from {}, workarea {}.\n{REMEMBER}\n{RECALL}\n{FRAMING}\n\n\
+            "OML memory for this session, from {}, workspace {}.\n{REMEMBER}\n{RECALL}\n{FRAMING}\n\n\
              Steering in force:\n\
              - metals-crew-sourcing: Quote every supplier price with its source and its date.\n\n\
              {SUBMISSIONS}\n\
@@ -2888,8 +2899,8 @@ async fn after_a_compaction_the_hook_asks_claude_to_record_the_summarys_durable_
     assert_eq!(
         context_of(&stdout),
         format!(
-            "OML memory for this session, from {}, in this key's default workarea \
-             (oml_workarea names it).\n{REMEMBER}\n{RECALL}\n{COMPACTED}\n{FRAMING}\n\n\
+            "OML memory for this session, from {}, in this key's default workspace \
+             (oml_workspace names it).\n{REMEMBER}\n{RECALL}\n{COMPACTED}\n{FRAMING}\n\n\
              Steering in force:\n- none\n\n\
              {SUBMISSIONS}\n- none\n\n\
              Memories matching \"metals\":\n- none",
@@ -3636,7 +3647,7 @@ async fn the_hook_shows_another_keys_held_memory_never() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_path() {
+async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workspace_path() {
     let Some(crew) = Crew::start().await else {
         return;
     };
@@ -3695,8 +3706,8 @@ async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_pat
         )]
     );
 
-    // A workarea path in which the key value straddles the cut, named by the
-    // newest own row. A workarea name is a lowercase RFC 1035 label and a
+    // A workspace path in which the key value straddles the cut, named by the
+    // newest own row. A workspace name is a lowercase RFC 1035 label and a
     // key value carries `_`, so no path the lead serves holds one (ADR-0026
     // d2); the hook redacts whatever a server sends (ADR-0029 d4), so a stub
     // serves this path.
@@ -3718,7 +3729,7 @@ async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_pat
             "claim_key": "metals-lot-e",
             "state": "held",
             "version": 1,
-            "workarea_path": child_path,
+            "workspace_path": child_path,
         }],
         "next_cursor": null,
     });
@@ -3750,7 +3761,7 @@ async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_pat
         context.lines().next(),
         Some(
             format!(
-                "OML memory for this session, from {url}, workarea {}….",
+                "OML memory for this session, from {url}, workspace {}….",
                 shown.chars().take(119).collect::<String>()
             )
             .as_str()
@@ -3761,7 +3772,7 @@ async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_pat
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_hook_caps_each_claim_key_and_the_workarea_path_at_120_characters() {
+async fn the_hook_caps_each_claim_key_and_the_workspace_path_at_120_characters() {
     // Neither a claim key nor the path counts toward the budget, so each is
     // cut where it is printed, and the record line comes before them all.
     // A name is at most 63 characters and unique in the tenant (ADR-0026 d1,
@@ -3787,7 +3798,7 @@ async fn the_hook_caps_each_claim_key_and_the_workarea_path_at_120_characters() 
         lines[..5],
         [
             format!(
-                "OML memory for this session, from {}, workarea {}.",
+                "OML memory for this session, from {}, workspace {}.",
                 crew.lab.server,
                 cut(&crew.path)
             )
@@ -3942,14 +3953,14 @@ async fn write_without_claim_key_sends_none_and_prints_the_servers_key() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     let (code, stdout, stderr) = lab.text(&[
         "keys",
         "issue-agent",
         "agent-7",
         "--principal",
         "crew/agent-7",
-        "--workarea",
+        "--workspace",
         &wa,
     ]);
     assert_eq!(code, 0, "{stderr}");
@@ -4256,9 +4267,9 @@ async fn doctor_stub_with(
                         "name": "agent-7",
                         "role": "writer",
                         "principal": "crew/agent-7",
-                        "held_by": "agent",
+                        "used_by": "agent",
                         "tenant": { "id": "t1", "name": "acme" },
-                        "default_workarea": { "id": "w1", "name": "metals", "path": "acme/metals" },
+                        "default_workspace": { "id": "w1", "name": "metals", "path": "acme/metals" },
                         "crew": null,
                         "grants": [],
                     }),
@@ -4369,7 +4380,10 @@ async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_so
     );
     assert_eq!(doctor["whoami"]["role"], "writer", "{log}");
     assert_eq!(doctor["whoami"]["tenant"], "acme", "{log}");
-    assert_eq!(doctor["whoami"]["default_workarea"], "acme/metals", "{log}");
+    assert_eq!(
+        doctor["whoami"]["default_workspace"], "acme/metals",
+        "{log}"
+    );
     assert_eq!(doctor["chain_head_seq"], 7, "{log}");
     assert!(!log.contains("oml_file_key"), "no key printed: {log}");
     let seen = calls(&seen);
@@ -4381,7 +4395,7 @@ async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_so
             "/v2/whoami",
             // Whether the server takes origin_kinds (ADR-0063 d13).
             "/v1/memories",
-            "/v2/workareas/w1",
+            "/v2/workspaces/w1",
             "/v2/edges",
             "/v2/events"
         ],
@@ -4503,9 +4517,9 @@ async fn login_stub() -> (String, Calls, tokio::task::JoinHandle<()>) {
                     "name": "agent-7",
                     "role": "writer",
                     "principal": "crew/agent-7",
-                    "held_by": "agent",
+                    "used_by": "agent",
                     "tenant": { "id": "t1", "name": "acme" },
-                    "default_workarea": { "id": "w1", "name": "metals", "path": "acme/metals" },
+                    "default_workspace": { "id": "w1", "name": "metals", "path": "acme/metals" },
                     "crew": null,
                     "grants": [],
                 }))
@@ -4785,7 +4799,7 @@ async fn doctor_names_each_values_source_and_never_prints_the_key() {
 
 /// ADR-0044 d11, d14 through the real lead: `--user` issues a user key whose
 /// root the first issuance creates, with `universe`'s node read added by the
-/// server; the key creates a workarea under its root by the bare parent
+/// server; the key creates a workspace under its root by the bare parent
 /// name; `--grant …:node` sends a node grant; and `oml doctor` under the
 /// user key names its root and warns once the key no longer reads
 /// universe's claims.
@@ -4839,9 +4853,12 @@ async fn doctor_warns_when_a_user_key_does_not_read_universe() {
         ENROLLMENT,
     );
     assert_eq!(code, 0, "bootstrap claim: {log}");
-    let root = claim["root_workarea_id"].as_str().expect("root").to_owned();
+    let root = claim["root_workspace_id"]
+        .as_str()
+        .expect("root")
+        .to_owned();
 
-    // --user with no --workarea: the user's root, created by this issuance.
+    // --user with no --workspace: the user's root, created by this issuance.
     let (code, alice, log) = oml(
         &server,
         &creds,
@@ -4859,12 +4876,14 @@ async fn doctor_warns_when_a_user_key_does_not_read_universe() {
     assert_eq!(code, 0, "issue-agent --user: {log}");
     assert_eq!(alice["user"]["name"], "alice", "{log}");
     let alice_root = alice["user"]["id"].as_str().expect("root id").to_owned();
-    assert_eq!(alice["default_workarea_id"], alice_root.as_str(), "{log}");
+    assert_eq!(alice["default_workspace_id"], alice_root.as_str(), "{log}");
     let grants = alice["grants"].as_array().expect("grants");
     assert!(
-        grants.iter().any(|g| g["workarea_node_id"] == root.as_str()
-            && g["role"] == "reader"
-            && g["covers"] == "node"),
+        grants
+            .iter()
+            .any(|g| g["workspace_node_id"] == root.as_str()
+                && g["role"] == "reader"
+                && g["covers"] == "node"),
         "universe's node read, added by the server: {log}"
     );
     let alice_key = alice["value"].as_str().expect("value").to_owned();
@@ -4874,7 +4893,7 @@ async fn doctor_warns_when_a_user_key_does_not_read_universe() {
         &server,
         &creds,
         Some(&alice_key),
-        &["workareas", "create", "alice", "project"],
+        &["workspaces", "create", "alice", "project"],
     );
     assert_eq!(code, 0, "a user key creates under its root: {log}");
     assert_eq!(created["path"], "universe.alice.project", "{log}");
@@ -4939,12 +4958,12 @@ async fn doctor_warns_when_a_user_key_does_not_read_universe() {
 }
 
 /// ADR-0044 d16 through the real lead: a tenant writer key whose default
-/// workarea lies in a user's root is told by `oml doctor` that its new
+/// workspace lies in a user's root is told by `oml doctor` that its new
 /// memories there are refused and which key to issue instead, and the
 /// write it was warned about answers `submission.user_root_refused`; the
 /// user's own key is told nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn doctor_warns_when_a_tenant_writer_keys_default_workarea_lies_in_a_users_root() {
+async fn doctor_warns_when_a_tenant_writer_keys_default_workspace_lies_in_a_users_root() {
     let Some(lab) = Lab::start().await else {
         return;
     };
@@ -4964,7 +4983,7 @@ async fn doctor_warns_when_a_tenant_writer_keys_default_workarea_lies_in_a_users
     let alice_key = alice["value"].as_str().expect("value").to_owned();
     let (code, _, log) = lab.json(
         Some(&alice_key),
-        &["workareas", "create", "alice", "project"],
+        &["workspaces", "create", "alice", "project"],
     );
     assert_eq!(code, 0, "a user key creates under its root: {log}");
     let (code, doctor, log) = lab.json(Some(&alice_key), &["doctor"]);
@@ -4979,11 +4998,11 @@ async fn doctor_warns_when_a_tenant_writer_keys_default_workarea_lies_in_a_users
             "crew-loader",
             "--principal",
             "crew/loader",
-            "--workarea",
+            "--workspace",
             "alice.project",
         ],
     );
-    assert_eq!(code, 0, "issue-agent on a workarea in alice's root: {log}");
+    assert_eq!(code, 0, "issue-agent on a workspace in alice's root: {log}");
     assert_eq!(loader["user"], Value::Null, "{log}");
     let loader_key = loader["value"].as_str().expect("value").to_owned();
     let (code, doctor, log) = lab.json(Some(&loader_key), &["doctor"]);
@@ -4991,7 +5010,7 @@ async fn doctor_warns_when_a_tenant_writer_keys_default_workarea_lies_in_a_users
     assert_eq!(doctor["verdict"], "warn", "{log}");
     assert_eq!(
         doctor["user_root_writes"],
-        "warn: the default workarea universe.alice.project lies in the root of user alice, where only alice's keys start memories; this tenant key's new memories there are refused (submission.user_root_refused); issue the agent a key with --user alice",
+        "warn: the default workspace universe.alice.project lies in the root of user alice, where only alice's keys start memories; this tenant key's new memories there are refused (submission.user_root_refused); issue the agent a key with --user alice",
         "{log}"
     );
     let (code, refused, log) = lab.json(Some(&loader_key), &["write", "The loader ran at noon."]);
@@ -5004,7 +5023,7 @@ async fn doctor_warns_when_a_tenant_writer_keys_default_workarea_lies_in_a_users
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn doctor_prints_role_tenant_and_default_workarea_from_whoami() {
+async fn doctor_prints_role_tenant_and_default_workspace_from_whoami() {
     let (url, seen, task) = doctor_stub().await;
     let pair = ["--url", url.as_str(), "--api-key", "oml_flag_key"];
 
@@ -5016,14 +5035,14 @@ async fn doctor_prints_role_tenant_and_default_workarea_from_whoami() {
             "role": "writer",
             "tenant": "acme",
             "user": null,
-            "default_workarea": "acme/metals",
+            "default_workspace": "acme/metals",
         }),
         "{log}"
     );
     let (code, text) = doctor_text(&pair, &[]);
     assert_eq!(code, 0, "{text}");
     assert!(
-        text.contains("whoami      : role writer, tenant acme, default workarea acme/metals\n"),
+        text.contains("whoami      : role writer, tenant acme, default workspace acme/metals\n"),
         "{text}"
     );
     // A key that names no user says so (ADR-0044 d14).
@@ -5060,7 +5079,7 @@ async fn canned_stub() -> (String, Recorder, tokio::task::JoinHandle<()>) {
         "version": 1,
         "kind": "memory",
         "state": "promoted",
-        "workarea_path": "universe.metals",
+        "workspace_path": "universe.metals",
         "text": "Supplier Accra Metals quoted 412 USD/t.",
     });
     let canned = json!({
@@ -5069,8 +5088,8 @@ async fn canned_stub() -> (String, Recorder, tokio::task::JoinHandle<()>) {
         "version": 1,
         "kind": "memory",
         "state": "held",
-        "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-        "workarea_path": "universe.metals",
+        "workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+        "workspace_path": "universe.metals",
         "text": "Supplier Accra Metals quoted 412 USD/t.",
         "retirement": false,
         "replaces": null,
@@ -5088,7 +5107,7 @@ async fn canned_stub() -> (String, Recorder, tokio::task::JoinHandle<()>) {
         "key_id": "0192f0a4-0000-7000-8000-000000000001",
         "value": STUB_VALUE,
         "tenant_id": "0192f0a4-0000-7000-8000-000000000002",
-        "root_workarea_id": "0192f0a4-0000-7000-8000-000000000003",
+        "root_workspace_id": "0192f0a4-0000-7000-8000-000000000003",
     });
     let router = axum::Router::new()
         .fallback(move || {
@@ -5321,8 +5340,8 @@ async fn oml_read_refuses_query_with_an_artifact_id() {
         (vec!["read", "--k", "3"], "--k"),
         (vec!["read", "--include-unreviewed"], "--include-unreviewed"),
         (
-            vec!["read", STUB_ARTIFACT, "--workarea", "metals"],
-            "--workarea",
+            vec!["read", STUB_ARTIFACT, "--workspace", "metals"],
+            "--workspace",
         ),
         (vec!["read", STUB_ARTIFACT, "--all"], "--all"),
         (vec!["read", "--own", "--all"], "--all"),
@@ -5354,7 +5373,7 @@ async fn oml_read_fetches_with_an_artifact_id_recalls_with_query_and_lists_with_
                 "Accra Metals",
                 "--k",
                 "3",
-                "--workarea",
+                "--workspace",
                 "metals",
                 "--kinds",
                 "memory",
@@ -5368,7 +5387,7 @@ async fn oml_read_fetches_with_an_artifact_id_recalls_with_query_and_lists_with_
                 "query": "Accra Metals",
                 "include_text": true,
                 "k": 3,
-                "workarea": "metals",
+                "workspace": "metals",
                 "kinds": ["memory", "derived_fact"],
                 "include_unreviewed": true,
             }),
@@ -5383,7 +5402,7 @@ async fn oml_read_fetches_with_an_artifact_id_recalls_with_query_and_lists_with_
             vec![
                 "read",
                 "--all",
-                "--workarea",
+                "--workspace",
                 "universe.metals",
                 "--state",
                 "promoted",
@@ -5399,7 +5418,7 @@ async fn oml_read_fetches_with_an_artifact_id_recalls_with_query_and_lists_with_
                 "c/1",
             ],
             "GET /v1/memories".to_owned(),
-            "own=false&workarea=universe.metals&state=promoted&kind=memory\
+            "own=false&workspace=universe.metals&state=promoted&kind=memory\
              &since=2026-11-01T00%3A00%3A00Z&until=2026-11-03T00%3A00%3A00Z&limit=5&cursor=c%2F1"
                 .to_owned(),
             Value::Null,
@@ -5532,7 +5551,7 @@ async fn oml_events_tails_get_v2_events_with_its_filters() {
             "events",
             "--after-seq",
             "4182",
-            "--workarea",
+            "--workspace",
             "metals",
             "--limit",
             "50",
@@ -5542,7 +5561,7 @@ async fn oml_events_tails_get_v2_events_with_its_filters() {
     assert!(stdout.contains("head seq 7"), "{stdout}");
     let sent = taken(&seen);
     assert_eq!(routes(&sent), vec!["GET /v2/events"], "{sent:?}");
-    assert_eq!(sent[0].query, "after_seq=4182&workarea=metals&limit=50");
+    assert_eq!(sent[0].query, "after_seq=4182&workspace=metals&limit=50");
     let (code, _, stderr) = stub_text(&server, &dir, &["events"]);
     assert_eq!(code, 0, "{stderr}");
     let sent = taken(&seen);
@@ -5556,7 +5575,7 @@ async fn review_approve_without_serve_id_approves_the_one_claimed_item() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("metals");
+    let wa = lab.workspace("metals");
     let writer = lab.issue(
         "crew-agent-1",
         &[
@@ -5571,21 +5590,21 @@ async fn review_approve_without_serve_id_approves_the_one_claimed_item() {
         .as_str()
         .expect("writer value")
         .to_owned();
-    let dreamer = lab.issue(
+    let reviewer = lab.issue(
         "crew-reviewer-1",
         &[
             "--role",
-            "dreamer",
-            "--held-by",
-            "human",
+            "reviewer",
+            "--used-by",
+            "person",
             "--principal",
             "crew/reviewer-1",
             "--grant",
-            &format!("{wa}:dreamer"),
+            &format!("{wa}:reviewer"),
         ],
     )["value"]
         .as_str()
-        .expect("dreamer value")
+        .expect("reviewer value")
         .to_owned();
     let (code, accepted, log) = lab.json(
         Some(&writer),
@@ -5594,11 +5613,11 @@ async fn review_approve_without_serve_id_approves_the_one_claimed_item() {
     assert_eq!(code, 0, "write: {log}");
 
     // With nothing claimed, the default has no item to apply to.
-    let (code, envelope, log) = lab.json(Some(&dreamer), &["review", "approve"]);
+    let (code, envelope, log) = lab.json(Some(&reviewer), &["review", "approve"]);
     assert_eq!(code, 1, "{log}");
     assert_eq!(envelope["error"]["code"], "request.validation", "{log}");
 
-    let (code, serve, log) = lab.json(Some(&dreamer), &["review", "next"]);
+    let (code, serve, log) = lab.json(Some(&reviewer), &["review", "next"]);
     assert_eq!(code, 0, "review next: {log}");
     assert_eq!(
         serve["item"]["artifact_id"], accepted["artifact_id"],
@@ -5606,7 +5625,7 @@ async fn review_approve_without_serve_id_approves_the_one_claimed_item() {
     );
     lab.take_requests();
     let (code, verdict, log) = lab.json(
-        Some(&dreamer),
+        Some(&reviewer),
         &["review", "approve", "--note", "matches the quote"],
     );
     assert_eq!(code, 0, "review approve: {log}");
@@ -6169,7 +6188,7 @@ async fn the_injected_text_stays_within_its_byte_budget_and_opens_with_the_data_
     for line in &lines[2..] {
         assert!(line.starts_with("- ") && line.len() <= 400, "{line}");
         assert!(
-            line.contains("(workarea ") && line.contains(", recorded "),
+            line.contains("(workspace ") && line.contains(", recorded "),
             "{line}"
         );
     }
@@ -6385,20 +6404,20 @@ async fn the_session_cache_never_holds_a_memory_body_and_is_deleted_at_session_e
 // ---------------------------------------------------------------------------
 
 impl Crew {
-    /// A dreamer key on the crew workarea that also reads it, named after
+    /// A reviewer key on the crew workspace that also reads it, named after
     /// its principal: it proposes, ratifies and reads the claims it links.
     fn curator(&self, principal: &str) -> String {
         self.lab.issue(
             principal,
             &[
                 "--role",
-                "dreamer",
-                "--held-by",
-                "human",
+                "reviewer",
+                "--used-by",
+                "person",
                 "--principal",
                 principal,
                 "--grant",
-                &format!("{}:dreamer", self.wa),
+                &format!("{}:reviewer", self.wa),
                 "--grant",
                 &format!("{}:reader", self.wa),
             ],
@@ -6426,7 +6445,7 @@ impl Crew {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn workareas_status_propose_pending_and_ratify_drive_the_transition_routes() {
+async fn workspaces_status_propose_pending_and_ratify_drive_the_transition_routes() {
     let Some(crew) = Crew::start().await else {
         return;
     };
@@ -6437,28 +6456,28 @@ async fn workareas_status_propose_pending_and_ratify_drive_the_transition_routes
     let (code, proposal, log) = crew.lab.json(
         Some(&dora),
         &[
-            "workareas",
+            "workspaces",
             "status",
             "propose",
             "metals",
             "--to",
-            "committed",
+            "protected",
         ],
     );
     assert_eq!(code, 0, "propose: {log}");
     let seen = crew.lab.take_requests();
-    assert_eq!(routes(&seen), ["POST /v2/workareas/metals/transitions"]);
-    assert_eq!(seen[0].body, json!({ "to": "committed" }));
+    assert_eq!(routes(&seen), ["POST /v2/workspaces/metals/transitions"]);
+    assert_eq!(seen[0].body, json!({ "to": "protected" }));
     assert_eq!(proposal["state"], "pending", "{log}");
     let transition = proposal["transition_id"].as_str().expect("id").to_owned();
 
     let (code, pending, log) = crew
         .lab
-        .json(Some(&dan), &["workareas", "status", "pending", "metals"]);
+        .json(Some(&dan), &["workspaces", "status", "pending", "metals"]);
     assert_eq!(code, 0, "pending: {log}");
     assert_eq!(
         routes(&crew.lab.take_requests()),
-        ["GET /v2/workareas/metals"]
+        ["GET /v2/workspaces/metals"]
     );
     assert_eq!(
         pending["pending_transitions"][0]["transition_id"],
@@ -6467,16 +6486,16 @@ async fn workareas_status_propose_pending_and_ratify_drive_the_transition_routes
 
     let (code, ratified, log) = crew.lab.json(
         Some(&dan),
-        &["workareas", "status", "ratify", "metals", &transition],
+        &["workspaces", "status", "ratify", "metals", &transition],
     );
     assert_eq!(code, 0, "ratify: {log}");
     assert_eq!(
         routes(&crew.lab.take_requests()),
         [format!(
-            "POST /v2/workareas/metals/transitions/{transition}/ratify"
+            "POST /v2/workspaces/metals/transitions/{transition}/ratify"
         )]
     );
-    assert_eq!(ratified["to"], "committed", "{log}");
+    assert_eq!(ratified["to"], "protected", "{log}");
     crew.lab.stop().await;
 }
 
@@ -6510,7 +6529,7 @@ async fn edges_propose_list_and_ratify_send_the_v2_edges_family_for_kind_claim_a
     let seen = crew.lab.take_requests();
     assert_eq!(
         seen[0].body,
-        json!({ "kind": "brief", "from_artifact_id": a, "to_workarea_id": "metals" })
+        json!({ "kind": "brief", "from_artifact_id": a, "to_workspace_id": "metals" })
     );
 
     for edge in [&claim_edge, &brief_edge] {
@@ -6526,21 +6545,21 @@ async fn edges_propose_list_and_ratify_send_the_v2_edges_family_for_kind_claim_a
 
     let (code, page, log) = crew.lab.json(
         Some(&dan),
-        &["edges", "list", "--kind", "brief", "--workarea", "metals"],
+        &["edges", "list", "--kind", "brief", "--workspace", "metals"],
     );
     assert_eq!(code, 0, "list: {log}");
     let seen = crew.lab.take_requests();
     assert_eq!(routes(&seen), ["GET /v2/edges"]);
-    assert_eq!(seen[0].query, "kind=brief&workarea_id=metals");
+    assert_eq!(seen[0].query, "kind=brief&workspace_id=metals");
     assert_eq!(page["items"][0]["edge_id"], brief_edge["edge_id"]);
     crew.lab.stop().await;
 }
 
-/// The hook reads the key's default workarea through whoami and prints its
+/// The hook reads the key's default workspace through whoami and prints its
 /// ratified brief, each member on one line, before the steering; a
-/// workarea with no brief adds no section (ADR-0046 d9; ADR-0029 d2).
+/// workspace with no brief adds no section (ADR-0046 d9; ADR-0029 d2).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_session_start_hook_prints_the_default_workareas_brief_before_the_steering() {
+async fn the_session_start_hook_prints_the_default_workspaces_brief_before_the_steering() {
     let Some(crew) = Crew::start().await else {
         return;
     };
@@ -6575,17 +6594,20 @@ async fn the_session_start_hook_prints_the_default_workareas_brief_before_the_st
             "GET /v1/memories".to_owned(),
             "POST /v1/memories/recall".to_owned(),
             "GET /v2/whoami".to_owned(),
-            format!("GET /v2/workareas/{}", crew.wa),
+            format!("GET /v2/workspaces/{}", crew.wa),
         ]
     );
     let context = context_of(&stdout);
-    let brief = section(&context, "Brief of this workarea, agreed by its reviewers:");
+    let brief = section(
+        &context,
+        "Brief of this workspace, agreed by its reviewers:",
+    );
     assert_eq!(
         brief,
         ["- sourcing-rule: Quote every supplier price with its source."]
     );
     let (at_brief, at_steering) = (
-        context.find("Brief of this workarea").expect("the brief"),
+        context.find("Brief of this workspace").expect("the brief"),
         context.find("Steering in force:").expect("steering"),
     );
     assert!(at_brief < at_steering, "the brief comes first");
@@ -6593,22 +6615,22 @@ async fn the_session_start_hook_prints_the_default_workareas_brief_before_the_st
 }
 
 /// The requests one session start sends under the crew's agent key: the
-/// own listing, the recall, then whoami and the default workarea's read for
+/// own listing, the recall, then whoami and the default workspace's read for
 /// its brief (ADR-0029 d2; ADR-0046 d9).
 fn session_start_routes(crew: &Crew) -> Vec<String> {
     vec![
         "GET /v1/memories".to_owned(),
         "POST /v1/memories/recall".to_owned(),
         "GET /v2/whoami".to_owned(),
-        format!("GET /v2/workareas/{}", crew.wa),
+        format!("GET /v2/workspaces/{}", crew.wa),
     ]
 }
 
-/// Doctor names the default workarea's brief, empty or how many members it
+/// Doctor names the default workspace's brief, empty or how many members it
 /// serves, and how many transitions wait there for a second identity
 /// (ADR-0046 Consequences, the doctor lines).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn doctor_names_an_empty_brief_and_the_transitions_waiting_on_the_default_workarea() {
+async fn doctor_names_an_empty_brief_and_the_transitions_waiting_on_the_default_workspace() {
     let Some(crew) = Crew::start().await else {
         return;
     };
@@ -6616,21 +6638,21 @@ async fn doctor_names_an_empty_brief_and_the_transitions_waiting_on_the_default_
     let (code, _, log) = crew.lab.json(
         Some(&dora),
         &[
-            "workareas",
+            "workspaces",
             "status",
             "propose",
             "metals",
             "--to",
-            "committed",
+            "protected",
         ],
     );
     assert_eq!(code, 0, "{log}");
 
     let (code, report, log) = crew.lab.json(Some(&crew.agent), &["doctor"]);
     assert_eq!(code, 0, "{log}");
-    assert_eq!(report["default_workarea"]["brief_items"], 0, "{report}");
+    assert_eq!(report["default_workspace"]["brief_items"], 0, "{report}");
     assert_eq!(
-        report["default_workarea"]["pending_transitions"], 1,
+        report["default_workspace"]["pending_transitions"], 1,
         "{report}"
     );
 
@@ -6683,9 +6705,9 @@ async fn doctor_search_stub(
                 "/readyz" => json!({ "status": "ok", "checks": {}, "search": search }),
                 "/v2/whoami" => json!({
                     "key_id": "k1", "name": "admin", "role": "admin",
-                    "principal": "acme/admin", "held_by": "human",
+                    "principal": "acme/admin", "used_by": "person",
                     "tenant": { "id": "t1", "name": "acme" },
-                    "default_workarea": null, "crew": null, "grants": [],
+                    "default_workspace": null, "crew": null, "grants": [],
                 }),
                 "/v2/search" => settings,
                 "/v2/events" => json!({ "events": [], "head_seq": 7 }),
@@ -6712,7 +6734,7 @@ async fn doctor_warns_on_the_scan_share_and_each_postings_fault_and_is_quiet_whe
         "enabled": ["keyword-any", "bm25", "bm25-postings"], "deployment_default": "bm25-postings",
         "tenant_default": null, "effective": "bm25-postings",
         "postings": { "partition": true, "unfilled": 0, "served_behind": 0,
-                      "workarea_drift": 0, "term_drift": 0, "terms_checked": 200 },
+                      "workspace_drift": 0, "term_drift": 0, "terms_checked": 200 },
     });
     let run = |url: String| {
         let (code, doctor, log) = doctor_run(
@@ -6756,14 +6778,14 @@ async fn doctor_warns_on_the_scan_share_and_each_postings_fault_and_is_quiet_whe
     // Each fault in the tenant's postings, one line each.
     let mut faulty = healthy.clone();
     faulty["postings"] = json!({ "partition": true, "unfilled": 3, "served_behind": 2,
-                                 "workarea_drift": 1, "term_drift": 5, "terms_checked": 200 });
+                                 "workspace_drift": 1, "term_drift": 5, "terms_checked": 200 });
     let (url, task) = doctor_search_stub(readyz.clone(), faulty, 10, 0).await;
     let (verdict, lines, log) = run(url);
     assert_eq!(verdict, "warn", "{log}");
     for says in [
         "warn search: the postings fill is incomplete: 3 memory versions have no postings",
         "warn search: 2 served memories have no served postings",
-        "warn search: the postings counts disagree: 1 workarea count, 5 of 200 sampled word counts",
+        "warn search: the postings counts disagree: 1 workspace count, 5 of 200 sampled word counts",
     ] {
         assert!(lines.iter().any(|l| l.starts_with(says)), "{says}: {log}");
     }
@@ -6799,15 +6821,15 @@ async fn oml_review_list_and_approve_ids_judge_each_listed_item() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("adr-import");
-    let issue = |name: &str, role: &str, held_by: &str, principal: &str, grant: &str| {
+    let wa = lab.workspace("adr-import");
+    let issue = |name: &str, role: &str, used_by: &str, principal: &str, grant: &str| {
         lab.issue(
             name,
             &[
                 "--role",
                 role,
-                "--held-by",
-                held_by,
+                "--used-by",
+                used_by,
                 "--principal",
                 principal,
                 "--grant",
@@ -6820,7 +6842,7 @@ async fn oml_review_list_and_approve_ids_judge_each_listed_item() {
     };
     let loader = issue("loader", "writer", "agent", "crew/loader", "writer");
     let twin = issue("twin", "writer", "agent", "eugene", "writer");
-    let reviewer = issue("eugene-review", "dreamer", "human", "eugene", "dreamer");
+    let reviewer = issue("eugene-review", "reviewer", "person", "eugene", "reviewer");
     for key in ["adr-0001-d1", "adr-0001-d2"] {
         let (code, _, log) = lab.json(
             Some(&loader),
@@ -6829,7 +6851,7 @@ async fn oml_review_list_and_approve_ids_judge_each_listed_item() {
                 &format!("Decision {key}."),
                 "--claim-key",
                 key,
-                "--workarea",
+                "--workspace",
                 &wa,
             ],
         );
@@ -6842,7 +6864,7 @@ async fn oml_review_list_and_approve_ids_judge_each_listed_item() {
             "Decision adr-0002-d1.",
             "--claim-key",
             "adr-0002-d1",
-            "--workarea",
+            "--workspace",
             &wa,
         ],
     );
@@ -6898,7 +6920,13 @@ async fn oml_review_list_and_approve_ids_judge_each_listed_item() {
     // `oml doctor` says which reviewer key may review in bulk: an ok line
     // for the person's key, a warning naming the fix for a crew's key held
     // by an agent, and no line for a key that does not review (ADR-0055 d13).
-    let crew = issue("crew-review", "dreamer", "agent", "crew/review", "dreamer");
+    let crew = issue(
+        "crew-review",
+        "reviewer",
+        "agent",
+        "crew/review",
+        "reviewer",
+    );
     let (_, person, _) = lab.json(Some(&reviewer), &["doctor"]);
     assert!(
         person["review"]
@@ -6909,7 +6937,7 @@ async fn oml_review_list_and_approve_ids_judge_each_listed_item() {
     let (_, crew_doctor, _) = lab.json(Some(&crew), &["doctor"]);
     let line = crew_doctor["review"].as_str().unwrap_or_default();
     assert!(
-        line.starts_with("warn bulk review") && line.contains("--held-by human"),
+        line.starts_with("warn bulk review") && line.contains("--used-by person"),
         "{crew_doctor}"
     );
     assert_eq!(crew_doctor["verdict"], "warn", "{crew_doctor}");
@@ -6967,27 +6995,27 @@ const SYNC_ADR_2: &str = "# ADR-0002 — Two\n\n**Status:** accepted\n\n**Amends
 /// records load as anchored held claims, a person reviews them in bulk, a
 /// second run writes nothing and records each tip fresh, an edit is stale
 /// to `--check` and superseded by the next run, a rename is moved with no
-/// write, and the stated edge is proposed by one dreamer and ratified by
+/// write, and the stated edge is proposed by one reviewer and ratified by
 /// another.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn oml_sync_keeps_a_workarea_in_step_with_a_clones_records() {
+async fn oml_sync_keeps_a_workspace_in_step_with_a_clones_records() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("oml-design");
-    let issue = |name: &str, role: &str, held_by: &str, principal: &str| {
+    let wa = lab.workspace("oml-design");
+    let issue = |name: &str, role: &str, used_by: &str, principal: &str| {
         lab.issue(
             name,
             &[
                 "--role",
                 role,
-                "--held-by",
-                held_by,
+                "--used-by",
+                used_by,
                 "--principal",
                 principal,
                 "--grant",
                 &format!("{wa}:{role}"),
-                // A person's dreamer reads the tips it links (ADR-0057 d10).
+                // A person's reviewer reads the tips it links (ADR-0057 d10).
                 "--grant",
                 &format!("{wa}:reader"),
             ],
@@ -6997,8 +7025,8 @@ async fn oml_sync_keeps_a_workarea_in_step_with_a_clones_records() {
             .to_owned()
     };
     let sync = issue("design-sync", "writer", "service", "crew/design-sync");
-    let reviewer = issue("eugene-review", "dreamer", "human", "eugene");
-    let ratifier = issue("ana-review", "dreamer", "human", "ana");
+    let reviewer = issue("eugene-review", "reviewer", "person", "eugene");
+    let ratifier = issue("ana-review", "reviewer", "person", "ana");
     let clone = lab.dir.join("clone");
     std::fs::create_dir_all(clone.join("docs/adr")).expect("clone dir");
     git_in(&clone, &["init", "-q", "-b", "main"]);
@@ -7011,7 +7039,7 @@ async fn oml_sync_keeps_a_workarea_in_step_with_a_clones_records() {
     git_in(&clone, &["add", "."]);
     git_in(&clone, &["commit", "-q", "-m", "records"]);
     let run = |key: &str, extra: &[&str]| {
-        let mut args = vec!["sync", "docs/adr", "--workarea", "oml-design"];
+        let mut args = vec!["sync", "docs/adr", "--workspace", "oml-design"];
         args.extend_from_slice(extra);
         oml_at(&lab, key, &clone, &args)
     };
@@ -7023,7 +7051,7 @@ async fn oml_sync_keeps_a_workarea_in_step_with_a_clones_records() {
             &[
                 "review",
                 "list",
-                "--workarea",
+                "--workspace",
                 "oml-design",
                 "--author-key",
                 "design-sync",
@@ -7057,7 +7085,7 @@ async fn oml_sync_keeps_a_workarea_in_step_with_a_clones_records() {
         first["items"], dry["items"],
         "the dry run's plan is the run's"
     );
-    let (code, held, log) = lab.json(Some(&sync), &["read", "--own", "--workarea", "oml-design"]);
+    let (code, held, log) = lab.json(Some(&sync), &["read", "--own", "--workspace", "oml-design"]);
     assert_eq!(code, 0, "{log}");
     let d1 = held["items"]
         .as_array()
@@ -7104,7 +7132,8 @@ async fn oml_sync_keeps_a_workarea_in_step_with_a_clones_records() {
         edited["summary"]["changed"], 1,
         "the decision alone, since the summary's span holds only its headline: {log}"
     );
-    let (code, served, log) = lab.json(Some(&sync), &["read", "--all", "--workarea", "oml-design"]);
+    let (code, served, log) =
+        lab.json(Some(&sync), &["read", "--all", "--workspace", "oml-design"]);
     assert_eq!(code, 0, "{log}");
     let d2 = served["items"]
         .as_array()
@@ -7136,7 +7165,7 @@ async fn oml_sync_keeps_a_workarea_in_step_with_a_clones_records() {
     assert_eq!(moved["summary"]["moved"], 2, "{log}");
     assert_eq!(moved["summary"]["writes_this_run"], 0, "{log}");
 
-    // The edge: proposed by one person's dreamer key, ratified by another's.
+    // The edge: proposed by one person's reviewer key, ratified by another's.
     let (code, proposed, log) = run(&reviewer, &["--edges"]);
     assert_eq!(code, 0, "edges: {log}");
     assert_eq!(proposed["edges"][0]["state"], "pending", "{log}");
@@ -7162,15 +7191,15 @@ async fn oml_sync_loads_a_crates_docs_and_a_code_edit_writes_nothing() {
     let Some(lab) = Lab::start().await else {
         return;
     };
-    let wa = lab.workarea("oml-code");
-    let issue = |name: &str, role: &str, held_by: &str, principal: &str| {
+    let wa = lab.workspace("oml-code");
+    let issue = |name: &str, role: &str, used_by: &str, principal: &str| {
         lab.issue(
             name,
             &[
                 "--role",
                 role,
-                "--held-by",
-                held_by,
+                "--used-by",
+                used_by,
                 "--principal",
                 principal,
                 "--grant",
@@ -7184,7 +7213,7 @@ async fn oml_sync_loads_a_crates_docs_and_a_code_edit_writes_nothing() {
             .to_owned()
     };
     let sync = issue("code-sync", "writer", "service", "crew/code-sync");
-    let reviewer = issue("eugene-code-review", "dreamer", "human", "eugene");
+    let reviewer = issue("eugene-code-review", "reviewer", "person", "eugene");
     let clone = lab.dir.join("code-clone");
     std::fs::create_dir_all(clone.join("crates/demo/src")).expect("clone dir");
     git_in(&clone, &["init", "-q", "-b", "main"]);
@@ -7202,7 +7231,7 @@ async fn oml_sync_loads_a_crates_docs_and_a_code_edit_writes_nothing() {
         let mut args = vec![
             "sync",
             "crates",
-            "--workarea",
+            "--workspace",
             "oml-code",
             "--adapter",
             "rust",
@@ -7218,7 +7247,7 @@ async fn oml_sync_loads_a_crates_docs_and_a_code_edit_writes_nothing() {
             &[
                 "review",
                 "list",
-                "--workarea",
+                "--workspace",
                 "oml-code",
                 "--author-key",
                 "code-sync",
@@ -7246,7 +7275,7 @@ async fn oml_sync_loads_a_crates_docs_and_a_code_edit_writes_nothing() {
         first["items"], dry["items"],
         "the dry run's plan is the run's"
     );
-    let (code, held, log) = lab.json(Some(&sync), &["read", "--own", "--workarea", "oml-code"]);
+    let (code, held, log) = lab.json(Some(&sync), &["read", "--own", "--workspace", "oml-code"]);
     assert_eq!(code, 0, "{log}");
     let tip = |key: &str| -> Value {
         held["items"]
@@ -7307,7 +7336,7 @@ async fn oml_sync_loads_a_crates_docs_and_a_code_edit_writes_nothing() {
             &[
                 "sync",
                 ".",
-                "--workarea",
+                "--workspace",
                 "oml-code",
                 "--adapter",
                 "rust",

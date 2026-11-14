@@ -1,7 +1,7 @@
 //! The ten operations the web console needs that no other operation serves
 //! (ADR-0070 d5, "New operations"), each the documented face of a use case
 //! the pages already call: the person's keys, the review queue, a person's
-//! capacities, a workarea's offers, the end of a session, the personal
+//! capacities, a workspace's offers, the end of a session, the personal
 //! export and deletion request, and the admin's quota, disable and deletion
 //! close. Each takes any credential under the operation's own rules; the
 //! person's own acts (#1 for a non-admin, #5, #6, #7) only a session key's,
@@ -18,7 +18,7 @@ use axum::response::Response;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use oml_app::app::{ActClaim, ActTicket, Caller, Capacity, OwnKey, WorkareaOffer};
+use oml_app::app::{ActClaim, ActTicket, Caller, Capacity, OwnKey, WorkspaceOffer};
 use oml_app::domain::Role;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::signup::Quota;
@@ -33,8 +33,8 @@ use crate::{
     parse_json, parse_role, reference, retry_chain, session,
 };
 
-/// The most workareas one capacities request names.
-const CAPACITY_WORKAREAS_MAX: usize = 50;
+/// The most workspaces one capacities request names.
+const CAPACITY_WORKSPACES_MAX: usize = 50;
 
 /// A refusal of a person's own act to anything but their session key:
 /// `access.verb_ceiling`, `details.reason: session_key_only` (ADR-0070 d5;
@@ -105,7 +105,7 @@ fn user_param(user: &str) -> Result<Name, ApiError> {
 fn grant_json(grant: &GrantRecord) -> Value {
     json!({
         "grant_id": grant.grant.grant_id,
-        "workarea_node_id": grant.grant.node,
+        "workspace_node_id": grant.grant.node,
         "role": grant.grant.role.as_str(),
         "covers": grant.grant.covers.as_str(),
         "epoch": grant.epoch,
@@ -116,7 +116,7 @@ fn grant_json(grant: &GrantRecord) -> Value {
 #[serde(deny_unknown_fields)]
 struct CapacitiesBody {
     capacity: String,
-    workareas: Vec<String>,
+    workspaces: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -379,7 +379,7 @@ where
         F: std::future::Future<Output = Result<Acted, ActFailure>> + Send + 'static,
     {
         // The task carries the request's span, its traffic scope (the key,
-        // the workarea, the store time and the counters the act observes)
+        // the workspace, the store time and the counters the act observes)
         // and its session, as every task-local the request set (#233).
         let span = tracing::Span::current();
         let scope = crate::traffic::current_scope();
@@ -646,12 +646,12 @@ where
             for g in k.access.iter().flat_map(|a| &a.grants) {
                 let path = st
                     .app
-                    .workarea_path(&caller, g.grant.node)
+                    .workspace_path(&caller, g.grant.node)
                     .await
                     .map_err(|e| map_app_error(e, ErrorContext::Write))?;
                 grants.push(json!({
                     "role": g.grant.role.as_str(),
-                    "workarea_id": g.grant.node,
+                    "workspace_id": g.grant.node,
                     "path": path,
                 }));
             }
@@ -659,7 +659,7 @@ where
                 "id": k.key.key_id,
                 "name": k.key.name.as_ref().map(Name::as_str),
                 "role": k.key.role.as_str(),
-                "held_by": k.key.held_by.as_str(),
+                "used_by": k.key.used_by.as_str(),
                 "credential": k.key.credential.as_str(),
                 "user_root_id": k.key.user,
                 "revoked": k.key.revoked_at.is_some(),
@@ -696,7 +696,7 @@ where
     }
 
     /// `GET /v2/review/queue`, admin by key role: the held count and the
-    /// oldest per workarea, tenant-wide, by path, and no content
+    /// oldest per workspace, tenant-wide, by path, and no content
     /// (ADR-0045 d10).
     async fn review_queue_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
         let caller = st.console_caller(headers).await?;
@@ -709,7 +709,7 @@ where
             StatusCode::OK,
             &json!({
                 "items": rows.iter().map(|r| json!({
-                    "workarea_id": r.depth.workarea_id,
+                    "workspace_id": r.depth.workspace_id,
                     "path": r.path,
                     "held": r.depth.held,
                     "oldest_at": r.depth.oldest.as_str(),
@@ -734,7 +734,7 @@ where
     }
 
     /// `POST /v2/web/users/{user}/capacities`, admin by key role: the
-    /// person's `<user>-review` gains dreamer and reader on each workarea,
+    /// person's `<user>-review` gains reviewer and reader on each workspace,
     /// or `<user>-curate`, created at the first designation, gains reader on
     /// each; every grant a `grant.issued` (ADR-0045 d10; ADR-0044 d7).
     async fn grant_capacities_inner(
@@ -761,34 +761,34 @@ where
                     .with_details(json!({ "field": "/capacity" })));
             }
         };
-        if req.workareas.is_empty() || req.workareas.len() > CAPACITY_WORKAREAS_MAX {
+        if req.workspaces.is_empty() || req.workspaces.len() > CAPACITY_WORKSPACES_MAX {
             return Err(ApiError::validation(format!(
-                "workareas names 1 to {CAPACITY_WORKAREAS_MAX} workareas"
+                "workspaces names 1 to {CAPACITY_WORKSPACES_MAX} workspaces"
             ))
-            .with_details(json!({ "field": "/workareas" })));
+            .with_details(json!({ "field": "/workspaces" })));
         }
-        let workareas: Vec<Reference> = req
-            .workareas
+        let workspaces: Vec<Reference> = req
+            .workspaces
             .iter()
             .enumerate()
-            .map(|(i, w)| reference(&format!("/workareas/{i}"), w))
+            .map(|(i, w)| reference(&format!("/workspaces/{i}"), w))
             .collect::<Result<_, _>>()?;
         let st = st.clone();
         claim
             .run(async move {
                 let mut key = None;
                 let mut added = Vec::new();
-                for workarea in workareas {
+                for workspace in workspaces {
                     let granted = if curate {
                         retry_chain(|| {
                             st.app
-                                .grant_curation_capacity(&caller, &user, workarea.clone())
+                                .grant_curation_capacity(&caller, &user, workspace.clone())
                         })
                         .await
                     } else {
                         retry_chain(|| {
                             st.app
-                                .grant_review_capacity(&caller, &user, workarea.clone())
+                                .grant_review_capacity(&caller, &user, workspace.clone())
                         })
                         .await
                     }
@@ -818,38 +818,38 @@ where
             .await
     }
 
-    // -- #4 GET /v2/workareas/{workarea}/offers -------------------------------
+    // -- #4 GET /v2/workspaces/{workspace}/offers -------------------------------
 
-    pub(crate) async fn workarea_offers(
+    pub(crate) async fn workspace_offers(
         State(st): State<Self>,
         rid: Rid,
-        Path(workarea): Path<String>,
+        Path(workspace): Path<String>,
         headers: HeaderMap,
     ) -> Response {
         finish(
             &rid,
-            Self::workarea_offers_inner(&st, &workarea, &headers).await,
+            Self::workspace_offers_inner(&st, &workspace, &headers).await,
         )
     }
 
-    /// `GET /v2/workareas/{workarea}/offers`: the transitions, the mode
-    /// change and the commit the caller's verbs admit on the workarea now,
+    /// `GET /v2/workspaces/{workspace}/offers`: the transitions, the mode
+    /// change and the commit the caller's verbs admit on the workspace now,
     /// each judged by the verb's own check, and a commit withheld with the
     /// held rows that stop it, and each act not offered with the refusal its
-    /// verb would answer (ADR-0045 d28). A workarea the caller cannot read
+    /// verb would answer (ADR-0045 d28). A workspace the caller cannot read
     /// is `access.not_found`.
-    async fn workarea_offers_inner(
+    async fn workspace_offers_inner(
         st: &Self,
-        workarea: &str,
+        workspace: &str,
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, None)?;
-        let node = reference("workarea", workarea)?;
+        let node = reference("workspace", workspace)?;
         let offers = st.offers_json(acting.bearer(), node).await?;
         Ok(json_response(StatusCode::OK, &offers))
     }
 
-    /// The body of `GET /v2/workareas/{workarea}/offers` for `bearer`, which
+    /// The body of `GET /v2/workspaces/{workspace}/offers` for `bearer`, which
     /// the counted tree also serves as its scope's `offers` to the caller it
     /// resolved (#286): the same reads, the same checks, the same body.
     pub(crate) async fn offers_json(
@@ -857,15 +857,15 @@ where
         bearer: Bearer<'_>,
         node: Reference,
     ) -> Result<Value, ApiError> {
-        // A workarea the caller cannot read is absent, as its read answers
+        // A workspace the caller cannot read is absent, as its read answers
         // it (R3); the offers name nothing of one.
         self.app
-            .workarea_info(bearer, Some(node.clone()))
+            .workspace_info(bearer, Some(node.clone()))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let (offers, refusals) = self
             .app
-            .workarea_offers_explained_for(bearer, node)
+            .workspace_offers_explained_for(bearer, node)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         // Each act not offered, with the refusal its verb would answer, so
@@ -874,10 +874,10 @@ where
             .into_iter()
             .map(|(act, e)| {
                 let (op, to) = match act {
-                    WorkareaOffer::Propose(to) => ("propose", to.as_str()),
-                    WorkareaOffer::InProgress => ("mode", "in_progress"),
-                    WorkareaOffer::Commit => ("mode", "standard"),
-                    WorkareaOffer::Ratify { to, .. } => ("ratify", to.as_str()),
+                    WorkspaceOffer::Propose(to) => ("propose", to.as_str()),
+                    WorkspaceOffer::InProgress => ("mode", "in_progress"),
+                    WorkspaceOffer::Commit => ("mode", "standard"),
+                    WorkspaceOffer::Ratify { to, .. } => ("ratify", to.as_str()),
                 };
                 let e = map_app_error(e, ErrorContext::Write);
                 json!({ "op": op, "to": to, "code": e.code, "message": e.message })
@@ -888,10 +888,10 @@ where
         let mut commit_offered = false;
         for offer in &offers.offers {
             match offer {
-                WorkareaOffer::Propose(to) => {
+                WorkspaceOffer::Propose(to) => {
                     transitions.push(json!({ "op": "propose", "to": to.as_str() }));
                 }
-                WorkareaOffer::Ratify {
+                WorkspaceOffer::Ratify {
                     transition_id,
                     from,
                     to,
@@ -901,12 +901,12 @@ where
                     "from": from.as_str(),
                     "to": to.as_str(),
                 })),
-                WorkareaOffer::InProgress => mode_change = json!({ "to": "in_progress" }),
-                WorkareaOffer::Commit => commit_offered = true,
+                WorkspaceOffer::InProgress => mode_change = json!({ "to": "in_progress" }),
+                WorkspaceOffer::Commit => commit_offered = true,
             }
         }
         Ok(json!({
-                "workarea_id": offers.workarea_id,
+                "workspace_id": offers.workspace_id,
                 "status": offers.status.as_str(),
                 "mode": if offers.in_progress { "in_progress" } else { "standard" },
                 "transitions": transitions,
@@ -1261,8 +1261,8 @@ where
             ("/grants", !req.grants.is_empty()),
             ("/label", req.label.is_some()),
             ("/principal", req.principal.is_some()),
-            ("/held_by", req.held_by.is_some()),
-            ("/default_workarea", req.default_workarea.is_some()),
+            ("/used_by", req.used_by.is_some()),
+            ("/default_workspace", req.default_workspace.is_some()),
             ("/crew", req.crew.is_some()),
             ("/user", req.user.is_some()),
             ("/guardrail_scope", req.guardrail_scope.is_some()),
@@ -1345,7 +1345,7 @@ where
         if !matches!(node, Reference::Name(n) if n.as_str() == "universe") {
             return Err(
                 ApiError::validation("a session key cuts a key off on universe only")
-                    .with_details(json!({ "field": "/workarea" })),
+                    .with_details(json!({ "field": "/workspace" })),
             );
         }
         let Reference::Name(key) = key else {

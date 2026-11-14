@@ -128,7 +128,7 @@ fn error_code(body: &Value) -> &str {
     body["error"]["code"].as_str().unwrap_or("<no code>")
 }
 
-/// The bootstrap ceremony; returns (admin token, root workarea id).
+/// The bootstrap ceremony; returns (admin token, root workspace id).
 async fn bootstrap(router: &Router) -> (String, Uuid) {
     let (status, body) = send(
         router,
@@ -146,7 +146,7 @@ async fn bootstrap(router: &Router) -> (String, Uuid) {
     .await;
     assert_eq!(status, StatusCode::CREATED, "bootstrap claim: {body}");
     let token = body["value"].as_str().expect("show-once value").to_owned();
-    let root = Uuid::parse_str(body["root_workarea_id"].as_str().expect("root id")).expect("uuid");
+    let root = Uuid::parse_str(body["root_workspace_id"].as_str().expect("root id")).expect("uuid");
     (token, root)
 }
 
@@ -157,7 +157,7 @@ async fn issue(
     name: &str,
     role: &str,
     principal: &str,
-    held_by: &str,
+    used_by: &str,
     grants: Value,
 ) -> Value {
     let (status, body) = send(
@@ -168,7 +168,7 @@ async fn issue(
         Some(&format!("issue-{name}")),
         Some(json!({
             "role": role, "name": name, "principal": principal,
-            "held_by": held_by, "grants": grants,
+            "used_by": used_by, "grants": grants,
         })),
     )
     .await;
@@ -183,18 +183,18 @@ fn value_of(issued: &Value) -> String {
         .to_owned()
 }
 
-async fn create_workarea(router: &Router, admin: &str, parent: Uuid, name: &str) -> Uuid {
+async fn create_workspace(router: &Router, admin: &str, parent: Uuid, name: &str) -> Uuid {
     let (status, body) = send(
         router,
         "POST",
-        "/v2/workareas",
+        "/v2/workspaces",
         Some(admin),
         Some(&format!("wa-{name}")),
         Some(json!({ "parent": parent, "name": name })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
-    Uuid::parse_str(body["id"].as_str().expect("workarea id")).expect("uuid")
+    Uuid::parse_str(body["id"].as_str().expect("workspace id")).expect("uuid")
 }
 
 /// A fresh Idempotency-Key per request a test means as new.
@@ -213,12 +213,12 @@ struct World {
 async fn world() -> Option<World> {
     let rig = fresh_rig().await?;
     let (admin, root) = bootstrap(&rig.router).await;
-    let node = create_workarea(&rig.router, &admin, root, "docs").await;
+    let node = create_workspace(&rig.router, &admin, root, "docs").await;
     let on = |roles: &[&str]| {
         Value::from(
             roles
                 .iter()
-                .map(|r| json!({ "workarea": node, "role": r }))
+                .map(|r| json!({ "workspace": node, "role": r }))
                 .collect::<Vec<_>>(),
         )
     };
@@ -239,10 +239,10 @@ async fn world() -> Option<World> {
             &rig.router,
             &admin,
             "person-review",
-            "dreamer",
+            "reviewer",
             "person-review",
-            "human",
-            on(&["dreamer", "reader"]),
+            "person",
+            on(&["reviewer", "reader"]),
         )
         .await,
     );
@@ -256,7 +256,7 @@ async fn world() -> Option<World> {
 
 impl World {
     async fn write(&self, key: &str, body: Value) -> (StatusCode, Value) {
-        let mut request = json!({ "claim_key": key, "kind": "memory", "workarea": self.node });
+        let mut request = json!({ "claim_key": key, "kind": "memory", "workspace": self.node });
         for (k, v) in body.as_object().expect("object") {
             request[k] = v.clone();
         }
@@ -498,7 +498,7 @@ async fn an_unknown_format_is_request_validation_listing_the_accepted_values() {
     // Steering reads prose: another format is refused naming `format`.
     let (status, body) = send(
         &w.rig.router, "POST", "/v1/memories", Some(&w.writer), Some("steer-fmt"),
-        Some(json!({ "kind": "steering", "body": "{\"a\":1}", "workarea": w.node, "format": "application/json", "title": "t" })),
+        Some(json!({ "kind": "steering", "body": "{\"a\":1}", "workspace": w.node, "format": "application/json", "title": "t" })),
     ).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["details"]["field"], "format");
@@ -618,7 +618,7 @@ async fn search_reads_the_derived_search_text_of_a_diagram() {
         "/v1/memories/recall",
         Some(&w.writer),
         None,
-        Some(json!({ "query": "which service calls Payments", "workarea": w.node })),
+        Some(json!({ "query": "which service calls Payments", "workspace": w.node })),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{hits}");
@@ -679,12 +679,12 @@ async fn the_near_copy_keys_of_a_diagram_are_the_keys_of_its_search_text() {
 async fn the_rescan_finds_what_admission_finds_in_a_titled_json_claim() {
     let Some(rig) = fresh_rig().await else { return };
     let (admin, root) = bootstrap(&rig.router).await;
-    let node = create_workarea(&rig.router, &admin, root, "notes").await;
+    let node = create_workspace(&rig.router, &admin, root, "notes").await;
     let on = |roles: &[&str]| {
         Value::from(
             roles
                 .iter()
-                .map(|r| json!({ "workarea": node, "role": r }))
+                .map(|r| json!({ "workspace": node, "role": r }))
                 .collect::<Vec<_>>(),
         )
     };
@@ -705,10 +705,10 @@ async fn the_rescan_finds_what_admission_finds_in_a_titled_json_claim() {
             &rig.router,
             &admin,
             "person-review",
-            "dreamer",
+            "reviewer",
             "person-review",
-            "human",
-            on(&["dreamer", "reader"]),
+            "person",
+            on(&["reviewer", "reader"]),
         )
         .await,
     );
@@ -722,7 +722,7 @@ async fn the_rescan_finds_what_admission_finds_in_a_titled_json_claim() {
         Some(&writer),
         Some("titled-json"),
         Some(json!({
-            "claim_key": "titled-json", "kind": "memory", "workarea": node,
+            "claim_key": "titled-json", "kind": "memory", "workspace": node,
             "format": "application/json", "title": persona, "body": body,
         })),
     )

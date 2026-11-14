@@ -1,4 +1,4 @@
-//! `oml sync`: read a source at one commit, diff it against a workarea and
+//! `oml sync`: read a source at one commit, diff it against a workspace and
 //! write the plan, or check it, or propose and ratify its edges (ADR-0057
 //! d6–d11, d14). Every call goes through [`SyncApi`], so a run is tested
 //! against a fake.
@@ -25,7 +25,7 @@ pub const MAX_WRITES: usize = 200;
 #[derive(Clone, Debug, Default)]
 pub struct Options {
     pub source: String,
-    pub workarea: String,
+    pub workspace: String,
     pub adapter: Option<Kind>,
     pub rev: String,
     pub repo: Option<String>,
@@ -44,27 +44,27 @@ pub struct Options {
     /// Allow an exclude set other than the one recorded for this source.
     pub change_exclude: bool,
     /// Allow `--adapter` to name another adapter than the one the
-    /// workarea's claims of this source were written by.
+    /// workspace's claims of this source were written by.
     pub change_adapter: bool,
     /// Drafts mode: the pull request whose records load into
-    /// `<workarea>-pr-<n>` (ADR-0057 d14).
+    /// `<workspace>-pr-<n>` (ADR-0057 d14).
     pub pr: Option<u64>,
     pub base: String,
 }
 
 impl Options {
-    /// The workarea the run diffs: `<workarea>-pr-<n>` in drafts mode.
+    /// The workspace the run diffs: `<workspace>-pr-<n>` in drafts mode.
     #[must_use]
-    pub fn target_workarea(&self) -> String {
+    pub fn target_workspace(&self) -> String {
         match self.pr {
-            Some(n) => format!("{}-pr-{n}", self.workarea),
-            None => self.workarea.clone(),
+            Some(n) => format!("{}-pr-{n}", self.workspace),
+            None => self.workspace.clone(),
         }
     }
 }
 
 /// A source read at one commit: its files' bytes, not yet extracted, since
-/// the adapter is the workarea's (ADR-0057 d7).
+/// the adapter is the workspace's (ADR-0057 d7).
 #[derive(Clone, Debug)]
 pub struct Loaded {
     pub repo: String,
@@ -228,7 +228,7 @@ pub fn load(cwd: &Path, opts: &Options) -> Result<Loaded, String> {
         return Err(format!(
             "this clone last synced {path} into {} excluding [{}]; this run excludes [{}]. Pass \
              --change-exclude to change the set",
-            opts.target_workarea(),
+            opts.target_workspace(),
             recorded.replace(',', ", "),
             opts.exclude.join(", ")
         ));
@@ -275,7 +275,7 @@ pub fn load(cwd: &Path, opts: &Options) -> Result<Loaded, String> {
 
 /// The git config entry recording a source's exclude set on this clone.
 fn exclude_config(opts: &Options, path: &str) -> String {
-    let id = super::hash::sha256(format!("{}\0{path}", opts.target_workarea()).as_bytes());
+    let id = super::hash::sha256(format!("{}\0{path}", opts.target_workspace()).as_bytes());
     format!(
         "oml.sync-{}.exclude",
         &id["sha256:".len().."sha256:".len() + 16]
@@ -337,15 +337,15 @@ pub fn execute(
     if opts.retire_all && opts.pr.is_none() {
         return Err(CliError::local(
             "--retire-all requires --pr <n>; it only retires draft claims and never changes \
-             the main workarea",
+             the main workspace",
         ));
     }
-    let workarea = opts.target_workarea();
-    let workarea_id = api.workarea_id(&workarea)?;
+    let workspace = opts.target_workspace();
+    let workspace_id = api.workspace_id(&workspace)?;
     let me = api.me()?;
     let mut ctx = Context {
-        workarea: workarea.clone(),
-        workarea_id: workarea_id.clone(),
+        workspace: workspace.clone(),
+        workspace_id: workspace_id.clone(),
         repo: loaded.repo.clone(),
         rev: loaded.commit.clone(),
         scope: loaded.scope.clone(),
@@ -359,7 +359,7 @@ pub fn execute(
     };
     let served = list_served(api, &ctx)?;
     let own = api.list(&ListQuery {
-        workarea: workarea.clone(),
+        workspace: workspace.clone(),
         own: true,
         ..ListQuery::default()
     })?;
@@ -403,7 +403,7 @@ pub fn execute(
         kind.name(),
         hashers_line(kind)
     ));
-    p.line(&format!("workarea  {workarea}  key {}", me.name));
+    p.line(&format!("workspace  {workspace}  key {}", me.name));
     for (file, why) in &x.unreadable {
         p.line(&format!("unreadable {file}: {why}"));
     }
@@ -430,7 +430,7 @@ pub fn execute(
         .chain(own.iter().map(|v| v.claim_key.clone()))
         .collect();
     let existing = if opts.check {
-        api.claim_edges(&workarea_id)?
+        api.claim_edges(&workspace_id)?
     } else {
         Vec::new()
     };
@@ -439,7 +439,7 @@ pub fn execute(
         return run_check(api, loaded, &x, opts, &plan, &edges, &mut p);
     }
     if !opts.dry_run {
-        write_plan(api, &mut plan, &workarea)?;
+        write_plan(api, &mut plan, &workspace)?;
     }
     for e in &plan.entries {
         p.line(&entry_line(e));
@@ -450,27 +450,27 @@ pub fn execute(
     let wrote = plan.entries.iter().any(|e| e.writes_this_run);
     if !opts.dry_run && wrote {
         p.line(&format!(
-            "review    oml review list --workarea {workarea} --author-key {}",
+            "review    oml review list --workspace {workspace} --author-key {}",
             me.name
         ));
         p.line(&format!(
-            "          oml review list --workarea {workarea} --author-key {} --ids-only | oml review approve --ids -",
+            "          oml review list --workspace {workspace} --author-key {} --ids-only | oml review approve --ids -",
             me.name
         ));
     }
     let failed = !x.unreadable.is_empty() || plan.entries.iter().any(|e| e.outcome.fails());
     Ok(Report {
         exit: u8::from(failed),
-        json: plan_json(loaded, &x, &workarea, &plan, &edges, &summary),
+        json: plan_json(loaded, &x, &workspace, &plan, &edges, &summary),
     })
 }
 
-/// The adapters whose claims this workarea holds under the source, by
+/// The adapters whose claims this workspace holds under the source, by
 /// their keys' namespaces (ADR-0057 d7).
 fn recorded_adapters(ctx: &Context, own: &[Listed], served: &[Listed]) -> BTreeSet<Kind> {
     own.iter()
         .chain(served)
-        .filter(|v| v.workarea_id.as_deref() == Some(ctx.workarea_id.as_str()))
+        .filter(|v| v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str()))
         .filter(|v| {
             v.anchor.as_ref().is_some_and(|a| {
                 a.repo.as_deref() == Some(ctx.repo.as_str())
@@ -486,7 +486,7 @@ fn recorded_adapters(ctx: &Context, own: &[Listed], served: &[Listed]) -> BTreeS
 }
 
 /// The adapter of this run and the namespaces it answers for. The adapter
-/// is the one the workarea's claims of this source were written by; a
+/// is the one the workspace's claims of this source were written by; a
 /// first run takes `--adapter` or infers it from the file names; another
 /// adapter is refused unless `--change-adapter`, which then retires the
 /// old adapter's claims.
@@ -529,7 +529,7 @@ fn resolve_adapter(
                 Ok((k, vec![k]))
             }
             _ => Err(CliError::local(format!(
-                "the workarea's claims of this source were written by several adapters ({}); \
+                "the workspace's claims of this source were written by several adapters ({}); \
                  name one with --adapter",
                 names()
             ))),
@@ -554,7 +554,7 @@ fn guard_exclude(
         .iter()
         .chain(served)
         .filter(|v| {
-            v.workarea_id.as_deref() == Some(ctx.workarea_id.as_str()) && ours(&v.claim_key)
+            v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str()) && ours(&v.claim_key)
         })
         .filter_map(|v| v.anchor.as_ref())
         .filter(|a| a.repo.as_deref() == Some(ctx.repo.as_str()))
@@ -571,7 +571,7 @@ fn guard_exclude(
     )))
 }
 
-/// Refuses a run from a checkout older than the one the workarea's claims
+/// Refuses a run from a checkout older than the one the workspace's claims
 /// of this source were read at, or from a clone that does not hold that
 /// commit: such a run would retire what was added since and revert what
 /// changed (ADR-0057 d20). `--allow-rollback` is the deliberate revert.
@@ -593,7 +593,7 @@ fn guard_rev(
     let revs: BTreeSet<String> = own
         .iter()
         .chain(served)
-        .filter(|v| v.workarea_id.as_deref() == Some(ctx.workarea_id.as_str()))
+        .filter(|v| v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str()))
         .filter(|v| ours(&v.claim_key))
         .filter(|v| {
             v.anchor
@@ -636,7 +636,7 @@ fn guard_rev(
 /// (ADR-0057 d4, d17).
 fn list_served(api: &dyn SyncApi, ctx: &Context) -> Result<Vec<Listed>, CliError> {
     api.list(&ListQuery {
-        workarea: ctx.workarea.clone(),
+        workspace: ctx.workspace.clone(),
         own: false,
         anchor_repo: Some(ctx.repo.clone()),
         anchor_path_prefix: Some(ctx.scope.prefix()).filter(|p| !p.is_empty()),
@@ -650,12 +650,12 @@ fn list_served(api: &dyn SyncApi, ctx: &Context) -> Result<Vec<Listed>, CliError
     })
 }
 
-/// Claim key → the artifact id of its live promoted tip in the workarea.
+/// Claim key → the artifact id of its live promoted tip in the workspace.
 fn tips_of(ctx: &Context, served: &[Listed]) -> HashMap<String, String> {
     served
         .iter()
         .filter(|v| {
-            v.workarea_id.as_deref() == Some(ctx.workarea_id.as_str())
+            v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str())
                 && v.tip
                 && v.state == "promoted"
                 && !v.retirement
@@ -669,7 +669,7 @@ fn tips_of(ctx: &Context, served: &[Listed]) -> HashMap<String, String> {
 pub(crate) fn write_plan(
     api: &dyn SyncApi,
     plan: &mut Plan,
-    workarea: &str,
+    workspace: &str,
 ) -> Result<(), CliError> {
     // Every source check first, in one batch the API may send concurrently;
     // an entry whose check was refused writes nothing.
@@ -693,7 +693,7 @@ pub(crate) fn write_plan(
         if !e.writes_this_run {
             continue;
         }
-        let Some(body) = e.write_body(workarea) else {
+        let Some(body) = e.write_body(workspace) else {
             continue;
         };
         let key = e.idempotency_key.clone().unwrap_or_default();
@@ -744,7 +744,7 @@ pub(crate) fn send_checks(
 }
 
 /// `--retire-all`: a retirement for every live claim the key wrote in the
-/// workarea under the source, and `pending` for one with a held version
+/// workspace under the source, and `pending` for one with a held version
 /// (ADR-0057 d14).
 fn retire_all(ctx: &Context, own: &[Listed]) -> Plan {
     // The diff with no items retires exactly that set: every claim under the
@@ -825,7 +825,7 @@ fn run_check(
         exit: u8::from(failing),
         json: json!({
             "source": source_json(loaded, x),
-            "workarea": opts.target_workarea(),
+            "workspace": opts.target_workspace(),
             "claims": rows,
             "edges": edges,
         }),
@@ -856,7 +856,7 @@ fn run_edges(
         .map(|si| si.item.claim_key.clone())
         .chain(served.iter().map(|v| v.claim_key.clone()))
         .collect();
-    let existing = api.claim_edges(&ctx.workarea_id)?;
+    let existing = api.claim_edges(&ctx.workspace_id)?;
     let mut lines = edge_lines(&x.edges, &known, &tips, &existing);
     let mut refused = false;
     for e in &mut lines {
@@ -867,7 +867,7 @@ fn run_edges(
             continue;
         };
         if !opts.ratify && e.state == "proposed" {
-            let key = format!("sync:{}:edge:{from}:{}:{to}", ctx.workarea, e.label);
+            let key = format!("sync:{}:edge:{from}:{}:{to}", ctx.workspace, e.label);
             match api.propose_edge(&from, &to, &e.label, &key) {
                 Ok(v) => {
                     e.state = v["state"].as_str().unwrap_or("pending").to_owned();
@@ -884,7 +884,7 @@ fn run_edges(
             && e.proposer_key_id.as_deref() != Some(me.key_id.as_str())
             && let Some(id) = e.edge_id.clone()
         {
-            match api.ratify_edge(&id, &format!("sync:{}:ratify:{id}", ctx.workarea)) {
+            match api.ratify_edge(&id, &format!("sync:{}:ratify:{id}", ctx.workspace)) {
                 Ok(_) => e.state = "ratified".to_owned(),
                 Err(CliError::Refused { code, .. }) => {
                     refused = true;
@@ -905,7 +905,7 @@ fn run_edges(
         exit: u8::from(refused),
         json: json!({
             "source": source_json(loaded, x),
-            "workarea": opts.target_workarea(),
+            "workspace": opts.target_workspace(),
             "edges": lines,
         }),
     })
@@ -1023,7 +1023,7 @@ fn source_json(loaded: &Loaded, x: &Extracted) -> Value {
 fn plan_json(
     loaded: &Loaded,
     x: &Extracted,
-    workarea: &str,
+    workspace: &str,
     plan: &Plan,
     edges: &[EdgeLine],
     summary: &Value,
@@ -1041,7 +1041,7 @@ fn plan_json(
         .collect();
     json!({
         "source": source_json(loaded, x),
-        "workarea": workarea,
+        "workspace": workspace,
         "items": plan.entries,
         "unreadable": x.unreadable.iter().map(|(f, w)| json!({"path": f, "why": w})).collect::<Vec<_>>(),
         "skipped": x.skipped.iter().chain(&loaded.skipped).map(|(f, w)| json!({"path": f, "why": w})).collect::<Vec<_>>(),

@@ -48,7 +48,7 @@ fn a_curie_is_a_registered_prefix_and_a_localname() {
     let vocab = Uuid::from_u128(0xB1);
     let mut registry = PrefixRegistry::new();
     registry.register("biz", vocab).expect("a fresh prefix");
-    assert_eq!(registry.workarea_of("biz"), Some(vocab));
+    assert_eq!(registry.workspace_of("biz"), Some(vocab));
     assert_eq!(registry.owner(&parsed), Ok(CurieOwner::Vocabulary(vocab)));
     let unregistered = curie("ops:churn-risk");
     assert_eq!(
@@ -66,7 +66,11 @@ fn a_curie_is_a_registered_prefix_and_a_localname() {
             prefix: "biz".to_owned()
         })
     );
-    assert_eq!(registry.workarea_of("biz"), Some(vocab), "never reassigned");
+    assert_eq!(
+        registry.workspace_of("biz"),
+        Some(vocab),
+        "never reassigned"
+    );
     for malformed in ["", "9lives", "b z", "biz:"] {
         assert_eq!(
             registry.register(malformed, Uuid::from_u128(0xB3)),
@@ -77,7 +81,7 @@ fn a_curie_is_a_registered_prefix_and_a_localname() {
         );
     }
 
-    // A vocabulary node is any workarea in a registered workarea's subtree;
+    // A vocabulary node is any workspace in a registered workspace's subtree;
     // ancestry runs from the node to the root.
     let universe = Uuid::from_u128(0xA0);
     let child = Uuid::from_u128(0xB4);
@@ -99,7 +103,7 @@ fn the_oml_prefix_is_reserved_in_every_tenant() {
             }),
             "tenant {n}"
         );
-        assert_eq!(registry.workarea_of("oml"), None, "no workarea owns oml:");
+        assert_eq!(registry.workspace_of("oml"), None, "no workspace owns oml:");
         // The provider owns oml: in every tenant, registered or not, and it
         // names exactly the shipped register.
         assert_eq!(

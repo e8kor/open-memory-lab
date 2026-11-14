@@ -1,10 +1,10 @@
-//! Federated recall's pure rules (ADR-0072 phase 1): which workareas are
+//! Federated recall's pure rules (ADR-0072 phase 1): which workspaces are
 //! trusted sources, the size-aware estimate that orders candidates above the
 //! cap, the tail's lower bound, and the widen hint's rate test. Every
 //! function is a function of exact counts and names alone: no clock, no
 //! randomness and no model (d9), so the same counts give the same order.
 
-use crate::ladder::WorkareaStatus;
+use crate::ladder::WorkspaceStatus;
 
 /// The tenant's `max_sources` when no admin set one (d5; unmeasured, #205).
 pub const MAX_SOURCES_DEFAULT: u32 = 8;
@@ -26,17 +26,14 @@ pub const WIDEN_FACTOR: f64 = 2.0;
 /// by at least this many of its rows, so one stray row never does (d8).
 pub const WIDEN_FLOOR: u64 = 2;
 
-/// Whether a node is a trusted source (d1): `committed` or `validated`, and
+/// Whether a node is a trusted source (d1): `protected` or `frozen`, and
 /// outside every in-progress subtree. A `development` node never is, and
 /// every node of an in-progress subtree is `development` by construction
 /// (ADR-0030 d1), so it is excluded twice. Judged per node, never per
 /// subtree.
 #[must_use]
-pub fn is_trusted_source(status: WorkareaStatus, inside_in_progress: bool) -> bool {
-    matches!(
-        status,
-        WorkareaStatus::Committed | WorkareaStatus::Validated
-    ) && !inside_in_progress
+pub fn is_trusted_source(status: WorkspaceStatus, inside_in_progress: bool) -> bool {
+    matches!(status, WorkspaceStatus::Protected | WorkspaceStatus::Frozen) && !inside_in_progress
 }
 
 /// The non-negative BM25 inverse document frequency over a reference set of
@@ -169,10 +166,10 @@ mod tests {
 
     #[test]
     fn only_committed_and_validated_nodes_outside_an_in_progress_subtree_are_trusted() {
-        assert!(is_trusted_source(WorkareaStatus::Committed, false));
-        assert!(is_trusted_source(WorkareaStatus::Validated, false));
-        assert!(!is_trusted_source(WorkareaStatus::Development, false));
-        assert!(!is_trusted_source(WorkareaStatus::Committed, true));
+        assert!(is_trusted_source(WorkspaceStatus::Protected, false));
+        assert!(is_trusted_source(WorkspaceStatus::Frozen, false));
+        assert!(!is_trusted_source(WorkspaceStatus::Development, false));
+        assert!(!is_trusted_source(WorkspaceStatus::Protected, true));
     }
 
     #[test]

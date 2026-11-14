@@ -75,11 +75,11 @@ pub const ADMIN_MEMORIES_PATH: &str = "/web/admin/memories";
 /// The admin page's Atlas, which `oml-web` serves.
 pub const ADMIN_ATLAS_PATH: &str = "/web/admin/atlas";
 
-/// The user page's Workareas view, which `oml-web` serves (ADR-0070 d7 (b)).
-pub const USER_WORKAREAS_PATH: &str = "/web/workareas";
+/// The user page's Workspaces view, which `oml-web` serves (ADR-0070 d7 (b)).
+pub const USER_WORKSPACES_PATH: &str = "/web/workspaces";
 
-/// The admin page's Workareas view, which `oml-web` serves (ADR-0070 d7 (b)).
-pub const ADMIN_WORKAREAS_PATH: &str = "/web/admin/workareas";
+/// The admin page's Workspaces view, which `oml-web` serves (ADR-0070 d7 (b)).
+pub const ADMIN_WORKSPACES_PATH: &str = "/web/admin/workspaces";
 
 /// The user page's Review view, review next only; bulk review stays the
 /// admin page's (ADR-0055 d1). `oml-web` serves it (ADR-0070 d7 (b)).
@@ -122,7 +122,7 @@ pub const PERSONAL_TABS: [(&str, &str); 7] = [
     (USER_REVIEW_PATH, "Review"),
     (USER_ATLAS_PATH, "Atlas"),
     (USER_KEYS_PATH, "Keys"),
-    (USER_WORKAREAS_PATH, "Workareas"),
+    (USER_WORKSPACES_PATH, "Workspaces"),
     ("/web/guardrails", "Guardrails"),
 ];
 
@@ -135,7 +135,7 @@ pub const ADMIN_TABS: [(&str, &str); 8] = [
     (ADMIN_REVIEW_PATH, "Review"),
     (ADMIN_ATLAS_PATH, "Atlas"),
     (ADMIN_KEYS_PATH, "Keys"),
-    (ADMIN_WORKAREAS_PATH, "Workareas"),
+    (ADMIN_WORKSPACES_PATH, "Workspaces"),
     (ADMIN_CURATE_PATH, "Curate"),
 ];
 
@@ -703,12 +703,12 @@ mod tests {
         );
         assert_eq!(
             nav(&personal),
-            r#"<nav aria-label="Personal"><a href="/web/start">Start</a><a href="/web/memories">Memories</a><a href="/web/review">Review</a><a href="/web/atlas">Atlas</a><a href="/web/keys" class="on" aria-current="page">Keys</a><a href="/web/workareas">Workareas</a><a href="/web/guardrails">Guardrails</a></nav>"#
+            r#"<nav aria-label="Personal"><a href="/web/start">Start</a><a href="/web/memories">Memories</a><a href="/web/review">Review</a><a href="/web/atlas">Atlas</a><a href="/web/keys" class="on" aria-current="page">Keys</a><a href="/web/workspaces">Workspaces</a><a href="/web/guardrails">Guardrails</a></nav>"#
         );
         let admin = shell("", &bar(Scope::Administration), ADMIN_ATLAS_PATH, None, "");
         assert_eq!(
             nav(&admin),
-            r#"<nav aria-label="Administration"><a href="/web/admin/people">People</a><a href="/web/admin/users">Quotas</a><a href="/web/admin/memories">Memories</a><a href="/web/admin/review">Review</a><a href="/web/admin/atlas" class="on" aria-current="page">Atlas</a><a href="/web/admin/keys">Keys</a><a href="/web/admin/workareas">Workareas</a><a href="/web/admin/curate">Curate</a></nav>"#
+            r#"<nav aria-label="Administration"><a href="/web/admin/people">People</a><a href="/web/admin/users">Quotas</a><a href="/web/admin/memories">Memories</a><a href="/web/admin/review">Review</a><a href="/web/admin/atlas" class="on" aria-current="page">Atlas</a><a href="/web/admin/keys">Keys</a><a href="/web/admin/workspaces">Workspaces</a><a href="/web/admin/curate">Curate</a></nav>"#
         );
         assert!(
             personal.contains(r#"<header class="top personal">"#),

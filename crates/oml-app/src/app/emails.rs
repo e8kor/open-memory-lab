@@ -28,7 +28,7 @@ where
     /// `web.email_changed`, which ends its sessions in the same commit. The
     /// journal holds the email's digest, never the address. An email
     /// another tenant's entry holds is [`AppError::WebEmailTaken`]; a user
-    /// a workarea's name holds is `name.taken` kind `workarea`; a user
+    /// a workspace's name holds is `name.taken` kind `workspace`; a user
     /// whose composed session key names another key holds, while no entry
     /// names that user, is `name.taken` kind `key`.
     pub async fn allow_web_email(
@@ -203,23 +203,23 @@ where
         }
     }
 
-    /// A new user's name must not be a shared workarea's, nor compose a
+    /// A new user's name must not be a shared workspace's, nor compose a
     /// session key name another key holds (ADR-0045 d2). The user's own
     /// root, which a user key naming them created, is theirs, and so are
     /// session keys serving them (ADR-0044 d1, d2).
     async fn require_free_user(&self, tenant_id: Uuid, user: &Name) -> Result<(), AppError> {
         if let Some(id) = self
             .journal
-            .resolve_name(tenant_id, NamedKind::Workarea, user)
+            .resolve_name(tenant_id, NamedKind::Workspace, user)
             .await?
             && !self
                 .journal
-                .workarea(tenant_id, id)
+                .workspace(tenant_id, id)
                 .await?
                 .is_some_and(|w| w.user_root)
         {
             return Err(AppError::NameTaken {
-                kind: NamedKind::Workarea,
+                kind: NamedKind::Workspace,
                 name: user.clone(),
             });
         }

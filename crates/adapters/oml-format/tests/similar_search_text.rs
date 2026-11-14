@@ -3,7 +3,7 @@
 //! in different source are the same claim, and the check names the first.
 
 use oml_app::App;
-use oml_app::domain::HeldBy;
+use oml_app::domain::UsedBy;
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
 use oml_app::domain::{MemoryKind, Role};
@@ -41,7 +41,7 @@ fn request(idem: &str, body: &str, format: Option<&str>) -> SubmitRequest {
         verb: None,
         kind: MemoryKind::Memory,
         body: body.to_owned(),
-        workarea: None,
+        workspace: None,
         derives_from: Vec::new(),
         severity: None,
         rule: None,
@@ -62,7 +62,7 @@ async fn writer(app: &TestApp) -> String {
         .await
         .expect("bootstrap");
     let grant = |role| GrantRequest {
-        node: boot.root_workarea_id.into(),
+        node: boot.root_workspace_id.into(),
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
@@ -75,8 +75,8 @@ async fn writer(app: &TestApp) -> String {
                 role: Role::Writer,
                 name: Name::parse("w-key").expect("name"),
                 principal: "writer".to_owned(),
-                held_by: Some(HeldBy::Agent),
-                default_workarea: None,
+                used_by: Some(UsedBy::Agent),
+                default_workspace: None,
                 crew: None,
                 grants: vec![grant(Role::Writer), grant(Role::Reader)],
                 connect_code: false,
@@ -127,7 +127,7 @@ async fn the_verdict_event_covers_the_format_the_version_was_signed_with() {
         .await
         .expect("bootstrap");
     let grant = |role| GrantRequest {
-        node: boot.root_workarea_id.into(),
+        node: boot.root_workspace_id.into(),
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
@@ -137,8 +137,8 @@ async fn the_verdict_event_covers_the_format_the_version_was_signed_with() {
         role,
         name: Name::parse(name).expect("name"),
         principal: name.to_owned(),
-        held_by: Some(HeldBy::Agent),
-        default_workarea: None,
+        used_by: Some(UsedBy::Agent),
+        default_workspace: None,
         crew: None,
         grants,
         connect_code: false,
@@ -160,12 +160,12 @@ async fn the_verdict_event_covers_the_format_the_version_was_signed_with() {
             admin,
             &issue(
                 "d-key",
-                R::Dreamer,
-                vec![grant(R::Dreamer), grant(R::Reader)],
+                R::Reviewer,
+                vec![grant(R::Reviewer), grant(R::Reader)],
             ),
         )
         .await
-        .expect("dreamer");
+        .expect("reviewer");
     let sent = app
         .submit_memory(
             &w.value,

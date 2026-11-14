@@ -1,16 +1,16 @@
-//! The workarea dropdown's offer (ADR-0045 d28), over the in-memory
-//! doubles: what the pages offer a key on a workarea is exactly what the
+//! The workspace dropdown's offer (ADR-0045 d28), over the in-memory
+//! doubles: what the pages offer a key on a workspace is exactly what the
 //! verbs would do for it now, for an agent key, a person's key, the
-//! proposer against another person, and an in-progress workarea with held
+//! proposer against another person, and an in-progress workspace with held
 //! rows. Each test is named after the sentence it proves.
 
 use oml_app::App;
-use oml_app::app::{WorkareaOffer, WorkareaOffers};
-use oml_app::domain::WorkareaStatus;
+use oml_app::app::{WorkspaceOffer, WorkspaceOffers};
+use oml_app::domain::WorkspaceStatus;
 use oml_app::domain::access::Covers;
-use oml_app::domain::in_progress::WorkareaMode;
+use oml_app::domain::in_progress::WorkspaceMode;
 use oml_app::domain::name::{Name, Reference};
-use oml_app::domain::{HeldBy, MemoryKind, Role};
+use oml_app::domain::{MemoryKind, Role, UsedBy};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::types::{
     AppError, BootstrapRequest, BootstrapResult, GrantRequest, IssueKeyRequest, IssuedKey,
@@ -38,7 +38,7 @@ struct World {
     boot: BootstrapResult,
     proj: Uuid,
     agent: IssuedKey,
-    agent_dreamer: IssuedKey,
+    agent_reviewer: IssuedKey,
     ann: IssuedKey,
     bob: IssuedKey,
 }
@@ -48,7 +48,7 @@ async fn key(
     admin: &str,
     key_name: &str,
     role: Role,
-    held_by: HeldBy,
+    used_by: UsedBy,
     grants: Vec<GrantRequest>,
 ) -> IssuedKey {
     app.issue_key(
@@ -58,8 +58,8 @@ async fn key(
             role,
             name: name(key_name),
             principal: key_name.to_owned(),
-            held_by: Some(held_by),
-            default_workarea: None,
+            used_by: Some(used_by),
+            default_workspace: None,
             crew: None,
             grants,
             connect_code: false,
@@ -73,8 +73,8 @@ async fn key(
     .expect("the admin issues the key")
 }
 
-/// `universe` → `crew` → `proj`: a writer agent, a dreamer agent and two
-/// people, ann and bob, each with a dreamer key of their own on `crew`.
+/// `universe` → `crew` → `proj`: a writer agent, a reviewer agent and two
+/// people, ann and bob, each with a reviewer key of their own on `crew`.
 async fn world() -> World {
     let store = MemStore::new();
     let app = App::new(
@@ -94,38 +94,38 @@ async fn world() -> World {
         .expect("bootstrap");
     let admin = boot.admin_key.value.clone();
     let crew = app
-        .create_workarea(
+        .create_workspace(
             &admin,
             &name("crew"),
-            Some(boot.root_workarea_id.into()),
+            Some(boot.root_workspace_id.into()),
             None,
         )
         .await
         .expect("crew")
-        .workarea
-        .workarea_id;
+        .workspace
+        .workspace_id;
     let proj = app
-        .create_workarea(&admin, &name("proj"), Some(crew.into()), None)
+        .create_workspace(&admin, &name("proj"), Some(crew.into()), None)
         .await
         .expect("proj")
-        .workarea
-        .workarea_id;
+        .workspace
+        .workspace_id;
     let agent = key(
         &app,
         &admin,
         "writer-agent",
         Role::Writer,
-        HeldBy::Agent,
+        UsedBy::Agent,
         vec![grant(crew, Role::Writer), grant(crew, Role::Reader)],
     )
     .await;
-    let agent_dreamer = key(
+    let agent_reviewer = key(
         &app,
         &admin,
-        "dreamer-agent",
-        Role::Dreamer,
-        HeldBy::Agent,
-        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+        "reviewer-agent",
+        Role::Reviewer,
+        UsedBy::Agent,
+        vec![grant(crew, Role::Reviewer), grant(crew, Role::Reader)],
     )
     .await;
     let person = |n: &'static str| {
@@ -133,9 +133,9 @@ async fn world() -> World {
             &app,
             &admin,
             n,
-            Role::Dreamer,
-            HeldBy::Human,
-            vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+            Role::Reviewer,
+            UsedBy::Person,
+            vec![grant(crew, Role::Reviewer), grant(crew, Role::Reader)],
         )
     };
     let ann = person("ann-review").await;
@@ -145,15 +145,15 @@ async fn world() -> World {
         boot,
         proj,
         agent,
-        agent_dreamer,
+        agent_reviewer,
         ann,
         bob,
     }
 }
 
-async fn offers(w: &World, key: &IssuedKey) -> WorkareaOffers {
+async fn offers(w: &World, key: &IssuedKey) -> WorkspaceOffers {
     w.app
-        .workarea_offers_for(key.value.as_str(), w.proj.into())
+        .workspace_offers_for(key.value.as_str(), w.proj.into())
         .await
         .expect("the offer reads")
 }
@@ -161,24 +161,24 @@ async fn offers(w: &World, key: &IssuedKey) -> WorkareaOffers {
 /// Every act a dropdown could hold for the node as it is: each rung, each
 /// live proposal, and the mode the node is not in (setting the mode it is
 /// in changes nothing, so it is no act).
-async fn candidates(w: &World) -> Vec<WorkareaOffer> {
+async fn candidates(w: &World) -> Vec<WorkspaceOffer> {
     let status = w
         .app
-        .workarea_status(w.boot.admin_key.value.as_str(), w.proj.into())
+        .workspace_status(w.boot.admin_key.value.as_str(), w.proj.into())
         .await
         .expect("the admin reads the status");
     let in_progress = offers(w, &w.ann).await.in_progress;
     let mut all = vec![
-        WorkareaOffer::Propose(WorkareaStatus::Committed),
-        WorkareaOffer::Propose(WorkareaStatus::Validated),
+        WorkspaceOffer::Propose(WorkspaceStatus::Protected),
+        WorkspaceOffer::Propose(WorkspaceStatus::Frozen),
         if in_progress {
-            WorkareaOffer::Commit
+            WorkspaceOffer::Commit
         } else {
-            WorkareaOffer::InProgress
+            WorkspaceOffer::InProgress
         },
     ];
     for t in status.pending {
-        all.push(WorkareaOffer::Ratify {
+        all.push(WorkspaceOffer::Ratify {
             transition_id: t.transition_id,
             from: t.from,
             to: t.to,
@@ -188,27 +188,27 @@ async fn candidates(w: &World) -> Vec<WorkareaOffer> {
 }
 
 /// Runs `offer` as `key`, the verb the page would post.
-async fn run(w: &World, key: &IssuedKey, offer: WorkareaOffer) -> Result<(), AppError> {
+async fn run(w: &World, key: &IssuedKey, offer: WorkspaceOffer) -> Result<(), AppError> {
     let node: Reference = w.proj.into();
     match offer {
-        WorkareaOffer::Propose(to) => w
+        WorkspaceOffer::Propose(to) => w
             .app
             .propose_transition(key.value.as_str(), node, to)
             .await
             .map(|_| ()),
-        WorkareaOffer::Ratify { transition_id, .. } => w
+        WorkspaceOffer::Ratify { transition_id, .. } => w
             .app
             .ratify_transition(key.value.as_str(), node, transition_id)
             .await
             .map(|_| ()),
-        WorkareaOffer::InProgress => w
+        WorkspaceOffer::InProgress => w
             .app
-            .set_workarea_mode(key.value.as_str(), node, WorkareaMode::InProgress)
+            .set_workspace_mode(key.value.as_str(), node, WorkspaceMode::InProgress)
             .await
             .map(|_| ()),
-        WorkareaOffer::Commit => w
+        WorkspaceOffer::Commit => w
             .app
-            .set_workarea_mode(key.value.as_str(), node, WorkareaMode::Standard)
+            .set_workspace_mode(key.value.as_str(), node, WorkspaceMode::Standard)
             .await
             .map(|_| ()),
     }
@@ -220,8 +220,8 @@ async fn run(w: &World, key: &IssuedKey, offer: WorkareaOffer) -> Result<(), App
 async fn assert_offer_is_the_allowed_set(
     w: &World,
     key: &IssuedKey,
-    expected: &[WorkareaOffer],
-    apply: Option<WorkareaOffer>,
+    expected: &[WorkspaceOffer],
+    apply: Option<WorkspaceOffer>,
 ) {
     let offered = offers(w, key).await.offers;
     assert_eq!(offered, expected, "the offer for {}", key.name.as_str());
@@ -245,17 +245,17 @@ async fn assert_offer_is_the_allowed_set(
 }
 
 #[tokio::test]
-async fn the_workarea_options_offered_are_exactly_the_acts_allowed() {
+async fn the_workspace_options_offered_are_exactly_the_acts_allowed() {
     let w = world().await;
 
-    // A writer agent may do nothing to a workarea.
+    // A writer agent may do nothing to a workspace.
     assert_offer_is_the_allowed_set(&w, &w.agent, &[], None).await;
 
-    // A dreamer agent may propose, never set the mode: that is a person's.
+    // A reviewer agent may propose, never set the mode: that is a person's.
     assert_offer_is_the_allowed_set(
         &w,
-        &w.agent_dreamer,
-        &[WorkareaOffer::Propose(WorkareaStatus::Committed)],
+        &w.agent_reviewer,
+        &[WorkspaceOffer::Propose(WorkspaceStatus::Protected)],
         None,
     )
     .await;
@@ -266,10 +266,10 @@ async fn the_workarea_options_offered_are_exactly_the_acts_allowed() {
         &w,
         &w.ann,
         &[
-            WorkareaOffer::Propose(WorkareaStatus::Committed),
-            WorkareaOffer::InProgress,
+            WorkspaceOffer::Propose(WorkspaceStatus::Protected),
+            WorkspaceOffer::InProgress,
         ],
-        Some(WorkareaOffer::Propose(WorkareaStatus::Committed)),
+        Some(WorkspaceOffer::Propose(WorkspaceStatus::Protected)),
     )
     .await;
 
@@ -277,15 +277,15 @@ async fn the_workarea_options_offered_are_exactly_the_acts_allowed() {
     // is, and only that one proposal.
     let pending = w
         .app
-        .workarea_status(w.boot.admin_key.value.as_str(), w.proj.into())
+        .workspace_status(w.boot.admin_key.value.as_str(), w.proj.into())
         .await
         .expect("a status")
         .pending;
     assert_eq!(pending.len(), 1);
-    let ratify = WorkareaOffer::Ratify {
+    let ratify = WorkspaceOffer::Ratify {
         transition_id: pending[0].transition_id,
-        from: WorkareaStatus::Development,
-        to: WorkareaStatus::Committed,
+        from: WorkspaceStatus::Development,
+        to: WorkspaceStatus::Protected,
     };
     let ann = offers(&w, &w.ann).await.offers;
     assert!(!ann.contains(&ratify), "R2: the proposer never ratifies");
@@ -293,40 +293,40 @@ async fn the_workarea_options_offered_are_exactly_the_acts_allowed() {
         &w,
         &w.bob,
         &[
-            WorkareaOffer::Propose(WorkareaStatus::Committed),
+            WorkspaceOffer::Propose(WorkspaceStatus::Protected),
             ratify,
-            WorkareaOffer::InProgress,
+            WorkspaceOffer::InProgress,
         ],
         Some(ratify),
     )
     .await;
 
-    // Committed now: the next rung is validated, and in progress is a
+    // Protected now: the next rung is validated, and in progress is a
     // development node's alone.
     let after = offers(&w, &w.ann).await;
-    assert_eq!(after.status, WorkareaStatus::Committed);
+    assert_eq!(after.status, WorkspaceStatus::Protected);
     assert_offer_is_the_allowed_set(
         &w,
         &w.ann,
-        &[WorkareaOffer::Propose(WorkareaStatus::Validated)],
+        &[WorkspaceOffer::Propose(WorkspaceStatus::Frozen)],
         None,
     )
     .await;
 }
 
 #[tokio::test]
-async fn an_in_progress_workarea_with_held_rows_withholds_the_commit_with_their_count() {
+async fn an_in_progress_workspace_with_held_rows_withholds_the_commit_with_their_count() {
     let w = world().await;
     w.app
-        .set_workarea_mode(
+        .set_workspace_mode(
             w.ann.value.as_str(),
             w.proj.into(),
-            WorkareaMode::InProgress,
+            WorkspaceMode::InProgress,
         )
         .await
         .expect("ann puts proj in progress");
     // Inside, no transition is offered: commit first (ADR-0030).
-    assert_offer_is_the_allowed_set(&w, &w.ann, &[WorkareaOffer::Commit], None).await;
+    assert_offer_is_the_allowed_set(&w, &w.ann, &[WorkspaceOffer::Commit], None).await;
     for body in ["first draft", "second draft"] {
         w.app
             .submit_memory(
@@ -340,7 +340,7 @@ async fn an_in_progress_workarea_with_held_rows_withholds_the_commit_with_their_
                     verb: Some(SubmitVerb::Remember),
                     kind: MemoryKind::Memory,
                     body: body.to_owned(),
-                    workarea: Some(w.proj.into()),
+                    workspace: Some(w.proj.into()),
                     derives_from: Vec::new(),
                     severity: None,
                     rule: None,
@@ -357,7 +357,7 @@ async fn an_in_progress_workarea_with_held_rows_withholds_the_commit_with_their_
     assert!(held.in_progress);
     assert_eq!(held.commit_withheld, Some(2), "the count is shown");
     assert_offer_is_the_allowed_set(&w, &w.ann, &[], None).await;
-    let refused = run(&w, &w.ann, WorkareaOffer::Commit)
+    let refused = run(&w, &w.ann, WorkspaceOffer::Commit)
         .await
         .expect_err("the commit is refused while rows are held");
     assert!(

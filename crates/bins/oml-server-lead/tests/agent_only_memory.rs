@@ -2,9 +2,9 @@
 //! agent that stores only to OML reads back what it wrote, searches it under a
 //! budget, updates it and proposes retiring it — holding one key and calling
 //! only the three tools the agent plugin lists, oml_write, oml_read and
-//! oml_workarea (docs/api/mcp-plugin.md, ADR-0025, ADR-0039 d2). A dreamer
+//! oml_workspace (docs/api/mcp-plugin.md, ADR-0025, ADR-0039 d2). A reviewer
 //! ratifies over the review ring, never over MCP, and a second agent key on
-//! the same workarea under the same principal holds R3, since own is the
+//! the same workspace under the same principal holds R3, since own is the
 //! authoring key and never the principal (ADR-0025 d3): the first agent's held
 //! rows never reach it, and its submission never reaches the first agent's
 //! events tail, read over `GET /v2/events` since the tail left MCP.
@@ -196,19 +196,19 @@ impl McpKey {
 struct Crew {
     /// The agent: one writer-role key with writer and reader grants.
     agent: McpKey,
-    /// A second agent key of the same shape on the same workarea and under
+    /// A second agent key of the same shape on the same workspace and under
     /// the same principal: principal equality never makes a row own (R3, d3).
     other: McpKey,
     /// The reviewer, on the review ring only.
-    dreamer: String,
-    workarea: String,
+    reviewer: String,
+    workspace: String,
     /// The tenant's first admin key, from the bootstrap claim.
     admin: String,
 }
 
-/// Bootstrap, one crew workarea, two one-key agents of one principal and a
-/// dreamer on it (ADR-0025 d1, d2): a writer-role key admits reader grants,
-/// and a key's default workarea is its first grant's node.
+/// Bootstrap, one crew workspace, two one-key agents of one principal and a
+/// reviewer on it (ADR-0025 d1, d2): a writer-role key admits reader grants,
+/// and a key's default workspace is its first grant's node.
 async fn crew(router: &Router) -> Crew {
     let (status, boot) = send(
         router,
@@ -221,18 +221,18 @@ async fn crew(router: &Router) -> Crew {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
     let admin = boot["value"].as_str().expect("admin key").to_owned();
-    let root = boot["root_workarea_id"].as_str().expect("root").to_owned();
+    let root = boot["root_workspace_id"].as_str().expect("root").to_owned();
     let (status, wa) = send(
         router,
         "POST",
-        "/v2/workareas",
+        "/v2/workspaces",
         Some(&admin),
         Some("wa-1"),
         Some(&json!({"parent": root, "name": "metals-crew"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{wa}");
-    let workarea = wa["id"].as_str().expect("workarea id").to_owned();
+    let workspace = wa["id"].as_str().expect("workspace id").to_owned();
 
     let mut values = Vec::new();
     for (idem, role, principal, grants) in [
@@ -249,15 +249,15 @@ async fn crew(router: &Router) -> Crew {
             vec!["writer", "reader"],
         ),
         (
-            "issue-dreamer",
-            "dreamer",
+            "issue-reviewer",
+            "reviewer",
             "crew/reviewer-3",
-            vec!["dreamer"],
+            vec!["reviewer"],
         ),
     ] {
         let grants: Vec<Value> = grants
             .into_iter()
-            .map(|grant| json!({"workarea": workarea, "role": grant}))
+            .map(|grant| json!({"workspace": workspace, "role": grant}))
             .collect();
         let (status, key) = send(
             router,
@@ -269,31 +269,31 @@ async fn crew(router: &Router) -> Crew {
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{key}");
-        assert_eq!(key["default_workarea_id"], workarea, "{key}");
+        assert_eq!(key["default_workspace_id"], workspace, "{key}");
         values.push(key["value"].as_str().expect("show-once value").to_owned());
     }
-    let dreamer = values.pop().expect("dreamer");
+    let reviewer = values.pop().expect("reviewer");
     let other = values.pop().expect("other");
     let agent = values.pop().expect("agent");
     Crew {
         agent: McpKey::new(router, &agent),
         other: McpKey::new(router, &other),
-        dreamer,
-        workarea,
+        reviewer,
+        workspace,
         admin,
     }
 }
 
-/// The dreamer approves exactly `rows` over the review ring, in whatever
+/// The reviewer approves exactly `rows` over the review ring, in whatever
 /// order review next serves them.
-async fn approve(router: &Router, dreamer: &str, rows: &[&str], tag: &str) {
+async fn approve(router: &Router, reviewer: &str, rows: &[&str], tag: &str) {
     let mut pending: Vec<&str> = rows.to_vec();
     for n in 0..rows.len() {
         let (status, served) = send(
             router,
             "POST",
             "/v2/review/next",
-            Some(dreamer),
+            Some(reviewer),
             Some(&format!("{tag}-next-{n}")),
             None,
         )
@@ -309,7 +309,7 @@ async fn approve(router: &Router, dreamer: &str, rows: &[&str], tag: &str) {
             router,
             "POST",
             "/v2/review/verdicts",
-            Some(dreamer),
+            Some(reviewer),
             Some(&format!("{tag}-verdict-{n}")),
             Some(&json!({"serve_id": served["serve_id"], "verdict": "approve"})),
         )
@@ -378,11 +378,11 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
         return;
     };
     let crew = crew(&router).await;
-    let (agent, other, wa) = (&crew.agent, &crew.other, crew.workarea.as_str());
+    let (agent, other, wa) = (&crew.agent, &crew.other, crew.workspace.as_str());
     let mut texts: HashMap<String, &str> = HashMap::new();
 
     // 1. One connection lists the three tools, oml_write, oml_read and
-    // oml_workarea, and the journey calls only those: Claude Code offers the
+    // oml_workspace, and the journey calls only those: Claude Code offers the
     // model nothing else (ADR-0025 d12; ADR-0039 d2).
     let listed = agent.rpc("tools/list", json!({})).await;
     let names = set(listed["result"]["tools"]
@@ -390,11 +390,11 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
         .expect("tools")
         .iter()
         .map(|t| t["name"].as_str().expect("name")));
-    assert_eq!(names, set(["oml_write", "oml_read", "oml_workarea"]));
+    assert_eq!(names, set(["oml_write", "oml_read", "oml_workspace"]));
 
-    // 2. On its default workarea the one key both remembers and recalls
+    // 2. On its default workspace the one key both remembers and recalls
     // (d1, d14; roles-and-keys.md, effective verbs).
-    let info = agent.ok("oml_workarea", json!({})).await;
+    let info = agent.ok("oml_workspace", json!({})).await;
     assert_eq!(info["id"], wa, "{info}");
     assert_eq!(
         info["my_effective_verbs"],
@@ -432,7 +432,7 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
         assert_eq!(receipt["mode"], "submit", "{receipt}");
         assert_eq!(receipt["state"], "held", "{receipt}");
         assert_eq!(receipt["version"], 1, "{receipt}");
-        assert_eq!(receipt["workarea"], wa, "{receipt}");
+        assert_eq!(receipt["workspace"], wa, "{receipt}");
         texts.insert(id(&receipt), text);
         held.push(id(&receipt));
     }
@@ -448,7 +448,7 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
     for item in items {
         assert_eq!(item["state"], "held", "{item}");
         assert_eq!(item["tip"], false, "{item}");
-        assert_eq!(item["workarea"], wa, "{item}");
+        assert_eq!(item["workspace"], wa, "{item}");
         assert_eq!(item["text"], texts[&id(item)], "{item}");
         assert_eq!(item["tokens"], tokens(texts[&id(item)]), "{item}");
     }
@@ -466,7 +466,7 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
     assert_eq!(got["tip"], false, "{got}");
     assert_eq!(got["retirement"], false, "{got}");
     assert_eq!(got["replaces"], Value::Null, "{got}");
-    assert_eq!(got["workarea"], wa, "{got}");
+    assert_eq!(got["workspace"], wa, "{got}");
     assert_eq!(got["tokens"], tokens(QUOTE), "{got}");
     assert_eq!(got["derives_from"], json!([]), "{got}");
     assert_eq!(got["attachments"], json!([]), "{got}");
@@ -515,7 +515,7 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
     // 7. Another identity ratifies all three over the review ring.
     approve(
         &router,
-        &crew.dreamer,
+        &crew.reviewer,
         &[&quote, &alloy, &steering],
         "first",
     )
@@ -593,7 +593,7 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
         successor["replaces"],
         json!({"artifact_id": quote, "version": 1})
     );
-    assert_eq!(successor["workarea"], wa, "{successor}");
+    assert_eq!(successor["workspace"], wa, "{successor}");
     assert_eq!(successor["idempotent_replay"], false, "{successor}");
     let revised = id(&successor);
     texts.insert(revised.clone(), QUOTE_REVISED);
@@ -623,7 +623,7 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
         json!({"artifact_id": quote, "version": 1})
     );
 
-    approve(&router, &crew.dreamer, &[&revised], "revision").await;
+    approve(&router, &crew.reviewer, &[&revised], "revision").await;
     let after = other.ok("oml_read", json!({"query": QUERY})).await;
     assert_eq!(set(ids(&after["hits"])), set([&revised, &alloy]), "{after}");
     let tip = after["hits"]
@@ -662,7 +662,7 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
     let retirement = id(&retire);
     texts.insert(retirement.clone(), RETIREMENT);
 
-    approve(&router, &crew.dreamer, &[&retirement], "retirement").await;
+    approve(&router, &crew.reviewer, &[&retirement], "retirement").await;
     for key in [agent, other] {
         let result = key.ok("oml_read", json!({"query": QUERY})).await;
         assert_eq!(ids(&result["hits"]), [alloy.as_str()], "{result}");
@@ -734,7 +734,7 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
     for event in &events {
         let event_type = event["event_type"].as_str().expect("event_type");
         assert!(
-            ["submission.", "lifecycle.", "workarea."]
+            ["submission.", "lifecycle.", "workspace."]
                 .iter()
                 .any(|family| event_type.starts_with(family)),
             "{event_type} is not on the content tail: {event}"
@@ -742,9 +742,9 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
         let seq = event["seq"].as_u64().expect("seq");
         assert!(seq > last_seq, "seq ascending: {event}");
         last_seq = seq;
-        if !event_type.starts_with("workarea.") {
+        if !event_type.starts_with("workspace.") {
             assert_ne!(subject(event), foreign, "{event}");
-            assert_eq!(event["payload"]["workarea_id"], wa, "{event}");
+            assert_eq!(event["payload"]["workspace_id"], wa, "{event}");
         }
     }
     let subjects = |event_type: &str| -> Vec<String> {
@@ -975,7 +975,7 @@ async fn an_explicit_verb_keeps_its_journal_event() {
 }
 
 // ---------------------------------------------------------------------------
-// One workarea field on the memory routes (ADR-0039 d4, d7). These run over
+// One workspace field on the memory routes (ADR-0039 d4, d7). These run over
 // the in-memory doubles, so they need no role pair: what they prove is the
 // transport's and the app's, not the store's.
 // ---------------------------------------------------------------------------
@@ -1004,24 +1004,24 @@ fn doubles_router() -> Router {
     .into_router()
 }
 
-/// A child of the crew workarea, `child`, and a writer key, `scoped`, with
-/// writer and reader grants on the crew workarea and `child` as its default
-/// workarea, so a read that defaults reads `child` alone (ADR-0039 d4).
+/// A child of the crew workspace, `child`, and a writer key, `scoped`, with
+/// writer and reader grants on the crew workspace and `child` as its default
+/// workspace, so a read that defaults reads `child` alone (ADR-0039 d4).
 async fn scoped_key(router: &Router, crew: &Crew) -> (McpKey, String) {
     let (status, child) = send(
         router,
         "POST",
-        "/v2/workareas",
+        "/v2/workspaces",
         Some(&crew.admin),
         Some("wa-child"),
-        Some(&json!({"parent": crew.workarea, "name": "metals-child"})),
+        Some(&json!({"parent": crew.workspace, "name": "metals-child"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{child}");
     let child = child["id"].as_str().expect("child id").to_owned();
     let grants: Vec<Value> = ["writer", "reader"]
         .into_iter()
-        .map(|role| json!({"workarea": crew.workarea, "role": role}))
+        .map(|role| json!({"workspace": crew.workspace, "role": role}))
         .collect();
     let (status, key) = send(
         router,
@@ -1034,12 +1034,12 @@ async fn scoped_key(router: &Router, crew: &Crew) -> (McpKey, String) {
             "name": "issue-scoped",
             "principal": "crew/agent-9",
             "grants": grants,
-            "default_workarea": child,
+            "default_workspace": child,
         })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{key}");
-    assert_eq!(key["default_workarea_id"], child.as_str(), "{key}");
+    assert_eq!(key["default_workspace_id"], child.as_str(), "{key}");
     let value = key["value"].as_str().expect("show-once value");
     (McpKey::new(router, value), child)
 }
@@ -1064,11 +1064,11 @@ fn hit_ids(recall: &Value) -> BTreeSet<String> {
 }
 
 #[tokio::test]
-async fn the_x_oml_workarea_header_is_refused_naming_workarea() {
+async fn the_x_oml_workspace_header_is_refused_naming_workspace() {
     let router = doubles_router();
     let crew = crew(&router).await;
     let token = crew.agent.token.as_str();
-    let header = [("x-oml-workarea", crew.workarea.as_str())];
+    let header = [("x-oml-workspace", crew.workspace.as_str())];
 
     let (status, written) = submit(&router, &crew.agent, "hdr-0", &json!({ "body": QUOTE })).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{written}");
@@ -1082,31 +1082,31 @@ async fn the_x_oml_workarea_header_is_refused_naming_workarea() {
             "/v1/memories".to_owned(),
             Some("hdr-1"),
             Some(json!({ "body": ALLOY })),
-            "/workarea",
+            "/workspace",
         ),
         (
             "POST",
             format!("/v1/memories/{target}/supersede"),
             Some("hdr-2"),
             Some(json!({ "expected_version": 1, "body": QUOTE_REVISED })),
-            "/workarea",
+            "/workspace",
         ),
         (
             "POST",
             "/v1/memories/recall".to_owned(),
             None,
             Some(json!({ "query": QUERY })),
-            "/workarea",
+            "/workspace",
         ),
-        ("GET", "/v1/memories".to_owned(), None, None, "workarea"),
+        ("GET", "/v1/memories".to_owned(), None, None, "workspace"),
         (
             "GET",
             "/v1/memories?own=true".to_owned(),
             None,
             None,
-            "workarea",
+            "workspace",
         ),
-        ("GET", "/v2/events".to_owned(), None, None, "workarea"),
+        ("GET", "/v2/events".to_owned(), None, None, "workspace"),
     ] {
         let (status, refused) = send_with(
             &router,
@@ -1118,7 +1118,7 @@ async fn the_x_oml_workarea_header_is_refused_naming_workarea() {
             &header,
         )
         .await;
-        assert_renamed(status, &refused, "X-OML-Workarea", renamed_to);
+        assert_renamed(status, &refused, "X-OML-Workspace", renamed_to);
     }
 
     // The same target in the field is honoured.
@@ -1126,34 +1126,34 @@ async fn the_x_oml_workarea_header_is_refused_naming_workarea() {
         &router,
         &crew.agent,
         "hdr-3",
-        &json!({ "body": ALLOY, "workarea": crew.workarea }),
+        &json!({ "body": ALLOY, "workspace": crew.workspace }),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
     assert_eq!(
-        accepted["workarea_id"],
-        crew.workarea.as_str(),
+        accepted["workspace_id"],
+        crew.workspace.as_str(),
         "{accepted}"
     );
 }
 
 #[tokio::test]
-async fn a_listing_naming_workarea_id_is_refused_naming_workarea() {
+async fn a_listing_naming_workspace_id_is_refused_naming_workspace() {
     let router = doubles_router();
     let crew = crew(&router).await;
     let token = crew.agent.token.as_str();
     for path in [
-        format!("/v1/memories?workarea_id={}", crew.workarea),
-        format!("/v1/memories?own=true&workarea_id={}", crew.workarea),
-        format!("/v2/events?workarea_id={}", crew.workarea),
+        format!("/v1/memories?workspace_id={}", crew.workspace),
+        format!("/v1/memories?own=true&workspace_id={}", crew.workspace),
+        format!("/v2/events?workspace_id={}", crew.workspace),
     ] {
         let (status, refused) = send(&router, "GET", &path, Some(token), None, None).await;
-        assert_renamed(status, &refused, "workarea_id", "workarea");
+        assert_renamed(status, &refused, "workspace_id", "workspace");
     }
     for path in [
-        format!("/v1/memories?workarea={}", crew.workarea),
-        format!("/v1/memories?own=true&workarea={}", crew.workarea),
-        format!("/v2/events?workarea={}", crew.workarea),
+        format!("/v1/memories?workspace={}", crew.workspace),
+        format!("/v1/memories?own=true&workspace={}", crew.workspace),
+        format!("/v2/events?workspace={}", crew.workspace),
     ] {
         let (status, page) = send(&router, "GET", &path, Some(token), None, None).await;
         assert_eq!(status, StatusCode::OK, "{path}: {page}");
@@ -1161,32 +1161,32 @@ async fn a_listing_naming_workarea_id_is_refused_naming_workarea() {
 }
 
 #[tokio::test]
-async fn recall_without_workarea_reads_the_keys_default_workarea() {
+async fn recall_without_workspace_reads_the_keys_default_workspace() {
     let router = doubles_router();
     let crew = crew(&router).await;
     let (scoped, child) = scoped_key(&router, &crew).await;
 
-    // One claim in the key's default workarea, the child, by omission, and
+    // One claim in the key's default workspace, the child, by omission, and
     // one in its parent, by the field.
     let (status, in_child) = submit(&router, &scoped, "dflt-1", &json!({ "body": QUOTE })).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{in_child}");
-    assert_eq!(in_child["workarea_id"], child.as_str(), "{in_child}");
+    assert_eq!(in_child["workspace_id"], child.as_str(), "{in_child}");
     let (status, in_parent) = submit(
         &router,
         &scoped,
         "dflt-2",
-        &json!({ "body": ALLOY, "workarea": crew.workarea }),
+        &json!({ "body": ALLOY, "workspace": crew.workspace }),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{in_parent}");
     assert_eq!(
-        in_parent["workarea_id"],
-        crew.workarea.as_str(),
+        in_parent["workspace_id"],
+        crew.workspace.as_str(),
         "{in_parent}"
     );
     approve(
         &router,
-        &crew.dreamer,
+        &crew.reviewer,
         &[&id(&in_child), &id(&in_parent)],
         "dflt",
     )
@@ -1212,12 +1212,12 @@ async fn recall_without_workarea_reads_the_keys_default_workarea() {
     assert_eq!(
         recall(json!({ "query": QUERY })).await,
         set([id(&in_child)]),
-        "an omitted workarea reads the key's default, the child"
+        "an omitted workspace reads the key's default, the child"
     );
     assert_eq!(
-        recall(json!({ "query": QUERY, "workarea": crew.workarea })).await,
+        recall(json!({ "query": QUERY, "workspace": crew.workspace })).await,
         set([id(&in_child), id(&in_parent)]),
-        "a named workarea reads its subtree"
+        "a named workspace reads its subtree"
     );
 
     // The scoped listing defaults the same way.
@@ -1235,7 +1235,7 @@ async fn recall_without_workarea_reads_the_keys_default_workarea() {
 }
 
 #[tokio::test]
-async fn the_own_work_listing_without_workarea_lists_everything_the_key_wrote() {
+async fn the_own_work_listing_without_workspace_lists_everything_the_key_wrote() {
     let router = doubles_router();
     let crew = crew(&router).await;
     let (scoped, child) = scoped_key(&router, &crew).await;
@@ -1246,7 +1246,7 @@ async fn the_own_work_listing_without_workarea_lists_everything_the_key_wrote() 
         &router,
         &scoped,
         "own-2",
-        &json!({ "body": ALLOY, "workarea": crew.workarea }),
+        &json!({ "body": ALLOY, "workspace": crew.workspace }),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{in_parent}");
@@ -1267,12 +1267,12 @@ async fn the_own_work_listing_without_workarea_lists_everything_the_key_wrote() 
     assert_eq!(
         list("/v1/memories?own=true".to_owned()).await,
         set([id(&in_child), id(&in_parent)]),
-        "the own-work listing reads every workarea the key wrote in"
+        "the own-work listing reads every workspace the key wrote in"
     );
     assert_eq!(
-        list(format!("/v1/memories?own=true&workarea={child}")).await,
+        list(format!("/v1/memories?own=true&workspace={child}")).await,
         set([id(&in_child)]),
-        "a named workarea narrows it to that subtree"
+        "a named workspace narrows it to that subtree"
     );
 }
 
@@ -1379,12 +1379,12 @@ async fn a_memory_response_carries_text_and_no_body() {
 // (ADR-0039 d10). These run over the in-memory doubles, as above.
 // ---------------------------------------------------------------------------
 
-/// A dreamer key on the crew workarea with dreamer and reader grants, so
+/// A reviewer key on the crew workspace with reviewer and reader grants, so
 /// it may propose an edit as well as review (ADR-0025 d10).
 async fn reviewer(router: &Router, crew: &Crew, name: &str, principal: &str) -> String {
-    let grants: Vec<Value> = ["dreamer", "reader"]
+    let grants: Vec<Value> = ["reviewer", "reader"]
         .into_iter()
-        .map(|role| json!({"workarea": crew.workarea, "role": role}))
+        .map(|role| json!({"workspace": crew.workspace, "role": role}))
         .collect();
     let (status, key) = send(
         router,
@@ -1392,7 +1392,7 @@ async fn reviewer(router: &Router, crew: &Crew, name: &str, principal: &str) -> 
         "/v2/keys",
         Some(&crew.admin),
         Some(name),
-        Some(&json!({"role": "dreamer", "name": name, "principal": principal, "grants": grants})),
+        Some(&json!({"role": "reviewer", "name": name, "principal": principal, "grants": grants})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{key}");
@@ -1473,7 +1473,7 @@ async fn one_open_item_then_two(router: &Router) {
     let (status, tip) = submit(router, &crew.agent, "two-0", &json!({ "body": QUOTE })).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{tip}");
     let tip = id(&tip);
-    approve(router, &crew.dreamer, &[tip.as_str()], "two-tip").await;
+    approve(router, &crew.reviewer, &[tip.as_str()], "two-tip").await;
     let (status, successor) = send(
         router,
         "POST",
@@ -1515,7 +1515,7 @@ async fn one_open_item_then_two(router: &Router) {
     assert_eq!(claim_next(router, &rev, "two-next-2").await, second);
     let (status, rejected) = verdict(
         router,
-        &crew.dreamer,
+        &crew.reviewer,
         "two-v-2",
         &json!({
             "serve_id": format!("srv_{}", proposal.replace('-', "")),
@@ -1545,7 +1545,7 @@ async fn a_verdict_without_serve_id_is_refused_naming_serve_id_when_the_reviewer
     // A held row waits, but the reviewer claimed nothing.
     let (status, refused) = verdict(
         &router,
-        &crew.dreamer,
+        &crew.reviewer,
         "none-v-1",
         &json!({"verdict": "approve"}),
     )
@@ -1555,7 +1555,7 @@ async fn a_verdict_without_serve_id_is_refused_naming_serve_id_when_the_reviewer
 
     // The row is still served whole to the next claim.
     assert_eq!(
-        claim_next(&router, &crew.dreamer, "none-next").await,
+        claim_next(&router, &crew.reviewer, "none-next").await,
         written
     );
 }
@@ -1571,10 +1571,10 @@ async fn a_verdict_without_serve_id_never_applies_to_an_item_another_reviewer_cl
     let written = id(&written);
     assert_eq!(claim_next(&router, &rev, "other-next").await, written);
 
-    // The claim is rev's: crew.dreamer holds none, so its default is none.
+    // The claim is rev's: crew.reviewer holds none, so its default is none.
     let (status, refused) = verdict(
         &router,
-        &crew.dreamer,
+        &crew.reviewer,
         "other-v-1",
         &json!({"verdict": "approve"}),
     )
@@ -1639,23 +1639,23 @@ async fn a_retried_verdict_without_serve_id_replays_its_stored_response_and_neve
 
     // The approve commits; its response is taken to be lost.
     assert_eq!(
-        claim_next(&router, &crew.dreamer, "rep-next-1").await,
+        claim_next(&router, &crew.reviewer, "rep-next-1").await,
         first
     );
     let request = json!({"verdict": "approve"});
     let (status, replayed, applied) =
-        verdict_replay(&router, &crew.dreamer, "rep-v-1", &request).await;
+        verdict_replay(&router, &crew.reviewer, "rep-v-1", &request).await;
     assert_eq!(status, StatusCode::OK, "{applied}");
     assert!(!replayed, "{applied}");
     assert_eq!(applied["artifact_id"], first.as_str(), "{applied}");
 
     // The same key claims the next item, then retries the lost request.
     assert_eq!(
-        claim_next(&router, &crew.dreamer, "rep-next-2").await,
+        claim_next(&router, &crew.reviewer, "rep-next-2").await,
         second
     );
     let (status, replayed, replay) =
-        verdict_replay(&router, &crew.dreamer, "rep-v-1", &request).await;
+        verdict_replay(&router, &crew.reviewer, "rep-v-1", &request).await;
     assert_eq!(status, StatusCode::OK, "{replay}");
     assert!(replayed, "{replay}");
     assert_eq!(replay, applied);
@@ -1664,7 +1664,7 @@ async fn a_retried_verdict_without_serve_id_replays_its_stored_response_and_neve
     // The key names one request: another body under it is refused.
     let (status, mismatch) = verdict(
         &router,
-        &crew.dreamer,
+        &crew.reviewer,
         "rep-v-1",
         &json!({"verdict": "reject", "reason": "a different request"}),
     )

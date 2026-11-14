@@ -22,12 +22,12 @@ fn scratch(test: &str) -> PathBuf {
 fn served(id: &str, claim_key: &str, text: &str) -> Value {
     json!({
         "artifact_id": id, "claim_key": claim_key, "version": 1,
-        "workarea_id": "00000000-0000-4000-8000-0000000000e1",
-        "workarea_path": "universe.eng", "depth": 1,
+        "workspace_id": "00000000-0000-4000-8000-0000000000e1",
+        "workspace_path": "universe.eng", "depth": 1,
         "severity": "must", "text": text,
         "rule": {"rule": "oml-gr/1", "tool": "shell", "command": ["git", "push", "*"], "effect": "deny"},
         "tokens": 5, "promoted_at": "2026-10-31T10:00:00.000000Z",
-        "verdicts": [{"held_by": "human", "at": "2026-10-31T10:00:00.000000Z"}],
+        "verdicts": [{"used_by": "person", "at": "2026-10-31T10:00:00.000000Z"}],
         "conflict": []
     })
 }

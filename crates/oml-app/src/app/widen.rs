@@ -42,7 +42,7 @@ pub const WIDEN_SIGNAL_PAIRS_HELD: usize = 8_000_000;
 /// The most (form, node) counts one tenant's signals hold, about 32 MB: a
 /// tenant past it drops its own oldest first, so no tenant evicts another
 /// below its share, and a signal larger on its own is never read whole. A
-/// tenant of 100,000 rows over 50 workareas measured 1,332,730 (#268).
+/// tenant of 100,000 rows over 50 workspaces measured 1,332,730 (#268).
 pub const WIDEN_SIGNAL_TENANT_PAIRS: usize = 2_000_000;
 
 /// A build taking longer is stopped by the transport, counted as failed
@@ -86,10 +86,10 @@ pub fn drops_widen_signals(event_type: &str) -> bool {
         event_type,
         e::LIFECYCLE_ERASE
             | "lifecycle.demote"
-            | e::WORKAREA_MODE_SET
-            | e::WORKAREA_STATUS_TRANSITION
+            | e::WORKSPACE_MODE_SET
+            | e::WORKSPACE_STATUS_TRANSITION
             | e::FEDERATION_POLICY_SET
-            | e::WORKAREA_FEDERATION_SET
+            | e::WORKSPACE_FEDERATION_SET
     )
 }
 
@@ -600,7 +600,7 @@ where
         }
         let scope_ancestry = self
             .journal
-            .workarea_ancestry(tenant_id, key.scope)
+            .workspace_ancestry(tenant_id, key.scope)
             .await?
             .unwrap_or_default();
         let ServedNodes {
@@ -742,10 +742,10 @@ mod tests {
         for event in [
             "lifecycle.erase",
             "lifecycle.demote",
-            "workarea.mode_set",
-            "workarea.status_transition",
+            "workspace.mode_set",
+            "workspace.status_transition",
             "federation.policy_set",
-            "workarea.federation_set",
+            "workspace.federation_set",
         ] {
             assert!(drops_widen_signals(event), "{event}");
         }

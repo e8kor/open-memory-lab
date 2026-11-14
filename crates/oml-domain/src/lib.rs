@@ -7,11 +7,11 @@
 //! roles, memory status transitions, and the constitution's R2 check
 //! (ADR-0001 d2). `access` holds grant admissibility, effective access, the
 //! refusal order, effective verbs and content-tail visibility (ADR-0025 d1,
-//! d2, d14, d15), with dreamer grants narrowed by `edge_labels` and the
+//! d2, d14, d15), with reviewer grants narrowed by `edge_labels` and the
 //! member-profile check (ADR-0027 [proposed in #10, unmerged] d3, d4, d5); `budget` holds the budget token, the budget cut and the
 //! recall order (ADR-0025 d6, d7, d8); `name` holds the name grammar, the
 //! classification of a reference as an id or a name, and the naming of rows
-//! that predate names (ADR-0026 d2, d3, d11); `ladder` holds the workarea
+//! that predate names (ADR-0026 d2, d3, d11); `ladder` holds the workspace
 //! status ladder, its refusal reasons, the ratifier's independence and the
 //! frozen area's closed list of mutations (ADR-0009 d1, d3, d4, d5); `oauth`
 //! holds the pure core of connections — the connect code, PKCE, the redirect
@@ -77,11 +77,11 @@ pub use keys::{
     verify_rotation_cross_sig,
 };
 pub use ladder::{
-    FrozenOp, LadderNode, LadderRefusal, WorkareaStatus, frozen_refuses, propose_check,
+    FrozenOp, LadderNode, LadderRefusal, WorkspaceStatus, frozen_refuses, propose_check,
     ratifier_is_proposer, ratify_check, same_user, transition_preconditions,
 };
 pub use model::{
-    DERIVED_CLAIM_KEY_PREFIX, HeldBy, KeyCrew, LineageClosure, MemoryKind, MemoryStatus, Role,
-    TransitionError, VerdictError, check_reviewer, derive_claim_key, nfc,
+    DERIVED_CLAIM_KEY_PREFIX, KeyCrew, LineageClosure, MemoryKind, MemoryStatus, Role,
+    TransitionError, UsedBy, VerdictError, check_reviewer, derive_claim_key, nfc,
     satisfies_crew_inequality, satisfies_manager_inequality, transition,
 };

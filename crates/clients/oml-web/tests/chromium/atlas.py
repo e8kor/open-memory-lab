@@ -1,4 +1,4 @@
-"""The Memories list, the Atlas and the Workareas view in a real Chromium, driven by Playwright
+"""The Memories list, the Atlas and the Workspaces view in a real Chromium, driven by Playwright
 (ADR-0045 d22, d25, d27, d32).
 
 Run by the Rust test `the_atlas_treemap_draws_and_zooms_with_no_script_in_chromium`
@@ -126,9 +126,9 @@ def main() -> int:
                         shot("atlas-zoomed")
 
                     if theme == "dark":
-                        page.goto(f"{issuer}{base}/workareas")
+                        page.goto(f"{issuer}{base}/workspaces")
                         out[f"{tag}_selects"] = page.locator("select[name=op]").count()
-                        shot("workareas")
+                        shot("workspaces")
                     ctx.close()
         browser.close()
     out["requests"] = requests

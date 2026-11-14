@@ -16,16 +16,16 @@ pub use oml_guardrail::*;
 
 /// What the serve of a held guardrail adds, to its author and to its
 /// reviewers alike (ADR-0037 d10, amending ADR-0012 d5).
-pub const LOAD_WARNING: &str = "every key that reads this workarea will load this rule, here and below it unless its guardrail scope is workarea";
+pub const LOAD_WARNING: &str = "every key that reads this workspace will load this rule, here and below it unless its guardrail scope is workspace";
 
 /// A key's guardrail scope, the issuance attribute that bounds which
-/// applicable guardrails the key loads (ADR-0037 d4): `workarea` serves the
+/// applicable guardrails the key loads (ADR-0037 d4): `workspace` serves the
 /// guardrails on the scope node alone, `ancestors` those of the node and of
 /// every ancestor of it the key reads. An admin sets it at issuance and only
 /// a rotation changes it; no client sets it, and no `off` value exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GuardrailScope {
-    Workarea,
+    Workspace,
     Ancestors,
 }
 
@@ -37,7 +37,7 @@ impl GuardrailScope {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            GuardrailScope::Workarea => "workarea",
+            GuardrailScope::Workspace => "workspace",
             GuardrailScope::Ancestors => "ancestors",
         }
     }
@@ -47,7 +47,7 @@ impl GuardrailScope {
     #[must_use]
     pub fn parse(word: &str) -> Option<Self> {
         match word {
-            "workarea" => Some(GuardrailScope::Workarea),
+            "workspace" => Some(GuardrailScope::Workspace),
             "ancestors" => Some(GuardrailScope::Ancestors),
             _ => None,
         }

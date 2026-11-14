@@ -80,14 +80,14 @@ MARKER = {"A": "tenant-a-visible", "B": "TENANT-B-SECRET"}
 
 # The adapter's column lists at commit 02a385d (crates/adapters/oml-pg/src/lib.rs).
 MEMORY_COLUMNS = (
-    "m.id, m.tenant_id, m.workarea_id, m.claim_key, m.version, m.kind, m.claim, "
+    "m.id, m.tenant_id, m.workspace_id, m.claim_key, m.version, m.kind, m.claim, "
     "m.claim_digest, m.body_bytes, m.status, m.is_tip, m.retirement, m.replaces_artifact_id, "
     "m.author_principal, m.author_key_id, m.derives_from, m.lineage_principals, "
     "m.lineage_key_ids, m.scan_finding, "
     "to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at_signed, "
     "to_char(m.promoted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS promoted_at_signed"
 )
-WORKAREA_COLUMNS = "id, tenant_id, parent_id, name, crew"
+WORKSPACE_COLUMNS = "id, tenant_id, parent_id, name, crew"
 
 # Failed checks recorded as findings on docs/engineering/spikes/spike-3-rls.md. A listed
 # check that fails is reported as recorded and does not fail the run. A listed check that
@@ -192,7 +192,7 @@ class Tenant:
     universe: uuid.UUID
     child: uuid.UUID
     writer: uuid.UUID
-    dreamer: uuid.UUID
+    reviewer: uuid.UUID
     m1: uuid.UUID  # promoted memory
     m2: uuid.UUID  # held memory, in review_queue
     m3: uuid.UUID  # promoted steering (kind set after 0005)
@@ -214,7 +214,7 @@ class Tenant:
         return [self.m1, self.m2, self.m3, self.m4]
 
     def identifiers(self) -> set[str]:
-        ids = {self.id, self.universe, self.child, self.writer, self.dreamer, self.grant_w,
+        ids = {self.id, self.universe, self.child, self.writer, self.reviewer, self.grant_w,
                self.grant_d, self.denial, *self.memories, *self.events.values()}
         return {str(i) for i in ids} | {self.marker, self.idem_key}
 
@@ -223,10 +223,10 @@ def make_tenant(letter: str) -> Tenant:
     t = Tenant(
         letter=letter,
         id=uid(letter, "tenant"),
-        universe=uid(letter, "workarea", 0),
-        child=uid(letter, "workarea", 1),
+        universe=uid(letter, "workspace", 0),
+        child=uid(letter, "workspace", 1),
         writer=uid(letter, "key", 1),
-        dreamer=uid(letter, "key", 2),
+        reviewer=uid(letter, "key", 2),
         m1=uid(letter, "memory", 1),
         m2=uid(letter, "memory", 2),
         m3=uid(letter, "memory", 3),
@@ -299,24 +299,24 @@ def seed_before_0004(conn: psycopg.Connection, t: Tenant) -> None:
     with tenant_tx(conn, t.id):
         seed_insert(conn, "INSERT INTO tenants (id, name) VALUES (%s, %s)", [t.id, f"{t.marker} tenant"])
         seed_insert(
-            conn, "INSERT INTO workareas (id, tenant_id, parent_id, name, status) VALUES "
-            "(%s, %s, NULL, %s, 'committed'), (%s, %s, %s, %s, 'development')",
+            conn, "INSERT INTO workspaces (id, tenant_id, parent_id, name, status) VALUES "
+            "(%s, %s, NULL, %s, 'protected'), (%s, %s, %s, %s, 'development')",
             [t.universe, t.id, f"{t.marker} universe", t.child, t.id, t.universe, f"{t.marker} child"],
         )
         seed_insert(
-            conn, "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, default_workarea_id) "
-            "VALUES (%s, %s, %s, 'writer', %s, 'agent', %s), (%s, %s, %s, 'dreamer', %s, 'agent', %s)",
+            conn, "INSERT INTO api_keys (id, tenant_id, hash, role, principal, used_by, default_workspace_id) "
+            "VALUES (%s, %s, %s, 'writer', %s, 'agent', %s), (%s, %s, %s, 'reviewer', %s, 'agent', %s)",
             [t.writer, t.id, key_hash(t.letter, "writer"), t.principal, t.child,
-             t.dreamer, t.id, key_hash(t.letter, "dreamer"), f"{t.marker}/dreamer-1", t.universe],
+             t.reviewer, t.id, key_hash(t.letter, "reviewer"), f"{t.marker}/reviewer-1", t.universe],
         )
         journal_row(conn, t, 1, "tenant.genesis", {"name": t.marker}, None)
         journal_row(conn, t, 2, "key.issued", {"key_id": str(t.writer)}, None)
-        journal_row(conn, t, 3, "key.issued", {"key_id": str(t.dreamer)}, t.writer)
+        journal_row(conn, t, 3, "key.issued", {"key_id": str(t.reviewer)}, t.writer)
         journal_row(conn, t, 4, "submission.remember", {"artifact_id": str(t.m1)}, t.writer)
-        journal_row(conn, t, 5, "lifecycle.promote", {"artifact_id": str(t.m1)}, t.dreamer)
+        journal_row(conn, t, 5, "lifecycle.promote", {"artifact_id": str(t.m1)}, t.reviewer)
         journal_row(conn, t, 6, "submission.remember", {"artifact_id": str(t.m2)}, t.writer)
         journal_row(conn, t, 7, "submission.remember", {"artifact_id": str(t.m3)}, t.writer)
-        journal_row(conn, t, 8, "lifecycle.promote", {"artifact_id": str(t.m3)}, t.dreamer)
+        journal_row(conn, t, 8, "lifecycle.promote", {"artifact_id": str(t.m3)}, t.reviewer)
         seed_insert(
             conn, "INSERT INTO journal_chain_head (tenant_id, seq, head_hash) VALUES (%s, 8, %s)",
             [t.id, hashlib.sha256(f"{t.letter}-8".encode()).digest()],
@@ -333,7 +333,7 @@ def seed_before_0004(conn: psycopg.Connection, t: Tenant) -> None:
         ]
         for mid, claim, status, seq, claim_key in memories:
             seed_insert(
-                conn, "INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, "
+                conn, "INSERT INTO memories (id, tenant_id, workspace_id, claim, claim_digest, status, "
                 "created_event_id, terms, claim_key, author_principal, author_key_id, derives_from, "
                 "lineage_principals, lineage_key_ids) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
@@ -357,21 +357,21 @@ def seed_after_migrations(conn: psycopg.Connection, t: Tenant) -> None:
     """Rows only the 0004/0005 schema has: grants, denials, a steering kind, a held successor."""
     with tenant_tx(conn, t.id):
         seed_insert(
-            conn, "INSERT INTO grants (id, tenant_id, key_id, role, workarea_node_id, deny, epoch) VALUES "
-            "(%s, %s, %s, 'writer', %s, '[]', 2), (%s, %s, %s, 'dreamer', %s, '[]', 3)",
-            [t.grant_w, t.id, t.writer, t.child, t.grant_d, t.id, t.dreamer, t.universe],
+            conn, "INSERT INTO grants (id, tenant_id, key_id, role, workspace_node_id, deny, epoch) VALUES "
+            "(%s, %s, %s, 'writer', %s, '[]', 2), (%s, %s, %s, 'reviewer', %s, '[]', 3)",
+            [t.grant_w, t.id, t.writer, t.child, t.grant_d, t.id, t.reviewer, t.universe],
         )
         seed_insert(
-            conn, "INSERT INTO key_denials (id, tenant_id, key_id, workarea_node_id, epoch, created_by) "
+            conn, "INSERT INTO key_denials (id, tenant_id, key_id, workspace_node_id, epoch, created_by) "
             "VALUES (%s, %s, %s, %s, 3, %s)",
-            [t.denial, t.id, t.writer, t.universe, t.dreamer],
+            [t.denial, t.id, t.writer, t.universe, t.reviewer],
         )
         conn.execute("UPDATE memories SET kind = 'steering' WHERE id = %s", [t.m3])
         journal_row(conn, t, 9, "submission.remember", {"artifact_id": str(t.m4)}, t.writer)
         conn.execute("UPDATE journal_chain_head SET seq = 9 WHERE tenant_id = %s", [t.id])
         claim = f"{t.marker} runbook drain upgrade verify undrain, revised"
         seed_insert(
-            conn, "INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, "
+            conn, "INSERT INTO memories (id, tenant_id, workspace_id, claim, claim_digest, status, "
             "created_event_id, claim_key, author_principal, author_key_id, lineage_principals, "
             "lineage_key_ids, version, kind, is_tip, body_bytes, replaces_artifact_id) "
             "VALUES (%s, %s, %s, %s, %s, 'held', %s, 'deploy-runbook', %s, %s, %s, %s, 2, "
@@ -856,7 +856,7 @@ def s3_3_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant) -> None:
 
             # A row every constraint and domain of the schema accepts (a lowercase label, under
             # A's universe), so the policy is the only thing that can refuse it.
-            state = sqlstate_of(conn, "INSERT INTO workareas (tenant_id, parent_id, name, status) "
+            state = sqlstate_of(conn, "INSERT INTO workspaces (tenant_id, parent_id, name, status) "
                                       "VALUES (%s, %s, 'no-tenant-write', 'development')", [a.id, a.universe])
             s.check(state == "42501", f"[{role}] a write with no tenant set is refused with {state} "
                                       "(new row violates row-level security policy)")
@@ -918,7 +918,7 @@ def b_shapes(a: Tenant, b: Tenant) -> tuple[list[tuple[str, str, Any, str]], lis
         ("chain head", "SELECT seq, head_hash FROM journal_chain_head WHERE tenant_id = %s", [b.id], "rows"),
         ("journal range", "SELECT signed_bytes, signed_bytes_hash, sig FROM journal WHERE tenant_id = %s "
                           "AND seq >= %s ORDER BY seq ASC LIMIT %s", [b.id, 1, 100], "rows"),
-        ("tail-scan subjects", "SELECT id, workarea_id, author_key_id FROM memories WHERE tenant_id = %s "
+        ("tail-scan subjects", "SELECT id, workspace_id, author_key_id FROM memories WHERE tenant_id = %s "
                                "AND id = ANY(%s::uuid[])", [b.id, b.memories], "rows"),
         ("get memory", f"SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = %s AND m.id = %s",
          [b.id, b.m1], "rows"),
@@ -927,79 +927,79 @@ def b_shapes(a: Tenant, b: Tenant) -> tuple[list[tuple[str, str, Any, str]], lis
         ("recall FTS", "SELECT m.id, m.body_bytes, ts_rank(to_tsvector('simple', m.claim), "
                        "plainto_tsquery('simple', %s), 0) AS score FROM memories m WHERE m.tenant_id = %s "
                        "AND m.status = 'promoted' AND m.is_tip AND NOT m.retirement AND m.kind = ANY(%s::text[]) "
-                       "AND m.workarea_id = ANY(%s::uuid[]) AND to_tsvector('simple', m.claim) @@ "
+                       "AND m.workspace_id = ANY(%s::uuid[]) AND to_tsvector('simple', m.claim) @@ "
                        "plainto_tsquery('simple', %s) ORDER BY score DESC, m.id ASC LIMIT %s",
          [words, b.id, ["memory", "steering"], b.nodes, words, 10], "rows"),
         ("recall own held FTS", "SELECT m.id, m.body_bytes, ts_rank(to_tsvector('simple', m.claim), "
                                 "plainto_tsquery('simple', %(q)s), 0) AS score FROM memories m WHERE m.tenant_id = "
                                 "%(t)s AND m.status = 'held' AND m.author_key_id = ANY(%(a)s::uuid[]) AND NOT "
-                                "m.retirement AND m.kind = ANY(%(k)s::text[]) AND m.workarea_id = ANY(%(w)s::uuid[]) "
+                                "m.retirement AND m.kind = ANY(%(k)s::text[]) AND m.workspace_id = ANY(%(w)s::uuid[]) "
                                 "AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', %(q)s) ORDER BY "
                                 "score DESC, m.id ASC LIMIT %(n)s",
          {"q": words, "t": b.id, "a": [b.writer], "k": ["memory"], "w": b.nodes, "n": 10}, "rows"),
         ("steering", f"SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = %s AND m.status = 'promoted' "
-                     "AND m.is_tip AND NOT m.retirement AND m.kind = 'steering' AND m.workarea_id = ANY(%s::uuid[]) "
-                     "ORDER BY array_position(%s::uuid[], m.workarea_id) ASC, m.promoted_at ASC, m.id ASC",
+                     "AND m.is_tip AND NOT m.retirement AND m.kind = 'steering' AND m.workspace_id = ANY(%s::uuid[]) "
+                     "ORDER BY array_position(%s::uuid[], m.workspace_id) ASC, m.promoted_at ASC, m.id ASC",
          [b.id, b.nodes, b.nodes], "rows"),
         ("own listing", f"SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = %s AND m.author_key_id = "
-                        "ANY(%s::uuid[]) AND NOT (m.workarea_id = ANY(%s::uuid[])) ORDER BY m.created_at DESC, "
+                        "ANY(%s::uuid[]) AND NOT (m.workspace_id = ANY(%s::uuid[])) ORDER BY m.created_at DESC, "
                         "m.id DESC LIMIT %s", [b.id, [b.writer], [], 50], "rows"),
         ("tips listing, every filter", f"SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = %s AND "
-                                       "m.status = 'promoted' AND m.is_tip AND m.workarea_id = ANY(%s::uuid[]) AND "
-                                       "m.workarea_id = ANY(%s::uuid[]) AND m.status = %s AND m.kind = %s AND "
+                                       "m.status = 'promoted' AND m.is_tip AND m.workspace_id = ANY(%s::uuid[]) AND "
+                                       "m.workspace_id = ANY(%s::uuid[]) AND m.status = %s AND m.kind = %s AND "
                                        "m.claim_key = %s AND m.created_at >= (%s)::timestamptz AND m.created_at < "
                                        "(%s)::timestamptz AND (m.created_at, m.id) < ((%s)::timestamptz, %s) "
                                        "ORDER BY m.created_at DESC, m.id DESC LIMIT %s",
          [b.id, b.nodes, b.nodes, "promoted", "memory", "deploy-runbook", "2000-01-01T00:00:00Z",
           "2999-01-01T00:00:00Z", "2999-01-01T00:00:00Z", uuid.UUID(int=2**128 - 1), 50], "rows"),
         ("claim_key state", "SELECT max(version) AS greatest, coalesce(bool_or(status IN ('held', 'promoted', "
-                            "'demoted')), false) AS live FROM memories WHERE tenant_id = %s AND workarea_id = %s "
+                            "'demoted')), false) AS live FROM memories WHERE tenant_id = %s AND workspace_id = %s "
                             "AND claim_key = %s", [b.id, b.child, "deploy-runbook"], "aggregate"),
-        ("served tip", f"SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = %s AND m.workarea_id = %s "
+        ("served tip", f"SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = %s AND m.workspace_id = %s "
                        "AND m.claim_key = %s AND m.is_tip AND m.status = 'promoted'",
          [b.id, b.child, "deploy-runbook"], "rows"),
         ("held successors", f"SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = %s AND "
                             "m.replaces_artifact_id = %s AND m.status = 'held' ORDER BY m.created_at ASC, m.id ASC",
          [b.id, b.m1], "rows"),
         ("review claim next", f"SELECT {MEMORY_COLUMNS} FROM review_queue q JOIN memories m ON m.id = q.memory_id "
-                              "WHERE q.tenant_id = %(t)s AND m.workarea_id = ANY(%(w)s::uuid[]) AND (q.held_by_key "
+                              "WHERE q.tenant_id = %(t)s AND m.workspace_id = ANY(%(w)s::uuid[]) AND (q.held_by_key "
                               "IS NULL OR q.held_by_key = %(k)s) AND NOT (m.lineage_principals @> ARRAY[%(p)s]::text[]) "
                               "AND NOT (m.lineage_key_ids @> ARRAY[%(k)s]::uuid[]) AND NOT EXISTS (SELECT 1 FROM "
                               "memories r WHERE r.tenant_id = %(t)s AND r.id <> m.id AND r.status = 'held' AND "
-                              "r.replaces_artifact_id = m.replaces_artifact_id AND r.workarea_id = m.workarea_id AND "
+                              "r.replaces_artifact_id = m.replaces_artifact_id AND r.workspace_id = m.workspace_id AND "
                               "r.claim_key = m.claim_key AND (r.author_key_id = %(k)s OR r.author_principal = %(p)s)) "
                               "ORDER BY q.held_since ASC, q.memory_id ASC LIMIT 1 FOR NO KEY UPDATE OF q SKIP LOCKED",
-         {"t": b.id, "w": b.nodes, "k": a.dreamer, "p": f"{a.marker}/dreamer-1"}, "rows"),
-        ("key by hash", "SELECT id, tenant_id, role, principal, held_by, default_workarea_id, issued_by, hash "
+         {"t": b.id, "w": b.nodes, "k": a.reviewer, "p": f"{a.marker}/reviewer-1"}, "rows"),
+        ("key by hash", "SELECT id, tenant_id, role, principal, used_by, default_workspace_id, issued_by, hash "
                         "FROM api_keys WHERE hash = %s AND revoked_at IS NULL", [key_hash("B", "writer")], "rows"),
         ("key issued_seq", "SELECT issued_seq FROM api_keys WHERE tenant_id = %s AND id = %s", [b.id, b.writer], "rows"),
-        ("grants of a key", "SELECT id, role, workarea_node_id, deny, epoch FROM grants WHERE tenant_id = %s AND "
+        ("grants of a key", "SELECT id, role, workspace_node_id, deny, epoch FROM grants WHERE tenant_id = %s AND "
                             "key_id = %s ORDER BY epoch ASC, id ASC", [b.id, b.writer], "rows"),
-        ("denials of a key", "SELECT id, workarea_node_id, created_by, epoch FROM key_denials WHERE tenant_id = %s "
+        ("denials of a key", "SELECT id, workspace_node_id, created_by, epoch FROM key_denials WHERE tenant_id = %s "
                              "AND key_id = %s ORDER BY epoch ASC, id ASC", [b.id, b.writer], "rows"),
-        ("workarea get", f"SELECT {WORKAREA_COLUMNS} FROM workareas WHERE tenant_id = %s AND id = %s",
+        ("workspace get", f"SELECT {WORKSPACE_COLUMNS} FROM workspaces WHERE tenant_id = %s AND id = %s",
          [b.id, b.child], "rows"),
-        ("workarea ancestry", f"WITH RECURSIVE up AS (SELECT {WORKAREA_COLUMNS}, 0 AS depth FROM workareas WHERE "
+        ("workspace ancestry", f"WITH RECURSIVE up AS (SELECT {WORKSPACE_COLUMNS}, 0 AS depth FROM workspaces WHERE "
                               "tenant_id = %(t)s AND id = %(n)s UNION ALL SELECT w.id, w.tenant_id, w.parent_id, "
-                              "w.name, w.crew, up.depth + 1 FROM workareas w JOIN up ON w.id = up.parent_id WHERE "
-                              f"w.tenant_id = %(t)s) SELECT {WORKAREA_COLUMNS} FROM up ORDER BY depth ASC",
+                              "w.name, w.crew, up.depth + 1 FROM workspaces w JOIN up ON w.id = up.parent_id WHERE "
+                              f"w.tenant_id = %(t)s) SELECT {WORKSPACE_COLUMNS} FROM up ORDER BY depth ASC",
          {"t": b.id, "n": b.child}, "rows"),
-        ("workarea subtree", f"WITH RECURSIVE down AS (SELECT {WORKAREA_COLUMNS}, 0 AS depth FROM workareas WHERE "
+        ("workspace subtree", f"WITH RECURSIVE down AS (SELECT {WORKSPACE_COLUMNS}, 0 AS depth FROM workspaces WHERE "
                              "tenant_id = %(t)s AND id = %(n)s UNION ALL SELECT w.id, w.tenant_id, w.parent_id, "
-                             "w.name, w.crew, down.depth + 1 FROM workareas w JOIN down ON w.parent_id = down.id "
-                             f"WHERE w.tenant_id = %(t)s) SELECT {WORKAREA_COLUMNS} FROM down ORDER BY depth ASC, id ASC",
+                             "w.name, w.crew, down.depth + 1 FROM workspaces w JOIN down ON w.parent_id = down.id "
+                             f"WHERE w.tenant_id = %(t)s) SELECT {WORKSPACE_COLUMNS} FROM down ORDER BY depth ASC, id ASC",
          {"t": b.id, "n": b.universe}, "rows"),
-        ("workarea children", f"SELECT {WORKAREA_COLUMNS} FROM workareas WHERE tenant_id = %s AND parent_id = %s "
+        ("workspace children", f"SELECT {WORKSPACE_COLUMNS} FROM workspaces WHERE tenant_id = %s AND parent_id = %s "
                               "ORDER BY name COLLATE \"C\" ASC, id ASC", [b.id, b.universe], "rows"),
         ("idempotency get", "SELECT request_digest, response FROM idempotency WHERE tenant_id = %s AND key = %s",
          [b.id, b.idem_key], "rows"),
         ("review claim update", "UPDATE review_queue SET held_by_key = %s WHERE tenant_id = %s AND memory_id = %s "
-                                "RETURNING *", [a.dreamer, b.id, b.m2], "rows"),
+                                "RETURNING *", [a.reviewer, b.id, b.m2], "rows"),
     ]
     beyond = [
         ("join by B ids", "SELECT m.* FROM (VALUES (%s::uuid), (%s::uuid)) v(id) JOIN memories m ON m.id = v.id",
          [b.m1, b.m2], "rows"),
-        ("IN subquery", "SELECT * FROM workareas WHERE id IN (SELECT workarea_id FROM memories WHERE tenant_id = %s)",
+        ("IN subquery", "SELECT * FROM workspaces WHERE id IN (SELECT workspace_id FROM memories WHERE tenant_id = %s)",
          [b.id], "rows"),
         ("EXISTS", "SELECT EXISTS (SELECT 1 FROM memories WHERE id = %s)", [b.m1], "aggregate"),
         ("count by tenant", "SELECT count(*) FROM memories WHERE tenant_id = %s", [b.id], "aggregate"),
@@ -1031,14 +1031,14 @@ def generic_shapes(tables: dict[str, str]) -> list[tuple[str, str, list]]:
         shapes.append((f"full scan {table}", f'SELECT * FROM "{table}"', []))
         shapes.append((f"group by tenant {table}", f'SELECT "{col}", count(*) FROM "{table}" GROUP BY 1', []))
     joins = [
-        ("join memories-workareas", "SELECT m.id, w.name, m.claim FROM memories m JOIN workareas w ON w.id = m.workarea_id", []),
+        ("join memories-workspaces", "SELECT m.id, w.name, m.claim FROM memories m JOIN workspaces w ON w.id = m.workspace_id", []),
         ("join grants-api_keys", "SELECT g.id, k.principal FROM grants g JOIN api_keys k ON k.id = g.key_id", []),
         ("join journal-outbox", "SELECT j.event_id, o.payload FROM journal j JOIN outbox o ON o.tenant_id = j.tenant_id "
                                 "AND o.tenant_seq = j.seq", []),
         ("join memories-journal", "SELECT m.id, j.payload FROM memories m JOIN journal j ON j.event_id = m.created_event_id", []),
         ("join review_queue-memories", "SELECT q.memory_id, m.claim FROM review_queue q JOIN memories m ON m.id = q.memory_id", []),
-        ("LATERAL", "SELECT w.name, x.claim FROM workareas w, LATERAL (SELECT claim FROM memories m "
-                    "WHERE m.workarea_id = w.id ORDER BY created_at LIMIT 2) x", []),
+        ("LATERAL", "SELECT w.name, x.claim FROM workspaces w, LATERAL (SELECT claim FROM memories m "
+                    "WHERE m.workspace_id = w.id ORDER BY created_at LIMIT 2) x", []),
         ("UNION ALL", "SELECT tenant_id::text FROM memories UNION ALL SELECT tenant_id::text FROM api_keys "
                       "UNION ALL SELECT id::text FROM tenants", []),
         ("window", "SELECT tenant_id, id, row_number() OVER (PARTITION BY tenant_id ORDER BY created_at) FROM memories", []),
@@ -1059,15 +1059,15 @@ def index_shapes(b: Tenant) -> list[tuple[str, str, list, list[str]]]:
     """One probe per index of the schema, naming tenant B's values, with the planner
     settings that make its index the cheapest path (a GIN index has only bitmap scans)."""
     return [
-        ("memories_workarea", "SELECT * FROM memories WHERE tenant_id = %s AND workarea_id = %s AND status = 'held'",
+        ("memories_workspace", "SELECT * FROM memories WHERE tenant_id = %s AND workspace_id = %s AND status = 'held'",
          [b.id, b.child], BTREE),
         ("memories_claim_fts", "SELECT * FROM memories WHERE to_tsvector('simple', claim) @@ "
                                "plainto_tsquery('simple', 'secret')", [], BITMAP),
         ("memories_author", "SELECT * FROM memories WHERE tenant_id = %s AND author_key_id = %s "
                             "ORDER BY created_at DESC", [b.id, b.writer], BTREE),
-        ("memories_served_tip", "SELECT * FROM memories WHERE tenant_id = %s AND workarea_id = %s AND "
+        ("memories_served_tip", "SELECT * FROM memories WHERE tenant_id = %s AND workspace_id = %s AND "
                                 "claim_key = 'deploy-runbook' AND is_tip AND status = 'promoted'", [b.id, b.child], BTREE),
-        ("memories_claim_version", "SELECT * FROM memories WHERE tenant_id = %s AND workarea_id = %s AND "
+        ("memories_claim_version", "SELECT * FROM memories WHERE tenant_id = %s AND workspace_id = %s AND "
                                    "claim_key = 'deploy-runbook' AND version = 2 AND status = 'held'", [b.id, b.child], BTREE),
         ("memories_pkey", "SELECT * FROM memories WHERE id = %s", [b.m1], BTREE),
         ("grants_key", "SELECT * FROM grants WHERE tenant_id = %s AND key_id = %s", [b.id, b.writer], BTREE),
@@ -1085,10 +1085,10 @@ def index_shapes(b: Tenant) -> list[tuple[str, str, list, list[str]]]:
         ("review_queue_pkey", "SELECT * FROM review_queue WHERE memory_id = %s", [b.m2], BTREE),
         ("idempotency_pkey", "SELECT * FROM idempotency WHERE tenant_id = %s AND key = %s", [b.id, b.idem_key], BTREE),
         ("tenants_pkey", "SELECT * FROM tenants WHERE id = %s", [b.id], BTREE),
-        ("workareas_pkey", "SELECT * FROM workareas WHERE id = %s", [b.child], BTREE),
-        ("workareas_tenant_id_id", "SELECT tenant_id, id FROM workareas WHERE tenant_id = %s AND id > %s",
+        ("workspaces_pkey", "SELECT * FROM workspaces WHERE id = %s", [b.child], BTREE),
+        ("workspaces_tenant_id_id", "SELECT tenant_id, id FROM workspaces WHERE tenant_id = %s AND id > %s",
          [b.id, uuid.UUID(int=0)], BTREE),
-        ("workareas_universe", "SELECT * FROM workareas WHERE tenant_id = %s AND parent_id IS NULL", [b.id], BTREE),
+        ("workspaces_universe", "SELECT * FROM workspaces WHERE tenant_id = %s AND parent_id IS NULL", [b.id], BTREE),
     ]
 
 
@@ -1273,7 +1273,7 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
         # The function is handed the whole row as text, so a migration that renames or moves a
         # column cannot leave it handed NULLs.
         probes = [f"SELECT 1 FROM {t} x WHERE pg_temp.spike_leak(x::text)"
-                  for t in ("memories", "workareas", "api_keys", "journal", "tenants", "outbox") if t in tables]
+                  for t in ("memories", "workspaces", "api_keys", "journal", "tenants", "outbox") if t in tables]
         seen: dict[str, list[str]] = {}
         for tenant, label in ((a.id, "A"), (b.id, "B")):
             notices.clear()
@@ -1349,17 +1349,17 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
         probe_key = ("INSERT INTO api_keys (tenant_id, hash, credential, role, principal, issued_seq, {col}) "
                      "VALUES (%s, %s, 'bearer', 'reader', 'probe', 1, %s)")
         fk_cases = [
-            ("workareas.parent_id",
-             "INSERT INTO workareas (tenant_id, parent_id, name, status) VALUES (%s, %s, 'probe', "
+            ("workspaces.parent_id",
+             "INSERT INTO workspaces (tenant_id, parent_id, name, status) VALUES (%s, %s, 'probe', "
              "'development')", lambda x: [a.id, x], a.universe, b.universe),
             ("memories.created_event_id",
-             "INSERT INTO memories (tenant_id, workarea_id, claim, claim_digest, status, created_event_id, "
+             "INSERT INTO memories (tenant_id, workspace_id, claim, claim_digest, status, created_event_id, "
              "claim_key, author_principal, author_key_id, version, kind, body_bytes) VALUES (%s, %s, 'probe', "
              "'\\x00', 'held', %s, 'probe', 'probe', %s, 1, 'memory', 5)",
              lambda x: [a.id, a.child, x, a.writer], a.events[4], b.events[4]),
             ("review_queue.memory_id", "INSERT INTO review_queue (memory_id, tenant_id) VALUES (%s, %s)",
              lambda x: [x, a.id], a.m1, b.m1),
-            ("api_keys.default_workarea_id", probe_key.format(col="default_workarea_id"),
+            ("api_keys.default_workspace_id", probe_key.format(col="default_workspace_id"),
              lambda x: [a.id, b"probe-default", x], a.universe, b.universe),
             ("api_keys.rotated_from", probe_key.format(col="rotated_from"),
              lambda x: [a.id, b"probe-rotated", x], a.writer, b.writer),
@@ -1510,7 +1510,7 @@ def apply_migrations(owner_ci: str, serving_role: str, migrations: Path, a: Tena
                     "SELECT id, version, kind, body_bytes = octet_length(normalize(claim, NFC)), is_tip, "
                     "promoted_at IS NOT NULL FROM memories ORDER BY id").fetchall()
                 idem = conn.execute("SELECT response ->> 'version' FROM idempotency").fetchall()
-            keys_ok = keys == {t.writer: (2, None), t.dreamer: (3, t.writer)}
+            keys_ok = keys == {t.writer: (2, None), t.reviewer: (3, t.writer)}
             expect = {t.m1: (1, "memory", True, True, True), t.m2: (1, "memory", True, False, False),
                       t.m3: (1, "memory", True, True, True)}
             mems_ok = {r[0]: tuple(r[1:]) for r in mems} == expect

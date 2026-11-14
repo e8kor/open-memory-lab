@@ -51,7 +51,7 @@ accepts that secret. Check it with:
      kubectl --namespace {{ $ns }} exec deployment/{{ $fullname }}-web -- /usr/local/bin/oml-web --doctor
 
 The Ingress, once enabled, routes each page the web console serves by its own path
-(web.ingressPaths: the Guardrails, Workareas, Memories, Atlas, Review and Keys
+(web.ingressPaths: the Guardrails, Workspaces, Memories, Atlas, Review and Keys
 pages, one memory, Curate, Start with its poll and export, setup, the admin overview, the
 users page, the Memories JSON and the diagram frame's two prefixes) and every other path to the lead.
 {{- if not .Values.web.publicUrl }}

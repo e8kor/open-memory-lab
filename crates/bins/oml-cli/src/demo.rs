@@ -1,5 +1,5 @@
-//! `oml demo seed`: a demonstration workarea filled through the public API
-//! alone (ADR-0067 d4). It creates the workarea, three short-lived identities
+//! `oml demo seed`: a demonstration workspace filled through the public API
+//! alone (ADR-0067 d4). It creates the workspace, three short-lived identities
 //! (one author and two reviewers, so the reviewer is never the author), and
 //! writes a team's memories: most approved, some superseded by a newer approved
 //! version, some left held. Every identity is fenced from the whole tree when
@@ -146,7 +146,7 @@ pub const MEMORIES: [Memory; 30] = [
 /// What a finished seed reports.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Report {
-    pub workarea: String,
+    pub workspace: String,
     pub approved: usize,
     pub superseded: usize,
     pub held: usize,
@@ -154,13 +154,13 @@ pub struct Report {
     pub identities: [String; 3],
 }
 
-/// The three names a seed of `workarea` gives its identities.
+/// The three names a seed of `workspace` gives its identities.
 #[must_use]
-pub fn identity_names(workarea: &str) -> [String; 3] {
+pub fn identity_names(workspace: &str) -> [String; 3] {
     [
-        format!("{workarea}-author"),
-        format!("{workarea}-reviewer-a"),
-        format!("{workarea}-reviewer-b"),
+        format!("{workspace}-author"),
+        format!("{workspace}-reviewer-a"),
+        format!("{workspace}-reviewer-b"),
     ]
 }
 
@@ -182,20 +182,20 @@ fn issue(
     admin: &Client,
     name: &str,
     role: &str,
-    held_by: &str,
-    workarea: &str,
+    used_by: &str,
+    workspace: &str,
     grant_roles: &[&str],
 ) -> Result<String, CliError> {
     let grants: Vec<Value> = grant_roles
         .iter()
-        .map(|r| json!({ "workarea": workarea, "role": r }))
+        .map(|r| json!({ "workspace": workspace, "role": r }))
         .collect();
     let body = json!({
         "role": role,
         "name": name,
-        "held_by": held_by,
+        "used_by": used_by,
         "principal": format!("demo/{name}"),
-        "default_workarea": workarea,
+        "default_workspace": workspace,
         "grants": grants,
     });
     let (_, response) = admin.post("/v2/keys", &body, &opts())?;
@@ -214,7 +214,7 @@ fn approve(reviewer: &Client, artifact: &str) -> Result<(), CliError> {
     let item = text(&served["item"], "artifact_id")?;
     if item != artifact {
         return Err(CliError::local(format!(
-            "the review queue served {item} where {artifact} was written; the workarea is not new"
+            "the review queue served {item} where {artifact} was written; the workspace is not new"
         )));
     }
     let body = json!({ "verdict": "approve", "serve_id": text(&served, "serve_id")? });
@@ -227,20 +227,20 @@ fn approve(reviewer: &Client, artifact: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Seeds `workarea` under `parent` through `admin`, which must be an admin
+/// Seeds `workspace` under `parent` through `admin`, which must be an admin
 /// key. Nothing is retried and nothing is undone on failure: the identities
 /// it issued are fenced even then, so a failed seed leaves no live key.
 ///
 /// # Errors
 ///
 /// The refusal or failure of the first call that did not succeed.
-pub fn seed(admin: &Client, workarea: &str, parent: &str) -> Result<Report, CliError> {
+pub fn seed(admin: &Client, workspace: &str, parent: &str) -> Result<Report, CliError> {
     let (_, created) = admin.post(
-        "/v2/workareas",
-        &json!({ "parent": parent, "name": workarea }),
+        "/v2/workspaces",
+        &json!({ "parent": parent, "name": workspace }),
         &opts(),
     )?;
-    let identities = identity_names(workarea);
+    let identities = identity_names(workspace);
     let mut issued = Vec::new();
     let result = (|| {
         let author = issue(
@@ -248,26 +248,26 @@ pub fn seed(admin: &Client, workarea: &str, parent: &str) -> Result<Report, CliE
             &identities[0],
             "writer",
             "agent",
-            workarea,
+            workspace,
             &["writer", "reader"],
         )?;
         issued.push(identities[0].clone());
         let first = issue(
             admin,
             &identities[1],
-            "dreamer",
-            "human",
-            workarea,
-            &["dreamer"],
+            "reviewer",
+            "person",
+            workspace,
+            &["reviewer"],
         )?;
         issued.push(identities[1].clone());
         let second = issue(
             admin,
             &identities[2],
-            "dreamer",
-            "human",
-            workarea,
-            &["dreamer"],
+            "reviewer",
+            "person",
+            workspace,
+            &["reviewer"],
         )?;
         issued.push(identities[2].clone());
         let server = admin.server().to_owned();
@@ -276,18 +276,18 @@ pub fn seed(admin: &Client, workarea: &str, parent: &str) -> Result<Report, CliE
             Client::new(server.clone(), Some(first)),
             Client::new(server, Some(second)),
         ];
-        run(&writer, &reviewers, workarea)
+        run(&writer, &reviewers, workspace)
     })();
     for name in &issued {
         let path = format!("/v2/keys/{}/denials", segment(name)?);
-        let fenced = admin.post(&path, &json!({ "workarea": "universe" }), &opts());
+        let fenced = admin.post(&path, &json!({ "workspace": "universe" }), &opts());
         if result.is_ok() {
             fenced?;
         }
     }
     let (approved, superseded, held) = result?;
     Ok(Report {
-        workarea: text(&created, "name").unwrap_or(workarea).to_owned(),
+        workspace: text(&created, "name").unwrap_or(workspace).to_owned(),
         approved,
         superseded,
         held,
@@ -302,7 +302,7 @@ pub fn seed(admin: &Client, workarea: &str, parent: &str) -> Result<Report, CliE
 fn run(
     writer: &Client,
     reviewers: &[Client; 2],
-    workarea: &str,
+    workspace: &str,
 ) -> Result<(usize, usize, usize), CliError> {
     let mut turn = 0_usize;
     let mut next_reviewer = || {
@@ -311,7 +311,7 @@ fn run(
     };
     let (mut approved, mut superseded, mut held) = (0, 0, 0);
     let write = |n: usize, path: &str, body: &Value| -> Result<String, CliError> {
-        let (_, receipt) = writer.post_keyed(path, body, &format!("demo-seed:{workarea}:{n}"))?;
+        let (_, receipt) = writer.post_keyed(path, body, &format!("demo-seed:{workspace}:{n}"))?;
         Ok(text(&receipt, "artifact_id")?.to_owned())
     };
     for (n, memory) in MEMORIES.iter().enumerate() {
@@ -373,7 +373,7 @@ mod tests {
         }
     }
 
-    /// The three identities are distinct names under the workarea, so the
+    /// The three identities are distinct names under the workspace, so the
     /// reviewers are never the author.
     #[test]
     fn the_author_and_the_two_reviewers_are_three_names() {

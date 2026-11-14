@@ -636,7 +636,7 @@ where
         };
         let Some(user) = self
             .journal
-            .workarea(tenant_id, root)
+            .workspace(tenant_id, root)
             .await?
             .map(|w| w.name)
         else {
@@ -685,10 +685,10 @@ where
             .key
             .user
             .ok_or(AppError::WebKeyMissing { capacity: "web" })?;
-        let nodes = self.journal.workarea_subtree(tenant_id, root).await?;
+        let nodes = self.journal.workspace_subtree(tenant_id, root).await?;
         let paths: BTreeMap<Uuid, String> = {
-            let by_id: BTreeMap<Uuid, &crate::types::WorkareaRecord> =
-                nodes.iter().map(|w| (w.workarea_id, w)).collect();
+            let by_id: BTreeMap<Uuid, &crate::types::WorkspaceRecord> =
+                nodes.iter().map(|w| (w.workspace_id, w)).collect();
             nodes
                 .iter()
                 .map(|w| {
@@ -700,7 +700,7 @@ where
                     }
                     parts.push(UNIVERSE.to_owned());
                     parts.reverse();
-                    (w.workarea_id, parts.join("."))
+                    (w.workspace_id, parts.join("."))
                 })
                 .collect()
         };
@@ -712,7 +712,7 @@ where
             "exported_at": self.clock.now().as_str(),
             "memories": memories.iter().map(|m| json!({
                 "memory_id": m.memory_id.to_string(),
-                "workarea": paths.get(&m.workarea_id),
+                "workspace": paths.get(&m.workspace_id),
                 "claim_key": m.claim_key,
                 "version": m.version,
                 "status": m.status.as_str(),
@@ -738,10 +738,10 @@ where
     ) -> Result<Vec<crate::types::MemoryRecord>, AppError> {
         let nodes: Vec<Uuid> = self
             .journal
-            .workarea_subtree(tenant_id, root)
+            .workspace_subtree(tenant_id, root)
             .await?
             .into_iter()
-            .map(|w| w.workarea_id)
+            .map(|w| w.workspace_id)
             .collect();
         Ok(self
             .journal
@@ -900,17 +900,17 @@ where
     ) -> Result<Option<Uuid>, AppError> {
         let Some(id) = self
             .journal
-            .resolve_name(tenant_id, NamedKind::Workarea, user)
+            .resolve_name(tenant_id, NamedKind::Workspace, user)
             .await?
         else {
             return Ok(None);
         };
         Ok(self
             .journal
-            .workarea(tenant_id, id)
+            .workspace(tenant_id, id)
             .await?
             .filter(|w| w.user_root)
-            .map(|w| w.workarea_id))
+            .map(|w| w.workspace_id))
     }
 }
 

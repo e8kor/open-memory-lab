@@ -15,9 +15,9 @@ use oml_domain::valid_time::{ValidTime, ValidTimeError, Window};
 use oml_domain::vocab_edges::{CycleRefused, EdgeState};
 use oml_domain::web::{Email, GitHubEmail, Provider, SignInRefusal, UserTooLong};
 use oml_domain::{
-    ChainError, EventTime, FrozenOp, HeldBy, JcsError, LadderRefusal, LineageClosure, MemoryKind,
-    MemoryStatus, Role, Sha256Hash, SignedEnvelope, TransitionError, VerdictError, VerifyError,
-    WorkareaStatus,
+    ChainError, EventTime, FrozenOp, JcsError, LadderRefusal, LineageClosure, MemoryKind,
+    MemoryStatus, Role, Sha256Hash, SignedEnvelope, TransitionError, UsedBy, VerdictError,
+    VerifyError, WorkspaceStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -79,8 +79,8 @@ pub struct KeyRecord {
     pub tenant_id: Uuid,
     pub role: Role,
     pub principal: String,
-    pub held_by: HeldBy,
-    pub default_workarea: Option<Uuid>,
+    pub used_by: UsedBy,
+    pub default_workspace: Option<Uuid>,
     /// The key that issued this one; `None` for the bootstrap ceremony's
     /// first admin key, which no key issues (postgres-schema.md
     /// `api_keys.issued_by`).
@@ -291,7 +291,7 @@ pub struct ConnectCodeRecord {
 
 /// A key's one live connect code as `oml keys show` names it: its id, its
 /// expiry, and whether it outlives the ten-minute default, which only an
-/// admin's explicit lifetime on a key confined to one workarea can do
+/// admin's explicit lifetime on a key confined to one workspace can do
 /// (ADR-0067 d3). The code itself is never here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveConnectCode {
@@ -528,21 +528,21 @@ pub enum ConnectOutcome {
     CodeVoided,
 }
 
-/// A granted workarea as the confirmation names it: by its name, with the
+/// A granted workspace as the confirmation names it: by its name, with the
 /// grant's role (ADR-0031 d9 step 2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfirmationGrant {
-    pub workarea_id: Uuid,
-    pub workarea: Name,
+    pub workspace_id: Uuid,
+    pub workspace: Name,
     pub role: Role,
 }
 
 /// What the confirmation shows a correct code's holder before the
 /// connection opens (http-api.md "The authorization page"; ADR-0031 d9
 /// step 2): the tenant by the name the operator gave it, the key's name,
-/// principal and role, every granted workarea with its grant's role, and
-/// the workareas each verb-kind sentence names, from the key's effective
-/// access at each granted workarea. The page builds its sentences from
+/// principal and role, every granted workspace with its grant's role, and
+/// the workspaces each verb-kind sentence names, from the key's effective
+/// access at each granted workspace. The page builds its sentences from
 /// these; "Everything it writes is held…" follows from a non-empty
 /// `writes_in` or `proposes_in`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -558,16 +558,16 @@ pub struct ConfirmationView {
     pub role: Role,
     /// In grant order.
     pub grants: Vec<ConfirmationGrant>,
-    /// Granted workareas where writer is effective: "Claude can remember
+    /// Granted workspaces where writer is effective: "Claude can remember
     /// and learn as this agent in …".
     pub writes_in: Vec<Name>,
-    /// Granted workareas where reader is effective: "Claude can recall and
+    /// Granted workspaces where reader is effective: "Claude can recall and
     /// read as this agent in …".
     pub reads_in: Vec<Name>,
-    /// Granted workareas where dreamer is effective, its propose class:
+    /// Granted workspaces where reviewer is effective, its propose class:
     /// "Claude can propose edits and edges as this agent in …".
     pub proposes_in: Vec<Name>,
-    /// Granted workareas whose tenant policy permits `self_signed` rows.
+    /// Granted workspaces whose tenant policy permits `self_signed` rows.
     /// No journalled tenant policy permits them in this build, so it is
     /// always empty here.
     pub self_signed_in: Vec<Name>,
@@ -816,7 +816,7 @@ pub struct RegisteredClient {
 
 /// A stored grant row: the domain grant and its epoch, the journal seq of
 /// the `grant.issued` that wrote it (postgres-schema.md `grants`;
-/// workareas.md permission epoch; ADR-0025 d14).
+/// workspaces.md permission epoch; ADR-0025 d14).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrantRecord {
     pub grant: Grant,
@@ -836,7 +836,7 @@ pub struct DenialRecord {
 /// What effective access is computed from for one key, read in one
 /// snapshot: the floor of its permission epoch, its grants, its global
 /// denials in force and the epochs of the lifts that ended the others, each
-/// list in epoch order (workareas.md effective access and permission epoch;
+/// list in epoch order (workspaces.md effective access and permission epoch;
 /// ADR-0025 d1, d14).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyAccess {
@@ -854,7 +854,7 @@ pub struct KeyAccess {
 impl KeyAccess {
     /// The key's permission epoch over what is built: the latest of its
     /// `key.issued`, `grant.issued`, `key.denied` and `key.denial_lifted`
-    /// seqs (workareas.md permission epoch; ADR-0025 d14).
+    /// seqs (workspaces.md permission epoch; ADR-0025 d14).
     #[must_use]
     pub fn permission_epoch(&self) -> u64 {
         self.grants
@@ -866,9 +866,9 @@ impl KeyAccess {
     }
 }
 
-/// A workarea's crew: recorded, not operated — OML never contacts the
+/// A workspace's crew: recorded, not operated — OML never contacts the
 /// external manager (openapi.yaml `CrewRecord`; event-catalog.md
-/// `workarea.create`). An absent member is stored and served absent.
+/// `workspace.create`). An absent member is stored and served absent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Crew {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -879,11 +879,11 @@ pub struct Crew {
     pub external_manager: Option<String>,
 }
 
-/// A workarea node: id, parent, name, its rung on the status ladder and
+/// A workspace node: id, parent, name, its rung on the status ladder and
 /// its crew.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkareaRecord {
-    pub workarea_id: Uuid,
+pub struct WorkspaceRecord {
+    pub workspace_id: Uuid,
     pub tenant_id: Uuid,
     pub parent_id: Option<Uuid>,
     /// Unique in the tenant across the whole tree and never changed; the
@@ -891,15 +891,15 @@ pub struct WorkareaRecord {
     pub name: Name,
     /// The node's rung on the status ladder, as its row stores it: one
     /// column, written at create and by a ratified transition alone
-    /// (ADR-0009 d1; workareas.md the status ladder). `workarea.create`
-    /// stores `development`, and a tenant's bootstrap stores `committed` on
-    /// the universe root, which never moves (http-api.md workareas).
-    pub status: WorkareaStatus,
-    /// The crew object a PoC `workarea.create` copied in, kept as the
+    /// (ADR-0009 d1; workspaces.md the status ladder). `workspace.create`
+    /// stores `development`, and a tenant's bootstrap stores `protected` on
+    /// the universe root, which never moves (http-api.md workspaces).
+    pub status: WorkspaceStatus,
+    /// The crew object a PoC `workspace.create` copied in, kept as the
     /// history the naming of rows that predate names reads it from; `None`
-    /// on every workarea created since crews are records (ADR-0026 d8, d11).
+    /// on every workspace created since crews are records (ADR-0026 d8, d11).
     pub crew: Option<Crew>,
-    /// The crew record the workarea names; `None` when it names none
+    /// The crew record the workspace names; `None` when it names none
     /// (ADR-0026 d8).
     pub crew_id: Option<Uuid>,
     /// A user root, `universe.<user>`, which only issuance creates; fixed at
@@ -911,18 +911,18 @@ pub struct WorkareaRecord {
     /// node crosses a user root's boundary (d1).
     pub namespace: Option<Uuid>,
     /// Whether a person's key put the node in progress (ADR-0030 d1):
-    /// `workareas.mode`, written by `workarea.mode_set` alone.
+    /// `workspaces.mode`, written by `workspace.mode_set` alone.
     pub in_progress: bool,
 }
 
-impl WorkareaRecord {
+impl WorkspaceRecord {
     /// The user root the node belongs to: itself for a user root, the root
     /// whose namespace holds it beneath one, `None` for a shared node
     /// (ADR-0044 d1).
     #[must_use]
     pub fn user(&self) -> Option<Uuid> {
         if self.user_root {
-            Some(self.workarea_id)
+            Some(self.workspace_id)
         } else {
             self.namespace
         }
@@ -931,9 +931,9 @@ impl WorkareaRecord {
 
 /// Where a status-ladder proposal stands: `pending` until a second identity
 /// ratifies it, then `ratified` for good (ADR-0009 d3; postgres-schema.md
-/// `workarea_transitions.state`). A proposal made stale by another's
+/// `workspace_transitions.state`). A proposal made stale by another's
 /// ratification stays `pending` as history; the status read, not the row,
-/// tells it apart (workareas.md, the status read lists only live proposals).
+/// tells it apart (workspaces.md, the status read lists only live proposals).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransitionState {
     Pending,
@@ -960,10 +960,10 @@ impl TransitionState {
     }
 }
 
-/// One status-ladder proposal as its `workarea_transitions` row holds it:
+/// One status-ladder proposal as its `workspace_transitions` row holds it:
 /// the node, the step from one rung to the next, the proposer's key and
 /// principal, and the ratifier's key once a second identity ratified it
-/// (ADR-0009 d3; workareas.md, a pending proposal is a row). The journal
+/// (ADR-0009 d3; workspaces.md, a pending proposal is a row). The journal
 /// seqs of the proposal and the ratification are the store's, written from
 /// the events the folds commit with, never carried here.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -971,9 +971,9 @@ pub struct TransitionRecord {
     /// The events' `transition_id`.
     pub transition_id: Uuid,
     pub tenant_id: Uuid,
-    pub workarea_id: Uuid,
-    pub from: WorkareaStatus,
-    pub to: WorkareaStatus,
+    pub workspace_id: Uuid,
+    pub from: WorkspaceStatus,
+    pub to: WorkspaceStatus,
     pub state: TransitionState,
     pub proposer_key_id: Uuid,
     /// The principal the proposing key's row holds, which the proposal's
@@ -984,16 +984,16 @@ pub struct TransitionRecord {
     pub ratifier_key_id: Option<Uuid>,
 }
 
-/// A workarea's status read (http-api.md workareas, `GET
-/// /v2/workareas/{id}/status`): the rung its row stores, the review policy
+/// A workspace's status read (http-api.md workspaces, `GET
+/// /v2/workspaces/{id}/status`): the rung its row stores, the review policy
 /// object in force, and its live proposals in proposal order, the pending
 /// rows whose `from` is that rung; a proposal another's ratification made
-/// stale is not listed (workareas.md, the status read lists only live
+/// stale is not listed (workspaces.md, the status read lists only live
 /// proposals; ADR-0009 d3).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkareaStatusView {
-    pub workarea_id: Uuid,
-    pub status: WorkareaStatus,
+pub struct WorkspaceStatusView {
+    pub workspace_id: Uuid,
+    pub status: WorkspaceStatus,
     /// The policy a verdict's ratification and a transition's
     /// `policy_snapshot` read, so the three never disagree.
     pub policy: serde_json::Value,
@@ -1003,14 +1003,14 @@ pub struct WorkareaStatusView {
 /// One live proposal as the status read serves it, the openapi
 /// `Transition` shape: never the proposer's principal nor the tenant, and
 /// the proposing key only to a key in the proposer's own key set, as the
-/// tail serves it (workareas.md, the status read names the proposing key
+/// tail serves it (workspaces.md, the status read names the proposing key
 /// only to its own key set; http-api.md#events-tail; ADR-0025 d15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransitionView {
     pub transition_id: Uuid,
-    pub workarea_id: Uuid,
-    pub from: WorkareaStatus,
-    pub to: WorkareaStatus,
+    pub workspace_id: Uuid,
+    pub from: WorkspaceStatus,
+    pub to: WorkspaceStatus,
     pub state: TransitionState,
     /// The proposing key when it is in the reader's own key set; `None`
     /// to every other reader, an admin key included.
@@ -1018,7 +1018,7 @@ pub struct TransitionView {
 }
 
 /// A crew record: named, recorded and not operated — OML never contacts the
-/// external manager (workareas.md crews; postgres-schema.md `crews`;
+/// external manager (workspaces.md crews; postgres-schema.md `crews`;
 /// ADR-0026 d8). The name never changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrewRecord {
@@ -1030,51 +1030,51 @@ pub struct CrewRecord {
     pub external_manager: Option<String>,
 }
 
-/// A node as `workarea.create` committed it, with the path derived from the
-/// stored ancestry: the same derivation the workarea read serves, so the
+/// A node as `workspace.create` committed it, with the path derived from the
+/// stored ancestry: the same derivation the workspace read serves, so the
 /// create and the read never name one node two ways (ADR-0025 d14).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CreatedWorkarea {
-    pub workarea: WorkareaRecord,
+pub struct CreatedWorkspace {
+    pub workspace: WorkspaceRecord,
     pub path: String,
-    /// The crew record the create named, as the workarea read serves it.
+    /// The crew record the create named, as the workspace read serves it.
     pub crew: Option<CrewRecord>,
 }
 
-/// One workarea as the calling key may see it (http-api.md workareas;
+/// One workspace as the calling key may see it (http-api.md workspaces;
 /// ADR-0025 d14): the node, its path derived from the `parent_id` names
 /// from `universe`, the crew record it names, the immediate children the
 /// key can read, the verbs its effective access confers there, and its
-/// permission epoch. No workarea edge can exist in this build, so the read
+/// permission epoch. No workspace edge can exist in this build, so the read
 /// serves no edges. An admin key reads it by its key role: every child, no
 /// effective verb (ADR-0026 d15).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkareaInfo {
-    pub workarea: WorkareaRecord,
+pub struct WorkspaceInfo {
+    pub workspace: WorkspaceRecord,
     /// The node's in-progress root, itself for a root, `None` outside every
     /// in-progress subtree (ADR-0030 d13).
-    pub in_progress_root: Option<WorkareaRecord>,
+    pub in_progress_root: Option<WorkspaceRecord>,
     pub path: String,
-    /// The crew record the workarea names, read from the store; `None` when
+    /// The crew record the workspace names, read from the store; `None` when
     /// it names none (ADR-0026 d8).
     pub crew: Option<CrewRecord>,
     /// Ordered by name in byte order, then id; a child the key cannot read
     /// is absent, not marked.
-    pub children: Vec<WorkareaRecord>,
+    pub children: Vec<WorkspaceRecord>,
     /// The effective-verbs table of roles-and-keys.md over the roles
     /// effective on the node, in table order; empty for an admin key, which
     /// holds no grant role.
     pub my_effective_verbs: Vec<&'static str>,
     /// The key's permission epoch as its access was read for this request
-    /// (workareas.md permission epoch).
+    /// (workspaces.md permission epoch).
     pub permission_epoch: u64,
     /// The review policy in force, the one a transition's `policy_snapshot`
     /// records (ADR-0039 d9; ADR-0046 d3).
     pub policy: serde_json::Value,
     /// The node's federation field, served beside `policy` (ADR-0072 d5).
-    pub federation: crate::federation::WorkareaFederation,
+    pub federation: crate::federation::WorkspaceFederation,
     /// The node's live proposals in proposal order, as the status read lists
-    /// them (workareas.md, the status read lists only live proposals).
+    /// them (workspaces.md, the status read lists only live proposals).
     pub pending_transitions: Vec<TransitionView>,
     /// The node's brief as this key may read it; empty for an admin key,
     /// which reads no claim content (ADR-0046 d9).
@@ -1085,18 +1085,18 @@ pub struct WorkareaInfo {
     pub stale_versions: u64,
 }
 
-/// One node of a workarea tree read, with its derived path and the crew
-/// record it names, if any (http-api.md workareas, `GET
-/// /v2/workareas/{id}/tree`; ADR-0026 d8, d15).
+/// One node of a workspace tree read, with its derived path and the crew
+/// record it names, if any (http-api.md workspaces, `GET
+/// /v2/workspaces/{id}/tree`; ADR-0026 d8, d15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeNode {
-    pub workarea: WorkareaRecord,
+    pub workspace: WorkspaceRecord,
     pub path: String,
     pub crew: Option<CrewRecord>,
 }
 
-/// One page of a workarea tree read, in path order, and the cursor of the
-/// next page, `None` once the tree is exhausted (http-api.md workareas and
+/// One page of a workspace tree read, in path order, and the cursor of the
+/// next page, `None` once the tree is exhausted (http-api.md workspaces and
 /// pagination; ADR-0026 d15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreePage {
@@ -1105,14 +1105,14 @@ pub struct TreePage {
 }
 
 /// The rows of one tenant's chain that have no name yet: the tenant's own
-/// row, workareas and keys. Every row a creation writes is named, so on the
+/// row, workspaces and keys. Every row a creation writes is named, so on the
 /// names schema these are the rows that predate names (ADR-0026 d9, d11;
 /// postgres-schema.md names and tenants).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UnnamedRows {
     pub tenant: bool,
     /// In id order.
-    pub workareas: Vec<Uuid>,
+    pub workspaces: Vec<Uuid>,
     /// In id order.
     pub keys: Vec<Uuid>,
 }
@@ -1120,7 +1120,7 @@ pub struct UnnamedRows {
 impl UnnamedRows {
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        !self.tenant && self.workareas.is_empty() && self.keys.is_empty()
+        !self.tenant && self.workspaces.is_empty() && self.keys.is_empty()
     }
 }
 
@@ -1159,8 +1159,8 @@ pub enum NamingRefusal {
 pub struct MemoryRecord {
     pub memory_id: Uuid,
     pub tenant_id: Uuid,
-    pub workarea_id: Uuid,
-    /// Names one live claim per workarea; its versions share it
+    pub workspace_id: Uuid,
+    /// Names one live claim per workspace; its versions share it
     /// (audit-and-lineage.md supersession chains).
     pub claim_key: String,
     /// The ordinal within the `claim_key`: 1 for a new claim, 1 + the
@@ -1273,7 +1273,7 @@ impl MemoryRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Approval {
     /// The reviewing key's attestation at the verdict.
-    pub held_by: HeldBy,
+    pub used_by: UsedBy,
     /// Whether the reviewing key and the authoring key act for one person,
     /// as the promotion's event marks it (ADR-0055 d7); `None` on a version
     /// ratified before the mark.
@@ -1362,7 +1362,7 @@ pub struct GuardrailFields {
     pub rule: Option<Value>,
 }
 
-/// What a capture reads of one `claim_key` in one workarea before it commits
+/// What a capture reads of one `claim_key` in one workspace before it commits
 /// (audit-and-lineage.md supersession chains; ADR-0025 d10, d18).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ClaimKeyState {
@@ -1386,7 +1386,7 @@ pub struct VersionRef {
 /// One memory version as the calling key is served it (http-api.md get and
 /// recall; ADR-0025 d3, d12): the row with `derives_from` cut to the
 /// ancestors the key can read, the version it replaces only where the key
-/// can read that version too, and the workarea's derived path.
+/// can read that version too, and the workspace's derived path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServedMemory {
     pub memory: MemoryRecord,
@@ -1395,9 +1395,9 @@ pub struct ServedMemory {
     /// replaces, so a reviewer sees it before the verdict; `None` otherwise
     /// (proposed ADR-0059 d4).
     pub replaces_valid_until: Option<oml_domain::valid_time::ValidEnd>,
-    /// The `parent_id` names from the root to the row's workarea, joined
+    /// The `parent_id` names from the root to the row's workspace, joined
     /// with `.` (ADR-0025 d14); `None` for a node the tenant does not hold.
-    pub workarea_path: Option<String>,
+    pub workspace_path: Option<String>,
     /// A `universe` version served to a key outside its authoring key set:
     /// no principal, no `derives_from`, and the memory's author and lineage
     /// fields blanked, so no field says where its source lived (ADR-0044
@@ -1544,10 +1544,10 @@ pub struct IssuedKey {
     pub role: Role,
     pub principal: String,
     /// The issuer's attestation as journalled; `None` when none was sent.
-    pub held_by: Option<HeldBy>,
+    pub used_by: Option<UsedBy>,
     /// The sent default, else the first grant's node; `None` for a
     /// zero-grant key.
-    pub default_workarea: Option<Uuid>,
+    pub default_workspace: Option<Uuid>,
     /// The key's name as journalled ([`IssueKeyRequest::name`]).
     pub name: Name,
     /// The crew record named at issuance, fixed for the key's life
@@ -1590,14 +1590,14 @@ pub struct ConnectCodeIssued {
 #[derive(Debug, Clone)]
 pub struct BootstrapResult {
     pub tenant_id: Uuid,
-    pub root_workarea_id: Uuid,
+    pub root_workspace_id: Uuid,
     pub admin_key: IssuedKey,
 }
 
 /// `POST /v2/keys`, validated in the issuance order (roles-and-keys.md
 /// grant admissibility and refusal order; ADR-0025 d2).
 ///
-/// Every workarea and crew reference takes an id or a name, resolved in the
+/// Every workspace and crew reference takes an id or a name, resolved in the
 /// issuer's tenant after the issuer's role is checked and before step 1
 /// (roles-and-keys.md issuance order; ADR-0026 d4).
 #[derive(Debug, Clone)]
@@ -1610,10 +1610,10 @@ pub struct IssueKeyRequest {
     pub principal: String,
     /// The issuing admin's attestation; `None` journals null and stores the
     /// schema default, `agent`.
-    pub held_by: Option<HeldBy>,
+    pub used_by: Option<UsedBy>,
     /// `None` takes the first grant's node; a key never inherits its
     /// issuer's default.
-    pub default_workarea: Option<Reference>,
+    pub default_workspace: Option<Reference>,
     /// The key's crew record, fixed for its life; one the tenant does not
     /// hold is absent at step 4 (ADR-0026 d8).
     pub crew: Option<Reference>,
@@ -1643,7 +1643,7 @@ pub struct IssueKeyRequest {
 }
 
 /// One requested grant: a role over the subtree of `node`, less the
-/// subtrees of `deny`, each of which must lie inside it (workareas.md
+/// subtrees of `deny`, each of which must lie inside it (workspaces.md
 /// per-grant attenuation), every node by id or name.
 #[derive(Debug, Clone)]
 pub struct GrantRequest {
@@ -1729,7 +1729,7 @@ pub struct SimilarItem {
     pub claim_key: String,
     pub version: u32,
     pub kind: String,
-    pub workarea_id: Uuid,
+    pub workspace_id: Uuid,
     pub state: String,
     pub relation: String,
     pub jaccard_percent: u8,
@@ -1752,9 +1752,9 @@ pub struct SubmitRequest {
     pub kind: MemoryKind,
     /// The claim text as sent; capture normalizes it to NFC (admission.md).
     pub body: String,
-    /// The body's `workarea`, by id or name; `None` resolves to the key's
-    /// default workarea (http-api.md; ADR-0026 d4, ADR-0039 d7).
-    pub workarea: Option<Reference>,
+    /// The body's `workspace`, by id or name; `None` resolves to the key's
+    /// default workspace (http-api.md; ADR-0026 d4, ADR-0039 d7).
+    pub workspace: Option<Reference>,
     pub derives_from: Vec<Uuid>,
     /// Required on kind `guardrail` and refused on every other kind
     /// (proposed ADR-0037 d10).
@@ -1785,7 +1785,7 @@ pub struct SubmitReceipt {
     pub memory_id: Uuid,
     pub claim_key: String,
     pub version: u32,
-    pub workarea_id: Uuid,
+    pub workspace_id: Uuid,
     pub state: String,
     pub journal_seq: u64,
     pub body_digest: String,
@@ -1853,7 +1853,7 @@ pub struct BulkItem {
 /// and a `claim_key` prefix, each optional, all applied together.
 #[derive(Debug, Clone, Default)]
 pub struct HeldListingRequest {
-    pub workarea: Option<Reference>,
+    pub workspace: Option<Reference>,
     pub author_key: Option<Reference>,
     pub claim_key_prefix: Option<String>,
     pub cursor: Option<String>,
@@ -1900,7 +1900,7 @@ pub struct NamedServe {
 }
 
 /// A review verdict as `POST /v2/review/verdicts` received it. Its
-/// idempotency record is scoped to the key, the nil workarea and the
+/// idempotency record is scoped to the key, the nil workspace and the
 /// `Idempotency-Key`, and looked up before the default serve resolves, so a
 /// retry replays what it committed and never resolves a new target
 /// (http-api.md idempotency; ADR-0039 d10).
@@ -1914,7 +1914,7 @@ pub struct VerdictRequest {
 }
 
 /// The kinds recall serves as hits. Vocabulary kinds join them only by a
-/// workarea's journalled opt-in, which is unbuilt (retrieval.md, the
+/// workspace's journalled opt-in, which is unbuilt (retrieval.md, the
 /// recall-ordering contract; ADR-0021 d9, ADR-0025 d8).
 pub const HIT_KINDS: [MemoryKind; 2] = [MemoryKind::Memory, MemoryKind::DerivedFact];
 
@@ -1922,11 +1922,11 @@ pub const HIT_KINDS: [MemoryKind; 2] = [MemoryKind::Memory, MemoryKind::DerivedF
 pub struct RecallRequest {
     pub query: String,
     pub k: usize,
-    /// The body's `workarea`, the scope node, by id or name; `None`
-    /// resolves to the key's default workarea, and a key with neither is
+    /// The body's `workspace`, the scope node, by id or name; `None`
+    /// resolves to the key's default workspace, and a key with neither is
     /// refused — there is no tenant-wide fallback (ADR-0025 d1; ADR-0026
     /// d4, ADR-0039 d4).
-    pub workarea: Option<Reference>,
+    pub workspace: Option<Reference>,
     /// The hit kinds the request admits; empty when it sent no filter. It
     /// narrows the hits only, never the steering (retrieval.md, the
     /// recall-ordering contract; ADR-0025 d8).
@@ -1993,7 +1993,7 @@ pub struct RecallHit {
     /// `matched.rank_before`: the hit's rank in the first stage's list, from
     /// 1, for a hit the reranker scored (ADR-0053 d7).
     pub rank_before: Option<u32>,
-    /// The hit's `via` under `wide` or a list: whether its workarea is the
+    /// The hit's `via` under `wide` or a list: whether its workspace is the
     /// scope's or a federated source; `None` under `scope` (ADR-0072 d8).
     pub source: Option<crate::federation::Via>,
 }
@@ -2050,8 +2050,8 @@ pub struct RecallResult {
     /// The recall's id, the answer's `recall_id`: the event that records it
     /// and the id a `feedback` member names (ADR-0054 d2, d6).
     pub recall_id: Uuid,
-    /// The workarea node the recall read, resolved.
-    pub scope_workarea_id: Uuid,
+    /// The workspace node the recall read, resolved.
+    pub scope_workspace_id: Uuid,
     pub steering: Vec<ServedMemory>,
     pub hits: Vec<RecallHit>,
     /// How the `max_tokens` cut was applied; `None` when no budget was sent,
@@ -2115,12 +2115,12 @@ pub struct RecallResult {
 }
 
 /// The guardrail read (proposed ADR-0037 d5): the scope node is the key's
-/// default workarea or the `workarea` field (ADR-0039 d7), within the key's
+/// default workspace or the `workspace` field (ADR-0039 d7), within the key's
 /// grants; nothing in the request names a scope, which the key's issuance
 /// alone sets (d4).
 #[derive(Debug, Clone, Default)]
 pub struct GuardrailRequest {
-    pub workarea: Option<Reference>,
+    pub workspace: Option<Reference>,
 }
 
 /// One approving verdict on a served guardrail: the reviewing key's
@@ -2128,7 +2128,7 @@ pub struct GuardrailRequest {
 /// (proposed ADR-0037 d5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuardrailVerdict {
-    pub held_by: HeldBy,
+    pub used_by: UsedBy,
     pub at: EventTime,
 }
 
@@ -2138,8 +2138,8 @@ pub struct ServedGuardrail {
     pub artifact_id: Uuid,
     pub claim_key: String,
     pub version: u32,
-    pub workarea_id: Uuid,
-    pub workarea_path: Option<String>,
+    pub workspace_id: Uuid,
+    pub workspace_path: Option<String>,
     /// The node's depth from the tenant's root, the root at 0.
     pub depth: u32,
     pub severity: Severity,
@@ -2219,7 +2219,7 @@ pub enum ListingScope {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListingFilter {
     pub scope: ListingScope,
-    /// Only rows on these nodes — the own-work listing's `workarea_id`
+    /// Only rows on these nodes — the own-work listing's `workspace_id`
     /// subtree; `None` narrows nothing.
     pub subtree: Option<Vec<Uuid>>,
     pub state: Option<MemoryStatus>,
@@ -2286,13 +2286,13 @@ pub struct ClaimEdgeRecord {
 pub struct ClaimEdgeFilter {
     /// Only edges with this version at either endpoint.
     pub artifact_id: Option<Uuid>,
-    /// Only edges with an endpoint version in this workarea's subtree, as
-    /// every other `workarea_id` filter in http-api.md narrows (search, the
+    /// Only edges with an endpoint version in this workspace's subtree, as
+    /// every other `workspace_id` filter in http-api.md narrows (search, the
     /// events tail).
-    // reading: http-api.md names `workarea_id` on the graph read but not
+    // reading: http-api.md names `workspace_id` on the graph read but not
     // which endpoint it constrains; an edge is a connection either way, so
     // it matches as `artifact_id` does, at either endpoint.
-    pub workarea_id: Option<Uuid>,
+    pub workspace_id: Option<Uuid>,
 }
 
 /// What the store's claim-edge page selects: the read's [`ClaimEdgeFilter`]
@@ -2303,10 +2303,10 @@ pub struct ClaimEdgeFilter {
 pub struct ClaimEdgeSelection {
     /// Only edges with this version at either endpoint.
     pub artifact_id: Option<Uuid>,
-    /// Only edges with an endpoint version in one of these workareas: the
+    /// Only edges with an endpoint version in one of these workspaces: the
     /// filter's subtree where reader is effective; `None` narrows nothing.
     pub within: Option<Vec<Uuid>>,
-    /// Both endpoint versions lie in these workareas, every node where
+    /// Both endpoint versions lie in these workspaces, every node where
     /// reader is effective for the key...
     pub readable_nodes: Vec<Uuid>,
     /// ...and each is promoted or authored by this key...
@@ -2330,13 +2330,13 @@ pub struct ClaimEdgePosition {
     pub edge_id: Uuid,
 }
 
-/// `GET /v2/edges?kind=claim`'s query as the use case takes it: the workarea by
+/// `GET /v2/edges?kind=claim`'s query as the use case takes it: the workspace by
 /// id or name (ADR-0026), resolved to the [`ClaimEdgeFilter`] every page
 /// re-applies.
 #[derive(Debug, Clone, Default)]
 pub struct ClaimEdgeQuery {
-    /// Only edges with an endpoint version in this workarea.
-    pub workarea: Option<Reference>,
+    /// Only edges with an endpoint version in this workspace.
+    pub workspace: Option<Reference>,
     /// Only edges with this version at either endpoint.
     pub artifact_id: Option<Uuid>,
 }
@@ -2356,12 +2356,12 @@ pub struct ClaimEdgePage {
 pub struct ListRequest {
     /// `own=true`: the own-work listing, every row the key wrote.
     pub own: bool,
-    /// The query's `workarea`, by id or name, the subtree the listing reads
+    /// The query's `workspace`, by id or name, the subtree the listing reads
     /// (ADR-0039 d4, d7). On the scoped listing `None` resolves to the
-    /// key's default workarea, and a key with neither is refused; on the
+    /// key's default workspace, and a key with neither is refused; on the
     /// own-work listing it narrows the key's rows to that subtree, and
-    /// `None` lists every workarea the key wrote in.
-    pub workarea: Option<Reference>,
+    /// `None` lists every workspace the key wrote in.
+    pub workspace: Option<Reference>,
     pub state: Option<MemoryStatus>,
     pub kind: Option<MemoryKind>,
     pub claim_key: Option<String>,
@@ -2413,7 +2413,7 @@ pub struct KeyDetail {
     /// The key's user root, by id and name; `None` for a tenant key
     /// (ADR-0044 d11).
     pub user: Option<NamedRef>,
-    pub held_by: Option<HeldBy>,
+    pub used_by: Option<UsedBy>,
     /// The guardrail scope as the key's `key.issued` journalled it, an
     /// issuance without one folding as `ancestors` (proposed ADR-0037 d4).
     pub guardrail_scope: GuardrailScope,
@@ -2428,22 +2428,22 @@ pub struct NamedRef {
     pub name: Name,
 }
 
-/// A key's default workarea as `whoami` serves it: its id, its name and the
+/// A key's default workspace as `whoami` serves it: its id, its name and the
 /// path derived from its ancestry, root first (ADR-0039 d15).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkareaRef {
+pub struct WorkspaceRef {
     pub id: Uuid,
     pub name: Name,
     pub path: String,
 }
 
 /// The rows a key's own record references, read in one store query: its
-/// tenant, its default workarea and its crew record, `None` where the key
+/// tenant, its default workspace and its crew record, `None` where the key
 /// names none (ADR-0039 d15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyReferences {
     pub tenant: NamedRef,
-    pub default_workarea: Option<WorkareaRef>,
+    pub default_workspace: Option<WorkspaceRef>,
     pub crew: Option<NamedRef>,
     /// The key's user root (ADR-0044 d11).
     pub user: Option<NamedRef>,
@@ -2452,20 +2452,20 @@ pub struct KeyReferences {
 /// `GET /v2/whoami`: the calling key's own record, the references it names
 /// and its stored grants, never its denials, which name subtrees it may not
 /// read (ADR-0039 d15); a `<user>-web` session key's record also says
-/// whether it carries any. A provider-level key names no tenant, workarea or
+/// whether it carries any. A provider-level key names no tenant, workspace or
 /// crew and holds no grant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Whoami {
     pub key: KeyRecord,
     pub tenant: Option<NamedRef>,
-    pub default_workarea: Option<WorkareaRef>,
+    pub default_workspace: Option<WorkspaceRef>,
     pub crew: Option<NamedRef>,
     /// The key's user root, by id and name, from which a client learns its
     /// root; `None` for a tenant key (ADR-0044 d11).
     pub user: Option<NamedRef>,
     pub grants: Vec<GrantRecord>,
     /// For a person's `<user>-web` session key alone: whether it carries a
-    /// denial in force on any workarea, which refuses it three key acts for
+    /// denial in force on any workspace, which refuses it three key acts for
     /// good (ADR-0070 d2; #343). `None` for every other key, the other
     /// session keys included, so an agent key or an admin key learns nothing
     /// of its denials (ADR-0039 d15).
@@ -2473,7 +2473,7 @@ pub struct Whoami {
 }
 
 /// `POST /v1/memories/{artifact_id}/supersede` (http-api.md supersede;
-/// ADR-0025 d10, d11). The successor's `claim_key` and workarea are always
+/// ADR-0025 d10, d11). The successor's `claim_key` and workspace are always
 /// the target's.
 #[derive(Debug, Clone)]
 pub struct SupersedeRequest {
@@ -2492,9 +2492,9 @@ pub struct SupersedeRequest {
     pub derives_from: Vec<Uuid>,
     /// Digested with the request, never journalled.
     pub reason: Option<String>,
-    /// The body's `workarea`, by id or name: when sent, it must be the
-    /// target's workarea (ADR-0039 d7).
-    pub workarea: Option<Reference>,
+    /// The body's `workspace`, by id or name: when sent, it must be the
+    /// target's workspace (ADR-0039 d7).
+    pub workspace: Option<Reference>,
     /// Set by `oml_write` with `replaces`, which carries no vocabulary
     /// fields: a target of a vocabulary kind is refused, and superseded on
     /// the HTTP API instead (mcp-plugin.md `oml_write`; ADR-0025 d12,
@@ -2558,7 +2558,7 @@ pub struct SupersedeReceipt {
     pub memory_id: Uuid,
     pub claim_key: String,
     pub version: u32,
-    pub workarea_id: Uuid,
+    pub workspace_id: Uuid,
     pub state: String,
     pub retirement: bool,
     pub replaces: VersionRef,
@@ -2579,7 +2579,7 @@ pub struct ProposeClaimEdge {
     pub label: String,
 }
 
-/// A brief edge as the store holds it: one claim joined to one workarea's
+/// A brief edge as the store holds it: one claim joined to one workspace's
 /// brief, pending until a key that is not its proposer ratifies it
 /// (postgres-schema.md `brief_edges`; ADR-0046 d7, d8). Nothing deletes one,
 /// and it widens no lineage closure.
@@ -2589,8 +2589,8 @@ pub struct BriefEdgeRecord {
     pub tenant_id: Uuid,
     /// The member claim's version (`from_artifact_id` on the proposal).
     pub artifact_id: Uuid,
-    /// The workarea whose brief the claim joins (`to_workarea_id`).
-    pub workarea_id: Uuid,
+    /// The workspace whose brief the claim joins (`to_workspace_id`).
+    pub workspace_id: Uuid,
     /// `pending` or `ratified`.
     pub state: EdgeState,
     pub proposer_key_id: Uuid,
@@ -2608,8 +2608,8 @@ pub struct BriefEdgeRecord {
 #[derive(Debug, Clone)]
 pub struct ProposeBriefEdge {
     pub artifact_id: Uuid,
-    /// The workarea by id or name, as sent.
-    pub workarea: Reference,
+    /// The workspace by id or name, as sent.
+    pub workspace: Reference,
 }
 
 /// A brief edge as openapi.yaml's `Edge` serves it with `kind: brief`, and
@@ -2618,7 +2618,7 @@ pub struct ProposeBriefEdge {
 pub struct BriefEdgeView {
     pub edge_id: Uuid,
     pub from_artifact_id: Uuid,
-    pub to_workarea_id: Uuid,
+    pub to_workspace_id: Uuid,
     pub label: String,
     pub state: String,
     pub proposer_key_id: Uuid,
@@ -2630,7 +2630,7 @@ impl From<&BriefEdgeRecord> for BriefEdgeView {
         Self {
             edge_id: edge.edge_id,
             from_artifact_id: edge.artifact_id,
-            to_workarea_id: edge.workarea_id,
+            to_workspace_id: edge.workspace_id,
             label: oml_domain::brief::BRIEF_LABEL.to_owned(),
             state: edge.state.as_str().to_owned(),
             proposer_key_id: edge.proposer_key_id,
@@ -2662,14 +2662,14 @@ pub enum EdgeRatification {
     Brief(BriefEdgeRatification),
 }
 
-/// One page of a workarea's brief edges, pending and ratified, newest first.
+/// One page of a workspace's brief edges, pending and ratified, newest first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BriefEdgePage {
     pub items: Vec<BriefEdgeView>,
     pub next_cursor: Option<String>,
 }
 
-/// A workarea's brief as the workarea read and the session-start hook
+/// A workspace's brief as the workspace read and the session-start hook
 /// serve it: the ratified members the key reads that are still served
 /// tips, in ratification order, cut by `brief.max_tokens` (ADR-0046 d8, d9).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2748,7 +2748,7 @@ pub struct TailedEvent {
     /// `api_key_id` as null.
     pub names_actor: bool,
     /// The payload as served: outside the actor's own key set every field
-    /// naming a key is null, and a claim-subject workarea id the naming rule
+    /// naming a key is null, and a claim-subject workspace id the naming rule
     /// withholds is null (roles-and-keys.md#own).
     pub payload: serde_json::Value,
 }
@@ -3013,7 +3013,7 @@ pub enum AppError {
         grant_index: Option<usize>,
     },
     #[error(
-        "an admin key never carries a dreamer grant (roles-and-keys.md two-key rule, access.role_exclusive)"
+        "an admin key never carries a reviewer grant (roles-and-keys.md two-key rule, access.role_exclusive)"
     )]
     RoleExclusive,
     /// A user key's grant names a node outside its user's root: issuer
@@ -3053,7 +3053,7 @@ pub enum AppError {
     )]
     SessionKeyDenied { role: Role, verb: &'static str },
     /// A new memory, or a successor of a ratified retirement, addresses a
-    /// user root or a workarea beneath one with a key that is not that
+    /// user root or a workspace beneath one with a key that is not that
     /// user's: answered where the key reads the node or the target, in
     /// place of `access.grant_refused` and `access.author_only`; a key that
     /// reads neither keeps `access.not_found` (ADR-0044 d16; errors.md
@@ -3070,7 +3070,7 @@ pub enum AppError {
         "the node is readable but effective access does not confer {needed_role:?} (roles-and-keys.md refusal order, access.grant_refused)"
     )]
     GrantRefused {
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         needed_role: Role,
     },
     /// The deny node as the request spelled it (http-api.md names and ids).
@@ -3083,13 +3083,13 @@ pub enum AppError {
     },
     /// The default as the request spelled it.
     #[error(
-        "no grant of the key covers default workarea {workarea} (roles-and-keys.md issuance order, request.validation)"
+        "no grant of the key covers default workspace {workspace} (roles-and-keys.md issuance order, request.validation)"
     )]
-    DefaultUncovered { workarea: Reference },
+    DefaultUncovered { workspace: Reference },
     #[error(
-        "no workarea: the key has no default and the request names none (http-api.md request.workarea_unresolved)"
+        "no workspace: the key has no default and the request names none (http-api.md request.workspace_unresolved)"
     )]
-    WorkareaUnresolved,
+    WorkspaceUnresolved,
     #[error(
         "max_tokens counts text that include_text false would not send (retrieval.md token budgets, request.validation)"
     )]
@@ -3159,11 +3159,11 @@ pub enum AppError {
     /// ADR-0057 d5).
     #[error("{field}: {reason} (request.validation)")]
     SourceCheckInvalid { field: String, reason: String },
-    /// The `workarea` as the request spelled it.
+    /// The `workspace` as the request spelled it.
     #[error(
-        "workarea names {workarea}, not the target's workarea: a supersession is captured in its target's (http-api.md supersede, request.validation)"
+        "workspace names {workspace}, not the target's workspace: a supersession is captured in its target's (http-api.md supersede, request.validation)"
     )]
-    WorkareaNotTarget { workarea: Reference },
+    WorkspaceNotTarget { workspace: Reference },
     #[error(
         "a {target:?} target admits no {sent:?} successor: a kind changes only within its class, and a retirement keeps the target's (audit-and-lineage.md, request.validation)"
     )]
@@ -3213,7 +3213,7 @@ pub enum AppError {
     )]
     DerivedClaimKeySent,
     #[error(
-        "a held, promoted or demoted version holds this claim_key in the workarea (audit-and-lineage.md, submission.claim_key_conflict)"
+        "a held, promoted or demoted version holds this claim_key in the workspace (audit-and-lineage.md, submission.claim_key_conflict)"
     )]
     ClaimKeyConflict,
     #[error(
@@ -3285,28 +3285,28 @@ pub enum AppError {
     )]
     ServeIdUnresolved { several: bool },
     /// The held listing and the bulk verdict are a person's act: a key not
-    /// a dreamer held by a human is refused before any lookup (ADR-0055 d1;
+    /// a reviewer used by a person is refused before any lookup (ADR-0055 d1;
     /// errors.md `access.verb_ceiling`, reason `bulk_review_is_human_only`).
-    #[error("bulk review is a person's act: a {} key held by {} is refused (ADR-0055 d1, access.verb_ceiling)", .role.as_str(), .held_by.as_str())]
-    BulkReviewHumanOnly { role: Role, held_by: HeldBy },
+    #[error("bulk review is a person's act: a {} key used by {} is refused (ADR-0055 d1, access.verb_ceiling)", .role.as_str(), .used_by.as_str())]
+    BulkReviewHumanOnly { role: Role, used_by: UsedBy },
     /// `origin` outside its grammar, or out of step with the anchor
     /// (ADR-0063 d1, d2; request.validation, `details.field`).
     #[error("{field}: {reason} (ADR-0063, request.validation)")]
     OriginInvalid { field: String, reason: String },
-    /// A person's chat workarea, `chat` directly under a user root, is
-    /// created only by a key held by a human (ADR-0063 d8;
+    /// A person's chat workspace, `chat` directly under a user root, is
+    /// created only by a key used by a person (ADR-0063 d8;
     /// `access.verb_ceiling`, reason `chat_scope_is_human_only`).
-    #[error("the chat workarea is a person's to open: a key held by {} is refused (ADR-0063 d8, access.verb_ceiling)", .held_by.as_str())]
-    ChatScopeHumanOnly { held_by: HeldBy },
-    /// Only a person's key sets a workarea's mode (ADR-0030 d1; errors.md
+    #[error("the chat workspace is a person's to open: a key used by {} is refused (ADR-0063 d8, access.verb_ceiling)", .used_by.as_str())]
+    ChatScopeHumanOnly { used_by: UsedBy },
+    /// Only a person's key sets a workspace's mode (ADR-0030 d1; errors.md
     /// `access.verb_ceiling`, reason `mode_is_human_only`).
-    #[error("a workarea's mode is set by a person's key: a {} key held by {} is refused (ADR-0030 d1, access.verb_ceiling)", .role.as_str(), .held_by.as_str())]
-    ModeHumanOnly { role: Role, held_by: HeldBy },
-    /// Only a person's dreamer key or a tenant admin sets a workarea's
+    #[error("a workspace's mode is set by a person's key: a {} key used by {} is refused (ADR-0030 d1, access.verb_ceiling)", .role.as_str(), .used_by.as_str())]
+    ModeHumanOnly { role: Role, used_by: UsedBy },
+    /// Only a person's reviewer key or a tenant admin sets a workspace's
     /// federation field (ADR-0072 d5; errors.md `access.verb_ceiling`,
     /// reason `federation_is_human_only`).
-    #[error("a workarea's federation field is set by a person's dreamer key or a tenant admin: a {} key held by {} is refused (ADR-0072 d5, access.verb_ceiling)", .role.as_str(), .held_by.as_str())]
-    FederationHumanOnly { role: Role, held_by: HeldBy },
+    #[error("a workspace's federation field is set by a person's reviewer key or a tenant admin: a {} key used by {} is refused (ADR-0072 d5, access.verb_ceiling)", .role.as_str(), .used_by.as_str())]
+    FederationHumanOnly { role: Role, used_by: UsedBy },
     /// The shape of `sources`, `wide` or a list on a tenant with federation
     /// off, or a policy value out of range (ADR-0072 d5;
     /// `request.validation` with `details.field`).
@@ -3345,22 +3345,22 @@ pub enum AppError {
     /// A profile the key's role or attestation does not admit (ADR-0030
     /// d8; request.validation, field `/profile`).
     #[error(
-        "profile {profile} needs a dreamer key held by an agent (ADR-0030 d8, request.validation, field /profile)"
+        "profile {profile} needs a reviewer key used by an agent (ADR-0030 d8, request.validation, field /profile)"
     )]
     ProfileMismatch { profile: &'static str },
     /// An act refused by an in-progress subtree's rules (ADR-0030 d1, d6, d7;
-    /// errors.md `workarea.in_progress_refused`).
-    #[error("workarea {workarea_id}: {reason} (ADR-0030, workarea.in_progress_refused)")]
+    /// errors.md `workspace.in_progress_refused`).
+    #[error("workspace {workspace_id}: {reason} (ADR-0030, workspace.in_progress_refused)")]
     InProgressRefused {
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         reason: InProgressReason,
     },
     /// The commit of an in-progress root while a version in its subtree is
-    /// held (ADR-0030 d6; errors.md `workarea.held_remaining`).
+    /// held (ADR-0030 d6; errors.md `workspace.held_remaining`).
     #[error(
-        "workarea {workarea_id} still holds unreviewed memories in its subtree, so its commit waits on review (ADR-0030 d6, workarea.held_remaining)"
+        "workspace {workspace_id} still holds unreviewed memories in its subtree, so its commit waits on review (ADR-0030 d6, workspace.held_remaining)"
     )]
-    HeldRemaining { workarea_id: Uuid },
+    HeldRemaining { workspace_id: Uuid },
     /// A bulk verdict's `artifact_ids` or a listing's `limit` outside what
     /// ADR-0055 d2 and d3 admit (request.validation, `details.field`).
     #[error("{reason} (ADR-0055, request.validation, field {field})")]
@@ -3381,10 +3381,10 @@ pub enum AppError {
     /// A person's disable met a live admin key whose row names their user
     /// root. No verb issues one, so the row was edited directly; no denial
     /// can cut an admin key off, so the disable refuses before its first
-    /// commit and journals nothing (errors.md `workarea.admin_key_under_root`;
+    /// commit and journals nothing (errors.md `workspace.admin_key_under_root`;
     /// ADR-0068 d8, d11; #277).
     #[error(
-        "admin key {key} names the user root of {}, which no verb does, and no denial can cut it off: the disable journals nothing until the row's user_root_id is cleared (ADR-0068 d8, workarea.admin_key_under_root)", .user.as_str()
+        "admin key {key} names the user root of {}, which no verb does, and no denial can cut it off: the disable journals nothing until the row's user_root_id is cleared (ADR-0068 d8, workspace.admin_key_under_root)", .user.as_str()
     )]
     AdminKeyUnderUserRoot { user: Name, key: String },
     #[error(
@@ -3400,23 +3400,25 @@ pub enum AppError {
     },
     /// The status ladder refused a proposal of `from` → `to` on the node,
     /// before anything was sealed: nothing is journalled (errors.md
-    /// `workarea.transition_refused`, details `{workarea_id, from, to,
+    /// `workspace.transition_refused`, details `{workspace_id, from, to,
     /// reason}`; ADR-0009 d1, d3, d4).
     #[error(
-        "workarea {workarea_id}: {} to {} is refused: {reason} (errors.md workarea.transition_refused)",
+        "workspace {workspace_id}: {} to {} is refused: {reason} (errors.md workspace.transition_refused)",
         .from.as_str(),
         .to.as_str()
     )]
     TransitionRefused {
-        workarea_id: Uuid,
-        from: WorkareaStatus,
-        to: WorkareaStatus,
+        workspace_id: Uuid,
+        from: WorkspaceStatus,
+        to: WorkspaceStatus,
         reason: LadderRefusal,
     },
-    /// A `validated` node was asked for an operation freeze forbids
-    /// (errors.md `workarea.frozen`; ADR-0009 d5).
-    #[error("workarea {workarea_id} is validated and refuses {op:?} (errors.md workarea.frozen)")]
-    WorkareaFrozen { workarea_id: Uuid, op: FrozenOp },
+    /// A `frozen` node was asked for an operation freeze forbids
+    /// (errors.md `workspace.frozen`; ADR-0009 d5).
+    #[error(
+        "workspace {workspace_id} is validated and refuses {op:?} (errors.md workspace.frozen)"
+    )]
+    WorkspaceFrozen { workspace_id: Uuid, op: FrozenOp },
     /// The ratifying key is the proposing key or holds the proposer's
     /// principal, of a status transition or a claim edge (errors.md
     /// `review.ratifier_is_proposer`; ADR-0009 d3; ADR-0010 R2; ADR-0012).
@@ -3625,7 +3627,7 @@ pub struct WebCredentialRows {
 pub struct WebCredentialKey {
     pub key: KeyRecord,
     pub access: Option<KeyAccess>,
-    pub user_root: Option<WorkareaRecord>,
+    pub user_root: Option<WorkspaceRecord>,
     pub own_keys: Vec<KeyRecord>,
 }
 
@@ -3662,12 +3664,12 @@ pub enum ProviderFailure {
     Busy,
 }
 
-/// One workarea's review queue as the admin page shows it: how many held
+/// One workspace's review queue as the admin page shows it: how many held
 /// versions wait there and when the oldest was written, no content
 /// (ADR-0045 d10, amending ADR-0026 d15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueueDepth {
-    pub workarea_id: Uuid,
+    pub workspace_id: Uuid,
     pub held: u64,
     pub oldest: EventTime,
 }

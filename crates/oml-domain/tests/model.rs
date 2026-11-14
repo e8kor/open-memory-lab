@@ -96,10 +96,10 @@ fn closure_with_author() -> LineageClosure {
 }
 
 #[test]
-fn an_independent_dreamer_may_review() {
+fn an_independent_reviewer_may_review() {
     let closure = closure_with_author();
     assert_eq!(
-        check_reviewer(Role::Dreamer, "crew-green/reviewer-1", key(9), &closure),
+        check_reviewer(Role::Reviewer, "crew-green/reviewer-1", key(9), &closure),
         Ok(())
     );
 }
@@ -108,7 +108,7 @@ fn an_independent_dreamer_may_review() {
 fn the_author_is_refused_the_verdict() {
     let closure = closure_with_author();
     assert_eq!(
-        check_reviewer(Role::Dreamer, "crew-redline/agent-3", key(9), &closure),
+        check_reviewer(Role::Reviewer, "crew-redline/agent-3", key(9), &closure),
         Err(VerdictError::PrincipalInLineage(
             "crew-redline/agent-3".to_owned()
         ))
@@ -120,7 +120,7 @@ fn a_lineage_ancestor_is_refused_the_verdict() {
     // R2 runs over the whole lineage closure, not just the author (ADR-0001 d2).
     let closure = closure_with_author();
     assert_eq!(
-        check_reviewer(Role::Dreamer, "crew-blue/agent-7", key(9), &closure),
+        check_reviewer(Role::Reviewer, "crew-blue/agent-7", key(9), &closure),
         Err(VerdictError::PrincipalInLineage(
             "crew-blue/agent-7".to_owned()
         ))
@@ -131,18 +131,18 @@ fn a_lineage_ancestor_is_refused_the_verdict() {
 fn a_lineage_key_is_refused_even_under_a_fresh_principal() {
     let closure = closure_with_author();
     assert_eq!(
-        check_reviewer(Role::Dreamer, "crew-green/reviewer-1", key(2), &closure),
+        check_reviewer(Role::Reviewer, "crew-green/reviewer-1", key(2), &closure),
         Err(VerdictError::KeyInLineage(key(2)))
     );
 }
 
 #[test]
-fn only_dreamers_review() {
+fn only_reviewers_review() {
     let closure = LineageClosure::new();
     for role in [Role::Reader, Role::Writer, Role::Admin, Role::Operator] {
         assert_eq!(
             check_reviewer(role, "crew-green/reviewer-1", key(9), &closure),
-            Err(VerdictError::NotDreamer(role))
+            Err(VerdictError::NotReviewer(role))
         );
     }
 }

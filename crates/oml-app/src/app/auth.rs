@@ -17,7 +17,7 @@ use oml_domain::web::{
     Provider, ProviderIdentity, SESSION_TTL_DEFAULT_SECS, SignInRefusal, SignInState, admit_github,
     admit_google_id_token, capacity_credential, session_key_names,
 };
-use oml_domain::{EventTime, HeldBy, Role, Sha256Hash, event_types};
+use oml_domain::{EventTime, Role, Sha256Hash, UsedBy, event_types};
 
 use super::pages::key_name;
 use super::signup::DRAWS_MAX;
@@ -306,7 +306,7 @@ where
 {
     /// The first sign-in's keys (ADR-0045 d6, d20 e): `<user>-web`, a user
     /// key whose issuance creates `universe.<user>`, writer and reader on
-    /// it; `<user>-review`, a tenant dreamer key with dreamer and reader on
+    /// it; `<user>-review`, a tenant reviewer key with reviewer and reader on
     /// that root; and, for an admin entry, `<user>-admin`. Each is issued
     /// by the admin key that added the entry, only when missing, so a sign-in
     /// whose issuance failed part way completes at the next one. Every
@@ -356,8 +356,8 @@ where
                     Some(entry.user.clone()),
                 ),
                 Capacity::Review => (
-                    Role::Dreamer,
-                    vec![grant(Role::Dreamer), grant(Role::Reader)],
+                    Role::Reviewer,
+                    vec![grant(Role::Reviewer), grant(Role::Reader)],
                     None,
                 ),
                 Capacity::Admin | Capacity::Curate => (Role::Admin, Vec::new(), None),
@@ -370,8 +370,8 @@ where
                 role,
                 principal: name.as_str().to_owned(),
                 name,
-                held_by: Some(HeldBy::Human),
-                default_workarea: None,
+                used_by: Some(UsedBy::Person),
+                default_workspace: None,
                 crew: None,
                 grants,
                 connect_code: false,
@@ -414,7 +414,7 @@ where
                 let access = self.journal.key_access(tenant_id, key.key_id).await?;
                 let (user_root, own_keys) = match key.user {
                     Some(root) => (
-                        self.journal.workarea(tenant_id, root).await?,
+                        self.journal.workspace(tenant_id, root).await?,
                         self.journal.web_user_keys(tenant_id, root).await?,
                     ),
                     None => (None, Vec::new()),
@@ -468,7 +468,7 @@ where
                 let is_root = rows
                     .user_root
                     .as_ref()
-                    .is_some_and(|w| w.workarea_id == root && w.user_root);
+                    .is_some_and(|w| w.workspace_id == root && w.user_root);
                 if !is_root {
                     return Err(AppError::UserRootInvalid);
                 }
@@ -590,7 +590,7 @@ where
             }
         }
         let user = user.ok_or_else(|| AppError::NameTaken {
-            kind: NamedKind::Workarea,
+            kind: NamedKind::Workspace,
             name: drawn_user(&[0; 32]),
         })?;
         let entry = WebEntry {
@@ -663,11 +663,11 @@ where
         })
     }
 
-    /// A drawn name no workarea, key or entry of the tenant holds.
+    /// A drawn name no workspace, key or entry of the tenant holds.
     async fn user_name_free(&self, tenant_id: Uuid, user: &Name) -> Result<bool, AppError> {
         if self
             .journal
-            .resolve_name(tenant_id, NamedKind::Workarea, user)
+            .resolve_name(tenant_id, NamedKind::Workspace, user)
             .await?
             .is_some()
         {

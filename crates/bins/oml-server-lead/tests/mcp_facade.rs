@@ -136,7 +136,7 @@ async fn call_tool(router: &Router, token: &str, id: u64, name: &str, args: Valu
     body["result"].clone()
 }
 
-/// Bootstrap, one crew workarea, and a writer, dreamer and reader key on it.
+/// Bootstrap, one crew workspace, and a writer, reviewer and reader key on it.
 async fn crew(router: &Router) -> (String, String, String, Uuid) {
     crew_with_writer_grants(router, &["writer"]).await
 }
@@ -171,27 +171,27 @@ async fn crew_and_admin(
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
     let admin = boot["value"].as_str().expect("admin key").to_owned();
-    let root = boot["root_workarea_id"].as_str().expect("root").to_owned();
+    let root = boot["root_workspace_id"].as_str().expect("root").to_owned();
     let (status, wa) = send(
         router,
         "POST",
-        "/v2/workareas",
+        "/v2/workspaces",
         Some(&admin),
         Some("wa-1"),
         Some(&json!({"parent": root, "name": "metals-crew"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{wa}");
-    let crew = Uuid::parse_str(wa["id"].as_str().expect("workarea id")).expect("uuid");
+    let crew = Uuid::parse_str(wa["id"].as_str().expect("workspace id")).expect("uuid");
     let mut keys = Vec::new();
     for (role, principal, grants) in [
         ("writer", "crew/agent-7", writer_grants),
-        ("dreamer", "crew/reviewer-3", &["dreamer"][..]),
+        ("reviewer", "crew/reviewer-3", &["reviewer"][..]),
         ("reader", "crew/agent-recall", &["reader"][..]),
     ] {
         let grants: Vec<Value> = grants
             .iter()
-            .map(|grant| json!({"workarea": crew, "role": grant}))
+            .map(|grant| json!({"workspace": crew, "role": grant}))
             .collect();
         let (status, key) = send(
             router,
@@ -206,9 +206,9 @@ async fn crew_and_admin(
         keys.push(key["value"].as_str().expect("show-once value").to_owned());
     }
     let reader = keys.pop().expect("reader");
-    let dreamer = keys.pop().expect("dreamer");
+    let reviewer = keys.pop().expect("reviewer");
     let writer = keys.pop().expect("writer");
-    ((writer, dreamer, reader, crew), admin)
+    ((writer, reviewer, reader, crew), admin)
 }
 
 #[tokio::test]
@@ -421,7 +421,7 @@ async fn an_agent_writes_through_mcp_and_reads_only_after_another_identity_ratif
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, reader, crew) = crew(&router).await;
+    let (writer, reviewer, reader, crew) = crew(&router).await;
     let quote = "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery.";
     let write = json!({
         "claim_key": "supplier-quote-am-7741",
@@ -434,7 +434,7 @@ async fn an_agent_writes_through_mcp_and_reads_only_after_another_identity_ratif
     assert_eq!(held["isError"], false, "{held}");
     let receipt = &held["structuredContent"];
     assert_eq!(receipt["state"], "held");
-    assert_eq!(receipt["workarea"], crew.to_string());
+    assert_eq!(receipt["workspace"], crew.to_string());
     assert_eq!(receipt["idempotent_replay"], false);
     let text: Value =
         serde_json::from_str(held["content"][0]["text"].as_str().expect("text")).expect("json");
@@ -469,7 +469,7 @@ async fn an_agent_writes_through_mcp_and_reads_only_after_another_identity_ratif
         &router,
         "POST",
         "/v2/review/next",
-        Some(&dreamer),
+        Some(&reviewer),
         Some("n-1"),
         None,
     )
@@ -479,7 +479,7 @@ async fn an_agent_writes_through_mcp_and_reads_only_after_another_identity_ratif
         &router,
         "POST",
         "/v2/review/verdicts",
-        Some(&dreamer),
+        Some(&reviewer),
         Some("v-1"),
         Some(&json!({"serve_id": served["serve_id"], "verdict": "approve"})),
     )
@@ -507,7 +507,7 @@ async fn oml_read_state_shows_a_ratified_write_where_the_events_tail_showed_its_
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, reader, crew) = crew(&router).await;
+    let (writer, reviewer, reader, crew) = crew(&router).await;
     let held = call_tool(
         &router,
         &writer,
@@ -525,10 +525,10 @@ async fn oml_read_state_shows_a_ratified_write_where_the_events_tail_showed_its_
     let promoted = json!({"state": "promoted"});
     let before = call_tool(&router, &writer, 2, "oml_read", promoted.clone()).await;
     assert_eq!(before["structuredContent"]["items"], json!([]), "{before}");
-    approve_as(&router, &dreamer, "v1").await;
+    approve_as(&router, &reviewer, "v1").await;
 
     // The promoted version as the tail's promote named it: its id, claim key
-    // and version, in the crew's workarea.
+    // and version, in the crew's workspace.
     let after = call_tool(&router, &writer, 3, "oml_read", promoted).await;
     assert_eq!(after["isError"], false, "{after}");
     let items = after["structuredContent"]["items"]
@@ -538,9 +538,9 @@ async fn oml_read_state_shows_a_ratified_write_where_the_events_tail_showed_its_
     assert_eq!(items[0]["artifact_id"], artifact, "{after}");
     assert_eq!(items[0]["claim_key"], "supplier-quote-am-7741", "{after}");
     assert_eq!(items[0]["version"], 1, "{after}");
-    assert_eq!(items[0]["workarea"], crew.to_string(), "{after}");
+    assert_eq!(items[0]["workspace"], crew.to_string(), "{after}");
 
-    // Another key's own work holds none of it, and a workarea outside read
+    // Another key's own work holds none of it, and a workspace outside read
     // access is absence, as the tail's scope was.
     let theirs = call_tool(
         &router,
@@ -556,7 +556,7 @@ async fn oml_read_state_shows_a_ratified_write_where_the_events_tail_showed_its_
         &reader,
         5,
         "oml_read",
-        json!({"own": false, "workarea": Uuid::from_u128(0xBEEF)}),
+        json!({"own": false, "workspace": Uuid::from_u128(0xBEEF)}),
     )
     .await;
     assert_eq!(refused["isError"], true, "{refused}");
@@ -761,7 +761,7 @@ const V0_3_0_TOOL_NAMES: [&str; 8] = [
     "oml_get",
     "oml_supersede",
     "oml_my_work",
-    "oml_workarea_info",
+    "oml_workspace_info",
     "oml_events_tail",
 ];
 
@@ -819,7 +819,7 @@ async fn tools_list_names_three_tools_each_with_its_annotations() {
         [
             ("oml_write", "Remember"),
             ("oml_read", "Recall"),
-            ("oml_workarea", "Workarea"),
+            ("oml_workspace", "Workspace"),
         ],
         "{listed}"
     );
@@ -841,7 +841,7 @@ async fn tools_list_names_three_tools_each_with_its_annotations() {
                 })
             ),
             ("oml_read", &read_only),
-            ("oml_workarea", &read_only),
+            ("oml_workspace", &read_only),
         ],
         "{listed}"
     );
@@ -963,7 +963,7 @@ async fn tools_list_names_no_designed_tool() {
         "oml_get",
         "oml_supersede",
         "oml_my_work",
-        "oml_workarea_info",
+        "oml_workspace_info",
         "oml_events_tail",
         "oml_attach",
         "oml_graph",
@@ -996,11 +996,11 @@ const CLAIM: &str = "supplier-quote-am-7741";
 const REVISED: &str =
     "Accra Metals revised its aluminium price to 408 USD/t for Q1-2027 delivery, quote AM-7741-r2.";
 
-/// The writer remembers [`QUOTE`] as version 1 of [`CLAIM`] and the dreamer
+/// The writer remembers [`QUOTE`] as version 1 of [`CLAIM`] and the reviewer
 /// ratifies it; its `artifact_id`.
-async fn ratified(router: &Router, writer: &str, dreamer: &str) -> String {
+async fn ratified(router: &Router, writer: &str, reviewer: &str) -> String {
     remember_all(router, writer, &[(CLAIM, "memory", QUOTE)]).await;
-    approve_as(router, dreamer, "v1").await;
+    approve_as(router, reviewer, "v1").await;
     let work = call_tool(router, writer, 90, "oml_read", json!({"claim_key": CLAIM})).await;
     let items = work["structuredContent"]["items"]
         .as_array()
@@ -1029,7 +1029,7 @@ async fn oml_read_get_returns_the_authors_held_row_to_its_author_and_not_found_t
     };
     // The writer holds no reader grant: its own rows need none
     // (roles-and-keys.md#own; ADR-0025 d3).
-    let (writer, dreamer, reader, crew) = crew(&router).await;
+    let (writer, reviewer, reader, crew) = crew(&router).await;
     remember_all(&router, &writer, &[(CLAIM, "memory", QUOTE)]).await;
     let work = call_tool(&router, &writer, 1, "oml_read", json!({})).await;
     let id = work["structuredContent"]["items"][0]["artifact_id"]
@@ -1074,19 +1074,19 @@ async fn oml_read_get_returns_the_authors_held_row_to_its_author_and_not_found_t
             "valid_from",
             "valid_until",
             "version",
-            "workarea",
-            "workarea_path",
+            "workspace",
+            "workspace_path",
         ]
     );
     assert_eq!(item["state"], "held");
     assert_eq!(item["tip"], false);
     assert_eq!(item["text"], QUOTE);
     assert_eq!(item["tokens"], tokens(QUOTE));
-    assert_eq!(item["workarea"], crew.to_string());
+    assert_eq!(item["workspace"], crew.to_string());
     assert_eq!(item["derives_from"], json!([]));
     assert_eq!(item["attachments"], json!([]));
-    // The item is what the ring's get answers, `workarea_id` named
-    // `workarea`.
+    // The item is what the ring's get answers, `workspace_id` named
+    // `workspace`.
     let (status, ring) = send(
         &router,
         "GET",
@@ -1099,7 +1099,7 @@ async fn oml_read_get_returns_the_authors_held_row_to_its_author_and_not_found_t
     assert_eq!(status, StatusCode::OK, "{ring}");
     for name in fields(item) {
         let from = match name {
-            "workarea" => "workarea_id",
+            "workspace" => "workspace_id",
             other => other,
         };
         assert_eq!(item[name], ring[from], "{name}");
@@ -1110,7 +1110,7 @@ async fn oml_read_get_returns_the_authors_held_row_to_its_author_and_not_found_t
     let unknown = OsIds.new_id().to_string();
     for (n, token, artifact_id) in [
         (3, &reader, id.as_str()),
-        (4, &dreamer, id.as_str()),
+        (4, &reviewer, id.as_str()),
         (5, &writer, unknown.as_str()),
         (6, &writer, "art_01JB2YN4P6R8TA1CW3EY5G7J9L"),
     ] {
@@ -1130,7 +1130,7 @@ async fn oml_read_get_returns_the_authors_held_row_to_its_author_and_not_found_t
     }
 
     // Ratified, the row is any reader's to get, promoted and the tip.
-    approve_as(&router, &dreamer, "v1").await;
+    approve_as(&router, &reviewer, "v1").await;
     let got = call_tool(&router, &reader, 7, "oml_read", json!({"artifact_id": id})).await;
     assert_eq!(got["isError"], false, "{got}");
     let item = &got["structuredContent"]["items"][0];
@@ -1146,8 +1146,8 @@ async fn oml_write_with_replaces_enters_admission_held_and_leaves_the_tip_until_
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, reader, crew) = crew(&router).await;
-    let v1 = ratified(&router, &writer, &dreamer).await;
+    let (writer, reviewer, reader, crew) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &reviewer).await;
 
     let proposed = call_tool(
         &router,
@@ -1179,7 +1179,7 @@ async fn oml_write_with_replaces_enters_admission_held_and_leaves_the_tip_until_
             "state": "held",
             "retirement": false,
             "replaces": {"artifact_id": v1, "version": 1},
-            "workarea": crew.to_string(),
+            "workspace": crew.to_string(),
             "similar": [],
             "idempotent_replay": false,
         })
@@ -1210,7 +1210,7 @@ async fn oml_write_with_replaces_enters_admission_held_and_leaves_the_tip_until_
 
     // A non-author ratifies: the tip moves, and the target stays readable
     // as history.
-    approve_as(&router, &dreamer, "v2").await;
+    approve_as(&router, &reviewer, "v2").await;
     let after = call_tool(&router, &reader, 6, "oml_read", recall).await;
     assert_eq!(hit_ids(&after), [v2.as_str()], "{after}");
     let old = call_tool(&router, &reader, 7, "oml_read", json!({"artifact_id": v1})).await;
@@ -1266,8 +1266,8 @@ async fn oml_write_with_retirement_retires_the_claim_once_ratified_and_get_answe
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, reader, _) = crew(&router).await;
-    let v1 = ratified(&router, &writer, &dreamer).await;
+    let (writer, reviewer, reader, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &reviewer).await;
     let why = "Retired: quote AM-7741 lapsed on 2026-12-01 and was not renewed.";
 
     let proposed = call_tool(
@@ -1306,7 +1306,7 @@ async fn oml_write_with_retirement_retires_the_claim_once_ratified_and_get_answe
 
     // Ratified, the claim is retired: recall serves nothing of it, and get
     // answers every version as history (audit-and-lineage.md; ADR-0025 d11).
-    approve_as(&router, &dreamer, "v2").await;
+    approve_as(&router, &reviewer, "v2").await;
     let after = call_tool(&router, &reader, 3, "oml_read", recall).await;
     assert_eq!(after["structuredContent"]["hits"], json!([]), "{after}");
     assert_eq!(after["structuredContent"]["steering"], json!([]), "{after}");
@@ -1331,8 +1331,8 @@ async fn a_replayed_oml_write_supersession_is_an_idempotent_replay() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, _, _) = crew(&router).await;
-    let v1 = ratified(&router, &writer, &dreamer).await;
+    let (writer, reviewer, _, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &reviewer).await;
     let args = json!({
         "expected_version": 1,
         "replaces": v1,
@@ -1351,7 +1351,7 @@ async fn a_replayed_oml_write_supersession_is_an_idempotent_replay() {
     let replay = call_tool(&router, &writer, 2, "oml_write", args.clone()).await;
     assert_eq!(replay["isError"], false, "{replay}");
     assert_eq!(replay["structuredContent"], expected);
-    approve_as(&router, &dreamer, "v2").await;
+    approve_as(&router, &reviewer, "v2").await;
     let late = call_tool(&router, &writer, 3, "oml_write", args.clone()).await;
     assert_eq!(late["isError"], false, "{late}");
     assert_eq!(late["structuredContent"], expected);
@@ -1383,7 +1383,7 @@ async fn oml_write_refuses_a_vocabulary_kind_target_that_the_http_api_supersedes
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, _, _) = crew(&router).await;
+    let (writer, reviewer, _, _) = crew(&router).await;
     remember_all(
         &router,
         &writer,
@@ -1415,7 +1415,7 @@ async fn oml_write_refuses_a_vocabulary_kind_target_that_the_http_api_supersedes
 
     // Ratified, it is refused on this tool, which carries no vocabulary
     // fields (ADR-0025 d12) ...
-    approve_as(&router, &dreamer, "term").await;
+    approve_as(&router, &reviewer, "term").await;
     let refused = propose(3, "term-2").await;
     assert_eq!(refused["isError"], true, "{refused}");
     assert_eq!(
@@ -1521,7 +1521,7 @@ async fn oml_write_without_replaces_submits_and_journals_learn_when_derives_from
             "claim_key": claim_key,
             "version": 1,
             "state": "held",
-            "workarea": crew.to_string(),
+            "workspace": crew.to_string(),
             "retirement": false,
             "replaces": null,
             "similar": [],
@@ -1555,7 +1555,7 @@ async fn oml_write_without_replaces_submits_and_journals_learn_when_derives_from
             "text": ALLOY,
             "claim_key": "supplier-quote-ta-2207",
             "derives_from": [ancestor],
-            "workarea": "metals-crew",
+            "workspace": "metals-crew",
             "idempotency_key": "crew-procure/run-1/step-2",
         }),
     )
@@ -1564,7 +1564,7 @@ async fn oml_write_without_replaces_submits_and_journals_learn_when_derives_from
     let receipt = &derived["structuredContent"];
     assert_eq!(receipt["mode"], "submit", "{receipt}");
     assert_eq!(receipt["claim_key"], "supplier-quote-ta-2207", "{receipt}");
-    assert_eq!(receipt["workarea"], crew.to_string(), "{receipt}");
+    assert_eq!(receipt["workspace"], crew.to_string(), "{receipt}");
     let artifact = receipt["artifact_id"].as_str().expect("artifact id");
     assert_eq!(
         capture_events(&router, &agent, artifact).await,
@@ -1591,10 +1591,10 @@ async fn oml_write_with_replaces_supersedes_that_version() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, reader, crew) = crew(&router).await;
-    let v1 = ratified(&router, &writer, &dreamer).await;
+    let (writer, reviewer, reader, crew) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &reviewer).await;
 
-    // The target's own workarea, by name, is accepted.
+    // The target's own workspace, by name, is accepted.
     let proposed = call_tool(
         &router,
         &writer,
@@ -1605,7 +1605,7 @@ async fn oml_write_with_replaces_supersedes_that_version() {
             "replaces": v1,
             "text": REVISED,
             "reason": "supplier issued a revised quote",
-            "workarea": "metals-crew",
+            "workspace": "metals-crew",
             "idempotency_key": "crew-procure/run-2/step-1",
         }),
     )
@@ -1624,7 +1624,7 @@ async fn oml_write_with_replaces_supersedes_that_version() {
             "claim_key": CLAIM,
             "version": 2,
             "state": "held",
-            "workarea": crew.to_string(),
+            "workspace": crew.to_string(),
             "retirement": false,
             "replaces": {"artifact_id": v1, "version": 1},
             "similar": [],
@@ -1640,7 +1640,7 @@ async fn oml_write_with_replaces_supersedes_that_version() {
     let recall = json!({"query": "aluminium price"});
     let before = call_tool(&router, &reader, 3, "oml_read", recall.clone()).await;
     assert_eq!(hit_ids(&before), [v1.as_str()], "{before}");
-    approve_as(&router, &dreamer, "v2").await;
+    approve_as(&router, &reviewer, "v2").await;
     let after = call_tool(&router, &reader, 4, "oml_read", recall).await;
     assert_eq!(hit_ids(&after), [v2.as_str()], "{after}");
 
@@ -1652,8 +1652,8 @@ async fn oml_write_with_retirement_true_proposes_retiring_the_target() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, reader, _) = crew(&router).await;
-    let v1 = ratified(&router, &writer, &dreamer).await;
+    let (writer, reviewer, reader, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &reviewer).await;
     let why = "Retired: quote AM-7741 lapsed on 2026-12-01 and was not renewed.";
 
     let proposed = call_tool(
@@ -1685,7 +1685,7 @@ async fn oml_write_with_retirement_true_proposes_retiring_the_target() {
     let recall = json!({"query": "aluminium price"});
     let before = call_tool(&router, &reader, 2, "oml_read", recall.clone()).await;
     assert_eq!(hit_ids(&before), [v1.as_str()], "{before}");
-    approve_as(&router, &dreamer, "v2").await;
+    approve_as(&router, &reviewer, "v2").await;
     let after = call_tool(&router, &reader, 3, "oml_read", recall).await;
     assert_eq!(after["structuredContent"]["hits"], json!([]), "{after}");
 
@@ -1709,17 +1709,17 @@ async fn oml_write_by_a_tenant_key_starts_no_memory_in_a_users_root_and_its_revi
     };
     let (_, admin) = crew_and_admin(&router, &["writer"]).await;
     let mut keys = Vec::new();
-    for (name, role, user, workarea) in [
+    for (name, role, user, workspace) in [
         ("alice-laptop", "writer", Some("alice"), "alice"),
-        ("alice-review", "dreamer", Some("alice"), "alice"),
+        ("alice-review", "reviewer", Some("alice"), "alice"),
         ("crew-loader", "writer", None, "universe"),
-        ("crew-editor", "dreamer", None, "universe"),
+        ("crew-editor", "reviewer", None, "universe"),
     ] {
         let mut body = json!({
             "role": role, "name": name, "principal": name,
             "grants": [
-                {"workarea": workarea, "role": role},
-                {"workarea": workarea, "role": "reader"},
+                {"workspace": workspace, "role": role},
+                {"workspace": workspace, "role": "reader"},
             ],
         });
         if let Some(user) = user {
@@ -1741,7 +1741,7 @@ async fn oml_write_by_a_tenant_key_starts_no_memory_in_a_users_root_and_its_revi
         panic!("four keys");
     };
 
-    // Alice's own key writes in her root, its default workarea.
+    // Alice's own key writes in her root, its default workspace.
     let own = call_tool(
         &router,
         alice,
@@ -1764,7 +1764,7 @@ async fn oml_write_by_a_tenant_key_starts_no_memory_in_a_users_root_and_its_revi
         2,
         "oml_write",
         json!({"claim_key": "pump", "text": "The pump runs at night.",
-               "workarea": "alice", "idempotency_key": "crew-1"}),
+               "workspace": "alice", "idempotency_key": "crew-1"}),
     )
     .await;
     assert_eq!(refusal_code(&new_memory), "submission.user_root_refused");
@@ -1863,8 +1863,8 @@ async fn oml_write_refuses_claim_key_with_replaces_naming_claim_key() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, _, _) = crew(&router).await;
-    let v1 = ratified(&router, &writer, &dreamer).await;
+    let (writer, reviewer, _, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &reviewer).await;
 
     // The successor takes its target's claim_key, so a sent one is refused,
     // even the target's own.
@@ -1891,12 +1891,12 @@ async fn oml_write_refuses_claim_key_with_replaces_naming_claim_key() {
 }
 
 #[tokio::test]
-async fn oml_write_refuses_a_workarea_other_than_the_targets_naming_workarea() {
+async fn oml_write_refuses_a_workspace_other_than_the_targets_naming_workspace() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, _, _) = crew(&router).await;
-    let v1 = ratified(&router, &writer, &dreamer).await;
+    let (writer, reviewer, _, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &reviewer).await;
 
     let refused = call_tool(
         &router,
@@ -1906,13 +1906,13 @@ async fn oml_write_refuses_a_workarea_other_than_the_targets_naming_workarea() {
         json!({
             "expected_version": 1,
             "replaces": v1,
-            "workarea": Uuid::from_u128(0xBEEF),
+            "workspace": Uuid::from_u128(0xBEEF),
             "text": REVISED,
             "idempotency_key": "refused-1",
         }),
     )
     .await;
-    refused_naming(&refused, "/workarea");
+    refused_naming(&refused, "/workspace");
     assert_eq!(own_versions(&router, &writer).await, 1);
 
     drop_db(&db).await;
@@ -1923,7 +1923,7 @@ async fn oml_write_refuses_a_vocabulary_kind_target() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, _, _) = crew(&router).await;
+    let (writer, reviewer, _, _) = crew(&router).await;
     remember_all(
         &router,
         &writer,
@@ -1934,7 +1934,7 @@ async fn oml_write_refuses_a_vocabulary_kind_target() {
         )],
     )
     .await;
-    approve_as(&router, &dreamer, "term").await;
+    approve_as(&router, &reviewer, "term").await;
     let work = call_tool(&router, &writer, 1, "oml_read", json!({})).await;
     let term = work["structuredContent"]["items"][0]["artifact_id"]
         .as_str()
@@ -1994,12 +1994,12 @@ async fn oml_write_by_a_reader_key_is_refused_at_the_verb_ceiling_in_every_mode(
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, reader, _) = crew(&router).await;
-    let v1 = ratified(&router, &writer, &dreamer).await;
+    let (writer, reviewer, reader, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &reviewer).await;
 
     // A reader key's role admits no writer grant, so each of oml_write's
     // modes stops at step 1 of the refusal order, before the target or the
-    // workarea is read (R1; roles-and-keys.md, refusal order; ADR-0039 d2).
+    // workspace is read (R1; roles-and-keys.md, refusal order; ADR-0039 d2).
     for (id, (mode, args)) in (1..).zip([
         (
             "submit",
@@ -2033,13 +2033,13 @@ async fn oml_read_recall_and_scoped_listing_are_refused_without_a_reader_grant_a
         return;
     };
     // The writer here holds a writer grant alone.
-    let ((writer, dreamer, _, _), admin) = crew_and_admin(&router, &["writer"]).await;
-    ratified(&router, &writer, &dreamer).await;
+    let ((writer, reviewer, _, _), admin) = crew_and_admin(&router, &["writer"]).await;
+    ratified(&router, &writer, &reviewer).await;
 
     let recall = json!({"query": "aluminium price"});
     let scoped = json!({"own": false});
     for (id, (mode, args)) in (1..).zip([("recall", &recall), ("listing", &scoped)]) {
-        // Reader is not effective on the writer's default workarea, so the
+        // Reader is not effective on the writer's default workspace, so the
         // read answers step 4 of the refusal order: the node is not found,
         // never named as refused (roles-and-keys.md, refusal order).
         let refused = call_tool(&router, &writer, id, "oml_read", args.clone()).await;
@@ -2121,8 +2121,8 @@ async fn a_repeated_idempotency_key_replays_with_idempotent_replay_true() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, _, _) = crew(&router).await;
-    let v1 = ratified(&router, &writer, &dreamer).await;
+    let (writer, reviewer, _, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &reviewer).await;
 
     // A submission and a supersession each replay their stored receipt,
     // flagged, and write nothing a second time (D13).
@@ -2151,7 +2151,7 @@ async fn a_repeated_idempotency_key_replays_with_idempotent_replay_true() {
 }
 
 /// `oml_write`'s idempotency key has the scope of the endpoint its mode
-/// maps to: a submission's record is scoped to (key, resolved workarea), a
+/// maps to: a submission's record is scoped to (key, resolved workspace), a
 /// supersession's to the calling key alone, so one key reused across the
 /// two modes is two writes, neither a replay nor
 /// `idempotency.digest_mismatch`, and the catalog says both scopes
@@ -2170,7 +2170,7 @@ async fn a_reused_idempotency_key_across_modes_is_a_separate_write() {
         .as_str()
         .expect("description");
     assert!(
-        said.contains("Without replaces it is scoped to (key, resolved workarea)")
+        said.contains("Without replaces it is scoped to (key, resolved workspace)")
             && said.contains("with replaces to the calling key alone")
             && said.contains("is a separate write"),
         "{said}"
@@ -2179,8 +2179,8 @@ async fn a_reused_idempotency_key_across_modes_is_a_separate_write() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, _, _) = crew(&router).await;
-    let v1 = ratified(&router, &writer, &dreamer).await;
+    let (writer, reviewer, _, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &reviewer).await;
 
     let key = "crew-procure/run-5/step-1";
     let submitted = call_tool(
@@ -2213,16 +2213,16 @@ async fn a_reused_idempotency_key_across_modes_is_a_separate_write() {
     drop_db(&db).await;
 }
 
-/// `oml_write`'s `workarea` takes the node's name as well as its id: the
-/// facade passes it through as the body's `workarea` and the server
+/// `oml_write`'s `workspace` takes the node's name as well as its id: the
+/// facade passes it through as the body's `workspace` and the server
 /// resolves it,
 /// so a write naming `metals-crew` is captured there and the own-work
 /// listing under that name lists it, while a derived path is refused as
 /// `request.validation` naming the HTTP field the argument maps to; the
-/// served catalog says so (mcp-plugin.md, a workarea by id or name;
+/// served catalog says so (mcp-plugin.md, a workspace by id or name;
 /// errors.md `details.field`; ADR-0026 d4, d7).
 #[tokio::test]
-async fn oml_write_with_a_workarea_name_submits_into_it() {
+async fn oml_write_with_a_workspace_name_submits_into_it() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -2234,7 +2234,7 @@ async fn oml_write_with_a_workarea_name_submits_into_it() {
         1,
         "oml_write",
         json!({
-            "workarea": "metals-crew",
+            "workspace": "metals-crew",
             "claim_key": "supplier-quote-am-7741",
             "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery.",
             "idempotency_key": "crew-procure/run-1/step-1",
@@ -2243,14 +2243,14 @@ async fn oml_write_with_a_workarea_name_submits_into_it() {
     .await;
     assert_eq!(remembered["isError"], false, "{remembered}");
     let receipt = &remembered["structuredContent"];
-    assert_eq!(receipt["workarea"], crew.to_string(), "{remembered}");
+    assert_eq!(receipt["workspace"], crew.to_string(), "{remembered}");
     assert_eq!(receipt["state"], "held");
     let mine = call_tool(
         &router,
         &agent,
         2,
         "oml_read",
-        json!({"workarea": "metals-crew"}),
+        json!({"workspace": "metals-crew"}),
     )
     .await;
     assert_eq!(mine["isError"], false, "{mine}");
@@ -2266,7 +2266,7 @@ async fn oml_write_with_a_workarea_name_submits_into_it() {
         3,
         "oml_write",
         json!({
-            "workarea": "universe.metals-crew",
+            "workspace": "universe.metals-crew",
             "claim_key": "supplier-quote-am-7742",
             "text": "Supplier Accra Metals quoted 415 USD/t.",
             "idempotency_key": "crew-procure/run-1/step-2",
@@ -2276,7 +2276,7 @@ async fn oml_write_with_a_workarea_name_submits_into_it() {
     assert_eq!(refused["isError"], true, "{refused}");
     let error = &refused["structuredContent"]["error"];
     assert_eq!(error["code"], "request.validation", "{refused}");
-    assert_eq!(error["details"]["field"], "/workarea", "{refused}");
+    assert_eq!(error["details"]["field"], "/workspace", "{refused}");
 
     // The served entry of oml_write describes what the build serves: the id or the name, and no path (ADR-0025 d12,
     // ADR-0039 d10).
@@ -2287,7 +2287,7 @@ async fn oml_write_with_a_workarea_name_submits_into_it() {
         .iter()
         .find(|t| t["name"] == "oml_write")
         .expect("oml_write is served");
-    let described = tool["inputSchema"]["properties"]["workarea"]["description"]
+    let described = tool["inputSchema"]["properties"]["workspace"]["description"]
         .as_str()
         .expect("a description");
     assert!(described.contains("id or name"), "{described}");
@@ -2297,7 +2297,7 @@ async fn oml_write_with_a_workarea_name_submits_into_it() {
 }
 
 #[tokio::test]
-async fn oml_workarea_without_an_argument_describes_the_default_workarea() {
+async fn oml_workspace_without_an_argument_describes_the_default_workspace() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -2312,14 +2312,14 @@ async fn oml_workarea_without_an_argument_describes_the_default_workarea() {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
     let admin = boot["value"].as_str().expect("admin key").to_owned();
-    let root = boot["root_workarea_id"].as_str().expect("root").to_owned();
+    let root = boot["root_workspace_id"].as_str().expect("root").to_owned();
     let (status, wa) = send(
         &router,
         "POST",
-        "/v2/workareas",
+        "/v2/workspaces",
         Some(&admin),
         Some("wa-1"),
-        // A workarea names at most one crew record (ADR-0026 d8); this one
+        // A workspace names at most one crew record (ADR-0026 d8); this one
         // names none, so `crew` is null.
         Some(&json!({
             "parent": root,
@@ -2328,7 +2328,7 @@ async fn oml_workarea_without_an_argument_describes_the_default_workarea() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{wa}");
-    let crew = wa["id"].as_str().expect("workarea id").to_owned();
+    let crew = wa["id"].as_str().expect("workspace id").to_owned();
     let issue = |idem: &'static str, role: &'static str, grants: Value| {
         let (router, admin) = (&router, &admin);
         async move {
@@ -2349,20 +2349,20 @@ async fn oml_workarea_without_an_argument_describes_the_default_workarea() {
         "agent",
         "writer",
         json!([
-            {"workarea": crew, "role": "writer"},
-            {"workarea": crew, "role": "reader"},
+            {"workspace": crew, "role": "writer"},
+            {"workspace": crew, "role": "reader"},
         ]),
     )
     .await;
     let writer = issue(
         "writer",
         "writer",
-        json!([{"workarea": crew, "role": "writer"}]),
+        json!([{"workspace": crew, "role": "writer"}]),
     )
     .await;
     let unscoped = issue("unscoped", "reader", json!([])).await;
 
-    // Listed, and with workarea omitted it reads the key's journalled
+    // Listed, and with workspace omitted it reads the key's journalled
     // default: the same answer as naming it, from one ring call (ADR-0039
     // d10).
     let listed = rpc(&router, &agent, 1, "tools/list", json!({})).await;
@@ -2371,10 +2371,10 @@ async fn oml_workarea_without_an_argument_describes_the_default_workarea() {
             .as_array()
             .expect("tools")
             .iter()
-            .any(|t| t["name"] == "oml_workarea"),
+            .any(|t| t["name"] == "oml_workspace"),
         "{listed}"
     );
-    let info = call_tool(&router, &agent, 2, "oml_workarea", json!({})).await;
+    let info = call_tool(&router, &agent, 2, "oml_workspace", json!({})).await;
     assert_eq!(info["isError"], false, "{info}");
     let view = &info["structuredContent"];
     assert_eq!(
@@ -2393,7 +2393,7 @@ async fn oml_workarea_without_an_argument_describes_the_default_workarea() {
                 "remember", "learn", "attach", "supersede",
             ],
             "permission_epoch": view["permission_epoch"],
-            "policy": {"k": 1, "required_roles": ["dreamer"]},
+            "policy": {"k": 1, "required_roles": ["reviewer"]},
             "pending_transitions": [],
             "brief": view["brief"],
         })
@@ -2405,13 +2405,13 @@ async fn oml_workarea_without_an_argument_describes_the_default_workarea() {
     );
     assert!(view["permission_epoch"].is_u64(), "{view}");
     // By id and by name, the same node (ADR-0026 d4).
-    for (id, workarea) in [(3, crew.as_str()), (8, "metals-crew")] {
+    for (id, workspace) in [(3, crew.as_str()), (8, "metals-crew")] {
         let named = call_tool(
             &router,
             &agent,
             id,
-            "oml_workarea",
-            json!({"workarea": workarea}),
+            "oml_workspace",
+            json!({"workspace": workspace}),
         )
         .await;
         assert_eq!(&named["structuredContent"], view);
@@ -2420,17 +2420,17 @@ async fn oml_workarea_without_an_argument_describes_the_default_workarea() {
     // A key with no default is refused by name; a node the key cannot read
     // is absence, as on the ring; an unknown argument is validation.
     for (id, token, args, code) in [
-        (4, &unscoped, json!({}), "request.workarea_unresolved"),
+        (4, &unscoped, json!({}), "request.workspace_unresolved"),
         (5, &writer, json!({}), "access.not_found"),
-        (6, &agent, json!({"workarea": root}), "access.not_found"),
+        (6, &agent, json!({"workspace": root}), "access.not_found"),
         (
             7,
             &agent,
-            json!({"workarea_id": crew}),
+            json!({"workspace_id": crew}),
             "request.validation",
         ),
     ] {
-        let refused = call_tool(&router, token, id, "oml_workarea", args).await;
+        let refused = call_tool(&router, token, id, "oml_workspace", args).await;
         assert_eq!(refused["isError"], true, "{refused}");
         assert_eq!(
             refused["structuredContent"]["error"]["code"], code,
@@ -2442,7 +2442,7 @@ async fn oml_workarea_without_an_argument_describes_the_default_workarea() {
 }
 
 #[tokio::test]
-async fn an_admin_keys_oml_workarea_is_the_rings_structure_read_of_its_default() {
+async fn an_admin_keys_oml_workspace_is_the_rings_structure_read_of_its_default() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -2471,17 +2471,17 @@ async fn an_admin_keys_oml_workarea_is_the_rings_structure_read_of_its_default()
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{second}");
-    assert!(second["default_workarea_id"].is_null(), "{second}");
+    assert!(second["default_workspace_id"].is_null(), "{second}");
     let second_admin = second["value"]
         .as_str()
         .expect("show-once value")
         .to_owned();
 
-    // The facade rides the ring, whose workarea read answers an admin key by
+    // The facade rides the ring, whose workspace read answers an admin key by
     // its key role, structure only (ADR-0026 d15): the bootstrap admin reads
     // its default, the root, with no effective verb, and the admin key with
     // no default is refused by name.
-    let read = call_tool(&router, &bootstrap_admin, 1, "oml_workarea", json!({})).await;
+    let read = call_tool(&router, &bootstrap_admin, 1, "oml_workspace", json!({})).await;
     assert_eq!(read["isError"], false, "{read}");
     assert_eq!(read["structuredContent"]["path"], "universe", "{read}");
     assert_eq!(
@@ -2489,10 +2489,10 @@ async fn an_admin_keys_oml_workarea_is_the_rings_structure_read_of_its_default()
         json!([]),
         "{read}"
     );
-    let refused = call_tool(&router, &second_admin, 2, "oml_workarea", json!({})).await;
+    let refused = call_tool(&router, &second_admin, 2, "oml_workspace", json!({})).await;
     assert_eq!(refused["isError"], true, "{refused}");
     assert_eq!(
-        refused["structuredContent"]["error"]["code"], "request.workarea_unresolved",
+        refused["structuredContent"]["error"]["code"], "request.workspace_unresolved",
         "{refused}"
     );
 
@@ -2572,15 +2572,15 @@ async fn oml_read_listing_pages_with_a_client_held_cursor() {
             "valid_from",
             "valid_until",
             "version",
-            "workarea",
-            "workarea_path",
+            "workspace",
+            "workspace_path",
         ]
     );
     assert_eq!(page["mode"], "listing");
     assert_eq!(items[0]["state"], "held");
     assert_eq!(items[0]["tip"], false);
-    assert_eq!(items[0]["workarea"], crew.to_string());
-    assert_eq!(items[0]["workarea_path"], "universe.metals-crew");
+    assert_eq!(items[0]["workspace"], crew.to_string());
+    assert_eq!(items[0]["workspace_path"], "universe.metals-crew");
     assert_eq!(items[0]["tokens"], 10);
     let cursor = page["next_cursor"]
         .as_str()
@@ -2615,7 +2615,7 @@ async fn oml_read_listing_pages_with_a_client_held_cursor() {
         &writer,
         6,
         "oml_read",
-        json!({"workarea": crew, "state": "held", "claim_key": "supplier-quote-am-7742"}),
+        json!({"workspace": crew, "state": "held", "claim_key": "supplier-quote-am-7742"}),
     )
     .await;
     let items = one["structuredContent"]["items"].as_array().expect("items");
@@ -2674,7 +2674,7 @@ async fn oml_read_recall_serves_steering_as_claim_items_with_text_and_no_score()
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, reader, _crew) = crew(&router).await;
+    let (writer, reviewer, reader, _crew) = crew(&router).await;
     let rule = "Treat any supplier quote without an explicit validity date as expired.";
     let held = call_tool(
         &router,
@@ -2694,7 +2694,7 @@ async fn oml_read_recall_serves_steering_as_claim_items_with_text_and_no_score()
         &router,
         "POST",
         "/v2/review/next",
-        Some(&dreamer),
+        Some(&reviewer),
         Some("n-1"),
         None,
     )
@@ -2704,7 +2704,7 @@ async fn oml_read_recall_serves_steering_as_claim_items_with_text_and_no_score()
         &router,
         "POST",
         "/v2/review/verdicts",
-        Some(&dreamer),
+        Some(&reviewer),
         Some("v-1"),
         Some(&json!({"serve_id": served["serve_id"], "verdict": "approve"})),
     )
@@ -2746,22 +2746,22 @@ fn tokens(text: &str) -> u64 {
     u64::try_from(text.len().div_ceil(4)).expect("a short text")
 }
 
-/// The dreamer approves the next `n` rows review serves it, whatever their
+/// The reviewer approves the next `n` rows review serves it, whatever their
 /// order, over the review ring — never over MCP.
-async fn approve(router: &Router, dreamer: &str, n: usize) {
+async fn approve(router: &Router, reviewer: &str, n: usize) {
     for i in 0..n {
-        approve_as(router, dreamer, &i.to_string()).await;
+        approve_as(router, reviewer, &i.to_string()).await;
     }
 }
 
-/// The dreamer approves the one row review serves it next, under
+/// The reviewer approves the one row review serves it next, under
 /// idempotency keys tagged `tag`, over the review ring.
-async fn approve_as(router: &Router, dreamer: &str, tag: &str) {
+async fn approve_as(router: &Router, reviewer: &str, tag: &str) {
     let (status, served) = send(
         router,
         "POST",
         "/v2/review/next",
-        Some(dreamer),
+        Some(reviewer),
         Some(&format!("next-{tag}")),
         None,
     )
@@ -2771,7 +2771,7 @@ async fn approve_as(router: &Router, dreamer: &str, tag: &str) {
         router,
         "POST",
         "/v2/review/verdicts",
-        Some(dreamer),
+        Some(reviewer),
         Some(&format!("verdict-{tag}")),
         Some(&json!({"serve_id": served["serve_id"], "verdict": "approve"})),
     )
@@ -2840,7 +2840,7 @@ async fn oml_read_recall_takes_include_unreviewed_and_max_tokens_as_it_declares_
         .expect("oml_read is served");
     let properties = &recall["inputSchema"]["properties"];
     assert_eq!(properties["include_unreviewed"]["type"], "boolean");
-    // No default: absent means true inside an in-progress workarea and
+    // No default: absent means true inside an in-progress workspace and
     // false elsewhere (ADR-0030 d4).
     assert_eq!(properties["include_unreviewed"]["default"], Value::Null);
     assert_eq!(properties["max_tokens"]["type"], "integer");
@@ -2935,7 +2935,7 @@ async fn oml_read_recall_steering_items_carry_text_and_tokens_not_body() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (agent, dreamer, _, crew) = agent_crew(&router).await;
+    let (agent, reviewer, _, crew) = agent_crew(&router).await;
     remember_all(
         &router,
         &agent,
@@ -2945,7 +2945,7 @@ async fn oml_read_recall_steering_items_carry_text_and_tokens_not_body() {
         ],
     )
     .await;
-    approve(&router, &dreamer, 2).await;
+    approve(&router, &reviewer, 2).await;
 
     let recall = call_tool(
         &router,
@@ -2989,8 +2989,8 @@ async fn oml_read_recall_steering_items_carry_text_and_tokens_not_body() {
         "valid_from",
         "valid_until",
         "version",
-        "workarea",
-        "workarea_path",
+        "workspace",
+        "workspace_path",
     ];
     assert_eq!(fields(&steering[0]), base, "{recall}");
     let mut with_score = base.to_vec();
@@ -3012,8 +3012,8 @@ async fn oml_read_recall_steering_items_carry_text_and_tokens_not_body() {
         assert_eq!(item["tip"], true, "{item}");
         assert_eq!(item["retirement"], false, "{item}");
         assert_eq!(item["replaces"], Value::Null, "{item}");
-        assert_eq!(item["workarea"], crew.to_string(), "{item}");
-        assert_eq!(item["workarea_path"], "universe.metals-crew", "{item}");
+        assert_eq!(item["workspace"], crew.to_string(), "{item}");
+        assert_eq!(item["workspace_path"], "universe.metals-crew", "{item}");
         assert!(item["created_at"].is_string(), "{item}");
         assert!(item["promoted_at"].is_string(), "{item}");
     }
@@ -3027,7 +3027,7 @@ async fn oml_read_recall_under_max_tokens_returns_the_budget_object() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (agent, dreamer, _, _) = agent_crew(&router).await;
+    let (agent, reviewer, _, _) = agent_crew(&router).await;
     remember_all(
         &router,
         &agent,
@@ -3038,7 +3038,7 @@ async fn oml_read_recall_under_max_tokens_returns_the_budget_object() {
         ],
     )
     .await;
-    approve(&router, &dreamer, 3).await;
+    approve(&router, &reviewer, 3).await;
     let text_of = |item: &Value| {
         [QUOTE, ALLOY]
             .into_iter()
@@ -3229,14 +3229,14 @@ async fn write(router: &Router, writer: &str, n: u64, text: &str) -> String {
         .to_owned()
 }
 
-/// The dreamer gives the one row review serves it next `verdict`, over
+/// The reviewer gives the one row review serves it next `verdict`, over
 /// the review ring; the served row's `artifact_id`.
-async fn judge(router: &Router, dreamer: &str, tag: &str, verdict: &str) -> String {
+async fn judge(router: &Router, reviewer: &str, tag: &str, verdict: &str) -> String {
     let (status, served) = send(
         router,
         "POST",
         "/v2/review/next",
-        Some(dreamer),
+        Some(reviewer),
         Some(&format!("next-{tag}")),
         None,
     )
@@ -3246,7 +3246,7 @@ async fn judge(router: &Router, dreamer: &str, tag: &str, verdict: &str) -> Stri
         router,
         "POST",
         "/v2/review/verdicts",
-        Some(dreamer),
+        Some(reviewer),
         Some(&format!("verdict-{tag}")),
         Some(&json!({"serve_id": served["serve_id"], "verdict": verdict, "reason": "checked against the quote"})),
     )
@@ -3272,8 +3272,8 @@ async fn a_read_argument_outside_its_mode_is_refused_naming_it() {
         (1, json!({"artifact_id": stored, "k": 3}), "/k"),
         (
             2,
-            json!({"artifact_id": stored, "workarea": "metals-crew"}),
-            "/workarea",
+            json!({"artifact_id": stored, "workspace": "metals-crew"}),
+            "/workspace",
         ),
         (3, json!({"artifact_id": stored, "state": "held"}), "/state"),
         (4, json!({"query": "aluminium", "cursor": "c-1"}), "/cursor"),
@@ -3348,7 +3348,7 @@ async fn oml_read_with_no_mode_argument_lists_the_keys_own_work() {
     assert_eq!(item_ids(&own), [second.clone(), first.clone()], "{own}");
     let items = own["items"].as_array().expect("items");
     assert!(items.iter().all(|i| i["state"] == "held"), "{own}");
-    assert_eq!(items[0]["workarea"], crew.to_string(), "{own}");
+    assert_eq!(items[0]["workspace"], crew.to_string(), "{own}");
     assert_eq!(own["next_cursor"], Value::Null, "{own}");
     assert_eq!(
         read(&router, &writer, 2, json!({"own": true})).await,
@@ -3378,7 +3378,7 @@ async fn oml_read_with_no_mode_argument_lists_the_keys_own_work() {
         &router,
         &writer,
         11,
-        json!({"kind": "memory", "workarea": "metals-crew", "since": "2000-01-01T00:00:00Z", "until": "2999-01-01T00:00:00Z"}),
+        json!({"kind": "memory", "workspace": "metals-crew", "since": "2000-01-01T00:00:00Z", "until": "2999-01-01T00:00:00Z"}),
     )
     .await;
     assert_eq!(item_ids(&mine), [second, first], "{mine}");
@@ -3449,17 +3449,17 @@ async fn oml_read_until_leaves_out_a_version_written_at_its_instant_and_since_ta
 }
 
 #[tokio::test]
-async fn oml_read_with_own_false_lists_the_default_workarea() {
+async fn oml_read_with_own_false_lists_the_default_workspace() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, reader, crew) = crew(&router).await;
+    let (writer, reviewer, reader, crew) = crew(&router).await;
     let promoted = write(&router, &writer, 1, QUOTE).await;
-    assert_eq!(judge(&router, &dreamer, "v1", "approve").await, promoted);
+    assert_eq!(judge(&router, &reviewer, "v1", "approve").await, promoted);
     let held = write(&router, &writer, 2, ALLOY).await;
 
     // own: false is the scoped listing, new on MCP: the promoted tips of
-    // the key's default workarea, never a held row, whoever wrote them
+    // the key's default workspace, never a held row, whoever wrote them
     // (ADR-0039 d4, d10).
     let scoped = read(&router, &reader, 1, json!({"own": false})).await;
     assert_eq!(scoped["mode"], "listing", "{scoped}");
@@ -3469,17 +3469,21 @@ async fn oml_read_with_own_false_lists_the_default_workarea() {
         "{scoped}"
     );
     assert_eq!(scoped["items"][0]["state"], "promoted", "{scoped}");
-    assert_eq!(scoped["items"][0]["workarea"], crew.to_string(), "{scoped}");
+    assert_eq!(
+        scoped["items"][0]["workspace"],
+        crew.to_string(),
+        "{scoped}"
+    );
     assert!(!item_ids(&scoped).contains(&held), "{scoped}");
     // The same key's own listing is another read: it wrote nothing.
     let own = read(&router, &reader, 2, json!({})).await;
     assert_eq!(own["items"], json!([]), "{own}");
-    // Naming the default workarea is the same listing.
+    // Naming the default workspace is the same listing.
     let named = read(
         &router,
         &reader,
         3,
-        json!({"own": false, "workarea": "metals-crew"}),
+        json!({"own": false, "workspace": "metals-crew"}),
     )
     .await;
     assert_eq!(named, scoped);
@@ -3492,7 +3496,7 @@ async fn oml_read_state_tells_an_agent_whether_its_write_was_approved() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, _, _) = crew(&router).await;
+    let (writer, reviewer, _, _) = crew(&router).await;
     let first = write(&router, &writer, 1, QUOTE).await;
     let second = write(&router, &writer, 2, ALLOY).await;
 
@@ -3504,8 +3508,8 @@ async fn oml_read_state_tells_an_agent_whether_its_write_was_approved() {
 
     // One approved and one rejected: the state filter over the key's own
     // work answers which, with no events cursor (ADR-0039 d2).
-    let approved = judge(&router, &dreamer, "a", "approve").await;
-    let rejected = judge(&router, &dreamer, "b", "reject").await;
+    let approved = judge(&router, &reviewer, "a", "approve").await;
+    let rejected = judge(&router, &reviewer, "b", "reject").await;
     let mut both = vec![approved.clone(), rejected.clone()];
     both.sort_unstable();
     let mut written = vec![first, second];
@@ -3536,9 +3540,9 @@ async fn every_oml_read_mode_returns_claim_items_with_text_under_mode() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, reader, _) = crew(&router).await;
+    let (writer, reviewer, reader, _) = crew(&router).await;
     let stored = write(&router, &writer, 1, QUOTE).await;
-    judge(&router, &dreamer, "v1", "approve").await;
+    judge(&router, &reviewer, "v1", "approve").await;
 
     // ADR-0025 d12's claim item and its text, in each mode's container.
     let base = [
@@ -3565,8 +3569,8 @@ async fn every_oml_read_mode_returns_claim_items_with_text_under_mode() {
         "valid_from",
         "valid_until",
         "version",
-        "workarea",
-        "workarea_path",
+        "workspace",
+        "workspace_path",
     ];
     let with = |extra: &[&'static str]| {
         let mut names: Vec<&str> = base.iter().copied().chain(extra.iter().copied()).collect();
@@ -3588,7 +3592,7 @@ async fn every_oml_read_mode_returns_claim_items_with_text_under_mode() {
         &router,
         &reader,
         2,
-        json!({"query": "aluminium price", "workarea": "metals-crew", "k": 5, "kinds": ["memory"], "include_unreviewed": false, "max_tokens": MAX_TOKENS}),
+        json!({"query": "aluminium price", "workspace": "metals-crew", "k": 5, "kinds": ["memory"], "include_unreviewed": false, "max_tokens": MAX_TOKENS}),
     )
     .await;
     assert_eq!(recalled["mode"], "recall", "{recalled}");
@@ -3614,7 +3618,7 @@ async fn every_oml_read_mode_returns_claim_items_with_text_under_mode() {
 }
 
 #[tokio::test]
-async fn oml_workarea_returns_the_node_with_the_callers_verbs() {
+async fn oml_workspace_returns_the_node_with_the_callers_verbs() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -3623,7 +3627,7 @@ async fn oml_workarea_returns_the_node_with_the_callers_verbs() {
     // Listed with ADR-0039 d5's read-only hints, beside oml_read.
     let listed = rpc(&router, &agent, 1, "tools/list", json!({})).await;
     let tools = listed["result"]["tools"].as_array().expect("tools");
-    for name in ["oml_read", "oml_workarea"] {
+    for name in ["oml_read", "oml_workspace"] {
         let tool = tools
             .iter()
             .find(|t| t["name"] == name)
@@ -3635,9 +3639,9 @@ async fn oml_workarea_returns_the_node_with_the_callers_verbs() {
         );
     }
 
-    // One GET /v2/workareas/{workarea}: the node and the verbs this key's
+    // One GET /v2/workspaces/{workspace}: the node and the verbs this key's
     // effective access carries there, the default when none is named.
-    let node = call_tool(&router, &agent, 2, "oml_workarea", json!({})).await;
+    let node = call_tool(&router, &agent, 2, "oml_workspace", json!({})).await;
     assert_eq!(node["isError"], false, "{node}");
     let view = &node["structuredContent"];
     assert_eq!(view["id"], crew.to_string(), "{view}");
@@ -3658,26 +3662,26 @@ async fn oml_workarea_returns_the_node_with_the_callers_verbs() {
         "{view}"
     );
     assert!(view["permission_epoch"].is_u64(), "{view}");
-    for (id, workarea) in [(3, crew.to_string()), (4, "metals-crew".to_owned())] {
+    for (id, workspace) in [(3, crew.to_string()), (4, "metals-crew".to_owned())] {
         let named = call_tool(
             &router,
             &agent,
             id,
-            "oml_workarea",
-            json!({"workarea": workarea}),
+            "oml_workspace",
+            json!({"workspace": workspace}),
         )
         .await;
         assert_eq!(&named["structuredContent"], view);
     }
     // Another key's verbs are its own: the reader reads, never writes.
-    let theirs = call_tool(&router, &reader, 5, "oml_workarea", json!({})).await;
+    let theirs = call_tool(&router, &reader, 5, "oml_workspace", json!({})).await;
     assert_eq!(
         theirs["structuredContent"]["my_effective_verbs"],
         json!(["recall", "read", "graph_read", "events_tail"]),
         "{theirs}"
     );
     // An argument outside the schema is refused, as on every tool.
-    let refused = call_tool(&router, &agent, 6, "oml_workarea", json!({"scope": "x"})).await;
+    let refused = call_tool(&router, &agent, 6, "oml_workspace", json!({"scope": "x"})).await;
     assert!(outside_the_input_schema(&refused), "{refused}");
 
     drop_db(&db).await;
@@ -3708,18 +3712,18 @@ fn doubles_router() -> Router {
     .into_router()
 }
 
-/// `oml_workarea` serves the workarea read's policy, live proposals and
+/// `oml_workspace` serves the workspace read's policy, live proposals and
 /// ratified brief, each brief member as the claim item every tool returns,
 /// with its text, and no fourth tool is added (ADR-0046 d3, d9; ADR-0039
 /// d8).
 #[tokio::test]
-async fn oml_workarea_serves_the_policy_the_live_proposals_and_the_brief_as_claim_items() {
+async fn oml_workspace_serves_the_policy_the_live_proposals_and_the_brief_as_claim_items() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let ((writer, dreamer, _reader, crew), admin) =
+    let ((writer, reviewer, _reader, crew), admin) =
         crew_and_admin(&router, &["writer", "reader"]).await;
-    let artifact = ratified(&router, &writer, &dreamer).await;
+    let artifact = ratified(&router, &writer, &reviewer).await;
     let mut curators = Vec::new();
     for name in ["dora", "dan"] {
         let (status, key) = send(
@@ -3729,8 +3733,8 @@ async fn oml_workarea_serves_the_policy_the_live_proposals_and_the_brief_as_clai
             Some(&admin),
             Some(&format!("issue-{name}")),
             Some(&json!({
-                "role": "dreamer", "name": name, "principal": name,
-                "grants": [{"workarea": crew, "role": "dreamer"}, {"workarea": crew, "role": "reader"}],
+                "role": "reviewer", "name": name, "principal": name,
+                "grants": [{"workspace": crew, "role": "reviewer"}, {"workspace": crew, "role": "reader"}],
             })),
         )
         .await;
@@ -3743,7 +3747,7 @@ async fn oml_workarea_serves_the_policy_the_live_proposals_and_the_brief_as_clai
         "/v2/edges",
         Some(&curators[0]),
         Some("brief-1"),
-        Some(&json!({"kind": "brief", "from_artifact_id": artifact, "to_workarea_id": crew})),
+        Some(&json!({"kind": "brief", "from_artifact_id": artifact, "to_workspace_id": crew})),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{edge}");
@@ -3761,19 +3765,19 @@ async fn oml_workarea_serves_the_policy_the_live_proposals_and_the_brief_as_clai
     let (status, proposal) = send(
         &router,
         "POST",
-        &format!("/v2/workareas/{crew}/transitions"),
+        &format!("/v2/workspaces/{crew}/transitions"),
         Some(&curators[0]),
         Some("t-1"),
-        Some(&json!({"to": "committed"})),
+        Some(&json!({"to": "protected"})),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
 
-    let result = call_tool(&router, &writer, 1, "oml_workarea", json!({})).await;
+    let result = call_tool(&router, &writer, 1, "oml_workspace", json!({})).await;
     let node = &result["structuredContent"];
     assert_eq!(
         node["policy"],
-        json!({"k": 1, "required_roles": ["dreamer"]}),
+        json!({"k": 1, "required_roles": ["reviewer"]}),
         "{result}"
     );
     assert_eq!(
@@ -3893,8 +3897,8 @@ async fn oml_read_takes_as_of_in_every_mode_and_answers_as_http_does() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (writer, dreamer, reader, _) = crew(&router).await;
-    let v1 = ratified(&router, &writer, &dreamer).await;
+    let (writer, reviewer, reader, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &reviewer).await;
     let got = call_tool(&router, &reader, 1, "oml_read", json!({"artifact_id": v1})).await;
     let at = got["structuredContent"]["items"][0]["promoted_at"]
         .as_str()
@@ -3918,7 +3922,7 @@ async fn oml_read_takes_as_of_in_every_mode_and_answers_as_http_does() {
         .as_str()
         .expect("artifact id")
         .to_owned();
-    approve_as(&router, &dreamer, "v2").await;
+    approve_as(&router, &reviewer, "v2").await;
 
     let then = call_tool(
         &router,

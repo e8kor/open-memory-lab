@@ -51,7 +51,7 @@ fn settings_json(settings: &SearchSettings) -> Value {
                 "partition": h.partition,
                 "unfilled": h.unfilled,
                 "served_behind": h.served_behind,
-                "workarea_drift": h.workarea_drift,
+                "workspace_drift": h.workspace_drift,
                 "term_drift": h.term_drift,
                 "terms_checked": h.terms_checked,
                 // The learned sparse encoder's queue for this tenant

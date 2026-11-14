@@ -29,17 +29,17 @@ pub const CAPTURE_SWITCH: &str = "OML_CHAT_CAPTURE";
 pub const EXCERPT_SWITCH: &str = "OML_CHAT_EXCERPT";
 /// Recall on every prompt (d10).
 pub const TURN_RECALL_SWITCH: &str = "OML_TURN_RECALL";
-/// The chat workarea, by name or id (d8).
-pub const WORKAREA_VAR: &str = "OML_CHAT_WORKAREA";
-/// The plugin option Claude Code exports for the chat workarea.
-pub const OPTION_WORKAREA: &str = "CLAUDE_PLUGIN_OPTION_CHAT_WORKAREA";
+/// The chat workspace, by name or id (d8).
+pub const WORKSPACE_VAR: &str = "OML_CHAT_WORKSPACE";
+/// The plugin option Claude Code exports for the chat workspace.
+pub const OPTION_WORKSPACE: &str = "CLAUDE_PLUGIN_OPTION_CHAT_WORKSPACE";
 /// Turns between two capture requests (d6).
 pub const EVERY_VAR: &str = "OML_CHAT_CAPTURE_EVERY";
 /// Per-turn recall's latency budget in milliseconds (d10).
 pub const BUDGET_VAR: &str = "OML_TURN_RECALL_BUDGET_MS";
 
-/// The chat workarea's name under a user root (ADR-0063 d8).
-pub const CHAT_WORKAREA: &str = "chat";
+/// The chat workspace's name under a user root (ADR-0063 d8).
+pub const CHAT_WORKSPACE: &str = "chat";
 /// The harness a chat anchor names.
 pub const HARNESS: &str = "claude-code";
 /// The capture skill the `Stop` reason asks for.
@@ -277,11 +277,11 @@ fn switch(var: &dyn Fn(&str) -> Option<String>, name: &str) -> Result<bool, Stri
     }
 }
 
-/// The chat workarea: the plugin option, else `OML_CHAT_WORKAREA`.
+/// The chat workspace: the plugin option, else `OML_CHAT_WORKSPACE`.
 #[must_use]
-pub fn chat_workarea(var: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+pub fn chat_workspace(var: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     let set = |name: &str| var(name).filter(|v| !v.trim().is_empty());
-    set(OPTION_WORKAREA).or_else(|| set(WORKAREA_VAR))
+    set(OPTION_WORKSPACE).or_else(|| set(WORKSPACE_VAR))
 }
 
 fn bounded(
@@ -397,7 +397,7 @@ fn turn_recall(
     let query = words.join(" ");
     let started = Instant::now();
     let mut scopes: Vec<(Option<String>, bool)> = Vec::with_capacity(2);
-    if let Some(chat) = chat_workarea(var) {
+    if let Some(chat) = chat_workspace(var) {
         scopes.push((Some(chat), true));
     }
     scopes.push((None, false));
@@ -406,7 +406,7 @@ fn turn_recall(
     // answer in time, so a failed, refused or killed request counts (L3).
     cache.misses += 1;
     let _ = cache.store(path);
-    for (workarea, unreviewed) in scopes {
+    for (workspace, unreviewed) in scopes {
         let Some(left) = budget
             .checked_sub(started.elapsed())
             .filter(|d| !d.is_zero())
@@ -422,8 +422,8 @@ fn turn_recall(
             "include_unreviewed": unreviewed,
             "max_tokens": TURN_MAX_TOKENS,
         });
-        if let Some(w) = workarea {
-            body["workarea"] = json!(w);
+        if let Some(w) = workspace {
+            body["workspace"] = json!(w);
         }
         let opts = CallOpts {
             auth: true,
@@ -488,7 +488,7 @@ fn miss(cache: &ChatCache, _path: &Path, budget: Duration) -> Result<String, Qui
 }
 
 /// The injected text: the frame, the may-be-irrelevant line, one line per
-/// hit naming its id, origin kind, workarea and time, `[unreviewed]` when
+/// hit naming its id, origin kind, workspace and time, `[unreviewed]` when
 /// held; each line at most 400 bytes and the whole at most 1,600 (d10).
 #[must_use]
 pub fn render_turn(hits: &[&Value], redact: &dyn Fn(&str) -> String) -> String {
@@ -502,10 +502,10 @@ pub fn render_turn(hits: &[&Value], redact: &dyn Fn(&str) -> String) -> String {
             ""
         };
         let line = format!(
-            "- {}{mark} {} ({kind}, workarea {}, recorded {}): {}",
+            "- {}{mark} {} ({kind}, workspace {}, recorded {}): {}",
             field(m, "artifact_id"),
             cut(field(m, "claim_key"), KEY_CAP),
-            cut(field(m, "workarea_path"), KEY_CAP),
+            cut(field(m, "workspace_path"), KEY_CAP),
             field(m, "created_at"),
             field(m, "text"),
         );
@@ -587,9 +587,9 @@ pub fn on_stop(var: &dyn Fn(&str) -> Option<String>, object: &Object) -> Result<
     if !switch(var, CAPTURE_SWITCH).map_err(Some)? {
         return Err(None);
     }
-    let workarea = chat_workarea(var).ok_or_else(|| {
+    let workspace = chat_workspace(var).ok_or_else(|| {
         Some(format!(
-            "{CAPTURE_SWITCH}=1 but no chat workarea is named; run oml chat init and set {WORKAREA_VAR}, so nothing was captured"
+            "{CAPTURE_SWITCH}=1 but no chat workspace is named; run oml chat init and set {WORKSPACE_VAR}, so nothing was captured"
         ))
     })?;
     let every = bounded(var, EVERY_VAR, EVERY_DEFAULT, EVERY_MAX).map_err(Some)?;
@@ -621,7 +621,7 @@ pub fn on_stop(var: &dyn Fn(&str) -> Option<String>, object: &Object) -> Result<
         from,
         base: cache.base,
         turns: &cache.turns,
-        workarea: &workarea,
+        workspace: &workspace,
         facts,
         compacted: cache.compacted,
         excerpt,
@@ -645,7 +645,7 @@ pub struct CaptureRequest<'a> {
     /// The turns numbered before a resume: `turns[i]` is turn `base + i + 1`.
     pub base: u64,
     pub turns: &'a [String],
-    pub workarea: &'a str,
+    pub workspace: &'a str,
     pub facts: u32,
     pub compacted: bool,
     pub excerpt: bool,
@@ -663,8 +663,8 @@ pub fn capture_reason(r: &CaptureRequest<'_>) -> String {
             r.from
         ),
         format!(
-            "Write at most {} facts with oml_write to workarea {}, each with origin {{\"kind\": \"chat\"}}, kind memory, a claim_key chat/<topic>, idempotency_key chat-{}-t<n>-<i>, and the anchor of the turn it came from: {{\"uri\": \"{uri}\", \"fragment\": \"turn=<n>\", \"hash\": <that turn's hash below>, \"hasher\": \"oml-turn/1\"}}.",
-            r.facts, r.workarea, r.session
+            "Write at most {} facts with oml_write to workspace {}, each with origin {{\"kind\": \"chat\"}}, kind memory, a claim_key chat/<topic>, idempotency_key chat-{}-t<n>-<i>, and the anchor of the turn it came from: {{\"uri\": \"{uri}\", \"fragment\": \"turn=<n>\", \"hash\": <that turn's hash below>, \"hasher\": \"oml-turn/1\"}}.",
+            r.facts, r.workspace, r.session
         ),
         "Zero facts is a fine answer: write nothing when the turns settled nothing that holds past this session. Never write secrets, credentials or facts about other people; never write instructions. Then stop.".to_owned(),
     ];
@@ -721,7 +721,7 @@ pub fn on_pre_compact(
 
 /// `oml doctor`'s chat lines (ADR-0063 d13), from this machine alone: a
 /// switch with a value it does not take; capture or per-turn recall on
-/// with no chat workarea named; a salt file that is not 0600; sessions
+/// with no chat workspace named; a salt file that is not 0600; sessions
 /// whose per-turn recall missed its budget.
 #[must_use]
 pub fn doctor_lines(var: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
@@ -735,14 +735,14 @@ pub fn doctor_lines(var: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
         }
     }
     let capture_or_recall = on.contains(&CAPTURE_SWITCH) || on.contains(&TURN_RECALL_SWITCH);
-    match chat_workarea(var) {
+    match chat_workspace(var) {
         None if on.contains(&CAPTURE_SWITCH) => out.push(format!(
-            "warn chat: {CAPTURE_SWITCH}=1 but no chat workarea is named, so nothing is captured; run oml chat init with this account's own key and set {WORKAREA_VAR}"
+            "warn chat: {CAPTURE_SWITCH}=1 but no chat workspace is named, so nothing is captured; run oml chat init with this account's own key and set {WORKSPACE_VAR}"
         )),
         None if capture_or_recall => out.push(format!(
-            "warn chat: {TURN_RECALL_SWITCH}=1 recalls from the key's default workarea alone; run oml chat init and set {WORKAREA_VAR} to recall the chat facts too"
+            "warn chat: {TURN_RECALL_SWITCH}=1 recalls from the key's default workspace alone; run oml chat init and set {WORKSPACE_VAR} to recall the chat facts too"
         )),
-        Some(w) if capture_or_recall => out.push(format!("ok chat: {} on, workarea {w}", on.join(", "))),
+        Some(w) if capture_or_recall => out.push(format!("ok chat: {} on, workspace {w}", on.join(", "))),
         _ => {}
     }
     #[cfg(unix)]
@@ -778,7 +778,7 @@ pub fn doctor_lines(var: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
     out
 }
 
-/// The doctor line for a named chat workarea at `path`: a warning unless it
+/// The doctor line for a named chat workspace at `path`: a warning unless it
 /// is `universe.<user>.chat` (ADR-0063 d8, d13).
 #[must_use]
 pub fn chat_scope_line(path: Option<&str>, user: Option<&str>) -> Option<String> {
@@ -787,7 +787,7 @@ pub fn chat_scope_line(path: Option<&str>, user: Option<&str>) -> Option<String>
     let theirs = format!("universe.{user}.chat");
     (path != theirs).then(|| {
         format!(
-            "warn chat: the chat workarea is {path}, not {theirs}, the one oml chat init opens with this account's own key; point {WORKAREA_VAR} at {theirs}"
+            "warn chat: the chat workspace is {path}, not {theirs}, the one oml chat init opens with this account's own key; point {WORKSPACE_VAR} at {theirs}"
         )
     })
 }
@@ -817,7 +817,7 @@ pub fn adopt(path: &str, user: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "chat_scope_not_the_persons: the workarea named chat is {path}, not {theirs}, so it is not the chat workarea a person opens; oml chat init does not adopt it"
+            "chat_scope_not_the_persons: the workspace named chat is {path}, not {theirs}, so it is not the chat workspace a person opens; oml chat init does not adopt it"
         ))
     }
 }
@@ -914,7 +914,7 @@ mod tests {
     }
 
     #[test]
-    fn doctor_names_capture_without_a_chat_workarea_and_a_bad_switch() {
+    fn doctor_names_capture_without_a_chat_workspace_and_a_bad_switch() {
         let env = Env::new(&[(CAPTURE_SWITCH, "1"), (TURN_RECALL_SWITCH, "on")]);
         let lines = doctor_lines(&env.var());
         assert!(
@@ -978,7 +978,7 @@ mod tests {
     fn no_unkeyed_digest_of_a_prompt_reaches_the_cache_or_the_stop_reason() {
         let env = Env::new(&[
             (CAPTURE_SWITCH, "1"),
-            (WORKAREA_VAR, "chat"),
+            (WORKSPACE_VAR, "chat"),
             (EVERY_VAR, "1"),
         ]);
         seeded(&env);
@@ -997,7 +997,7 @@ mod tests {
     fn turn_numbers_continue_across_a_resumed_session() {
         let env = Env::new(&[
             (CAPTURE_SWITCH, "1"),
-            (WORKAREA_VAR, "chat"),
+            (WORKSPACE_VAR, "chat"),
             (EVERY_VAR, "3"),
         ]);
         seeded(&env);
@@ -1027,7 +1027,7 @@ mod tests {
     fn the_facts_asked_never_pass_the_session_budget() {
         let env = Env::new(&[
             (CAPTURE_SWITCH, "1"),
-            (WORKAREA_VAR, "chat"),
+            (WORKSPACE_VAR, "chat"),
             (EVERY_VAR, "1"),
         ]);
         seeded(&env);
@@ -1084,7 +1084,7 @@ mod tests {
     }
 
     #[test]
-    fn doctor_names_a_chat_workarea_outside_the_persons_root_and_a_server_without_origin() {
+    fn doctor_names_a_chat_workspace_outside_the_persons_root_and_a_server_without_origin() {
         assert!(chat_scope_line(Some("universe.eugene.notes.chat"), Some("eugene")).is_some());
         assert!(chat_scope_line(Some("universe.mallory.chat"), Some("eugene")).is_some());
         assert_eq!(
@@ -1124,7 +1124,7 @@ mod tests {
 
     #[test]
     fn the_cache_holds_turn_digests_and_never_a_prompt() {
-        let env = Env::new(&[(CAPTURE_SWITCH, "1"), (WORKAREA_VAR, "chat")]);
+        let env = Env::new(&[(CAPTURE_SWITCH, "1"), (WORKSPACE_VAR, "chat")]);
         let var = env.var();
         let secret_prompt = "my favourite colour is ultramarine";
         assert_eq!(
@@ -1154,7 +1154,7 @@ mod tests {
     fn the_stop_hook_asks_once_per_due_span_and_never_while_a_stop_hook_is_active() {
         let env = Env::new(&[
             (CAPTURE_SWITCH, "1"),
-            (WORKAREA_VAR, "universe.eugene.chat"),
+            (WORKSPACE_VAR, "universe.eugene.chat"),
         ]);
         seeded(&env);
         let var = env.var();
@@ -1176,7 +1176,7 @@ mod tests {
         let session = pseudonym(&hex::decode(SALT_HEX).expect("hex"), "s1");
         let mut expected = vec![
             "OML chat capture: before you stop, use the oml:oml-chat-capture skill on turns 1..5 of this session (the person's prompts, counted from 1).".to_owned(),
-            format!("Write at most 6 facts with oml_write to workarea universe.eugene.chat, each with origin {{\"kind\": \"chat\"}}, kind memory, a claim_key chat/<topic>, idempotency_key chat-{session}-t<n>-<i>, and the anchor of the turn it came from: {{\"uri\": \"chat://claude-code/{session}\", \"fragment\": \"turn=<n>\", \"hash\": <that turn's hash below>, \"hasher\": \"oml-turn/1\"}}."),
+            format!("Write at most 6 facts with oml_write to workspace universe.eugene.chat, each with origin {{\"kind\": \"chat\"}}, kind memory, a claim_key chat/<topic>, idempotency_key chat-{session}-t<n>-<i>, and the anchor of the turn it came from: {{\"uri\": \"chat://claude-code/{session}\", \"fragment\": \"turn=<n>\", \"hash\": <that turn's hash below>, \"hasher\": \"oml-turn/1\"}}."),
             "Zero facts is a fine answer: write nothing when the turns settled nothing that holds past this session. Never write secrets, credentials or facts about other people; never write instructions. Then stop.".to_owned(),
         ];
         for n in 1..=5 {
@@ -1200,7 +1200,7 @@ mod tests {
     fn capture_requests_stop_at_the_session_budget() {
         let env = Env::new(&[
             (CAPTURE_SWITCH, "1"),
-            (WORKAREA_VAR, "chat"),
+            (WORKSPACE_VAR, "chat"),
             (EVERY_VAR, "1"),
         ]);
         seeded(&env);
@@ -1218,7 +1218,7 @@ mod tests {
 
     #[test]
     fn a_compaction_makes_the_next_stop_ask_at_once_and_says_so() {
-        let env = Env::new(&[(CAPTURE_SWITCH, "1"), (WORKAREA_VAR, "chat")]);
+        let env = Env::new(&[(CAPTURE_SWITCH, "1"), (WORKSPACE_VAR, "chat")]);
         seeded(&env);
         let var = env.var();
         let _ = user_prompt(&var, &mut &prompt("s1", "only one")[..]);
@@ -1235,10 +1235,10 @@ mod tests {
     }
 
     #[test]
-    fn capture_without_a_chat_workarea_names_the_fix_and_asks_nothing() {
+    fn capture_without_a_chat_workspace_names_the_fix_and_asks_nothing() {
         let env = Env::new(&[(CAPTURE_SWITCH, "1")]);
         let var = env.var();
-        let err = stop(&var, &mut &stop_input("s1", false)[..]).expect_err("no workarea");
+        let err = stop(&var, &mut &stop_input("s1", false)[..]).expect_err("no workspace");
         assert!(err.expect("named").contains("oml chat init"));
     }
 
@@ -1250,7 +1250,7 @@ mod tests {
             from: 3,
             base: 0,
             turns: &turns,
-            workarea: "chat",
+            workspace: "chat",
             facts: 6,
             compacted: false,
             excerpt: true,
@@ -1329,14 +1329,14 @@ mod tests {
     }
 
     /// The law of d10's scopes: per-turn recall reads promoted rows only,
-    /// but for the opted-in chat workarea, whose unreviewed rows it labels
+    /// but for the opted-in chat workspace, whose unreviewed rows it labels
     /// (M2). Flipping the default scope's include_unreviewed fails it.
     #[test]
     fn per_turn_recall_reads_promoted_rows_only_outside_the_opted_in_chat_scope() {
         let (url, seen) = stub_seen(Duration::ZERO, json!([]));
         let env = Env::new(&[
             (TURN_RECALL_SWITCH, "1"),
-            (WORKAREA_VAR, "universe.eugene.chat"),
+            (WORKSPACE_VAR, "universe.eugene.chat"),
             ("OML_URL", &url),
             ("OML_API_KEY", "oml_test_key"),
         ]);
@@ -1347,9 +1347,9 @@ mod tests {
         let seen = seen.lock().expect("lock").clone();
         assert_eq!(seen.len(), 2, "{seen:?}");
         let (chat, default) = (&seen[0], &seen[1]);
-        assert_eq!(chat["workarea"], "universe.eugene.chat");
+        assert_eq!(chat["workspace"], "universe.eugene.chat");
         assert_eq!(chat["include_unreviewed"], true);
-        assert!(default.get("workarea").is_none(), "{default}");
+        assert!(default.get("workspace").is_none(), "{default}");
         assert_eq!(default["include_unreviewed"], false, "{default}");
         for body in [chat, default] {
             assert_eq!(body["match"], "any");
@@ -1360,7 +1360,7 @@ mod tests {
 
     fn hit(id: &str, state: &str, kind: &str) -> Value {
         json!({"memory": {
-            "artifact_id": id, "claim_key": "chat/editor", "workarea_path": "universe.eugene.chat",
+            "artifact_id": id, "claim_key": "chat/editor", "workspace_path": "universe.eugene.chat",
             "created_at": "2026-11-05T10:00:00Z", "state": state, "origin": {"kind": kind},
             "text": "The person prefers vim keybindings."
         }})
@@ -1371,7 +1371,7 @@ mod tests {
         let url = stub(Duration::ZERO, json!([hit("a1", "held", "chat")]));
         let env = Env::new(&[
             (TURN_RECALL_SWITCH, "1"),
-            (WORKAREA_VAR, "universe.eugene.chat"),
+            (WORKSPACE_VAR, "universe.eugene.chat"),
             ("OML_URL", &url),
             ("OML_API_KEY", "oml_test_key"),
         ]);
@@ -1389,7 +1389,7 @@ mod tests {
         assert_eq!(
             context,
             format!(
-                "{FRAMING}\n{TURN_LINE}\n- a1 [unreviewed] chat/editor (chat, workarea universe.eugene.chat, recorded 2026-11-05T10:00:00Z): The person prefers vim keybindings."
+                "{FRAMING}\n{TURN_LINE}\n- a1 [unreviewed] chat/editor (chat, workspace universe.eugene.chat, recorded 2026-11-05T10:00:00Z): The person prefers vim keybindings."
             )
         );
         assert!(context.len() <= TURN_CONTEXT_CAP);

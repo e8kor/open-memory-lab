@@ -28,17 +28,17 @@ Histograms use bucket bounds that start at 1 ms and double sixteen times, to 32.
 | `oml_oauth_token_requests_total` | counter | `grant_type`, `outcome` | `POST /oauth/token` calls by RFC outcome. A rise in `invalid_grant` on `refresh_token` means lost refresh answers or stolen tokens. |
 | `oml_web_exchanges_failed_total` | counter | `provider`, `reason` | Failed Google or GitHub sign-in exchanges. |
 
-### Review and workareas
+### Review and workspaces
 
 | Metric | Type | Labels | Counts |
 |---|---|---|---|
 | `oml_review_wait_seconds` | histogram | `verdict` | Time from a memory's submission to its verdict. The count by `verdict` gives the rejection rate. |
 | `oml_review_bulk_items_total` | counter | `outcome` | Items in bulk verdicts: `approved`, `rejected` or `skipped`. |
 | `oml_recall_unreviewed_hits_total` | counter | none | Recall hits labeled `unreviewed`. |
-| `oml_workarea_mode_changes_total` | counter | `mode` | Workarea modes set by a person's key. `standard` on an in-progress root is its commit. |
-| `oml_recall_sources_total` | counter | `mode` | Recalls that searched beyond their scope, by `sources` mode: `wide` or `list` ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). |
+| `oml_workspace_mode_changes_total` | counter | `mode` | Workspace modes set by a person's key. `standard` on an in-progress root is its commit. |
+| `oml_recall_sources_total` | counter | `mode` | Recalls that searched beyond their scope, by `sources` mode: `wide` or `list` ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). |
 | `oml_recall_federated_hits_total` | counter | none | Recall hits served from a federated source, outside the recall's scope. |
-| `oml_curation_acts_total` | counter | `act` | Acts by curator keys inside in-progress workareas: `reject`, `retire`, `flag` or `write`. |
+| `oml_curation_acts_total` | counter | `act` | Acts by curator keys inside in-progress workspaces: `reject`, `retire`, `flag` or `write`. |
 | `oml_source_checks_total` | counter | `outcome` | Source checks recorded: `fresh`, `equivalent`, `moved`, `changed` or `removed`. |
 | `oml_scan_findings_total` | counter | `class`, `rule`, `action` | Scan findings since start. `action` is `veto` or `hold`. Counts only, never a matched value. |
 
@@ -46,7 +46,7 @@ Histograms use bucket bounds that start at 1 ms and double sixteen times, to 32.
 
 | Metric | Type | Labels | Counts |
 |---|---|---|---|
-| `oml_remember_duplicates_total` | counter | `relation` | Writes whose text a served memory in the workarea already holds (`same_text`) or does not (`none`). |
+| `oml_remember_duplicates_total` | counter | `relation` | Writes whose text a served memory in the workspace already holds (`same_text`) or does not (`none`). |
 | `oml_remember_similar_total` | counter | `relation`, `on_similar` | Writes the similar check ran for. `relation` is `none`, `same_text` or `near_copy`. `on_similar` is `hold` or `refuse`. |
 | `oml_remember_similar_duration_seconds` | histogram | none | Time of the similar check. |
 

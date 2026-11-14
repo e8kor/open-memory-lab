@@ -16,9 +16,9 @@ Every non-2xx response has one envelope.
 {
   "error": {
     "code": "access.verb_ceiling",
-    "message": "a writer key cannot transition a workarea",
+    "message": "a writer key cannot transition a workspace",
     "rule": "R1: the surface an agent can call never promotes, signs, demotes or deletes.",
-    "details": {"verb": "POST /v2/workareas/{workarea}/transitions", "role": "writer"},
+    "details": {"verb": "POST /v2/workspaces/{workspace}/transitions", "role": "writer"},
     "retryable": false
   },
   "request_id": "req_01J..."
@@ -63,7 +63,7 @@ The refusals of the connection flow for claude.ai and phone apps. At `POST /oaut
 | `oauth.refresh_invalid` | 400 | The refresh token is unknown, expired, already rotated (which ends the connection), issued to another client, or its key is past its expiry. An expired key ends no connection and rotates nothing, so the token works again if an admin moves the key's date ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) d2, d5). |
 | `oauth.origin_refused` | 403 | A `POST /oauth/authorize` came from another origin. It uses no attempt. |
 | `oauth.attach_refused` | 403 | Reserved. This build does not return it. |
-| `oauth.connect_refused` | 422 | The key cannot hold a connection. `details.reason` is `role`, `held_by_service`, `bearer_key`, `revoked`, `expired`, `not_configured`, `connector_key`, `session_key` or `not_confined`; the last is a code that lives past ten minutes asked for a key that reaches more than one workarea, the universe or a user root. |
+| `oauth.connect_refused` | 422 | The key cannot hold a connection. `details.reason` is `role`, `used_by_service`, `bearer_key`, `revoked`, `expired`, `not_configured`, `connector_key`, `session_key` or `not_confined`; the last is a code that lives past ten minutes asked for a key that reaches more than one workspace, the universe or a user root. |
 
 ## `access` — what this key may do
 
@@ -71,8 +71,8 @@ A key's role, grants and denials decide these. Reads fail closed as absence.
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `access.verb_ceiling` | 403 | The key's role never calls this verb, whatever its grants. Examples: an agent key calling an admin verb, an admin key posting a verdict or calling recall (it reads memory text only through the journaled [admin read](../architecture/roles-and-keys.md#the-admin-read)), a `held_by: service` key reviewing, any web-page request carrying an `Authorization` header. `details.reason` `session_key_only`: a person's own act (listing their keys, ending their session, the export, the deletion request) sent by any key but their web session key, an agent's key naming them included. `details.reason` `session_capacity`: a key operation sent as a person's session key of another capacity than the one it serves, such as `POST /v2/keys` as `<user>-admin`. `details.reason` `session_key_denied`: `POST /v2/keys`, `POST /v2/keys/{key}/connect-codes` or `POST /v2/keys/{key}/denials` sent as a person's session key that carries a denial, on any workarea; such a key issues no key, mints no connect code and cuts off no key, and still ends its session. `details.reason` `federation_is_human_only`: a workarea's federation field set by a key other than a person's reviewer key or an admin key. |
-| `access.grant_refused` | 403 | The key can read the workarea, but its effective access does not confer the verb's role there. `details`: `workarea_id`, `needed_role`. |
+| `access.verb_ceiling` | 403 | The key's role never calls this verb, whatever its grants. Examples: an agent key calling an admin verb, an admin key posting a verdict or calling recall (it reads memory text only through the journaled [admin read](../architecture/roles-and-keys.md#the-admin-read)), a `used_by: service` key reviewing, any web-page request carrying an `Authorization` header. `details.reason` `session_key_only`: a person's own act (listing their keys, ending their session, the export, the deletion request) sent by any key but their web session key, an agent's key naming them included. `details.reason` `session_capacity`: a key operation sent as a person's session key of another capacity than the one it serves, such as `POST /v2/keys` as `<user>-admin`. `details.reason` `session_key_denied`: `POST /v2/keys`, `POST /v2/keys/{key}/connect-codes` or `POST /v2/keys/{key}/denials` sent as a person's session key that carries a denial, on any workspace; such a key issues no key, mints no connect code and cuts off no key, and still ends its session. `details.reason` `federation_is_human_only`: a workspace's federation field set by a key other than a person's reviewer key or an admin key. |
+| `access.grant_refused` | 403 | The key can read the workspace, but its effective access does not confer the verb's role there. `details`: `workspace_id`, `needed_role`. |
 | `access.not_found` | 404 | The thing does not exist, or is outside the key's read scope. The two cases look the same. Also answers a name that resolves to nothing the key may see. |
 | `access.author_only` | 403 | A writer key tried to supersede a version it did not author. |
 | `access.issuer_ceiling` | 403 | Key issuance or a grant asks for a role above the issuer's, or a grant role the key role does not admit. |
@@ -89,7 +89,7 @@ Malformed or unsupported requests. `details.field` names the refused value: a pa
 | `request.idempotency_key_required` | 400 | A state-creating `POST` has no `Idempotency-Key`. |
 | `request.payload_too_large` | 413 | The body exceeds the admitted size. See [limits](../reference/limits.md). |
 | `request.unsupported_media` | 415 | The `Content-Type` is not supported. `details.supported` names what is. |
-| `request.workarea_unresolved` | 422 | The call names no workarea and the key has no default workarea. |
+| `request.workspace_unresolved` | 422 | The call names no workspace and the key has no default workspace. |
 
 ## `idempotency` — the replay contract
 
@@ -113,10 +113,10 @@ Refusals at write time. A refused write stores nothing.
 | `submission.lineage_required` | 422 | A `learn` write has an empty `derives_from`. |
 | `submission.tip_conflict` | 409 | The supersession target is not the current tip. `details.current_tip` names it. |
 | `submission.version_conflict` | 409 | `expected_version` is not the latest version the caller can read. `details.current_version` names it. |
-| `submission.claim_key_conflict` | 409 | A new memory would put a second live version under one `claim_key` in the workarea. |
+| `submission.claim_key_conflict` | 409 | A new memory would put a second live version under one `claim_key` in the workspace. |
 | `submission.similar_exists` | 409 | The write sent `on_similar: refuse` and a readable memory already says the same. `details.similar` lists up to three. Resend with `hold`. |
 | `submission.universe_refused` | 409 | A write addressed the tenant's `universe` root from a key that may not write there. |
-| `submission.user_root_refused` | 409 | A new memory addressed a user's root, or a workarea beneath it, from a key that is not that user's; or such a key proposed a successor of a ratified retirement there, which would put the claim back in service. Answered where the key reads the workarea or the target; a key that reads neither gets `access.not_found`. |
+| `submission.user_root_refused` | 409 | A new memory addressed a user's root, or a workspace beneath it, from a key that is not that user's; or such a key proposed a successor of a ratified retirement there, which would put the claim back in service. Answered where the key reads the workspace or the target; a key that reads neither gets `access.not_found`. |
 
 ## `name` — unique names
 
@@ -126,17 +126,17 @@ A name is accepted wherever an id is. An unresolved name is `access.not_found`, 
 |---|---|---|
 | `name.taken` | 409 | A creation names a name its kind already holds, including a denied key's. `details`: `kind`, `name`. |
 
-## `workarea` — structure and status
+## `workspace` — structure and status
 
-Refusals from the workarea tree and its status ladder.
+Refusals from the workspace tree and its status ladder.
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `workarea.frozen` | 409 | A `validated` workarea was asked to accept a new write, child, promotion or move. |
-| `workarea.transition_refused` | 409 | The status change skips a rung, goes backward, or breaks a rule such as a child not being validated. |
-| `workarea.in_progress_refused` | 409 | The in-progress mode or change conflicts with the node's subtree, ancestors or status. `details.reason` says which. |
-| `workarea.held_remaining` | 409 | The commit of an in-progress workarea was asked while a version in its subtree is held. |
-| `workarea.admin_key_under_root` | 409 | A person's disable, or the deletion close that disables them, met a live admin key whose row names their user root. No verb issues one and no denial cuts one off, so nothing is journalled. `details`: `user`, `key`. Clear the key row's `user_root_id`, then send again ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d8). |
+| `workspace.frozen` | 409 | A `validated` workspace was asked to accept a new write, child, promotion or move. |
+| `workspace.transition_refused` | 409 | The status change skips a rung, goes backward, or breaks a rule such as a child not being validated. |
+| `workspace.in_progress_refused` | 409 | The in-progress mode or change conflicts with the node's subtree, ancestors or status. `details.reason` says which. |
+| `workspace.held_remaining` | 409 | The commit of an in-progress workspace was asked while a version in its subtree is held. |
+| `workspace.admin_key_under_root` | 409 | A person's disable, or the deletion close that disables them, met a live admin key whose row names their user root. No verb issues one and no denial cuts one off, so nothing is journalled. `details`: `user`, `key`. Clear the key row's `user_root_id`, then send again ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d8). |
 
 ## `review` — independence and the serve binding
 
@@ -161,7 +161,7 @@ This build serves no simulations and returns none of these codes.
 
 ## `vocab` — vocabulary structure
 
-Refusals from vocabulary workareas and their terms.
+Refusals from vocabulary workspaces and their terms.
 
 | Code | HTTP | Fires when |
 |---|---|---|
@@ -219,11 +219,11 @@ Review unavailability is not an API error. When no reviewer can approve, writes 
 | 401 | `auth.missing`, `auth.invalid` |
 | 403 | `oauth.origin_refused`, `oauth.attach_refused`, `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.ratifier_is_proposer`, `simulation.audience_refused` |
 | 404 | `access.not_found` |
-| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `submission.user_root_refused`, `name.taken`, `workarea.frozen`, `workarea.transition_refused`, `workarea.in_progress_refused`, `workarea.held_remaining`, `workarea.admin_key_under_root`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `export.not_ready` |
+| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `submission.user_root_refused`, `name.taken`, `workspace.frozen`, `workspace.transition_refused`, `workspace.in_progress_refused`, `workspace.held_remaining`, `workspace.admin_key_under_root`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `export.not_ready` |
 | 410 | `lifecycle.erased` |
 | 413 | `request.payload_too_large` |
 | 415 | `request.unsupported_media` |
-| 422 | `oauth.connect_refused`, `request.workarea_unresolved`, `submission.scan_veto`, `submission.format_invalid`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
+| 422 | `oauth.connect_refused`, `request.workspace_unresolved`, `submission.scan_veto`, `submission.format_invalid`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
 | 429 | `limit.rate`, `limit.quota` |
 | 500 | `system.internal` |
 | 503 | `system.unavailable` |

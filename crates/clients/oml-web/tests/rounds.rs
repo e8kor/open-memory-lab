@@ -88,16 +88,16 @@ impl Transport for Double {
 fn whoami() -> Value {
     json!({
         "key_id": "k1", "name": "alice-web", "role": "user", "principal": "alice",
-        "held_by": "human", "tenant": {"id": "t1", "name": "oml"},
-        "default_workarea": null, "crew": null,
+        "used_by": "person", "tenant": {"id": "t1", "name": "oml"},
+        "default_workspace": null, "crew": null,
         "user": {"id": ROOT, "name": "alice"}, "grants": [],
     })
 }
 
-fn offers(workarea: &str) -> Value {
+fn offers(workspace: &str) -> Value {
     json!({
-        "workarea_id": workarea, "status": "development", "mode": "standard",
-        "transitions": [{"op": "propose", "to": "committed"}],
+        "workspace_id": workspace, "status": "development", "mode": "standard",
+        "transitions": [{"op": "propose", "to": "protected"}],
         "mode_change": {"to": "in_progress"},
         "commit": {"offered": false, "held": null}, "refused": [],
     })
@@ -184,7 +184,7 @@ async fn the_text_search_reads_the_persons_keys_beside_the_recall_only_for_an_au
         }
         if record.starts_with("GET /v2/keys") {
             let page = json!({"items": [{
-                "id": "k9", "name": "alice-laptop", "role": "writer", "held_by": "agent",
+                "id": "k9", "name": "alice-laptop", "role": "writer", "used_by": "agent",
                 "credential": "bearer", "revoked": false, "cut_off": false, "grants": [],
             }], "next_cursor": null});
             (200, page, Some("POST /v1/memories/recall"))
@@ -211,7 +211,7 @@ async fn the_text_search_reads_the_persons_keys_beside_the_recall_only_for_an_au
         }
         if record.starts_with("POST /v1/memories/recall") {
             (200, json!({"steering": [], "hits": []}), None)
-        } else if record.starts_with("GET /v2/workareas/universe/tree") {
+        } else if record.starts_with("GET /v2/workspaces/universe/tree") {
             (200, json!({"items": [], "next_cursor": null}), None)
         } else {
             (500, envelope("internal.error"), None)
@@ -291,11 +291,11 @@ async fn the_admin_atlas_reads_the_scopes_offers_with_its_counts() {
         if let Some(answer) = session(record) {
             return answer;
         }
-        if record == "GET /v2/workareas/universe/tree?counts=true&offers=true admin" {
+        if record == "GET /v2/workspaces/universe/tree?counts=true&offers=true admin" {
             let mut both = counts(UNIVERSE, "universe");
             both["offers"] = offers(UNIVERSE);
             (200, both, Some("/offers review"))
-        } else if record == "GET /v2/workareas/universe/offers review" {
+        } else if record == "GET /v2/workspaces/universe/offers review" {
             (
                 200,
                 offers(UNIVERSE),
@@ -359,14 +359,14 @@ async fn the_admin_atlas_reads_its_offers_apart_from_an_api_that_refuses_the_par
             return answer;
         }
         match record {
-            "GET /v2/workareas/universe/tree?counts=true&offers=true admin" => {
+            "GET /v2/workspaces/universe/tree?counts=true&offers=true admin" => {
                 (400, envelope("request.validation"), None)
             }
-            "GET /v2/workareas/universe/tree?counts=true admin" => {
+            "GET /v2/workspaces/universe/tree?counts=true admin" => {
                 (200, counts(UNIVERSE, "universe"), None)
             }
-            "GET /v2/workareas/universe/offers admin"
-            | "GET /v2/workareas/universe/offers review" => (200, offers(UNIVERSE), None),
+            "GET /v2/workspaces/universe/offers admin"
+            | "GET /v2/workspaces/universe/offers review" => (200, offers(UNIVERSE), None),
             "POST /v2/admin/memories/search admin" => {
                 (200, json!({"items": [], "next_cursor": null}), None)
             }
@@ -389,7 +389,7 @@ async fn the_admin_atlas_reads_its_offers_apart_from_an_api_that_refuses_the_par
     assert!(
         answered
             .calls
-            .contains(&"GET /v2/workareas/universe/offers admin".to_owned()),
+            .contains(&"GET /v2/workspaces/universe/offers admin".to_owned()),
         "{:?}",
         answered.calls
     );
@@ -397,7 +397,7 @@ async fn the_admin_atlas_reads_its_offers_apart_from_an_api_that_refuses_the_par
     let json = page(script, "/web/admin/data/memories").await;
     assert_eq!(json.status, StatusCode::OK, "{}", json.body);
     let value: Value = serde_json::from_str(&json.body).unwrap();
-    let scope = &value["workareas"]["items"][0];
+    let scope = &value["workspaces"]["items"][0];
     assert_eq!(scope["path"], "universe", "{value}");
     assert!(scope.get("offers_unavailable").is_none(), "{value}");
 }
@@ -425,7 +425,7 @@ fn memories_script(record: &str) -> (u16, Value, Option<&'static str>) {
             json!({"items": [], "next_cursor": null}),
             Some("/tree?limit=200"),
         )
-    } else if record.starts_with("GET /v2/workareas/universe/tree?limit=200 web") {
+    } else if record.starts_with("GET /v2/workspaces/universe/tree?limit=200 web") {
         (200, names(), Some("GET /v1/memories"))
     } else if record.starts_with("GET /v1/memories") {
         (
@@ -433,7 +433,7 @@ fn memories_script(record: &str) -> (u16, Value, Option<&'static str>) {
             json!({"items": [], "next_cursor": null}),
             Some("/tree?limit=200"),
         )
-    } else if record.starts_with("GET /v2/workareas/universe/tree?counts=true web") {
+    } else if record.starts_with("GET /v2/workspaces/universe/tree?counts=true web") {
         (200, counts(UNIVERSE, "universe"), None)
     } else {
         (500, envelope("internal.error"), None)
@@ -494,7 +494,7 @@ async fn a_path_typed_in_the_field_is_refused_without_a_listing_call() {
         (status, body, Some("GET /v1/memories")) => (status, body, None),
         other => other,
     };
-    let answered = page(script, "/web/memories?workarea=Alice.Proj.Docs").await;
+    let answered = page(script, "/web/memories?workspace=Alice.Proj.Docs").await;
     assert_eq!(
         answered.status,
         StatusCode::BAD_REQUEST,
@@ -529,7 +529,7 @@ async fn a_path_typed_in_the_field_is_refused_without_a_listing_call() {
     assert!(
         answered
             .body
-            .contains(r#"<a href="/web/memories?workarea=alice.proj">alice.proj</a>"#),
+            .contains(r#"<a href="/web/memories?workspace=alice.proj">alice.proj</a>"#),
         "the closest names come from the names read: {}",
         answered.body
     );

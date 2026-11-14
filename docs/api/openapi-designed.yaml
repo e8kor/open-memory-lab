@@ -27,7 +27,7 @@ tags:
   - name: claim-administration
   - name: attachments
   - name: edges
-  - name: workareas
+  - name: workspaces
   - name: vocab
   - name: review
   - name: keys
@@ -80,8 +80,8 @@ paths:
     post:
       tags: [claim-administration]
       operationId: reassignClaim
-      summary: Journalled move between workareas, recording both policy snapshots.
-      description: 'Requires: admin key role. Stricter-policy destination re-enters held; refused into validated (workarea.frozen); claim_key collision refused without re_key.'
+      summary: Journalled move between workspaces, recording both policy snapshots.
+      description: 'Requires: admin key role. Stricter-policy destination re-enters held; refused into frozen (workspace.frozen); claim_key collision refused without re_key.'
       parameters:
         - { $ref: 'openapi.yaml#/components/parameters/ArtifactId' }
         - { $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }
@@ -90,7 +90,7 @@ paths:
         content:
           application/json:
             example:
-              workarea_id: a4497daf-cfc8-4ddc-a0e5-4817efdb56c8
+              workspace_id: a4497daf-cfc8-4ddc-a0e5-4817efdb56c8
               dry_run: false
             schema: { $ref: '#/components/schemas/ReassignRequest' }
       responses:
@@ -193,7 +193,7 @@ paths:
         content:
           application/json:
             example:
-              workarea_id: fbbb41c5-9630-4274-ae53-166f562f5286
+              workspace_id: fbbb41c5-9630-4274-ae53-166f562f5286
               claim_key: supplier-quote-am-7741
               to_version: 1
               reason: revised quote promoted in error; serve v1 while it is re-reviewed
@@ -322,12 +322,12 @@ paths:
         '429': { $ref: 'openapi.yaml#/components/responses/RateLimited' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/workareas:
+  /v2/workspaces:
     get:
-      tags: [workareas]
-      operationId: resolveWorkarea
-      summary: Resolve a workarea node by derived path (grants bind to node ids, never paths).
-      description: 'Requires: reader effective access on the node, or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).'
+      tags: [workspaces]
+      operationId: resolveWorkspace
+      summary: Resolve a workspace node by derived path (grants bind to node ids, never paths).
+      description: 'Requires: reader effective access on the node, or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).'
       parameters:
         - { name: path, in: query, required: true, schema: { type: string }, description: 'Derived ltree path. The one lookup by path: no reference field accepts a path (ADR-0026 d7).' }
       responses:
@@ -342,25 +342,25 @@ paths:
                 name: metals-crew
                 parent_id: 1351b2b6-5c7c-492d-9aff-630bc95035db
                 path: universe.procurement.metals-crew
-                status: committed
+                status: protected
                 crew:
                   crew_id: d10bcbe9-032d-4080-aa0c-cc06f8acd89f
                   name: metals-crew
                   charter_uri: https://crews.example.com/metals/charter.md
                   external_manager: crewd.example.com
                 created_at: '2026-09-02T09:14:33Z'
-              schema: { $ref: 'openapi.yaml#/components/schemas/Workarea' }
+              schema: { $ref: 'openapi.yaml#/components/schemas/Workspace' }
         '404': { $ref: 'openapi.yaml#/components/responses/NotFound' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/workareas/{workarea}/reparent:
+  /v2/workspaces/{workspace}/reparent:
     post:
-      tags: [workareas]
-      operationId: reparentWorkarea
+      tags: [workspaces]
+      operationId: reparentWorkspace
       summary: Journalled single-transaction descendant path rewrite; dry_run previews paths and grants affected.
-      description: 'Requires: admin key role. Re-parenting into a validated destination is refused (workarea.frozen).'
+      description: 'Requires: admin key role. Re-parenting into a frozen destination is refused (workspace.frozen).'
       parameters:
-        - { $ref: 'openapi.yaml#/components/parameters/WorkareaId' }
+        - { $ref: 'openapi.yaml#/components/parameters/WorkspaceId' }
         - { $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }
       requestBody:
         required: true
@@ -393,11 +393,11 @@ paths:
     get:
       tags: [vocab]
       operationId: suggestTerms
-      summary: Deterministic prefix+label typeahead over granted vocabulary workareas — matching, never interpretation.
-      description: 'Requires: reader effective access on the vocabulary workarea(s) searched; vocabularies outside scope are absent (fail closed).'
+      summary: Deterministic prefix+label typeahead over granted vocabulary workspaces — matching, never interpretation.
+      description: 'Requires: reader effective access on the vocabulary workspace(s) searched; vocabularies outside scope are absent (fail closed).'
       parameters:
         - { name: q, in: query, required: true, schema: { type: string } }
-        - { name: workarea_id, in: query, schema: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef' }, description: Restrict to one vocabulary workarea. }
+        - { name: workspace_id, in: query, schema: { $ref: 'openapi.yaml#/components/schemas/WorkspaceRef' }, description: Restrict to one vocabulary workspace. }
         - { $ref: 'openapi.yaml#/components/parameters/Limit' }
         - { $ref: 'openapi.yaml#/components/parameters/Cursor' }
       responses:
@@ -425,7 +425,7 @@ paths:
       tags: [vocab]
       operationId: getTerm
       summary: One term record — status, successors, the releases its tip appears in.
-      description: 'Requires: reader effective access on the owning vocabulary workarea. Unknown and out-of-scope CURIEs answer 404 access.not_found, indistinguishable (fail closed).'
+      description: 'Requires: reader effective access on the owning vocabulary workspace. Unknown and out-of-scope CURIEs answer 404 access.not_found, indistinguishable (fail closed).'
       parameters: [{ $ref: '#/components/parameters/Curie' }]
       responses:
         '200':
@@ -436,7 +436,7 @@ paths:
             application/json:
               example:
                 curie: proc:supplier-quote
-                workarea_id: 408324c0-55dd-4eb7-b39f-2d7f7147dc66
+                workspace_id: 408324c0-55dd-4eb7-b39f-2d7f7147dc66
                 version: 4
                 term_status: deprecated
                 definition_state: present
@@ -454,7 +454,7 @@ paths:
       tags: [vocab]
       operationId: getTermHierarchy
       summary: Parents, children, ancestors or descendants over ratified is_a — a lookup over the per-release closure, never a traversal.
-      description: 'Requires: reader effective access on the owning vocabulary workarea. Closure rows are materialized at release ratification (serialize, don''t compute — ADR-0021); release defaults to the owning vocabulary''s latest ratified release.'
+      description: 'Requires: reader effective access on the owning vocabulary workspace. Closure rows are materialized at release ratification (serialize, don''t compute — ADR-0021); release defaults to the owning vocabulary''s latest ratified release.'
       parameters:
         - { $ref: '#/components/parameters/Curie' }
         - { name: direction, in: query, required: true, schema: { type: string, enum: [parents, children, ancestors, descendants] } }
@@ -513,7 +513,7 @@ paths:
       tags: [review]
       operationId: reopenRejection
       summary: Non-author reopen of a rejection — a journalled verb, not a resubmission.
-      description: 'Requires: dreamer(review); the original author is refused (review.author_in_lineage). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1). A reopen that would put a second live version under one claim_key and ordinal is refused with 409 submission.claim_key_conflict (docs/architecture/audit-and-lineage.md, Supersession chains, claim_key and the tip; ADR-0025 d18).'
+      description: 'Requires: reviewer(review); the original author is refused (review.author_in_lineage). A used_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1). A reopen that would put a second live version under one claim_key and ordinal is refused with 409 submission.claim_key_conflict (docs/architecture/audit-and-lineage.md, Supersession chains, claim_key and the tip; ADR-0025 d18).'
       parameters: [{ $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -605,14 +605,14 @@ paths:
                 role: writer
                 principal: crew-procure/agent-7
                 crew_id: d10bcbe9-032d-4080-aa0c-cc06f8acd89f
-                default_workarea_id: fbbb41c5-9630-4274-ae53-166f562f5286
-                held_by: agent
+                default_workspace_id: fbbb41c5-9630-4274-ae53-166f562f5286
+                used_by: agent
                 label: procure agent 7
                 expiry: null
                 revoked_at: null
                 rotated_from: 4b155359-710a-4417-811c-904cc3959fcc
                 grants:
-                - workarea_node_id: fbbb41c5-9630-4274-ae53-166f562f5286
+                - workspace_node_id: fbbb41c5-9630-4274-ae53-166f562f5286
                   role: writer
                   grant_id: gr_01JB2YX3EY5G7J9LN2Q4S6U8W1
                   epoch: 8
@@ -628,8 +628,8 @@ paths:
     post:
       tags: [keys]
       operationId: addGrant
-      summary: Bind the key to a workarea node, by id or name (never a path), with optional per-grant deny masks; epoch bump.
-      description: 'Requires: admin key role. A grant''s role must be admissible under the key''s role (the admissibility table in docs/architecture/roles-and-keys.md; access.issuer_ceiling with details {role, admissible} otherwise — one grant, so no grant_index); a dreamer-class grant on an admin key is refused first (access.role_exclusive — the two-key rule). The grant''s epoch is its grant.issued journal seq.'
+      summary: Bind the key to a workspace node, by id or name (never a path), with optional per-grant deny masks; epoch bump.
+      description: 'Requires: admin key role. A grant''s role must be admissible under the key''s role (the admissibility table in docs/architecture/roles-and-keys.md; access.issuer_ceiling with details {role, admissible} otherwise — one grant, so no grant_index); a reviewer-class grant on an admin key is refused first (access.role_exclusive — the two-key rule). The grant''s epoch is its grant.issued journal seq.'
       parameters:
         - { $ref: 'openapi.yaml#/components/parameters/KeyId' }
         - { $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }
@@ -638,7 +638,7 @@ paths:
         content:
           application/json:
             example:
-              workarea: q1-2027
+              workspace: q1-2027
               role: writer
             schema: { $ref: 'openapi.yaml#/components/schemas/GrantRequest' }
       responses:
@@ -649,7 +649,7 @@ paths:
           content:
             application/json:
               example:
-                workarea_node_id: a4497daf-cfc8-4ddc-a0e5-4817efdb56c8
+                workspace_node_id: a4497daf-cfc8-4ddc-a0e5-4817efdb56c8
                 role: writer
                 grant_id: gr_01JB2YQ6R8TA1CW3EY5G7J9LN2
                 epoch: 9
@@ -713,7 +713,7 @@ paths:
       description: 'Requires: admin key role. Reproducible from journalled grants by construction (permission epoch).'
       parameters:
         - { $ref: 'openapi.yaml#/components/parameters/KeyId' }
-        - { name: workarea, in: query, schema: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef' } }
+        - { name: workspace, in: query, schema: { $ref: 'openapi.yaml#/components/schemas/WorkspaceRef' } }
       responses:
         '200':
           description: Effective access.
@@ -725,11 +725,11 @@ paths:
                 key_id: 4b155359-710a-4417-811c-904cc3959fcc
                 epoch: 10
                 entries:
-                - workarea_node_id: fbbb41c5-9630-4274-ae53-166f562f5286
+                - workspace_node_id: fbbb41c5-9630-4274-ae53-166f562f5286
                   path: universe.procurement.metals-crew
                   role: writer
                   masked_by: null
-                - workarea_node_id: a4497daf-cfc8-4ddc-a0e5-4817efdb56c8
+                - workspace_node_id: a4497daf-cfc8-4ddc-a0e5-4817efdb56c8
                   path: universe.procurement.metals-crew.q1-2027
                   role: writer
                   masked_by: dn_01JB2YH9K2M4P6R8TA1CV3EX5G
@@ -792,7 +792,7 @@ paths:
                 keys_affected:
                 - be45850c-8461-413d-bc65-332fbeae5453
                 held_refusals: 2
-                workareas_touched:
+                workspaces_touched:
                 - fbbb41c5-9630-4274-ae53-166f562f5286
               schema: { $ref: '#/components/schemas/BanPreview' }
         '201':
@@ -876,7 +876,7 @@ paths:
     post:
       tags: [simulations]
       operationId: openSimulation
-      summary: Open a simulation with a journalled audience; no dreamer in the audience means nothing can promote (fail closed, warned).
+      summary: Open a simulation with a journalled audience; no reviewer in the audience means nothing can promote (fail closed, warned).
       description: 'Requires: admin key role (D10).'
       parameters: [{ $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }]
       requestBody:
@@ -942,7 +942,7 @@ paths:
     post:
       tags: [simulations]
       operationId: changeSimulationAudience
-      summary: Correct a live simulation's audience — the only recovery from the fail-closed no-dreamer state short of ending it.
+      summary: Correct a live simulation's audience — the only recovery from the fail-closed no-reviewer state short of ending it.
       description: 'Requires: admin key role. Journals simulation.audience_changed; the audience at any seq is the fold of simulation.opened plus every audience_changed since. Removal takes effect on the next read; past reads stand in the read log.'
       parameters:
         - { name: simulation_id, in: path, required: true, schema: { type: string } }
@@ -955,7 +955,7 @@ paths:
               add:
               - key_id: d405428e-4c99-426d-8826-76d28436e423
               remove: []
-              reason: no dreamer in the audience; nothing could promote
+              reason: no reviewer in the audience; nothing could promote
             schema:
               type: object
               description: At least one of add/remove must be non-empty (request.validation otherwise).
@@ -969,7 +969,7 @@ paths:
                 reason: { type: string }
       responses:
         '200':
-          description: The resulting audience; carries the same warnings field as creation when it still holds no dreamer key.
+          description: The resulting audience; carries the same warnings field as creation when it still holds no reviewer key.
           headers:
             X-Request-Id: { $ref: 'openapi.yaml#/components/headers/XRequestId' }
           content:
@@ -1222,7 +1222,7 @@ paths:
       tags: [tenants]
       operationId: createTenant
       summary: Create a tenant and its universe root; the operator then issues its first admin key and nothing else.
-      description: 'Requires: operator key role. name must be unique in the deployment (409 name.taken — ADR-0026 d1, d5); the tenant''s root workarea is created with the name universe (ADR-0026 d6). Operator keys never read, write or review content (access.verb_ceiling).'
+      description: 'Requires: operator key role. name must be unique in the deployment (409 name.taken — ADR-0026 d1, d5); the tenant''s root workspace is created with the name universe (ADR-0026 d6). Operator keys never read, write or review content (access.verb_ceiling).'
       parameters: [{ $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -1263,8 +1263,8 @@ components:
       scheme: bearer
       bearerFormat: OML API key
       description: >-
-        One key, one role (reader | writer | dreamer | admin | operator), grants scoping it to
-        workarea subtrees. Tenant derives from the key server-side. Each operation's description
+        One key, one role (reader | writer | reviewer | admin | operator), grants scoping it to
+        workspace subtrees. Tenant derives from the key server-side. Each operation's description
         states its ceiling; refusals are typed (access.verb_ceiling, access.grant_refused,
         access.not_found) per docs/api/errors.md. Key wire format: "oml_" followed by 43
         base62 characters (256 bits of randomness). At rest the service stores only the plain
@@ -1314,9 +1314,9 @@ components:
 
     ReassignRequest:
       type: object
-      required: [workarea_id]
+      required: [workspace_id]
       properties:
-        workarea_id: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef', description: 'Destination node, by id or name.' }
+        workspace_id: { $ref: 'openapi.yaml#/components/schemas/WorkspaceRef', description: 'Destination node, by id or name.' }
         re_key: { type: [string, 'null'], description: New claim_key when the move would collide at the destination. }
         dry_run: { type: boolean, default: false }
 
@@ -1334,9 +1334,9 @@ components:
 
     TipOverrideRequest:
       type: object
-      required: [workarea_id, claim_key, to_version, reason]
+      required: [workspace_id, claim_key, to_version, reason]
       properties:
-        workarea_id: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef' }
+        workspace_id: { $ref: 'openapi.yaml#/components/schemas/WorkspaceRef' }
         claim_key: { type: string }
         to_version: { type: integer }
         reason: { type: string }
@@ -1384,23 +1384,23 @@ components:
         ciphertext_digest: { $ref: 'openapi.yaml#/components/schemas/Digest' }
         state: { type: string, const: complete }
 
-    WorkareaEdgeProposal:
+    WorkspaceEdgeProposal:
       type: object
-      required: [kind, from_workarea_id, to_workarea_id, label]
+      required: [kind, from_workspace_id, to_workspace_id, label]
       properties:
-        kind: { type: string, const: workarea }
-        from_workarea_id: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef', description: 'The node the edge leaves, by id or name; the path parameter of the family''s former workarea route.' }
-        to_workarea_id: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef' }
+        kind: { type: string, const: workspace }
+        from_workspace_id: { $ref: 'openapi.yaml#/components/schemas/WorkspaceRef', description: 'The node the edge leaves, by id or name; the path parameter of the family''s former workspace route.' }
+        to_workspace_id: { $ref: 'openapi.yaml#/components/schemas/WorkspaceRef' }
         label: { type: string, enum: [relates_to, continues, derived_from, mirrors] }
 
-    WorkareaEdge:
+    WorkspaceEdge:
       type: object
-      required: [kind, edge_id, from_workarea_id, to_workarea_id, label, state]
+      required: [kind, edge_id, from_workspace_id, to_workspace_id, label, state]
       properties:
-        kind: { type: string, const: workarea }
+        kind: { type: string, const: workspace }
         edge_id: { type: string }
-        from_workarea_id: { type: string }
-        to_workarea_id: { type: string }
+        from_workspace_id: { type: string }
+        to_workspace_id: { type: string }
         label: { type: string, enum: [relates_to, continues, derived_from, mirrors] }
         state: { type: string, enum: [pending, ratified] }
         proposer_key_id: { type: string }
@@ -1410,7 +1410,7 @@ components:
       type: object
       required: [new_parent_id]
       properties:
-        new_parent_id: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef' }
+        new_parent_id: { $ref: 'openapi.yaml#/components/schemas/WorkspaceRef' }
         dry_run: { type: boolean, default: false }
 
     Curie:
@@ -1435,10 +1435,10 @@ components:
 
     VocabTerm:
       type: object
-      required: [curie, workarea_id, version, term_status]
+      required: [curie, workspace_id, version, term_status]
       properties:
         curie: { $ref: '#/components/schemas/Curie' }
-        workarea_id: { type: string, description: The owning vocabulary workarea. }
+        workspace_id: { type: string, description: The owning vocabulary workspace. }
         version: { type: integer, description: The served tip version of the term claim. }
         term_status: { type: string, enum: [active, deprecated], description: 'Structural payload field — survives shredding, deterministically readable.' }
         definition_state: { type: string, enum: [present, erased], description: The CURIE is permanent; the definition body is erasable (410 lifecycle.erased on fetch). }
@@ -1507,7 +1507,7 @@ components:
           items:
             type: object
             properties:
-              workarea_node_id: { type: string }
+              workspace_node_id: { type: string }
               path: { type: string }
               role: { $ref: 'openapi.yaml#/components/schemas/Role' }
               masked_by: { type: [string, 'null'], description: "The deny (per-grant or global) that produced a hole, when one does." }
@@ -1540,7 +1540,7 @@ components:
       properties:
         keys_affected: { type: array, items: { type: string } }
         held_refusals: { type: integer }
-        workareas_touched: { type: array, items: { type: string } }
+        workspaces_touched: { type: array, items: { type: string } }
 
     BanPage:
       type: object
@@ -1585,7 +1585,7 @@ components:
         label: { type: string }
         opened_at: { type: string, format: date-time }
         ended_at: { type: [string, 'null'], format: date-time }
-        warnings: { type: array, items: { type: string }, description: E.g. no dreamer in the audience — nothing can promote (fail closed). }
+        warnings: { type: array, items: { type: string }, description: E.g. no reviewer in the audience — nothing can promote (fail closed). }
 
     SimulationPage:
       type: object
@@ -1670,7 +1670,7 @@ x-oml-designed-fields:
       terms:
         type: array
         items: { $ref: '#/components/schemas/Curie' }
-        description: 'CURIE annotations (ADR-0021 d8): clear, non-erasable metadata entering the signed bytes; checked by the vocab scanner under the workarea''s vocabulary_policy.'
+        description: 'CURIE annotations (ADR-0021 d8): clear, non-erasable metadata entering the signed bytes; checked by the vocab scanner under the workspace''s vocabulary_policy.'
       term_status: { type: string, enum: [active, deprecated], description: 'kind=term only. Structural payload field, never body text (ADR-0021 d1).' }
       successors:
         type: array
@@ -1735,12 +1735,12 @@ x-oml-designed-fields:
           the release pinned by the vocabulary that owns the expanded prefix (per-release
           closure lookup). Steering order and k are untouched; expansion changes the filter,
           never the ranking. Refused with request.validation where unbuilt.
-  createWorkarea:
+  createWorkspace:
     request:
-      prefix: { type: string, description: 'Registers the node as a vocabulary workarea (ADR-0021): tenant-unique and permanent, never reused or reassigned. Conflict answers 409 vocab.prefix_conflict. A create carrying prefix requires crew — a vocabulary needs a named curator crew record.' }
+      prefix: { type: string, description: 'Registers the node as a vocabulary workspace (ADR-0021): tenant-unique and permanent, never reused or reassigned. Conflict answers 409 vocab.prefix_conflict. A create carrying prefix requires crew — a vocabulary needs a named curator crew record.' }
   issueKey:
     request:
       tenant: { $ref: 'openapi.yaml#/components/schemas/TenantRef', description: "Present if and only if an operator key issues an admin key, the tenant's first; the tenant by id or name, resolved first, in the deployment. The key's name, its crew and every other reference of the body then resolve in that tenant, and a tenant that already holds a key of any role is access.issuer_ceiling. An operator key's operator key carries no tenant, and its name is in the provider's namespace (ADR-0026 d4, d5). Refused with request.validation until the first-admin-key path is built." }
   reviewNext:
     request:
-      workarea: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef', description: 'Serve only from this subtree, by id or name. Refused with request.validation until the subtree filter is built: the queue is served whole, so the filter is refused, never ignored (ADR-0026 d4).' }
+      workspace: { $ref: 'openapi.yaml#/components/schemas/WorkspaceRef', description: 'Serve only from this subtree, by id or name. Refused with request.validation until the subtree filter is built: the queue is served whole, so the filter is refused, never ignored (ADR-0026 d4).' }

@@ -1,5 +1,5 @@
 //! Federated recall, phase 1 (ADR-0072): the tenant's `federation` policy
-//! and a workarea's `accept_federated`, each a person's or an admin's
+//! and a workspace's `accept_federated`, each a person's or an admin's
 //! journalled act; and the plan a recall runs under its `sources` — the
 //! candidates a key reads, the reference set whose statistics every hit is
 //! scored with and the selection above the cap. Selection
@@ -17,17 +17,17 @@ use oml_domain::federation::{
 };
 use oml_domain::in_progress::may_set_mode;
 use oml_domain::name::{NamedKind, Reference};
-use oml_domain::{MemoryKind, Role, WorkareaStatus, event_types};
+use oml_domain::{MemoryKind, Role, WorkspaceStatus, event_types};
 
 use super::{App, Caller, derived_path, require_role};
 use crate::federation::{
     CountsScope, CutReport, DefaultSources, FederationPolicy, FederationPolicyChange,
     FederationRecord, FederationSettings, SearchedSource, SourceRefusal, Sources, SourcesReport,
-    Via, WorkareaFederation,
+    Via, WorkspaceFederation,
 };
 use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer, StoreError};
 use crate::search::{Fusion, MatchMode, Pipeline, RetrieverKind};
-use crate::types::WorkareaRecord;
+use crate::types::WorkspaceRecord;
 use crate::types::{AppError, Bearer, RecallRequest};
 
 /// A key that met more than [`CANDIDATES_DOCTOR`] candidate sources, as
@@ -140,55 +140,60 @@ where
         ))
     }
 
-    /// `POST /v2/workareas/{workarea}/federation` (d5): a dreamer key a
-    /// person holds, with dreamer effective access on the node, or a tenant
+    /// `POST /v2/workspaces/{workspace}/federation` (d5): a reviewer key a
+    /// person holds, with reviewer effective access on the node, or a tenant
     /// admin sets `accept_federated`; an agent's key is refused before any
-    /// lookup. Journalled as `workarea.federation_set {workarea_id, field,
+    /// lookup. Journalled as `workspace.federation_set {workspace_id, field,
     /// value, from}`; setting the value the node holds journals nothing.
-    pub async fn set_workarea_federation(
+    pub async fn set_workspace_federation(
         &self,
         bearer: impl Into<Bearer<'_>>,
-        workarea: Reference,
+        workspace: Reference,
         accept_federated: bool,
-    ) -> Result<WorkareaFederation, AppError> {
+    ) -> Result<WorkspaceFederation, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         let admin = key.role == Role::Admin;
-        if !admin && !may_set_mode(key.role, key.held_by, key.profile) {
+        if !admin && !may_set_mode(key.role, key.used_by, key.profile) {
             return Err(AppError::FederationHumanOnly {
                 role: key.role,
-                held_by: key.held_by,
+                used_by: key.used_by,
             });
         }
         let tenant_id = key.tenant_id;
-        let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
+        let workspace_id = self.resolve(key, NamedKind::Workspace, &workspace).await?;
         if admin {
             self.journal
-                .workarea(tenant_id, workarea_id)
+                .workspace(tenant_id, workspace_id)
                 .await?
                 .ok_or(AppError::NotFound)?;
         } else {
-            self.require_access(&caller, workarea_id, Role::Dreamer, "workarea_federation")
-                .await?;
+            self.require_access(
+                &caller,
+                workspace_id,
+                Role::Reviewer,
+                "workspace_federation",
+            )
+            .await?;
         }
-        self.observer.workarea(workarea_id);
+        self.observer.workspace(workspace_id);
         let from = self
             .journal
-            .federation_declining(tenant_id, &[workarea_id])
+            .federation_declining(tenant_id, &[workspace_id])
             .await?
             .is_empty();
         if from == accept_federated {
-            return Ok(WorkareaFederation { accept_federated });
+            return Ok(WorkspaceFederation { accept_federated });
         }
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
             tenant_id,
-            event_types::WORKAREA_FEDERATION_SET,
+            event_types::WORKSPACE_FEDERATION_SET,
             &key.principal,
             Some(key.key_id),
             json!({
-                "workarea_id": workarea_id.to_string(),
+                "workspace_id": workspace_id.to_string(),
                 "field": "accept_federated",
                 "value": accept_federated,
                 "from": from,
@@ -196,14 +201,14 @@ where
         )?;
         self.commit(
             event,
-            MetadataFold::WorkareaFederationSet {
-                workarea_id,
+            MetadataFold::WorkspaceFederationSet {
+                workspace_id,
                 accept_federated,
             },
             None,
         )
         .await?;
-        Ok(WorkareaFederation { accept_federated })
+        Ok(WorkspaceFederation { accept_federated })
     }
 
     /// The keys of `tenant_id` the doctor line names (d12).
@@ -270,14 +275,14 @@ where
             if distinct.len() != names.len() {
                 return Err(sources_invalid(
                     "/sources",
-                    "sources names a workarea twice",
+                    "sources names a workspace twice",
                 ));
             }
             if names.len() > policy.max_sources as usize {
                 return Err(sources_invalid(
                     "/sources",
                     &format!(
-                        "sources lists {} workareas, more than the tenant's max_sources of {}",
+                        "sources lists {} workspaces, more than the tenant's max_sources of {}",
                         names.len(),
                         policy.max_sources
                     ),
@@ -357,8 +362,8 @@ where
                         sources: Value::from(
                             listed.iter().map(Uuid::to_string).collect::<Vec<_>>(),
                         ),
-                        federated_workarea_ids: federated.iter().copied().collect(),
-                        reference_workarea_ids: listed,
+                        federated_workspace_ids: federated.iter().copied().collect(),
+                        reference_workspace_ids: listed,
                     }),
                     federated,
                 })
@@ -448,8 +453,8 @@ where
                     }),
                     record: Some(FederationRecord {
                         sources: Value::from("wide"),
-                        federated_workarea_ids: selected.clone(),
-                        reference_workarea_ids: r,
+                        federated_workspace_ids: selected.clone(),
+                        reference_workspace_ids: r,
                     }),
                     federated: selected.into_iter().collect(),
                 })
@@ -471,7 +476,7 @@ where
         hit_nodes: &[Uuid],
     ) -> Result<(Vec<Candidate>, BTreeMap<Uuid, String>), AppError> {
         let (inside, mut paths) = self.subtree_paths(caller.key.tenant_id, scope).await?;
-        let mut outside: BTreeSet<Uuid> = inside.iter().map(|w| w.workarea_id).collect();
+        let mut outside: BTreeSet<Uuid> = inside.iter().map(|w| w.workspace_id).collect();
         outside.extend(hit_nodes.iter().copied());
         let candidates = self.trusted_outside(caller, &outside, &mut paths).await?;
         Ok((candidates, paths))
@@ -498,7 +503,7 @@ where
         // effective access, in-progress root and path follow from its
         // parent's, parent before child (ADR-0025 d1; ADR-0030 d1).
         for root in roots {
-            let Some(above) = self.journal.workarea_ancestry(tenant_id, root).await? else {
+            let Some(above) = self.journal.workspace_ancestry(tenant_id, root).await? else {
                 continue;
             };
             let root_ip = oml_domain::in_progress::in_progress_root_of(
@@ -506,9 +511,9 @@ where
                     .iter()
                     .map(|w| {
                         (
-                            w.workarea_id,
+                            w.workspace_id,
                             w.in_progress,
-                            w.status == WorkareaStatus::Development,
+                            w.status == WorkspaceStatus::Development,
                         )
                     })
                     .collect::<Vec<_>>(),
@@ -517,13 +522,13 @@ where
             walk.insert(
                 root,
                 (
-                    above.iter().map(|w| w.workarea_id).collect(),
+                    above.iter().map(|w| w.workspace_id).collect(),
                     root_ip,
                     derived_path(&above),
                 ),
             );
-            for node in self.journal.workarea_subtree(tenant_id, root).await? {
-                let id = node.workarea_id;
+            for node in self.journal.workspace_subtree(tenant_id, root).await? {
+                let id = node.workspace_id;
                 if id != root {
                     let Some((ancestry, ip, path)) =
                         node.parent_id.and_then(|p| walk.get(&p)).cloned()
@@ -532,7 +537,7 @@ where
                     };
                     // A node that is not `development` is never inside, nor
                     // is anything beneath it (ADR-0030 d3).
-                    let ip = if node.status != WorkareaStatus::Development {
+                    let ip = if node.status != WorkspaceStatus::Development {
                         None
                     } else if node.in_progress {
                         Some(id)
@@ -578,18 +583,21 @@ where
         &self,
         tenant_id: Uuid,
         top: Uuid,
-    ) -> Result<(Vec<WorkareaRecord>, BTreeMap<Uuid, String>), AppError> {
+    ) -> Result<(Vec<WorkspaceRecord>, BTreeMap<Uuid, String>), AppError> {
         let mut paths = BTreeMap::new();
-        if let Some(ancestry) = self.journal.workarea_ancestry(tenant_id, top).await? {
+        if let Some(ancestry) = self.journal.workspace_ancestry(tenant_id, top).await? {
             paths.insert(top, derived_path(&ancestry));
         }
-        let nodes = self.journal.workarea_subtree(tenant_id, top).await?;
+        let nodes = self.journal.workspace_subtree(tenant_id, top).await?;
         for node in &nodes {
-            if node.workarea_id == top {
+            if node.workspace_id == top {
                 continue;
             }
             if let Some(parent) = node.parent_id.and_then(|p| paths.get(&p)).cloned() {
-                paths.insert(node.workarea_id, format!("{parent}.{}", node.name.as_str()));
+                paths.insert(
+                    node.workspace_id,
+                    format!("{parent}.{}", node.name.as_str()),
+                );
             }
         }
         Ok((nodes, paths))
@@ -620,7 +628,7 @@ where
     /// A list's nodes, each checked in index order (d5): a name the key
     /// cannot read and one that does not exist are the same
     /// `access.not_found` at `/sources/<i>`; a readable name that is not a
-    /// trusted source, or that lies outside subtree(scope) on a workarea
+    /// trusted source, or that lies outside subtree(scope) on a workspace
     /// declining federated reads, is refused with its reason. Only after
     /// the read check passes is a status or a policy consulted (d6).
     async fn listed_sources(
@@ -632,10 +640,10 @@ where
         let tenant_id = caller.key.tenant_id;
         let inside_scope: BTreeSet<Uuid> = self
             .journal
-            .workarea_subtree(tenant_id, scope)
+            .workspace_subtree(tenant_id, scope)
             .await?
             .into_iter()
-            .map(|w| w.workarea_id)
+            .map(|w| w.workspace_id)
             .collect();
         let mut listed = Vec::with_capacity(names.len());
         for (index, name) in names.iter().enumerate() {
@@ -644,7 +652,7 @@ where
                 return Err(not_found);
             };
             let id = match self
-                .resolve(&caller.key, NamedKind::Workarea, &reference)
+                .resolve(&caller.key, NamedKind::Workspace, &reference)
                 .await
             {
                 Ok(id) => id,
@@ -653,17 +661,17 @@ where
             };
             let ancestry = self
                 .journal
-                .workarea_ancestry(tenant_id, id)
+                .workspace_ancestry(tenant_id, id)
                 .await?
                 .unwrap_or_default();
-            let ids: Vec<Uuid> = ancestry.iter().map(|w| w.workarea_id).collect();
+            let ids: Vec<Uuid> = ancestry.iter().map(|w| w.workspace_id).collect();
             if ids.is_empty() || !caller.effective(&ids).contains(&Role::Reader) {
                 return Err(not_found);
             }
             if listed.iter().any(|(listed, _)| *listed == id) {
                 return Err(sources_invalid(
                     "/sources",
-                    "sources names a workarea twice",
+                    "sources names a workspace twice",
                 ));
             }
             let status = ancestry[0].status;
@@ -704,12 +712,12 @@ where
     ) -> Result<SearchedSource, AppError> {
         // The path the subtrees already gave, else the node's ancestry: a
         // scope's `universe` inside a user root (ADR-0044 d10).
-        let workarea_path = match path {
+        let workspace_path = match path {
             Some(path) => path.clone(),
             None => derived_path(
                 &self
                     .journal
-                    .workarea_ancestry(caller.key.tenant_id, node)
+                    .workspace_ancestry(caller.key.tenant_id, node)
                     .await?
                     .ok_or_else(|| {
                         StoreError::Backend(format!("searched node {node} has no ancestry"))
@@ -728,8 +736,8 @@ where
                 .collect(),
         };
         Ok(SearchedSource {
-            workarea_id: node,
-            workarea_path,
+            workspace_id: node,
+            workspace_path,
             via,
             estimate: estimate(&counts, reference),
             matched_words,

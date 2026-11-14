@@ -27,7 +27,7 @@ pub mod review;
 pub mod session;
 pub mod start;
 mod usage;
-pub mod workareas;
+pub mod workspaces;
 
 use std::sync::Arc;
 
@@ -64,10 +64,10 @@ pub use oml_page::SIGN_IN_PATH;
 /// (`tests/routes.rs`).
 pub const PAGES: &[(&str, &str)] = &[
     ("GET", GUARDRAILS_PATH),
-    ("GET", USER_WORKAREAS_PATH),
-    ("POST", USER_WORKAREAS_PATH),
-    ("GET", ADMIN_WORKAREAS_PATH),
-    ("POST", ADMIN_WORKAREAS_PATH),
+    ("GET", USER_WORKSPACES_PATH),
+    ("POST", USER_WORKSPACES_PATH),
+    ("GET", ADMIN_WORKSPACES_PATH),
+    ("POST", ADMIN_WORKSPACES_PATH),
     ("GET", USER_MEMORIES_PATH),
     ("GET", USER_ATLAS_PATH),
     ("GET", ADMIN_MEMORIES_PATH),
@@ -134,13 +134,13 @@ pub use oml_page::web::USER_KEYS_PATH;
 /// from the admin page's `cut_off` act (ADR-0045 d13).
 pub use oml_page::web::ADMIN_KEYS_PATH;
 
-/// The user page's Workareas view and its acts (ADR-0045 d28), moved from
-/// `GET /web?view=workarea` and the user page's workarea actions.
-pub use oml_page::web::USER_WORKAREAS_PATH;
+/// The user page's Workspaces view and its acts (ADR-0045 d28), moved from
+/// `GET /web?view=workspace` and the user page's workspace actions.
+pub use oml_page::web::USER_WORKSPACES_PATH;
 
-/// The admin page's Workareas view and its acts, moved from
-/// `GET /web/admin?view=workarea` and the admin page's workarea actions.
-pub use oml_page::web::ADMIN_WORKAREAS_PATH;
+/// The admin page's Workspaces view and its acts, moved from
+/// `GET /web/admin?view=workspace` and the admin page's workspace actions.
+pub use oml_page::web::ADMIN_WORKSPACES_PATH;
 
 /// The Guardrails view's own path (ADR-0037 d17), moved from
 /// `GET /web?view=guardrails`.
@@ -281,12 +281,12 @@ pub fn router(web: Web) -> Router {
     let pages = Router::new()
         .route(GUARDRAILS_PATH, get(pages::guardrails_page))
         .route(
-            USER_WORKAREAS_PATH,
-            get(workareas::user_page).post(workareas::user_act),
+            USER_WORKSPACES_PATH,
+            get(workspaces::user_page).post(workspaces::user_act),
         )
         .route(
-            ADMIN_WORKAREAS_PATH,
-            get(workareas::admin_page).post(workareas::admin_act),
+            ADMIN_WORKSPACES_PATH,
+            get(workspaces::admin_page).post(workspaces::admin_act),
         )
         .route(USER_MEMORIES_PATH, get(memories::user_list))
         .route(ADMIN_MEMORIES_PATH, get(memories::admin_list))
@@ -370,10 +370,10 @@ mod tests {
     fn the_proxy_sends_only_the_moved_pages_paths_here() {
         // Route-by-path (ADR-0070 d7 (b) as amended): the query plays no part.
         assert!(serves("GET", "/web/guardrails"));
-        assert!(serves("GET", "/web/workareas"));
-        assert!(serves("POST", "/web/workareas"));
-        assert!(serves("GET", "/web/admin/workareas"));
-        assert!(serves("POST", "/web/admin/workareas"));
+        assert!(serves("GET", "/web/workspaces"));
+        assert!(serves("POST", "/web/workspaces"));
+        assert!(serves("GET", "/web/admin/workspaces"));
+        assert!(serves("POST", "/web/admin/workspaces"));
         for path in [
             "/web/review",
             "/web/admin/review",

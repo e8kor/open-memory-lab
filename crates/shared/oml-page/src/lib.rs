@@ -220,8 +220,8 @@ mod tests {
     #[test]
     fn the_sign_in_location_carries_the_page_as_one_query_value() {
         assert_eq!(
-            sign_in_location("/web?view=guardrails&workarea=a b"),
-            "/web/sign-in?next=%2Fweb%3Fview%3Dguardrails%26workarea%3Da%20b"
+            sign_in_location("/web?view=guardrails&workspace=a b"),
+            "/web/sign-in?next=%2Fweb%3Fview%3Dguardrails%26workspace%3Da%20b"
         );
     }
 

@@ -1,16 +1,16 @@
-//! The Workareas view of the user page and of the admin page (ADR-0045
-//! d28), moved from the lead to paths of their own, `/web/workareas` and
-//! `/web/admin/workareas` (ADR-0070 d7 (b)), with its assertions unchanged
+//! The Workspaces view of the user page and of the admin page (ADR-0045
+//! d28), moved from the lead to paths of their own, `/web/workspaces` and
+//! `/web/admin/workspaces` (ADR-0070 d7 (b)), with its assertions unchanged
 //! but for the path (`tests/web_pages.rs`). Its acts are the first a page
-//! of `oml-web` runs: each workarea's dropdown names exactly the acts the
-//! acting keys may take now, read off `GET /v2/workareas/{w}/offers`;
+//! of `oml-web` runs: each workspace's dropdown names exactly the acts the
+//! acting keys may take now, read off `GET /v2/workspaces/{w}/offers`;
 //! Apply is a `GET` that changes nothing and asks again, naming a refused
 //! act's refusal; the confirmation's one `POST` calls the act's documented
 //! operation under the session's capacity credential, with the form's
 //! idempotency key, and answers a `303` back to the view.
 //!
 //! On the user page every act and every offer is the person's reviewer
-//! key's: a dreamer key a person holds proposes, ratifies another key's
+//! key's: a reviewer key a person holds proposes, ratifies another key's
 //! proposal and sets the mode (ADR-0009 d3; ADR-0030 d1). On the admin page
 //! transitions run as the admin key, which ADR-0009 admits by role, and
 //! the mode as the person's reviewer key.
@@ -24,34 +24,34 @@ use axum::extract::{Form, State};
 use axum::response::{IntoResponse as _, Response};
 use http::{HeaderValue, StatusCode, Uri, header};
 use oml_page::web::{
-    ADMIN_MEMORIES_PATH, ADMIN_WORKAREAS_PATH, USER_MEMORIES_PATH, USER_WORKAREAS_PATH, attr, form,
-    hidden, input, shell, short, text,
+    ADMIN_MEMORIES_PATH, ADMIN_WORKSPACES_PATH, USER_MEMORIES_PATH, USER_WORKSPACES_PATH, attr,
+    form, hidden, input, shell, short, text,
 };
-use oml_sdk::{WorkareaNode, WorkareaOffers};
+use oml_sdk::{WorkspaceNode, WorkspaceOffers};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
-use crate::pages::{Fields, refused, workareas as tree};
+use crate::pages::{Fields, refused, workspaces as tree};
 use crate::picker::reference;
 use crate::session::{PageCalls, Session, call};
 use crate::{Api, Capacity, Web, outcome};
 
-/// The most API calls one Workareas page has in flight while it reads each
-/// workarea's offers and proposals. A constant of the build, unmeasured
+/// The most API calls one Workspaces page has in flight while it reads each
+/// workspace's offers and proposals. A constant of the build, unmeasured
 /// (#170).
 pub const FAN_OUT: usize = 8;
 
-/// The rows a Workareas page draws, each with its offers and proposals
+/// The rows a Workspaces page draws, each with its offers and proposals
 /// read: the page's secondary reads are bounded by it (design notes row 26;
 /// ADR-0045 d25's scaling limit).
 pub const ROWS_PAGE: usize = 50;
 
 /// The form actions of the view, each the act of one documented operation.
 pub const ACTIONS: &[&str] = &[
-    "workarea_transition",
-    "workarea_ratify",
-    "workarea_mode",
-    "create_workarea",
+    "workspace_transition",
+    "workspace_ratify",
+    "workspace_mode",
+    "create_workspace",
 ];
 
 /// Which page the view is on.
@@ -64,8 +64,8 @@ pub(crate) enum Side {
 impl Side {
     pub(crate) fn path(self) -> &'static str {
         match self {
-            Self::User => USER_WORKAREAS_PATH,
-            Self::Admin => ADMIN_WORKAREAS_PATH,
+            Self::User => USER_WORKSPACES_PATH,
+            Self::Admin => ADMIN_WORKSPACES_PATH,
         }
     }
 
@@ -86,13 +86,13 @@ impl Side {
     }
 }
 
-/// One workarea's offers as the page's keys see them: the transitions as
+/// One workspace's offers as the page's keys see them: the transitions as
 /// the transitions capacity's offers name them, the mode and the commit as
 /// the person's reviewer key's.
 #[derive(Clone)]
 pub(crate) struct NodeOffers {
-    transitions: WorkareaOffers,
-    mode: Result<WorkareaOffers, oml_sdk::Error>,
+    transitions: WorkspaceOffers,
+    mode: Result<WorkspaceOffers, oml_sdk::Error>,
 }
 
 /// An act of the dropdown.
@@ -127,7 +127,7 @@ impl Act {
         }
     }
 
-    /// What a confirmed act will do, in a sentence, naming the workarea by
+    /// What a confirmed act will do, in a sentence, naming the workspace by
     /// its reference.
     fn consequence(&self, reference: &str) -> String {
         let path = text(reference);
@@ -156,28 +156,32 @@ impl Act {
         let nonce = hidden("nonce", &nonce());
         let (action, fields) = match self {
             Self::Propose(to) => (
-                "workarea_transition",
-                format!("{}{}", hidden("workarea", node), hidden("to", to)),
+                "workspace_transition",
+                format!("{}{}", hidden("workspace", node), hidden("to", to)),
             ),
             Self::Ratify { transition_id, .. } => (
-                "workarea_ratify",
+                "workspace_ratify",
                 format!(
                     "{}{}",
-                    hidden("workarea", node),
+                    hidden("workspace", node),
                     hidden("transition", transition_id)
                 ),
             ),
             Self::InProgress => (
-                "workarea_mode",
+                "workspace_mode",
                 format!(
                     "{}{}",
-                    hidden("workarea", node),
+                    hidden("workspace", node),
                     hidden("mode", "in_progress")
                 ),
             ),
             Self::Commit => (
-                "workarea_mode",
-                format!("{}{}", hidden("workarea", node), hidden("mode", "standard")),
+                "workspace_mode",
+                format!(
+                    "{}{}",
+                    hidden("workspace", node),
+                    hidden("mode", "standard")
+                ),
             ),
         };
         form(
@@ -300,7 +304,7 @@ impl NodeOffers {
             return r#"<span class="dim">nothing to do here now</span>"#.to_owned();
         }
         let mut out = format!(
-            r#"<form class="row act" method="get" action="{page}"><input type="hidden" name="workarea" value="{}"><label>act<select name="op">"#,
+            r#"<form class="row act" method="get" action="{page}"><input type="hidden" name="workspace" value="{}"><label>act<select name="op">"#,
             attr(node)
         );
         for act in &acts {
@@ -352,45 +356,45 @@ impl Credentials {
 }
 
 impl NodeOffers {
-    /// One workarea's offers from the transitions capacity's answer and the
+    /// One workspace's offers from the transitions capacity's answer and the
     /// mode capacity's, read apart.
     pub(crate) fn of(
-        transitions: WorkareaOffers,
-        mode: Result<WorkareaOffers, oml_sdk::Error>,
+        transitions: WorkspaceOffers,
+        mode: Result<WorkspaceOffers, oml_sdk::Error>,
     ) -> Self {
         Self { transitions, mode }
     }
 }
 
-/// One workarea's offers for the transitions, as the transitions
+/// One workspace's offers for the transitions, as the transitions
 /// capacity's key sees them; the request id of the call when it fails.
 pub(crate) async fn transitions_offers(
     api: &Api,
     credentials: &Credentials,
     calls: &PageCalls,
     node: &str,
-) -> Result<WorkareaOffers, (String, oml_sdk::Error)> {
+) -> Result<WorkspaceOffers, (String, oml_sdk::Error)> {
     let ids = calls.next_ids();
     let request_id = ids.request_id.clone().unwrap_or_default();
-    api.workarea_offers(&call(&credentials.transitions, &ids), node)
+    api.workspace_offers(&call(&credentials.transitions, &ids), node)
         .await
         .map_err(|e| (request_id, e))
 }
 
-/// One workarea's offers for the mode and the commit, as the mode
+/// One workspace's offers for the mode and the commit, as the mode
 /// capacity's key sees them.
 pub(crate) async fn mode_offers(
     api: &Api,
     credentials: &Credentials,
     calls: &PageCalls,
     node: &str,
-) -> Result<WorkareaOffers, oml_sdk::Error> {
+) -> Result<WorkspaceOffers, oml_sdk::Error> {
     let ids = calls.next_ids();
-    api.workarea_offers(&call(&credentials.mode, &ids), node)
+    api.workspace_offers(&call(&credentials.mode, &ids), node)
         .await
 }
 
-/// One workarea's offers: one call where one key takes every act, two
+/// One workspace's offers: one call where one key takes every act, two
 /// where the admin key takes the transitions; the request id of the call
 /// that failed otherwise.
 pub(crate) async fn offers_of(
@@ -402,14 +406,14 @@ pub(crate) async fn offers_of(
     let ids = calls.next_ids();
     let request_id = ids.request_id.clone().unwrap_or_default();
     let transitions = api
-        .workarea_offers(&call(&credentials.transitions, &ids), node)
+        .workspace_offers(&call(&credentials.transitions, &ids), node)
         .await
         .map_err(|e| (request_id, e))?;
     let mode = if credentials.same {
         Ok(transitions.clone())
     } else {
         let ids = calls.next_ids();
-        api.workarea_offers(&call(&credentials.mode, &ids), node)
+        api.workspace_offers(&call(&credentials.mode, &ids), node)
             .await
     };
     Ok(NodeOffers { transitions, mode })
@@ -427,7 +431,7 @@ async fn rows(
     api: &Api,
     credentials: &Credentials,
     calls: &Arc<PageCalls>,
-    nodes: &[WorkareaNode],
+    nodes: &[WorkspaceNode],
 ) -> Vec<Row> {
     let permits = Arc::new(Semaphore::new(FAN_OUT));
     let mut set = JoinSet::new();
@@ -452,7 +456,7 @@ async fn rows(
             let pending = {
                 let _permit = permits.acquire().await.expect("never closed");
                 let ids = calls.next_ids();
-                api.workarea(&call(&credentials.transitions, &ids), &id)
+                api.workspace(&call(&credentials.transitions, &ids), &id)
                     .await
                     .map(|view| view.pending_transitions.into_iter().map(|t| t.to).collect())
                     .unwrap_or_default()
@@ -479,7 +483,7 @@ async fn rows(
 /// The reference of each of `nodes`, the form every field takes
 /// (design notes row 20): the user roots are the tree's own, and the
 /// person's where the page knows it.
-fn references(nodes: &[WorkareaNode], own_root: Option<&str>) -> Vec<String> {
+fn references(nodes: &[WorkspaceNode], own_root: Option<&str>) -> Vec<String> {
     let roots: std::collections::BTreeSet<&str> = nodes
         .iter()
         .filter(|n| n.user_root)
@@ -496,7 +500,7 @@ fn references(nodes: &[WorkareaNode], own_root: Option<&str>) -> Vec<String> {
 /// with its status, mode, live proposals and dropdown.
 fn table(
     side: Side,
-    nodes: &[WorkareaNode],
+    nodes: &[WorkspaceNode],
     refs: &[String],
     shown: std::ops::Range<usize>,
     rows: &[Row],
@@ -507,7 +511,7 @@ fn table(
         Side::Admin => ADMIN_MEMORIES_PATH,
     };
     let mut out = String::from(
-        "<table class=\"oml-stack t-wa\"><tr><th>Workarea</th><th>Inside</th><th>Status</th><th>Mode</th><th>Act</th></tr>",
+        "<table class=\"oml-stack t-wa\"><tr><th>Workspace</th><th>Inside</th><th>Status</th><th>Mode</th><th>Act</th></tr>",
     );
     for ((node, reference), row) in nodes[shown.clone()]
         .iter()
@@ -520,7 +524,7 @@ fn table(
             .and_then(|p| nodes.iter().position(|n| n.id == p))
             .map_or_else(String::new, |i| text(&refs[i]));
         let named = format!(
-            r#"<td class="mono"><a href="{memories}?workarea={}">{}</a></td><td class="mono">{inside}</td>"#,
+            r#"<td class="mono"><a href="{memories}?workspace={}">{}</a></td><td class="mono">{inside}</td>"#,
             attr(&oml_sdk::encode(reference)),
             text(reference),
         );
@@ -594,10 +598,10 @@ struct ViewCtx<'a> {
 /// The confirmation above the table when the query names an `op`: the
 /// act's consequence and its one form, or the act's refusal by name with
 /// no form. An `op` outside the grammar is the form again; a proposal no
-/// longer live, or a workarea the keys cannot read, is not found.
+/// longer live, or a workspace the keys cannot read, is not found.
 async fn confirmation(
     view: &ViewCtx<'_>,
-    nodes: &[WorkareaNode],
+    nodes: &[WorkspaceNode],
     refs: &[String],
     fields: &Fields,
     op: &str,
@@ -610,11 +614,11 @@ async fn confirmation(
         credentials,
     } = *view;
     let page = side.path();
-    let Some(named) = fields.get("workarea") else {
+    let Some(named) = fields.get("workspace") else {
         return Err(Box::new(refused(
             StatusCode::BAD_REQUEST,
             "request.validation",
-            "workarea is required",
+            "workspace is required",
             calls,
         )));
     };
@@ -623,7 +627,7 @@ async fn confirmation(
         .zip(refs)
         .find(|(n, r)| n.id == named || n.path == named || *r == named)
         .map(|(n, r)| (n.id.clone(), r.clone()));
-    // A workarea the table does not list, zoomed to from the Atlas, is read
+    // A workspace the table does not list, zoomed to from the Atlas, is read
     // through the API, which checks the key may read it.
     let (id, path) = match listed {
         Some(node) => node,
@@ -631,7 +635,7 @@ async fn confirmation(
             let ids = calls.next_ids();
             match web
                 .api
-                .workarea(&call(&credentials.transitions, &ids), named)
+                .workspace(&call(&credentials.transitions, &ids), named)
                 .await
             {
                 Ok(view) => {
@@ -659,7 +663,7 @@ async fn confirmation(
     };
     let acts = offers.acts();
     let (wanted, refusal) = match op.split_once(':').ok_or_else(grammar)? {
-        ("propose", to @ ("committed" | "validated")) => {
+        ("propose", to @ ("protected" | "frozen")) => {
             (Act::Propose(to.to_owned()), ("propose", to))
         }
         ("ratify", transition) => {
@@ -751,7 +755,7 @@ async fn view(
             return refused(
                 StatusCode::BAD_GATEWAY,
                 "unavailable",
-                &format!("the workarea list did not end (request {request_id}); try again"),
+                &format!("the workspace list did not end (request {request_id}); try again"),
                 &calls,
             );
         }
@@ -798,16 +802,16 @@ async fn view(
         Side::User => {
             let user = session.whoami.user.as_ref().map_or("", |u| u.name.as_str());
             let mut body = format!(
-                r#"<h1>Workareas</h1><p class="desc">Under <code>{}</code>. Apply asks for a confirmation.</p>{confirm}{table}"#,
+                r#"<h1>Workspaces</h1><p class="desc">Under <code>{}</code>. Apply asks for a confirmation.</p>{confirm}{table}"#,
                 short(user)
             );
             body.push_str("<details class=\"help\"><summary>?</summary>In progress: the user's agents recall each other's unreviewed memories inside it, and nothing leaves it until it is committed, which needs every memory in it reviewed.</details>");
-            body.push_str("<h2>New workarea</h2>");
-            // Creating a workarea is the view's act, through `POST
-            // /v2/workareas` under the form's nonce (ADR-0070 d7 (b)).
+            body.push_str("<h2>New workspace</h2>");
+            // Creating a workspace is the view's act, through `POST
+            // /v2/workspaces` under the form's nonce (ADR-0070 d7 (b)).
             body.push_str(&form(
-                USER_WORKAREAS_PATH,
-                "create_workarea",
+                USER_WORKSPACES_PATH,
+                "create_workspace",
                 &session.csrf(),
                 &format!(
                     "{}{}{}",
@@ -823,7 +827,7 @@ async fn view(
         Side::Admin => (session.administration(), {
             let user = short(session.whoami.user.as_ref().map_or("", |u| u.name.as_str()));
             format!(
-                r#"<h1>Workareas</h1><p class="desc">Apply asks for a confirmation.</p><details class="help"><summary>?</summary>Status changes run as <code>{user}-admin</code> and need a second key to ratify; in progress and commit run as <code>{user}-review</code>.</details>{confirm}{table}"#
+                r#"<h1>Workspaces</h1><p class="desc">Apply asks for a confirmation.</p><details class="help"><summary>?</summary>Status changes run as <code>{user}-admin</code> and need a second key to ratify; in progress and commit run as <code>{user}-review</code>.</details>{confirm}{table}"#
             )
         }),
     };
@@ -846,7 +850,7 @@ fn admin_only(session: &Session, calls: &PageCalls) -> Option<Response> {
     })
 }
 
-/// `GET /web/workareas`: the user page's Workareas view.
+/// `GET /web/workspaces`: the user page's Workspaces view.
 pub async fn user_page(
     State(web): State<Web>,
     Extension(session): Extension<Session>,
@@ -856,7 +860,7 @@ pub async fn user_page(
     view(web, session, calls, &uri, Side::User).await
 }
 
-/// `GET /web/admin/workareas`: the admin page's Workareas view, the
+/// `GET /web/admin/workspaces`: the admin page's Workspaces view, the
 /// tenant's tree.
 pub async fn admin_page(
     State(web): State<Web>,
@@ -874,10 +878,10 @@ pub async fn admin_page(
 /// `nonce`.
 fn defined(action: &str) -> &'static [&'static str] {
     match action {
-        "create_workarea" => &["action", "csrf_token", "nonce", "name", "parent"],
-        "workarea_transition" => &["action", "csrf_token", "nonce", "workarea", "to"],
-        "workarea_ratify" => &["action", "csrf_token", "nonce", "workarea", "transition"],
-        _ => &["action", "csrf_token", "nonce", "workarea", "mode"],
+        "create_workspace" => &["action", "csrf_token", "nonce", "name", "parent"],
+        "workspace_transition" => &["action", "csrf_token", "nonce", "workspace", "to"],
+        "workspace_ratify" => &["action", "csrf_token", "nonce", "workspace", "transition"],
+        _ => &["action", "csrf_token", "nonce", "workspace", "mode"],
     }
 }
 
@@ -920,8 +924,8 @@ async fn act(
         );
     };
     calls.act(action);
-    // Creating a workarea is the user page's act alone.
-    if action == "create_workarea" && side == Side::Admin {
+    // Creating a workspace is the user page's act alone.
+    if action == "create_workspace" && side == Side::Admin {
         return refused(
             StatusCode::BAD_REQUEST,
             "request.validation",
@@ -938,10 +942,10 @@ async fn act(
         );
     }
     let required: &[&str] = match action {
-        "create_workarea" => &["name"],
-        "workarea_transition" => &["workarea", "to"],
-        "workarea_ratify" => &["workarea", "transition"],
-        _ => &["workarea", "mode"],
+        "create_workspace" => &["name"],
+        "workspace_transition" => &["workspace", "to"],
+        "workspace_ratify" => &["workspace", "transition"],
+        _ => &["workspace", "mode"],
     };
     if let Some(missing) = required.iter().find(|n| fields.get(n).is_none()) {
         return refused(
@@ -952,8 +956,8 @@ async fn act(
         );
     }
     let field = |name: &str| fields.get(name).unwrap_or_default();
-    let workarea = field("workarea");
-    if action == "create_workarea" && field("name").is_empty() {
+    let workspace = field("workspace");
+    if action == "create_workspace" && field("name").is_empty() {
         return refused(
             StatusCode::BAD_REQUEST,
             "request.validation",
@@ -984,35 +988,35 @@ async fn act(
     let _in_flight = in_flight(&key).lock_owned().await;
     let ids = calls.next_ids();
     let (outcome, done) = match action {
-        "create_workarea" => {
+        "create_workspace" => {
             // A blank parent is the person's own root.
             let parent = fields.get("parent").filter(|p| !p.is_empty());
             let credential = session.credential(Capacity::Web);
             (
                 web.api
-                    .create_workarea(&call(&credential, &ids), &key, field("name"), parent)
+                    .create_workspace(&call(&credential, &ids), &key, field("name"), parent)
                     .await
                     .map(|_| ()),
                 "created",
             )
         }
-        "workarea_transition" => {
+        "workspace_transition" => {
             let to = field("to");
             let credential = session.credential(side.transitions());
             (
                 web.api
-                    .propose_transition(&call(&credential, &ids), &key, workarea, to)
+                    .propose_transition(&call(&credential, &ids), &key, workspace, to)
                     .await
                     .map(|_| ()),
                 "proposed",
             )
         }
-        "workarea_ratify" => {
+        "workspace_ratify" => {
             let transition = field("transition");
             let credential = session.credential(side.transitions());
             (
                 web.api
-                    .ratify_transition(&call(&credential, &ids), &key, workarea, transition)
+                    .ratify_transition(&call(&credential, &ids), &key, workspace, transition)
                     .await
                     .map(|_| ()),
                 "ratified",
@@ -1023,7 +1027,7 @@ async fn act(
             let credential = session.credential(Capacity::Review);
             (
                 web.api
-                    .set_workarea_mode(&call(&credential, &ids), &key, workarea, mode)
+                    .set_workspace_mode(&call(&credential, &ids), &key, workspace, mode)
                     .await
                     .map(|_| ()),
                 "mode+set",
@@ -1043,7 +1047,7 @@ async fn act(
     }
 }
 
-/// `POST /web/workareas`: an act of the user page's view.
+/// `POST /web/workspaces`: an act of the user page's view.
 pub async fn user_act(
     State(web): State<Web>,
     Extension(session): Extension<Session>,
@@ -1053,7 +1057,7 @@ pub async fn user_act(
     act(web, session, calls, form, Side::User).await
 }
 
-/// `POST /web/admin/workareas`: an act of the admin page's view.
+/// `POST /web/admin/workspaces`: an act of the admin page's view.
 pub async fn admin_act(
     State(web): State<Web>,
     Extension(session): Extension<Session>,

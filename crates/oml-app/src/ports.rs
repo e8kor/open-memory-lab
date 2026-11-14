@@ -16,7 +16,7 @@ use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::name::{Name, NamedKind, Naming};
 use oml_domain::oauth::{RefreshDecision, RevokedCause, TokenKind};
 use oml_domain::{
-    ChainHead, EventTime, Sha256Hash, SignedEnvelope, WorkareaStatus, key_fingerprint,
+    ChainHead, EventTime, Sha256Hash, SignedEnvelope, WorkspaceStatus, key_fingerprint,
 };
 
 use crate::types::{
@@ -27,7 +27,7 @@ use crate::types::{
     OAuthClientRecord, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts,
     RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
     UnnamedRows, VersionFinding, WebCredentialKey, WebCredentialRows, WebEntry, WebSessionRecord,
-    WorkareaRecord,
+    WorkspaceRecord,
 };
 use oml_domain::web::Provider;
 
@@ -61,33 +61,33 @@ pub enum StoreError {
     #[error("prev_hash does not match the stored head at seq {seq}")]
     PrevHashConflict { seq: u64 },
     /// A ratification's compare-and-set found `replaced` no longer the
-    /// promoted tip under its successor's workarea and `claim_key`: the
+    /// promoted tip under its successor's workspace and `claim_key`: the
     /// commit wrote nothing (ADR-0025 d10).
     #[error("version {replaced} is no longer the served tip its successor replaces")]
     TipMoved { replaced: Uuid },
     /// A ratification's in-transaction re-check found its proposal no
     /// longer live: the row is already ratified, or its `from` is no longer
     /// the node's status. The commit wrote nothing, its event included;
-    /// answered `workarea.transition_refused`, `details.reason` `stale`
-    /// (errors.md; workareas.md, ratification re-checks; ADR-0009 d3).
-    #[error("transition {transition_id} on workarea {workarea_id} is stale")]
+    /// answered `workspace.transition_refused`, `details.reason` `stale`
+    /// (errors.md; workspaces.md, ratification re-checks; ADR-0009 d3).
+    #[error("transition {transition_id} on workspace {workspace_id} is stale")]
     TransitionStale {
         transition_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         /// The proposal's `from` and `to`, as the row holds them.
-        from: WorkareaStatus,
-        to: WorkareaStatus,
+        from: WorkspaceStatus,
+        to: WorkspaceStatus,
     },
-    /// A ratification of a step to `validated` found, inside its
+    /// A ratification of a step to `frozen` found, inside its
     /// transaction and after the chain lock, a direct child of the node
-    /// that is not `validated`: a child created, or a subtree reparented
+    /// that is not `frozen`: a child created, or a subtree reparented
     /// in, since the proposal. The commit wrote nothing; answered
-    /// `workarea.transition_refused`, `details.reason`
-    /// `children_not_validated` (errors.md; ADR-0009 d4).
-    #[error("transition {transition_id}: workarea {workarea_id} has a child not validated")]
-    ChildrenNotValidated {
+    /// `workspace.transition_refused`, `details.reason`
+    /// `children_not_frozen` (errors.md; ADR-0009 d4).
+    #[error("transition {transition_id}: workspace {workspace_id} has a child not validated")]
+    ChildrenNotFrozen {
         transition_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
     },
     /// A ratification's ratifying key is the proposing key, or holds the
     /// proposer's principal, read from the key row inside the transaction.
@@ -173,7 +173,7 @@ pub enum StoreError {
 /// A key row's `issued_seq`, a grant or denial row's epoch and a memory's
 /// `promoted_at` are never carried here: the store writes the seq or the
 /// `at` of the event this fold commits with, so the row cannot disagree with
-/// its event (workareas.md permission epoch; ADR-0025 d10, d14).
+/// its event (workspaces.md permission epoch; ADR-0025 d10, d14).
 ///
 /// Every fold that creates a named row writes its name, and refuses a name
 /// its kind already holds in the namespace with [`StoreError::NameTaken`]
@@ -192,11 +192,11 @@ pub enum MetadataFold {
     TenantGenesis {
         name: Name,
     },
-    /// `workarea.create`: the node, its path derived from its parent's path
-    /// and its name (postgres-schema.md `workareas`). Its name is unique in
+    /// `workspace.create`: the node, its path derived from its parent's path
+    /// and its name (postgres-schema.md `workspaces`). Its name is unique in
     /// its namespace, the shared one or its user root's, and refused with
     /// [`StoreError::NameTaken`] otherwise (ADR-0044 d5).
-    WorkareaCreated(WorkareaRecord),
+    WorkspaceCreated(WorkspaceRecord),
     /// `key.issued`: the key row, its `issued_seq` this commit's seq, with
     /// its credential. A connector key (`Credential::Connection`) carries no
     /// hash, or the store refuses it, so it never resolves through
@@ -209,34 +209,34 @@ pub enum MetadataFold {
     /// full new values; the store refuses a crew the tenant does not hold,
     /// and never changes a name (ADR-0026 d8).
     CrewUpdated(CrewRecord),
-    /// `workarea.crew_updated`: the node now names `crew_id`, a crew record
+    /// `workspace.crew_updated`: the node now names `crew_id`, a crew record
     /// of its own tenant, or the store refuses it (ADR-0026 d8).
-    WorkareaCrewUpdated {
-        workarea_id: Uuid,
+    WorkspaceCrewUpdated {
+        workspace_id: Uuid,
         crew_id: Uuid,
     },
-    /// `workarea.mode_set`: the node's `mode` is now `in_progress` or
+    /// `workspace.mode_set`: the node's `mode` is now `in_progress` or
     /// `standard` (ADR-0030 d1); the store refuses a node it does not hold.
     ///
     /// `held_free`, on a commit, names the subtree's nodes: the store refuses
     /// the commit with [`StoreError::HeldRemaining`] when any version on
     /// them is held, tested in the committing transaction (d6).
-    WorkareaModeSet {
-        workarea_id: Uuid,
+    WorkspaceModeSet {
+        workspace_id: Uuid,
         in_progress: bool,
         held_free: Vec<Uuid>,
     },
     /// `system.names_assigned`: each listed row of the commit's tenant, and
-    /// the tenant itself, takes the name the event assigns, every workarea's
+    /// the tenant itself, takes the name the event assigns, every workspace's
     /// path derives from those names, and each crew record is created and
-    /// named by the workareas listed under it. Every listed row must hold
+    /// named by the workspaces listed under it. Every listed row must hold
     /// no name yet, or the store refuses the commit, which writes nothing; a
     /// name its kind already holds is [`StoreError::NameTaken`]
     /// (postgres-schema.md folds; ADR-0026 d11).
     NamesAssigned(Naming),
     /// `grant.issued`: one grant row on `key_id`, its epoch this commit's
     /// seq. The store refuses a grant on a key or node it does not hold, and
-    /// a grant role other than reader, writer or dreamer (postgres-schema.md
+    /// a grant role other than reader, writer or reviewer (postgres-schema.md
     /// `grants`).
     GrantIssued {
         key_id: Uuid,
@@ -332,7 +332,7 @@ pub enum MetadataFold {
     /// A captured submission: the row lands `held` and, with `enqueue`,
     /// waits in the review queue. The store refuses a second held, promoted
     /// or demoted version of one ordinal under one `claim_key` in one
-    /// workarea (postgres-schema.md `memories_claim_version`).
+    /// workspace (postgres-schema.md `memories_claim_version`).
     ///
     /// `findings` is the version's findings list (ADR-0074 d23), stored in
     /// the same commit under this commit's seq, in order; a boxed slice, so
@@ -350,7 +350,7 @@ pub enum MetadataFold {
     },
     /// Ratification of a claim's first version: it is promoted and becomes
     /// the tip, and `promoted_at` is the event's `at`. The store refuses a
-    /// second promoted tip of one `claim_key` in one workarea
+    /// second promoted tip of one `claim_key` in one workspace
     /// (postgres-schema.md `memories_served_tip`; ADR-0025 d10). `approval`
     /// is the approving verdict the event's `ratification_event_id` names,
     /// stored on the row with the promotion (ADR-0077 d6). The application
@@ -385,7 +385,7 @@ pub enum MetadataFold {
     /// `lifecycle.supersede`: the ratified successor takes the tip from the
     /// version it replaces, which stays promoted. The store compare-and-sets
     /// that `replaced` is still the promoted tip under the successor's own
-    /// workarea and `claim_key` and that the successor replaces it; on a
+    /// workspace and `claim_key` and that the successor replaces it; on a
     /// lost compare-and-set it writes nothing and refuses with
     /// [`StoreError::TipMoved`]. `promoted_at` is the event's `at`
     /// (audit-and-lineage.md supersession chains; ADR-0025 d10).
@@ -458,16 +458,16 @@ pub enum MetadataFold {
     DeletionClosed {
         user: Name,
     },
-    /// `workarea.status_proposed`: the proposal's row, `pending` with no
+    /// `workspace.status_proposed`: the proposal's row, `pending` with no
     /// ratifier, its `proposed_seq` this commit's seq. The store refuses a
     /// node or proposing key its tenant does not hold, a proposer principal
     /// other than the one the proposing key's row holds, a step other than
     /// one rung forward, and a record that is not pending (postgres-schema.md
-    /// `workarea_transitions`; ADR-0009 d3; ADR-0010 R2). Whether the step
+    /// `workspace_transitions`; ADR-0009 d3; ADR-0010 R2). Whether the step
     /// may be proposed is the ladder's, decided before the commit.
     TransitionProposed(TransitionRecord),
-    /// `workarea.status_transition`: the pending row `transition_id` on
-    /// `workarea_id` becomes `ratified` by `ratifier_key_id`, its
+    /// `workspace.status_transition`: the pending row `transition_id` on
+    /// `workspace_id` becomes `ratified` by `ratifier_key_id`, its
     /// `ratified_seq` this commit's seq, and the node's status becomes `to`
     /// in the same transaction. The store re-checks the proposal inside
     /// that transaction, under the chain lock with the node and the row
@@ -476,17 +476,17 @@ pub enum MetadataFold {
     /// longer the node's status is [`StoreError::TransitionStale`]; a
     /// ratifier that is the proposing key or holds the proposer's
     /// principal, read from its key row, is
-    /// [`StoreError::RatifierIsProposer`]; a step to `validated` with a
-    /// direct child not `validated` is [`StoreError::ChildrenNotValidated`].
+    /// [`StoreError::RatifierIsProposer`]; a step to `frozen` with a
+    /// direct child not `frozen` is [`StoreError::ChildrenNotFrozen`].
     /// A row that is not a proposal on this node with this `to`, a ratifier
     /// key the tenant does not hold, and a universe root moved off
-    /// `committed` are defects. Every refusal refuses the commit, which
+    /// `protected` are defects. Every refusal refuses the commit, which
     /// writes nothing, its event included (ADR-0009 d1, d3, d4; ADR-0010
-    /// R2; workareas.md, ratification re-checks).
+    /// R2; workspaces.md, ratification re-checks).
     TransitionRatified {
         transition_id: Uuid,
-        workarea_id: Uuid,
-        to: WorkareaStatus,
+        workspace_id: Uuid,
+        to: WorkspaceStatus,
         ratifier_key_id: Uuid,
     },
     /// `claim_edge.proposed`: the edge row, pending with no ratifier. The
@@ -525,7 +525,7 @@ pub enum MetadataFold {
         ratifier_key_id: Uuid,
     },
     /// `brief_edge.proposed`: the edge row, pending with no ratifier, its
-    /// `created_at` the event's `at`. The store refuses a claim, workarea or
+    /// `created_at` the event's `at`. The store refuses a claim, workspace or
     /// proposer key its tenant does not hold, an id it holds already, and
     /// an edge that is not pending. It widens no lineage closure
     /// (postgres-schema.md `brief_edges`; ADR-0046 d7).
@@ -553,10 +553,10 @@ pub enum MetadataFold {
     /// `federation.policy_set`: the tenant's federation policy, whole
     /// (ADR-0072 d5).
     FederationPolicySet(crate::federation::FederationPolicy),
-    /// `workarea.federation_set`: the node's `accept_federated`; the store
+    /// `workspace.federation_set`: the node's `accept_federated`; the store
     /// refuses a node it does not hold (ADR-0072 d5).
-    WorkareaFederationSet {
-        workarea_id: Uuid,
+    WorkspaceFederationSet {
+        workspace_id: Uuid,
         accept_federated: bool,
     },
 }
@@ -570,13 +570,13 @@ pub struct OutboxRow {
     pub payload: Value,
 }
 
-/// The idempotency record scope: (key, resolved workarea, Idempotency-Key)
+/// The idempotency record scope: (key, resolved workspace, Idempotency-Key)
 /// per http-api.md, plus the tenant that owns the record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdempotencyScope {
     pub tenant_id: Uuid,
     pub key_id: Uuid,
-    pub workarea_id: Uuid,
+    pub workspace_id: Uuid,
     pub idem_key: String,
 }
 
@@ -647,7 +647,7 @@ pub struct Written {
     /// The account of the key that wrote it, from the key's record; `None`
     /// for a key of no account.
     pub author_account: Option<Uuid>,
-    /// Whether no earlier row carries its `claim_key` in its workarea, read
+    /// Whether no earlier row carries its `claim_key` in its workspace, read
     /// after the head as the capture reads it: the version then starts its
     /// chain, which is its author's account's and live once held. A claim
     /// captured under a released key, and every revision, does not.
@@ -712,7 +712,7 @@ pub fn claim_subject(event_type: &str, payload: &Value) -> Option<Uuid> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubjectRow {
     pub artifact_id: Uuid,
-    pub workarea_id: Uuid,
+    pub workspace_id: Uuid,
     /// `memories.author_key_id`: the envelope `api_key_id` of the version's
     /// submission event.
     pub author_key_id: Uuid,
@@ -992,7 +992,7 @@ pub trait JournalStore: Retriever + Send + Sync {
     ) -> impl Future<Output = Result<crate::federation::FederationPolicy, StoreError>> + Send;
 
     /// Of `nodes`, those whose `accept_federated` is off, folded from
-    /// `workarea.federation_set`; every node accepts by default
+    /// `workspace.federation_set`; every node accepts by default
     /// (ADR-0072 d5).
     fn federation_declining(
         &self,
@@ -1003,7 +1003,7 @@ pub trait JournalStore: Retriever + Send + Sync {
     /// The reference set's exact counts (ADR-0072 d4.2, d12): per node of
     /// `scope.nodes`, its served versions of `scope.kinds` and how many hold
     /// each of the query's kept words, less every version whose valid time
-    /// ended at or before `scope.expired_at`. Read from the per-workarea
+    /// ended at or before `scope.expired_at`. Read from the per-workspace
     /// counts the postings keep, never from an unreadable node, since the
     /// core names the nodes.
     fn reference_counts(
@@ -1118,7 +1118,7 @@ pub trait JournalStore: Retriever + Send + Sync {
 
     /// Applicable steering over `nodes`, the scope's ancestors the key reads,
     /// listed from the `universe` root down: every promoted served tip of
-    /// kind `steering` whose workarea is one of them, never a retirement
+    /// kind `steering` whose workspace is one of them, never a retirement
     /// version, so a retired claim serves none. It is ordered structurally,
     /// never by a query: by its node's position in `nodes` — its depth —
     /// then `promoted_at` ascending, then `artifact_id` ascending
@@ -1144,7 +1144,7 @@ pub trait JournalStore: Retriever + Send + Sync {
 
     /// Which of `memory_ids` were their claim's tip at `as_of`: promoted
     /// at or before it, with no later version of the claim (one
-    /// `workarea_id` and `claim_key`) promoted at or before it, in any
+    /// `workspace_id` and `claim_key`) promoted at or before it, in any
     /// state today (ADR-0059 d15, d16). The core's re-check of every
     /// promoted row an as-of read serves; an id no row has is absent.
     fn tips_as_of(
@@ -1155,7 +1155,7 @@ pub trait JournalStore: Retriever + Send + Sync {
     ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send;
 
     /// The guardrail rows on `nodes` (proposed ADR-0037 d3, d4): every
-    /// promoted served tip of kind `guardrail` whose workarea is one of them,
+    /// promoted served tip of kind `guardrail` whose workspace is one of them,
     /// never a retirement version, and every held version of kind
     /// `guardrail` on them that `author_key_id` authored, never another
     /// key's. Unordered: the read orders the set (d4). The state and the
@@ -1182,14 +1182,14 @@ pub trait JournalStore: Retriever + Send + Sync {
         limit: usize,
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
 
-    /// The greatest version of `claim_key` in the workarea in any state, and
+    /// The greatest version of `claim_key` in the workspace in any state, and
     /// whether a held, promoted or demoted version holds it: a capture's
     /// pre-`BEGIN` read (audit-and-lineage.md supersession chains; ADR-0025
     /// d10, d18).
     fn claim_key_state(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         claim_key: &str,
     ) -> impl Future<Output = Result<ClaimKeyState, StoreError>> + Send;
 
@@ -1224,36 +1224,36 @@ pub trait JournalStore: Retriever + Send + Sync {
         nodes: &[Uuid],
     ) -> impl Future<Output = Result<u64, StoreError>> + Send;
 
-    /// How many promoted served tips on `workarea_id` itself read `stale`:
+    /// How many promoted served tips on `workspace_id` itself read `stale`:
     /// their latest source check found the source `changed` or `removed`
     /// (ADR-0057 d5, d17). A held version is never counted.
     fn stale_count(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
     ) -> impl Future<Output = Result<u64, StoreError>> + Send;
 
-    /// The greatest `version` of `claim_key` in the workarea that a key of
+    /// The greatest `version` of `claim_key` in the workspace that a key of
     /// `own_key_ids` may read as the claim's: its own held and promoted
     /// versions, and with `reads_promoted` (reader effective access on the
-    /// workarea) every promoted one; never another author's held version,
+    /// workspace) every promoted one; never another author's held version,
     /// so a supersession's check tells its caller nothing it cannot read
     /// (ADR-0057 d19; R3).
     fn claim_latest_readable(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         claim_key: &str,
         own_key_ids: &[Uuid],
         reads_promoted: bool,
     ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send;
 
-    /// The promoted served tip of `claim_key` in the workarea, if any
+    /// The promoted served tip of `claim_key` in the workspace, if any
     /// (postgres-schema.md `memories_served_tip`; ADR-0025 d10).
     fn claim_tip(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         claim_key: &str,
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send;
 
@@ -1267,8 +1267,8 @@ pub trait JournalStore: Retriever + Send + Sync {
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
 
     /// Claim the next reviewable queue entry for this reviewer among the rows
-    /// whose workarea is in `workareas`, the nodes where the reviewer's
-    /// dreamer access is effective (ADR-0025 d1): entries claimed by another
+    /// whose workspace is in `workspaces`, the nodes where the reviewer's
+    /// reviewer access is effective (ADR-0025 d1): entries claimed by another
     /// key are skipped, and so is any row whose reviewer-exclusion set holds
     /// the reviewer — its lineage closure, and for a held successor the
     /// authors of the held rivals of its target (ADR-0025 d10) — so the
@@ -1280,7 +1280,7 @@ pub trait JournalStore: Retriever + Send + Sync {
         tenant_id: Uuid,
         reviewer_principal: &str,
         reviewer_key_id: Uuid,
-        workareas: &[Uuid],
+        workspaces: &[Uuid],
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send;
 
     /// The memory ids of the queue entries this reviewer key has claimed,
@@ -1320,7 +1320,7 @@ pub trait JournalStore: Retriever + Send + Sync {
     /// The key's `issued_seq`, grants and global denials, read in one
     /// snapshot so their epochs label one journalled state; `None` for a key
     /// this tenant does not hold. This is the one grants read effective
-    /// access costs per request (workareas.md effective access; ADR-0025 d1,
+    /// access costs per request (workspaces.md effective access; ADR-0025 d1,
     /// d14).
     fn key_access(
         &self,
@@ -1337,8 +1337,8 @@ pub trait JournalStore: Retriever + Send + Sync {
     /// provider's, which the operator tier reads and which this read never
     /// consults: a [`NamedKind::Tenant`] resolves nothing here, and no tenant
     /// holds the provider tenant's nil id, so nothing resolves under it. A
-    /// [`NamedKind::Workarea`] resolves in the shared namespace alone:
-    /// `universe`, each user root and each shared workarea (ADR-0044 d5).
+    /// [`NamedKind::Workspace`] resolves in the shared namespace alone:
+    /// `universe`, each user root and each shared workspace (ADR-0044 d5).
     fn resolve_name(
         &self,
         tenant_id: Uuid,
@@ -1346,12 +1346,12 @@ pub trait JournalStore: Retriever + Send + Sync {
         name: &Name,
     ) -> impl Future<Output = Result<Option<Uuid>, StoreError>> + Send;
 
-    /// The id of the workarea that holds `name` in the namespace of the
+    /// The id of the workspace that holds `name` in the namespace of the
     /// user root `user_root`: the names strictly beneath that root; `None`
     /// when none does, and for a `user_root` that is no user root, whose
     /// namespace holds nothing (ADR-0044 d5). [`JournalStore::resolve_name`]
-    /// of a workarea reads the shared namespace alone.
-    fn resolve_user_workarea(
+    /// of a workspace reads the shared namespace alone.
+    fn resolve_user_workspace(
         &self,
         tenant_id: Uuid,
         user_root: Uuid,
@@ -1383,7 +1383,7 @@ pub trait JournalStore: Retriever + Send + Sync {
     ) -> impl Future<Output = Result<Option<KeyRecord>, StoreError>> + Send;
 
     /// The rows a key of the tenant references, read in one query under the
-    /// tenant's fence: the tenant's id and name, the key's default workarea
+    /// tenant's fence: the tenant's id and name, the key's default workspace
     /// with the path its ancestry derives, and its crew record; `None` for a
     /// key the tenant does not hold (ADR-0039 d15).
     fn key_references(
@@ -1392,7 +1392,7 @@ pub trait JournalStore: Retriever + Send + Sync {
         key_id: Uuid,
     ) -> impl Future<Output = Result<Option<KeyReferences>, StoreError>> + Send;
 
-    /// The tenant's rows that have no name yet: its own row, its workareas
+    /// The tenant's rows that have no name yet: its own row, its workspaces
     /// and its keys, which the lead names before it serves (http-api.md
     /// rows created before names; ADR-0026 d11).
     fn unnamed_rows(
@@ -1400,39 +1400,39 @@ pub trait JournalStore: Retriever + Send + Sync {
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<UnnamedRows, StoreError>> + Send;
 
-    fn workarea(
+    fn workspace(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> impl Future<Output = Result<Option<WorkareaRecord>, StoreError>> + Send;
+        workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Option<WorkspaceRecord>, StoreError>> + Send;
 
     /// The node and each parent in turn, from the node to the root, by
     /// `parent_id`; `None` for a node this tenant does not hold. This is the
-    /// one ancestry walk effective access costs per request (workareas.md;
+    /// one ancestry walk effective access costs per request (workspaces.md;
     /// ADR-0025 d1).
-    fn workarea_ancestry(
+    fn workspace_ancestry(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> impl Future<Output = Result<Option<Vec<WorkareaRecord>>, StoreError>> + Send;
+        workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Option<Vec<WorkspaceRecord>>, StoreError>> + Send;
 
     /// The node and every descendant, each once: the node first, then each
     /// depth in id order, so a parent always precedes its children; empty for
     /// a node this tenant does not hold (ADR-0025 d1, subtree(scope)).
-    fn workarea_subtree(
+    fn workspace_subtree(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> impl Future<Output = Result<Vec<WorkareaRecord>, StoreError>> + Send;
+        workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkspaceRecord>, StoreError>> + Send;
 
     /// The node's immediate children, ordered by name in byte order: the
-    /// order the workarea read serves them in (ADR-0025 d14). Names are
+    /// order the workspace read serves them in (ADR-0025 d14). Names are
     /// unique in the tenant, so no two children tie (ADR-0026 d1).
-    fn workarea_children(
+    fn workspace_children(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> impl Future<Output = Result<Vec<WorkareaRecord>, StoreError>> + Send;
+        workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkspaceRecord>, StoreError>> + Send;
 
     /// The status-ladder proposal `transition_id`, pending or ratified;
     /// `None` for one this tenant does not hold (ADR-0009 d3).
@@ -1446,12 +1446,12 @@ pub trait JournalStore: Retriever + Send + Sync {
     /// proposed (`proposed_seq`); empty for a node this tenant does not
     /// hold. A proposal another's ratification made stale is still listed
     /// here, as its row is still pending: the status read drops the ones
-    /// whose `from` is no longer the node's status (workareas.md, the status
+    /// whose `from` is no longer the node's status (workspaces.md, the status
     /// read lists only live proposals).
     fn pending_transitions(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
     ) -> impl Future<Output = Result<Vec<TransitionRecord>, StoreError>> + Send;
 
     fn idempotency_get(
@@ -1509,8 +1509,8 @@ pub trait JournalStore: Retriever + Send + Sync {
 
     /// One page of the tenant's claim edges, pending and ratified, that
     /// `selection` selects — `artifact_id` matching either endpoint,
-    /// `within` holding either endpoint's workarea, and both endpoints rows
-    /// whose workarea is in `readable_nodes` and which are promoted or
+    /// `within` holding either endpoint's workspace, and both endpoints rows
+    /// whose workspace is in `readable_nodes` and which are promoted or
     /// authored by `reader_key_id` — newest first, `created_at` descending
     /// then `edge_id` descending, strictly after `after`, at most `limit` of
     /// them (http-api.md pagination and claim edges). An edge with an
@@ -1546,13 +1546,13 @@ pub trait JournalStore: Retriever + Send + Sync {
         edge_id: Uuid,
     ) -> impl Future<Output = Result<Option<BriefEdgeRecord>, StoreError>> + Send;
 
-    /// Every brief edge into `workarea_id`, pending and ratified, newest
+    /// Every brief edge into `workspace_id`, pending and ratified, newest
     /// first by `created_at`, then by edge id (ADR-0046 d7). Unpaged: the
-    /// count per workarea is unbounded, tracked as #145.
+    /// count per workspace is unbounded, tracked as #145.
     fn brief_edges(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
     ) -> impl Future<Output = Result<Vec<BriefEdgeRecord>, StoreError>> + Send;
 
     fn ratified_term_edges(
@@ -1629,7 +1629,7 @@ pub trait WebStore: JournalStore {
     /// under the name `key_name` gives for the session's user and that
     /// capacity, its access as [`JournalStore::key_access`] reads it, and
     /// for a key that names a user root the root's row and the keys naming
-    /// it, as [`JournalStore::workarea`] and [`Self::web_user_keys`] read
+    /// it, as [`JournalStore::workspace`] and [`Self::web_user_keys`] read
     /// them. `None` for a digest no row holds; a `key_name` that answers
     /// `None`, or a name no row holds, leaves the key `None`. A store may
     /// read them in one transaction under one snapshot, which is what the
@@ -1673,7 +1673,7 @@ pub trait WebStore: JournalStore {
         session_user: &Name,
     ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
 
-    /// The tenant's held versions per workarea: count and oldest
+    /// The tenant's held versions per workspace: count and oldest
     /// (ADR-0045 d10).
     fn web_queue(
         &self,
@@ -1744,7 +1744,7 @@ pub async fn web_credential_rows_read_apart<W: WebStore + ?Sized>(
             let access = store.key_access(tenant_id, key.key_id).await?;
             let (user_root, own_keys) = match key.user {
                 Some(root) => (
-                    store.workarea(tenant_id, root).await?,
+                    store.workspace(tenant_id, root).await?,
                     store.web_user_keys(tenant_id, root).await?,
                 ),
                 None => (None, Vec::new()),
@@ -2271,7 +2271,7 @@ pub trait KeyringStore: Send + Sync {
 
 /// What a request resolved, told as it resolves to the transport that logs
 /// the request: the key a credential named, or that none did, and the
-/// workarea a verb targets, by id (ADR-0042 d2, d14). It decides nothing,
+/// workspace a verb targets, by id (ADR-0042 d2, d14). It decides nothing,
 /// and nothing it is told is a name or a credential's value; the app works
 /// the same with [`NoObserver`], which tells no one.
 pub trait RequestObserver: Send + Sync {
@@ -2279,8 +2279,8 @@ pub trait RequestObserver: Send + Sync {
     /// connection's access token, or, with `None`, resolved to no key.
     fn credential(&self, key: Option<&KeyRecord>, connection: Option<Uuid>);
 
-    /// The request's verb targets `workarea_id`.
-    fn workarea(&self, workarea_id: Uuid);
+    /// The request's verb targets `workspace_id`.
+    fn workspace(&self, workspace_id: Uuid);
 
     /// A recall ran `pipeline`, `fallback` says whether `match: all` fell
     /// back to any term, and `access` how its lists were read, `postings` or
@@ -2337,7 +2337,7 @@ pub trait RequestObserver: Send + Sync {
         let _ = n;
     }
 
-    /// A person's key set a workarea's mode (ADR-0030 d5).
+    /// A person's key set a workspace's mode (ADR-0030 d5).
     fn mode_set(&self, mode: &'static str) {
         let _ = mode;
     }
@@ -2373,7 +2373,7 @@ pub trait TelemetryMeter: Send + Sync {
     /// or `store_error`.
     fn labels_dropped(&self, reason: &'static str, n: u64);
     /// A remembered memory was (`same_text`) or was not (`none`) an exact
-    /// duplicate of a served memory of its workarea.
+    /// duplicate of a served memory of its workspace.
     fn remembered(&self, relation: &'static str);
     /// The queue's depth now.
     fn queue_depth(&self, depth: i64);
@@ -2394,7 +2394,7 @@ pub struct NoObserver;
 impl RequestObserver for NoObserver {
     fn credential(&self, _key: Option<&KeyRecord>, _connection: Option<Uuid>) {}
 
-    fn workarea(&self, _workarea_id: Uuid) {}
+    fn workspace(&self, _workspace_id: Uuid) {}
 }
 
 /// Why a rerank did not reorder a recall (ADR-0053 d5): the core then serves

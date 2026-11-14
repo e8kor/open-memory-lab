@@ -115,7 +115,7 @@ fn a_free_label_joins_two_memories() {
 
 #[test]
 fn the_proposers_key_never_ratifies_its_own_edge() {
-    let r = ratifier(Role::Dreamer, PROPOSER, PROPOSER_KEY);
+    let r = ratifier(Role::Reviewer, PROPOSER, PROPOSER_KEY);
     let refusal = ratify(&r, &LineageClosure::new()).unwrap_err();
     assert_eq!(refusal, RatifyRefusal::RatifierIsProposer);
     assert_eq!(refusal.code(), "review.ratifier_is_proposer");
@@ -123,7 +123,7 @@ fn the_proposers_key_never_ratifies_its_own_edge() {
 
 #[test]
 fn another_key_of_the_proposers_principal_is_refused_as_the_proposer() {
-    let r = ratifier(Role::Dreamer, PROPOSER, 2);
+    let r = ratifier(Role::Reviewer, PROPOSER, 2);
     let refusal = ratify(&r, &LineageClosure::new()).unwrap_err();
     assert_eq!(refusal, RatifyRefusal::RatifierIsProposer);
     assert_eq!(refusal.code(), "review.ratifier_is_proposer");
@@ -140,17 +140,17 @@ fn a_ratifier_in_either_endpoints_lineage_is_refused_author_in_lineage() {
     target_side.add_principal("crew:target-author");
     target_side.add_key_id(id(20));
 
-    let by_principal = ratifier(Role::Dreamer, "crew:source-author", 11);
+    let by_principal = ratifier(Role::Reviewer, "crew:source-author", 11);
     let refusal = ratify(&by_principal, &source_side).unwrap_err();
     assert_eq!(refusal, RatifyRefusal::AuthorInLineage);
     assert_eq!(refusal.code(), "review.author_in_lineage");
 
-    let by_key = ratifier(Role::Dreamer, "crew:someone-else", 20);
+    let by_key = ratifier(Role::Reviewer, "crew:someone-else", 20);
     let refusal = ratify(&by_key, &target_side).unwrap_err();
     assert_eq!(refusal, RatifyRefusal::AuthorInLineage);
     assert_eq!(refusal.code(), "review.author_in_lineage");
 
-    let outsider = ratifier(Role::Dreamer, "crew:outsider", 30);
+    let outsider = ratifier(Role::Reviewer, "crew:outsider", 30);
     assert_eq!(ratify(&outsider, &source_side), Ok(()));
     assert_eq!(ratify(&outsider, &target_side), Ok(()));
 }
@@ -160,7 +160,7 @@ fn the_proposer_check_answers_before_the_lineage_check() {
     let mut closure = LineageClosure::new();
     closure.add_principal(PROPOSER);
     closure.add_key_id(id(PROPOSER_KEY));
-    let r = ratifier(Role::Dreamer, PROPOSER, PROPOSER_KEY);
+    let r = ratifier(Role::Reviewer, PROPOSER, PROPOSER_KEY);
     assert_eq!(ratify(&r, &closure), Err(RatifyRefusal::RatifierIsProposer));
 }
 
@@ -171,7 +171,7 @@ fn a_writer_ratifier_is_refused_by_role_before_any_r2_check() {
     closure.add_key_id(id(PROPOSER_KEY));
     let r = ratifier(Role::Writer, PROPOSER, PROPOSER_KEY);
     let refusal = ratify(&r, &closure).unwrap_err();
-    assert_eq!(refusal, RatifyRefusal::NotDreamer(Role::Writer));
+    assert_eq!(refusal, RatifyRefusal::NotReviewer(Role::Writer));
     assert_eq!(refusal.code(), "access.verb_ceiling");
 }
 

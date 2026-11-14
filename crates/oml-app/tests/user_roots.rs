@@ -1,4 +1,4 @@
-//! User roots, user keys, node grants, the two kinds of workarea namespace,
+//! User roots, user keys, node grants, the two kinds of workspace namespace,
 //! curation into `universe` and its served view (ADR-0044), over the
 //! in-memory doubles. Each test is named after the sentence of ADR-0044 d15
 //! it proves.
@@ -8,7 +8,7 @@ use oml_app::app::Capacity;
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::{Name, NamedKind, Reference};
 use oml_app::domain::web::Email;
-use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, event_types};
+use oml_app::domain::{MemoryKind, MemoryStatus, Role, UsedBy, event_types};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::ports::JournalStore as _;
 use oml_app::types::{
@@ -91,8 +91,8 @@ fn user_req(role: Role, user: &str, principal: &str, grants: Vec<GrantRequest>) 
         role,
         name: fresh_key_name(),
         principal: principal.to_owned(),
-        held_by: Some(HeldBy::Agent),
-        default_workarea: None,
+        used_by: Some(UsedBy::Agent),
+        default_workspace: None,
         crew: None,
         grants,
         user: Some(name(user)),
@@ -122,18 +122,18 @@ async fn user_writer(app: &TestApp, admin: &str, user: &str, principal: &str) ->
     .expect("issue a user writer key")
 }
 
-async fn user_dreamer(app: &TestApp, admin: &str, user: &str, principal: &str) -> IssuedKey {
+async fn user_reviewer(app: &TestApp, admin: &str, user: &str, principal: &str) -> IssuedKey {
     app.issue_key(
         admin,
         &user_req(
-            Role::Dreamer,
+            Role::Reviewer,
             user,
             principal,
-            vec![grant(by_name(user), Role::Dreamer)],
+            vec![grant(by_name(user), Role::Reviewer)],
         ),
     )
     .await
-    .expect("issue a user dreamer key")
+    .expect("issue a user reviewer key")
 }
 
 /// A tenant key, no user, with `grants`.
@@ -166,23 +166,23 @@ async fn curator(app: &TestApp, admin: &str, reads: &[&str]) -> IssuedKey {
     tenant_key(app, admin, Role::Writer, "curator", grants).await
 }
 
-/// A tenant dreamer on the `universe` node: the second identity curation
+/// A tenant reviewer on the `universe` node: the second identity curation
 /// needs (ADR-0044 d7).
 async fn universe_reviewer(app: &TestApp, admin: &str, principal: &str) -> IssuedKey {
     tenant_key(
         app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         principal,
         vec![
-            node_grant(by_name("universe"), Role::Dreamer),
+            node_grant(by_name("universe"), Role::Reviewer),
             node_grant(by_name("universe"), Role::Reader),
         ],
     )
     .await
 }
 
-fn submit(idem: &str, body: &str, workarea: Option<&str>) -> SubmitRequest {
+fn submit(idem: &str, body: &str, workspace: Option<&str>) -> SubmitRequest {
     SubmitRequest {
         on_similar: Default::default(),
         anchor: None,
@@ -192,7 +192,7 @@ fn submit(idem: &str, body: &str, workarea: Option<&str>) -> SubmitRequest {
         verb: None,
         kind: MemoryKind::Memory,
         body: body.to_owned(),
-        workarea: workarea.map(by_name),
+        workspace: workspace.map(by_name),
         derives_from: Vec::new(),
         severity: None,
         rule: None,
@@ -217,14 +217,14 @@ async fn approve(app: &TestApp, reviewer: &str, id: Uuid) {
         .expect("approve");
 }
 
-fn recall(query: &str, workarea: Option<&str>) -> RecallRequest {
+fn recall(query: &str, workspace: Option<&str>) -> RecallRequest {
     RecallRequest {
         sources: None,
         timings: false,
         anchor: oml_app::types::AnchorFilter::default(),
         query: query.to_owned(),
         k: 10,
-        workarea: workarea.map(by_name),
+        workspace: workspace.map(by_name),
         kinds: Vec::new(),
         include_text: true,
         include_unreviewed: Some(false),
@@ -250,7 +250,7 @@ struct Curated {
 async fn curated(app: &TestApp, boot: &BootstrapResult) -> Curated {
     let admin = &boot.admin_key.value;
     let alice = user_writer(app, admin, "alice", "alice/laptop").await;
-    let alice_review = user_dreamer(app, admin, "alice", "alice/review").await;
+    let alice_review = user_reviewer(app, admin, "alice", "alice/review").await;
     let source = written(
         app,
         &alice.value,
@@ -293,7 +293,7 @@ async fn a_node_grant_with_a_deny_entry_is_refused() {
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
     let crew = app
-        .create_workarea(admin, &name("crew"), Some(by_name("universe")), None)
+        .create_workspace(admin, &name("crew"), Some(by_name("universe")), None)
         .await
         .expect("crew");
     let err = app
@@ -306,7 +306,7 @@ async fn a_node_grant_with_a_deny_entry_is_refused() {
                     "unused",
                     "reader",
                     vec![GrantRequest {
-                        deny: vec![crew.workarea.workarea_id.into()],
+                        deny: vec![crew.workspace.workspace_id.into()],
                         ..node_grant(by_name("universe"), Role::Reader)
                     }],
                 )
@@ -328,15 +328,15 @@ async fn the_first_key_naming_a_user_creates_its_root_under_universe() {
     let user = alice.user.clone().expect("a user key names its root");
     assert_eq!(user.name.as_str(), "alice");
     let root = store
-        .workarea(boot.tenant_id, user.id)
+        .workspace(boot.tenant_id, user.id)
         .await
         .expect("read")
         .expect("the root exists");
     assert!(root.user_root);
-    assert_eq!(root.parent_id, Some(boot.root_workarea_id));
+    assert_eq!(root.parent_id, Some(boot.root_workspace_id));
     assert_eq!(root.namespace, None, "its name is in the shared namespace");
-    assert_eq!(alice.default_workarea, Some(user.id));
-    // The root's workarea.create precedes key.issued, both by the issuing
+    assert_eq!(alice.default_workspace, Some(user.id));
+    // The root's workspace.create precedes key.issued, both by the issuing
     // admin, and carries user_root: true; key.issued names the root.
     let events = store
         .events_range(boot.tenant_id, 1, 1000)
@@ -345,10 +345,10 @@ async fn the_first_key_naming_a_user_creates_its_root_under_universe() {
     let create = events
         .iter()
         .position(|e| {
-            e.envelope.event_type == event_types::WORKAREA_CREATE
-                && e.envelope.payload["workarea_id"] == user.id.to_string()
+            e.envelope.event_type == event_types::WORKSPACE_CREATE
+                && e.envelope.payload["workspace_id"] == user.id.to_string()
         })
-        .expect("workarea.create of the root");
+        .expect("workspace.create of the root");
     assert_eq!(events[create].envelope.payload["user_root"], true);
     assert_eq!(
         events[create].envelope.api_key_id,
@@ -377,7 +377,7 @@ async fn a_second_key_naming_the_user_joins_its_root() {
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
     let first = user_writer(&app, admin, "alice", "alice/laptop").await;
-    let second = user_dreamer(&app, admin, "alice", "alice/review").await;
+    let second = user_reviewer(&app, admin, "alice", "alice/review").await;
     assert_eq!(first.user, second.user);
     let creates = store
         .events_range(boot.tenant_id, 1, 1000)
@@ -385,7 +385,7 @@ async fn a_second_key_naming_the_user_joins_its_root() {
         .expect("journal")
         .into_iter()
         .filter(|e| {
-            e.envelope.event_type == event_types::WORKAREA_CREATE
+            e.envelope.event_type == event_types::WORKSPACE_CREATE
                 && e.envelope.payload["user_root"] == true
         })
         .count();
@@ -393,13 +393,13 @@ async fn a_second_key_naming_the_user_joins_its_root() {
 }
 
 #[tokio::test]
-async fn a_user_named_like_a_shared_workarea_is_name_taken() {
+async fn a_user_named_like_a_shared_workspace_is_name_taken() {
     let (app, store) = rig();
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
-    app.create_workarea(admin, &name("crew"), Some(by_name("universe")), None)
+    app.create_workspace(admin, &name("crew"), Some(by_name("universe")), None)
         .await
-        .expect("a shared workarea");
+        .expect("a shared workspace");
     let before = store
         .chain_head(boot.tenant_id)
         .await
@@ -419,7 +419,7 @@ async fn a_user_named_like_a_shared_workarea_is_name_taken() {
         .await
         .expect_err("a shared name is no user's");
     assert!(
-        matches!(err, AppError::NameTaken { kind: NamedKind::Workarea, ref name } if name.as_str() == "crew"),
+        matches!(err, AppError::NameTaken { kind: NamedKind::Workspace, ref name } if name.as_str() == "crew"),
         "{err:?}"
     );
     let err = app
@@ -450,7 +450,7 @@ async fn user_on_an_admin_key_is_refused() {
         .issue_key(
             admin,
             &IssueKeyRequest {
-                held_by: Some(HeldBy::Service),
+                used_by: Some(UsedBy::Service),
                 ..user_req(Role::Reader, "alice", "svc", Vec::new())
             },
         )
@@ -459,7 +459,7 @@ async fn user_on_an_admin_key_is_refused() {
     assert!(matches!(err, AppError::UserRefused(_)), "{err:?}");
     assert_eq!(
         store
-            .resolve_name(boot.tenant_id, NamedKind::Workarea, &name("alice"))
+            .resolve_name(boot.tenant_id, NamedKind::Workspace, &name("alice"))
             .await
             .expect("resolve"),
         None,
@@ -472,9 +472,9 @@ async fn a_user_keys_grant_outside_its_root_is_refused_as_issuer_ceiling() {
     let (app, store) = rig();
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
-    app.create_workarea(admin, &name("crew"), Some(by_name("universe")), None)
+    app.create_workspace(admin, &name("crew"), Some(by_name("universe")), None)
         .await
-        .expect("a shared workarea");
+        .expect("a shared workspace");
     user_writer(&app, admin, "bob", "bob/laptop").await;
     for outside in ["crew", "universe", "bob"] {
         let err = app
@@ -496,7 +496,7 @@ async fn a_user_keys_grant_outside_its_root_is_refused_as_issuer_ceiling() {
                                     store
                                         .resolve_name(
                                             boot.tenant_id,
-                                            NamedKind::Workarea,
+                                            NamedKind::Workspace,
                                             &name(outside),
                                         )
                                         .await
@@ -535,13 +535,13 @@ async fn issuance_adds_a_reader_node_grant_on_universe_to_every_user_key() {
     let admin = &boot.admin_key.value;
     for key in [
         user_writer(&app, admin, "alice", "alice/laptop").await,
-        user_dreamer(&app, admin, "alice", "alice/review").await,
+        user_reviewer(&app, admin, "alice", "alice/review").await,
     ] {
         let added: Vec<_> = key
             .access
             .grants
             .iter()
-            .filter(|g| g.grant.node == boot.root_workarea_id)
+            .filter(|g| g.grant.node == boot.root_workspace_id)
             .collect();
         assert_eq!(added.len(), 1, "one grant on universe");
         assert_eq!(added[0].grant.role, Role::Reader);
@@ -572,28 +572,28 @@ async fn issuance_adds_a_reader_node_grant_on_universe_to_every_user_key() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn two_users_each_create_a_workarea_named_project() {
+async fn two_users_each_create_a_workspace_named_project() {
     let (app, _) = rig();
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
     let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
     let bob = user_writer(&app, admin, "bob", "bob/laptop").await;
     let a = app
-        .create_workarea(&alice.value, &name("project"), None, None)
+        .create_workspace(&alice.value, &name("project"), None, None)
         .await
         .expect("alice's project");
     let b = app
-        .create_workarea(&bob.value, &name("project"), None, None)
+        .create_workspace(&bob.value, &name("project"), None, None)
         .await
         .expect("bob's project");
     assert_eq!(a.path, "universe.alice.project");
     assert_eq!(b.path, "universe.bob.project");
-    assert_ne!(a.workarea.workarea_id, b.workarea.workarea_id);
+    assert_ne!(a.workspace.workspace_id, b.workspace.workspace_id);
     // A second one in one user's namespace is taken, and so is the user's
     // own name and universe there.
     for taken in ["project", "alice", "universe"] {
         let err = app
-            .create_workarea(&alice.value, &name(taken), Some(by_name("project")), None)
+            .create_workspace(&alice.value, &name(taken), Some(by_name("project")), None)
             .await
             .expect_err("taken in alice's namespace");
         assert!(
@@ -602,7 +602,7 @@ async fn two_users_each_create_a_workarea_named_project() {
         );
     }
     // The shared namespace still holds a shared `project` apart.
-    app.create_workarea(admin, &name("project"), Some(by_name("universe")), None)
+    app.create_workspace(admin, &name("project"), Some(by_name("universe")), None)
         .await
         .expect("a shared project");
 }
@@ -612,27 +612,27 @@ async fn a_user_keys_bare_name_resolves_in_its_own_root() {
     let (app, _) = rig();
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
-    app.create_workarea(admin, &name("project"), Some(by_name("universe")), None)
+    app.create_workspace(admin, &name("project"), Some(by_name("universe")), None)
         .await
         .expect("a shared project");
     let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
     let mine = app
-        .create_workarea(&alice.value, &name("project"), None, None)
+        .create_workspace(&alice.value, &name("project"), None, None)
         .await
         .expect("alice's project");
     let info = app
-        .workarea_info(alice.value.as_str(), Some(by_name("project")))
+        .workspace_info(alice.value.as_str(), Some(by_name("project")))
         .await
         .expect("read by bare name");
-    assert_eq!(info.workarea.workarea_id, mine.workarea.workarea_id);
+    assert_eq!(info.workspace.workspace_id, mine.workspace.workspace_id);
     assert_eq!(info.path, "universe.alice.project");
     // Its own root's name and universe resolve too.
     let root = app
-        .workarea_info(alice.value.as_str(), Some(by_name("alice")))
+        .workspace_info(alice.value.as_str(), Some(by_name("alice")))
         .await
         .expect("its root");
-    assert!(root.workarea.user_root);
-    app.workarea_info(alice.value.as_str(), Some(by_name("universe")))
+    assert!(root.workspace.user_root);
+    app.workspace_info(alice.value.as_str(), Some(by_name("universe")))
         .await
         .expect("universe by its node grant");
     // A tenant key's bare name is the shared one.
@@ -645,7 +645,7 @@ async fn a_user_keys_bare_name_resolves_in_its_own_root() {
     )
     .await;
     let shared = app
-        .workarea_info(tenant.value.as_str(), Some(by_name("project")))
+        .workspace_info(tenant.value.as_str(), Some(by_name("project")))
         .await
         .expect("the shared project");
     assert_eq!(shared.path, "universe.project");
@@ -659,24 +659,24 @@ async fn a_qualified_name_resolves_for_an_admin() {
     let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
     let bob = user_writer(&app, admin, "bob", "bob/laptop").await;
     let project = app
-        .create_workarea(&alice.value, &name("project"), None, None)
+        .create_workspace(&alice.value, &name("project"), None, None)
         .await
         .expect("alice's project");
     let info = app
-        .workarea_info(admin.as_str(), Some(by_name("alice.project")))
+        .workspace_info(admin.as_str(), Some(by_name("alice.project")))
         .await
         .expect("an admin reads it by its qualified name");
-    assert_eq!(info.workarea.workarea_id, project.workarea.workarea_id);
+    assert_eq!(info.workspace.workspace_id, project.workspace.workspace_id);
     // Its bare name is not in the shared namespace.
     assert!(matches!(
-        app.workarea_info(admin.as_str(), Some(by_name("project")))
+        app.workspace_info(admin.as_str(), Some(by_name("project")))
             .await,
         Err(AppError::NotFound)
     ));
     // Bob's key resolves alice's qualified name and is told nothing more
     // than for an id it cannot see.
     assert!(matches!(
-        app.workarea_info(bob.value.as_str(), Some(by_name("alice.project")))
+        app.workspace_info(bob.value.as_str(), Some(by_name("alice.project")))
             .await,
         Err(AppError::NotFound)
     ));
@@ -690,20 +690,20 @@ async fn a_three_label_value_is_still_a_path_and_refused() {
 }
 
 #[tokio::test]
-async fn a_user_key_creates_a_workarea_under_its_root_by_default() {
+async fn a_user_key_creates_a_workspace_under_its_root_by_default() {
     let (app, store) = rig();
     let boot = bootstrap(&app).await;
     let alice = user_writer(&app, &boot.admin_key.value, "alice", "alice/laptop").await;
     let root = alice.user.clone().expect("root").id;
     let created = app
-        .create_workarea(&alice.value, &name("project"), None, None)
+        .create_workspace(&alice.value, &name("project"), None, None)
         .await
         .expect("created under the root");
-    assert_eq!(created.workarea.parent_id, Some(root));
-    assert_eq!(created.workarea.namespace, Some(root));
-    assert!(!created.workarea.user_root);
+    assert_eq!(created.workspace.parent_id, Some(root));
+    assert_eq!(created.workspace.namespace, Some(root));
+    assert!(!created.workspace.user_root);
     let nested = app
-        .create_workarea(
+        .create_workspace(
             &alice.value,
             &name("experiments"),
             Some(by_name("alice.project")),
@@ -719,8 +719,8 @@ async fn a_user_key_creates_a_workarea_under_its_root_by_default() {
     let create = events
         .iter()
         .find(|e| {
-            e.envelope.event_type == event_types::WORKAREA_CREATE
-                && e.envelope.payload["workarea_id"] == created.workarea.workarea_id.to_string()
+            e.envelope.event_type == event_types::WORKSPACE_CREATE
+                && e.envelope.payload["workspace_id"] == created.workspace.workspace_id.to_string()
         })
         .expect("journalled");
     assert_eq!(create.envelope.api_key_id, Some(alice.key_id));
@@ -732,14 +732,14 @@ async fn a_user_key_cannot_create_outside_its_root() {
     let (app, store) = rig();
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
-    app.create_workarea(admin, &name("crew"), Some(by_name("universe")), None)
+    app.create_workspace(admin, &name("crew"), Some(by_name("universe")), None)
         .await
-        .expect("a shared workarea");
+        .expect("a shared workspace");
     let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
     let bob = user_writer(&app, admin, "bob", "bob/laptop").await;
     // universe: read by the node grant, so grant_refused.
     let err = app
-        .create_workarea(&alice.value, &name("x"), Some(by_name("universe")), None)
+        .create_workspace(&alice.value, &name("x"), Some(by_name("universe")), None)
         .await
         .expect_err("not under universe");
     assert!(
@@ -752,24 +752,24 @@ async fn a_user_key_cannot_create_outside_its_root() {
         ),
         "{err:?}"
     );
-    // A shared workarea, or another user's root: absent.
+    // A shared workspace, or another user's root: absent.
     let bob_root = bob.user.expect("root").id;
     for parent in [Reference::from(bob_root), by_name("bob")] {
         let err = app
-            .create_workarea(&alice.value, &name("x"), Some(parent), None)
+            .create_workspace(&alice.value, &name("x"), Some(parent), None)
             .await
             .expect_err("not under bob");
         assert!(matches!(err, AppError::NotFound), "{err:?}");
     }
     let crew = store
-        .resolve_name(boot.tenant_id, NamedKind::Workarea, &name("crew"))
+        .resolve_name(boot.tenant_id, NamedKind::Workspace, &name("crew"))
         .await
         .expect("resolve")
         .expect("crew");
     let err = app
-        .create_workarea(&alice.value, &name("x"), Some(crew.into()), None)
+        .create_workspace(&alice.value, &name("x"), Some(crew.into()), None)
         .await
-        .expect_err("not under a shared workarea");
+        .expect_err("not under a shared workspace");
     assert!(matches!(err, AppError::NotFound), "{err:?}");
     // A reader user key, or a tenant writer key, holds no create verb.
     let reader = app
@@ -785,7 +785,7 @@ async fn a_user_key_cannot_create_outside_its_root() {
         .await
         .expect("reader");
     assert!(matches!(
-        app.create_workarea(&reader.value, &name("x"), None, None)
+        app.create_workspace(&reader.value, &name("x"), None, None)
             .await,
         Err(AppError::VerbCeiling { .. })
     ));
@@ -798,7 +798,7 @@ async fn a_user_key_cannot_create_outside_its_root() {
     )
     .await;
     assert!(matches!(
-        app.create_workarea(
+        app.create_workspace(
             &tenant_writer.value,
             &name("x"),
             Some(by_name("crew")),
@@ -858,7 +858,7 @@ async fn a_curators_write_into_universe_is_held() {
         .await
         .expect("a curator writes universe")
         .receipt;
-    assert_eq!(receipt.workarea_id, boot.root_workarea_id);
+    assert_eq!(receipt.workspace_id, boot.root_workspace_id);
     assert_eq!(receipt.state, "held");
 }
 
@@ -868,7 +868,7 @@ async fn a_curated_claim_is_never_promoted_by_the_sources_author() {
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
     let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
-    let alice_review = user_dreamer(&app, admin, "alice", "alice/review").await;
+    let alice_review = user_reviewer(&app, admin, "alice", "alice/review").await;
     let source = written(&app, &alice.value, &submit("src", "a finding", None)).await;
     approve(&app, &alice_review.value, source).await;
     let curator = curator(&app, admin, &["alice"]).await;
@@ -882,7 +882,7 @@ async fn a_curated_claim_is_never_promoted_by_the_sources_author() {
         },
     )
     .await;
-    // A tenant dreamer on universe that shares the source author's
+    // A tenant reviewer on universe that shares the source author's
     // principal is in the lineage closure; so is the curator's principal.
     for principal in ["alice/laptop", "curator"] {
         let excluded = universe_reviewer(&app, admin, principal).await;
@@ -892,11 +892,11 @@ async fn a_curated_claim_is_never_promoted_by_the_sources_author() {
             .expect_err("in the lineage closure");
         assert!(matches!(err, AppError::Verdict(_)), "{principal}: {err:?}");
     }
-    // A user dreamer key never reaches universe at all.
+    // A user reviewer key never reaches universe at all.
     let err = app
         .post_verdict(&alice_review.value, placed, Verdict::Approve, None)
         .await
-        .expect_err("alice's dreamer has no dreamer on universe");
+        .expect_err("alice's reviewer has no reviewer on universe");
     assert!(
         matches!(err, AppError::NotFound | AppError::GrantRefused { .. }),
         "{err:?}"
@@ -912,12 +912,12 @@ async fn a_curated_claim_is_never_promoted_by_the_sources_author() {
 }
 
 #[tokio::test]
-async fn a_users_own_dreamer_key_may_review_its_agents_writes() {
+async fn a_users_own_reviewer_key_may_review_its_agents_writes() {
     let (app, _) = rig();
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
     let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
-    let alice_review = user_dreamer(&app, admin, "alice", "alice/review").await;
+    let alice_review = user_reviewer(&app, admin, "alice", "alice/review").await;
     let id = written(&app, &alice.value, &submit("w", "an agent's write", None)).await;
     let outcome = app
         .post_verdict(&alice_review.value, id, Verdict::Approve, None)
@@ -941,8 +941,8 @@ async fn a_universe_claim_serves_no_principal_and_no_derives_from_to_a_reader() 
         .await
         .expect("bob reads universe's claim");
     assert!(got.anonymous);
-    assert_eq!(got.workarea_path.as_deref(), Some("universe"));
-    assert_eq!(got.memory.workarea_id, boot.root_workarea_id);
+    assert_eq!(got.workspace_path.as_deref(), Some("universe"));
+    assert_eq!(got.memory.workspace_id, boot.root_workspace_id);
     assert!(got.memory.author_principal.is_empty());
     assert_eq!(got.memory.author_key_id, Uuid::nil());
     assert!(got.memory.derives_from.is_empty());
@@ -1012,9 +1012,9 @@ async fn recall_inside_a_user_root_ranks_universe_hits_with_its_own() {
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
     let c = curated(&app, &boot).await;
-    let alice_review = user_dreamer(&app, admin, "alice", "alice/review2").await;
+    let alice_review = user_reviewer(&app, admin, "alice", "alice/review2").await;
     let project = app
-        .create_workarea(&c.alice.value, &name("project"), None, None)
+        .create_workspace(&c.alice.value, &name("project"), None, None)
         .await
         .expect("project");
     let own = written(
@@ -1039,9 +1039,9 @@ async fn recall_inside_a_user_root_ranks_universe_hits_with_its_own() {
         "the source lies outside the scope"
     );
     assert_eq!(project.path, "universe.alice.project");
-    // A tenant key scoped to a shared workarea gets no universe join.
+    // A tenant key scoped to a shared workspace gets no universe join.
     let crew = app
-        .create_workarea(admin, &name("crew"), Some(by_name("universe")), None)
+        .create_workspace(admin, &name("crew"), Some(by_name("universe")), None)
         .await
         .expect("crew");
     let tenant = tenant_key(
@@ -1050,7 +1050,7 @@ async fn recall_inside_a_user_root_ranks_universe_hits_with_its_own() {
         Role::Reader,
         "tr",
         vec![
-            grant(crew.workarea.workarea_id.into(), Role::Reader),
+            grant(crew.workspace.workspace_id.into(), Role::Reader),
             node_grant(by_name("universe"), Role::Reader),
         ],
     )
@@ -1103,20 +1103,20 @@ async fn a_user_key_never_sees_another_users_root_in_the_tree() {
     let admin = &boot.admin_key.value;
     let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
     let bob = user_writer(&app, admin, "bob", "bob/laptop").await;
-    app.create_workarea(&bob.value, &name("secret"), None, None)
+    app.create_workspace(&bob.value, &name("secret"), None, None)
         .await
-        .expect("bob's workarea");
-    app.create_workarea(admin, &name("crew"), Some(by_name("universe")), None)
+        .expect("bob's workspace");
+    app.create_workspace(admin, &name("crew"), Some(by_name("universe")), None)
         .await
-        .expect("a shared workarea");
+        .expect("a shared workspace");
     let tree = app
-        .workarea_tree(&alice.value, by_name("universe"), None, 100)
+        .workspace_tree(&alice.value, by_name("universe"), None, 100)
         .await
         .expect("alice reads the tree from universe");
     let paths: Vec<&str> = tree.items.iter().map(|n| n.path.as_str()).collect();
     assert_eq!(paths, vec!["universe", "universe.alice"]);
     let children = app
-        .workarea_info(alice.value.as_str(), Some(by_name("universe")))
+        .workspace_info(alice.value.as_str(), Some(by_name("universe")))
         .await
         .expect("universe")
         .children;
@@ -1126,7 +1126,7 @@ async fn a_user_key_never_sees_another_users_root_in_the_tree() {
     );
     // The admin sees every user root by name.
     let all = app
-        .workarea_tree(admin, by_name("universe"), None, 100)
+        .workspace_tree(admin, by_name("universe"), None, 100)
         .await
         .expect("admin");
     assert!(all.items.iter().any(|n| n.path == "universe.bob.secret"));
@@ -1139,7 +1139,7 @@ async fn a_key_naming_a_root_that_is_not_a_user_root_is_served_nothing() {
     let alice = user_writer(&app, &boot.admin_key.value, "alice", "alice/laptop").await;
     // A store row that names a shared node as its user: forged here, since
     // no verb writes one.
-    store.set_key_user(boot.tenant_id, alice.key_id, Some(boot.root_workarea_id));
+    store.set_key_user(boot.tenant_id, alice.key_id, Some(boot.root_workspace_id));
     let err = app
         .whoami(&alice.value)
         .await
@@ -1174,9 +1174,9 @@ async fn an_admin_reads_a_users_root_by_the_users_name_and_creates_none() {
         app.user_root(admin, &name("alice")).await.expect("read"),
         None
     );
-    app.create_workarea(admin, &name("crew"), Some(by_name("universe")), None)
+    app.create_workspace(admin, &name("crew"), Some(by_name("universe")), None)
         .await
-        .expect("a shared workarea");
+        .expect("a shared workspace");
     assert!(matches!(
         app.user_root(admin, &name("crew")).await,
         Err(AppError::NameTaken { .. })
@@ -1187,7 +1187,7 @@ async fn an_admin_reads_a_users_root_by_the_users_name_and_creates_none() {
         .await
         .expect("read")
         .expect("the root the first key created");
-    assert_eq!(Some(root.workarea_id), alice.user.map(|u| u.id));
+    assert_eq!(Some(root.workspace_id), alice.user.map(|u| u.id));
     assert!(matches!(
         app.user_root(&alice.value, &name("alice")).await,
         Err(AppError::VerbCeiling { .. })
@@ -1200,12 +1200,12 @@ async fn an_admin_reads_a_users_root_by_the_users_name_and_creates_none() {
 
 use oml_app::domain::guardrail::{GuardrailScope, Severity};
 
-fn guardrail(idem: &str, body: &str, workarea: Option<&str>) -> SubmitRequest {
+fn guardrail(idem: &str, body: &str, workspace: Option<&str>) -> SubmitRequest {
     SubmitRequest {
         on_similar: Default::default(),
         kind: MemoryKind::Guardrail,
         severity: Some(Severity::Must),
-        ..submit(idem, body, workarea)
+        ..submit(idem, body, workspace)
     }
 }
 
@@ -1240,7 +1240,7 @@ async fn a_user_key_with_scope_ancestors_loads_universes_guardrails_through_its_
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
     let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
-    let alice_review = user_dreamer(&app, admin, "alice", "alice/review").await;
+    let alice_review = user_reviewer(&app, admin, "alice", "alice/review").await;
     let own = written(
         &app,
         &alice.value,
@@ -1257,13 +1257,13 @@ async fn a_user_key_with_scope_ancestors_loads_universes_guardrails_through_its_
     let paths: Vec<Option<&str>> = set
         .guardrails
         .iter()
-        .map(|g| g.workarea_path.as_deref())
+        .map(|g| g.workspace_path.as_deref())
         .collect();
     assert_eq!(paths, [Some("universe"), Some("universe.alice")]);
 }
 
 #[tokio::test]
-async fn a_user_key_with_scope_workarea_loads_no_universe_guardrail() {
+async fn a_user_key_with_scope_workspace_loads_no_universe_guardrail() {
     let (app, _) = rig();
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
@@ -1272,7 +1272,7 @@ async fn a_user_key_with_scope_workarea_loads_no_universe_guardrail() {
         .issue_key(
             admin,
             &IssueKeyRequest {
-                guardrail_scope: Some(GuardrailScope::Workarea),
+                guardrail_scope: Some(GuardrailScope::Workspace),
                 ..user_req(
                     Role::Reader,
                     "alice",
@@ -1284,7 +1284,7 @@ async fn a_user_key_with_scope_workarea_loads_no_universe_guardrail() {
         .await
         .expect("issue a narrow user key");
     let set = set_of(&app, &narrow.value).await;
-    assert_eq!(set.guardrail_scope, GuardrailScope::Workarea);
+    assert_eq!(set.guardrail_scope, GuardrailScope::Workspace);
     assert!(set.guardrails.is_empty(), "{:?}", texts(&set));
 }
 
@@ -1294,7 +1294,7 @@ async fn no_guardrail_of_another_users_root_is_ever_served() {
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
     let bob = user_writer(&app, admin, "bob", "bob/laptop").await;
-    let bob_review = user_dreamer(&app, admin, "bob", "bob/review").await;
+    let bob_review = user_reviewer(&app, admin, "bob", "bob/review").await;
     let bobs = written(&app, &bob.value, &guardrail("b-g", "Bob's own rule.", None)).await;
     approve(&app, &bob_review.value, bobs).await;
     let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
@@ -1306,7 +1306,7 @@ async fn no_guardrail_of_another_users_root_is_ever_served() {
         .guardrails(
             alice.value.as_str(),
             &GuardrailRequest {
-                workarea: Some(Reference::Name(name("bob"))),
+                workspace: Some(Reference::Name(name("bob"))),
             },
         )
         .await
@@ -1341,11 +1341,11 @@ async fn a_universe_guardrail_is_served_with_origin_universe_its_verdicts_and_no
     let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
     let set = set_of(&app, &alice.value).await;
     let g = set.guardrails.first().expect("the universe guardrail");
-    assert_eq!(g.workarea_path.as_deref(), Some("universe"));
+    assert_eq!(g.workspace_path.as_deref(), Some("universe"));
     assert_eq!(g.depth, 0);
     // Its verdict's attestation and time, never a key (d18 Q6).
     assert_eq!(g.verdicts.len(), 1);
-    assert_eq!(g.verdicts[0].held_by, HeldBy::Agent);
+    assert_eq!(g.verdicts[0].used_by, UsedBy::Agent);
 }
 
 #[tokio::test]
@@ -1354,7 +1354,7 @@ async fn the_users_reviewer_key_ratifies_a_guardrail_its_agents_propose_in_its_r
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
     let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
-    let alice_review = user_dreamer(&app, admin, "alice", "alice/review").await;
+    let alice_review = user_reviewer(&app, admin, "alice", "alice/review").await;
     let id = written(
         &app,
         &alice.value,
@@ -1377,23 +1377,23 @@ async fn the_users_reviewer_key_ratifies_a_guardrail_its_agents_propose_in_its_r
 // The lifecycle and edges inside user roots (ADR-0046 d1, d2, d5)
 // ---------------------------------------------------------------------------
 
-/// A dreamer key of `user` that also reads its root: it proposes, ratifies
+/// A reviewer key of `user` that also reads its root: it proposes, ratifies
 /// and reads the claims it links.
 async fn user_curator(app: &TestApp, admin: &str, user: &str, principal: &str) -> IssuedKey {
     app.issue_key(
         admin,
         &user_req(
-            Role::Dreamer,
+            Role::Reviewer,
             user,
             principal,
             vec![
-                grant(by_name(user), Role::Dreamer),
+                grant(by_name(user), Role::Reviewer),
                 grant(by_name(user), Role::Reader),
             ],
         ),
     )
     .await
-    .expect("issue a user dreamer key that reads its root")
+    .expect("issue a user reviewer key that reads its root")
 }
 
 #[tokio::test]
@@ -1407,10 +1407,10 @@ async fn a_user_root_climbs_to_committed_and_validated_is_refused_on_it_as_user_
         .propose_transition(
             &first.value,
             by_name("alice"),
-            oml_app::domain::WorkareaStatus::Committed,
+            oml_app::domain::WorkspaceStatus::Protected,
         )
         .await
-        .expect("a user root climbs to committed");
+        .expect("a user root climbs to protected");
     app.ratify_transition(&second.value, by_name("alice"), committed.transition_id)
         .await
         .expect("another key of alice ratifies");
@@ -1418,7 +1418,7 @@ async fn a_user_root_climbs_to_committed_and_validated_is_refused_on_it_as_user_
         .propose_transition(
             &first.value,
             by_name("alice"),
-            oml_app::domain::WorkareaStatus::Validated,
+            oml_app::domain::WorkspaceStatus::Frozen,
         )
         .await
         .unwrap_err();
@@ -1442,7 +1442,7 @@ async fn a_ratification_by_another_key_of_the_same_user_is_journalled_same_user(
     let first = user_curator(&app, admin, "alice", "alice/first").await;
     let second = user_curator(&app, admin, "alice", "alice/second").await;
     let project = app
-        .create_workarea(
+        .create_workspace(
             user_writer(&app, admin, "alice", "alice/laptop")
                 .await
                 .value
@@ -1452,14 +1452,14 @@ async fn a_ratification_by_another_key_of_the_same_user_is_journalled_same_user(
             None,
         )
         .await
-        .expect("alice creates a workarea")
-        .workarea
-        .workarea_id;
+        .expect("alice creates a workspace")
+        .workspace
+        .workspace_id;
     let proposal = app
         .propose_transition(
             &first.value,
             project.into(),
-            oml_app::domain::WorkareaStatus::Committed,
+            oml_app::domain::WorkspaceStatus::Protected,
         )
         .await
         .expect("a proposal");
@@ -1473,7 +1473,7 @@ async fn a_ratification_by_another_key_of_the_same_user_is_journalled_same_user(
     let ratified = events
         .iter()
         .rev()
-        .find(|e| e.envelope.event_type == event_types::WORKAREA_STATUS_TRANSITION)
+        .find(|e| e.envelope.event_type == event_types::WORKSPACE_STATUS_TRANSITION)
         .expect("the ratification");
     assert_eq!(ratified.envelope.payload["same_user"], true);
 
@@ -1482,10 +1482,10 @@ async fn a_ratification_by_another_key_of_the_same_user_is_journalled_same_user(
     let tenant_reviewer = tenant_key(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "tenant-reviewer",
         vec![
-            grant(by_name("bob"), Role::Dreamer),
+            grant(by_name("bob"), Role::Reviewer),
             grant(by_name("bob"), Role::Reader),
         ],
     )
@@ -1494,7 +1494,7 @@ async fn a_ratification_by_another_key_of_the_same_user_is_journalled_same_user(
         .propose_transition(
             &bob.value,
             by_name("bob"),
-            oml_app::domain::WorkareaStatus::Committed,
+            oml_app::domain::WorkspaceStatus::Protected,
         )
         .await
         .expect("bob proposes");
@@ -1512,7 +1512,7 @@ async fn a_ratification_by_another_key_of_the_same_user_is_journalled_same_user(
     let ratified = events
         .iter()
         .rev()
-        .find(|e| e.envelope.event_type == event_types::WORKAREA_STATUS_TRANSITION)
+        .find(|e| e.envelope.event_type == event_types::WORKSPACE_STATUS_TRANSITION)
         .expect("the ratification");
     assert_eq!(ratified.envelope.payload["same_user"], false);
 }
@@ -1535,7 +1535,7 @@ async fn a_user_keys_claim_or_brief_edge_with_an_endpoint_in_universe_is_refused
             matches!(
                 err,
                 AppError::GrantRefused {
-                    needed_role: Role::Dreamer,
+                    needed_role: Role::Reviewer,
                     ..
                 }
             ),
@@ -1560,7 +1560,7 @@ async fn a_user_keys_claim_or_brief_edge_with_an_endpoint_in_universe_is_refused
             &alice.value,
             &oml_app::types::ProposeBriefEdge {
                 artifact_id: c.placed,
-                workarea: by_name("alice"),
+                workspace: by_name("alice"),
             },
             None,
         )
@@ -1581,7 +1581,7 @@ async fn a_user_keys_claim_or_brief_edge_with_an_endpoint_in_universe_is_refused
         &alice.value,
         &oml_app::types::ProposeBriefEdge {
             artifact_id: c.source,
-            workarea: by_name("alice"),
+            workspace: by_name("alice"),
         },
         None,
     )
@@ -1636,10 +1636,10 @@ async fn same_user_is_one_rule_for_claim_approvals_transitions_and_edges() {
     let crew_review = tenant_key(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "crew/reviewer",
         vec![
-            grant(by_name("alice"), Role::Dreamer),
+            grant(by_name("alice"), Role::Reviewer),
             grant(by_name("alice"), Role::Reader),
         ],
     )
@@ -1731,7 +1731,7 @@ async fn same_user_is_one_rule_for_claim_approvals_transitions_and_edges() {
                 retirement: false,
                 derives_from: Vec::new(),
                 reason: None,
-                workarea: None,
+                workspace: None,
                 refuse_vocabulary_target: false,
                 severity: None,
                 rule: None,
@@ -1838,7 +1838,7 @@ async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key
         (Capacity::Admin, "alice", Answer::VerbCeiling),
         (Capacity::Admin, "bob", Answer::VerbCeiling),
     ];
-    for (i, (capacity, workarea, expected)) in cases.into_iter().enumerate() {
+    for (i, (capacity, workspace, expected)) in cases.into_iter().enumerate() {
         let key = app
             .web_caller(&alice, capacity)
             .await
@@ -1854,7 +1854,7 @@ async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key
                 &submit(
                     &format!("capacity-{i}"),
                     &format!("Decision capacity-{i}."),
-                    Some(workarea),
+                    Some(workspace),
                 ),
             )
             .await;
@@ -1870,12 +1870,12 @@ async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key
             }) => Answer::GrantRefused,
             Err(AppError::UserRootRefused) => Answer::UserRootRefused,
             Err(AppError::VerbCeiling { verb: "submit", .. }) => Answer::VerbCeiling,
-            Err(other) => panic!("alice-{} in {workarea}: {other:?}", capacity.suffix()),
+            Err(other) => panic!("alice-{} in {workspace}: {other:?}", capacity.suffix()),
         };
         assert_eq!(
             answer,
             expected,
-            "alice-{} in {workarea}",
+            "alice-{} in {workspace}",
             capacity.suffix()
         );
         let journalled = store

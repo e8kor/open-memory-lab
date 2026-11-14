@@ -20,7 +20,7 @@
 //!    read serves the key's holder, its kind after it; on the person's
 //!    side no kind, since the read serves none it can stand behind
 //!    (`provenance` is `agent` for every key); and `same user` where the
-//!    page knows it; `in` the workarea's reference; `claim` key and version, `· tip`;
+//!    page knows it; `in` the workspace's reference; `claim` key and version, `· tip`;
 //!    `replaces vN` or `retires vN`; `from` the origin kind; `scan`;
 //!    `written`, the instant to the second;
 //! 3. opened, the same list on every surface (the `MemoryCard` order): the
@@ -103,9 +103,9 @@ pub(crate) fn is_prose(media_type: &str) -> bool {
 }
 
 /// The word a card names a key's holder by.
-pub(crate) fn kind_word(held_by: &str) -> &'static str {
-    match held_by {
-        "human" => "person",
+pub(crate) fn kind_word(used_by: &str) -> &'static str {
+    match used_by {
+        "person" => "person",
         "agent" => "agent",
         _ => "service",
     }
@@ -282,7 +282,7 @@ pub(crate) struct View<'a> {
     pub(crate) change: &'a str,
     /// The review strip, after the body.
     pub(crate) strip: &'a str,
-    /// The kinds of top label the page knows, which name the workarea by
+    /// The kinds of top label the page knows, which name the workspace by
     /// its reference (design notes row 20).
     pub(crate) roots: &'a Roots,
 }
@@ -334,7 +334,7 @@ impl<'a> View<'a> {
 pub(crate) struct Card {
     id: String,
     state: &'static str,
-    workarea: String,
+    workspace: String,
     version: u32,
     tip: bool,
     title: Option<String>,
@@ -343,7 +343,7 @@ pub(crate) struct Card {
     claim_key: String,
     /// `None` where the card shows the shared area (ADR-0044 d9).
     author: Option<String>,
-    /// `agent`, `person` or `service`: the admin read's `held_by`, the one
+    /// `agent`, `person` or `service`: the admin read's `used_by`, the one
     /// read that serves the key's holder; `None` on the person's side.
     author_kind: Option<&'static str>,
     created: String,
@@ -396,12 +396,12 @@ impl Card {
             findings: m.scan_findings.clone(),
             approved: m.approved_at.clone(),
             approver: m.approver.as_ref().map(|a| Approver {
-                kind: kind_word(&a.held_by),
+                kind: kind_word(&a.used_by),
                 same_user: a.same_user,
             }),
             id: m.artifact_id.clone(),
             state: row_state(&m.state, m.tip),
-            workarea: m.workarea_path.clone().unwrap_or_default(),
+            workspace: m.workspace_path.clone().unwrap_or_default(),
             version: m.version,
             tip: m.tip,
             title: m.title.clone(),
@@ -449,7 +449,7 @@ impl Card {
         let prose = is_prose(&format);
         let key = m.key.clone().unwrap_or_default();
         Self {
-            author_kind: m.held_by.as_deref().map(kind_word),
+            author_kind: m.used_by.as_deref().map(kind_word),
             created: m.created_at.clone(),
             served: m.promoted_at.clone(),
             scan: m.scan_finding.clone(),
@@ -460,7 +460,7 @@ impl Card {
             approver: None,
             id: m.artifact_id.clone(),
             state: admin_state(&m.state),
-            workarea: m.workarea_path.clone(),
+            workspace: m.workspace_path.clone(),
             version: m.version,
             tip: m.state == "promoted",
             title: m.title.clone(),
@@ -501,7 +501,7 @@ impl Card {
         let prose = is_prose(&format);
         let key = m.key.as_deref().or(m.key_id.as_deref()).unwrap_or_default();
         Self {
-            author_kind: m.held_by.as_deref().map(kind_word),
+            author_kind: m.used_by.as_deref().map(kind_word),
             created: m.created_at.clone(),
             served: m.promoted_at.clone(),
             scan: m.scan_finding.clone(),
@@ -521,7 +521,7 @@ impl Card {
             approver: None,
             id: m.artifact_id.clone(),
             state: admin_state(&m.state),
-            workarea: m.workarea_path.clone(),
+            workspace: m.workspace_path.clone(),
             version: m.version,
             tip: m.state == "promoted",
             title: m.title.clone(),
@@ -605,21 +605,21 @@ impl Card {
         self.replaces_valid_until.as_deref()
     }
 
-    /// The workarea's path, as the read serves it.
-    pub(crate) fn workarea(&self) -> &str {
-        &self.workarea
+    /// The workspace's path, as the read serves it.
+    pub(crate) fn workspace(&self) -> &str {
+        &self.workspace
     }
 
-    /// The workarea's reference, by the kinds of top label `roots` knows.
+    /// The workspace's reference, by the kinds of top label `roots` knows.
     pub(crate) fn reference(&self, roots: &Roots) -> String {
-        roots.reference(&self.workarea)
+        roots.reference(&self.workspace)
     }
 
     pub(crate) fn json(&self) -> Value {
         json!({
             "artifact_id": self.id,
             "state": self.state,
-            "workarea": self.workarea,
+            "workspace": self.workspace,
             "version": self.version,
             "title": self.title,
             "text": self.body,
@@ -641,7 +641,7 @@ impl Card {
     /// approved and whether a person's, an agent's or a service's key
     /// approved it, and that a person's own review of their agent's write is
     /// one. The line names the key's kind: a key no one attested is stored
-    /// as an agent's (`key.issued`'s `held_by`), so "a reviewer agent" would
+    /// as an agent's (`key.issued`'s `used_by`), so "a reviewer agent" would
     /// say more than is known. A field the API does not serve, an
     /// unreviewed or a `universe` row's, adds nothing, so the line never
     /// says more than the API did (ADR-0077 d2, d4).
@@ -791,7 +791,7 @@ impl Card {
         let reference = self.reference(view.roots);
         let _ = write!(
             out,
-            r#"<li><span class="k">in</span><a class="v" href="{}?workarea={}">{}</a></li>"#,
+            r#"<li><span class="k">in</span><a class="v" href="{}?workspace={}">{}</a></li>"#,
             view.list_path(),
             attr(&oml_sdk::encode(&reference)),
             text(&reference)

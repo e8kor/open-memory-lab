@@ -259,7 +259,7 @@ where
         let usage = self.journal.user_usage(tenant_id, root, &now).await?;
         let user = self
             .journal
-            .workarea(tenant_id, root)
+            .workspace(tenant_id, root)
             .await?
             .filter(|w| w.user_root)
             .map(|w| w.name);
@@ -291,7 +291,7 @@ where
             Err(_) => match Name::parse(account) {
                 Ok(name) => {
                     self.journal
-                        .resolve_name(tenant_id, NamedKind::Workarea, &name)
+                        .resolve_name(tenant_id, NamedKind::Workspace, &name)
                         .await?
                 }
                 Err(_) => None,
@@ -301,10 +301,10 @@ where
             return Err(AppError::NotFound);
         };
         self.journal
-            .workarea(tenant_id, id)
+            .workspace(tenant_id, id)
             .await?
             .filter(|w| w.user_root)
-            .map(|w| w.workarea_id)
+            .map(|w| w.workspace_id)
             .ok_or(AppError::NotFound)
     }
 
@@ -339,7 +339,7 @@ where
                 None => {
                     let name = self
                         .journal
-                        .workarea(tenant_id, row.user_root)
+                        .workspace(tenant_id, row.user_root)
                         .await?
                         .map(|w| w.name);
                     names.insert(row.user_root, name.clone());
@@ -365,7 +365,7 @@ where
         let name_of = |root: Uuid| async move {
             Ok::<_, AppError>(
                 self.journal
-                    .workarea(tenant_id, root)
+                    .workspace(tenant_id, root)
                     .await?
                     .map(|w| w.name),
             )

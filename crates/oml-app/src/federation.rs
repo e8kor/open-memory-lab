@@ -1,5 +1,5 @@
 //! Federated recall's request, policy and answer types (ADR-0072 phase 1):
-//! the `sources` field, the tenant's `federation` policy and a workarea's
+//! the `sources` field, the tenant's `federation` policy and a workspace's
 //! `accept_federated`, the counts a store reads over the reference set, and
 //! what an answer says about the sources it searched.
 
@@ -11,7 +11,7 @@ use uuid::Uuid;
 use oml_domain::MemoryKind;
 
 /// Where a recall searches (d5): a string is a mode and an array is a fixed
-/// set of workareas, answered whole or refused.
+/// set of workspaces, answered whole or refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sources {
     /// Today's answer exactly, plus the widen hint where a signal serves it
@@ -19,7 +19,7 @@ pub enum Sources {
     Scope,
     /// The scope plus the candidates selection chooses.
     Wide,
-    /// The listed workareas alone, by id or name as sent, in the caller's
+    /// The listed workspaces alone, by id or name as sent, in the caller's
     /// order; validated whole before any search.
     List(Vec<String>),
 }
@@ -70,7 +70,7 @@ pub struct FederationPolicy {
     pub enabled: bool,
     pub default_sources: DefaultSources,
     /// At most this many candidates are searched beside the scope under
-    /// `wide`, and a list names at most this many workareas.
+    /// `wide`, and a list names at most this many workspaces.
     pub max_sources: u32,
 }
 
@@ -121,15 +121,15 @@ pub struct WidenSignalHealth {
     pub last_failure: Option<String>,
 }
 
-/// A workarea's federation field as its read serves it (d5).
+/// A workspace's federation field as its read serves it (d5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WorkareaFederation {
+pub struct WorkspaceFederation {
     pub accept_federated: bool,
 }
 
-impl Default for WorkareaFederation {
+impl Default for WorkspaceFederation {
     fn default() -> Self {
-        WorkareaFederation {
+        WorkspaceFederation {
             accept_federated: true,
         }
     }
@@ -225,7 +225,7 @@ impl VocabularyCounts {
 
 /// `search.widen` on a `scope` answer (d8, as amended): how many
 /// candidates hold a kept word and a lower bound on their matching rows.
-/// It names no workarea.
+/// It names no workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Widen {
     pub candidates: usize,
@@ -254,8 +254,8 @@ impl Via {
 /// its rows hold. Phase 1 has no descriptor, so `matched` names words only.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchedSource {
-    pub workarea_id: Uuid,
-    pub workarea_path: String,
+    pub workspace_id: Uuid,
+    pub workspace_path: String,
     pub via: Via,
     pub estimate: f64,
     pub matched_words: Vec<String>,
@@ -282,22 +282,22 @@ pub struct SourcesReport {
 }
 
 /// What a federated recall adds to its event (d9): the `sources` given, as
-/// the mode or the list's workarea ids, the federated nodes searched, and
+/// the mode or the list's workspace ids, the federated nodes searched, and
 /// the reference set's nodes, so a replay computes the same R.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FederationRecord {
-    /// `"scope"`, `"wide"`, or the list as an array of workarea ids.
+    /// `"scope"`, `"wide"`, or the list as an array of workspace ids.
     pub sources: serde_json::Value,
-    pub federated_workarea_ids: Vec<Uuid>,
-    pub reference_workarea_ids: Vec<Uuid>,
+    pub federated_workspace_ids: Vec<Uuid>,
+    pub reference_workspace_ids: Vec<Uuid>,
 }
 
 /// Why a readable name in a `sources` list is not a usable source (d5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceRefusal {
-    /// Not `committed` or `validated`, or inside an in-progress subtree.
+    /// Not `protected` or `frozen`, or inside an in-progress subtree.
     Untrusted,
-    /// Outside subtree(scope) on a workarea whose `accept_federated` is off.
+    /// Outside subtree(scope) on a workspace whose `accept_federated` is off.
     DeclinesFederation,
 }
 

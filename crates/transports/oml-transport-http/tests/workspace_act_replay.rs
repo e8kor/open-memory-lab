@@ -1,5 +1,5 @@
-//! The four workarea acts the web console runs, over the in-memory
-//! doubles: creating a workarea, proposing a transition, ratifying one and
+//! The four workspace acts the web console runs, over the in-memory
+//! doubles: creating a workspace, proposing a transition, ratifying one and
 //! setting the mode each
 //! replay the recorded outcome under the same `Idempotency-Key` and request,
 //! with `Idempotency-Replay: true` and nothing acted again, and refuse the
@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::{Name, NamedKind};
-use oml_app::domain::{HeldBy, Role, Sha256Hash};
+use oml_app::domain::{Role, Sha256Hash, UsedBy};
 use oml_app::doubles::MemStore;
 use oml_app::ports::{
     IdempotencyClaim, IdempotencyPut, IdempotencyRecord, IdempotencyScope, JournalStore as _,
@@ -81,7 +81,7 @@ struct World {
 }
 
 /// `universe` → `proj` and `draft`; the admin key, and ann, a person's
-/// dreamer key on both.
+/// reviewer key on both.
 async fn world() -> World {
     let store = MemStore::new();
     let app = app(&store);
@@ -97,17 +97,17 @@ async fn world() -> World {
     let mut nodes = Vec::new();
     for n in ["proj", "draft"] {
         nodes.push(
-            app.create_workarea(&admin, &name(n), Some(boot.root_workarea_id.into()), None)
+            app.create_workspace(&admin, &name(n), Some(boot.root_workspace_id.into()), None)
                 .await
-                .expect("a workarea")
-                .workarea
-                .workarea_id,
+                .expect("a workspace")
+                .workspace
+                .workspace_id,
         );
     }
     let grants = nodes
         .iter()
         .flat_map(|node| {
-            [Role::Dreamer, Role::Reader].map(|role| GrantRequest {
+            [Role::Reviewer, Role::Reader].map(|role| GrantRequest {
                 node: (*node).into(),
                 role,
                 deny: Vec::new(),
@@ -120,11 +120,11 @@ async fn world() -> World {
             &admin,
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Dreamer,
+                role: Role::Reviewer,
                 name: name("ann-review"),
                 principal: "ann".to_owned(),
-                held_by: Some(HeldBy::Human),
-                default_workarea: None,
+                used_by: Some(UsedBy::Person),
+                default_workspace: None,
                 crew: None,
                 grants,
                 connect_code: false,
@@ -151,8 +151,8 @@ async fn world() -> World {
 #[tokio::test]
 async fn a_proposal_replays_under_the_same_key_and_request_and_refuses_the_key_on_another() {
     let w = world().await;
-    let path = format!("/v2/workareas/{}/transitions", w.proj);
-    let body = json!({"to": "committed"});
+    let path = format!("/v2/workspaces/{}/transitions", w.proj);
+    let body = json!({"to": "protected"});
     let (status, headers, first) = send(&w.router, &path, &w.ann, "p-1", Some(body.clone())).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{first}");
     assert!(!replayed(&headers));
@@ -167,7 +167,7 @@ async fn a_proposal_replays_under_the_same_key_and_request_and_refuses_the_key_o
         &path,
         &w.ann,
         "p-1",
-        Some(json!({"to": "validated"})),
+        Some(json!({"to": "frozen"})),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
@@ -177,17 +177,17 @@ async fn a_proposal_replays_under_the_same_key_and_request_and_refuses_the_key_o
 #[tokio::test]
 async fn a_ratification_replays_under_the_same_key_and_refuses_the_key_on_another_transition() {
     let w = world().await;
-    let propose = format!("/v2/workareas/{}/transitions", w.proj);
+    let propose = format!("/v2/workspaces/{}/transitions", w.proj);
     let (status, _, proposal) = send(
         &w.router,
         &propose,
         &w.ann,
         "p-1",
-        Some(json!({"to": "committed"})),
+        Some(json!({"to": "protected"})),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
-    let ratify = |t: &str| format!("/v2/workareas/{}/transitions/{t}/ratify", w.proj);
+    let ratify = |t: &str| format!("/v2/workspaces/{}/transitions/{t}/ratify", w.proj);
     let first_id = proposal["transition_id"]
         .as_str()
         .expect("an id")
@@ -201,15 +201,15 @@ async fn a_ratification_replays_under_the_same_key_and_refuses_the_key_on_anothe
     assert_eq!(status, StatusCode::OK, "{again}");
     assert!(replayed(&headers), "the resubmission is a replay");
     assert_eq!(again, first);
-    let node = w.store.workarea(w.tenant, w.proj).await.unwrap().unwrap();
-    assert_eq!(node.status.as_str(), "committed");
+    let node = w.store.workspace(w.tenant, w.proj).await.unwrap().unwrap();
+    assert_eq!(node.status.as_str(), "protected");
     // The same key on another transition is refused by name.
     let (status, _, next) = send(
         &w.router,
         &propose,
         &w.ann,
         "p-2",
-        Some(json!({"to": "validated"})),
+        Some(json!({"to": "frozen"})),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{next}");
@@ -217,14 +217,14 @@ async fn a_ratification_replays_under_the_same_key_and_refuses_the_key_on_anothe
     let (status, _, refused) = send(&w.router, &ratify(&next_id), &w.admin, "r-1", None).await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
     assert_eq!(refused["error"]["code"], "idempotency.digest_mismatch");
-    let node = w.store.workarea(w.tenant, w.proj).await.unwrap().unwrap();
-    assert_eq!(node.status.as_str(), "committed", "nothing ratified");
+    let node = w.store.workspace(w.tenant, w.proj).await.unwrap().unwrap();
+    assert_eq!(node.status.as_str(), "protected", "nothing ratified");
 }
 
 #[tokio::test]
 async fn a_mode_change_replays_under_the_same_key_and_request_and_refuses_the_key_on_another() {
     let w = world().await;
-    let path = format!("/v2/workareas/{}/mode", w.draft);
+    let path = format!("/v2/workspaces/{}/mode", w.draft);
     let body = json!({"mode": "in_progress"});
     let (status, headers, first) = send(&w.router, &path, &w.ann, "m-1", Some(body.clone())).await;
     assert_eq!(status, StatusCode::OK, "{first}");
@@ -243,7 +243,7 @@ async fn a_mode_change_replays_under_the_same_key_and_request_and_refuses_the_ke
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
     assert_eq!(refused["error"]["code"], "idempotency.digest_mismatch");
-    let node = w.store.workarea(w.tenant, w.draft).await.unwrap().unwrap();
+    let node = w.store.workspace(w.tenant, w.draft).await.unwrap().unwrap();
     assert!(node.in_progress, "the refused request committed nothing");
 }
 
@@ -253,7 +253,7 @@ async fn a_creation_replays_under_the_same_key_and_request_and_refuses_the_key_o
     let body = json!({"name": "fresh", "parent": "universe"});
     let (status, headers, first) = send(
         &w.router,
-        "/v2/workareas",
+        "/v2/workspaces",
         &w.admin,
         "c-1",
         Some(body.clone()),
@@ -264,13 +264,13 @@ async fn a_creation_replays_under_the_same_key_and_request_and_refuses_the_key_o
     // Without the replay a second creation answers name.taken; with it, the
     // person sees the creation that already succeeded.
     let (status, headers, again) =
-        send(&w.router, "/v2/workareas", &w.admin, "c-1", Some(body)).await;
+        send(&w.router, "/v2/workspaces", &w.admin, "c-1", Some(body)).await;
     assert_eq!(status, StatusCode::CREATED, "{again}");
     assert!(replayed(&headers), "the resubmission is a replay");
     assert_eq!(again, first);
     let (status, _, refused) = send(
         &w.router,
-        "/v2/workareas",
+        "/v2/workspaces",
         &w.admin,
         "c-1",
         Some(json!({"name": "other", "parent": "universe"})),
@@ -280,7 +280,7 @@ async fn a_creation_replays_under_the_same_key_and_request_and_refuses_the_key_o
     assert_eq!(refused["error"]["code"], "idempotency.digest_mismatch");
     let root = w
         .store
-        .workarea_children(
+        .workspace_children(
             w.tenant,
             first["parent_id"].as_str().unwrap().parse().unwrap(),
         )
@@ -297,7 +297,7 @@ async fn a_creation_replays_under_the_same_key_and_request_and_refuses_the_key_o
 // -- each act costs one request of the person's rate (#253, #281) ---------
 
 /// ann, a person of the sign-up tenant at one request a minute: her root
-/// `universe.ann` → `proj` and `draft`, her dreamer key on both, and the
+/// `universe.ann` → `proj` and `draft`, her reviewer key on both, and the
 /// router over an app with sign-up on and a clock that never leaves its
 /// minute, so each test spends one window (ADR-0068 d5).
 async fn world_at_one_request_a_minute() -> World {
@@ -314,11 +314,11 @@ async fn world_at_one_request_a_minute() -> World {
     let admin = boot.admin_key.value.clone();
     let person_key = |key_name: &str, grants: Vec<GrantRequest>| IssueKeyRequest {
         profile: None,
-        role: Role::Dreamer,
+        role: Role::Reviewer,
         name: name(key_name),
         principal: "ann".to_owned(),
-        held_by: Some(HeldBy::Human),
-        default_workarea: None,
+        used_by: Some(UsedBy::Person),
+        default_workspace: None,
         crew: None,
         grants,
         connect_code: false,
@@ -341,17 +341,17 @@ async fn world_at_one_request_a_minute() -> World {
     let mut nodes = Vec::new();
     for n in ["proj", "draft"] {
         nodes.push(
-            app.create_workarea(&admin, &name(n), Some(root.into()), None)
+            app.create_workspace(&admin, &name(n), Some(root.into()), None)
                 .await
-                .expect("a workarea")
-                .workarea
-                .workarea_id,
+                .expect("a workspace")
+                .workspace
+                .workspace_id,
         );
     }
     let grants = nodes
         .iter()
         .flat_map(|node| {
-            [Role::Dreamer, Role::Reader].map(|role| GrantRequest {
+            [Role::Reviewer, Role::Reader].map(|role| GrantRequest {
                 node: (*node).into(),
                 role,
                 deny: Vec::new(),
@@ -397,7 +397,7 @@ async fn world_at_one_request_a_minute() -> World {
 async fn the_minute_is_spent(w: &World) {
     let (status, _, refused) = send(
         &w.router,
-        &format!("/v2/workareas/{}/mode", w.draft),
+        &format!("/v2/workspaces/{}/mode", w.draft),
         &w.ann,
         "spent",
         Some(json!({"mode": "standard"})),
@@ -412,13 +412,13 @@ async fn the_minute_is_spent(w: &World) {
 #[tokio::test]
 async fn a_proposal_by_a_persons_key_costs_one_request_of_its_rate() {
     let w = world_at_one_request_a_minute().await;
-    let path = format!("/v2/workareas/{}/transitions", w.proj);
+    let path = format!("/v2/workspaces/{}/transitions", w.proj);
     let (status, _, proposal) = send(
         &w.router,
         &path,
         &w.ann,
         "p-1",
-        Some(json!({"to": "committed"})),
+        Some(json!({"to": "protected"})),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
@@ -430,20 +430,20 @@ async fn a_proposal_by_a_persons_key_costs_one_request_of_its_rate() {
 #[tokio::test]
 async fn a_ratification_by_a_persons_key_costs_one_request_of_its_rate() {
     let w = world_at_one_request_a_minute().await;
-    let propose = format!("/v2/workareas/{}/transitions", w.proj);
+    let propose = format!("/v2/workspaces/{}/transitions", w.proj);
     let (status, _, proposal) = send(
         &w.router,
         &propose,
         &w.admin,
         "p-1",
-        Some(json!({"to": "committed"})),
+        Some(json!({"to": "protected"})),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
     let id = proposal["transition_id"].as_str().expect("an id");
     let (status, _, ratified) = send(
         &w.router,
-        &format!("/v2/workareas/{}/transitions/{id}/ratify", w.proj),
+        &format!("/v2/workspaces/{}/transitions/{id}/ratify", w.proj),
         &w.ann,
         "r-1",
         None,
@@ -458,7 +458,7 @@ async fn a_ratification_by_a_persons_key_costs_one_request_of_its_rate() {
 #[tokio::test]
 async fn a_mode_change_by_a_persons_key_costs_one_request_of_its_rate() {
     let w = world_at_one_request_a_minute().await;
-    let path = format!("/v2/workareas/{}/mode", w.draft);
+    let path = format!("/v2/workspaces/{}/mode", w.draft);
     let (status, _, set) = send(
         &w.router,
         &path,
@@ -473,9 +473,9 @@ async fn a_mode_change_by_a_persons_key_costs_one_request_of_its_rate() {
 
 // -- the claim an act takes on its key before it acts (#233) ---------------
 
-/// The claim scope and request digest `POST /v2/workareas` takes for
+/// The claim scope and request digest `POST /v2/workspaces` takes for
 /// `body` under `idem` as the admin key (ADR-0070 d5): the act's name
-/// beside the key, no workarea, and the digest over the empty path user
+/// beside the key, no workspace, and the digest over the empty path user
 /// and the body's bytes.
 async fn create_claim(w: &World, idem: &str, body: &Value) -> (IdempotencyScope, String) {
     let key_id = w
@@ -490,8 +490,8 @@ async fn create_claim(w: &World, idem: &str, body: &Value) -> (IdempotencyScope,
         IdempotencyScope {
             tenant_id: w.tenant,
             key_id,
-            workarea_id: Uuid::nil(),
-            idem_key: format!("workarea.create:{idem}"),
+            workspace_id: Uuid::nil(),
+            idem_key: format!("workspace.create:{idem}"),
         },
         Sha256Hash::digest(&bytes).to_prefixed(),
     )
@@ -500,12 +500,12 @@ async fn create_claim(w: &World, idem: &str, body: &Value) -> (IdempotencyScope,
 async fn created(w: &World, name: &str) -> usize {
     let root = w
         .store
-        .resolve_name(w.tenant, NamedKind::Workarea, &self::name("universe"))
+        .resolve_name(w.tenant, NamedKind::Workspace, &self::name("universe"))
         .await
         .expect("a lookup")
         .expect("the root");
     w.store
-        .workarea_children(w.tenant, root)
+        .workspace_children(w.tenant, root)
         .await
         .expect("children")
         .iter()
@@ -520,14 +520,14 @@ async fn two_concurrent_creates_under_one_key_create_once_and_answer_alike() {
     let ((s1, h1, b1), (s2, h2, b2)) = tokio::join!(
         send(
             &w.router,
-            "/v2/workareas",
+            "/v2/workspaces",
             &w.admin,
             "c-2",
             Some(body.clone())
         ),
         send(
             &w.router,
-            "/v2/workareas",
+            "/v2/workspaces",
             &w.admin,
             "c-2",
             Some(body.clone())
@@ -583,7 +583,7 @@ async fn a_send_whose_key_another_attempt_holds_waits_and_answers_that_attempts_
         })
     };
     let (status, headers, again) =
-        send(&w.router, "/v2/workareas", &w.admin, "c-3", Some(body)).await;
+        send(&w.router, "/v2/workspaces", &w.admin, "c-3", Some(body)).await;
     assert!(settle.await.unwrap(), "the other attempt settled");
     assert_eq!(status, StatusCode::CREATED, "{again}");
     assert!(replayed(&headers));
@@ -605,7 +605,7 @@ async fn a_send_whose_key_a_stopped_attempt_holds_answers_in_progress_and_acts_n
         .await
         .unwrap();
     let (status, headers, refused) =
-        send(&w.router, "/v2/workareas", &w.admin, "c-4", Some(body)).await;
+        send(&w.router, "/v2/workspaces", &w.admin, "c-4", Some(body)).await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
     assert_eq!(refused["error"]["code"], "idempotency.in_progress");
     assert!(headers.contains_key(header::RETRY_AFTER), "{headers:?}");
@@ -619,7 +619,7 @@ async fn an_act_whose_record_is_lost_still_answers_and_its_retry_acts_nothing() 
     w.store.fail_next_idempotency_settle();
     let (status, headers, first) = send(
         &w.router,
-        "/v2/workareas",
+        "/v2/workspaces",
         &w.admin,
         "c-5",
         Some(body.clone()),
@@ -627,7 +627,7 @@ async fn an_act_whose_record_is_lost_still_answers_and_its_retry_acts_nothing() 
     .await;
     assert_eq!(status, StatusCode::CREATED, "the act committed: {first}");
     assert!(!replayed(&headers));
-    let (status, _, retry) = send(&w.router, "/v2/workareas", &w.admin, "c-5", Some(body)).await;
+    let (status, _, retry) = send(&w.router, "/v2/workspaces", &w.admin, "c-5", Some(body)).await;
     assert_eq!(status, StatusCode::CONFLICT, "{retry}");
     assert_eq!(retry["error"]["code"], "idempotency.in_progress");
     assert_eq!(created(&w, "lost").await, 1, "the retry acted nothing");
@@ -639,7 +639,7 @@ async fn a_refused_act_frees_its_key_so_the_resubmission_acts_again() {
     let body = json!({"name": "later", "parent": "nowhere"});
     let (status, _, first) = send(
         &w.router,
-        "/v2/workareas",
+        "/v2/workspaces",
         &w.admin,
         "c-6",
         Some(body.clone()),
@@ -648,7 +648,7 @@ async fn a_refused_act_frees_its_key_so_the_resubmission_acts_again() {
     assert!(status.is_client_error(), "{first}");
     let code = first["error"]["code"].clone();
     assert_ne!(code, "idempotency.in_progress");
-    let (status, _, again) = send(&w.router, "/v2/workareas", &w.admin, "c-6", Some(body)).await;
+    let (status, _, again) = send(&w.router, "/v2/workspaces", &w.admin, "c-6", Some(body)).await;
     assert!(status.is_client_error(), "{again}");
     assert_eq!(
         again["error"]["code"], code,
@@ -665,7 +665,9 @@ async fn a_request_dropped_after_its_act_committed_never_lets_the_resubmission_a
         let router = w.router.clone();
         let admin = w.admin.clone();
         let body = body.clone();
-        tokio::spawn(async move { send(&router, "/v2/workareas", &admin, "c-7", Some(body)).await })
+        tokio::spawn(
+            async move { send(&router, "/v2/workspaces", &admin, "c-7", Some(body)).await },
+        )
     };
     while !park.reached() {
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -676,7 +678,7 @@ async fn a_request_dropped_after_its_act_committed_never_lets_the_resubmission_a
     assert!(first.await.is_err(), "the request was dropped");
     park.open();
     let (status, headers, again) =
-        send(&w.router, "/v2/workareas", &w.admin, "c-7", Some(body)).await;
+        send(&w.router, "/v2/workspaces", &w.admin, "c-7", Some(body)).await;
     assert_eq!(status, StatusCode::CREATED, "{again}");
     assert!(
         replayed(&headers),
@@ -689,15 +691,15 @@ async fn a_request_dropped_after_its_act_committed_never_lets_the_resubmission_a
 async fn a_step_that_fails_after_the_act_committed_holds_the_key_so_the_resubmission_acts_nothing()
 {
     let w = world().await;
-    let path = format!("/v2/workareas/{}/mode", w.draft);
+    let path = format!("/v2/workspaces/{}/mode", w.draft);
     let body = json!({"mode": "in_progress"});
-    w.store.fail_workarea_children_after_next_commit();
+    w.store.fail_workspace_children_after_next_commit();
     let (status, _, first) = send(&w.router, &path, &w.ann, "m-9", Some(body.clone())).await;
     assert!(
         status.is_server_error(),
         "the read after the commit failed: {first}"
     );
-    let node = w.store.workarea(w.tenant, w.draft).await.unwrap().unwrap();
+    let node = w.store.workspace(w.tenant, w.draft).await.unwrap().unwrap();
     assert!(node.in_progress, "the act committed");
     let head = w.store.chain_head(w.tenant).await.unwrap();
     let (status, _, again) = send(&w.router, &path, &w.ann, "m-9", Some(body)).await;
@@ -717,7 +719,7 @@ async fn a_request_refused_before_its_act_runs_frees_its_key() {
     let body = json!({"name": "early", "parent": "universe", "prefix": "ex"});
     let (status, _, first) = send(
         &w.router,
-        "/v2/workareas",
+        "/v2/workspaces",
         &w.admin,
         "c-8",
         Some(body.clone()),
@@ -725,7 +727,7 @@ async fn a_request_refused_before_its_act_runs_frees_its_key() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{first}");
     let started = std::time::Instant::now();
-    let (status, _, again) = send(&w.router, "/v2/workareas", &w.admin, "c-8", Some(body)).await;
+    let (status, _, again) = send(&w.router, "/v2/workspaces", &w.admin, "c-8", Some(body)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{again}");
     assert_eq!(again["error"]["code"], first["error"]["code"]);
     assert!(
@@ -741,7 +743,7 @@ async fn a_panic_after_the_act_committed_is_answered_as_a_handler_panic_and_hold
     w.store.panic_after_next_commit();
     let (status, _, first) = send(
         &w.router,
-        "/v2/workareas",
+        "/v2/workspaces",
         &w.admin,
         "c-9",
         Some(body.clone()),
@@ -749,7 +751,7 @@ async fn a_panic_after_the_act_committed_is_answered_as_a_handler_panic_and_hold
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{first}");
     assert_eq!(first["error"]["details"]["reason"], "handler_panic");
-    let (status, _, again) = send(&w.router, "/v2/workareas", &w.admin, "c-9", Some(body)).await;
+    let (status, _, again) = send(&w.router, "/v2/workspaces", &w.admin, "c-9", Some(body)).await;
     assert_eq!(status, StatusCode::CONFLICT, "{again}");
     assert_eq!(again["error"]["code"], "idempotency.in_progress");
     assert_eq!(created(&w, "panicked").await, 1, "created once");

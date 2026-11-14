@@ -80,12 +80,12 @@ async fn federated_recall_double_passes_the_leakage_suite() {
 }
 
 /// Test 7 over the double, its deterministic half: an unreadable
-/// workarea of 100,000 matching rows changes no `wide` answer, byte for
+/// workspace of 100,000 matching rows changes no `wide` answer, byte for
 /// byte, and no recall's work: the rows its reads visit are the same count
 /// with the copies as without, so its time cannot depend on them
 /// (ADR-0072 d6, d13; #278).
 #[tokio::test]
-async fn federated_recall_double_answers_and_rows_read_do_not_depend_on_an_unreadable_workarea() {
+async fn federated_recall_double_answers_and_rows_read_do_not_depend_on_an_unreadable_workspace() {
     use contracts::federation::{answer_sample, timing_world};
     let t = timing_world(MemStore::new().answering_bm25_with_any_word()).await;
     let read = t.world.store.rows_read();
@@ -100,18 +100,18 @@ async fn federated_recall_double_answers_and_rows_read_do_not_depend_on_an_unrea
     assert_eq!(
         t.world.store.rows_read() - read,
         work_without,
-        "a wide recall visited rows of an unreadable workarea"
+        "a wide recall visited rows of an unreadable workspace"
     );
 }
 
 /// Test 7 over the double, its timing half, a measurement run by hand or
-/// by the weekly bench (`--ignored`): an unreadable workarea of 100,000
+/// by the weekly bench (`--ignored`): an unreadable workspace of 100,000
 /// matching rows moves neither p50 nor p95 of a wide recall (ADR-0072 d6,
 /// d13). Wall-clock quantiles move with the host's load, so it gates no
 /// change (#278).
 #[tokio::test]
 #[ignore = "a measurement: wall-clock quantiles, run by the weekly bench"]
-async fn federated_recall_double_timing_does_not_depend_on_an_unreadable_workarea() {
+async fn federated_recall_double_timing_does_not_depend_on_an_unreadable_workspace() {
     use contracts::federation::{assert_within_noise, timing_sample, timing_world};
     let t = timing_world(MemStore::new().answering_bm25_with_any_word()).await;
     let without = timing_sample(&t, "bm25", 60).await;
@@ -123,9 +123,9 @@ async fn federated_recall_double_timing_does_not_depend_on_an_unreadable_workare
 }
 
 /// Test 4 over the double, its deterministic half: a list naming an
-/// unreadable workarea that holds 100,000 matching rows is refused with the
+/// unreadable workspace that holds 100,000 matching rows is refused with the
 /// same bytes and the same work as one naming an absent name, the rows its
-/// reads visit the same count, so its time cannot depend on the workarea. A
+/// reads visit the same count, so its time cannot depend on the workspace. A
 /// recall that does read rows is counted by the same meter, so the equal
 /// counts are not a meter that counts nothing (ADR-0072 d6, d13; #295).
 #[tokio::test]
@@ -149,7 +149,7 @@ async fn a_lists_unreadable_name_refusal_reads_the_rows_an_absent_names_refusal_
         "an unreadable name's refusal visited rows an absent name's did not"
     );
     // The meter counts a recall that reads: a list naming a readable
-    // workarea visits its rows.
+    // workspace visits its rows.
     let read = t.world.store.rows_read();
     let answered = t
         .world
@@ -305,7 +305,7 @@ async fn the_refresh_stops_a_build_past_its_timeout_and_builds_the_ones_behind_i
 /// round 2, R1).
 #[tokio::test]
 async fn a_build_overtaken_by_a_drop_is_never_held() {
-    use oml_app::domain::WorkareaStatus;
+    use oml_app::domain::WorkspaceStatus;
     use oml_app::federation::Sources;
     let store = MemStore::new().answering_bm25_with_any_word();
     let (w, key) = contracts::federation::kiwi_world(store.clone(), true).await;
@@ -323,7 +323,7 @@ async fn a_build_overtaken_by_a_drop_is_never_held() {
             .propose_transition(
                 w.admin.as_str(),
                 w.node("orchard").into(),
-                WorkareaStatus::Validated,
+                WorkspaceStatus::Frozen,
             )
             .await
             .expect("propose validated");

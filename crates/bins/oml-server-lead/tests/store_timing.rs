@@ -148,7 +148,7 @@ async fn a_console_acts_store_calls_count_on_its_request_line() {
         let response = router
             .clone()
             .oneshot(
-                Request::post("/v2/workareas")
+                Request::post("/v2/workspaces")
                     .header(
                         header::AUTHORIZATION,
                         format!("Bearer {}", boot.admin_key.value),

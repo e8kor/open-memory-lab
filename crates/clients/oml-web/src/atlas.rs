@@ -1,8 +1,8 @@
 //! The Atlas's drawing (ADR-0045 d25, d30, d32), moved from the lead
-//! (ADR-0070 d7 (b)): the workareas the page's key may read under the
+//! (ADR-0070 d7 (b)): the workspaces the page's key may read under the
 //! scope, as one squarified treemap whose areas are their readable counts,
 //! drawn as SVG with no script, and the counts' bar and legend. The counts
-//! are the API's, `GET /v2/workareas/{workarea}/tree?counts=true`, so
+//! are the API's, `GET /v2/workspaces/{workspace}/tree?counts=true`, so
 //! nothing the key cannot read is drawn or counted.
 
 use std::fmt::Write as _;
@@ -160,7 +160,7 @@ pub(crate) fn svg(tiles: &[Tile], w: f64, h: f64, font: f64, class: &str) -> Str
     let sizes: Vec<f64> = tiles.iter().map(|t| t.counts.total() as f64).collect();
     let rects = squarify(&sizes, w, h);
     let mut out = format!(
-        r#"<svg class="tm {class}" viewBox="0 0 {w} {h}" role="group" aria-label="Workareas sized by readable memory count; the table below has the same rows">"#
+        r#"<svg class="tm {class}" viewBox="0 0 {w} {h}" role="group" aria-label="Workspaces sized by readable memory count; the table below has the same rows">"#
     );
     let gap = 2.0;
     for (t, (x, y, rw, rh)) in tiles.iter().zip(rects) {
@@ -312,7 +312,7 @@ mod tests {
     fn a_tile_too_small_for_its_name_keeps_a_cut_name_or_its_title() {
         let tiles = [
             Tile {
-                name: "a-workarea-with-a-very-long-name".to_owned(),
+                name: "a-workspace-with-a-very-long-name".to_owned(),
                 href: "/x".to_owned(),
                 counts: Counts {
                     approved: 1000,

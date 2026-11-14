@@ -61,7 +61,7 @@ fn clone_with(test: &str, origin: &str) -> PathBuf {
 fn opts(source: &str) -> Options {
     Options {
         source: source.into(),
-        workarea: "design".into(),
+        workspace: "design".into(),
         rev: "HEAD".into(),
         max_writes: 200,
         base: "main".into(),
@@ -219,7 +219,7 @@ fn the_drafts_mode_reads_only_the_records_the_pull_request_adds_or_changes() {
         rev: "design/x".into(),
         ..opts("docs/adr")
     };
-    assert_eq!(o.target_workarea(), "design-pr-59");
+    assert_eq!(o.target_workspace(), "design-pr-59");
     let loaded = load(&dir, &o).unwrap();
     let x = extracted(&loaded);
     assert_eq!(x.adapter, Kind::Adr);
@@ -386,7 +386,7 @@ fn retire_all_requires_pr() {
             "k",
             "sync",
             "docs",
-            "--workarea",
+            "--workspace",
             "w",
             "--retire-all",
         ],
@@ -545,8 +545,8 @@ fn whoami_fixture_counting(
     let server = format!("http://{}", listener.local_addr().expect("its address"));
     let mut me = serde_json::json!({
         "key_id": "key_w", "name": "writer", "role": "writer", "principal": "p",
-        "held_by": "agent", "tenant": {"id": "t1", "name": "oml"},
-        "default_workarea": null, "crew": null, "user": null, "grants": [],
+        "used_by": "agent", "tenant": {"id": "t1", "name": "oml"},
+        "default_workspace": null, "crew": null, "user": null, "grants": [],
     });
     if let Some(shared) = shared {
         me["shared"] = serde_json::Value::Bool(shared);
@@ -588,7 +588,7 @@ fn sync_to(dir: &Path, server: &str, allow: bool) -> (i32, String, String) {
         "k",
         "sync",
         "docs",
-        "--workarea",
+        "--workspace",
         "w",
     ];
     if allow {
@@ -847,7 +847,7 @@ fn opt_in_with_path(dir: &Path, server: &str, bin: &Path) -> (i32, String, Strin
             "k",
             "sync",
             "docs",
-            "--workarea",
+            "--workspace",
             "w",
             "--allow-public-server",
         ],

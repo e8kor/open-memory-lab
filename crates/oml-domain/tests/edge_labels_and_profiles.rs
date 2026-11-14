@@ -1,9 +1,9 @@
-//! Narrowed dreamer grants and member profiles: the `edge_labels` grant
+//! Narrowed reviewer grants and member profiles: the `edge_labels` grant
 //! attribute, narrowed effective access, the refusal-order steps that name
 //! `edge_labels`, `my_edge_labels`, and the member-profile check of the
-//! issuance order (ADR-0027 [proposed in #10, unmerged] d3, d4, d5; roles-and-keys.md "Narrowed dreamer
+//! issuance order (ADR-0027 [proposed in #10, unmerged] d3, d4, d5; roles-and-keys.md "Narrowed reviewer
 //! grants: `edge_labels`", "Member profiles", "Grant admissibility and
-//! refusal order"; workareas.md, effective access).
+//! refusal order"; workspaces.md, effective access).
 
 use std::collections::BTreeSet;
 
@@ -14,7 +14,7 @@ use oml_domain::access::{
     effective_verbs, my_edge_labels, resolve, resolve_verb,
 };
 use oml_domain::vocab::{OmlLabel, PrefixRegistry};
-use oml_domain::{HeldBy, Role};
+use oml_domain::{Role, UsedBy};
 use uuid::Uuid;
 
 /// A tenant with one vocabulary: `universe` → {`metals-vocab` (prefix
@@ -107,9 +107,9 @@ fn unnarrowed(grants: &[LabelledGrant]) -> Vec<Grant> {
         .collect()
 }
 
-/// A dreamer grant narrowed to `labels`.
+/// A reviewer grant narrowed to `labels`.
 fn narrowed(n: u128, node: Uuid, labels: &[&str]) -> LabelledGrant {
-    LabelledGrant::new(plain(n, node, Role::Dreamer, &[]), Some(labels))
+    LabelledGrant::new(plain(n, node, Role::Reviewer, &[]), Some(labels))
         .expect("admissible edge_labels")
 }
 
@@ -127,8 +127,8 @@ fn denial(n: u128, node: Uuid) -> KeyDenial {
 const ABOUT: &str = "oml:about";
 
 /// A classifier as `oml crews add-member --as classifier` issues it
-/// (ADR-0027 d14): a reader grant on its `--workarea`, and on its
-/// `--vocabulary` a dreamer grant narrowed to `oml:about` and a reader grant.
+/// (ADR-0027 d14): a reader grant on its `--workspace`, and on its
+/// `--vocabulary` a reviewer grant narrowed to `oml:about` and a reader grant.
 fn classifier_grants(tree: &Tree) -> Vec<LabelledGrant> {
     vec![
         grant(1, tree.research, Role::Reader),
@@ -146,12 +146,12 @@ fn term_creator_grants(tree: &Tree) -> Vec<LabelledGrant> {
     ]
 }
 
-/// A curator as add-member issues it: a dreamer and a reader grant on its
-/// `--vocabulary`, and on its `--workarea` a dreamer grant narrowed to
+/// A curator as add-member issues it: a reviewer and a reader grant on its
+/// `--vocabulary`, and on its `--workspace` a reviewer grant narrowed to
 /// `oml:about` and a reader grant.
 fn curator_grants(tree: &Tree) -> Vec<LabelledGrant> {
     vec![
-        grant(1, tree.metals_vocab, Role::Dreamer),
+        grant(1, tree.metals_vocab, Role::Reviewer),
         grant(2, tree.metals_vocab, Role::Reader),
         narrowed(3, tree.research, &[ABOUT]),
         grant(4, tree.research, Role::Reader),
@@ -163,10 +163,10 @@ fn check(
     crew: Option<CrewKind>,
     profile: Option<MemberProfile>,
     key_role: Role,
-    held_by: Option<HeldBy>,
+    used_by: Option<UsedBy>,
     grants: &[LabelledGrant],
 ) -> Result<(), ProfileMismatch> {
-    check_member_profile(crew, profile, key_role, held_by, grants, |node| {
+    check_member_profile(crew, profile, key_role, used_by, grants, |node| {
         tree.is_vocabulary_node(node)
     })
 }
@@ -183,14 +183,14 @@ fn mismatch(
     })
 }
 
-// ---- The edge_labels attribute (roles-and-keys.md, narrowed dreamer grants) ----
+// ---- The edge_labels attribute (roles-and-keys.md, narrowed reviewer grants) ----
 
 #[test]
-fn edge_labels_are_admitted_on_a_dreamer_grant_only_as_distinct_oml_labels() {
+fn edge_labels_are_admitted_on_a_reviewer_grant_only_as_distinct_oml_labels() {
     let tree = Tree::new();
-    let dreamer = plain(1, tree.metals_vocab, Role::Dreamer, &[]);
-    let built = LabelledGrant::new(dreamer.clone(), Some(&["oml:is_a", ABOUT]))
-        .expect("two distinct oml: labels on a dreamer grant");
+    let reviewer = plain(1, tree.metals_vocab, Role::Reviewer, &[]);
+    let built = LabelledGrant::new(reviewer.clone(), Some(&["oml:is_a", ABOUT]))
+        .expect("two distinct oml: labels on a reviewer grant");
     assert_eq!(
         built.edge_labels(),
         Some(&labels(&[OmlLabel::IsA, OmlLabel::About]))
@@ -198,34 +198,34 @@ fn edge_labels_are_admitted_on_a_dreamer_grant_only_as_distinct_oml_labels() {
     // A narrowed grant is no plain grant; an unnarrowed one is the grant sent.
     assert_eq!(built.unnarrowed(), None);
     assert_eq!(
-        LabelledGrant::new(dreamer.clone(), None).map(|g| g.edge_labels().cloned()),
+        LabelledGrant::new(reviewer.clone(), None).map(|g| g.edge_labels().cloned()),
         Ok(None)
     );
     assert_eq!(
-        LabelledGrant::new(dreamer.clone(), None).map(|g| g.unnarrowed().cloned()),
-        Ok(Some(dreamer.clone()))
+        LabelledGrant::new(reviewer.clone(), None).map(|g| g.unnarrowed().cloned()),
+        Ok(Some(reviewer.clone()))
     );
 
     for role in [Role::Reader, Role::Writer] {
         assert_eq!(
             LabelledGrant::new(plain(2, tree.research, role, &[]), Some(&[ABOUT])),
-            Err(EdgeLabelsRefusal::NotDreamer { role }),
+            Err(EdgeLabelsRefusal::NotReviewer { role }),
             "{role:?}"
         );
     }
     assert_eq!(
-        LabelledGrant::new(dreamer.clone(), Some(&[])),
+        LabelledGrant::new(reviewer.clone(), Some(&[])),
         Err(EdgeLabelsRefusal::Empty)
     );
     assert_eq!(
-        LabelledGrant::new(dreamer.clone(), Some(&[ABOUT, ABOUT])),
+        LabelledGrant::new(reviewer.clone(), Some(&[ABOUT, ABOUT])),
         Err(EdgeLabelsRefusal::Repeated {
             label: ABOUT.to_owned()
         })
     );
     for outside in ["metal:about", "oml:mentions", "about"] {
         assert_eq!(
-            LabelledGrant::new(dreamer.clone(), Some(&[outside])),
+            LabelledGrant::new(reviewer.clone(), Some(&[outside])),
             Err(EdgeLabelsRefusal::OutsideOml {
                 label: outside.to_owned()
             }),
@@ -234,52 +234,52 @@ fn edge_labels_are_admitted_on_a_dreamer_grant_only_as_distinct_oml_labels() {
     }
 }
 
-// ---- Narrowed effective access (workareas.md; roles-and-keys.md) ----
+// ---- Narrowed effective access (workspaces.md; roles-and-keys.md) ----
 
 #[test]
-fn a_narrowed_dreamer_grant_confers_only_edges_with_its_labels() {
+fn a_narrowed_reviewer_grant_confers_only_edges_with_its_labels() {
     let tree = Tree::new();
     let grants = classifier_grants(&tree);
     let at_alloys = effective_access(&grants, &[], &tree.ancestry(tree.alloys));
     assert_eq!(
         at_alloys,
         EffectiveAccess {
-            roles: [Role::Reader, Role::Dreamer].into_iter().collect(),
+            roles: [Role::Reader, Role::Reviewer].into_iter().collect(),
             edge_labels: Some(labels(&[OmlLabel::About])),
         }
     );
 
     // Proposing, ratifying or rejecting an `oml:about` edge is allowed.
     assert_eq!(
-        resolve_verb(Role::Dreamer, &at_alloys, Verb::ClaimEdge(ABOUT)),
+        resolve_verb(Role::Reviewer, &at_alloys, Verb::ClaimEdge(ABOUT)),
         Ok(())
     );
     assert_eq!(
-        resolve_verb(Role::Dreamer, &at_alloys, Verb::Needs(Role::Reader)),
+        resolve_verb(Role::Reviewer, &at_alloys, Verb::Needs(Role::Reader)),
         Ok(())
     );
-    // Every other dreamer-class verb, and every other label, open or `oml:`,
+    // Every other reviewer-class verb, and every other label, open or `oml:`,
     // is refused at step 3, naming the narrowed set.
     let refused = Err(VerbRefusal::GrantRefused {
-        needed_role: Role::Dreamer,
+        needed_role: Role::Reviewer,
         edge_labels: Some(labels(&[OmlLabel::About])),
     });
     for verb in [
-        Verb::Needs(Role::Dreamer),
+        Verb::Needs(Role::Reviewer),
         Verb::ClaimEdge("oml:is_a"),
         Verb::ClaimEdge("oml:replaced_by"),
         Verb::ClaimEdge("cites"),
     ] {
         assert_eq!(
-            resolve_verb(Role::Dreamer, &at_alloys, verb),
+            resolve_verb(Role::Reviewer, &at_alloys, verb),
             refused,
             "{verb:?}"
         );
     }
 
-    // A narrowed dreamer still reports `propose` and `review`.
+    // A narrowed reviewer still reports `propose` and `review`.
     assert_eq!(
-        effective_verbs(&at_alloys.roles, HeldBy::Agent),
+        effective_verbs(&at_alloys.roles, UsedBy::Agent),
         [
             "recall",
             "read",
@@ -302,60 +302,60 @@ fn a_narrowed_dreamer_grant_confers_only_edges_with_its_labels() {
         Some(labels(&[OmlLabel::IsA, OmlLabel::About]))
     );
     assert_eq!(
-        resolve_verb(Role::Dreamer, &union, Verb::ClaimEdge("oml:is_a")),
+        resolve_verb(Role::Reviewer, &union, Verb::ClaimEdge("oml:is_a")),
         Ok(())
     );
     // Without a reader grant, a refused verb is not found.
     assert_eq!(
-        resolve_verb(Role::Dreamer, &union, Verb::ClaimEdge("oml:part_of")),
+        resolve_verb(Role::Reviewer, &union, Verb::ClaimEdge("oml:part_of")),
         Err(VerbRefusal::NotFound)
     );
 }
 
 #[test]
-fn an_unnarrowed_dreamer_grant_on_the_same_node_widens_a_narrowed_one() {
+fn an_unnarrowed_reviewer_grant_on_the_same_node_widens_a_narrowed_one() {
     let tree = Tree::new();
     let grants = [
         narrowed(1, tree.research, &[ABOUT]),
-        grant(2, tree.research, Role::Dreamer),
+        grant(2, tree.research, Role::Reviewer),
         grant(3, tree.research, Role::Reader),
     ];
     let access = effective_access(&grants, &[], &tree.ancestry(tree.lit_review));
     assert_eq!(access.edge_labels, None);
     assert_eq!(my_edge_labels(&access), None);
     for verb in [
-        Verb::Needs(Role::Dreamer),
+        Verb::Needs(Role::Reviewer),
         Verb::ClaimEdge(ABOUT),
         Verb::ClaimEdge("oml:is_a"),
         Verb::ClaimEdge("cites"),
     ] {
         assert_eq!(
-            resolve_verb(Role::Dreamer, &access, verb),
+            resolve_verb(Role::Reviewer, &access, verb),
             Ok(()),
             "{verb:?}"
         );
     }
 
     // An unnarrowed grant whose own deny masks the node no longer survives
-    // there, so the narrowed grant is the only dreamer grant left.
+    // there, so the narrowed grant is the only reviewer grant left.
     let masked = [
         narrowed(1, tree.research, &[ABOUT]),
-        LabelledGrant::from(plain(2, tree.universe, Role::Dreamer, &[tree.lit_review])),
+        LabelledGrant::from(plain(2, tree.universe, Role::Reviewer, &[tree.lit_review])),
         grant(3, tree.research, Role::Reader),
     ];
     let access = effective_access(&masked, &[], &tree.ancestry(tree.lit_review));
     assert_eq!(access.edge_labels, Some(labels(&[OmlLabel::About])));
     assert_eq!(
-        resolve_verb(Role::Dreamer, &access, Verb::Needs(Role::Dreamer)),
+        resolve_verb(Role::Reviewer, &access, Verb::Needs(Role::Reviewer)),
         Err(VerbRefusal::GrantRefused {
-            needed_role: Role::Dreamer,
+            needed_role: Role::Reviewer,
             edge_labels: Some(labels(&[OmlLabel::About])),
         })
     );
 }
 
 #[test]
-fn a_global_denial_empties_a_narrowed_dreamer() {
+fn a_global_denial_empties_a_narrowed_reviewer() {
     let tree = Tree::new();
     let grants = classifier_grants(&tree);
     let denials = [denial(1, tree.metals_vocab)];
@@ -363,7 +363,7 @@ fn a_global_denial_empties_a_narrowed_dreamer() {
     assert_eq!(access, EffectiveAccess::default());
     assert_eq!(my_edge_labels(&access), None);
     assert_eq!(
-        resolve_verb(Role::Dreamer, &access, Verb::ClaimEdge(ABOUT)),
+        resolve_verb(Role::Reviewer, &access, Verb::ClaimEdge(ABOUT)),
         Err(VerbRefusal::NotFound)
     );
 }
@@ -378,12 +378,12 @@ fn the_plain_refusal_order_allows_nothing_the_narrowed_one_refuses() {
     let at_alloys = tree.ancestry(tree.alloys);
     assert_eq!(
         resolve(
-            Role::Dreamer,
+            Role::Reviewer,
             &effective_roles(&unnarrowed(&classifier), &[], &at_alloys),
-            Role::Dreamer
+            Role::Reviewer
         ),
         Err(AccessRefusal::GrantRefused {
-            needed_role: Role::Dreamer
+            needed_role: Role::Reviewer
         })
     );
 
@@ -398,13 +398,13 @@ fn the_plain_refusal_order_allows_nothing_the_narrowed_one_refuses() {
             let ancestry = tree.ancestry(node);
             let access = effective_access(&grants, &denials, &ancestry);
             let roles = effective_roles(&plain_grants, &denials, &ancestry);
-            for key_role in [Role::Reader, Role::Writer, Role::Dreamer] {
+            for key_role in [Role::Reader, Role::Writer, Role::Reviewer] {
                 for (needed, verb) in [
                     (Role::Reader, Verb::Needs(Role::Reader)),
                     (Role::Writer, Verb::Needs(Role::Writer)),
-                    (Role::Dreamer, Verb::Needs(Role::Dreamer)),
-                    (Role::Dreamer, Verb::ClaimEdge(ABOUT)),
-                    (Role::Dreamer, Verb::ClaimEdge("oml:is_a")),
+                    (Role::Reviewer, Verb::Needs(Role::Reviewer)),
+                    (Role::Reviewer, Verb::ClaimEdge(ABOUT)),
+                    (Role::Reviewer, Verb::ClaimEdge("oml:is_a")),
                 ] {
                     if resolve(key_role, &roles, needed).is_ok() {
                         assert_eq!(
@@ -424,7 +424,7 @@ fn the_plain_refusal_order_is_the_narrowed_one_where_no_grant_is_narrowed() {
     let tree = Tree::new();
     let denials = [denial(1, tree.lit_review)];
     let mixed = vec![
-        grant(1, tree.metals_vocab, Role::Dreamer),
+        grant(1, tree.metals_vocab, Role::Reviewer),
         LabelledGrant::from(plain(2, tree.universe, Role::Reader, &[tree.research])),
         grant(3, tree.research, Role::Writer),
     ];
@@ -449,11 +449,11 @@ fn the_plain_refusal_order_is_the_narrowed_one_where_no_grant_is_narrowed() {
             for key_role in [
                 Role::Reader,
                 Role::Writer,
-                Role::Dreamer,
+                Role::Reviewer,
                 Role::Admin,
                 Role::Operator,
             ] {
-                for needed in [Role::Reader, Role::Writer, Role::Dreamer] {
+                for needed in [Role::Reader, Role::Writer, Role::Reviewer] {
                     assert_eq!(
                         resolve_verb(key_role, &access, Verb::Needs(needed)).map_err(as_plain),
                         resolve(key_role, &roles, needed),
@@ -472,16 +472,16 @@ fn a_classifier_proposing_is_a_is_grant_refused_naming_its_labels() {
     let tree = Tree::new();
     let access = effective_access(&classifier_grants(&tree), &[], &tree.ancestry(tree.alloys));
     let naming_about = Err(VerbRefusal::GrantRefused {
-        needed_role: Role::Dreamer,
+        needed_role: Role::Reviewer,
         edge_labels: Some(labels(&[OmlLabel::About])),
     });
     assert_eq!(
-        resolve_verb(Role::Dreamer, &access, Verb::ClaimEdge("oml:is_a")),
+        resolve_verb(Role::Reviewer, &access, Verb::ClaimEdge("oml:is_a")),
         naming_about
     );
     // Review next and edit-as-proposal on its vocabulary answer the same.
     assert_eq!(
-        resolve_verb(Role::Dreamer, &access, Verb::Needs(Role::Dreamer)),
+        resolve_verb(Role::Reviewer, &access, Verb::Needs(Role::Reviewer)),
         naming_about
     );
 }
@@ -491,9 +491,9 @@ fn a_role_outside_the_key_roles_set_is_verb_ceiling_before_any_narrowing() {
     let tree = Tree::new();
     let access = effective_access(&classifier_grants(&tree), &[], &tree.ancestry(tree.alloys));
     assert_eq!(
-        resolve_verb(Role::Dreamer, &access, Verb::Needs(Role::Writer)),
+        resolve_verb(Role::Reviewer, &access, Verb::Needs(Role::Writer)),
         Err(VerbRefusal::VerbCeiling {
-            role: Role::Dreamer,
+            role: Role::Reviewer,
             needed: Role::Writer,
         })
     );
@@ -501,7 +501,7 @@ fn a_role_outside_the_key_roles_set_is_verb_ceiling_before_any_narrowing() {
         resolve_verb(Role::Writer, &access, Verb::ClaimEdge(ABOUT)),
         Err(VerbRefusal::VerbCeiling {
             role: Role::Writer,
-            needed: Role::Dreamer,
+            needed: Role::Reviewer,
         })
     );
 }
@@ -509,14 +509,14 @@ fn a_role_outside_the_key_roles_set_is_verb_ceiling_before_any_narrowing() {
 // ---- my_edge_labels (roles-and-keys.md#effective-verbs) ----
 
 #[test]
-fn my_edge_labels_is_the_narrowed_set_and_null_where_dreamer_is_unnarrowed_or_absent() {
+fn my_edge_labels_is_the_narrowed_set_and_null_where_reviewer_is_unnarrowed_or_absent() {
     let tree = Tree::new();
     let classifier = classifier_grants(&tree);
     let at = |grants: &[LabelledGrant], node: Uuid| {
         my_edge_labels(&effective_access(grants, &[], &tree.ancestry(node)))
     };
     assert_eq!(at(&classifier, tree.alloys), Some(vec![ABOUT]));
-    // Reader only on the content workarea: dreamer is absent there.
+    // Reader only on the content workspace: reviewer is absent there.
     assert_eq!(at(&classifier, tree.lit_review), None);
     let curator = curator_grants(&tree);
     assert_eq!(at(&curator, tree.alloys), None);
@@ -540,7 +540,7 @@ fn each_member_profile_admits_the_grants_add_member_issues() {
     for (profile, role, grants) in [
         (
             MemberProfile::Classifier,
-            Role::Dreamer,
+            Role::Reviewer,
             classifier_grants(&tree),
         ),
         (
@@ -548,14 +548,18 @@ fn each_member_profile_admits_the_grants_add_member_issues() {
             Role::Writer,
             term_creator_grants(&tree),
         ),
-        (MemberProfile::Curator, Role::Dreamer, curator_grants(&tree)),
+        (
+            MemberProfile::Curator,
+            Role::Reviewer,
+            curator_grants(&tree),
+        ),
     ] {
         assert_eq!(profile.key_role(), role);
-        for held_by in [HeldBy::Agent, HeldBy::Human] {
+        for used_by in [UsedBy::Agent, UsedBy::Person] {
             assert_eq!(
-                check(&tree, ontology, Some(profile), role, Some(held_by), &grants),
+                check(&tree, ontology, Some(profile), role, Some(used_by), &grants),
                 Ok(()),
-                "{profile:?} {held_by:?}"
+                "{profile:?} {used_by:?}"
             );
         }
     }
@@ -564,15 +568,15 @@ fn each_member_profile_admits_the_grants_add_member_issues() {
 #[test]
 fn a_key_of_a_general_crew_or_of_none_without_a_profile_is_not_checked() {
     let tree = Tree::new();
-    let broad = [grant(1, tree.universe, Role::Dreamer)];
+    let broad = [grant(1, tree.universe, Role::Reviewer)];
     for crew in [None, Some(CrewKind::General)] {
         assert_eq!(
             check(
                 &tree,
                 crew,
                 None,
-                Role::Dreamer,
-                Some(HeldBy::Service),
+                Role::Reviewer,
+                Some(UsedBy::Service),
                 &broad
             ),
             Ok(()),
@@ -589,8 +593,8 @@ fn an_ontology_crew_key_without_a_profile_is_profile_required() {
             &tree,
             Some(CrewKind::Ontology),
             None,
-            Role::Dreamer,
-            Some(HeldBy::Agent),
+            Role::Reviewer,
+            Some(UsedBy::Agent),
             &classifier_grants(&tree),
         ),
         mismatch(None, ProfileClause::ProfileRequired, None)
@@ -607,8 +611,8 @@ fn a_profile_on_a_key_of_a_general_crew_is_a_profile_mismatch_on_crew_kind() {
                 &tree,
                 crew,
                 classifier,
-                Role::Dreamer,
-                Some(HeldBy::Agent),
+                Role::Reviewer,
+                Some(UsedBy::Agent),
                 &classifier_grants(&tree),
             ),
             mismatch(classifier, ProfileClause::CrewKind, None),
@@ -627,7 +631,7 @@ fn a_profile_on_another_key_role_is_a_profile_mismatch_on_key_role() {
             Some(CrewKind::Ontology),
             curator,
             Role::Writer,
-            Some(HeldBy::Agent),
+            Some(UsedBy::Agent),
             &term_creator_grants(&tree),
         ),
         mismatch(curator, ProfileClause::KeyRole, None)
@@ -635,43 +639,43 @@ fn a_profile_on_another_key_role_is_a_profile_mismatch_on_key_role() {
 }
 
 #[test]
-fn a_service_attested_member_key_is_a_profile_mismatch_on_held_by() {
+fn a_service_attested_member_key_is_a_profile_mismatch_on_used_by() {
     let tree = Tree::new();
     let classifier = Some(MemberProfile::Classifier);
-    for held_by in [Some(HeldBy::Service), None] {
+    for used_by in [Some(UsedBy::Service), None] {
         assert_eq!(
             check(
                 &tree,
                 Some(CrewKind::Ontology),
                 classifier,
-                Role::Dreamer,
-                held_by,
+                Role::Reviewer,
+                used_by,
                 &classifier_grants(&tree),
             ),
-            mismatch(classifier, ProfileClause::HeldBy, None),
-            "{held_by:?}"
+            mismatch(classifier, ProfileClause::UsedBy, None),
+            "{used_by:?}"
         );
     }
 }
 
 #[test]
-fn a_classifier_with_an_unnarrowed_dreamer_grant_is_a_profile_mismatch_naming_the_grant() {
+fn a_classifier_with_an_unnarrowed_reviewer_grant_is_a_profile_mismatch_naming_the_grant() {
     let tree = Tree::new();
     let classifier = Some(MemberProfile::Classifier);
     let mut grants = classifier_grants(&tree);
-    grants.push(grant(4, tree.alloys, Role::Dreamer));
+    grants.push(grant(4, tree.alloys, Role::Reviewer));
     assert_eq!(
         check(
             &tree,
             Some(CrewKind::Ontology),
             classifier,
-            Role::Dreamer,
-            Some(HeldBy::Agent),
+            Role::Reviewer,
+            Some(UsedBy::Agent),
             &grants,
         ),
         mismatch(classifier, ProfileClause::Grant, Some(3))
     );
-    // A narrowed dreamer grant off a vocabulary node, or one narrowed to
+    // A narrowed reviewer grant off a vocabulary node, or one narrowed to
     // another label, is outside the row too.
     for stray in [
         narrowed(4, tree.research, &[ABOUT]),
@@ -685,8 +689,8 @@ fn a_classifier_with_an_unnarrowed_dreamer_grant_is_a_profile_mismatch_naming_th
                 &tree,
                 Some(CrewKind::Ontology),
                 classifier,
-                Role::Dreamer,
-                Some(HeldBy::Agent),
+                Role::Reviewer,
+                Some(UsedBy::Agent),
                 &grants,
             ),
             mismatch(classifier, ProfileClause::Grant, Some(0))
@@ -700,7 +704,7 @@ fn a_curator_or_term_creator_grant_outside_its_row_is_a_profile_mismatch_naming_
     let ontology = Some(CrewKind::Ontology);
     let curator = Some(MemberProfile::Curator);
     for stray in [
-        grant(5, tree.research, Role::Dreamer),
+        grant(5, tree.research, Role::Reviewer),
         narrowed(5, tree.metals_vocab, &[ABOUT]),
     ] {
         let mut grants = curator_grants(&tree);
@@ -710,8 +714,8 @@ fn a_curator_or_term_creator_grant_outside_its_row_is_a_profile_mismatch_naming_
                 &tree,
                 ontology,
                 curator,
-                Role::Dreamer,
-                Some(HeldBy::Human),
+                Role::Reviewer,
+                Some(UsedBy::Person),
                 &grants
             ),
             mismatch(curator, ProfileClause::Grant, Some(4))
@@ -730,7 +734,7 @@ fn a_curator_or_term_creator_grant_outside_its_row_is_a_profile_mismatch_naming_
                 ontology,
                 term_creator,
                 Role::Writer,
-                Some(HeldBy::Agent),
+                Some(UsedBy::Agent),
                 &grants
             ),
             mismatch(term_creator, ProfileClause::Grant, Some(2))
@@ -745,7 +749,7 @@ fn a_member_key_without_its_must_grant_is_a_profile_mismatch_on_required_grant()
     for (profile, role, grants) in [
         (
             MemberProfile::Classifier,
-            Role::Dreamer,
+            Role::Reviewer,
             vec![grant(1, tree.research, Role::Reader)],
         ),
         (
@@ -755,13 +759,13 @@ fn a_member_key_without_its_must_grant_is_a_profile_mismatch_on_required_grant()
         ),
         (
             MemberProfile::Curator,
-            Role::Dreamer,
+            Role::Reviewer,
             vec![
                 narrowed(1, tree.research, &[ABOUT]),
                 grant(2, tree.metals_vocab, Role::Reader),
             ],
         ),
-        (MemberProfile::Curator, Role::Dreamer, vec![]),
+        (MemberProfile::Curator, Role::Reviewer, vec![]),
     ] {
         assert_eq!(
             check(
@@ -769,7 +773,7 @@ fn a_member_key_without_its_must_grant_is_a_profile_mismatch_on_required_grant()
                 ontology,
                 Some(profile),
                 role,
-                Some(HeldBy::Agent),
+                Some(UsedBy::Agent),
                 &grants
             ),
             mismatch(Some(profile), ProfileClause::RequiredGrant, None),
@@ -782,14 +786,14 @@ fn a_member_key_without_its_must_grant_is_a_profile_mismatch_on_required_grant()
 fn a_deny_mask_inside_a_grant_never_fails_a_profile() {
     let tree = Tree::new();
     let mut grants = curator_grants(&tree);
-    grants[0] = LabelledGrant::from(plain(1, tree.metals_vocab, Role::Dreamer, &[tree.alloys]));
+    grants[0] = LabelledGrant::from(plain(1, tree.metals_vocab, Role::Reviewer, &[tree.alloys]));
     assert_eq!(
         check(
             &tree,
             Some(CrewKind::Ontology),
             Some(MemberProfile::Curator),
-            Role::Dreamer,
-            Some(HeldBy::Agent),
+            Role::Reviewer,
+            Some(UsedBy::Agent),
             &grants,
         ),
         Ok(())
@@ -808,7 +812,7 @@ fn a_grant_added_to_a_profiled_key_is_checked_on_its_shape_alone() {
         check_profile_amendment(MemberProfile::Classifier, &grants, is_vocabulary),
         Ok(())
     );
-    grants.push(grant(3, tree.metals_vocab, Role::Dreamer));
+    grants.push(grant(3, tree.metals_vocab, Role::Reviewer));
     assert_eq!(
         check_profile_amendment(MemberProfile::Classifier, &grants, is_vocabulary),
         mismatch(
@@ -835,7 +839,7 @@ fn profile_and_clause_spell_the_wire_names() {
             ProfileClause::CrewKind,
             ProfileClause::ProfileRequired,
             ProfileClause::KeyRole,
-            ProfileClause::HeldBy,
+            ProfileClause::UsedBy,
             ProfileClause::Grant,
             ProfileClause::RequiredGrant,
         ]
@@ -844,7 +848,7 @@ fn profile_and_clause_spell_the_wire_names() {
             "crew_kind",
             "profile_required",
             "key_role",
-            "held_by",
+            "used_by",
             "grant",
             "required_grant",
         ]

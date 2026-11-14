@@ -1,6 +1,6 @@
 //! Grant admissibility, effective access, the refusal order, effective verbs
 //! and content-tail visibility (ADR-0025 d1, d2, d14, d15;
-//! roles-and-keys.md, workareas.md, http-api.md#events-tail).
+//! roles-and-keys.md, workspaces.md, http-api.md#events-tail).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -9,14 +9,14 @@ use oml_domain::access::{
     admissible_grant_roles, check_issuance, effective_roles, effective_verbs, resolve,
     tail_visible,
 };
-use oml_domain::{HeldBy, Role};
+use oml_domain::{Role, UsedBy};
 use proptest::prelude::*;
 use uuid::Uuid;
 
 const ALL_ROLES: [Role; 5] = [
     Role::Reader,
     Role::Writer,
-    Role::Dreamer,
+    Role::Reviewer,
     Role::Admin,
     Role::Operator,
 ];
@@ -50,7 +50,7 @@ fn roles(list: &[Role]) -> BTreeSet<Role> {
     list.iter().copied().collect()
 }
 
-/// The example tenant of workareas.md: `universe` → `research-crew` →
+/// The example tenant of workspaces.md: `universe` → `research-crew` →
 /// {`lit-review`, `experiments` → `run-grid`}, and `universe` → `ops-crew`.
 struct Tree {
     universe: Uuid,
@@ -133,26 +133,26 @@ fn a_writer_key_admits_reader_and_writer_grants_only() {
 }
 
 #[test]
-fn a_dreamer_key_admits_reader_and_dreamer_grants_only() {
+fn a_reviewer_key_admits_reader_and_reviewer_grants_only() {
     assert_eq!(
-        admissible_grant_roles(Role::Dreamer),
-        &[Role::Reader, Role::Dreamer]
+        admissible_grant_roles(Role::Reviewer),
+        &[Role::Reader, Role::Reviewer]
     );
     let tree = Tree::new();
     for role in ALL_ROLES {
         let result = check_issuance(
             Role::Admin,
-            Role::Dreamer,
+            Role::Reviewer,
             &[grant(1, tree.research_crew, role, &[])],
         );
-        if matches!(role, Role::Reader | Role::Dreamer) {
+        if matches!(role, Role::Reader | Role::Reviewer) {
             assert_eq!(result, Ok(()), "{role:?}");
         } else {
             assert_eq!(
                 result,
                 Err(IssuanceRefusal::IssuerCeiling {
                     role,
-                    admissible: &[Role::Reader, Role::Dreamer],
+                    admissible: &[Role::Reader, Role::Reviewer],
                     grant_index: Some(0),
                 }),
                 "{role:?}"
@@ -196,13 +196,13 @@ fn admin_and_operator_keys_admit_no_grant() {
 }
 
 #[test]
-fn an_admin_key_with_a_dreamer_grant_is_role_exclusive_before_issuer_ceiling() {
-    // Admin admits no grant, so the dreamer grant would also fail step 3;
+fn an_admin_key_with_a_reviewer_grant_is_role_exclusive_before_issuer_ceiling() {
+    // Admin admits no grant, so the reviewer grant would also fail step 3;
     // the two-key rule answers first (issuance order step 1).
     let tree = Tree::new();
     let grants = [
         grant(1, tree.research_crew, Role::Reader, &[]),
-        grant(2, tree.research_crew, Role::Dreamer, &[]),
+        grant(2, tree.research_crew, Role::Reviewer, &[]),
     ];
     assert_eq!(
         check_issuance(Role::Admin, Role::Admin, &grants),
@@ -220,7 +220,7 @@ fn an_admin_minting_an_operator_key_is_issuer_ceiling_naming_the_issuable_roles(
         check_issuance(Role::Admin, Role::Operator, &[]),
         Err(IssuanceRefusal::IssuerCeiling {
             role: Role::Operator,
-            admissible: &[Role::Reader, Role::Writer, Role::Dreamer, Role::Admin],
+            admissible: &[Role::Reader, Role::Writer, Role::Reviewer, Role::Admin],
             grant_index: None,
         })
     );
@@ -243,11 +243,11 @@ fn the_key_role_ceiling_answers_before_grant_admissibility() {
         check_issuance(
             Role::Admin,
             Role::Operator,
-            &[grant(1, tree.research_crew, Role::Dreamer, &[])],
+            &[grant(1, tree.research_crew, Role::Reviewer, &[])],
         ),
         Err(IssuanceRefusal::IssuerCeiling {
             role: Role::Operator,
-            admissible: &[Role::Reader, Role::Writer, Role::Dreamer, Role::Admin],
+            admissible: &[Role::Reader, Role::Writer, Role::Reviewer, Role::Admin],
             grant_index: None,
         })
     );
@@ -259,23 +259,23 @@ fn the_first_inadmissible_grant_is_named_by_its_index() {
     let grants = [
         grant(1, tree.research_crew, Role::Reader, &[]),
         grant(2, tree.research_crew, Role::Writer, &[]),
-        grant(3, tree.lit_review, Role::Dreamer, &[]),
+        grant(3, tree.lit_review, Role::Reviewer, &[]),
         grant(4, tree.ops_crew, Role::Admin, &[]),
     ];
     assert_eq!(
         check_issuance(Role::Admin, Role::Writer, &grants),
         Err(IssuanceRefusal::IssuerCeiling {
-            role: Role::Dreamer,
+            role: Role::Reviewer,
             admissible: &[Role::Reader, Role::Writer],
             grant_index: Some(2),
         })
     );
 }
 
-// ---- Effective access (workareas.md#effective-access-union-of-attenuated-grants-then-deny-wins) ----
+// ---- Effective access (workspaces.md#effective-access-union-of-attenuated-grants-then-deny-wins) ----
 
 #[test]
-fn the_workareas_md_worked_example_resolves_row_for_row() {
+fn the_workspaces_md_worked_example_resolves_row_for_row() {
     // Grant A = reader on research-crew with a deny on experiments;
     // grant B = reader on experiments; a global deny on run-grid.
     let tree = Tree::new();
@@ -371,7 +371,7 @@ fn a_grant_covers_its_subtree_and_nothing_above_or_beside_it() {
 #[test]
 fn a_role_outside_the_key_roles_set_is_verb_ceiling() {
     // Step 1 needs no node: it answers even where the role is effective.
-    let all = roles(&[Role::Reader, Role::Writer, Role::Dreamer]);
+    let all = roles(&[Role::Reader, Role::Writer, Role::Reviewer]);
     assert_eq!(
         resolve(Role::Reader, &all, Role::Writer),
         Err(AccessRefusal::VerbCeiling {
@@ -380,21 +380,21 @@ fn a_role_outside_the_key_roles_set_is_verb_ceiling() {
         })
     );
     assert_eq!(
-        resolve(Role::Writer, &all, Role::Dreamer),
+        resolve(Role::Writer, &all, Role::Reviewer),
         Err(AccessRefusal::VerbCeiling {
             role: Role::Writer,
-            needed: Role::Dreamer,
+            needed: Role::Reviewer,
         })
     );
     assert_eq!(
-        resolve(Role::Dreamer, &BTreeSet::new(), Role::Writer),
+        resolve(Role::Reviewer, &BTreeSet::new(), Role::Writer),
         Err(AccessRefusal::VerbCeiling {
-            role: Role::Dreamer,
+            role: Role::Reviewer,
             needed: Role::Writer,
         })
     );
     for key_role in [Role::Admin, Role::Operator] {
-        for needed in [Role::Reader, Role::Writer, Role::Dreamer] {
+        for needed in [Role::Reader, Role::Writer, Role::Reviewer] {
             assert_eq!(
                 resolve(key_role, &all, needed),
                 Err(AccessRefusal::VerbCeiling {
@@ -435,12 +435,12 @@ fn a_readable_node_without_the_role_is_grant_refused() {
             needed_role: Role::Writer,
         })
     );
-    let dreamer_grants = [grant(2, tree.research_crew, Role::Reader, &[])];
-    let eff = effective_roles(&dreamer_grants, &[], &tree.ancestry(tree.experiments));
+    let reviewer_grants = [grant(2, tree.research_crew, Role::Reader, &[])];
+    let eff = effective_roles(&reviewer_grants, &[], &tree.ancestry(tree.experiments));
     assert_eq!(
-        resolve(Role::Dreamer, &eff, Role::Dreamer),
+        resolve(Role::Reviewer, &eff, Role::Reviewer),
         Err(AccessRefusal::GrantRefused {
-            needed_role: Role::Dreamer,
+            needed_role: Role::Reviewer,
         })
     );
 }
@@ -477,7 +477,7 @@ fn one_writer_key_with_writer_and_reader_grants_remembers_and_recalls() {
 #[test]
 fn effective_verbs_for_writer_and_reader_are_the_union_of_the_table() {
     assert_eq!(
-        effective_verbs(&roles(&[Role::Writer, Role::Reader]), HeldBy::Agent),
+        effective_verbs(&roles(&[Role::Writer, Role::Reader]), UsedBy::Agent),
         [
             "recall",
             "read",
@@ -490,16 +490,16 @@ fn effective_verbs_for_writer_and_reader_are_the_union_of_the_table() {
         ]
     );
     assert_eq!(
-        effective_verbs(&roles(&[Role::Reader]), HeldBy::Human),
+        effective_verbs(&roles(&[Role::Reader]), UsedBy::Person),
         ["recall", "read", "graph_read", "events_tail"]
     );
-    assert!(effective_verbs(&BTreeSet::new(), HeldBy::Agent).is_empty());
+    assert!(effective_verbs(&BTreeSet::new(), UsedBy::Agent).is_empty());
 }
 
 #[test]
-fn effective_verbs_for_dreamer_and_reader_list_supersede_once_in_table_order() {
+fn effective_verbs_for_reviewer_and_reader_list_supersede_once_in_table_order() {
     assert_eq!(
-        effective_verbs(&roles(&[Role::Dreamer, Role::Reader]), HeldBy::Agent),
+        effective_verbs(&roles(&[Role::Reviewer, Role::Reader]), UsedBy::Agent),
         [
             "recall",
             "read",
@@ -510,10 +510,10 @@ fn effective_verbs_for_dreamer_and_reader_list_supersede_once_in_table_order() {
             "supersede",
         ]
     );
-    // No key role admits both writer and dreamer, but the union is still
+    // No key role admits both writer and reviewer, but the union is still
     // free of duplicates in table order.
     assert_eq!(
-        effective_verbs(&roles(&[Role::Writer, Role::Dreamer]), HeldBy::Agent),
+        effective_verbs(&roles(&[Role::Writer, Role::Reviewer]), UsedBy::Agent),
         [
             "remember",
             "learn",
@@ -528,7 +528,7 @@ fn effective_verbs_for_dreamer_and_reader_list_supersede_once_in_table_order() {
 #[test]
 fn a_service_keys_effective_verbs_omit_review() {
     assert_eq!(
-        effective_verbs(&roles(&[Role::Dreamer, Role::Reader]), HeldBy::Service),
+        effective_verbs(&roles(&[Role::Reviewer, Role::Reader]), UsedBy::Service),
         [
             "recall",
             "read",
@@ -563,9 +563,9 @@ fn caller<'a>(grants: &'a [Grant], denials: &'a [KeyDenial], scope: Uuid) -> Tai
     }
 }
 
-fn subject(workareas: &[Vec<Uuid>], author: Option<Uuid>, promoted: bool) -> TailSubject<'_> {
+fn subject(workspaces: &[Vec<Uuid>], author: Option<Uuid>, promoted: bool) -> TailSubject<'_> {
     TailSubject {
-        workareas,
+        workspaces,
         author_key: author,
         promoted,
         self_signed: false,
@@ -646,14 +646,14 @@ fn an_event_outside_the_tails_subtree_is_hidden() {
         &me
     ));
     assert!(!tail_visible(
-        "workarea.create",
+        "workspace.create",
         &subject(&beside, None, false),
         &me
     ));
 }
 
 #[test]
-fn a_promoted_subjects_lifecycle_event_is_visible_to_a_reader_of_its_workarea() {
+fn a_promoted_subjects_lifecycle_event_is_visible_to_a_reader_of_its_workspace() {
     let tree = Tree::new();
     let reader = [grant(1, tree.research_crew, Role::Reader, &[])];
     let me = caller(&reader, &[], tree.research_crew);
@@ -701,7 +701,7 @@ fn a_never_promoted_subjects_lifecycle_event_reaches_only_its_author() {
 }
 
 #[test]
-fn a_self_signed_subjects_lifecycle_event_shows_only_on_a_tail_scoped_to_its_workarea() {
+fn a_self_signed_subjects_lifecycle_event_shows_only_on_a_tail_scoped_to_its_workspace() {
     let tree = Tree::new();
     let reader = [grant(1, tree.research_crew, Role::Reader, &[])];
     let at = [tree.ancestry(tree.experiments)];
@@ -751,7 +751,7 @@ fn a_subject_outside_the_audience_is_hidden_even_from_its_author() {
 }
 
 #[test]
-fn a_reassign_is_visible_through_either_listed_workarea() {
+fn a_reassign_is_visible_through_either_listed_workspace() {
     // A key reading only experiments sees a promoted version move in from
     // ops-crew, and sees one leave experiments for ops-crew.
     let tree = Tree::new();
@@ -769,7 +769,7 @@ fn a_reassign_is_visible_through_either_listed_workarea() {
         &subject(&outbound, Some(OTHER), true),
         &me
     ));
-    // Neither listed workarea readable: hidden.
+    // Neither listed workspace readable: hidden.
     let elsewhere = [tree.ancestry(tree.ops_crew), tree.ancestry(tree.lit_review)];
     assert!(!tail_visible(
         "lifecycle.reassign",
@@ -779,16 +779,16 @@ fn a_reassign_is_visible_through_either_listed_workarea() {
 }
 
 #[test]
-fn a_workarea_event_needs_reader_on_its_node_and_a_relate_event_on_both_endpoints() {
+fn a_workspace_event_needs_reader_on_its_node_and_a_relate_event_on_both_endpoints() {
     let tree = Tree::new();
     let reader = [grant(1, tree.research_crew, Role::Reader, &[])];
     let me = caller(&reader, &[], tree.experiments);
     for event_type in [
-        "workarea.create",
-        "workarea.reparent",
-        "workarea.status_proposed",
-        "workarea.status_transition",
-        "workarea.crew_updated",
+        "workspace.create",
+        "workspace.reparent",
+        "workspace.status_proposed",
+        "workspace.status_transition",
+        "workspace.crew_updated",
     ] {
         let node = [tree.ancestry(tree.run_grid)];
         assert!(
@@ -801,7 +801,7 @@ fn a_workarea_event_needs_reader_on_its_node_and_a_relate_event_on_both_endpoint
             "{event_type}"
         );
     }
-    for event_type in ["workarea.relate_proposed", "workarea.relate_ratified"] {
+    for event_type in ["workspace.relate_proposed", "workspace.relate_ratified"] {
         // Both readable, one inside the tail's subtree.
         let both = [tree.ancestry(tree.run_grid), tree.ancestry(tree.lit_review)];
         assert!(
@@ -867,7 +867,7 @@ fn review_and_key_events_are_never_visible_on_the_content_tail() {
 }
 
 #[test]
-fn a_subject_with_the_wrong_number_of_workareas_is_hidden() {
+fn a_subject_with_the_wrong_number_of_workspaces_is_hidden() {
     let tree = Tree::new();
     let grants = writer_reader_grants(&tree);
     let me = caller(&grants, &[], tree.research_crew);
@@ -893,7 +893,7 @@ fn a_subject_with_the_wrong_number_of_workareas_is_hidden() {
         &me
     ));
     assert!(!tail_visible(
-        "workarea.relate_ratified",
+        "workspace.relate_ratified",
         &subject(&one, None, false),
         &me
     ));
@@ -955,7 +955,7 @@ proptest! {
             let n = parents.len();
             let grant_spec = (
                 0..n,
-                proptest::sample::select(vec![Role::Reader, Role::Writer, Role::Dreamer]),
+                proptest::sample::select(vec![Role::Reader, Role::Writer, Role::Reviewer]),
                 proptest::collection::vec(0..n, 0..3),
             );
             (

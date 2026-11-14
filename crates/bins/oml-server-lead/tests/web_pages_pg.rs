@@ -441,7 +441,7 @@ async fn the_session_gates_rows_read_in_one_transaction_are_the_rows_its_separat
             "the-denial",
             "/v2/keys/bob-web/denials",
             &boot.admin_key.value,
-            json!({"workarea": "universe"}),
+            json!({"workspace": "universe"}),
         ),
     )
     .await;
@@ -558,7 +558,7 @@ async fn an_email_is_unique_in_the_deployment() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_user_named_like_a_shared_workarea_is_name_taken() {
+async fn a_user_named_like_a_shared_workspace_is_name_taken() {
     let db = fresh_name();
     if !mint_database(&db).await {
         return;
@@ -567,14 +567,14 @@ async fn a_user_named_like_a_shared_workarea_is_name_taken() {
     let key = SigningKey::from_bytes(&OsIds.new_secret());
     let boot = tenant(&store, &key, "oml").await;
     lead_app(&store, key.clone())
-        .create_workarea(
+        .create_workspace(
             &boot.admin_key.value,
             &Name::parse("research").expect("a name"),
-            Some(boot.root_workarea_id.into()),
+            Some(boot.root_workspace_id.into()),
             None,
         )
         .await
-        .expect("a shared workarea");
+        .expect("a shared workspace");
     let router = lead(&store, &key, &MemSignIn::new()).await;
     let (status, _, body) = send(
         &router,
@@ -587,7 +587,7 @@ async fn a_user_named_like_a_shared_workarea_is_name_taken() {
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     let refusal: Value = serde_json::from_str(&body).expect("JSON");
-    assert_eq!(refusal["error"]["details"]["kind"], "workarea");
+    assert_eq!(refusal["error"]["details"]["kind"], "workspace");
     let (status, _, body) = send(
         &router,
         json_post(
@@ -668,8 +668,8 @@ async fn bulk_review_lists_confirms_by_id_and_records_each_outcome_once() {
             &admin,
             json!({"role": "writer", "name": "alice-loader", "principal": "alice/loader",
                    "user": "alice", "grants": [
-                       {"workarea": "alice", "role": "writer"},
-                       {"workarea": "alice", "role": "reader"}]}),
+                       {"workspace": "alice", "role": "writer"},
+                       {"workspace": "alice", "role": "reader"}]}),
         ),
     )
     .await;

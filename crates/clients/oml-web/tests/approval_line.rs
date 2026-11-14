@@ -30,8 +30,8 @@ impl Transport for Double {
         let body = if path.starts_with("/v2/whoami") {
             json!({
                 "key_id": "k1", "name": "alice-web", "role": "user", "principal": "alice",
-                "held_by": "human", "tenant": {"id": "t1", "name": "oml"},
-                "default_workarea": null, "crew": null,
+                "used_by": "person", "tenant": {"id": "t1", "name": "oml"},
+                "default_workspace": null, "crew": null,
                 "user": {"id": ROOT, "name": "alice"}, "grants": [],
             })
         } else if path.starts_with("/v1/memories") {
@@ -53,13 +53,13 @@ impl Transport for Double {
 fn memory(id: &str, state: &str, principal: Option<&str>, approval: Option<(&str, bool)>) -> Value {
     json!({
         "artifact_id": id, "claim_key": format!("claim-{id}"), "version": 1, "tip": true,
-        "workarea_path": "universe.alice", "state": state, "principal": principal,
+        "workspace_path": "universe.alice", "state": state, "principal": principal,
         "author_key_id": null, "created_at": "2026-11-09T08:00:00.000000Z",
         "promoted_at": (state == "promoted").then_some("2026-11-10T09:30:00.000000Z"),
         "text": format!("text of {id}"),
         "approved_at": approval.map(|_| "2026-11-10T09:30:00.000000Z"),
-        "approver": approval.map(|(held_by, same_user)| json!({
-            "held_by": held_by, "same_user": same_user,
+        "approver": approval.map(|(used_by, same_user)| json!({
+            "used_by": used_by, "same_user": same_user,
         })),
     })
 }
@@ -129,7 +129,7 @@ async fn a_card_says_when_it_was_approved_and_whether_a_persons_an_agents_or_a_s
             "by-person",
             "promoted",
             Some("alice"),
-            Some(("human", false))
+            Some(("person", false))
         ),
         memory(
             "by-agent",
@@ -170,7 +170,7 @@ async fn a_person_approving_their_own_agents_write_is_marked_a_self_review() {
         "own",
         "promoted",
         Some("alice"),
-        Some(("human", true))
+        Some(("person", true))
     )]))
     .await;
     let step = review_step(&page, "own");
@@ -208,7 +208,7 @@ async fn the_json_route_carries_the_approval_the_card_shows_and_nothing_more() {
     let json = list_at(
         "/web/data/memories",
         json!([
-            memory("own", "promoted", Some("alice"), Some(("human", true))),
+            memory("own", "promoted", Some("alice"), Some(("person", true))),
             memory(
                 "by-agent",
                 "promoted",

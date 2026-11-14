@@ -207,7 +207,7 @@ async fn quickstart_brings_up_the_compose_profile_claims_the_lead_and_prints_the
         "{log}"
     );
 
-    // The keys, owner-only; the agent's is a writer key on the crew workarea.
+    // The keys, owner-only; the agent's is a writer key on the crew workspace.
     let agent_file = stack.join("keys").join("agent");
     for name in ["agent", "reviewer"] {
         assert_eq!(mode(&stack.join("keys").join(name)), 0o600, "{name}");
@@ -223,7 +223,7 @@ async fn quickstart_brings_up_the_compose_profile_claims_the_lead_and_prints_the
         .into_json()
         .expect("JSON");
     assert_eq!(me["role"], "writer", "{me}");
-    assert_eq!(me["default_workarea"]["path"], "universe.crew", "{me}");
+    assert_eq!(me["default_workspace"]["path"], "universe.crew", "{me}");
     assert!(
         !dir.join("user-credentials.toml").exists(),
         "the user's own credentials file is left alone"

@@ -11,7 +11,7 @@
 //! or with a text query through recall, its one ranked page; the admin page
 //! lists through `POST /v2/admin/memories/search` as `<user>-admin`, one
 //! `memory.admin_read` per page, which the API journals (d24). The Atlas
-//! reads no memory: `GET /v2/workareas/{w}/tree?counts=true` and the scope's
+//! reads no memory: `GET /v2/workspaces/{w}/tree?counts=true` and the scope's
 //! offers (d30). Each row links to the memory's own page, `crate::memory`.
 
 use std::fmt::Write as _;
@@ -33,7 +33,7 @@ use crate::card::{Card, Kinds, kind_word, row_state};
 use crate::pages::{Fields, WalkEnd, refused, walk};
 use crate::picker::{self, Browse, Chosen, Field, Names, Roots};
 use crate::session::{PageCalls, Session, call, cookie};
-use crate::workareas::{
+use crate::workspaces::{
     Credentials, NodeOffers, Side as ActSide, mode_offers, offers_of, transitions_offers,
 };
 use crate::{Capacity, SESSION_COOKIE, Web, outcome};
@@ -101,14 +101,14 @@ impl Side {
             |u| format!("{}-admin", u.name),
         );
         match (self, atlas) {
-            (Self::User, false) => "Newest first. A held memory waits for another identity's review. Its author and the agent's signed-in owner can read it; an in-progress workarea also serves it to readers.".to_owned(),
-            (Self::User, true) => "Each workarea sized by the memories this account reads in it, by state.".to_owned(),
+            (Self::User, false) => "Newest first. A held memory waits for another identity's review. Its author and the agent's signed-in owner can read it; an in-progress workspace also serves it to readers.".to_owned(),
+            (Self::User, true) => "Each workspace sized by the memories this account reads in it, by state.".to_owned(),
             (Self::Admin, false) => format!(
                 "Read as <code>{}</code>: every memory of the tenant, newest first. Each page read is journalled. This key never recalls and never judges.",
                 text(&admin)
             ),
             (Self::Admin, true) => format!(
-                "Read as <code>{}</code>: every workarea of the tenant, sized by its memories, each row counted as structure. No text is read.",
+                "Read as <code>{}</code>: every workspace of the tenant, sized by its memories, each row counted as structure. No text is read.",
                 text(&admin)
             ),
         }
@@ -120,12 +120,12 @@ type FieldRefusal = (&'static str, String);
 
 /// The Memories view's query, each field checked as the lead checked it
 /// (ADR-0045 d22); the API checks an author's grammar, and the picker a
-/// workarea's ([`crate::picker`]).
+/// workspace's ([`crate::picker`]).
 #[derive(Clone)]
 struct ListQuery {
     q: Option<String>,
     state: Option<String>,
-    workarea: Option<String>,
+    workspace: Option<String>,
     origin: Option<String>,
     author: Option<String>,
     cursor: Option<String>,
@@ -171,7 +171,7 @@ impl ListQuery {
         Ok(Self {
             q: value("q"),
             state,
-            workarea: value("workarea"),
+            workspace: value("workspace"),
             origin,
             author: value("author"),
             cursor: value("cursor"),
@@ -187,7 +187,7 @@ impl ListQuery {
         for (name, value) in [
             ("q", self.q.as_deref()),
             ("state", self.state.as_deref()),
-            ("workarea", self.workarea.as_deref()),
+            ("workspace", self.workspace.as_deref()),
             ("origin", self.origin.as_deref()),
             ("author", self.author.as_deref()),
             ("limit", self.limit_sent.as_deref()),
@@ -250,7 +250,7 @@ async fn own_kinds(web: &Web, credential: &str, calls: &PageCalls) -> Result<Kin
         let kinds: Kinds = page
             .items
             .into_iter()
-            .map(|k| (k.id, k.name, kind_word(&k.held_by)))
+            .map(|k| (k.id, k.name, kind_word(&k.used_by)))
             .collect();
         Ok((kinds, page.next_cursor))
     })
@@ -286,7 +286,7 @@ async fn user_cards(
     let Some(text_query) = &q.q else {
         let ids = calls.next_ids();
         let query = MemoryQuery {
-            workarea: q.workarea.as_deref(),
+            workspace: q.workspace.as_deref(),
             state: q.state.as_deref(),
             origin: q.origin.as_deref(),
             author: q.author.as_deref(),
@@ -309,7 +309,7 @@ async fn user_cards(
     let recall = RecallQuery {
         query: text_query,
         k: q.limit.min(RECALL_MAX),
-        workarea: q.workarea.as_deref(),
+        workspace: q.workspace.as_deref(),
         origin: q.origin.as_deref(),
     };
     let keys = async {
@@ -374,7 +374,7 @@ async fn admin_cards(
             &call(&credential, &ids),
             &AdminSearch {
                 query: q.q.as_deref(),
-                workarea: q.workarea.as_deref(),
+                workspace: q.workspace.as_deref(),
                 state: q.state.as_deref(),
                 origin_kind: q.origin.as_deref(),
                 author: q.author.as_deref(),
@@ -389,7 +389,7 @@ async fn admin_cards(
     })
 }
 
-/// The filters the picker's links keep beside the workarea, in the form's
+/// The filters the picker's links keep beside the workspace, in the form's
 /// order.
 fn keep(q: &ListQuery) -> Vec<(&'static str, String)> {
     [
@@ -404,9 +404,9 @@ fn keep(q: &ListQuery) -> Vec<(&'static str, String)> {
     .collect()
 }
 
-/// The workarea field of the view's filter form: the person's Atlas
+/// The workspace field of the view's filter form: the person's Atlas
 /// empty is the person's root (ADR-0045 d25), every other view's every
-/// workarea the key reads.
+/// workspace the key reads.
 fn field(
     side: Side,
     q: &ListQuery,
@@ -427,14 +427,14 @@ fn field(
         standalone: false,
         empty: match (side, atlas) {
             (Side::User, true) => "Empty: the user root.",
-            (Side::User, false) => "Empty: every readable workarea.",
-            (Side::Admin, _) => "Empty: every workarea.",
+            (Side::User, false) => "Empty: every readable workspace.",
+            (Side::Admin, _) => "Empty: every workspace.",
         },
     }
     .html()
 }
 
-/// The filter form, its workarea field first, the link to the same
+/// The filter form, its workspace field first, the link to the same
 /// filters on the other view and, for the list, the rows and the pager
 /// (ADR-0045 d22, d25, d27; design notes row 23).
 fn list_view(
@@ -540,10 +540,10 @@ fn list_view(
     out
 }
 
-/// The Atlas's scope: the workarea the filter names, else the person's
+/// The Atlas's scope: the workspace the filter names, else the person's
 /// root, or `universe` on the admin page.
 fn scope(side: Side, session: &Session, q: &ListQuery) -> Option<String> {
-    q.workarea.clone().or_else(|| default_scope(side, session))
+    q.workspace.clone().or_else(|| default_scope(side, session))
 }
 
 /// The Atlas's scope when the field is empty (ADR-0045 d25).
@@ -580,7 +580,7 @@ async fn regions(
     side: Side,
     scope: &str,
 ) -> (
-    Result<oml_sdk::WorkareaCounts, oml_sdk::Error>,
+    Result<oml_sdk::WorkspaceCounts, oml_sdk::Error>,
     Result<NodeOffers, (String, oml_sdk::Error)>,
 ) {
     let credential = session.credential(reader(side));
@@ -589,7 +589,7 @@ async fn regions(
     let counts_call = call(&credential, &ids);
     if !credentials.transitions_as(&credential) {
         return tokio::join!(
-            web.api.workarea_counts(&counts_call, scope, false),
+            web.api.workspace_counts(&counts_call, scope, false),
             offers_of(&web.api, &credentials, calls, scope),
         );
     }
@@ -598,16 +598,16 @@ async fn regions(
     // mode, so the offers add no round (#286).
     let request_id = ids.request_id.clone().unwrap_or_default();
     let (counts, mode) = tokio::join!(
-        web.api.workarea_counts(&counts_call, scope, true),
+        web.api.workspace_counts(&counts_call, scope, true),
         mode_offers(&web.api, &credentials, calls, scope),
     );
     match counts {
-        Ok(oml_sdk::WorkareaCounts {
+        Ok(oml_sdk::WorkspaceCounts {
             offers: Some(transitions),
             items,
             truncated,
         }) => (
-            Ok(oml_sdk::WorkareaCounts {
+            Ok(oml_sdk::WorkspaceCounts {
                 items,
                 truncated,
                 offers: None,
@@ -621,7 +621,7 @@ async fn regions(
             let ids = calls.next_ids();
             let counts_call = call(&credential, &ids);
             let (counts, transitions) = tokio::join!(
-                web.api.workarea_counts(&counts_call, scope, false),
+                web.api.workspace_counts(&counts_call, scope, false),
                 transitions_offers(&web.api, &credentials, calls, scope),
             );
             (counts, transitions.map(|t| NodeOffers::of(t, mode)))
@@ -666,11 +666,11 @@ fn atlas_view(
             subtree[parent].add(own);
         }
     }
-    // Every link, tile and heading names a workarea by its reference, the
+    // Every link, tile and heading names a workspace by its reference, the
     // form every field takes on both pages (design notes row 20).
     let zoom = |path: &str| {
         format!(
-            "{}?workarea={}",
+            "{}?workspace={}",
             side.atlas(),
             oml_sdk::encode(&refer(path))
         )
@@ -693,7 +693,11 @@ fn atlas_view(
     if own.total() > 0 || tiles.is_empty() {
         tiles.push(Tile {
             name: format!("{top_ref} (own rows)"),
-            href: format!("{}?workarea={}", side.memories(), oml_sdk::encode(&top_ref)),
+            href: format!(
+                "{}?workspace={}",
+                side.memories(),
+                oml_sdk::encode(&top_ref)
+            ),
             counts: own,
             status: top.status.clone(),
             in_progress: in_progress(top),
@@ -734,7 +738,7 @@ fn atlas_view(
         out.push_str("</figure>");
     }
     // The table twin: the same rows, the numbers right-aligned.
-    out.push_str(r#"<table class="twin" id="atlas-table"><thead><tr><th scope="col">Workarea</th><th scope="col">Status</th><th scope="col" class="num">Readable</th><th scope="col">By state</th></tr></thead><tbody>"#);
+    out.push_str(r#"<table class="twin" id="atlas-table"><thead><tr><th scope="col">Workspace</th><th scope="col">Status</th><th scope="col" class="num">Readable</th><th scope="col">By state</th></tr></thead><tbody>"#);
     for t in &tiles {
         let _ = write!(
             out,
@@ -752,7 +756,7 @@ fn atlas_view(
     // The scope's panel: what it holds, where to read it, what to do.
     let _ = write!(
         out,
-        r#"<aside class="oml-rail-side" aria-labelledby="sel-h"><section class="oml-panel"><h2 id="sel-h" class="mono">{}</h2>{}<p class="desc">{}{} · <b>{}</b> readable</p>{}{}<p><a href="{}?workarea={}">Open memories</a></p>"#,
+        r#"<aside class="oml-rail-side" aria-labelledby="sel-h"><section class="oml-panel"><h2 id="sel-h" class="mono">{}</h2>{}<p class="desc">{}{} · <b>{}</b> readable</p>{}{}<p><a href="{}?workspace={}">Open memories</a></p>"#,
         text(&top_ref),
         top.path
             .rsplit_once('.')
@@ -818,7 +822,7 @@ fn failed_page(failed: Failed, calls: &PageCalls, next: &str) -> Response {
     }
 }
 
-/// One page of the list as the page's key reads it, `workarea` the value
+/// One page of the list as the page's key reads it, `workspace` the value
 /// sent in place of the query's.
 async fn cards(
     web: &Web,
@@ -826,10 +830,10 @@ async fn cards(
     calls: &PageCalls,
     side: Side,
     q: &ListQuery,
-    workarea: Option<&str>,
+    workspace: Option<&str>,
 ) -> Result<CardPage, Failed> {
     let mut sent = q.clone();
-    sent.workarea = workarea.map(str::to_owned);
+    sent.workspace = workspace.map(str::to_owned);
     match side {
         Side::User => user_cards(web, session, calls, &sent).await,
         Side::Admin => admin_cards(web, session, calls, &sent).await,
@@ -950,7 +954,7 @@ async fn list_page(
             );
         }
     };
-    let chosen = Chosen::of(q.workarea.as_deref());
+    let chosen = Chosen::of(q.workspace.as_deref());
     let first = async {
         match chosen.value() {
             _ if chosen.refused() => None,
@@ -971,8 +975,8 @@ async fn list_page(
         Primary::Missed(chosen) => (chosen, None),
         Primary::Failed(failed) => return failed_page(failed, &calls, next),
     };
-    q.workarea = chosen.shown().map(str::to_owned);
-    // Each row names its workarea by reference: the names' kinds, and a
+    q.workspace = chosen.shown().map(str::to_owned);
+    // Each row names its workspace by reference: the names' kinds, and a
     // read of any top label they leave unknown (design notes row 20).
     let roots = match &cards {
         Some(cards) => {
@@ -983,7 +987,7 @@ async fn list_page(
                     &web,
                     &session.credential(reader(side)),
                     &calls,
-                    cards.cards.iter().map(Card::workarea),
+                    cards.cards.iter().map(Card::workspace),
                 )
                 .await
         }
@@ -1043,7 +1047,7 @@ async fn atlas_page(
             &calls,
         );
     };
-    let chosen = Chosen::of(q.workarea.as_deref());
+    let chosen = Chosen::of(q.workspace.as_deref());
     let scope = chosen.value().unwrap_or(&default).to_owned();
     // The Atlas of `universe` is the tree the hints and Browse read: its
     // counted read gives the names and an open Browse, and neither costs a
@@ -1122,7 +1126,7 @@ async fn atlas_page(
         Primary::Failed(failed) => return failed_page(failed, &calls, next),
     };
     let browse = reused.or(browse);
-    q.workarea = chosen.shown().map(str::to_owned);
+    q.workspace = chosen.shown().map(str::to_owned);
     let field = field(side, &q, true, &chosen, &names, browse.as_ref());
     let mut body = list_view(side, &side.lede(true, &session), &q, None, true, &field);
     body.push_str(&drawn);
@@ -1224,7 +1228,7 @@ fn regions_json(nodes: &[CountedNode], partial: bool, offers: Option<&NodeOffers
                 "status": n.status,
                 "in_progress": n.mode == "in_progress",
                 // Ontology crews are designed (ADR-0027) and not stored
-                // yet; the badge shows when a workarea can say so.
+                // yet; the badge shows when a workspace can say so.
                 "ontology": false,
                 "counts": {
                     "approved": c.approved,
@@ -1325,9 +1329,9 @@ async fn data(
     // node's offers unavailable, as the Atlas's panel does, and the regions
     // and rows still answer.
     let mut answer = cards.json();
-    answer["workareas"] = regions_json(&counts.items, counts.truncated, offers.as_ref().ok());
+    answer["workspaces"] = regions_json(&counts.items, counts.truncated, offers.as_ref().ok());
     if offers.is_err()
-        && let Some(scope) = answer["workareas"]["items"].get_mut(0)
+        && let Some(scope) = answer["workspaces"]["items"].get_mut(0)
     {
         scope["offers_unavailable"] = json!(true);
     }
@@ -1335,7 +1339,7 @@ async fn data(
 }
 
 /// `GET /web/data/memories`: the user page's page of the list and its
-/// Atlas's workareas, as JSON.
+/// Atlas's workspaces, as JSON.
 pub async fn user_data(
     State(web): State<Web>,
     Extension(calls): Extension<Arc<PageCalls>>,
@@ -1394,14 +1398,14 @@ mod tests {
         let q = parsed(&[
             ("q", ""),
             ("state", ""),
-            ("workarea", ""),
+            ("workspace", ""),
             ("origin", ""),
             ("author", ""),
             ("cursor", ""),
             ("limit", ""),
         ])
         .unwrap();
-        assert!(q.q.is_none() && q.state.is_none() && q.workarea.is_none());
+        assert!(q.q.is_none() && q.state.is_none() && q.workspace.is_none());
         assert!(q.origin.is_none() && q.author.is_none() && q.cursor.is_none());
         assert_eq!(q.limit, PAGE_DEFAULT);
         assert_eq!(q.link(USER_MEMORIES_PATH, None), "/web/memories");

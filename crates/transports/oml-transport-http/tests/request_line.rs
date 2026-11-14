@@ -17,7 +17,7 @@ use tower::ServiceExt as _;
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
 use oml_app::domain::oauth::Issuer;
-use oml_app::domain::{HeldBy, Role};
+use oml_app::domain::{Role, UsedBy};
 use oml_app::doubles::MemStore;
 use oml_app::types::{BootstrapRequest, BootstrapResult, GrantRequest, IssueKeyRequest, IssuedKey};
 use oml_transport_http::traffic::{Resolved, ScopeObserver, Traffic, TrustedProxies};
@@ -111,18 +111,18 @@ async fn key(app: &TestApp, boot: &BootstrapResult, name: &str, connector: bool)
             role: Role::Writer,
             name: Name::parse(name).expect("a name"),
             principal: format!("crew/{name}"),
-            held_by: Some(HeldBy::Agent),
-            default_workarea: None,
+            used_by: Some(UsedBy::Agent),
+            default_workspace: None,
             crew: None,
             grants: vec![
                 GrantRequest {
-                    node: boot.root_workarea_id.into(),
+                    node: boot.root_workspace_id.into(),
                     role: Role::Writer,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
                 },
                 GrantRequest {
-                    node: boot.root_workarea_id.into(),
+                    node: boot.root_workspace_id.into(),
                     role: Role::Reader,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
@@ -307,7 +307,7 @@ async fn no_log_line_contains_a_request_body_the_bearer_value_a_token_a_query_or
 }
 
 #[tokio::test]
-async fn the_request_line_carries_the_resolved_key_the_target_workarea_and_the_route_template() {
+async fn the_request_line_carries_the_resolved_key_the_target_workspace_and_the_route_template() {
     let store = MemStore::new();
     let app = observed(&store);
     let boot = tenant(&app).await;
@@ -345,7 +345,7 @@ async fn the_request_line_carries_the_resolved_key_the_target_workarea_and_the_r
     assert_eq!(line["principal"], "crew/agent-7");
     assert_eq!(line["role"], "writer");
     assert_eq!(line["credential"], "bearer");
-    assert_eq!(line["workarea_id"], boot.root_workarea_id.to_string());
+    assert_eq!(line["workspace_id"], boot.root_workspace_id.to_string());
     assert_eq!(line["user_agent"], "oml-cli/0.4.1 hook/session-start");
     assert!(line["bytes_in"].as_u64().is_some_and(|n| n > 0));
     assert!(line["bytes_out"].as_u64().is_some_and(|n| n > 0));
@@ -576,7 +576,7 @@ async fn every_route_attaches_what_it_resolved_to_its_response() {
             .replace("{key}", "agent-7")
             .replace("{connection_id}", "0b5f6c3e-5d0b-4d8f-9a5e-2f1d7c9e8a11")
             .replace("{crew}", "crew-a")
-            .replace("{workarea}", "area-a");
+            .replace("{workspace}", "area-a");
         let response = router
             .clone()
             .oneshot(

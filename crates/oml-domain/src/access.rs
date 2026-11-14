@@ -1,13 +1,13 @@
 //! Grant admissibility, effective access, the refusal order, effective
 //! verbs and content-tail visibility — pure functions over journalled grant
 //! and denial records, computed on every request with no cache
-//! (ADR-0025 d1, d2, d14, d15; ADR-0019 d1) — and the dreamer grant narrowed
+//! (ADR-0025 d1, d2, d14, d15; ADR-0019 d1) — and the reviewer grant narrowed
 //! by `edge_labels`, with the member profile an ontology crew's keys carry
 //! (ADR-0027 [proposed in #10, unmerged] d3, d4, d5).
 //!
 //! The tables are declared on `docs/architecture/roles-and-keys.md`
 //! (grant admissibility and refusal order, effective verbs, narrowed
-//! dreamer grants, member profiles), `docs/architecture/workareas.md`
+//! reviewer grants, member profiles), `docs/architecture/workspaces.md`
 //! (effective access) and `docs/api/http-api.md` (events tail); this module
 //! mirrors them and adds nothing.
 //!
@@ -17,7 +17,7 @@
 //! |---|---|
 //! | [`EdgeLabelsRefusal`], every variant | `request.validation` |
 //! | [`VerbRefusal::VerbCeiling`] | `access.verb_ceiling` |
-//! | [`VerbRefusal::GrantRefused`] | `access.grant_refused`, `details` `{workarea_id, needed_role}` plus `edge_labels` where dreamer is narrowed |
+//! | [`VerbRefusal::GrantRefused`] | `access.grant_refused`, `details` `{workspace_id, needed_role}` plus `edge_labels` where reviewer is narrowed |
 //! | [`VerbRefusal::NotFound`] | `access.not_found` |
 //! | [`ProfileMismatch`] | `access.profile_mismatch` (403), `details` `{profile, clause, grant_index}` |
 
@@ -25,7 +25,7 @@ use std::collections::BTreeSet;
 
 use uuid::Uuid;
 
-use crate::model::{HeldBy, Role};
+use crate::model::{Role, UsedBy};
 use crate::vocab::OmlLabel;
 
 /// What a grant covers: its node's whole subtree, the default and every
@@ -58,15 +58,15 @@ impl Covers {
     }
 }
 
-/// One grant on a key: one role over the subtree of one workarea node, or
+/// One grant on a key: one role over the subtree of one workspace node, or
 /// over the node alone with [`Covers::Node`], with its own deny entries, each
-/// a subtree masked within this grant only (workareas.md, per-grant
+/// a subtree masked within this grant only (workspaces.md, per-grant
 /// attenuation; ADR-0044 d4). A node grant carries no deny entry, since
 /// nothing beneath it is covered to mask.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Grant {
     pub grant_id: Uuid,
-    /// The granted node id, never a path (workareas.md, grants bind to node ids).
+    /// The granted node id, never a path (workspaces.md, grants bind to node ids).
     pub node: Uuid,
     pub role: Role,
     /// Subtree roots this grant does not cover.
@@ -90,7 +90,7 @@ impl Grant {
 }
 
 /// A global per-key denial: a subtree the key cannot reach whatever its
-/// grants say — deny-wins (workareas.md).
+/// grants say — deny-wins (workspaces.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyDenial {
     pub denial_id: Uuid,
@@ -106,7 +106,7 @@ pub fn admissible_grant_roles(key_role: Role) -> &'static [Role] {
     match key_role {
         Role::Reader => &[Role::Reader],
         Role::Writer => &[Role::Reader, Role::Writer],
-        Role::Dreamer => &[Role::Reader, Role::Dreamer],
+        Role::Reviewer => &[Role::Reader, Role::Reviewer],
         Role::Admin | Role::Operator => &[],
     }
 }
@@ -118,9 +118,9 @@ pub fn admissible_grant_roles(key_role: Role) -> &'static [Role] {
 #[must_use]
 pub fn issuable_key_roles(issuer_role: Role) -> &'static [Role] {
     match issuer_role {
-        Role::Admin => &[Role::Reader, Role::Writer, Role::Dreamer, Role::Admin],
+        Role::Admin => &[Role::Reader, Role::Writer, Role::Reviewer, Role::Admin],
         Role::Operator => &[Role::Admin, Role::Operator],
-        Role::Reader | Role::Writer | Role::Dreamer => &[],
+        Role::Reader | Role::Writer | Role::Reviewer => &[],
     }
 }
 
@@ -128,10 +128,10 @@ pub fn issuable_key_roles(issuer_role: Role) -> &'static [Role] {
 /// roles-and-keys.md (ADR-0025 d2).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum IssuanceRefusal {
-    /// Step 1, `access.role_exclusive`: an admin key never carries a dreamer
+    /// Step 1, `access.role_exclusive`: an admin key never carries a reviewer
     /// grant — the two-key rule.
     #[error(
-        "an admin key never carries a dreamer grant (roles-and-keys.md two-key rule, access.role_exclusive)"
+        "an admin key never carries a reviewer grant (roles-and-keys.md two-key rule, access.role_exclusive)"
     )]
     RoleExclusive,
     /// Steps 2 and 3, `access.issuer_ceiling`. With no `grant_index`, `role`
@@ -160,7 +160,7 @@ pub fn check_issuance(
     key_role: Role,
     grants: &[Grant],
 ) -> Result<(), IssuanceRefusal> {
-    if key_role == Role::Admin && grants.iter().any(|g| g.role == Role::Dreamer) {
+    if key_role == Role::Admin && grants.iter().any(|g| g.role == Role::Reviewer) {
         return Err(IssuanceRefusal::RoleExclusive);
     }
     let issuable = issuable_key_roles(issuer_role);
@@ -187,19 +187,19 @@ pub fn check_issuance(
 }
 
 /// Whether a global per-key denial names the node whose ancestry is
-/// `ancestry`, or an ancestor of it — deny-wins (workareas.md).
+/// `ancestry`, or an ancestor of it — deny-wins (workspaces.md).
 fn globally_denied(denials: &[KeyDenial], ancestry: &[Uuid]) -> bool {
     denials.iter().any(|d| ancestry.contains(&d.node))
 }
 
 /// Whether `grant` survives at the node whose ancestry is `ancestry`: it is
 /// on the node or an ancestor, and its own deny list names neither
-/// (workareas.md, per-grant attenuation).
+/// (workspaces.md, per-grant attenuation).
 fn survives(grant: &Grant, ancestry: &[Uuid]) -> bool {
     grant.reaches(ancestry) && !grant.deny.iter().any(|d| ancestry.contains(d))
 }
 
-/// `effective_roles(N)` (workareas.md, effective access; ADR-0025 d1):
+/// `effective_roles(N)` (workspaces.md, effective access; ADR-0025 d1):
 /// every subtree grant on N or an ancestor of N and every node grant on N
 /// itself (ADR-0044 d4), less each grant whose own deny list names N or an
 /// ancestor of N, unioned; the empty set when any global
@@ -222,7 +222,7 @@ pub fn effective_roles(
         .collect()
 }
 
-/// A refused workarea-scoped verb, by step of the refusal order
+/// A refused workspace-scoped verb, by step of the refusal order
 /// (roles-and-keys.md; errors.md `access`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum AccessRefusal {
@@ -234,7 +234,7 @@ pub enum AccessRefusal {
     VerbCeiling { role: Role, needed: Role },
     /// Step 3, `access.grant_refused`: the node is readable but its
     /// effective access does not confer the needed role. The caller adds the
-    /// `workarea_id` detail.
+    /// `workspace_id` detail.
     #[error(
         "the node is readable but effective access does not confer {needed_role:?} (roles-and-keys.md refusal order step 3, access.grant_refused)"
     )]
@@ -272,23 +272,23 @@ const VERBS_CONFERRED: [(Role, &[&str]); 3] = [
         &["recall", "read", "graph_read", "events_tail"],
     ),
     (Role::Writer, &["remember", "learn", "attach", "supersede"]),
-    (Role::Dreamer, &["propose", "review", "supersede"]),
+    (Role::Reviewer, &["propose", "review", "supersede"]),
 ];
 
 /// `my_effective_verbs` (roles-and-keys.md, effective verbs; ADR-0025 d14):
 /// the union of the verbs the `effective` roles confer, in table order
-/// without duplicates, and without `review` for a `held_by: service` key,
+/// without duplicates, and without `review` for a `used_by: service` key,
 /// which is refused every review-class verb. It states the access
 /// conferred, not what a server build serves.
 #[must_use]
-pub fn effective_verbs(effective: &BTreeSet<Role>, held_by: HeldBy) -> Vec<&'static str> {
+pub fn effective_verbs(effective: &BTreeSet<Role>, used_by: UsedBy) -> Vec<&'static str> {
     let mut verbs: Vec<&'static str> = Vec::new();
     for (role, conferred) in VERBS_CONFERRED {
         if !effective.contains(&role) {
             continue;
         }
         for &verb in conferred {
-            if verb == "review" && held_by == HeldBy::Service {
+            if verb == "review" && used_by == UsedBy::Service {
                 continue;
             }
             if !verbs.contains(&verb) {
@@ -299,7 +299,7 @@ pub fn effective_verbs(effective: &BTreeSet<Role>, held_by: HeldBy) -> Vec<&'sta
     verbs
 }
 
-// ---- Narrowed dreamer grants: `edge_labels` (ADR-0027 d5) ----
+// ---- Narrowed reviewer grants: `edge_labels` (ADR-0027 d5) ----
 //
 // Kept beside `Grant`, `effective_roles`, `resolve` and `AccessRefusal`
 // rather than inside them, so that their callers are unchanged, and computed
@@ -307,19 +307,19 @@ pub fn effective_verbs(effective: &BTreeSet<Role>, held_by: HeldBy) -> Vec<&'sta
 // and `resolve_verb` where no grant is narrowed, which keeps ADR-0008's one
 // access computation. A narrowed grant never reaches them, since
 // `LabelledGrant::unnarrowed` is `None` for it: a caller still on the plain
-// functions refuses a narrowed dreamer's verbs instead of conferring the
-// whole dreamer row.
+// functions refuses a narrowed reviewer's verbs instead of conferring the
+// whole reviewer row.
 
 /// A refused `edge_labels` on a grant request (roles-and-keys.md, narrowed
-/// dreamer grants; ADR-0027 d5). Every variant answers `request.validation`,
+/// reviewer grants; ADR-0027 d5). Every variant answers `request.validation`,
 /// checked with the rest of the body before step 0 of the issuance order.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EdgeLabelsRefusal {
-    /// `edge_labels` on a grant whose role is not `dreamer`.
+    /// `edge_labels` on a grant whose role is not `reviewer`.
     #[error(
-        "edge_labels is admitted on a dreamer grant only, not on {role:?} (request.validation)"
+        "edge_labels is admitted on a reviewer grant only, not on {role:?} (request.validation)"
     )]
-    NotDreamer { role: Role },
+    NotReviewer { role: Role },
     /// An empty list: an absent `edge_labels` is the unnarrowed grant.
     #[error("edge_labels is a non-empty list (request.validation)")]
     Empty,
@@ -332,11 +332,11 @@ pub enum EdgeLabelsRefusal {
 }
 
 /// One grant with its `edge_labels` attribute: absent, the grant means what
-/// [`Grant`] says; present, a dreamer grant narrowed to claim edges carrying
+/// [`Grant`] says; present, a reviewer grant narrowed to claim edges carrying
 /// a listed label — a second attenuation inside the grant, beside its deny
-/// masks (roles-and-keys.md, narrowed dreamer grants; ADR-0027 d5). Built
+/// masks (roles-and-keys.md, narrowed reviewer grants; ADR-0027 d5). Built
 /// only through [`LabelledGrant::new`] or from a [`Grant`], so a narrowed
-/// grant is always a dreamer grant with a non-empty set of `oml:` labels.
+/// grant is always a reviewer grant with a non-empty set of `oml:` labels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabelledGrant {
     grant: Grant,
@@ -345,7 +345,7 @@ pub struct LabelledGrant {
 
 impl LabelledGrant {
     /// `grant` with the `edge_labels` a request or a stored grant row
-    /// carries, refusing a non-dreamer grant first, then an empty list, then
+    /// carries, refusing a non-reviewer grant first, then an empty list, then
     /// each label in list order: one outside `oml:`, then one listed before.
     // reading: the docs name the four refusals but not their order; the
     // grant's role is read before the list, and the list in its own order.
@@ -353,8 +353,8 @@ impl LabelledGrant {
         let Some(list) = edge_labels else {
             return Ok(Self::from(grant));
         };
-        if grant.role != Role::Dreamer {
-            return Err(EdgeLabelsRefusal::NotDreamer { role: grant.role });
+        if grant.role != Role::Reviewer {
+            return Err(EdgeLabelsRefusal::NotReviewer { role: grant.role });
         }
         if list.is_empty() {
             return Err(EdgeLabelsRefusal::Empty);
@@ -379,11 +379,11 @@ impl LabelledGrant {
     /// The grant as [`Grant`] says it, for [`effective_roles`], [`resolve`]
     /// and [`TailCaller`], where it is not narrowed; `None` for a narrowed
     /// grant, which those cannot read without dropping its `edge_labels`.
-    /// A narrowed grant is always a dreamer grant, so leaving it out fails
-    /// closed: where it is the only dreamer grant, they refuse every
-    /// dreamer-class verb, the claim edges its labels list included, and they
+    /// A narrowed grant is always a reviewer grant, so leaving it out fails
+    /// closed: where it is the only reviewer grant, they refuse every
+    /// reviewer-class verb, the claim edges its labels list included, and they
     /// confer every other role as [`effective_access`] does
-    /// (roles-and-keys.md, narrowed dreamer grants; ADR-0027 d5).
+    /// (roles-and-keys.md, narrowed reviewer grants; ADR-0027 d5).
     #[must_use]
     pub fn unnarrowed(&self) -> Option<&Grant> {
         self.edge_labels.is_none().then_some(&self.grant)
@@ -416,24 +416,24 @@ impl From<Grant> for LabelledGrant {
 }
 
 /// Effective access at one node once a grant may be narrowed
-/// (roles-and-keys.md, narrowed dreamer grants; workareas.md, effective
+/// (roles-and-keys.md, narrowed reviewer grants; workspaces.md, effective
 /// access; ADR-0027 d5).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EffectiveAccess {
     /// `effective_roles(N)`, unchanged by narrowing.
     pub roles: BTreeSet<Role>,
-    /// Where dreamer is **narrowed** at N — every dreamer grant surviving
+    /// Where reviewer is **narrowed** at N — every reviewer grant surviving
     /// there carries `edge_labels` — the union of their lists; `None` where
-    /// dreamer is unnarrowed or absent.
+    /// reviewer is unnarrowed or absent.
     pub edge_labels: Option<BTreeSet<OmlLabel>>,
 }
 
 /// Effective access at the node whose ancestry, from the node to the root,
-/// is `ancestry` (roles-and-keys.md, narrowed dreamer grants; ADR-0027 d5).
+/// is `ancestry` (roles-and-keys.md, narrowed reviewer grants; ADR-0027 d5).
 /// `roles` is computed as [`effective_roles`] computes it, narrowed grants
 /// included: narrowing cuts verbs out of a grant, never its role. Of the
-/// dreamer grants that survive at N — on N or an ancestor, not masked at N by their
-/// own deny list — dreamer is unnarrowed if any carries no `edge_labels`, and
+/// reviewer grants that survive at N — on N or an ancestor, not masked at N by their
+/// own deny list — reviewer is unnarrowed if any carries no `edge_labels`, and
 /// otherwise narrowed to the union of their lists. A narrowed grant
 /// attenuates only itself, so an unnarrowed grant beside it widens it, and a
 /// global denial covering N empties every role.
@@ -451,15 +451,15 @@ pub fn effective_access(
         .filter(|g| survives(&g.grant, ancestry))
         .collect();
     let roles = surviving.iter().map(|g| g.grant.role).collect();
-    let dreamer: Vec<&LabelledGrant> = surviving
+    let reviewer: Vec<&LabelledGrant> = surviving
         .into_iter()
-        .filter(|g| g.grant.role == Role::Dreamer)
+        .filter(|g| g.grant.role == Role::Reviewer)
         .collect();
-    let edge_labels = if dreamer.is_empty() || dreamer.iter().any(|g| g.edge_labels.is_none()) {
+    let edge_labels = if reviewer.is_empty() || reviewer.iter().any(|g| g.edge_labels.is_none()) {
         None
     } else {
         Some(
-            dreamer
+            reviewer
                 .iter()
                 .filter_map(|g| g.edge_labels.as_ref())
                 .flatten()
@@ -470,10 +470,10 @@ pub fn effective_access(
     EffectiveAccess { roles, edge_labels }
 }
 
-/// `my_edge_labels` on the workarea read (roles-and-keys.md, effective
+/// `my_edge_labels` on the workspace read (roles-and-keys.md, effective
 /// verbs; ADR-0027 d5): the narrowed set as `oml:` CURIEs in the register's
-/// order where dreamer is narrowed, `None` — served null — where it is
-/// unnarrowed or absent. A narrowed dreamer still contributes `propose` and
+/// order where reviewer is narrowed, `None` — served null — where it is
+/// unnarrowed or absent. A narrowed reviewer still contributes `propose` and
 /// `review` to [`effective_verbs`] over `access.roles`.
 #[must_use]
 pub fn my_edge_labels(access: &EffectiveAccess) -> Option<Vec<&'static str>> {
@@ -483,16 +483,16 @@ pub fn my_edge_labels(access: &EffectiveAccess) -> Option<Vec<&'static str>> {
         .map(|set| set.iter().map(|label| label.as_str()).collect())
 }
 
-/// A workarea-scoped verb as the refusal order reads it once a dreamer may
+/// A workspace-scoped verb as the refusal order reads it once a reviewer may
 /// be narrowed (roles-and-keys.md, refusal order step 2; ADR-0027 d5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verb<'a> {
-    /// Any verb but a claim-edge act, needing this grant role. For dreamer:
-    /// a serve, a verdict, a reopen, edit-as-proposal, a workarea-edge act, a
+    /// Any verb but a claim-edge act, needing this grant role. For reviewer:
+    /// a serve, a verdict, a reopen, edit-as-proposal, a workspace-edge act, a
     /// status-transition act or a dead-letter re-enqueue.
     Needs(Role),
     /// Proposing, ratifying or rejecting a claim edge with this label, which
-    /// needs dreamer. Claim-edge labels are open, so any label is taken; a
+    /// needs reviewer. Claim-edge labels are open, so any label is taken; a
     /// narrowed set lists `oml:` labels only.
     ClaimEdge(&'a str),
 }
@@ -501,13 +501,13 @@ impl Verb<'_> {
     fn needed_role(self) -> Role {
         match self {
             Verb::Needs(role) => role,
-            Verb::ClaimEdge(_) => Role::Dreamer,
+            Verb::ClaimEdge(_) => Role::Reviewer,
         }
     }
 }
 
-/// A refused workarea-scoped verb, by step of the refusal order, once a
-/// dreamer may be narrowed (roles-and-keys.md; errors.md `access`). It is
+/// A refused workspace-scoped verb, by step of the refusal order, once a
+/// reviewer may be narrowed (roles-and-keys.md; errors.md `access`). It is
 /// [`AccessRefusal`] with the `edge_labels` detail of step 3.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum VerbRefusal {
@@ -517,8 +517,8 @@ pub enum VerbRefusal {
     )]
     VerbCeiling { role: Role, needed: Role },
     /// Step 3, `access.grant_refused`. `edge_labels` is the narrowed set at
-    /// the node where dreamer is narrowed there, else `None`. The caller
-    /// adds the `workarea_id` detail.
+    /// the node where reviewer is narrowed there, else `None`. The caller
+    /// adds the `workspace_id` detail.
     #[error(
         "the node is readable but effective access does not confer {needed_role:?} for this verb (roles-and-keys.md refusal order step 3, access.grant_refused)"
     )]
@@ -533,7 +533,7 @@ pub enum VerbRefusal {
 
 /// The refusal order for `verb` on a node whose [`effective_access`] is
 /// `access` (roles-and-keys.md; ADR-0025 d1; ADR-0027 d5): verb ceiling;
-/// allowed where the needed role is effective and, for a narrowed dreamer,
+/// allowed where the needed role is effective and, for a narrowed reviewer,
 /// only for a claim-edge act whose label the narrowed set lists; grant
 /// refused, naming the narrowed set, where reader is effective; else not
 /// found. Where nothing is narrowed it answers as [`resolve`] does.
@@ -546,7 +546,7 @@ pub fn resolve_verb(
 }
 
 /// The one refusal order [`resolve`] and [`resolve_verb`] answer:
-/// `edge_labels` is the narrowed set at the node, `None` where dreamer is
+/// `edge_labels` is the narrowed set at the node, `None` where reviewer is
 /// unnarrowed or absent (roles-and-keys.md; ADR-0025 d1; ADR-0027 d5).
 fn refusal_order(
     key_role: Role,
@@ -565,7 +565,7 @@ fn refusal_order(
         (Some(listed), Verb::ClaimEdge(label)) => {
             OmlLabel::parse(label).is_some_and(|l| listed.contains(&l))
         }
-        (Some(_), Verb::Needs(role)) => role != Role::Dreamer,
+        (Some(_), Verb::Needs(role)) => role != Role::Reviewer,
         (None, _) => true,
     };
     if roles.contains(&needed) && narrowing_admits {
@@ -584,7 +584,7 @@ fn refusal_order(
 
 /// A crew record's kind, given at creation and never changed; an absent
 /// kind, and every crew recorded before ADR-0027, is `general`
-/// (workareas.md, crews; ADR-0027 d1).
+/// (workspaces.md, crews; ADR-0027 d1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CrewKind {
     General,
@@ -625,7 +625,7 @@ impl MemberProfile {
     #[must_use]
     pub fn key_role(self) -> Role {
         match self {
-            MemberProfile::Classifier | MemberProfile::Curator => Role::Dreamer,
+            MemberProfile::Classifier | MemberProfile::Curator => Role::Reviewer,
             MemberProfile::TermCreator => Role::Writer,
         }
     }
@@ -638,7 +638,7 @@ pub enum ProfileClause {
     CrewKind,
     ProfileRequired,
     KeyRole,
-    HeldBy,
+    UsedBy,
     Grant,
     RequiredGrant,
 }
@@ -650,7 +650,7 @@ impl ProfileClause {
             ProfileClause::CrewKind => "crew_kind",
             ProfileClause::ProfileRequired => "profile_required",
             ProfileClause::KeyRole => "key_role",
-            ProfileClause::HeldBy => "held_by",
+            ProfileClause::UsedBy => "used_by",
             ProfileClause::Grant => "grant",
             ProfileClause::RequiredGrant => "required_grant",
         }
@@ -682,7 +682,7 @@ enum Cell {
 }
 
 // reading: `edge_labels: ["oml:about"]` in the table is read as exactly
-// that list, so a dreamer grant narrowed to `oml:about` and another label
+// that list, so a reviewer grant narrowed to `oml:about` and another label
 // lies in no cell; deny masks never move a grant between cells.
 fn cell(profile: MemberProfile, grant: &LabelledGrant, on_vocabulary: bool) -> Option<Cell> {
     let narrowed = grant.edge_labels.is_some();
@@ -690,7 +690,7 @@ fn cell(profile: MemberProfile, grant: &LabelledGrant, on_vocabulary: bool) -> O
         (MemberProfile::Classifier, Role::Reader) | (MemberProfile::Curator, Role::Reader) => {
             Some(Cell::May)
         }
-        (MemberProfile::Classifier, Role::Dreamer) => {
+        (MemberProfile::Classifier, Role::Reviewer) => {
             if !narrowed || !on_vocabulary {
                 Some(Cell::Never)
             } else if grant.about_only() {
@@ -702,7 +702,7 @@ fn cell(profile: MemberProfile, grant: &LabelledGrant, on_vocabulary: bool) -> O
         (MemberProfile::TermCreator, _) if !on_vocabulary => Some(Cell::Never),
         (MemberProfile::TermCreator, Role::Writer) => Some(Cell::Must),
         (MemberProfile::TermCreator, Role::Reader) => Some(Cell::May),
-        (MemberProfile::Curator, Role::Dreamer) => match (narrowed, on_vocabulary) {
+        (MemberProfile::Curator, Role::Reviewer) => match (narrowed, on_vocabulary) {
             (false, true) => Some(Cell::Must),
             (true, false) if grant.about_only() => Some(Cell::May),
             (true, false) => None,
@@ -738,25 +738,25 @@ fn check_profile_grants(
 /// Step 7 of the issuance order (roles-and-keys.md, member profiles;
 /// ADR-0027 d3, d4): when the key names a crew of kind `ontology`, or the
 /// body carries a profile, the clauses in order — the crew is of kind
-/// `ontology`, a profile is sent, the key role is the profile's, `held_by`
-/// is `agent` or `human`, every grant lies within the row's "must" or "may"
+/// `ontology`, a profile is sent, the key role is the profile's, `used_by`
+/// is `agent` or `person`, every grant lies within the row's "must" or "may"
 /// cells and none within "never", and a "must" grant is present — the first
 /// failure answering. A key naming a `general` crew, or none, without a
 /// profile is not checked. `crew` is the named crew's kind, `None` for no
 /// crew; `is_vocabulary_node` says whether a grant's node lies in a
-/// vocabulary workarea's subtree. Deny masks and global denials only narrow,
+/// vocabulary workspace's subtree. Deny masks and global denials only narrow,
 /// so neither is read.
 // reading: a profile sent without a crew is `request.validation` before
 // step 0; reaching this step regardless, it fails `crew_kind`, since no
 // crew is of kind `ontology`.
-// reading: `held_by` is read as the attestation the body sent, so an absent
-// one — journalled null, stored as the schema default — fails `held_by`:
+// reading: `used_by` is read as the attestation the body sent, so an absent
+// one — journalled null, stored as the schema default — fails `used_by`:
 // the journal must prove the attestation the profile requires.
 pub fn check_member_profile(
     crew: Option<CrewKind>,
     profile: Option<MemberProfile>,
     key_role: Role,
-    held_by: Option<HeldBy>,
+    used_by: Option<UsedBy>,
     grants: &[LabelledGrant],
     is_vocabulary_node: impl Fn(Uuid) -> bool,
 ) -> Result<(), ProfileMismatch> {
@@ -780,8 +780,8 @@ pub fn check_member_profile(
     if key_role != profile.key_role() {
         return refuse(ProfileClause::KeyRole);
     }
-    if !matches!(held_by, Some(HeldBy::Agent | HeldBy::Human)) {
-        return refuse(ProfileClause::HeldBy);
+    if !matches!(used_by, Some(UsedBy::Agent | UsedBy::Person)) {
+        return refuse(ProfileClause::UsedBy);
     }
     check_profile_grants(profile, grants, &is_vocabulary_node)?;
     let required = grants
@@ -798,7 +798,7 @@ pub fn check_member_profile(
 /// and refused with clause `grant`, journalling nothing (roles-and-keys.md,
 /// member profiles; ADR-0027 d4).
 // reading: only the `grant` clause is re-run. The crew kind, the profile,
-// the key role and `held_by` are fixed for the key's life, and
+// the key role and `used_by` are fixed for the key's life, and
 // `required_grant` is not re-checked, since a revocation may leave a
 // profiled key short of its required grant and adding authority within
 // the row must not then be refused.
@@ -814,21 +814,21 @@ pub fn check_profile_amendment(
 /// tail judges it (http-api.md#events-tail; ADR-0025 d15).
 #[derive(Debug, Clone, Copy)]
 pub struct TailSubject<'a> {
-    /// The subject's workareas as the subject table lists them, each as its
+    /// The subject's workspaces as the subject table lists them, each as its
     /// ancestry from the node to the root: one for most types; for
-    /// `lifecycle.reassign`, `from_workarea_id` and, when `re_enters_held` is
-    /// false, `to_workarea_id`; for `workarea.relate_*`, both endpoints. A
+    /// `lifecycle.reassign`, `from_workspace_id` and, when `re_enters_held` is
+    /// false, `to_workspace_id`; for `workspace.relate_*`, both endpoints. A
     /// count the event type does not take hides the event.
-    pub workareas: &'a [Vec<Uuid>],
+    pub workspaces: &'a [Vec<Uuid>],
     /// The subject version's authoring key, as its submission event's
-    /// envelope `api_key_id` names it; `None` for a `workarea.*` subject.
+    /// envelope `api_key_id` names it; `None` for a `workspace.*` subject.
     pub author_key: Option<Uuid>,
     /// The reader clause's *promoted* condition: in the journal up to and
     /// including the event — before it, for `lifecycle.reassign` — the
     /// version's latest transition between held and promoted is a promotion.
     pub promoted: bool,
     /// The subject is `self_signed`, so the reader clause shows it only on a
-    /// tail whose `workarea_id` is the subject's own workarea.
+    /// tail whose `workspace_id` is the subject's own workspace.
     pub self_signed: bool,
     /// The subject is a simulation row or sim-derived version outside the
     /// calling key's audience: no clause shows it.
@@ -836,7 +836,7 @@ pub struct TailSubject<'a> {
 }
 
 /// The tailing key: its own key set (roles-and-keys.md#own), its grants and
-/// global denials, and the tail's `workarea_id`.
+/// global denials, and the tail's `workspace_id`.
 #[derive(Debug, Clone, Copy)]
 pub struct TailCaller<'a> {
     pub own_keys: &'a [Uuid],
@@ -858,13 +858,13 @@ impl TailCaller<'_> {
         self.denials.iter().any(|d| ancestry.contains(&d.node))
     }
 
-    /// The reader clause (a): reader on a listed workarea within the tail's
+    /// The reader clause (a): reader on a listed workspace within the tail's
     /// subtree, promoted, inside the audience, and a self-signed subject
-    /// only on a tail scoped to that same workarea.
+    /// only on a tail scoped to that same workspace.
     fn reader_clause(&self, subject: &TailSubject<'_>) -> bool {
         subject.promoted
             && !subject.outside_audience
-            && subject.workareas.iter().any(|w| {
+            && subject.workspaces.iter().any(|w| {
                 self.reads(w)
                     && self.within(w)
                     && (!subject.self_signed || w.first() == Some(&self.scope))
@@ -872,7 +872,7 @@ impl TailCaller<'_> {
     }
 
     /// The author clause (b), and the whole rule for the submission family:
-    /// the authoring key is in the caller's own key set, a listed workarea
+    /// the authoring key is in the caller's own key set, a listed workspace
     /// lies within the tail's subtree minus the global denials, and the
     /// subject is inside the audience. No reader grant is needed.
     fn author_clause(&self, subject: &TailSubject<'_>) -> bool {
@@ -881,7 +881,7 @@ impl TailCaller<'_> {
             .is_some_and(|k| self.own_keys.contains(&k))
             && !subject.outside_audience
             && subject
-                .workareas
+                .workspaces
                 .iter()
                 .any(|w| self.within(w) && !self.denied(w))
     }
@@ -891,13 +891,13 @@ impl TailCaller<'_> {
 /// (http-api.md#events-tail, the single declaration site; ADR-0025 d15).
 /// `submission.*` and `simulation.write` reach only the author;
 /// `lifecycle.*` reaches a reader of a promoted subject or its author;
-/// `workarea.*` reaches readers of the node, or of both endpoints with one
+/// `workspace.*` reaches readers of the node, or of both endpoints with one
 /// inside the tail's subtree. `review.*`, `claim_edge.*`, `key.*`,
 /// `grant.*`, `tenant.*`, `system.*` and every type the tables do not map
 /// are never shown.
 #[must_use]
 pub fn tail_visible(event_type: &str, subject: &TailSubject<'_>, caller: &TailCaller<'_>) -> bool {
-    let count = subject.workareas.len();
+    let count = subject.workspaces.len();
     match event_type {
         "submission.remember" | "submission.learn" | "submission.attach" | "simulation.write" => {
             count == 1 && caller.author_clause(subject)
@@ -913,21 +913,21 @@ pub fn tail_visible(event_type: &str, subject: &TailSubject<'_>, caller: &TailCa
             (1..=2).contains(&count)
                 && (caller.reader_clause(subject) || caller.author_clause(subject))
         }
-        "workarea.create"
-        | "workarea.reparent"
-        | "workarea.status_proposed"
-        | "workarea.status_transition"
-        | "workarea.crew_updated" => {
+        "workspace.create"
+        | "workspace.reparent"
+        | "workspace.status_proposed"
+        | "workspace.status_transition"
+        | "workspace.crew_updated" => {
             count == 1
                 && subject
-                    .workareas
+                    .workspaces
                     .iter()
                     .all(|w| caller.reads(w) && caller.within(w))
         }
-        "workarea.relate_proposed" | "workarea.relate_ratified" => {
+        "workspace.relate_proposed" | "workspace.relate_ratified" => {
             count == 2
-                && subject.workareas.iter().all(|w| caller.reads(w))
-                && subject.workareas.iter().any(|w| caller.within(w))
+                && subject.workspaces.iter().all(|w| caller.reads(w))
+                && subject.workspaces.iter().any(|w| caller.within(w))
         }
         _ => false,
     }

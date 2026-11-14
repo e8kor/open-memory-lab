@@ -1,10 +1,10 @@
-//! The one workarea picker of the console (the design system's
-//! `WorkareaField`): a `GET` text input with the browser's own hints, the
-//! chosen line with Clear, and a Browse of the workareas directly under the
+//! The one workspace picker of the console (the design system's
+//! `WorkspaceField`): a `GET` text input with the browser's own hints, the
+//! chosen line with Clear, and a Browse of the workspaces directly under the
 //! field, one bordered unit, with no script. It stands on Memories, the
 //! Atlas and Review on both sides, and alone on Guardrails.
 //!
-//! Every workarea is named by its **reference** ([`reference()`]): its bare
+//! Every workspace is named by its **reference** ([`reference()`]): its bare
 //! name in the shared namespace (`platform`), `<user>.<name>` inside a
 //! person's root (`alice.docs`, whatever its depth), the root's own name
 //! (`alice`), or `universe`. Every field takes it on both sides, since a
@@ -12,7 +12,7 @@
 //! never is (ADR-0026 d7).
 //!
 //! The hints are names only, from the uncounted tree read
-//! (`GET /v2/workareas/{root}/tree`, [`Names::read`]): one page of 200
+//! (`GET /v2/workspaces/{root}/tree`, [`Names::read`]): one page of 200
 //! on Memories and the Atlas ([`LIST_HINTS_PAGES`]), up to [`HINTS_MAX`] on
 //! Guardrails. Counts and marks appear only inside an opened Browse,
 //! which the page draws when its query carries `browse=1` and which then
@@ -59,10 +59,10 @@ pub const CLOSEST_MAX: usize = 8;
 /// The query parameter that opens Browse.
 pub const BROWSE: &str = "browse";
 
-/// The reference of the workarea at `path`, where `is_user_root` says
+/// The reference of the workspace at `path`, where `is_user_root` says
 /// whether a label under `universe` names a person's root: `universe`, a
 /// top-level name, `<user>.<name>` beneath a user root, or the bare name
-/// beneath a shared workarea. A path alone cannot tell
+/// beneath a shared workspace. A path alone cannot tell
 /// `universe.platform.oncall` (`oncall`) from `universe.alice.docs`
 /// (`alice.docs`), so the caller says which top labels are user roots.
 #[must_use]
@@ -79,7 +79,7 @@ pub fn reference(path: &str, is_user_root: impl Fn(&str) -> bool) -> String {
 
 /// The top labels under `universe` a page knows the kind of: a person's
 /// root, which makes the names beneath it `<user>.<name>`, or a shared
-/// workarea, whose descendants are named by their bare name (design notes
+/// workspace, whose descendants are named by their bare name (design notes
 /// row 20). A path alone cannot tell `universe.platform.oncall` (`oncall`)
 /// from `universe.alice.docs` (`alice.docs`), so a page fills this from
 /// what it read: the tree read's `user_root` marks, the person's own root,
@@ -117,7 +117,7 @@ impl Roots {
     }
 
     /// The reference of `path` by these kinds; a top label they do not
-    /// know is read as a shared workarea's.
+    /// know is read as a shared workspace's.
     #[must_use]
     pub fn reference(&self, path: &str) -> String {
         reference(path, |l| self.user.contains(l))
@@ -130,7 +130,7 @@ impl Roots {
     }
 
     /// The top label of `path` whose kind changes its reference and that
-    /// these kinds do not know: one under `universe`, with a workarea
+    /// these kinds do not know: one under `universe`, with a workspace
     /// beneath it.
     fn unknown<'a>(&self, path: &'a str) -> Option<&'a str> {
         let mut labels = path.split('.');
@@ -143,7 +143,7 @@ impl Roots {
 
     /// These kinds with every top label of `paths` they do not know read
     /// once, as `credential`, by its node's first tree row
-    /// (`GET /v2/workareas/{top}/tree?limit=1`), whose `user_root` mark
+    /// (`GET /v2/workspaces/{top}/tree?limit=1`), whose `user_root` mark
     /// says which it is; the reads run together. A page whose reads name
     /// only the person's root and `universe` makes none. A label the key
     /// cannot read, or whose read fails, stays shared: a person's review
@@ -168,7 +168,7 @@ impl Roots {
             let ids = calls.next_ids();
             let first = web
                 .api
-                .workarea_tree(&call(credential, &ids), top, 1, None)
+                .workspace_tree(&call(credential, &ids), top, 1, None)
                 .await;
             let user_root = first.ok().is_some_and(|page| {
                 page.items
@@ -212,7 +212,7 @@ async fn join_all<F: Future>(futures: Vec<F>) -> Vec<F::Output> {
     out.into_iter().flatten().collect()
 }
 
-/// One workarea of the tree read.
+/// One workspace of the tree read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Place {
     pub id: String,
@@ -260,7 +260,7 @@ impl Names {
             let request_id = ids.request_id.clone().unwrap_or_default();
             let read = web
                 .api
-                .workarea_tree(&call(credential, &ids), root, TREE_PAGE, cursor.as_deref())
+                .workspace_tree(&call(credential, &ids), root, TREE_PAGE, cursor.as_deref())
                 .await;
             let read = match read {
                 Ok(read) => read,
@@ -309,7 +309,7 @@ impl Names {
     }
 
     /// Names from a counted tree the page already read under `universe`:
-    /// every workarea the viewer reads unless the read was cut at its cap.
+    /// every workspace the viewer reads unless the read was cut at its cap.
     #[must_use]
     pub fn of_counted(nodes: &[CountedNode], truncated: bool) -> Self {
         let roots = Roots::of_nodes(
@@ -336,7 +336,7 @@ impl Names {
 
     /// Names from a read the page already made, `(id, path)` each, with
     /// the kinds of top label it knows, and no call. Such a set is never
-    /// taken as every workarea the viewer reads, so a name it lacks is
+    /// taken as every workspace the viewer reads, so a name it lacks is
     /// left to the API.
     #[must_use]
     pub fn of_places(places: impl IntoIterator<Item = (String, String)>, roots: Roots) -> Self {
@@ -382,7 +382,7 @@ impl Names {
         }
     }
 
-    /// Every workarea read, a parent before its children.
+    /// Every workspace read, a parent before its children.
     #[must_use]
     pub fn places(&self) -> &[Place] {
         &self.places
@@ -406,14 +406,14 @@ impl Names {
         &self.roots
     }
 
-    /// Whether the read holds every workarea the viewer reads, so a name
+    /// Whether the read holds every workspace the viewer reads, so a name
     /// it lacks is one the viewer cannot read.
     fn whole(&self) -> bool {
         !self.more && !self.partial && self.unavailable.is_none()
     }
 
-    /// The workarea `typed` names: by id, by reference, or by a bare name
-    /// only one workarea read has, which is how `docs` names `alice.docs`
+    /// The workspace `typed` names: by id, by reference, or by a bare name
+    /// only one workspace read has, which is how `docs` names `alice.docs`
     /// on the admin page as it does on the person's (ADR-0044 d5 resolves a
     /// bare name in the person's root for their keys only).
     #[must_use]
@@ -495,7 +495,7 @@ impl Names {
 
     /// The answer to `chosen` before any call: a value this read holds is
     /// the place it names, and a value the read lacks, when it holds every
-    /// workarea the viewer reads, is refused without a call; otherwise the
+    /// workspace the viewer reads, is refused without a call; otherwise the
     /// API decides.
     #[must_use]
     pub fn resolve(&self, chosen: Chosen) -> Chosen {
@@ -539,7 +539,7 @@ impl Names {
 }
 
 /// The rows of `n` and of every node beneath it that `nodes` lists: the
-/// count the Atlas's tile shows for the same workarea, so Browse and the
+/// count the Atlas's tile shows for the same workspace, so Browse and the
 /// Atlas give one meaning to "readable".
 fn subtree_total(nodes: &[CountedNode], n: &CountedNode) -> u64 {
     let mut total = Counts::of(&n.counts).total();
@@ -601,9 +601,9 @@ fn is_label(label: &str) -> bool {
 /// The field's value and what it names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Chosen {
-    /// Empty: every workarea the viewer reads.
+    /// Empty: every workspace the viewer reads.
     Every,
-    /// A workarea the tree read holds.
+    /// A workspace the tree read holds.
     Place(Place),
     /// A well-formed value the tree read does not settle: the API decides.
     Ask(String),
@@ -622,7 +622,7 @@ pub struct Miss {
 impl Chosen {
     /// The value a page's query sent, trimmed and lower-cased (names are
     /// lower-case by grammar), checked as the API would check it before
-    /// any call: empty is every workarea; a value of three labels or more,
+    /// any call: empty is every workspace; a value of three labels or more,
     /// or one under `universe.`, is a path and `request.validation`, as is
     /// a value that is neither an id nor a name (ADR-0026 d2, d7; ADR-0044
     /// d5); anything else the tree read or the API settles.
@@ -649,8 +649,8 @@ impl Chosen {
         Self::Ask(typed)
     }
 
-    /// The value to send the API as `workarea`: the place's id, or the
-    /// value as typed; `None` for every workarea and for a refusal.
+    /// The value to send the API as `workspace`: the place's id, or the
+    /// value as typed; `None` for every workspace and for a refusal.
     #[must_use]
     pub fn value(&self) -> Option<&str> {
         match self {
@@ -702,7 +702,7 @@ pub fn browse_asked(sent: Option<&str>) -> bool {
     sent == Some("1")
 }
 
-/// Browse's counted read: each workarea with its own counts and marks, or
+/// Browse's counted read: each workspace with its own counts and marks, or
 /// the request id of the read that failed.
 pub struct Browse {
     nodes: Result<(Vec<CountedNode>, bool), String>,
@@ -716,7 +716,7 @@ impl Browse {
         let request_id = ids.request_id.clone().unwrap_or_default();
         let nodes = web
             .api
-            .workarea_counts(&call(credential, &ids), root, false)
+            .workspace_counts(&call(credential, &ids), root, false)
             .await
             .map(|c| (c.items, c.truncated))
             .map_err(|_| request_id);
@@ -745,7 +745,7 @@ pub struct Field<'a> {
     pub names: &'a Names,
     /// Browse's read, when the page asked for it open.
     pub browse: Option<&'a Browse>,
-    /// The admin page: every workarea, counted as memories.
+    /// The admin page: every workspace, counted as memories.
     pub admin: bool,
     /// The field stands alone in its own form, with Show.
     pub standalone: bool,
@@ -754,12 +754,12 @@ pub struct Field<'a> {
 }
 
 impl Field<'_> {
-    /// The page's link with the other filters kept, `workarea` set to
+    /// The page's link with the other filters kept, `workspace` set to
     /// `reference` where given and `browse=1` where asked.
     fn link(&self, reference: Option<&str>, browse: bool) -> String {
         let mut pairs: Vec<String> = Vec::new();
         if let Some(reference) = reference {
-            pairs.push(format!("workarea={}", encode(reference)));
+            pairs.push(format!("workspace={}", encode(reference)));
         }
         for (name, value) in self.keep {
             pairs.push(format!("{name}={}", encode(value)));
@@ -798,14 +798,14 @@ impl Field<'_> {
             )
         } else {
             (
-                r#"<div class="oml-wa" role="group" aria-label="Workarea">"#.to_owned(),
+                r#"<div class="oml-wa" role="group" aria-label="Workspace">"#.to_owned(),
                 "</div>",
             )
         };
         let mut out = open;
         let _ = write!(
             out,
-            r#"<label for="{id}">Workarea</label><div class="ctl"><input class="oml-input" id="{id}" name="workarea" type="text" value="{}" list="{id}-list" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="{described}"{}>{}</div>"#,
+            r#"<label for="{id}">Workspace</label><div class="ctl"><input class="oml-input" id="{id}" name="workspace" type="text" value="{}" list="{id}-list" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="{described}"{}>{}</div>"#,
             attr(self.chosen.shown().unwrap_or_default()),
             if miss.is_some() {
                 r#" aria-invalid="true""#
@@ -860,7 +860,7 @@ impl Field<'_> {
     fn hint(&self) -> String {
         if let Some(request_id) = &self.names.unavailable {
             return format!(
-                r#"The workarea list is unavailable (request <code>{}</code>). {}"#,
+                r#"The workspace list is unavailable (request <code>{}</code>). {}"#,
                 text(request_id),
                 text(self.empty)
             );
@@ -868,13 +868,13 @@ impl Field<'_> {
         let mut hint = text(self.empty);
         if self.admin {
             hint.push_str(
-                " Type for hints; a workarea in a person's root is <code>user.name</code>.",
+                " Type for hints; a workspace in a person's root is <code>user.name</code>.",
             );
         }
         if self.names.more {
             let _ = write!(
                 hint,
-                " The hints hold the first {} workareas: the list is partial. Browse and a typed name still work.",
+                " The hints hold the first {} workspaces: the list is partial. Browse and a typed name still work.",
                 self.names.places.len()
             );
         }
@@ -892,9 +892,9 @@ impl Field<'_> {
                 format!(r#"<code>{typed}</code> is neither an id nor a name."#)
             }
         } else if self.admin {
-            format!(r#"No workarea is named <code>{typed}</code>."#)
+            format!(r#"No workspace is named <code>{typed}</code>."#)
         } else {
-            format!(r#"No readable workarea is named <code>{typed}</code>."#)
+            format!(r#"No readable workspace is named <code>{typed}</code>."#)
         };
         let mut out = format!(
             r#"<div class="oml-wa-miss" id="{}-miss" role="alert"><p class="code">{}<code>{}</code></p><p>{sentence}</p>"#,
@@ -921,7 +921,7 @@ impl Field<'_> {
     }
 
     /// Browse: closed, a link that asks for it open; open, the tree as
-    /// links with each workarea's count and marks.
+    /// links with each workspace's count and marks.
     fn browse(&self) -> String {
         let shown = self.chosen.shown();
         let Some(browse) = self.browse else {
@@ -941,7 +941,7 @@ impl Field<'_> {
         };
         let unit = if self.admin { "memories" } else { "readable" };
         let mut out = format!(
-            r#"<details class="oml-wa-browse" open><summary>Browse <span class="n">{} workareas{}</span></summary><div class="panel"><ul class="oml-wa-tree">"#,
+            r#"<details class="oml-wa-browse" open><summary>Browse <span class="n">{} workspaces{}</span></summary><div class="panel"><ul class="oml-wa-tree">"#,
             nodes.len(),
             if truncated {
                 " · counted from the first 2,000"
@@ -1092,7 +1092,7 @@ mod tests {
             matches!(&chosen, Chosen::Place(p) if p.reference == "alice.notes"),
             "{chosen:?}"
         );
-        // `docs` is held by alice and by bob: not one workarea.
+        // `docs` is held by alice and by bob: not one workspace.
         assert!(matches!(
             names.resolve(Chosen::of(Some("docs"))),
             Chosen::Miss(_)
@@ -1165,7 +1165,7 @@ mod tests {
             browse: None,
             admin: false,
             standalone: false,
-            empty: "Empty: every readable workarea.",
+            empty: "Empty: every readable workspace.",
         };
         let html = field.html();
         assert!(
@@ -1178,7 +1178,7 @@ mod tests {
         );
         assert!(
             html.contains(
-                r#"href="/web/memories?workarea=alice.proj&amp;state=held&amp;browse=1">Browse</a>"#
+                r#"href="/web/memories?workspace=alice.proj&amp;state=held&amp;browse=1">Browse</a>"#
             ),
             "{html}"
         );
@@ -1189,10 +1189,10 @@ mod tests {
         assert!(html.contains(r#"aria-describedby="wa-hint""#), "{html}");
     }
 
-    /// Browse counts each workarea as the Atlas's tile does: its own rows
+    /// Browse counts each workspace as the Atlas's tile does: its own rows
     /// and every row beneath it, in the same word (bulk D fixes).
     #[test]
-    fn browse_counts_a_workarea_with_its_subtree_as_the_atlas_does() {
+    fn browse_counts_a_workspace_with_its_subtree_as_the_atlas_does() {
         let node = |id: &str, name: &str, parent: Option<&str>, path: &str, n: u64, root: bool| {
             serde_json::from_value::<CountedNode>(serde_json::json!({
                 "id": id, "name": name, "parent_id": parent, "path": path,
@@ -1219,7 +1219,7 @@ mod tests {
             browse: Some(&browse),
             admin: false,
             standalone: false,
-            empty: "Empty: every readable workarea.",
+            empty: "Empty: every readable workspace.",
         };
         let html = field.html();
         assert!(
@@ -1245,7 +1245,7 @@ mod tests {
             browse: None,
             admin: true,
             standalone: false,
-            empty: "Empty: every workarea.",
+            empty: "Empty: every workspace.",
         };
         let html = field.html();
         assert!(
@@ -1254,7 +1254,7 @@ mod tests {
         );
         assert!(html.contains("<code>access.not_found</code>"), "{html}");
         assert!(
-            html.contains(r#"<a href="/web/admin/memories?workarea=alice.proj">alice.proj</a>"#),
+            html.contains(r#"<a href="/web/admin/memories?workspace=alice.proj">alice.proj</a>"#),
             "{html}"
         );
         assert!(!html.contains("wa-hint"), "{html}");

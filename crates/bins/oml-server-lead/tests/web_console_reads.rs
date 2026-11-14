@@ -18,7 +18,7 @@ use oml_app::App;
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::web::{Email, capacity_credential};
-use oml_app::domain::{HeldBy, MemoryKind, Role};
+use oml_app::domain::{MemoryKind, Role, UsedBy};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::types::{
     BootstrapRequest, GrantRequest, IssueKeyRequest, SubmitRequest, WebEmailRequest,
@@ -240,15 +240,15 @@ async fn a_session_keys_read_resolves_its_caller_on_the_gates_access_once_and_a_
     let admin = web(&rig.alice, "admin");
     let tree = get(
         &rig.router,
-        "/v2/workareas/universe/tree?counts=true",
+        "/v2/workspaces/universe/tree?counts=true",
         &admin,
         true,
     )
     .await;
-    let offers = get(&rig.router, "/v2/workareas/universe/offers", &admin, true).await;
+    let offers = get(&rig.router, "/v2/workspaces/universe/offers", &admin, true).await;
     let both = get(
         &rig.router,
-        "/v2/workareas/universe/tree?counts=true&offers=true",
+        "/v2/workspaces/universe/tree?counts=true&offers=true",
         &admin,
         true,
     )
@@ -312,7 +312,7 @@ async fn whoami_names_a_denied_session_key_in_the_store_calls_it_already_makes()
     let denial = send(
         &rig.router,
         Request::post("/v2/keys/alice-web/denials").header("idempotency-key", "deny-alice-web"),
-        r#"{"workarea":"universe"}"#,
+        r#"{"workspace":"universe"}"#,
         &rig.admin,
         false,
     )
@@ -452,11 +452,11 @@ async fn whoami_refuses_a_person_flag_it_cannot_serve() {
 }
 
 // ---------------------------------------------------------------------------
-// GET /v2/workareas/{workarea}/tree?counts=true&offers=true
+// GET /v2/workspaces/{workspace}/tree?counts=true&offers=true
 // ---------------------------------------------------------------------------
 
 /// The counted tree with `offers=true` serves the scope's offers exactly as
-/// `GET /v2/workareas/{workarea}/offers` serves them to the same caller,
+/// `GET /v2/workspaces/{workspace}/offers` serves them to the same caller,
 /// beside the counts it serves without them, for an admin key value and
 /// for each capacity of a session (#286: the admin Atlas's extra round).
 #[tokio::test]
@@ -470,21 +470,21 @@ async fn the_counted_tree_serves_the_scopes_offers_as_the_offers_operation_does(
     ] {
         let counted = get(
             &rig.router,
-            &format!("/v2/workareas/{scope}/tree?counts=true"),
+            &format!("/v2/workspaces/{scope}/tree?counts=true"),
             &bearer,
             web_client,
         )
         .await;
         let both = get(
             &rig.router,
-            &format!("/v2/workareas/{scope}/tree?counts=true&offers=true"),
+            &format!("/v2/workspaces/{scope}/tree?counts=true&offers=true"),
             &bearer,
             web_client,
         )
         .await;
         let offers = get(
             &rig.router,
-            &format!("/v2/workareas/{scope}/offers"),
+            &format!("/v2/workspaces/{scope}/offers"),
             &bearer,
             web_client,
         )
@@ -508,7 +508,7 @@ async fn the_counted_trees_offers_go_to_no_caller_the_tree_refuses() {
     for offers in ["", "&offers=true"] {
         let refused = get(
             &rig.router,
-            &format!("/v2/workareas/alice/tree?counts=true{offers}"),
+            &format!("/v2/workspaces/alice/tree?counts=true{offers}"),
             &web(&rig.bob, "web"),
             true,
         )
@@ -529,9 +529,9 @@ async fn the_counted_trees_offers_go_to_no_caller_the_tree_refuses() {
 async fn the_tree_refuses_offers_it_cannot_serve() {
     let rig = rig().await;
     for path in [
-        "/v2/workareas/universe/tree?offers=true",
-        "/v2/workareas/universe/tree?counts=false&offers=true",
-        "/v2/workareas/universe/tree?counts=true&offers=maybe",
+        "/v2/workspaces/universe/tree?offers=true",
+        "/v2/workspaces/universe/tree?counts=false&offers=true",
+        "/v2/workspaces/universe/tree?counts=true&offers=maybe",
     ] {
         let refused = get(&rig.router, path, &rig.admin, false).await;
         assert_eq!(
@@ -554,7 +554,7 @@ async fn the_tree_refuses_offers_it_cannot_serve() {
 /// refuses, it is refused with the refusal of the one that refused (the
 /// tree's first) and serves neither counts nor offers. An admin key on a
 /// person's root is served by both, the admin key role reading every
-/// workarea's structure and offers (#286: the field widens nothing).
+/// workspace's structure and offers (#286: the field widens nothing).
 #[tokio::test]
 async fn the_counted_trees_offers_serve_only_where_the_tree_and_the_offers_operation_both_serve() {
     let rig = rig().await;
@@ -569,7 +569,7 @@ async fn the_counted_trees_offers_serve_only_where_the_tree_and_the_offers_opera
     let (mut served, mut refused) = (0, 0);
     for (bearer, web_client) in &callers {
         for scope in ["universe", "alice", "bob", "nowhere"] {
-            let at = |q: &str| format!("/v2/workareas/{scope}/{q}");
+            let at = |q: &str| format!("/v2/workspaces/{scope}/{q}");
             let tree = get(&rig.router, &at("tree?counts=true"), bearer, *web_client).await;
             let offers = get(&rig.router, &at("offers"), bearer, *web_client).await;
             let both = get(
@@ -609,7 +609,7 @@ async fn the_counted_trees_offers_serve_only_where_the_tree_and_the_offers_opera
     // The case the review named: an admin key on a person's root.
     let admin_on_root = get(
         &rig.router,
-        "/v2/workareas/alice/tree?counts=true&offers=true",
+        "/v2/workspaces/alice/tree?counts=true&offers=true",
         &rig.admin,
         false,
     )
@@ -691,24 +691,24 @@ async fn the_review_pages_reads_cost_the_gate_and_their_own_verbs_store_calls() 
     );
 }
 
-/// `n` workareas, alice's root and `n - 1` beneath it, each holding one
+/// `n` workspaces, alice's root and `n - 1` beneath it, each holding one
 /// row a user agent key wrote and nobody has judged, as the web bench
 /// seeds them (`bench/web/run.py`).
-async fn held_in_workareas(rig: &Rig, n: usize) {
+async fn held_in_workspaces(rig: &Rig, n: usize) {
     let root = Reference::Name(Name::parse("alice").expect("a name"));
     let mut nodes = vec![root.clone()];
     for i in 1..n {
         let created = rig
             .app
-            .create_workarea(
+            .create_workspace(
                 rig.admin.as_str(),
                 &Name::parse(&format!("p{i}")).expect("a name"),
                 Some(root.clone()),
                 None,
             )
             .await
-            .expect("the workarea is created");
-        nodes.push(Reference::Id(created.workarea.workarea_id));
+            .expect("the workspace is created");
+        nodes.push(Reference::Id(created.workspace.workspace_id));
     }
     let writer = rig
         .app
@@ -719,8 +719,8 @@ async fn held_in_workareas(rig: &Rig, n: usize) {
                 role: Role::Writer,
                 name: Name::parse("alice-bench-writer").expect("a name"),
                 principal: "bench/writer".to_owned(),
-                held_by: Some(HeldBy::Agent),
-                default_workarea: Some(root.clone()),
+                used_by: Some(UsedBy::Agent),
+                default_workspace: Some(root.clone()),
                 crew: None,
                 grants: vec![GrantRequest {
                     node: root.clone(),
@@ -751,7 +751,7 @@ async fn held_in_workareas(rig: &Rig, n: usize) {
                     verb: None,
                     kind: MemoryKind::Memory,
                     body: format!("The service in area {i} logs one line per request."),
-                    workarea: Some(node),
+                    workspace: Some(node),
                     derives_from: Vec::new(),
                     severity: None,
                     rule: None,
@@ -766,18 +766,18 @@ async fn held_in_workareas(rig: &Rig, n: usize) {
     }
 }
 
-/// The held listing's store calls do not grow with the workarea count:
-/// one held row in each of 6 workareas and in each of 48 is served in the
-/// same calls, since each row's workarea path comes from the walk that
-/// found the reviewer's dreamer nodes, not from a read per workarea. The
+/// The held listing's store calls do not grow with the workspace count:
+/// one held row in each of 6 workspaces and in each of 48 is served in the
+/// same calls, since each row's workspace path comes from the walk that
+/// found the reviewer's reviewer nodes, not from a read per workspace. The
 /// web bench measured 13 and 55 before (ADR-0070 d8, 2026-11-13). Every
 /// row is listed and held.
 #[tokio::test]
-async fn the_held_listings_store_calls_do_not_grow_with_the_workareas() {
+async fn the_held_listings_store_calls_do_not_grow_with_the_workspaces() {
     let mut calls = Vec::new();
     for n in [6, 48] {
         let rig = rig().await;
-        held_in_workareas(&rig, n).await;
+        held_in_workspaces(&rig, n).await;
         let held = get(
             &rig.router,
             "/v2/review/held?limit=200",
@@ -791,10 +791,10 @@ async fn the_held_listings_store_calls_do_not_grow_with_the_workareas() {
         for item in items {
             assert_eq!(item["state"], "held", "{item}");
         }
-        // Each row's path is its workarea's, as the ancestry read derives it.
+        // Each row's path is its workspace's, as the ancestry read derives it.
         let mut paths: Vec<&str> = items
             .iter()
-            .map(|i| i["workarea_path"].as_str().expect("a path"))
+            .map(|i| i["workspace_path"].as_str().expect("a path"))
             .collect();
         paths.sort_unstable();
         let mut expected: Vec<String> = std::iter::once("universe.alice".to_owned())
@@ -803,7 +803,7 @@ async fn the_held_listings_store_calls_do_not_grow_with_the_workareas() {
         expected.sort_unstable();
         assert_eq!(paths, expected);
         println!(
-            "store calls: held listing at {n} workareas {}",
+            "store calls: held listing at {n} workspaces {}",
             held.store_calls()
         );
         calls.push(held.store_calls());
@@ -812,7 +812,7 @@ async fn the_held_listings_store_calls_do_not_grow_with_the_workareas() {
 }
 
 // ---------------------------------------------------------------------------
-// The workarea picker's reads (design notes row 14, decided 2026-11-13)
+// The workspace picker's reads (design notes row 14, decided 2026-11-13)
 // ---------------------------------------------------------------------------
 
 /// The picker's hints are names only, from the uncounted tree read, which
@@ -831,14 +831,14 @@ async fn the_pickers_hint_read_costs_less_than_browses_counted_read() {
         let bearer = web(&rig.alice, capacity);
         let names = get(
             &rig.router,
-            "/v2/workareas/universe/tree?limit=200",
+            "/v2/workspaces/universe/tree?limit=200",
             &bearer,
             true,
         )
         .await;
         let counted = get(
             &rig.router,
-            "/v2/workareas/universe/tree?counts=true",
+            "/v2/workspaces/universe/tree?counts=true",
             &bearer,
             true,
         )
@@ -865,8 +865,8 @@ async fn the_pickers_hint_read_costs_less_than_browses_counted_read() {
 // The redesign's fix round (bulk D): the top label read
 // ---------------------------------------------------------------------------
 
-/// A page that names a workarea under a top label it does not know reads
-/// that label's node once, `GET /v2/workareas/{top}/tree?limit=1`, whose
+/// A page that names a workspace under a top label it does not know reads
+/// that label's node once, `GET /v2/workspaces/{top}/tree?limit=1`, whose
 /// `user_root` mark says whether the names beneath it are `<user>.<name>`
 /// (design notes row 20). Its store calls, as the admin key reading a
 /// person's root and as a person's reviewer key reading its own, printed
@@ -876,14 +876,14 @@ async fn the_top_label_read_costs_the_gate_and_one_tree_walk() {
     let rig = rig().await;
     let admin = get(
         &rig.router,
-        "/v2/workareas/bob/tree?limit=1",
+        "/v2/workspaces/bob/tree?limit=1",
         &web(&rig.alice, "admin"),
         true,
     )
     .await;
     let review = get(
         &rig.router,
-        "/v2/workareas/alice/tree?limit=1",
+        "/v2/workspaces/alice/tree?limit=1",
         &web(&rig.alice, "review"),
         true,
     )

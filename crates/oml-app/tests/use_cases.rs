@@ -20,9 +20,9 @@ use oml_app::domain::oauth::{
 use oml_app::domain::vocab::OmlLabel;
 use oml_app::domain::vocab_edges::EdgeState;
 use oml_app::domain::{
-    EventDraft, EventTime, FrozenOp, HeldBy, KeySet, LadderRefusal, MemoryKind, MemoryStatus, Role,
-    Sha256Hash, SignedEnvelope, WorkareaStatus, canonical_bytes, derive_claim_key, event_types,
-    next_envelope, sha256_digest_string, sign, verify_chain,
+    EventDraft, EventTime, FrozenOp, KeySet, LadderRefusal, MemoryKind, MemoryStatus, Role,
+    Sha256Hash, SignedEnvelope, UsedBy, WorkspaceStatus, canonical_bytes, derive_claim_key,
+    event_types, next_envelope, sha256_digest_string, sign, verify_chain,
 };
 use oml_app::doubles::{
     FixedClock, MarkerScanner, MemDocuments, MemSigner, MemStore, PlainSealer, SeqIdGen,
@@ -90,20 +90,20 @@ async fn bootstrap(app: &TestApp) -> BootstrapResult {
     .expect("bootstrap")
 }
 
-/// A workarea under `parent`, created by the admin.
-async fn workarea(app: &TestApp, admin: &str, name: &str, parent: Uuid) -> Uuid {
+/// A workspace under `parent`, created by the admin.
+async fn workspace(app: &TestApp, admin: &str, name: &str, parent: Uuid) -> Uuid {
     let name = Name::parse(name).expect("a fixture name the creation grammar admits");
-    app.create_workarea(admin, &name, Some(parent.into()), None)
+    app.create_workspace(admin, &name, Some(parent.into()), None)
         .await
-        .expect("create workarea")
-        .workarea
-        .workarea_id
+        .expect("create workspace")
+        .workspace
+        .workspace_id
 }
 
-/// Bootstrap and one crew workarea under the root: (bootstrap, crew).
+/// Bootstrap and one crew workspace under the root: (bootstrap, crew).
 async fn tenant(app: &TestApp) -> (BootstrapResult, Uuid) {
     let boot = bootstrap(app).await;
-    let crew = workarea(app, &boot.admin_key.value, "crew", boot.root_workarea_id).await;
+    let crew = workspace(app, &boot.admin_key.value, "crew", boot.root_workspace_id).await;
     (boot, crew)
 }
 
@@ -142,8 +142,8 @@ fn issue_req(role: Role, principal: &str, grants: Vec<GrantRequest>) -> IssueKey
         role,
         name: fresh_key_name(),
         principal: principal.to_owned(),
-        held_by: Some(HeldBy::Agent),
-        default_workarea: None,
+        used_by: Some(UsedBy::Agent),
+        default_workspace: None,
         crew: None,
         grants,
         connect_code: false,
@@ -198,7 +198,7 @@ fn submit_req(idem: &str, body: &str) -> SubmitRequest {
         verb: None,
         kind: MemoryKind::Memory,
         body: body.to_owned(),
-        workarea: None,
+        workspace: None,
         derives_from: Vec::new(),
         severity: None,
         rule: None,
@@ -209,10 +209,10 @@ fn submit_req(idem: &str, body: &str) -> SubmitRequest {
     }
 }
 
-fn submit_into(idem: &str, body: &str, workarea_id: Uuid) -> SubmitRequest {
+fn submit_into(idem: &str, body: &str, workspace_id: Uuid) -> SubmitRequest {
     SubmitRequest {
         on_similar: Default::default(),
-        workarea: Some(workarea_id.into()),
+        workspace: Some(workspace_id.into()),
         ..submit_req(idem, body)
     }
 }
@@ -224,7 +224,7 @@ fn recall_req(query: &str) -> RecallRequest {
         anchor: oml_app::types::AnchorFilter::default(),
         query: query.to_owned(),
         k: 10,
-        workarea: None,
+        workspace: None,
         kinds: Vec::new(),
         include_text: true,
         include_unreviewed: Some(false),
@@ -252,7 +252,7 @@ fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
         retirement: false,
         derives_from: Vec::new(),
         reason: None,
-        workarea: None,
+        workspace: None,
         refuse_vocabulary_target: false,
         severity: None,
         rule: None,
@@ -309,15 +309,15 @@ async fn served_lineage(app: &TestApp, key: &str, id: Uuid, query: &str) -> Vec<
     got.memory.derives_from
 }
 
-/// Submit as `writer` and have `dreamer` approve: the promoted row's id.
-async fn promoted(app: &TestApp, writer: &str, dreamer: &str, req: &SubmitRequest) -> Uuid {
+/// Submit as `writer` and have `reviewer` approve: the promoted row's id.
+async fn promoted(app: &TestApp, writer: &str, reviewer: &str, req: &SubmitRequest) -> Uuid {
     let id = app
         .submit_memory(writer, req)
         .await
         .expect("submit")
         .receipt
         .memory_id;
-    app.post_verdict(dreamer, id, Verdict::Approve, None)
+    app.post_verdict(reviewer, id, Verdict::Approve, None)
         .await
         .expect("approve");
     id
@@ -329,7 +329,7 @@ async fn happy_path_end_to_end() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda-writer", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana-dreamer", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana-reviewer", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea-reader", crew).await;
 
     // Submit: held on arrival, scan pass.
@@ -342,7 +342,7 @@ async fn happy_path_end_to_end() {
         .expect("submit");
     assert!(!submitted.replayed);
     assert_eq!(submitted.receipt.state, "held");
-    assert_eq!(submitted.receipt.workarea_id, crew, "the key's default");
+    assert_eq!(submitted.receipt.workspace_id, crew, "the key's default");
     let memory_id = submitted.receipt.memory_id;
 
     // Held rows are invisible to everyone but the author (R3).
@@ -361,15 +361,15 @@ async fn happy_path_end_to_end() {
         .expect("recall");
     assert!(recall.hits.is_empty());
 
-    // Review: the dreamer is served the held item and approves it.
+    // Review: the reviewer is served the held item and approves it.
     let served = app
-        .review_next(&dreamer.value)
+        .review_next(&reviewer.value)
         .await
         .expect("review next")
         .expect("an item waits");
     assert_eq!(served.memory.memory_id, memory_id);
     let outcome = app
-        .post_verdict(&dreamer.value, memory_id, Verdict::Approve, None)
+        .post_verdict(&reviewer.value, memory_id, Verdict::Approve, None)
         .await
         .expect("verdict");
     assert_eq!(outcome.state, MemoryStatus::Promoted);
@@ -435,7 +435,10 @@ async fn happy_path_end_to_end() {
         .collect();
     assert_eq!(
         types,
-        [event_types::WORKAREA_CREATE, event_types::LIFECYCLE_PROMOTE]
+        [
+            event_types::WORKSPACE_CREATE,
+            event_types::LIFECYCLE_PROMOTE
+        ]
     );
     assert_eq!((tail.head_seq, tail.next_after_seq), (14, 14));
     let promote = &tail.events[1];
@@ -453,12 +456,12 @@ async fn a_ratified_successor_is_the_one_hit_and_the_version_it_replaced_stays_p
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rita", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
 
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
@@ -471,7 +474,7 @@ async fn a_ratified_successor_is_the_one_hit_and_the_version_it_replaced_stays_p
         .expect("supersede")
         .receipt
         .memory_id;
-    app.post_verdict(&dreamer.value, second, Verdict::Approve, None)
+    app.post_verdict(&reviewer.value, second, Verdict::Approve, None)
         .await
         .expect("ratify the successor");
 
@@ -498,9 +501,9 @@ async fn r2_author_cannot_verdict_its_own_work() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    // A dreamer key held by the SAME principal as the author.
-    let same_principal_dreamer = issue(&app, admin, Role::Dreamer, "wanda", crew).await;
-    let other_dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    // A reviewer key used by the SAME principal as the author.
+    let same_principal_reviewer = issue(&app, admin, Role::Reviewer, "wanda", crew).await;
+    let other_reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
 
     let submitted = app
         .submit_memory(&writer.value, &submit_req("idem-1", "fact one"))
@@ -521,16 +524,16 @@ async fn r2_author_cannot_verdict_its_own_work() {
         }
     ));
 
-    // The same principal behind a dreamer key is refused by the lineage
+    // The same principal behind a reviewer key is refused by the lineage
     // closure (R2), and the queue never serves it the row at all.
     let served = app
-        .review_next(&same_principal_dreamer.value)
+        .review_next(&same_principal_reviewer.value)
         .await
         .expect("review next");
     assert!(served.is_none(), "the queue skips lineage-excluded rows");
     let err = app
         .post_verdict(
-            &same_principal_dreamer.value,
+            &same_principal_reviewer.value,
             memory_id,
             Verdict::Approve,
             None,
@@ -542,9 +545,9 @@ async fn r2_author_cannot_verdict_its_own_work() {
         AppError::Verdict(oml_app::domain::VerdictError::PrincipalInLineage(_))
     ));
 
-    // An independent dreamer may judge it.
+    // An independent reviewer may judge it.
     let outcome = app
-        .post_verdict(&other_dreamer.value, memory_id, Verdict::Approve, None)
+        .post_verdict(&other_reviewer.value, memory_id, Verdict::Approve, None)
         .await
         .expect("independent verdict");
     assert_eq!(outcome.state, MemoryStatus::Promoted);
@@ -556,7 +559,7 @@ async fn role_ceilings_are_refused_with_typed_errors() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
 
     // Reader cannot write (R1).
@@ -571,15 +574,15 @@ async fn role_ceilings_are_refused_with_typed_errors() {
             ..
         }
     ));
-    // Dreamer cannot write.
+    // Reviewer cannot write.
     let err = app
-        .submit_memory(&dreamer.value, &submit_req("i", "x"))
+        .submit_memory(&reviewer.value, &submit_req("i", "x"))
         .await
         .unwrap_err();
     assert!(matches!(
         err,
         AppError::VerbCeiling {
-            role: Role::Dreamer,
+            role: Role::Reviewer,
             ..
         }
     ));
@@ -684,7 +687,7 @@ async fn a_scan_veto_journals_nothing_and_leaves_no_row() {
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let writer = issue(&app, &boot.admin_key.value, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, &boot.admin_key.value, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, &boot.admin_key.value, Role::Reviewer, "dana", crew).await;
     let before = journal(&store, boot.tenant_id).await.len();
     let outbox = store.outbox_len(boot.tenant_id);
 
@@ -702,7 +705,7 @@ async fn a_scan_veto_journals_nothing_and_leaves_no_row() {
     // submission.scan_veto).
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
     assert_eq!(store.outbox_len(boot.tenant_id), outbox);
-    let served = app.review_next(&dreamer.value).await.expect("review next");
+    let served = app.review_next(&reviewer.value).await.expect("review next");
     assert!(served.is_none(), "nothing waits in the queue after a veto");
 
     // No idempotency record either: the same key with a clean body is new
@@ -723,7 +726,7 @@ async fn supersede_is_author_only_and_tip_only() {
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
     let other_writer = agent(&app, admin, "walt", crew).await;
     let writer_only = issue(&app, admin, Role::Writer, "wren", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
 
     let submitted = app
         .submit_memory(&writer.value, &submit_req("i1", "original fact"))
@@ -739,7 +742,7 @@ async fn supersede_is_author_only_and_tip_only() {
         .unwrap_err();
     assert!(matches!(err, AppError::TipConflict { .. }), "{err:?}");
 
-    app.post_verdict(&dreamer.value, memory_id, Verdict::Approve, None)
+    app.post_verdict(&reviewer.value, memory_id, Verdict::Approve, None)
         .await
         .expect("promote");
 
@@ -786,7 +789,7 @@ async fn a_second_version_one_on_a_live_claim_key_is_claim_key_conflict() {
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let library = workarea(&app, admin, "library", boot.root_workarea_id).await;
+    let library = workspace(&app, admin, "library", boot.root_workspace_id).await;
     let writer = issue_with(
         &app,
         admin,
@@ -795,11 +798,11 @@ async fn a_second_version_one_on_a_live_claim_key_is_claim_key_conflict() {
         vec![grant(crew, Role::Writer), grant(library, Role::Writer)],
     )
     .await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
-    let fleet = |idem: &str, workarea: Uuid| SubmitRequest {
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
+    let fleet = |idem: &str, workspace: Uuid| SubmitRequest {
         on_similar: Default::default(),
         claim_key: Some("fleet-order".to_owned()),
-        ..submit_into(idem, "the fleet follows the canary", workarea)
+        ..submit_into(idem, "the fleet follows the canary", workspace)
     };
 
     let first = app
@@ -820,7 +823,7 @@ async fn a_second_version_one_on_a_live_claim_key_is_claim_key_conflict() {
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
 
     // So does a promoted one.
-    app.post_verdict(&dreamer.value, first.memory_id, Verdict::Approve, None)
+    app.post_verdict(&reviewer.value, first.memory_id, Verdict::Approve, None)
         .await
         .expect("approve");
     let err = app
@@ -829,11 +832,11 @@ async fn a_second_version_one_on_a_live_claim_key_is_claim_key_conflict() {
         .unwrap_err();
     assert!(matches!(err, AppError::ClaimKeyConflict), "{err:?}");
 
-    // A claim_key is namespaced by workarea.
+    // A claim_key is namespaced by workspace.
     let elsewhere = app
         .submit_memory(&writer.value, &fleet("i4", library))
         .await
-        .expect("another workarea's claim")
+        .expect("another workspace's claim")
         .receipt;
     assert_eq!(elsewhere.version, 1);
 }
@@ -844,7 +847,7 @@ async fn a_rejected_first_version_releases_its_claim_key() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let fleet = |idem: &str| SubmitRequest {
         on_similar: Default::default(),
         claim_key: Some("fleet-order".to_owned()),
@@ -858,7 +861,7 @@ async fn a_rejected_first_version_releases_its_claim_key() {
         .receipt
         .memory_id;
     app.post_verdict(
-        &dreamer.value,
+        &reviewer.value,
         rejected,
         Verdict::Reject,
         Some("the canary is gone"),
@@ -982,12 +985,12 @@ async fn a_successor_takes_the_next_version_and_the_targets_kind() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
 
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &SubmitRequest {
             on_similar: Default::default(),
             kind: MemoryKind::DerivedFact,
@@ -1026,15 +1029,15 @@ async fn replaces_names_the_replaced_version_only_to_a_key_that_can_read_it() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let approver = issue(&app, admin, Role::Dreamer, "dana", crew).await;
-    // Dreamer only: it reviews on crew but reads nothing there.
-    let blind = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let approver = issue(&app, admin, Role::Reviewer, "dana", crew).await;
+    // Reviewer only: it reviews on crew but reads nothing there.
+    let blind = issue(&app, admin, Role::Reviewer, "dora", crew).await;
     let sighted = issue_with(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "dina",
-        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+        vec![grant(crew, Role::Reviewer), grant(crew, Role::Reader)],
     )
     .await;
 
@@ -1112,12 +1115,12 @@ async fn one_writer_key_with_writer_and_reader_grants_remembers_and_recalls() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let agent = agent(&app, admin, "crew/agent-7", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "crew/reviewer-3", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "crew/reviewer-3", crew).await;
 
     let id = promoted(
         &app,
         &agent.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
@@ -1156,7 +1159,7 @@ async fn a_submit_on_a_node_the_key_only_reads_is_grant_refused() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let library = workarea(&app, admin, "library", boot.root_workarea_id).await;
+    let library = workspace(&app, admin, "library", boot.root_workspace_id).await;
     let writer = issue_with(
         &app,
         admin,
@@ -1174,25 +1177,25 @@ async fn a_submit_on_a_node_the_key_only_reads_is_grant_refused() {
         matches!(
             err,
             AppError::GrantRefused {
-                workarea_id,
+                workspace_id,
                 needed_role: Role::Writer,
-            } if workarea_id == library
+            } if workspace_id == library
         ),
         "{err:?}"
     );
 }
 
 #[tokio::test]
-async fn an_x_oml_workarea_outside_the_grants_is_not_found() {
+async fn an_x_oml_workspace_outside_the_grants_is_not_found() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let sibling = workarea(&app, admin, "sibling", boot.root_workarea_id).await;
+    let sibling = workspace(&app, admin, "sibling", boot.root_workspace_id).await;
     let agent = agent(&app, admin, "crew/agent-7", crew).await;
 
     // A sibling, an ancestor of the granted node, and a node no tenant holds
     // all answer as absence: a grant covers its subtree only.
-    for node in [sibling, boot.root_workarea_id, Uuid::from_u128(0xDEAD)] {
+    for node in [sibling, boot.root_workspace_id, Uuid::from_u128(0xDEAD)] {
         let err = app
             .submit_memory(&agent.value, &submit_into("i1", "x", node))
             .await
@@ -1207,7 +1210,7 @@ async fn an_x_oml_workarea_outside_the_grants_is_not_found() {
                 &RecallRequest {
                     sources: None,
                     timings: false,
-                    workarea: Some(node.into()),
+                    workspace: Some(node.into()),
                     ..recall_req("x")
                 },
             )
@@ -1221,20 +1224,20 @@ async fn an_x_oml_workarea_outside_the_grants_is_not_found() {
 }
 
 #[tokio::test]
-async fn recall_with_neither_default_nor_override_is_workarea_unresolved() {
+async fn recall_with_neither_default_nor_override_is_workspace_unresolved() {
     let app = app();
     let (boot, _crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     // A zero-grant key has no default (ADR-0025 d2).
     let reader = issue_with(&app, admin, Role::Reader, "rhea", Vec::new()).await;
-    assert_eq!(reader.default_workarea, None);
+    assert_eq!(reader.default_workspace, None);
 
     let err = app
         .recall(&reader.value, &recall_req("x"))
         .await
         .unwrap_err();
-    assert!(matches!(err, AppError::WorkareaUnresolved), "{err:?}");
-    // Step 1 runs before the workarea resolves: a reader submitting is the
+    assert!(matches!(err, AppError::WorkspaceUnresolved), "{err:?}");
+    // Step 1 runs before the workspace resolves: a reader submitting is the
     // verb ceiling whether or not it has a default.
     let err = app
         .submit_memory(&reader.value, &submit_req("i1", "x"))
@@ -1257,22 +1260,22 @@ async fn a_global_denial_takes_a_granted_subtree_out_of_recall() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let quarantine = workarea(&app, admin, "quarantine", crew).await;
+    let quarantine = workspace(&app, admin, "quarantine", crew).await;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
 
     let kept = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
     let masked = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_into("i2", "the canary in quarantine", quarantine),
     )
     .await;
@@ -1311,7 +1314,7 @@ async fn a_global_denial_takes_a_granted_subtree_out_of_recall() {
             &RecallRequest {
                 sources: None,
                 timings: false,
-                workarea: Some(quarantine.into()),
+                workspace: Some(quarantine.into()),
                 ..recall_req("canary")
             },
         )
@@ -1359,12 +1362,12 @@ async fn a_global_denial_takes_a_granted_subtree_out_of_recall() {
 }
 
 #[tokio::test]
-async fn a_dreamer_is_served_only_held_rows_inside_its_dreamer_grants() {
+async fn a_reviewer_is_served_only_held_rows_inside_its_reviewer_grants() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let other = workarea(&app, admin, "other-crew", boot.root_workarea_id).await;
-    let masked = workarea(&app, admin, "masked", crew).await;
+    let other = workspace(&app, admin, "other-crew", boot.root_workspace_id).await;
+    let masked = workspace(&app, admin, "masked", crew).await;
     let writer = issue_with(
         &app,
         admin,
@@ -1373,15 +1376,15 @@ async fn a_dreamer_is_served_only_held_rows_inside_its_dreamer_grants() {
         vec![grant(crew, Role::Writer), grant(other, Role::Writer)],
     )
     .await;
-    let dreamer = issue_with(
+    let reviewer = issue_with(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "dana",
         vec![
             GrantRequest {
                 node: crew.into(),
-                role: Role::Dreamer,
+                role: Role::Reviewer,
                 deny: vec![masked.into()],
                 covers: Covers::Subtree,
             },
@@ -1405,32 +1408,32 @@ async fn a_dreamer_is_served_only_held_rows_inside_its_dreamer_grants() {
     // The other crew's row is readable only, and the masked row lies under
     // the grant's own deny: neither is ever served.
     let served = app
-        .review_next(&dreamer.value)
+        .review_next(&reviewer.value)
         .await
         .expect("review next")
         .expect("the row inside waits");
     assert_eq!(served.memory.memory_id, inside);
-    app.post_verdict(&dreamer.value, inside, Verdict::Approve, None)
+    app.post_verdict(&reviewer.value, inside, Verdict::Approve, None)
         .await
         .expect("approve");
-    let served = app.review_next(&dreamer.value).await.expect("review next");
+    let served = app.review_next(&reviewer.value).await.expect("review next");
     assert!(served.is_none(), "{served:?}");
 }
 
 #[tokio::test]
-async fn a_verdict_on_a_row_outside_dreamer_access_is_not_found() {
+async fn a_verdict_on_a_row_outside_reviewer_access_is_not_found() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let other = workarea(&app, admin, "other-crew", boot.root_workarea_id).await;
+    let other = workspace(&app, admin, "other-crew", boot.root_workspace_id).await;
     let writer = issue(&app, admin, Role::Writer, "wanda", other).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
-    let reading_dreamer = issue_with(
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
+    let reading_reviewer = issue_with(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "dora",
-        vec![grant(crew, Role::Dreamer), grant(other, Role::Reader)],
+        vec![grant(crew, Role::Reviewer), grant(other, Role::Reader)],
     )
     .await;
 
@@ -1442,40 +1445,40 @@ async fn a_verdict_on_a_row_outside_dreamer_access_is_not_found() {
         .memory_id;
 
     let err = app
-        .post_verdict(&dreamer.value, row, Verdict::Approve, None)
+        .post_verdict(&reviewer.value, row, Verdict::Approve, None)
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::NotFound), "{err:?}");
     // Where reader is effective, the refusal names the missing role
     // (refusal order step 3), with no exception for review.
     let err = app
-        .post_verdict(&reading_dreamer.value, row, Verdict::Approve, None)
+        .post_verdict(&reading_reviewer.value, row, Verdict::Approve, None)
         .await
         .unwrap_err();
     assert!(
         matches!(
             err,
             AppError::GrantRefused {
-                workarea_id,
-                needed_role: Role::Dreamer,
-            } if workarea_id == other
+                workspace_id,
+                needed_role: Role::Reviewer,
+            } if workspace_id == other
         ),
         "{err:?}"
     );
 }
 
 #[tokio::test]
-async fn r2_refuses_the_author_whatever_grants_its_dreamer_key_holds() {
+async fn r2_refuses_the_author_whatever_grants_its_reviewer_key_holds() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let author_dreamer = issue_with(
+    let author_reviewer = issue_with(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "wanda",
-        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+        vec![grant(crew, Role::Reviewer), grant(crew, Role::Reader)],
     )
     .await;
 
@@ -1486,12 +1489,12 @@ async fn r2_refuses_the_author_whatever_grants_its_dreamer_key_holds() {
         .receipt
         .memory_id;
     let served = app
-        .review_next(&author_dreamer.value)
+        .review_next(&author_reviewer.value)
         .await
         .expect("review next");
     assert!(served.is_none(), "the queue skips lineage-excluded rows");
     let err = app
-        .post_verdict(&author_dreamer.value, row, Verdict::Approve, None)
+        .post_verdict(&author_reviewer.value, row, Verdict::Approve, None)
         .await
         .unwrap_err();
     assert!(
@@ -1513,11 +1516,11 @@ async fn a_service_key_is_refused_review_before_any_lookup() {
         .issue_key(
             admin,
             &IssueKeyRequest {
-                held_by: Some(HeldBy::Service),
+                used_by: Some(UsedBy::Service),
                 ..issue_req(
-                    Role::Dreamer,
+                    Role::Reviewer,
                     "reconciler",
-                    vec![grant(crew, Role::Dreamer)],
+                    vec![grant(crew, Role::Reviewer)],
                 )
             },
         )
@@ -1527,14 +1530,14 @@ async fn a_service_key_is_refused_review_before_any_lookup() {
         .await
         .expect("submit");
 
-    // Its dreamer grant confers review like any other; the attestation, not
+    // Its reviewer grant confers review like any other; the attestation, not
     // the grant, keeps it out (ADR-0025 d1).
     let err = app.review_next(&repair.value).await.unwrap_err();
     assert!(
         matches!(
             err,
             AppError::VerbCeiling {
-                role: Role::Dreamer,
+                role: Role::Reviewer,
                 ..
             }
         ),
@@ -1553,7 +1556,7 @@ async fn a_service_key_is_refused_review_before_any_lookup() {
         matches!(
             err,
             AppError::VerbCeiling {
-                role: Role::Dreamer,
+                role: Role::Reviewer,
                 ..
             }
         ),
@@ -1591,7 +1594,7 @@ async fn an_unreadable_derives_from_target_is_not_found() {
     let first = agent(&app, admin, "crew/agent-7", crew).await;
     let second = agent(&app, admin, "crew/agent-8", crew).await;
     let writer_only = issue(&app, admin, Role::Writer, "wren", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
 
     let held = app
         .submit_memory(&first.value, &submit_req("i1", "a held fact"))
@@ -1620,9 +1623,9 @@ async fn an_unreadable_derives_from_target_is_not_found() {
         .await
         .expect("own held ancestor");
 
-    // Once promoted, a reader of its workarea may derive from it; a key
+    // Once promoted, a reader of its workspace may derive from it; a key
     // with no reader grant there still may not.
-    app.post_verdict(&dreamer.value, held, Verdict::Approve, None)
+    app.post_verdict(&reviewer.value, held, Verdict::Approve, None)
         .await
         .expect("approve");
     app.submit_memory(&second.value, &derive("d3"))
@@ -1645,7 +1648,7 @@ async fn a_promoted_row_derived_from_its_authors_held_row_names_it_to_no_other_k
     let admin = &boot.admin_key.value;
     let author = agent(&app, admin, "crew/agent-7", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
 
     let held = app
         .submit_memory(&author.value, &submit_req("i1", "the canary drains first"))
@@ -1656,7 +1659,7 @@ async fn a_promoted_row_derived_from_its_authors_held_row_names_it_to_no_other_k
     let derived = promoted(
         &app,
         &author.value,
-        &dreamer.value,
+        &reviewer.value,
         &SubmitRequest {
             on_similar: Default::default(),
             claim_key: Some("fleet-order".to_owned()),
@@ -1680,7 +1683,7 @@ async fn a_promoted_row_derived_from_its_authors_held_row_names_it_to_no_other_k
     );
 
     // Once the ancestor is promoted the reader can read it, and it is named.
-    app.post_verdict(&dreamer.value, held, Verdict::Approve, None)
+    app.post_verdict(&reviewer.value, held, Verdict::Approve, None)
         .await
         .expect("approve the ancestor");
     assert_eq!(
@@ -1693,12 +1696,12 @@ async fn a_promoted_row_derived_from_its_authors_held_row_names_it_to_no_other_k
 // Recall: the steering segment and the hit order (ADR-0025 d8)
 // ---------------------------------------------------------------------------
 
-/// A first version of `kind` in `workarea_id`.
-fn submit_kind(idem: &str, kind: MemoryKind, body: &str, workarea_id: Uuid) -> SubmitRequest {
+/// A first version of `kind` in `workspace_id`.
+fn submit_kind(idem: &str, kind: MemoryKind, body: &str, workspace_id: Uuid) -> SubmitRequest {
     SubmitRequest {
         on_similar: Default::default(),
         kind,
-        ..submit_into(idem, body, workarea_id)
+        ..submit_into(idem, body, workspace_id)
     }
 }
 
@@ -1717,7 +1720,7 @@ fn recall_at(query: &str, scope: Uuid) -> RecallRequest {
     RecallRequest {
         sources: None,
         timings: false,
-        workarea: Some(scope.into()),
+        workspace: Some(scope.into()),
         ..recall_req(query)
     }
 }
@@ -1728,12 +1731,12 @@ async fn a_promoted_steering_row_precedes_hits_unranked() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     let promote = |req: SubmitRequest| {
-        let (writer, dreamer) = (writer.value.clone(), dreamer.value.clone());
+        let (writer, reviewer) = (writer.value.clone(), reviewer.value.clone());
         let app = &app;
-        async move { promoted(app, &writer, &dreamer, &req).await }
+        async move { promoted(app, &writer, &reviewer, &req).await }
     };
 
     // One steering row misses the query and the other matches it twice:
@@ -1790,9 +1793,9 @@ async fn ancestor_steering_applies_to_a_child_scope() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let quotes = workarea(&app, admin, "quotes", crew).await;
+    let quotes = workspace(&app, admin, "quotes", crew).await;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
 
     // The child's row is promoted first: depth from the root orders the
@@ -1800,14 +1803,14 @@ async fn ancestor_steering_applies_to_a_child_scope() {
     let local = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_kind("s1", MemoryKind::Steering, "Quotes are in USD/t.", quotes),
     )
     .await;
     let standing = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_kind(
             "s2",
             MemoryKind::Steering,
@@ -1830,9 +1833,9 @@ async fn child_steering_does_not_apply_to_the_parent() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let quotes = workarea(&app, admin, "quotes", crew).await;
+    let quotes = workspace(&app, admin, "quotes", crew).await;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     for (idem, kind, body) in [
         ("s1", MemoryKind::Steering, "Quote the canary in USD/t."),
@@ -1841,7 +1844,7 @@ async fn child_steering_does_not_apply_to_the_parent() {
         promoted(
             &app,
             &writer.value,
-            &dreamer.value,
+            &reviewer.value,
             &submit_kind(idem, kind, body, quotes),
         )
         .await;
@@ -1862,13 +1865,13 @@ async fn steering_on_an_unreadable_ancestor_is_not_served() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let quotes = workarea(&app, admin, "quotes", crew).await;
+    let quotes = workspace(&app, admin, "quotes", crew).await;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let standing = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_kind(
             "s1",
             MemoryKind::Steering,
@@ -1900,7 +1903,7 @@ async fn kinds_filters_hits_only() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     let mut ids = Vec::new();
     for (idem, kind, body) in [
@@ -1920,7 +1923,7 @@ async fn kinds_filters_hits_only() {
             promoted(
                 &app,
                 &writer.value,
-                &dreamer.value,
+                &reviewer.value,
                 &submit_kind(idem, kind, body, crew),
             )
             .await,
@@ -1960,11 +1963,11 @@ async fn issuance_never_inherits_the_issuers_default() {
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let sub = workarea(&app, admin, "sub", crew).await;
+    let sub = workspace(&app, admin, "sub", crew).await;
 
     // The issuer's default is the root; no issued key ever takes it.
     let zero = issue_with(&app, admin, Role::Writer, "w0", Vec::new()).await;
-    assert_eq!(zero.default_workarea, None, "a zero-grant key has none");
+    assert_eq!(zero.default_workspace, None, "a zero-grant key has none");
     let first = issue_with(
         &app,
         admin,
@@ -1973,19 +1976,23 @@ async fn issuance_never_inherits_the_issuers_default() {
         vec![grant(crew, Role::Writer), grant(sub, Role::Reader)],
     )
     .await;
-    assert_eq!(first.default_workarea, Some(crew), "the first grant's node");
+    assert_eq!(
+        first.default_workspace,
+        Some(crew),
+        "the first grant's node"
+    );
     let named = app
         .issue_key(
             admin,
             &IssueKeyRequest {
-                default_workarea: Some(sub.into()),
+                default_workspace: Some(sub.into()),
                 ..issue_req(Role::Writer, "w2", vec![grant(crew, Role::Writer)])
             },
         )
         .await
         .expect("issue");
     assert_eq!(
-        named.default_workarea,
+        named.default_workspace,
         Some(sub),
         "a covered default is kept"
     );
@@ -2000,7 +2007,7 @@ async fn issuance_never_inherits_the_issuers_default() {
                 .iter()
                 .any(|k| e.envelope.payload["key_id"] == k.to_string())
         })
-        .map(|e| e.envelope.payload["default_workarea_id"].clone())
+        .map(|e| e.envelope.payload["default_workspace_id"].clone())
         .collect();
     assert_eq!(
         journalled,
@@ -2017,8 +2024,8 @@ async fn a_default_no_grant_covers_is_refused() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let sibling = workarea(&app, admin, "sibling", boot.root_workarea_id).await;
-    let masked = workarea(&app, admin, "masked", crew).await;
+    let sibling = workspace(&app, admin, "sibling", boot.root_workspace_id).await;
+    let masked = workspace(&app, admin, "masked", crew).await;
     let head = app.verify_chain(admin).await.expect("verify").seq;
 
     let masking = GrantRequest {
@@ -2027,19 +2034,19 @@ async fn a_default_no_grant_covers_is_refused() {
         deny: vec![masked.into()],
         covers: Covers::Subtree,
     };
-    for default in [sibling, masked, boot.root_workarea_id] {
+    for default in [sibling, masked, boot.root_workspace_id] {
         let err = app
             .issue_key(
                 admin,
                 &IssueKeyRequest {
-                    default_workarea: Some(default.into()),
+                    default_workspace: Some(default.into()),
                     ..issue_req(Role::Writer, "w", vec![masking.clone()])
                 },
             )
             .await
             .unwrap_err();
         assert!(
-            matches!(&err, AppError::DefaultUncovered { workarea } if *workarea == Reference::Id(default)),
+            matches!(&err, AppError::DefaultUncovered { workspace } if *workspace == Reference::Id(default)),
             "{err:?}"
         );
     }
@@ -2055,14 +2062,14 @@ async fn issuance_refuses_in_the_issuance_order_and_journals_nothing() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let sibling = workarea(&app, admin, "sibling", boot.root_workarea_id).await;
+    let sibling = workspace(&app, admin, "sibling", boot.root_workspace_id).await;
     let head = app.verify_chain(admin).await.expect("verify").seq;
 
     // 1. The two-key rule runs first, even where admissibility also fails.
     let err = app
         .issue_key(
             admin,
-            &issue_req(Role::Admin, "a", vec![grant(crew, Role::Dreamer)]),
+            &issue_req(Role::Admin, "a", vec![grant(crew, Role::Reviewer)]),
         )
         .await
         .unwrap_err();
@@ -2074,7 +2081,7 @@ async fn issuance_refuses_in_the_issuance_order_and_journals_nothing() {
             &issue_req(
                 Role::Writer,
                 "w",
-                vec![grant(crew, Role::Reader), grant(crew, Role::Dreamer)],
+                vec![grant(crew, Role::Reader), grant(crew, Role::Reviewer)],
             ),
         )
         .await
@@ -2083,7 +2090,7 @@ async fn issuance_refuses_in_the_issuance_order_and_journals_nothing() {
         matches!(
             err,
             AppError::IssuerCeiling {
-                role: Role::Dreamer,
+                role: Role::Reviewer,
                 admissible,
                 grant_index: Some(1),
             } if admissible == admissible_grant_roles(Role::Writer)
@@ -2176,7 +2183,7 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let sub = workarea(&app, admin, "sub", crew).await;
+    let sub = workspace(&app, admin, "sub", crew).await;
 
     let issued = issue_with(
         &app,
@@ -2222,8 +2229,8 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
             "issued_by_key_id": boot.admin_key.key_id.to_string(),
             "expiry": null,
             "value_disclosed": false,
-            "held_by": "agent",
-            "default_workarea_id": crew.to_string(),
+            "used_by": "agent",
+            "default_workspace_id": crew.to_string(),
             // The name the issuance gave, and, sent no crew, a null crew
             // (event-catalog.md `key.issued`; ADR-0026 d8, d9).
             "name": issued.name.as_str(),
@@ -2243,7 +2250,7 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
             serde_json::json!({
                 "grant_id": record.grant.grant_id.to_string(),
                 "key_id": issued.key_id.to_string(),
-                "workarea_node_id": record.grant.node.to_string(),
+                "workspace_node_id": record.grant.node.to_string(),
                 "role": record.grant.role.as_str(),
                 "deny": record
                     .grant
@@ -2355,33 +2362,33 @@ async fn a_key_whose_issuance_failed_part_way_reads_back_by_name_revoked_at_its_
 }
 
 // ---------------------------------------------------------------------------
-// The workarea read: the caller's children, verbs and epoch (ADR-0025 d14)
+// The workspace read: the caller's children, verbs and epoch (ADR-0025 d14)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn workarea_info_names_the_verbs_this_keys_grants_confer() {
+async fn workspace_info_names_the_verbs_this_keys_grants_confer() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let agent = agent(&app, admin, "crew/agent-7", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
-    let dreamer = issue_with(
+    let reviewer = issue_with(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "dana",
-        vec![grant(crew, Role::Reader), grant(crew, Role::Dreamer)],
+        vec![grant(crew, Role::Reader), grant(crew, Role::Reviewer)],
     )
     .await;
     let service = app
         .issue_key(
             admin,
             &IssueKeyRequest {
-                held_by: Some(HeldBy::Service),
+                used_by: Some(UsedBy::Service),
                 ..issue_req(
-                    Role::Dreamer,
+                    Role::Reviewer,
                     "reconciler",
-                    vec![grant(crew, Role::Reader), grant(crew, Role::Dreamer)],
+                    vec![grant(crew, Role::Reader), grant(crew, Role::Reviewer)],
                 )
             },
         )
@@ -2406,7 +2413,7 @@ async fn workarea_info_names_the_verbs_this_keys_grants_confer() {
         ),
         (&reader, vec!["recall", "read", "graph_read", "events_tail"]),
         (
-            &dreamer,
+            &reviewer,
             vec![
                 "recall",
                 "read",
@@ -2431,7 +2438,7 @@ async fn workarea_info_names_the_verbs_this_keys_grants_confer() {
         ),
     ] {
         let info = app
-            .workarea_info(&key.value, Some(crew.into()))
+            .workspace_info(&key.value, Some(crew.into()))
             .await
             .expect("a readable node");
         assert_eq!(info.my_effective_verbs, verbs, "{}", key.principal);
@@ -2439,15 +2446,15 @@ async fn workarea_info_names_the_verbs_this_keys_grants_confer() {
 }
 
 #[tokio::test]
-async fn workarea_info_lists_only_readable_children() {
+async fn workspace_info_lists_only_readable_children() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let beta = workarea(&app, admin, "beta", crew).await;
-    let sealed = workarea(&app, admin, "sealed", crew).await;
-    let a_zulu = workarea(&app, admin, "a-zulu", crew).await;
-    let alpha = workarea(&app, admin, "alpha", crew).await;
-    let quarantine = workarea(&app, admin, "quarantine", crew).await;
+    let beta = workspace(&app, admin, "beta", crew).await;
+    let sealed = workspace(&app, admin, "sealed", crew).await;
+    let a_zulu = workspace(&app, admin, "a-zulu", crew).await;
+    let alpha = workspace(&app, admin, "alpha", crew).await;
+    let quarantine = workspace(&app, admin, "quarantine", crew).await;
     let reader = issue_with(
         &app,
         admin,
@@ -2470,13 +2477,13 @@ async fn workarea_info_lists_only_readable_children() {
     // order, so "a-zulu" sorts before "alpha", where a collation that skips
     // the hyphen would put it after.
     let info = app
-        .workarea_info(&reader.value, Some(crew.into()))
+        .workspace_info(&reader.value, Some(crew.into()))
         .await
         .expect("a readable node");
     assert_eq!(
         info.children
             .iter()
-            .map(|c| (c.workarea_id, c.name.as_str(), c.status.as_str()))
+            .map(|c| (c.workspace_id, c.name.as_str(), c.status.as_str()))
             .collect::<Vec<_>>(),
         vec![
             (a_zulu, "a-zulu", "development"),
@@ -2487,12 +2494,12 @@ async fn workarea_info_lists_only_readable_children() {
 }
 
 #[tokio::test]
-async fn an_unreadable_workarea_is_not_found() {
+async fn an_unreadable_workspace_is_not_found() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let sibling = workarea(&app, admin, "sibling", boot.root_workarea_id).await;
-    let quarantine = workarea(&app, admin, "quarantine", crew).await;
+    let sibling = workspace(&app, admin, "sibling", boot.root_workspace_id).await;
+    let quarantine = workspace(&app, admin, "quarantine", crew).await;
     let agent = agent(&app, admin, "crew/agent-7", crew).await;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
     app.deny_key(admin, agent.key_id.into(), quarantine.into())
@@ -2503,19 +2510,19 @@ async fn an_unreadable_workarea_is_not_found() {
     // a globally denied child all answer as absence.
     for node in [
         sibling,
-        boot.root_workarea_id,
+        boot.root_workspace_id,
         Uuid::from_u128(0xDEAD),
         quarantine,
     ] {
         let err = app
-            .workarea_info(&agent.value, Some(node.into()))
+            .workspace_info(&agent.value, Some(node.into()))
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::NotFound), "{node}: {err:?}");
     }
     // Writer alone does not read the node (refusal order step 4).
     let err = app
-        .workarea_info(&writer.value, Some(crew.into()))
+        .workspace_info(&writer.value, Some(crew.into()))
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::NotFound), "{err:?}");
@@ -2523,24 +2530,24 @@ async fn an_unreadable_workarea_is_not_found() {
     // included, and a node no tenant holds is absent to it too (ADR-0026
     // d15).
     for node in [crew, quarantine] {
-        app.workarea_info(admin, Some(node.into()))
+        app.workspace_info(admin, Some(node.into()))
             .await
             .expect("the admin reads the structure");
     }
     let err = app
-        .workarea_info(admin, Some(Uuid::from_u128(0xDEAD).into()))
+        .workspace_info(admin, Some(Uuid::from_u128(0xDEAD).into()))
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::NotFound), "{err:?}");
 }
 
 #[tokio::test]
-async fn an_omitted_workarea_resolves_to_the_default_only_after_the_verb_ceiling() {
+async fn an_omitted_workspace_resolves_to_the_default_only_after_the_verb_ceiling() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let second_admin = issue_with(&app, admin, Role::Admin, "bob-admin", vec![]).await;
-    assert_eq!(second_admin.default_workarea, None);
+    assert_eq!(second_admin.default_workspace, None);
     let agent = agent(&app, admin, "crew/agent-7", crew).await;
     let unscoped = issue_with(&app, admin, Role::Reader, "rhea", vec![]).await;
 
@@ -2548,58 +2555,58 @@ async fn an_omitted_workarea_resolves_to_the_default_only_after_the_verb_ceiling
     // default resolves for it as for any key past step 1: the bootstrap
     // admin reads the root it defaults to, and a zero-grant admin with no
     // default is refused by name.
-    let root = app.workarea_info(admin, None).await.expect("the default");
-    assert_eq!(root.workarea.workarea_id, boot.root_workarea_id);
+    let root = app.workspace_info(admin, None).await.expect("the default");
+    assert_eq!(root.workspace.workspace_id, boot.root_workspace_id);
     let err = app
-        .workarea_info(&second_admin.value, None)
+        .workspace_info(&second_admin.value, None)
         .await
         .unwrap_err();
-    assert!(matches!(err, AppError::WorkareaUnresolved), "{err:?}");
+    assert!(matches!(err, AppError::WorkspaceUnresolved), "{err:?}");
     // Past step 1, a key with no default is refused by name, and a key with
     // one reads it as if it had named it.
-    let err = app.workarea_info(&unscoped.value, None).await.unwrap_err();
-    assert!(matches!(err, AppError::WorkareaUnresolved), "{err:?}");
+    let err = app.workspace_info(&unscoped.value, None).await.unwrap_err();
+    assert!(matches!(err, AppError::WorkspaceUnresolved), "{err:?}");
     assert_eq!(
-        app.workarea_info(&agent.value, None)
+        app.workspace_info(&agent.value, None)
             .await
             .expect("default"),
-        app.workarea_info(&agent.value, Some(crew.into()))
+        app.workspace_info(&agent.value, Some(crew.into()))
             .await
             .expect("named")
     );
 }
 
-/// The status is one stored column: `workarea.create` stores `development`
-/// on a new node and the tenant's bootstrap stores `committed` on the
+/// The status is one stored column: `workspace.create` stores `development`
+/// on a new node and the tenant's bootstrap stores `protected` on the
 /// universe root, the read serves what the row stores, and each create
 /// event's payload spells the status it stored (ADR-0009 d1).
 #[tokio::test]
-async fn a_created_workarea_is_development_and_the_universe_root_is_committed_as_stored() {
+async fn a_created_workspace_is_development_and_the_universe_root_is_committed_as_stored() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let t = boot.tenant_id;
 
     let root = store
-        .workarea(t, boot.root_workarea_id)
+        .workspace(t, boot.root_workspace_id)
         .await
         .expect("read")
         .expect("the root");
-    assert_eq!(root.status, WorkareaStatus::Committed);
+    assert_eq!(root.status, WorkspaceStatus::Protected);
     let created = store
-        .workarea(t, crew)
+        .workspace(t, crew)
         .await
         .expect("read")
         .expect("the crew node");
-    assert_eq!(created.status, WorkareaStatus::Development);
+    assert_eq!(created.status, WorkspaceStatus::Development);
 
     let stored: Vec<(String, String)> = journal(&store, t)
         .await
         .iter()
-        .filter(|e| e.envelope.event_type == event_types::WORKAREA_CREATE)
+        .filter(|e| e.envelope.event_type == event_types::WORKSPACE_CREATE)
         .map(|e| {
             (
-                e.envelope.payload["workarea_id"]
+                e.envelope.payload["workspace_id"]
                     .as_str()
                     .expect("id")
                     .to_owned(),
@@ -2613,7 +2620,7 @@ async fn a_created_workarea_is_development_and_the_universe_root_is_committed_as
     assert_eq!(
         stored,
         vec![
-            (boot.root_workarea_id.to_string(), "committed".to_owned()),
+            (boot.root_workspace_id.to_string(), "protected".to_owned()),
             (crew.to_string(), "development".to_owned()),
         ]
     );
@@ -2624,27 +2631,27 @@ async fn the_derived_path_follows_parent_ids_from_universe() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let quarter = workarea(&app, admin, "q1-2027", crew).await;
-    let reader = issue(&app, admin, Role::Reader, "rhea", boot.root_workarea_id).await;
+    let quarter = workspace(&app, admin, "q1-2027", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", boot.root_workspace_id).await;
 
     let root = app
-        .workarea_info(&reader.value, Some(boot.root_workarea_id.into()))
+        .workspace_info(&reader.value, Some(boot.root_workspace_id.into()))
         .await
         .expect("the root");
     assert_eq!(root.path, "universe");
-    assert_eq!(root.workarea.parent_id, None);
-    // The universe root is permanently committed (workareas.md).
-    assert_eq!(root.workarea.status, WorkareaStatus::Committed);
+    assert_eq!(root.workspace.parent_id, None);
+    // The universe root is permanently protected (workspaces.md).
+    assert_eq!(root.workspace.status, WorkspaceStatus::Protected);
 
     let leaf = app
-        .workarea_info(&reader.value, Some(quarter.into()))
+        .workspace_info(&reader.value, Some(quarter.into()))
         .await
         .expect("the leaf");
     assert_eq!(leaf.path, "universe.crew.q1-2027");
-    assert_eq!(leaf.workarea.parent_id, Some(crew));
-    assert_eq!(leaf.workarea.status, WorkareaStatus::Development);
+    assert_eq!(leaf.workspace.parent_id, Some(crew));
+    assert_eq!(leaf.workspace.status, WorkspaceStatus::Development);
     let middle = app
-        .workarea_info(&reader.value, Some(crew.into()))
+        .workspace_info(&reader.value, Some(crew.into()))
         .await
         .expect("the crew");
     assert_eq!(middle.path, "universe.crew");
@@ -2663,10 +2670,10 @@ async fn the_permission_epoch_moves_when_a_global_denial_is_journalled() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let quarantine = workarea(&app, admin, "quarantine", crew).await;
+    let quarantine = workspace(&app, admin, "quarantine", crew).await;
     let agent = agent(&app, admin, "crew/agent-7", crew).await;
     let epoch = || async {
-        app.workarea_info(&agent.value, Some(crew.into()))
+        app.workspace_info(&agent.value, Some(crew.into()))
             .await
             .expect("a readable node")
             .permission_epoch
@@ -2708,43 +2715,43 @@ async fn metals_crew(app: &TestApp, admin: &str) -> oml_app::types::CrewRecord {
     .expect("create crew")
 }
 
-/// `crew` on workarea create is a crew record's id or name; the workarea
-/// read serves the record from the store, and `workarea.create` journals
+/// `crew` on workspace create is a crew record's id or name; the workspace
+/// read serves the record from the store, and `workspace.create` journals
 /// its `crew_id` in place of the crew object the PoC copied in (ADR-0026
-/// d8; event-catalog.md `workarea.create`).
+/// d8; event-catalog.md `workspace.create`).
 #[tokio::test]
-async fn a_workarea_names_its_crew_record_by_name_and_the_read_serves_the_record() {
+async fn a_workspace_names_its_crew_record_by_name_and_the_read_serves_the_record() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
     let crew = metals_crew(&app, admin).await;
     let created = app
-        .create_workarea(
+        .create_workspace(
             admin,
             &name("metals"),
-            Some(boot.root_workarea_id.into()),
+            Some(boot.root_workspace_id.into()),
             Some(by_name("metals-crew")),
         )
         .await
         .expect("create");
-    let (path, created) = (created.path, created.workarea);
+    let (path, created) = (created.path, created.workspace);
     assert_eq!(created.crew_id, Some(crew.crew_id));
-    let bare = workarea(&app, admin, "bare", boot.root_workarea_id).await;
+    let bare = workspace(&app, admin, "bare", boot.root_workspace_id).await;
     let reader = issue_with(
         &app,
         admin,
         Role::Reader,
         "rhea",
         vec![
-            grant(created.workarea_id, Role::Reader),
+            grant(created.workspace_id, Role::Reader),
             grant(bare, Role::Reader),
         ],
     )
     .await;
 
     let info = app
-        .workarea_info(&reader.value, Some(created.workarea_id.into()))
+        .workspace_info(&reader.value, Some(created.workspace_id.into()))
         .await
         .expect("read");
     assert_eq!(info.crew, Some(crew.clone()), "the record, read back");
@@ -2752,7 +2759,7 @@ async fn a_workarea_names_its_crew_record_by_name_and_the_read_serves_the_record
     assert_eq!(path, "universe.metals");
     assert_eq!(info.path, path);
     let info = app
-        .workarea_info(&reader.value, Some(bare.into()))
+        .workspace_info(&reader.value, Some(bare.into()))
         .await
         .expect("read");
     assert_eq!(info.crew, None);
@@ -2763,8 +2770,8 @@ async fn a_workarea_names_its_crew_record_by_name_and_the_read_serves_the_record
     let create = tail
         .iter()
         .find(|e| {
-            e.envelope.event_type == event_types::WORKAREA_CREATE
-                && e.envelope.payload["workarea_id"] == created.workarea_id.to_string()
+            e.envelope.event_type == event_types::WORKSPACE_CREATE
+                && e.envelope.payload["workspace_id"] == created.workspace_id.to_string()
         })
         .expect("the create is journalled");
     assert_eq!(create.envelope.payload["crew_id"], crew.crew_id.to_string());
@@ -2776,10 +2783,10 @@ async fn a_workarea_names_its_crew_record_by_name_and_the_read_serves_the_record
     let head = journal(&store, boot.tenant_id).await.len();
     for crew_ref in [by_name("nowhere-crew"), Uuid::from_u128(0xDEAD).into()] {
         let err = app
-            .create_workarea(
+            .create_workspace(
                 admin,
                 &name("orphan"),
-                Some(boot.root_workarea_id.into()),
+                Some(boot.root_workspace_id.into()),
                 Some(crew_ref),
             )
             .await
@@ -2788,15 +2795,15 @@ async fn a_workarea_names_its_crew_record_by_name_and_the_read_serves_the_record
     }
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
 
-    // The crew-metadata update points a workarea at a crew record, by name,
-    // journalled as `workarea.crew_updated` with its `crew_id`.
+    // The crew-metadata update points a workspace at a crew record, by name,
+    // journalled as `workspace.crew_updated` with its `crew_id`.
     let pointed = app
-        .set_workarea_crew(admin, by_name("bare"), by_name("metals-crew"))
+        .set_workspace_crew(admin, by_name("bare"), by_name("metals-crew"))
         .await
         .expect("point bare at the crew");
     assert_eq!(pointed.crew_id, Some(crew.crew_id));
     let info = app
-        .workarea_info(&reader.value, Some(bare.into()))
+        .workspace_info(&reader.value, Some(bare.into()))
         .await
         .expect("read");
     assert_eq!(info.crew, Some(crew.clone()));
@@ -2804,11 +2811,11 @@ async fn a_workarea_names_its_crew_record_by_name_and_the_read_serves_the_record
     let updated = tail.last().expect("the update is journalled");
     assert_eq!(
         updated.envelope.event_type,
-        event_types::WORKAREA_CREW_UPDATED
+        event_types::WORKSPACE_CREW_UPDATED
     );
     assert_eq!(
         updated.envelope.payload,
-        json!({ "workarea_id": bare.to_string(), "crew_id": crew.crew_id.to_string() })
+        json!({ "workspace_id": bare.to_string(), "crew_id": crew.crew_id.to_string() })
     );
 }
 
@@ -2955,20 +2962,20 @@ async fn a_crew_update_changes_its_charter_and_manager_and_never_its_name() {
 // retirement is a supersession; edit-as-proposal (ADR-0025 d10, d11)
 // ---------------------------------------------------------------------------
 
-/// A writer key on `crew` (writer and reader), a reader key, and a dreamer
-/// key with dreamer and reader, each under its own principal.
+/// A writer key on `crew` (writer and reader), a reader key, and a reviewer
+/// key with reviewer and reader, each under its own principal.
 async fn crew_keys(app: &TestApp, admin: &str, crew: Uuid) -> (IssuedKey, IssuedKey, IssuedKey) {
     let writer = agent(app, admin, "wanda", crew).await;
     let reader = issue(app, admin, Role::Reader, "rhea", crew).await;
-    let dreamer = issue_with(
+    let reviewer = issue_with(
         app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "dana",
-        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+        vec![grant(crew, Role::Reviewer), grant(crew, Role::Reader)],
     )
     .await;
-    (writer, reader, dreamer)
+    (writer, reader, reviewer)
 }
 
 #[tokio::test]
@@ -2976,13 +2983,13 @@ async fn a_supersession_leaves_the_old_tip_served_to_others_until_a_non_author_r
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, reader, dreamer) = crew_keys(&app, admin, crew).await;
-    let authors_dreamer = issue(&app, admin, Role::Dreamer, "wanda", crew).await;
+    let (writer, reader, reviewer) = crew_keys(&app, admin, crew).await;
+    let authors_reviewer = issue(&app, admin, Role::Reviewer, "wanda", crew).await;
 
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
@@ -3007,14 +3014,14 @@ async fn a_supersession_leaves_the_old_tip_served_to_others_until_a_non_author_r
 
     // The author's principal cannot ratify, under any key (R2).
     let err = app
-        .post_verdict(&authors_dreamer.value, successor, Verdict::Approve, None)
+        .post_verdict(&authors_reviewer.value, successor, Verdict::Approve, None)
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::Verdict(_)), "{err:?}");
     assert_eq!(hit_ids(&app, &reader.value, "canary").await, vec![first]);
 
     // A non-author ratifies: only now does the successor replace the tip.
-    app.post_verdict(&dreamer.value, successor, Verdict::Approve, None)
+    app.post_verdict(&reviewer.value, successor, Verdict::Approve, None)
         .await
         .expect("ratify");
     assert_eq!(
@@ -3035,12 +3042,12 @@ async fn ratifying_a_supersession_journals_one_lifecycle_supersede_and_flips_the
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, admin, crew).await;
 
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
@@ -3054,7 +3061,7 @@ async fn ratifying_a_supersession_journals_one_lifecycle_supersede_and_flips_the
         .receipt
         .memory_id;
     let before = journal(&store, boot.tenant_id).await.len();
-    app.post_verdict(&dreamer.value, successor, Verdict::Approve, None)
+    app.post_verdict(&reviewer.value, successor, Verdict::Approve, None)
         .await
         .expect("ratify");
 
@@ -3071,7 +3078,7 @@ async fn ratifying_a_supersession_journals_one_lifecycle_supersede_and_flips_the
     );
     let supersede = &ratified[1].payload;
     assert_eq!(supersede["claim_key"], "claim-i1");
-    assert_eq!(supersede["workarea_id"], crew.to_string());
+    assert_eq!(supersede["workspace_id"], crew.to_string());
     assert_eq!(supersede["new_artifact_id"], successor.to_string());
     assert_eq!(supersede["new_version"], 2);
     assert_eq!(supersede["replaces_artifact_id"], first.to_string());
@@ -3119,25 +3126,25 @@ async fn a_supersession_whose_target_lost_the_tip_is_tip_conflict_at_verdict_and
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, admin, crew).await;
     let editor = issue_with(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "eddie",
-        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+        vec![grant(crew, Role::Reviewer), grant(crew, Role::Reader)],
     )
     .await;
 
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
     // Two held successors of one tip: the author's revision and a
-    // dreamer's edit-as-proposal.
+    // reviewer's edit-as-proposal.
     let revision = app
         .supersede(&writer.value, &supersede_req("sup-w", first, "revision"))
         .await
@@ -3150,12 +3157,12 @@ async fn a_supersession_whose_target_lost_the_tip_is_tip_conflict_at_verdict_and
         .receipt;
     assert_eq!((revision.version, edit.version), (2, 3));
 
-    app.post_verdict(&dreamer.value, revision.memory_id, Verdict::Approve, None)
+    app.post_verdict(&reviewer.value, revision.memory_id, Verdict::Approve, None)
         .await
         .expect("the first ratified takes the tip");
     let head = journal(&store, boot.tenant_id).await.len();
     let err = app
-        .post_verdict(&dreamer.value, edit.memory_id, Verdict::Approve, None)
+        .post_verdict(&reviewer.value, edit.memory_id, Verdict::Approve, None)
         .await
         .unwrap_err();
     assert!(
@@ -3186,7 +3193,7 @@ async fn a_supersession_whose_target_lost_the_tip_is_tip_conflict_at_verdict_and
     // It stays held until a reviewer rejects it.
     let rejected = app
         .post_verdict(
-            &dreamer.value,
+            &reviewer.value,
             edit.memory_id,
             Verdict::Reject,
             Some("stale"),
@@ -3197,14 +3204,14 @@ async fn a_supersession_whose_target_lost_the_tip_is_tip_conflict_at_verdict_and
 }
 
 /// A promoted first version and one held successor of it: the tenant, the
-/// dreamer that may ratify, the target and the successor.
+/// reviewer that may ratify, the target and the successor.
 async fn a_held_successor(app: &TestApp) -> (BootstrapResult, IssuedKey, Uuid, Uuid) {
     let (boot, crew) = tenant(app).await;
-    let (writer, _reader, dreamer) = crew_keys(app, &boot.admin_key.value, crew).await;
+    let (writer, _reader, reviewer) = crew_keys(app, &boot.admin_key.value, crew).await;
     let first = promoted(
         app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
@@ -3217,7 +3224,7 @@ async fn a_held_successor(app: &TestApp) -> (BootstrapResult, IssuedKey, Uuid, U
         .expect("supersede")
         .receipt
         .memory_id;
-    (boot, dreamer, first, successor)
+    (boot, reviewer, first, successor)
 }
 
 /// The types of the events journalled from `from` on.
@@ -3232,9 +3239,9 @@ async fn types_since(store: &MemStore, tenant: Uuid, from: usize) -> Vec<String>
 async fn a_verdict_whose_ratification_loses_the_compare_and_set_in_the_store_journals_no_verdict() {
     let store = MemStore::new();
     let app = app_over(store.clone());
-    let (boot, dreamer, first, successor) = a_held_successor(&app).await;
+    let (boot, reviewer, first, successor) = a_held_successor(&app).await;
     let served = app
-        .review_next(&dreamer.value)
+        .review_next(&reviewer.value)
         .await
         .expect("review next")
         .expect("the successor is served");
@@ -3248,7 +3255,7 @@ async fn a_verdict_whose_ratification_loses_the_compare_and_set_in_the_store_jou
         StoreError::TipMoved { replaced: first },
     );
     let err = app
-        .post_verdict(&dreamer.value, successor, Verdict::Approve, None)
+        .post_verdict(&reviewer.value, successor, Verdict::Approve, None)
         .await
         .unwrap_err();
     assert!(
@@ -3276,7 +3283,7 @@ async fn a_verdict_whose_ratification_loses_the_compare_and_set_in_the_store_jou
     assert_eq!(row.status, MemoryStatus::Held, "it stays held");
     assert!(!row.is_tip);
     let again = app
-        .review_next(&dreamer.value)
+        .review_next(&reviewer.value)
         .await
         .expect("review next")
         .expect("the serve is not consumed");
@@ -3287,7 +3294,7 @@ async fn a_verdict_whose_ratification_loses_the_compare_and_set_in_the_store_jou
 async fn a_ratification_that_loses_the_chain_head_journals_its_verdict_once_on_retry() {
     let store = MemStore::new();
     let app = app_over(store.clone());
-    let (boot, dreamer, _first, successor) = a_held_successor(&app).await;
+    let (boot, reviewer, _first, successor) = a_held_successor(&app).await;
     let before = journal(&store, boot.tenant_id).await.len();
 
     // A commit landed between the verdict's head read and its ratification.
@@ -3300,7 +3307,7 @@ async fn a_ratification_that_loses_the_chain_head_journals_its_verdict_once_on_r
         },
     );
     let err = app
-        .post_verdict(&dreamer.value, successor, Verdict::Approve, None)
+        .post_verdict(&reviewer.value, successor, Verdict::Approve, None)
         .await
         .unwrap_err();
     assert!(
@@ -3314,7 +3321,7 @@ async fn a_ratification_that_loses_the_chain_head_journals_its_verdict_once_on_r
     );
 
     // The transport retries the whole verdict on a chain-head conflict.
-    app.post_verdict(&dreamer.value, successor, Verdict::Approve, None)
+    app.post_verdict(&reviewer.value, successor, Verdict::Approve, None)
         .await
         .expect("the retry ratifies");
     assert_eq!(
@@ -3333,19 +3340,19 @@ async fn a_replayed_supersede_returns_the_stored_receipt_and_writes_once() {
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, admin, crew).await;
 
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
     let other = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i2", "the canary drains last"),
     )
     .await;
@@ -3393,7 +3400,7 @@ async fn a_replayed_supersede_returns_the_stored_receipt_and_writes_once() {
     );
 
     // A committed supersession replays even after the key lost its access
-    // to the target's workarea (http-api.md idempotency).
+    // to the target's workspace (http-api.md idempotency).
     app.deny_key(admin, writer.key_id.into(), crew.into())
         .await
         .expect("deny");
@@ -3411,11 +3418,11 @@ async fn a_supersede_that_loses_the_idempotency_race_replays_the_winner_and_writ
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, admin, crew).await;
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
@@ -3442,16 +3449,16 @@ async fn tip_conflict_names_the_current_tip_when_readable() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, admin, crew).await;
     // Writer only: it reads its own rows and nothing else on crew.
     let blind = issue(&app, admin, Role::Writer, "wren", crew).await;
-    let approver = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let approver = issue(&app, admin, Role::Reviewer, "dora", crew).await;
 
     // The reading writer's claim moves to a version it can read.
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
@@ -3461,7 +3468,7 @@ async fn tip_conflict_names_the_current_tip_when_readable() {
         .expect("supersede")
         .receipt
         .memory_id;
-    app.post_verdict(&dreamer.value, second, Verdict::Approve, None)
+    app.post_verdict(&reviewer.value, second, Verdict::Approve, None)
         .await
         .expect("ratify");
     let err = app
@@ -3481,7 +3488,7 @@ async fn tip_conflict_names_the_current_tip_when_readable() {
         "{err:?}"
     );
 
-    // The blind writer's claim moves to a dreamer's edit it cannot read:
+    // The blind writer's claim moves to a reviewer's edit it cannot read:
     // the refusal names no tip.
     let blind_first = promoted(
         &app,
@@ -3491,7 +3498,10 @@ async fn tip_conflict_names_the_current_tip_when_readable() {
     )
     .await;
     let edit = app
-        .supersede(&dreamer.value, &supersede_req("sup-e", blind_first, "edit"))
+        .supersede(
+            &reviewer.value,
+            &supersede_req("sup-e", blind_first, "edit"),
+        )
         .await
         .expect("edit-as-proposal")
         .receipt
@@ -3517,12 +3527,12 @@ async fn a_ratified_retirement_takes_the_claim_out_of_recall_and_keeps_every_ver
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (writer, reader, reviewer) = crew_keys(&app, admin, crew).await;
 
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
@@ -3536,7 +3546,7 @@ async fn a_ratified_retirement_takes_the_claim_out_of_recall_and_keeps_every_ver
         .receipt;
     assert!(proposal.retirement);
     let before = journal(&store, boot.tenant_id).await.len();
-    app.post_verdict(&dreamer.value, proposal.memory_id, Verdict::Approve, None)
+    app.post_verdict(&reviewer.value, proposal.memory_id, Verdict::Approve, None)
         .await
         .expect("ratify the retirement");
 
@@ -3572,12 +3582,12 @@ async fn a_held_retirement_changes_no_recall() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (writer, reader, reviewer) = crew_keys(&app, admin, crew).await;
 
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
@@ -3599,12 +3609,12 @@ async fn superseding_a_retirement_version_returns_the_claim_to_recall() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (writer, reader, reviewer) = crew_keys(&app, admin, crew).await;
 
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
@@ -3614,7 +3624,7 @@ async fn superseding_a_retirement_version_returns_the_claim_to_recall() {
         .expect("retire-proposal")
         .receipt
         .memory_id;
-    app.post_verdict(&dreamer.value, retirement, Verdict::Approve, None)
+    app.post_verdict(&reviewer.value, retirement, Verdict::Approve, None)
         .await
         .expect("ratify the retirement");
     assert!(hit_ids(&app, &reader.value, "canary").await.is_empty());
@@ -3632,7 +3642,7 @@ async fn superseding_a_retirement_version_returns_the_claim_to_recall() {
         .receipt;
     assert_eq!(revived.version, 3);
     assert!(!revived.retirement);
-    app.post_verdict(&dreamer.value, revived.memory_id, Verdict::Approve, None)
+    app.post_verdict(&reviewer.value, revived.memory_id, Verdict::Approve, None)
         .await
         .expect("ratify");
     assert_eq!(
@@ -3646,12 +3656,12 @@ async fn a_term_cannot_retire_it_deprecates() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, admin, crew).await;
 
     let term = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &SubmitRequest {
             on_similar: Default::default(),
             kind: MemoryKind::Term,
@@ -3671,19 +3681,19 @@ async fn a_successor_kind_changes_only_within_its_class() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, admin, crew).await;
 
     let memory = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
     let term = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &SubmitRequest {
             on_similar: Default::default(),
             kind: MemoryKind::Term,
@@ -3739,12 +3749,12 @@ async fn a_derived_fact_successor_journals_submission_learn() {
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, admin, crew).await;
 
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
@@ -3774,16 +3784,16 @@ async fn a_derived_fact_successor_journals_submission_learn() {
 }
 
 #[tokio::test]
-async fn an_x_oml_workarea_other_than_the_targets_is_request_validation() {
+async fn an_x_oml_workspace_other_than_the_targets_is_request_validation() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, admin, crew).await;
 
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
@@ -3792,23 +3802,26 @@ async fn an_x_oml_workarea_other_than_the_targets_is_request_validation() {
             &writer.value,
             &SupersedeRequest {
                 on_similar: Default::default(),
-                workarea: Some(boot.root_workarea_id.into()),
+                workspace: Some(boot.root_workspace_id.into()),
                 ..supersede_req("sup-1", first, "revised")
             },
         )
         .await
         .unwrap_err();
-    assert!(matches!(err, AppError::WorkareaNotTarget { .. }), "{err:?}");
+    assert!(
+        matches!(err, AppError::WorkspaceNotTarget { .. }),
+        "{err:?}"
+    );
     app.supersede(
         &writer.value,
         &SupersedeRequest {
             on_similar: Default::default(),
-            workarea: Some(crew.into()),
+            workspace: Some(crew.into()),
             ..supersede_req("sup-2", first, "revised")
         },
     )
     .await
-    .expect("the target's own workarea");
+    .expect("the target's own workspace");
 }
 
 #[tokio::test]
@@ -3816,14 +3829,14 @@ async fn a_writer_cannot_supersede_another_keys_claim() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, admin, crew).await;
     let other = agent(&app, admin, "walt", crew).await;
-    let approver = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let approver = issue(&app, admin, Role::Reviewer, "dora", crew).await;
 
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
@@ -3833,10 +3846,10 @@ async fn a_writer_cannot_supersede_another_keys_claim() {
         .unwrap_err();
     assert!(matches!(err, AppError::AuthorOnly), "{err:?}");
 
-    // Once a dreamer's ratified edit holds the tip, the claim is the
-    // dreamer's: own is read on the tip, never on the first version.
+    // Once a reviewer's ratified edit holds the tip, the claim is the
+    // reviewer's: own is read on the tip, never on the first version.
     let edit = app
-        .supersede(&dreamer.value, &supersede_req("sup-e", first, "edit"))
+        .supersede(&reviewer.value, &supersede_req("sup-e", first, "edit"))
         .await
         .expect("edit-as-proposal")
         .receipt
@@ -3852,17 +3865,17 @@ async fn a_writer_cannot_supersede_another_keys_claim() {
 }
 
 #[tokio::test]
-async fn a_dreamer_proposes_an_edit_to_another_authors_claim_and_cannot_review_it() {
+async fn a_reviewer_proposes_an_edit_to_another_authors_claim_and_cannot_review_it() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, reader, dreamer) = crew_keys(&app, admin, crew).await;
-    let approver = issue(&app, admin, Role::Dreamer, "dora", crew).await;
-    let reviewer_only = issue(&app, admin, Role::Dreamer, "dina", crew).await;
+    let (writer, reader, reviewer) = crew_keys(&app, admin, crew).await;
+    let approver = issue(&app, admin, Role::Reviewer, "dora", crew).await;
+    let reviewer_only = issue(&app, admin, Role::Reviewer, "dina", crew).await;
     let reads_only = issue_with(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "dale",
         vec![grant(crew, Role::Reader)],
     )
@@ -3876,7 +3889,7 @@ async fn a_dreamer_proposes_an_edit_to_another_authors_claim_and_cannot_review_i
     )
     .await;
 
-    // Edit-as-proposal needs dreamer and reader on the target's workarea,
+    // Edit-as-proposal needs reviewer and reader on the target's workspace,
     // resolved by the refusal order.
     let err = app
         .supersede(&reviewer_only.value, &supersede_req("e-0", first, "edit"))
@@ -3891,7 +3904,7 @@ async fn a_dreamer_proposes_an_edit_to_another_authors_claim_and_cannot_review_i
         matches!(
             err,
             AppError::GrantRefused {
-                needed_role: Role::Dreamer,
+                needed_role: Role::Reviewer,
                 ..
             }
         ),
@@ -3900,7 +3913,7 @@ async fn a_dreamer_proposes_an_edit_to_another_authors_claim_and_cannot_review_i
 
     let edit = app
         .supersede(
-            &dreamer.value,
+            &reviewer.value,
             &supersede_req("e-2", first, "the canary drains and settles first"),
         )
         .await
@@ -3911,18 +3924,18 @@ async fn a_dreamer_proposes_an_edit_to_another_authors_claim_and_cannot_review_i
 
     // Its proposer is in its lineage: never served it, refused its verdict.
     assert!(
-        app.review_next(&dreamer.value)
+        app.review_next(&reviewer.value)
             .await
             .expect("review next")
             .is_none()
     );
     let err = app
-        .post_verdict(&dreamer.value, edit.memory_id, Verdict::Approve, None)
+        .post_verdict(&reviewer.value, edit.memory_id, Verdict::Approve, None)
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::Verdict(_)), "{err:?}");
 
-    // Another dreamer ratifies it.
+    // Another reviewer ratifies it.
     app.post_verdict(&approver.value, edit.memory_id, Verdict::Approve, None)
         .await
         .expect("ratify");
@@ -3937,13 +3950,13 @@ async fn the_author_cannot_ratify_its_own_retirement() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, reader, dreamer) = crew_keys(&app, admin, crew).await;
-    let authors_dreamer = issue(&app, admin, Role::Dreamer, "wanda", crew).await;
+    let (writer, reader, reviewer) = crew_keys(&app, admin, crew).await;
+    let authors_reviewer = issue(&app, admin, Role::Reviewer, "wanda", crew).await;
 
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;
@@ -3954,13 +3967,13 @@ async fn the_author_cannot_ratify_its_own_retirement() {
         .receipt
         .memory_id;
     assert!(
-        app.review_next(&authors_dreamer.value)
+        app.review_next(&authors_reviewer.value)
             .await
             .expect("review next")
             .is_none()
     );
     let err = app
-        .post_verdict(&authors_dreamer.value, retirement, Verdict::Approve, None)
+        .post_verdict(&authors_reviewer.value, retirement, Verdict::Approve, None)
         .await
         .unwrap_err();
     assert!(
@@ -3978,8 +3991,8 @@ async fn a_rival_successors_author_is_kept_off_the_others_review() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
-    let approver = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, admin, crew).await;
+    let approver = issue(&app, admin, Role::Reviewer, "dora", crew).await;
 
     let first = promoted(
         &app,
@@ -3988,9 +4001,9 @@ async fn a_rival_successors_author_is_kept_off_the_others_review() {
         &submit_req("i1", "the canary drains first"),
     )
     .await;
-    // The dreamer's edit and the author's revision compete for one tip.
+    // The reviewer's edit and the author's revision compete for one tip.
     let edit = app
-        .supersede(&dreamer.value, &supersede_req("e-1", first, "edit"))
+        .supersede(&reviewer.value, &supersede_req("e-1", first, "edit"))
         .await
         .expect("edit")
         .receipt
@@ -4004,13 +4017,18 @@ async fn a_rival_successors_author_is_kept_off_the_others_review() {
 
     // The edit's author may not judge its rival: never served, refused.
     assert!(
-        app.review_next(&dreamer.value)
+        app.review_next(&reviewer.value)
             .await
             .expect("review next")
             .is_none()
     );
     let err = app
-        .post_verdict(&dreamer.value, revision, Verdict::Reject, Some("mine wins"))
+        .post_verdict(
+            &reviewer.value,
+            revision,
+            Verdict::Reject,
+            Some("mine wins"),
+        )
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::Verdict(_)), "{err:?}");
@@ -4020,7 +4038,7 @@ async fn a_rival_successors_author_is_kept_off_the_others_review() {
         .await
         .expect("reject the edit");
     let served = app
-        .review_next(&dreamer.value)
+        .review_next(&reviewer.value)
         .await
         .expect("review next")
         .expect("the revision waits");
@@ -4107,19 +4125,19 @@ async fn include_own_held_shows_the_authors_held_row_to_that_key_only() {
     assert!(off.hits.is_empty(), "the flag defaults off");
 
     // Own is the authoring key, never the principal: another reader key and
-    // a dreamer key of the same principal see nothing of it
+    // a reviewer key of the same principal see nothing of it
     // (roles-and-keys.md#own; ADR-0025 d4).
     let same_reader = issue(&app, admin, Role::Reader, "wanda", crew).await;
-    let same_dreamer = issue_with(
+    let same_reviewer = issue_with(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "wanda",
-        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+        vec![grant(crew, Role::Reviewer), grant(crew, Role::Reader)],
     )
     .await;
     let stranger = issue(&app, admin, Role::Reader, "rhea", crew).await;
-    for key in [&same_reader, &same_dreamer, &stranger] {
+    for key in [&same_reader, &same_reviewer, &stranger] {
         let recall = app
             .recall(&key.value, &own_held("canary"))
             .await
@@ -4139,12 +4157,12 @@ async fn own_held_rows_are_ranked_among_promoted_hits_with_state_held() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (author, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (author, _reader, reviewer) = crew_keys(&app, admin, crew).await;
     // This store scores by distinct query terms matched: 3, 2 and 1.
     let best = promoted(
         &app,
         &author.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("p1", "canary drain settle"),
     )
     .await;
@@ -4152,7 +4170,7 @@ async fn own_held_rows_are_ranked_among_promoted_hits_with_state_held() {
     let worst = promoted(
         &app,
         &author.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("p2", "canary"),
     )
     .await;
@@ -4190,19 +4208,19 @@ async fn own_held_rows_count_against_k_and_the_budget() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (author, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (author, _reader, reviewer) = crew_keys(&app, admin, crew).await;
     let (two_text, held_text) = ("canary drain", "canary drain settle");
     let two = promoted(
         &app,
         &author.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("p1", two_text),
     )
     .await;
     let one = promoted(
         &app,
         &author.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("p2", "canary"),
     )
     .await;
@@ -4261,7 +4279,7 @@ async fn own_held_steering_and_retirement_rows_never_enter_recall() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (author, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (author, _reader, reviewer) = crew_keys(&app, admin, crew).await;
     let steering = held(
         &app,
         &author.value,
@@ -4271,7 +4289,7 @@ async fn own_held_steering_and_retirement_rows_never_enter_recall() {
     let target = promoted(
         &app,
         &author.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("m1", "the canary claim"),
     )
     .await;
@@ -4303,13 +4321,13 @@ async fn own_held_steering_and_retirement_rows_never_enter_recall() {
 }
 
 #[tokio::test]
-async fn include_own_held_never_widens_the_workareas_served() {
+async fn include_own_held_never_widens_the_workspaces_served() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let quotes = workarea(&app, admin, "quotes", crew).await;
-    let freight = workarea(&app, admin, "freight", crew).await;
-    let quarantine = workarea(&app, admin, "quarantine", quotes).await;
+    let quotes = workspace(&app, admin, "quotes", crew).await;
+    let freight = workspace(&app, admin, "freight", crew).await;
+    let quarantine = workspace(&app, admin, "quarantine", quotes).await;
     // The key writes the whole crew but reads only quotes, and a global
     // denial masks quarantine beneath it.
     let author = issue_with(
@@ -4346,7 +4364,7 @@ async fn include_own_held_never_widens_the_workareas_served() {
             &RecallRequest {
                 sources: None,
                 timings: false,
-                workarea: Some(quotes.into()),
+                workspace: Some(quotes.into()),
                 ..own_held("canary")
             },
         )
@@ -4365,7 +4383,7 @@ async fn include_own_held_never_widens_the_workareas_served() {
                 &RecallRequest {
                     sources: None,
                     timings: false,
-                    workarea: Some(scope.into()),
+                    workspace: Some(scope.into()),
                     ..own_held("canary")
                 },
             )
@@ -4380,11 +4398,11 @@ async fn a_held_successor_appears_with_replaces_while_its_target_stays_a_hit() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (author, reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (author, reader, reviewer) = crew_keys(&app, admin, crew).await;
     let target = promoted(
         &app,
         &author.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("q1", "the canary quote is 412"),
     )
     .await;
@@ -4444,7 +4462,7 @@ async fn budget_fixture() -> (TestApp, IssuedKey, Uuid, Vec<Uuid>, u64, Vec<u64>
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (writer, reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (writer, reader, reviewer) = crew_keys(&app, admin, crew).await;
     let steering_text = "Quote every price in USD/t.";
     let texts = [
         "canary drain settle",
@@ -4454,7 +4472,7 @@ async fn budget_fixture() -> (TestApp, IssuedKey, Uuid, Vec<Uuid>, u64, Vec<u64>
     let steering = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_kind("s1", MemoryKind::Steering, steering_text, crew),
     )
     .await;
@@ -4464,7 +4482,7 @@ async fn budget_fixture() -> (TestApp, IssuedKey, Uuid, Vec<Uuid>, u64, Vec<u64>
             promoted(
                 &app,
                 &writer.value,
-                &dreamer.value,
+                &reviewer.value,
                 &submit_req(&format!("m{n}"), text),
             )
             .await,
@@ -4564,7 +4582,7 @@ async fn every_steering_item_and_hit_carries_its_tokens() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (author, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let (author, _reader, reviewer) = crew_keys(&app, admin, crew).await;
     // Each text is sent decomposed; its count is its NFC text's, which here
     // is one budget token fewer (retrieval.md token budgets; ADR-0025 d6).
     let [steering_text, hit_text, held_text] =
@@ -4576,14 +4594,14 @@ async fn every_steering_item_and_hit_carries_its_tokens() {
     let steering = promoted(
         &app,
         &author.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_kind("s1", MemoryKind::Steering, &decomposed(steering_text), crew),
     )
     .await;
     let hit = promoted(
         &app,
         &author.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("m1", &decomposed(hit_text)),
     )
     .await;
@@ -4697,7 +4715,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
         digest(RecallRequest {
             sources: None,
             timings: false,
-            workarea: Some(crew.into()),
+            workspace: Some(crew.into()),
             ..recall_req("canary")
         })
         .await,
@@ -4754,11 +4772,11 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
 // structure reads (ADR-0026 d4, d5, d6, d8, d9, d11, d15)
 // ---------------------------------------------------------------------------
 
-/// A first version of a claim into the workarea `target` names.
+/// A first version of a claim into the workspace `target` names.
 fn submit_to(idem: &str, body: &str, target: Reference) -> SubmitRequest {
     SubmitRequest {
         on_similar: Default::default(),
-        workarea: Some(target),
+        workspace: Some(target),
         ..submit_req(idem, body)
     }
 }
@@ -4770,17 +4788,17 @@ fn rendered(err: &AppError) -> (String, String) {
     (err.to_string(), format!("{err:?}"))
 }
 
-/// `X-OML-Workarea` names the node by name; the server replaces the name by
+/// `X-OML-Workspace` names the node by name; the server replaces the name by
 /// the node's id after the verb ceiling, and the request runs as the same
 /// request by id runs — which is the same request, so it replays
 /// (http-api.md names and ids; ADR-0026 d4).
 #[tokio::test]
-async fn a_writer_key_submitting_with_its_workareas_name_lands_in_that_workarea() {
+async fn a_writer_key_submitting_with_its_workspaces_name_lands_in_that_workspace() {
     let app = app();
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
-    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
-    let metals = workarea(&app, admin, "metals", boot.root_workarea_id).await;
+    let other = workspace(&app, admin, "other", boot.root_workspace_id).await;
+    let metals = workspace(&app, admin, "metals", boot.root_workspace_id).await;
     // The key's default is `other`, so only the name can land the write in
     // `metals`.
     let writer = issue_with(
@@ -4795,7 +4813,7 @@ async fn a_writer_key_submitting_with_its_workareas_name_lands_in_that_workarea(
         ],
     )
     .await;
-    assert_eq!(writer.default_workarea, Some(other));
+    assert_eq!(writer.default_workspace, Some(other));
 
     let req = submit_to("s-1", "copper rose in march", by_name("metals"));
     let first = app
@@ -4803,13 +4821,13 @@ async fn a_writer_key_submitting_with_its_workareas_name_lands_in_that_workarea(
         .await
         .expect("submit by name");
     assert!(!first.replayed);
-    assert_eq!(first.receipt.workarea_id, metals);
+    assert_eq!(first.receipt.workspace_id, metals);
     let stored = app
         .get_memory(&writer.value, first.receipt.memory_id)
         .await
         .expect("get its own row");
-    assert_eq!(stored.memory.workarea_id, metals);
-    assert_eq!(stored.workarea_path.as_deref(), Some("universe.metals"));
+    assert_eq!(stored.memory.workspace_id, metals);
+    assert_eq!(stored.workspace_path.as_deref(), Some("universe.metals"));
 
     // The header is resolved before the record is looked up, so the same
     // request with the id in the header replays (http-api.md idempotency).
@@ -4818,7 +4836,7 @@ async fn a_writer_key_submitting_with_its_workareas_name_lands_in_that_workarea(
             &writer.value,
             &SubmitRequest {
                 on_similar: Default::default(),
-                workarea: Some(metals.into()),
+                workspace: Some(metals.into()),
                 ..req.clone()
             },
         )
@@ -4837,8 +4855,8 @@ async fn a_name_the_key_holds_no_grant_on_answers_not_found_with_the_same_body_a
     let app = app_over(store.clone());
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
-    let metals = workarea(&app, admin, "metals", boot.root_workarea_id).await;
-    let hidden = workarea(&app, admin, "hidden", boot.root_workarea_id).await;
+    let metals = workspace(&app, admin, "metals", boot.root_workspace_id).await;
+    let hidden = workspace(&app, admin, "hidden", boot.root_workspace_id).await;
     let agent = agent(&app, admin, "wanda", metals).await;
     let head = journal(&store, boot.tenant_id).await.len();
 
@@ -4864,7 +4882,7 @@ async fn a_name_the_key_holds_no_grant_on_answers_not_found_with_the_same_body_a
                 &RecallRequest {
                     sources: None,
                     timings: false,
-                    workarea: Some(target),
+                    workspace: Some(target),
                     ..recall_req("copper")
                 },
             )
@@ -4881,7 +4899,7 @@ async fn a_name_the_key_holds_no_grant_on_answers_not_found_with_the_same_body_a
     let info = |target: Reference| {
         let (app, key) = (&app, &agent.value);
         async move {
-            app.workarea_info(key, Some(target))
+            app.workspace_info(key, Some(target))
                 .await
                 .expect_err("refused")
         }
@@ -4899,8 +4917,8 @@ async fn a_name_the_key_holds_no_grant_on_answers_not_found_with_the_same_body_a
 /// that does not, and no name is looked up first (roles-and-keys.md refusal
 /// order; ADR-0025 d1; ADR-0026 d4).
 #[tokio::test]
-async fn a_reader_key_submitting_by_workarea_name_is_refused_at_the_verb_ceiling_before_resolution()
-{
+async fn a_reader_key_submitting_by_workspace_name_is_refused_at_the_verb_ceiling_before_resolution()
+ {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
@@ -4930,26 +4948,26 @@ async fn a_reader_key_submitting_by_workarea_name_is_refused_at_the_verb_ceiling
 }
 
 /// Names are unique in the tenant across the whole tree, not among
-/// siblings: a second workarea of a taken name answers `name.taken` under
+/// siblings: a second workspace of a taken name answers `name.taken` under
 /// any parent, and journals nothing (ADR-0026 d1, d5).
 #[tokio::test]
-async fn a_second_workarea_with_a_taken_name_answers_name_taken_and_journals_nothing() {
+async fn a_second_workspace_with_a_taken_name_answers_name_taken_and_journals_nothing() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
-    let first = workarea(&app, admin, "procurement", boot.root_workarea_id).await;
-    let team = workarea(&app, admin, "team", boot.root_workarea_id).await;
+    let first = workspace(&app, admin, "procurement", boot.root_workspace_id).await;
+    let team = workspace(&app, admin, "team", boot.root_workspace_id).await;
     let head = hashes(&journal(&store, boot.tenant_id).await);
-    for parent in [boot.root_workarea_id, team] {
+    for parent in [boot.root_workspace_id, team] {
         let err = app
-            .create_workarea(admin, &name("procurement"), Some(parent.into()), None)
+            .create_workspace(admin, &name("procurement"), Some(parent.into()), None)
             .await
             .unwrap_err();
         assert!(
             matches!(
                 &err,
-                AppError::NameTaken { kind: NamedKind::Workarea, name } if name.as_str() == "procurement"
+                AppError::NameTaken { kind: NamedKind::Workspace, name } if name.as_str() == "procurement"
             ),
             "{err:?}"
         );
@@ -4957,7 +4975,7 @@ async fn a_second_workarea_with_a_taken_name_answers_name_taken_and_journals_not
     assert_eq!(hashes(&journal(&store, boot.tenant_id).await), head);
     assert_eq!(
         store
-            .resolve_name(boot.tenant_id, NamedKind::Workarea, &name("procurement"))
+            .resolve_name(boot.tenant_id, NamedKind::Workspace, &name("procurement"))
             .await
             .expect("resolve"),
         Some(first),
@@ -4965,25 +4983,25 @@ async fn a_second_workarea_with_a_taken_name_answers_name_taken_and_journals_not
     );
 }
 
-/// Every tenant's root is `universe` from its creation, so a workarea create
+/// Every tenant's root is `universe` from its creation, so a workspace create
 /// naming `universe` answers `name.taken`, with no special case (ADR-0026
 /// d5, d6).
 #[tokio::test]
-async fn creating_a_workarea_named_universe_answers_name_taken() {
+async fn creating_a_workspace_named_universe_answers_name_taken() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let head = journal(&store, boot.tenant_id).await.len();
-    for parent in [boot.root_workarea_id, crew] {
+    for parent in [boot.root_workspace_id, crew] {
         let err = app
-            .create_workarea(admin, &name("universe"), Some(parent.into()), None)
+            .create_workspace(admin, &name("universe"), Some(parent.into()), None)
             .await
             .unwrap_err();
         assert!(
             matches!(
                 &err,
-                AppError::NameTaken { kind: NamedKind::Workarea, name } if name.as_str() == "universe"
+                AppError::NameTaken { kind: NamedKind::Workspace, name } if name.as_str() == "universe"
             ),
             "{err:?}"
         );
@@ -5063,7 +5081,7 @@ async fn a_partition_left_by_a_failed_genesis_commit_is_kept_and_the_retry_mints
 }
 
 /// Tenant creation creates the root named `universe` and journals the name
-/// in the root's `workarea.create`; `tenant.genesis` records the tenant's
+/// in the root's `workspace.create`; `tenant.genesis` records the tenant's
 /// name (ADR-0026 d1, d6; event-catalog.md).
 #[tokio::test]
 async fn bootstrap_names_the_root_universe() {
@@ -5071,7 +5089,7 @@ async fn bootstrap_names_the_root_universe() {
     let app = app_over(store.clone());
     let boot = bootstrap(&app).await;
     let root = store
-        .workarea(boot.tenant_id, boot.root_workarea_id)
+        .workspace(boot.tenant_id, boot.root_workspace_id)
         .await
         .expect("read")
         .expect("the root is stored");
@@ -5079,10 +5097,10 @@ async fn bootstrap_names_the_root_universe() {
     assert_eq!(root.parent_id, None);
     assert_eq!(
         store
-            .resolve_name(boot.tenant_id, NamedKind::Workarea, &name("universe"))
+            .resolve_name(boot.tenant_id, NamedKind::Workspace, &name("universe"))
             .await
             .expect("resolve"),
-        Some(boot.root_workarea_id)
+        Some(boot.root_workspace_id)
     );
 
     let events = journal(&store, boot.tenant_id).await;
@@ -5091,14 +5109,14 @@ async fn bootstrap_names_the_root_universe() {
         events[0].envelope.payload,
         json!({ "tenant_id": boot.tenant_id.to_string(), "name": "acme" })
     );
-    assert_eq!(events[1].envelope.event_type, event_types::WORKAREA_CREATE);
+    assert_eq!(events[1].envelope.event_type, event_types::WORKSPACE_CREATE);
     assert_eq!(
         events[1].envelope.payload,
         json!({
-            "workarea_id": boot.root_workarea_id.to_string(),
+            "workspace_id": boot.root_workspace_id.to_string(),
             "parent_id": Value::Null,
             "name": "universe",
-            "status": "committed",
+            "status": "protected",
             "crew_id": Value::Null,
             "prefix": Value::Null,
         })
@@ -5106,10 +5124,10 @@ async fn bootstrap_names_the_root_universe() {
 
     // The bootstrap admin key reads the root by its name.
     let info = app
-        .workarea_info(&boot.admin_key.value, Some(by_name("universe")))
+        .workspace_info(&boot.admin_key.value, Some(by_name("universe")))
         .await
         .expect("the admin reads the root");
-    assert_eq!(info.workarea.workarea_id, boot.root_workarea_id);
+    assert_eq!(info.workspace.workspace_id, boot.root_workspace_id);
     assert_eq!(info.path, "universe");
 }
 
@@ -5303,9 +5321,11 @@ impl PocChain {
         self
     }
 
-    /// A PoC `workarea.create`: the name as the PoC took it, and the crew
-    /// object it copied in.
-    fn workarea(
+    /// A PoC `workarea.create`, signed in the former names as the PoC and
+    /// every release before v0.8.0 wrote it, so every reader meets it
+    /// through the former-name map (ADR-0091 d4): the name as the PoC took
+    /// it, and the crew object it copied in.
+    fn workspace(
         &mut self,
         id: Uuid,
         parent: Option<Uuid>,
@@ -5313,7 +5333,7 @@ impl PocChain {
         crew: Value,
     ) -> &mut Self {
         self.push(
-            event_types::WORKAREA_CREATE,
+            "workarea.create",
             json!({
                 "workarea_id": id.to_string(),
                 "parent_id": parent.map(|p| p.to_string()),
@@ -5364,17 +5384,17 @@ async fn naming_rows_that_predate_names_journals_one_event_per_chain_and_a_secon
     let procurement_crew = json!({ "name": "Procurement Crew" });
     let mut poc = PocChain::new(tenant);
     poc.push(event_types::TENANT_GENESIS, json!({ "tenant_name": "oml" }))
-        .workarea(root, None, "root", Value::Null)
-        .workarea(
+        .workspace(root, None, "root", Value::Null)
+        .workspace(
             procurement,
             Some(root),
             "procurement",
             procurement_crew.clone(),
         )
-        .workarea(team, Some(root), "Procurement Team", procurement_crew)
-        .workarea(again, Some(team), "procurement", Value::Null)
-        .workarea(impostor, Some(team), "universe", Value::Null)
-        .workarea(
+        .workspace(team, Some(root), "Procurement Team", procurement_crew)
+        .workspace(again, Some(team), "procurement", Value::Null)
+        .workspace(impostor, Some(team), "universe", Value::Null)
+        .workspace(
             review,
             Some(root),
             "lit-review",
@@ -5435,15 +5455,15 @@ async fn naming_rows_that_predate_names_journals_one_event_per_chain_and_a_secon
             "names": [
                 entry("tenant", tenant, "oml".to_owned(), json!("oml")),
                 // Rule 1: the root is universe, whatever its create said.
-                entry("workarea", root, "universe".to_owned(), json!("root")),
+                entry("workspace", root, "universe".to_owned(), json!("root")),
                 // Rule 2: a usable name no earlier row holds is kept.
-                entry("workarea", procurement, "procurement".to_owned(), json!("procurement")),
+                entry("workspace", procurement, "procurement".to_owned(), json!("procurement")),
                 // Rule 3: ungrammatical, held by an earlier row, or a
                 // non-root universe — derived from the id.
-                entry("workarea", team, derived(NamedKind::Workarea, team), json!("Procurement Team")),
-                entry("workarea", again, derived(NamedKind::Workarea, again), json!("procurement")),
-                entry("workarea", impostor, derived(NamedKind::Workarea, impostor), json!("universe")),
-                entry("workarea", review, "lit-review".to_owned(), json!("lit-review")),
+                entry("workspace", team, derived(NamedKind::Workspace, team), json!("Procurement Team")),
+                entry("workspace", again, derived(NamedKind::Workspace, again), json!("procurement")),
+                entry("workspace", impostor, derived(NamedKind::Workspace, impostor), json!("universe")),
+                entry("workspace", review, "lit-review".to_owned(), json!("lit-review")),
                 // Every key before names had none.
                 entry("key", admin, derived(NamedKind::Key, admin), Value::Null),
                 entry("key", writer, derived(NamedKind::Key, writer), Value::Null),
@@ -5456,14 +5476,14 @@ async fn naming_rows_that_predate_names_journals_one_event_per_chain_and_a_secon
                     "name": derived(NamedKind::Crew, crew_id(0)),
                     "charter_uri": Value::Null,
                     "external_manager": Value::Null,
-                    "workarea_ids": [procurement.to_string(), team.to_string()],
+                    "workspace_ids": [procurement.to_string(), team.to_string()],
                 },
                 {
                     "crew_id": crew_id(1).to_string(),
                     "name": "redline",
                     "charter_uri": "https://crews.example.com/redline/charter.md",
                     "external_manager": "crewd.example.com",
-                    "workarea_ids": [review.to_string()],
+                    "workspace_ids": [review.to_string()],
                 },
             ],
         })
@@ -5475,13 +5495,13 @@ async fn naming_rows_that_predate_names_journals_one_event_per_chain_and_a_secon
     assert!(store.unnamed_rows(tenant).await.expect("read").is_empty());
     assert_eq!(
         store
-            .resolve_name(tenant, NamedKind::Workarea, &name("universe"))
+            .resolve_name(tenant, NamedKind::Workspace, &name("universe"))
             .await
             .expect("resolve"),
         Some(root)
     );
     let ancestry: Vec<String> = store
-        .workarea_ancestry(tenant, again)
+        .workspace_ancestry(tenant, again)
         .await
         .expect("read")
         .expect("the node")
@@ -5493,8 +5513,8 @@ async fn naming_rows_that_predate_names_journals_one_event_per_chain_and_a_secon
         ancestry,
         vec![
             "universe".to_owned(),
-            derived(NamedKind::Workarea, team),
-            derived(NamedKind::Workarea, again),
+            derived(NamedKind::Workspace, team),
+            derived(NamedKind::Workspace, again),
         ]
     );
     for (node, crew) in [
@@ -5503,7 +5523,7 @@ async fn naming_rows_that_predate_names_journals_one_event_per_chain_and_a_secon
         (review, crew_id(1)),
     ] {
         let stored = store
-            .workarea(tenant, node)
+            .workspace(tenant, node)
             .await
             .expect("read")
             .expect("node");
@@ -5562,13 +5582,13 @@ async fn the_naming_lifts_every_denial_on_an_admin_key_in_the_commit_that_names_
     let denied = |denial: Uuid, key: Uuid, node: Uuid| {
         json!({
             "denial_id": denial.to_string(), "key_id": key.to_string(),
-            "workarea_node_id": node.to_string(),
+            "workspace_node_id": node.to_string(),
         })
     };
     let mut poc = PocChain::new(tenant);
     poc.push(event_types::TENANT_GENESIS, json!({ "tenant_name": "oml" }))
-        .workarea(root, None, "root", Value::Null)
-        .workarea(team, Some(root), "team", Value::Null)
+        .workspace(root, None, "root", Value::Null)
+        .workspace(team, Some(root), "team", Value::Null)
         .key(admin, "admin", "oml/admin")
         .key(steward, "admin", "oml/steward")
         .key(writer, "writer", "crew/agent-7")
@@ -5664,7 +5684,7 @@ async fn a_row_with_no_name_in_a_chain_already_named_refuses_the_naming() {
     let root = Uuid::from_u128(0xB800);
     let mut poc = PocChain::new(tenant);
     poc.push(event_types::TENANT_GENESIS, json!({ "tenant_name": "oml" }))
-        .workarea(root, None, "root", Value::Null)
+        .workspace(root, None, "root", Value::Null)
         .push(
             event_types::SYSTEM_NAMES_ASSIGNED,
             json!({ "rule": "ADR-0026 d11", "names": [], "crews": [] }),
@@ -5689,30 +5709,30 @@ async fn a_row_with_no_name_in_a_chain_already_named_refuses_the_naming() {
     assert_eq!(hashes(&journal(&store, tenant).await), hashes(&poc.events));
 }
 
-/// An admin key reads the tree of any workarea in its tenant by its key
+/// An admin key reads the tree of any workspace in its tenant by its key
 /// role, with no grant: every node of the subtree in path order, a node
 /// before its children and siblings by name, each with its derived path; a
 /// reader key reads only what its grants reach (roles-and-keys.md
 /// permission matrix, footnote 6; ADR-0026 d15).
 #[tokio::test]
-async fn an_admin_key_reads_the_workarea_tree_by_name() {
+async fn an_admin_key_reads_the_workspace_tree_by_name() {
     let app = app();
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
-    let metals = workarea(&app, admin, "metals", boot.root_workarea_id).await;
-    let q1 = workarea(&app, admin, "q1-2027", metals).await;
-    let q2 = workarea(&app, admin, "q2-2027", metals).await;
-    let review = workarea(&app, admin, "lit-review", q1).await;
-    let _other = workarea(&app, admin, "other", boot.root_workarea_id).await;
+    let metals = workspace(&app, admin, "metals", boot.root_workspace_id).await;
+    let q1 = workspace(&app, admin, "q1-2027", metals).await;
+    let q2 = workspace(&app, admin, "q2-2027", metals).await;
+    let review = workspace(&app, admin, "lit-review", q1).await;
+    let _other = workspace(&app, admin, "other", boot.root_workspace_id).await;
 
     let tree = |key: &str, node: Reference| {
         let (app, key) = (&app, key.to_owned());
         async move {
-            app.workarea_tree(&key, node, None, 50).await.map(|page| {
+            app.workspace_tree(&key, node, None, 50).await.map(|page| {
                 assert_eq!(page.next_cursor, None, "one page holds the tree");
                 page.items
                     .into_iter()
-                    .map(|n| (n.workarea.workarea_id, n.path))
+                    .map(|n| (n.workspace.workspace_id, n.path))
                     .collect::<Vec<_>>()
             })
         }
@@ -5750,37 +5770,37 @@ async fn an_admin_key_reads_the_workarea_tree_by_name() {
     );
 }
 
-/// The admin key's workarea read is structure: every child, no effective
+/// The admin key's workspace read is structure: every child, no effective
 /// verb, its own permission epoch, and nothing of the claims the node
 /// holds; the content verbs still answer `access.verb_ceiling` at step 1
 /// (roles-and-keys.md permission matrix, footnote 6; ADR-0026 d15).
 #[tokio::test]
-async fn an_admin_key_reading_a_workarea_sees_no_claim_content() {
+async fn an_admin_key_reading_a_workspace_sees_no_claim_content() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let child = workarea(&app, admin, "child", crew).await;
-    let sealed = workarea(&app, admin, "sealed", crew).await;
-    let (writer, _reader, dreamer) = crew_keys(&app, admin, crew).await;
+    let child = workspace(&app, admin, "child", crew).await;
+    let sealed = workspace(&app, admin, "sealed", crew).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, admin, crew).await;
     let body = "the copper contract closes at 4182";
     let memory = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_into("s-1", body, crew),
     )
     .await;
 
     let info = app
-        .workarea_info(admin, Some(by_name("crew")))
+        .workspace_info(admin, Some(by_name("crew")))
         .await
         .expect("the admin reads the structure");
-    assert_eq!(info.workarea.workarea_id, crew);
+    assert_eq!(info.workspace.workspace_id, crew);
     assert_eq!(info.path, "universe.crew");
     assert_eq!(
         info.children
             .iter()
-            .map(|c| c.workarea_id)
+            .map(|c| c.workspace_id)
             .collect::<Vec<_>>(),
         vec![child, sealed],
         "every child, in name order"
@@ -5807,7 +5827,7 @@ async fn an_admin_key_reading_a_workarea_sees_no_claim_content() {
             &ListRequest {
                 anchor: oml_app::types::AnchorFilter::default(),
                 own: false,
-                workarea: Some(by_name("crew")),
+                workspace: Some(by_name("crew")),
                 state: None,
                 kind: None,
                 claim_key: None,
@@ -5846,7 +5866,7 @@ async fn an_admin_keys_recall_is_refused() {
                 &RecallRequest {
                     sources: None,
                     timings: false,
-                    workarea: scope,
+                    workspace: scope,
                     ..recall_req("anything")
                 },
             )
@@ -5900,7 +5920,7 @@ async fn a_global_denial_on_an_admin_key_is_refused_naming_key() {
 
 /// `whoami` answers the calling key's own record and nothing of any other
 /// key: its id, name, role, principal and attestation, its tenant, its
-/// default workarea with the derived path and its crew record, each as an
+/// default workspace with the derived path and its crew record, each as an
 /// id and a name, and its stored grants. It reads no claim, so it journals
 /// nothing, and a value that names no live key is refused as every request
 /// is (ADR-0039 d15).
@@ -5911,14 +5931,14 @@ async fn whoami_returns_the_calling_keys_own_record_and_no_other() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let metals = metals_crew(&app, admin).await;
-    let quarter = workarea(&app, admin, "q1-2027", crew).await;
+    let quarter = workspace(&app, admin, "q1-2027", crew).await;
     let agent = app
         .issue_key(
             admin,
             &IssueKeyRequest {
                 name: name("claude-laptop"),
                 crew: Some(by_name("metals-crew")),
-                default_workarea: Some(by_name("q1-2027")),
+                default_workspace: Some(by_name("q1-2027")),
                 ..issue_req(
                     Role::Writer,
                     "claude/laptop",
@@ -5936,10 +5956,10 @@ async fn whoami_returns_the_calling_keys_own_record_and_no_other() {
     assert_eq!(me.key.name, Some(name("claude-laptop")));
     assert_eq!(me.key.role, Role::Writer);
     assert_eq!(me.key.principal, "claude/laptop");
-    assert_eq!(me.key.held_by, HeldBy::Agent);
+    assert_eq!(me.key.used_by, UsedBy::Agent);
     let tenant = me.tenant.expect("a tenant key names its tenant");
     assert_eq!((tenant.id, tenant.name), (boot.tenant_id, name("acme")));
-    let default = me.default_workarea.expect("the journalled default");
+    let default = me.default_workspace.expect("the journalled default");
     assert_eq!(
         (default.id, default.name, default.path.as_str()),
         (quarter, name("q1-2027"), "universe.crew.q1-2027")
@@ -5963,7 +5983,7 @@ async fn whoami_returns_the_calling_keys_own_record_and_no_other() {
     assert_eq!(other.key.role, Role::Reader);
     assert_eq!(other.crew, None);
     assert_eq!(
-        other.default_workarea.map(|w| (w.id, w.path)),
+        other.default_workspace.map(|w| (w.id, w.path)),
         Some((crew, "universe.crew".to_owned()))
     );
     assert_eq!(other.grants.len(), 1);
@@ -6100,8 +6120,8 @@ async fn the_default_serve_id_is_the_reviewers_own_claimed_item() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let (writer, _reader, dana) = crew_keys(&app, admin, crew).await;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
-    let idle = issue(&app, admin, Role::Dreamer, "ida", crew).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
+    let idle = issue(&app, admin, Role::Reviewer, "ida", crew).await;
     let first = held(
         &app,
         &writer.value,
@@ -6258,8 +6278,8 @@ async fn operator_key(store: &MemStore, tenant: Uuid) -> String {
         tenant_id: tenant,
         role: Role::Operator,
         principal: "operator".to_owned(),
-        held_by: HeldBy::Human,
-        default_workarea: None,
+        used_by: UsedBy::Person,
+        default_workspace: None,
         issued_by: None,
         credential: Credential::Bearer,
         key_hash: Some(sha256_digest_string(value.as_bytes())),
@@ -6493,8 +6513,8 @@ async fn an_admin_or_operator_role_is_refused_a_connect_code_by_its_reason() {
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
 }
 
-/// Step 7 refuses a connect code for a key attested `held_by: service`
-/// with `held_by_service`, journalling nothing (ADR-0031 d7).
+/// Step 7 refuses a connect code for a key attested `used_by: service`
+/// with `used_by_service`, journalling nothing (ADR-0031 d7).
 #[tokio::test]
 async fn a_service_held_key_is_refused_a_connect_code() {
     let store = MemStore::new();
@@ -6505,7 +6525,7 @@ async fn a_service_held_key_is_refused_a_connect_code() {
         .issue_key(
             &boot.admin_key.value,
             &IssueKeyRequest {
-                held_by: Some(HeldBy::Service),
+                used_by: Some(UsedBy::Service),
                 ..connector_req("reconciler", vec![grant(crew, Role::Writer)])
             },
         )
@@ -6513,7 +6533,7 @@ async fn a_service_held_key_is_refused_a_connect_code() {
         .unwrap_err();
     assert_eq!(
         connect_refused(&err),
-        Some(ConnectRefused::HeldByService),
+        Some(ConnectRefused::UsedByService),
         "{err:?}"
     );
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
@@ -6546,7 +6566,7 @@ async fn a_connector_key_is_refused_when_oauth_issuer_is_unset() {
     assert!(bearer.connect_code.is_none());
 }
 
-/// The connect-code step is the seventh, after the default workarea and
+/// The connect-code step is the seventh, after the default workspace and
 /// before the name, which ADR-0026 d5 checks after every other check: a
 /// taken name with a refused connect code answers the connect code's
 /// refusal, an uncovered default answers before step 7, and only a key that
@@ -6558,7 +6578,7 @@ async fn the_name_check_runs_after_the_connect_code_step() {
     let app = oauth_app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
+    let other = workspace(&app, admin, "other", boot.root_workspace_id).await;
     app.issue_key(
         admin,
         &IssueKeyRequest {
@@ -6578,7 +6598,7 @@ async fn the_name_check_runs_after_the_connect_code_step() {
         .issue_key(
             admin,
             &taken(IssueKeyRequest {
-                held_by: Some(HeldBy::Service),
+                used_by: Some(UsedBy::Service),
                 ..connector_req("p", vec![grant(crew, Role::Writer)])
             }),
         )
@@ -6586,7 +6606,7 @@ async fn the_name_check_runs_after_the_connect_code_step() {
         .unwrap_err();
     assert_eq!(
         connect_refused(&err),
-        Some(ConnectRefused::HeldByService),
+        Some(ConnectRefused::UsedByService),
         "{err:?}"
     );
     let unset = app_over(store.clone());
@@ -6606,8 +6626,8 @@ async fn the_name_check_runs_after_the_connect_code_step() {
         .issue_key(
             admin,
             &taken(IssueKeyRequest {
-                held_by: Some(HeldBy::Service),
-                default_workarea: Some(other.into()),
+                used_by: Some(UsedBy::Service),
+                default_workspace: Some(other.into()),
                 ..connector_req("p", vec![grant(crew, Role::Writer)])
             }),
         )
@@ -6713,10 +6733,11 @@ async fn minting_a_code_for_a_revoked_key_or_without_oauth_issuer_is_refused() {
 }
 
 /// A directory reviewer's code outlives the ten-minute default: on a connector key whose grants
-/// reach one workarea and not the universe, a code minted with a lifetime lives that long, the
+/// reach one workspace and not the universe, a code minted with a lifetime lives that long, the
 /// key shows it as an extended code, and an ordinary code is not named so (ADR-0067 d3).
 #[tokio::test]
-async fn a_connect_code_minted_with_a_lifetime_lives_that_long_on_a_key_confined_to_one_workarea() {
+async fn a_connect_code_minted_with_a_lifetime_lives_that_long_on_a_key_confined_to_one_workspace()
+{
     let store = MemStore::new();
     let app = oauth_app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
@@ -6758,16 +6779,16 @@ async fn a_connect_code_minted_with_a_lifetime_lives_that_long_on_a_key_confined
 }
 
 /// A long-lived code is a standing credential, so it is minted only for a key that can reach one
-/// workarea: a key naming a user root, a key granted on the universe and a key granted on two
-/// workareas are each refused `not_confined`, a lifetime past thirty days is refused whatever
+/// workspace: a key naming a user root, a key granted on the universe and a key granted on two
+/// workspaces are each refused `not_confined`, a lifetime past thirty days is refused whatever
 /// the key, and none of them journals anything (ADR-0067 d3).
 #[tokio::test]
-async fn a_long_lived_code_is_refused_for_a_key_that_reaches_more_than_one_workarea() {
+async fn a_long_lived_code_is_refused_for_a_key_that_reaches_more_than_one_workspace() {
     let store = MemStore::new();
     let app = oauth_app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
+    let other = workspace(&app, admin, "other", boot.root_workspace_id).await;
     let two = app
         .issue_key(
             admin,
@@ -6783,7 +6804,7 @@ async fn a_long_lived_code_is_refused_for_a_key_that_reaches_more_than_one_worka
             admin,
             &connector_req(
                 "crew/universe",
-                vec![grant(boot.root_workarea_id, Role::Writer)],
+                vec![grant(boot.root_workspace_id, Role::Writer)],
             ),
         )
         .await
@@ -6821,7 +6842,7 @@ async fn a_long_lived_code_is_refused_for_a_key_that_reaches_more_than_one_worka
     // The same keys still take an ordinary code: the restriction is on the long life.
     app.mint_connect_code(admin, two.key_id.into())
         .await
-        .expect("an ordinary code for a key that reaches two workareas");
+        .expect("an ordinary code for a key that reaches two workspaces");
 }
 
 /// A key has at most one live code: minting one names the key's unredeemed
@@ -7158,18 +7179,18 @@ fn authorization_expired(err: &AppError) -> Option<AuthorizationExpired> {
 }
 
 /// After a correct code the confirmation shows the tenant by its name, the
-/// key's name, principal and role, every granted workarea by name with the
-/// grant's role, the workareas each verb-kind sentence names, and no
-/// self-signed workarea; the code is spent and the request's row is written
+/// key's name, principal and role, every granted workspace by name with the
+/// grant's role, the workspaces each verb-kind sentence names, and no
+/// self-signed workspace; the code is spent and the request's row is written
 /// under the SHA-256 of the confirmation's handle (http-api.md
 /// `POST /oauth/authorize`; ADR-0031 d8, d9 step 2).
 #[tokio::test]
-async fn a_correct_code_shows_the_keys_tenant_name_role_and_granted_workareas() {
+async fn a_correct_code_shows_the_keys_tenant_name_role_and_granted_workspaces() {
     let store = MemStore::new();
     let app = oauth_app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let notes = workarea(&app, admin, "notes", boot.root_workarea_id).await;
+    let notes = workspace(&app, admin, "notes", boot.root_workspace_id).await;
     let (issued, code) = connector_with_code(
         &app,
         admin,
@@ -7187,7 +7208,7 @@ async fn a_correct_code_shows_the_keys_tenant_name_role_and_granted_workareas() 
     let grants: Vec<(Uuid, Name, Role)> = view
         .grants
         .iter()
-        .map(|g| (g.workarea_id, g.workarea.clone(), g.role))
+        .map(|g| (g.workspace_id, g.workspace.clone(), g.role))
         .collect();
     assert_eq!(
         grants,
@@ -7766,11 +7787,11 @@ async fn the_page_does_not_exist_without_an_issuer() {
     }
 }
 
-/// A dreamer connector key's confirmation names its granted workareas in
+/// A reviewer connector key's confirmation names its granted workspaces in
 /// the propose sentence and in no write or read sentence (http-api.md
 /// "The authorization page"; ADR-0031 d9 step 2).
 #[tokio::test]
-async fn a_dreamer_key_is_shown_as_proposing() {
+async fn a_reviewer_key_is_shown_as_proposing() {
     let app = oauth_app_over(MemStore::new());
     let (boot, crew) = tenant(&app).await;
     let issued = app
@@ -7779,14 +7800,14 @@ async fn a_dreamer_key_is_shown_as_proposing() {
             &IssueKeyRequest {
                 connect_code: true,
                 ..issue_req(
-                    Role::Dreamer,
+                    Role::Reviewer,
                     "crew/claude-mobile",
-                    vec![grant(crew, Role::Dreamer)],
+                    vec![grant(crew, Role::Reviewer)],
                 )
             },
         )
         .await
-        .expect("a dreamer connector key");
+        .expect("a reviewer connector key");
     let code = issued
         .connect_code
         .and_then(|c| c.code)
@@ -7794,24 +7815,24 @@ async fn a_dreamer_key_is_shown_as_proposing() {
 
     let view = entered(&app, &code_page(&app).await, &code).await;
 
-    assert_eq!(view.role, Role::Dreamer);
+    assert_eq!(view.role, Role::Reviewer);
     assert_eq!(view.proposes_in, [name("crew")]);
     assert!(view.writes_in.is_empty(), "{view:?}");
     assert!(view.reads_in.is_empty(), "{view:?}");
 }
 
-/// A workarea a grant's own deny or a global denial masks is named in no
+/// A workspace a grant's own deny or a global denial masks is named in no
 /// verb sentence that grant or the denied grant would give, while every
 /// grant is still listed (http-api.md
 /// "The authorization page"; roles-and-keys.md denials; ADR-0031 d9
 /// step 2).
 #[tokio::test]
-async fn a_denied_workarea_is_named_in_no_sentence() {
+async fn a_denied_workspace_is_named_in_no_sentence() {
     let app = oauth_app_over(MemStore::new());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let notes = workarea(&app, admin, "notes", crew).await;
-    let archive = workarea(&app, admin, "archive", boot.root_workarea_id).await;
+    let notes = workspace(&app, admin, "notes", crew).await;
+    let archive = workspace(&app, admin, "archive", boot.root_workspace_id).await;
     let (issued, code) = connector_with_code(
         &app,
         admin,
@@ -7831,7 +7852,7 @@ async fn a_denied_workarea_is_named_in_no_sentence() {
 
     let view = entered(&app, &code_page(&app).await, &code).await;
 
-    let listed: Vec<Name> = view.grants.iter().map(|g| g.workarea.clone()).collect();
+    let listed: Vec<Name> = view.grants.iter().map(|g| g.workspace.clone()).collect();
     assert_eq!(listed, [name("crew"), name("notes"), name("archive")]);
     assert_eq!(view.writes_in, [name("crew")], "crew's deny masks notes");
     assert_eq!(
@@ -7864,7 +7885,7 @@ async fn a_code_of_one_tenant_shows_only_that_tenants_name_and_grants() {
         .await
         .expect("a second tenant");
     let admin = &globex.admin_key.value;
-    let lab = workarea(&app, admin, "lab", globex.root_workarea_id).await;
+    let lab = workspace(&app, admin, "lab", globex.root_workspace_id).await;
     let (issued, code) = connector_with_code(&app, admin, vec![grant(lab, Role::Reader)]).await;
 
     let view = entered(&app, &code_page(&app).await, &code).await;
@@ -7873,7 +7894,7 @@ async fn a_code_of_one_tenant_shows_only_that_tenants_name_and_grants() {
     let grants: Vec<(Uuid, Name)> = view
         .grants
         .iter()
-        .map(|g| (g.workarea_id, g.workarea.clone()))
+        .map(|g| (g.workspace_id, g.workspace.clone()))
         .collect();
     assert_eq!(grants, [(lab, name("lab"))]);
     assert_eq!(view.reads_in, [name("lab")]);
@@ -8511,11 +8532,11 @@ async fn each_tenants_access_token_resolves_to_its_own_tenants_key() {
         })
         .await
         .expect("a second tenant");
-    let lab = workarea(
+    let lab = workspace(
         &app,
         &globex.admin_key.value,
         "lab",
-        globex.root_workarea_id,
+        globex.root_workspace_id,
     )
     .await;
     let (globex_key, globex_code) = connected(&app, &globex.admin_key.value, lab).await;
@@ -8865,19 +8886,20 @@ impl oml_app::ports::RequestObserver for Told {
         self.0.lock().expect("unpoisoned").push(told);
     }
 
-    fn workarea(&self, workarea_id: Uuid) {
+    fn workspace(&self, workspace_id: Uuid) {
         self.0
             .lock()
             .expect("unpoisoned")
-            .push(format!("workarea {workarea_id}"));
+            .push(format!("workspace {workspace_id}"));
     }
 }
 
 /// The request line's identity fields come from the app: it tells its
 /// observer the key a credential resolved to, or that it resolved to none,
-/// and the workarea the verb targets, by id (ADR-0042 d2).
+/// and the workspace the verb targets, by id (ADR-0042 d2).
 #[tokio::test]
-async fn the_app_tells_its_observer_the_key_a_credential_named_and_the_workarea_a_submit_targets() {
+async fn the_app_tells_its_observer_the_key_a_credential_named_and_the_workspace_a_submit_targets()
+{
     let told = std::sync::Arc::new(Told::default());
     let app = app().with_observer(told.clone());
     let (boot, crew) = tenant(&app).await;
@@ -8894,7 +8916,7 @@ async fn the_app_tells_its_observer_the_key_a_credential_named_and_the_workarea_
         *told.0.lock().expect("unpoisoned"),
         vec![
             format!("key {}", writer.key_id),
-            format!("workarea {crew}"),
+            format!("workspace {crew}"),
             "no key".to_owned(),
         ]
     );
@@ -9338,7 +9360,7 @@ async fn an_admin_key_moves_an_expired_keys_date_later_and_the_key_authenticates
     );
 }
 
-/// R1 for a key's limits: a reader, a writer and a dreamer key cannot set
+/// R1 for a key's limits: a reader, a writer and a reviewer key cannot set
 /// any key's limits, their own included. An admin key an agent holds is
 /// issued with neither limit, cannot set its own, and is given none by
 /// another admin key. Each refusal journals nothing and leaves the limits
@@ -9354,7 +9376,7 @@ async fn no_key_extends_its_own_expiry_or_raises_its_own_rate() {
         requests_per_minute: Some(Some(1_000)),
     };
     let mut agents = Vec::new();
-    for role in [Role::Reader, Role::Writer, Role::Dreamer] {
+    for role in [Role::Reader, Role::Writer, Role::Reviewer] {
         agents.push(
             app.issue_key(
                 admin,
@@ -9753,17 +9775,17 @@ fn deny_push() -> Value {
     json!({"rule": "oml-gr/1", "tool": "shell", "command": ["git", "push", "*"], "effect": "deny"})
 }
 
-/// A guardrail of its own `claim_key` on `workarea_id` with `severity` and
+/// A guardrail of its own `claim_key` on `workspace_id` with `severity` and
 /// no rule.
-fn guardrail_req(idem: &str, severity: Severity, body: &str, workarea_id: Uuid) -> SubmitRequest {
+fn guardrail_req(idem: &str, severity: Severity, body: &str, workspace_id: Uuid) -> SubmitRequest {
     SubmitRequest {
         on_similar: Default::default(),
         severity: Some(severity),
-        ..submit_kind(idem, MemoryKind::Guardrail, body, workarea_id)
+        ..submit_kind(idem, MemoryKind::Guardrail, body, workspace_id)
     }
 }
 
-/// The set the key loads at its default workarea.
+/// The set the key loads at its default workspace.
 async fn guardrail_set(app: &TestApp, key: &str) -> GuardrailSet {
     app.guardrails(key, &GuardrailRequest::default())
         .await
@@ -9857,18 +9879,18 @@ async fn a_guardrail_target_admits_only_kind_guardrail() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let rail = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &guardrail_req("g1", Severity::Must, "Run the tests before a commit.", crew),
     )
     .await;
     let fact = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_into("m1", "a fact", crew),
     )
     .await;
@@ -10032,13 +10054,13 @@ async fn a_body_over_300_bytes_is_vetoed_as_guardrail_too_long() {
 }
 
 #[tokio::test]
-async fn a_guardrail_promotes_under_its_workarea_policy_and_no_author_verdict_counts() {
+async fn a_guardrail_promotes_under_its_workspace_policy_and_no_author_verdict_counts() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let author_dreamer = issue(&app, admin, Role::Dreamer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let author_reviewer = issue(&app, admin, Role::Reviewer, "wanda", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let id = app
         .submit_memory(
             &writer.value,
@@ -10049,7 +10071,7 @@ async fn a_guardrail_promotes_under_its_workarea_policy_and_no_author_verdict_co
         .receipt
         .memory_id;
     let err = app
-        .post_verdict(&author_dreamer.value, id, Verdict::Approve, None)
+        .post_verdict(&author_reviewer.value, id, Verdict::Approve, None)
         .await
         .unwrap_err();
     assert!(
@@ -10068,7 +10090,7 @@ async fn a_guardrail_promotes_under_its_workarea_policy_and_no_author_verdict_co
         MemoryStatus::Held
     );
     let outcome = app
-        .post_verdict(&dreamer.value, id, Verdict::Approve, None)
+        .post_verdict(&reviewer.value, id, Verdict::Approve, None)
         .await
         .expect("a non-author verdict");
     assert_eq!(outcome.state, MemoryStatus::Promoted);
@@ -10081,11 +10103,11 @@ async fn a_guardrail_is_never_self_signed_whatever_the_tenant_policy() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let id = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &guardrail_req("g1", Severity::Must, "Run the tests first.", crew),
     )
     .await;
@@ -10116,7 +10138,7 @@ async fn the_serve_of_a_held_guardrail_carries_the_load_warning() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let rail = app
         .submit_memory(
             &writer.value,
@@ -10132,10 +10154,10 @@ async fn the_serve_of_a_held_guardrail_carries_the_load_warning() {
     let own = app.get_memory(&writer.value, rail).await.expect("get");
     assert_eq!(own.load_warning, Some(LOAD_WARNING));
     let mut warned = Vec::new();
-    while let Some(served) = app.review_next(&dreamer.value).await.expect("review") {
+    while let Some(served) = app.review_next(&reviewer.value).await.expect("review") {
         warned.push((served.memory.kind, served.load_warning));
         app.post_verdict(
-            &dreamer.value,
+            &reviewer.value,
             served.memory.memory_id,
             Verdict::Approve,
             None,
@@ -10164,11 +10186,11 @@ async fn oml_write_supersession_refuses_a_guardrail_target() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let rail = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &guardrail_req("g1", Severity::Must, "Run the tests first.", crew),
     )
     .await;
@@ -10188,18 +10210,18 @@ async fn oml_write_supersession_refuses_a_guardrail_target() {
 }
 
 #[tokio::test]
-async fn a_key_is_issued_with_guardrail_scope_ancestors_unless_the_admin_names_workarea() {
+async fn a_key_is_issued_with_guardrail_scope_ancestors_unless_the_admin_names_workspace() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let unnamed = reader_scoped(&app, admin, "rhea", crew, None).await;
-    let named = reader_scoped(&app, admin, "rhea-2", crew, Some(GuardrailScope::Workarea)).await;
+    let named = reader_scoped(&app, admin, "rhea-2", crew, Some(GuardrailScope::Workspace)).await;
     assert_eq!(unnamed.guardrail_scope, GuardrailScope::Ancestors);
-    assert_eq!(named.guardrail_scope, GuardrailScope::Workarea);
+    assert_eq!(named.guardrail_scope, GuardrailScope::Workspace);
     assert_eq!(boot.admin_key.guardrail_scope, GuardrailScope::Ancestors);
     for (issued, scope) in [
         (&unnamed, GuardrailScope::Ancestors),
-        (&named, GuardrailScope::Workarea),
+        (&named, GuardrailScope::Workspace),
     ] {
         let detail = app
             .key(admin, issued.key_id.into())
@@ -10217,7 +10239,7 @@ async fn key_issued_journals_the_guardrail_scope() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let unnamed = reader_scoped(&app, admin, "rhea", crew, None).await;
-    let named = reader_scoped(&app, admin, "rhea-2", crew, Some(GuardrailScope::Workarea)).await;
+    let named = reader_scoped(&app, admin, "rhea-2", crew, Some(GuardrailScope::Workspace)).await;
     let events = journal(&store, boot.tenant_id).await;
     let journalled = |key_id: Uuid| {
         events
@@ -10229,7 +10251,7 @@ async fn key_issued_journals_the_guardrail_scope() {
             .map(|e| e.envelope.payload["guardrail_scope"].clone())
     };
     assert_eq!(journalled(unnamed.key_id), Some(json!("ancestors")));
-    assert_eq!(journalled(named.key_id), Some(json!("workarea")));
+    assert_eq!(journalled(named.key_id), Some(json!("workspace")));
     assert_eq!(journalled(boot.admin_key.key_id), Some(json!("ancestors")));
 }
 
@@ -10242,7 +10264,7 @@ async fn a_key_issued_without_guardrail_scope_folds_as_ancestors() {
     let key_id = Uuid::from_u128(0xD700);
     let mut poc = PocChain::new(tenant);
     poc.push(event_types::TENANT_GENESIS, json!({ "tenant_name": "oml" }))
-        .workarea(Uuid::from_u128(0xB700), None, "root", Value::Null)
+        .workspace(Uuid::from_u128(0xB700), None, "root", Value::Null)
         .key(key_id, "writer", "crew/agent-7");
     assert!(
         poc.events[2]
@@ -10267,21 +10289,21 @@ async fn a_key_issued_without_guardrail_scope_folds_as_ancestors() {
 
 // --- S2: the read ---------------------------------------------------------
 
-/// A tenant with `crew` and `crew.team`, a writer on both and a dreamer:
-/// (boot, crew, team, writer, dreamer).
+/// A tenant with `crew` and `crew.team`, a writer on both and a reviewer:
+/// (boot, crew, team, writer, reviewer).
 async fn guardrail_tenant(app: &TestApp) -> (BootstrapResult, Uuid, Uuid, IssuedKey, IssuedKey) {
     let (boot, crew) = tenant(app).await;
     let admin = boot.admin_key.value.clone();
-    let team = workarea(app, &admin, "team", crew).await;
+    let team = workspace(app, &admin, "team", crew).await;
     let writer = issue(app, &admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(app, &admin, Role::Dreamer, "dana", crew).await;
-    (boot, crew, team, writer, dreamer)
+    let reviewer = issue(app, &admin, Role::Reviewer, "dana", crew).await;
+    (boot, crew, team, writer, reviewer)
 }
 
 #[tokio::test]
-async fn a_held_guardrail_is_never_served_as_a_rule_even_inside_an_in_progress_workarea() {
+async fn a_held_guardrail_is_never_served_as_a_rule_even_inside_an_in_progress_workspace() {
     let app = app();
-    let (boot, crew, _team, writer, _dreamer) = guardrail_tenant(&app).await;
+    let (boot, crew, _team, writer, _reviewer) = guardrail_tenant(&app).await;
     let admin = &boot.admin_key.value;
     app.submit_memory(
         &writer.value,
@@ -10314,12 +10336,12 @@ async fn a_held_guardrail_is_never_served_as_a_rule_even_inside_an_in_progress_w
 #[tokio::test]
 async fn recall_never_serves_kind_guardrail() {
     let app = app();
-    let (boot, crew, _team, writer, dreamer) = guardrail_tenant(&app).await;
+    let (boot, crew, _team, writer, reviewer) = guardrail_tenant(&app).await;
     let admin = &boot.admin_key.value;
     let rail = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &guardrail_req("g1", Severity::Must, "Rotate the canary weekly.", crew),
     )
     .await;
@@ -10353,19 +10375,19 @@ async fn recall_never_serves_kind_guardrail() {
 #[tokio::test]
 async fn an_ancestor_guardrail_is_served_only_to_a_key_whose_reader_access_covers_that_ancestor() {
     let app = app();
-    let (boot, crew, team, writer, dreamer) = guardrail_tenant(&app).await;
+    let (boot, crew, team, writer, reviewer) = guardrail_tenant(&app).await;
     let admin = &boot.admin_key.value;
     let parent = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &guardrail_req("g1", Severity::Must, "Run the tests first.", crew),
     )
     .await;
     let child = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &guardrail_req("g2", Severity::Must, "Ask before a migration.", team),
     )
     .await;
@@ -10390,21 +10412,21 @@ async fn an_ancestor_guardrail_is_served_only_to_a_key_whose_reader_access_cover
 }
 
 #[tokio::test]
-async fn guardrail_scope_workarea_serves_the_scope_node_alone() {
+async fn guardrail_scope_workspace_serves_the_scope_node_alone() {
     let app = app();
-    let (boot, crew, team, writer, dreamer) = guardrail_tenant(&app).await;
+    let (boot, crew, team, writer, reviewer) = guardrail_tenant(&app).await;
     let admin = &boot.admin_key.value;
     promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &guardrail_req("g1", Severity::Never, "Never push to main.", crew),
     )
     .await;
     let child = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &guardrail_req("g2", Severity::Must, "Ask before a migration.", team),
     )
     .await;
@@ -10412,8 +10434,8 @@ async fn guardrail_scope_workarea_serves_the_scope_node_alone() {
         .issue_key(
             admin,
             &IssueKeyRequest {
-                guardrail_scope: Some(GuardrailScope::Workarea),
-                default_workarea: Some(team.into()),
+                guardrail_scope: Some(GuardrailScope::Workspace),
+                default_workspace: Some(team.into()),
                 ..issue_req(Role::Reader, "rhea", vec![grant(crew, Role::Reader)])
             },
         )
@@ -10421,26 +10443,26 @@ async fn guardrail_scope_workarea_serves_the_scope_node_alone() {
         .expect("issue key");
     let set = guardrail_set(&app, &key.value).await;
     assert_eq!(set.scope_node, team);
-    assert_eq!(set.guardrail_scope, GuardrailScope::Workarea);
+    assert_eq!(set.guardrail_scope, GuardrailScope::Workspace);
     assert_eq!(served_guardrail_ids(&set), vec![child]);
 }
 
 #[tokio::test]
 async fn no_parameter_or_header_changes_the_guardrail_scope() {
     let app = app();
-    let (boot, crew, team, writer, dreamer) = guardrail_tenant(&app).await;
+    let (boot, crew, team, writer, reviewer) = guardrail_tenant(&app).await;
     let admin = &boot.admin_key.value;
     let parent = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &guardrail_req("g1", Severity::Never, "Never push to main.", crew),
     )
     .await;
     let child = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &guardrail_req("g2", Severity::Must, "Ask before a migration.", team),
     )
     .await;
@@ -10448,24 +10470,24 @@ async fn no_parameter_or_header_changes_the_guardrail_scope() {
         .issue_key(
             admin,
             &IssueKeyRequest {
-                guardrail_scope: Some(GuardrailScope::Workarea),
+                guardrail_scope: Some(GuardrailScope::Workspace),
                 ..issue_req(Role::Reader, "rhea", vec![grant(crew, Role::Reader)])
             },
         )
         .await
         .expect("issue key");
-    // X-OML-Workarea picks the node within the grants, never the scope.
+    // X-OML-Workspace picks the node within the grants, never the scope.
     for node in [crew, team] {
         let set = app
             .guardrails(
                 &narrow.value,
                 &GuardrailRequest {
-                    workarea: Some(node.into()),
+                    workspace: Some(node.into()),
                 },
             )
             .await
             .expect("read");
-        assert_eq!(set.guardrail_scope, GuardrailScope::Workarea);
+        assert_eq!(set.guardrail_scope, GuardrailScope::Workspace);
         assert_eq!(set.scope_node, node);
         let expected = if node == crew { parent } else { child };
         assert_eq!(served_guardrail_ids(&set), vec![expected]);
@@ -10475,9 +10497,9 @@ async fn no_parameter_or_header_changes_the_guardrail_scope() {
 #[tokio::test]
 async fn the_set_orders_by_severity_then_depth_then_promoted_at_then_artifact_id() {
     let app = app();
-    let (boot, crew, team, writer, dreamer) = guardrail_tenant(&app).await;
+    let (boot, crew, team, writer, reviewer) = guardrail_tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let (w, d) = (&writer.value, &dreamer.value);
+    let (w, d) = (&writer.value, &reviewer.value);
     let req = |idem, severity, node| guardrail_req(idem, severity, "A rule.", node);
     let should_root = promoted(&app, w, d, &req("g1", Severity::Should, crew)).await;
     let must_child = promoted(&app, w, d, &req("g2", Severity::Must, team)).await;
@@ -10507,11 +10529,11 @@ async fn the_set_orders_by_severity_then_depth_then_promoted_at_then_artifact_id
     let depths: Vec<u32> = set.guardrails.iter().map(|g| g.depth).collect();
     assert_eq!(depths, vec![2, 1, 1, 2, 1]);
     assert_eq!(
-        set.guardrails[0].workarea_path.as_deref(),
+        set.guardrails[0].workspace_path.as_deref(),
         Some("universe.crew.team")
     );
     assert_eq!(set.guardrails[0].verdicts.len(), 1);
-    assert_eq!(set.guardrails[0].verdicts[0].held_by, HeldBy::Agent);
+    assert_eq!(set.guardrails[0].verdicts[0].used_by, UsedBy::Agent);
     assert_eq!(
         set.guardrails[0].tokens,
         budget_tokens("A rule.".len() as u64)
@@ -10521,7 +10543,7 @@ async fn the_set_orders_by_severity_then_depth_then_promoted_at_then_artifact_id
 #[tokio::test]
 async fn rows_of_one_claim_key_with_different_severities_each_name_the_others_in_conflict() {
     let app = app();
-    let (boot, crew, team, writer, dreamer) = guardrail_tenant(&app).await;
+    let (boot, crew, team, writer, reviewer) = guardrail_tenant(&app).await;
     let admin = &boot.admin_key.value;
     let topic = |severity, node, idem: &str| SubmitRequest {
         on_similar: Default::default(),
@@ -10531,21 +10553,21 @@ async fn rows_of_one_claim_key_with_different_severities_each_name_the_others_in
     let root = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &topic(Severity::Must, crew, "g1"),
     )
     .await;
     let child = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &topic(Severity::Never, team, "g2"),
     )
     .await;
     let same = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &SubmitRequest {
             on_similar: Default::default(),
             claim_key: Some("tests".to_owned()),
@@ -10578,14 +10600,14 @@ async fn rows_of_one_claim_key_with_different_severities_each_name_the_others_in
 #[tokio::test]
 async fn a_set_over_twelve_is_served_whole_with_over_cap_true() {
     let app = app();
-    let (boot, crew, _team, writer, dreamer) = guardrail_tenant(&app).await;
+    let (boot, crew, _team, writer, reviewer) = guardrail_tenant(&app).await;
     let admin = &boot.admin_key.value;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     for i in 0..SET_CAP {
         promoted(
             &app,
             &writer.value,
-            &dreamer.value,
+            &reviewer.value,
             &guardrail_req(&format!("g{i}"), Severity::Must, "A rule.", crew),
         )
         .await;
@@ -10596,7 +10618,7 @@ async fn a_set_over_twelve_is_served_whole_with_over_cap_true() {
     promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &guardrail_req("g-over", Severity::Must, "A rule.", crew),
     )
     .await;
@@ -10608,13 +10630,13 @@ async fn a_set_over_twelve_is_served_whole_with_over_cap_true() {
 #[tokio::test]
 async fn the_read_logs_the_served_ids() {
     let app = app();
-    let (boot, crew, team, writer, dreamer) = guardrail_tenant(&app).await;
+    let (boot, crew, team, writer, reviewer) = guardrail_tenant(&app).await;
     let admin = &boot.admin_key.value;
     for (idem, node) in [("g1", crew), ("g2", team)] {
         promoted(
             &app,
             &writer.value,
-            &dreamer.value,
+            &reviewer.value,
             &guardrail_req(idem, Severity::Must, "A rule.", node),
         )
         .await;
@@ -10638,7 +10660,7 @@ async fn the_read_logs_the_served_ids() {
 // ADR-0010) ----------------------------------------------------------------
 
 /// Ratifies `proposal` by `ratifier` straight through the store, sealing the
-/// `workarea.status_transition` on the journal's head with the test key: the
+/// `workspace.status_transition` on the journal's head with the test key: the
 /// ratify use case is a later step, and these tests need a node moved up the
 /// ladder to propose on.
 async fn ratify_in_store(
@@ -10653,12 +10675,12 @@ async fn ratify_in_store(
     let draft = EventDraft {
         tenant_id: proposal.tenant_id,
         event_id: Uuid::from_u128(0xF000_0000 + u128::from(head.envelope.seq)),
-        event_type: event_types::WORKAREA_STATUS_TRANSITION.to_owned(),
+        event_type: event_types::WORKSPACE_STATUS_TRANSITION.to_owned(),
         principal: "fixture-ratifier".to_owned(),
         api_key_id: Some(ratifier),
         at: head.envelope.at.clone(),
         payload: json!({
-            "workarea_id": proposal.workarea_id.to_string(),
+            "workspace_id": proposal.workspace_id.to_string(),
             "to": proposal.to.as_str(),
             "transition_id": proposal.transition_id.to_string(),
             "ratified_by_key_id": ratifier.to_string(),
@@ -10676,7 +10698,7 @@ async fn ratify_in_store(
             event,
             fold: oml_app::ports::MetadataFold::TransitionRatified {
                 transition_id: proposal.transition_id,
-                workarea_id: proposal.workarea_id,
+                workspace_id: proposal.workspace_id,
                 to: proposal.to,
                 ratifier_key_id: ratifier,
             },
@@ -10695,15 +10717,15 @@ async fn climb(
     store: &MemStore,
     (tenant, admin, ratifier): (Uuid, &str, Uuid),
     node: Uuid,
-    to: WorkareaStatus,
+    to: WorkspaceStatus,
 ) {
     let current = store
-        .workarea(tenant, node)
+        .workspace(tenant, node)
         .await
         .expect("read")
         .expect("the node")
         .status;
-    for rung in [WorkareaStatus::Committed, WorkareaStatus::Validated] {
+    for rung in [WorkspaceStatus::Protected, WorkspaceStatus::Frozen] {
         if rung <= current || rung > to {
             continue;
         }
@@ -10717,7 +10739,7 @@ async fn climb(
 
 /// An admin proposes on its key role: the proposal is a pending row naming
 /// the admin as proposer, the node keeps its status until a second identity
-/// ratifies, and exactly one `workarea.status_proposed` is journalled with
+/// ratifies, and exactly one `workspace.status_proposed` is journalled with
 /// the event catalog's payload (ADR-0009 d3; event-catalog.md).
 #[tokio::test]
 async fn an_admin_proposes_development_to_committed_and_it_stays_pending_with_one_status_proposed_event()
@@ -10732,13 +10754,13 @@ async fn an_admin_proposes_development_to_committed_and_it_stays_pending_with_on
         .propose_transition(
             &boot.admin_key.value,
             by_name("crew"),
-            WorkareaStatus::Committed,
+            WorkspaceStatus::Protected,
         )
         .await
         .expect("an admin proposes");
     assert_eq!(
         (
-            proposal.workarea_id,
+            proposal.workspace_id,
             proposal.from,
             proposal.to,
             proposal.state,
@@ -10748,16 +10770,20 @@ async fn an_admin_proposes_development_to_committed_and_it_stays_pending_with_on
         ),
         (
             crew,
-            WorkareaStatus::Development,
-            WorkareaStatus::Committed,
+            WorkspaceStatus::Development,
+            WorkspaceStatus::Protected,
             oml_app::types::TransitionState::Pending,
             boot.admin_key.key_id,
             "alice-admin",
             None,
         )
     );
-    let node = store.workarea(t, crew).await.expect("read").expect("node");
-    assert_eq!(node.status, WorkareaStatus::Development, "it stays pending");
+    let node = store.workspace(t, crew).await.expect("read").expect("node");
+    assert_eq!(
+        node.status,
+        WorkspaceStatus::Development,
+        "it stays pending"
+    );
     assert_eq!(
         store.pending_transitions(t, crew).await.expect("read"),
         vec![proposal.clone()]
@@ -10768,40 +10794,40 @@ async fn an_admin_proposes_development_to_committed_and_it_stays_pending_with_on
     let event = events.last().expect("the proposal event");
     assert_eq!(
         event.envelope.event_type,
-        event_types::WORKAREA_STATUS_PROPOSED
+        event_types::WORKSPACE_STATUS_PROPOSED
     );
     assert_eq!(event.envelope.api_key_id, Some(boot.admin_key.key_id));
     assert_eq!(
         event.envelope.payload,
         json!({
-            "workarea_id": crew.to_string(),
+            "workspace_id": crew.to_string(),
             "from": "development",
-            "to": "committed",
+            "to": "protected",
             "transition_id": proposal.transition_id.to_string(),
             "proposed_by_key_id": boot.admin_key.key_id.to_string(),
         })
     );
 }
 
-/// A dreamer key passes the verb ceiling and proposes where its effective
-/// access holds dreamer, here inherited from a grant on the parent
+/// A reviewer key passes the verb ceiling and proposes where its effective
+/// access holds reviewer, here inherited from a grant on the parent
 /// (ADR-0009 d3; ADR-0010; roles-and-keys.md refusal order).
 #[tokio::test]
-async fn a_dreamer_with_dreamer_access_on_the_node_proposes_a_transition() {
+async fn a_reviewer_with_reviewer_access_on_the_node_proposes_a_transition() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let quarter = workarea(&app, admin, "q1-2027", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let quarter = workspace(&app, admin, "q1-2027", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dora", crew).await;
 
     let proposal = app
-        .propose_transition(&dreamer.value, quarter.into(), WorkareaStatus::Committed)
+        .propose_transition(&reviewer.value, quarter.into(), WorkspaceStatus::Protected)
         .await
-        .expect("a dreamer proposes");
-    assert_eq!(proposal.proposer_key_id, dreamer.key_id);
+        .expect("a reviewer proposes");
+    assert_eq!(proposal.proposer_key_id, reviewer.key_id);
     assert_eq!(proposal.proposer_principal, "dora");
-    assert_eq!(proposal.workarea_id, quarter);
+    assert_eq!(proposal.workspace_id, quarter);
     assert_eq!(
         store
             .pending_transitions(boot.tenant_id, quarter)
@@ -10830,7 +10856,7 @@ async fn a_writer_or_reader_key_proposing_a_transition_is_refused_by_the_verb_ce
     for (key, role) in [(&writer, Role::Writer), (&reader, Role::Reader)] {
         for node in [by_name("crew"), by_name("no-such-node")] {
             let err = app
-                .propose_transition(&key.value, node, WorkareaStatus::Committed)
+                .propose_transition(&key.value, node, WorkspaceStatus::Protected)
                 .await
                 .unwrap_err();
             assert!(
@@ -10843,19 +10869,19 @@ async fn a_writer_or_reader_key_proposing_a_transition_is_refused_by_the_verb_ce
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
 }
 
-/// A dreamer key that reads the node but holds no dreamer role on it is
-/// refused `access.grant_refused` naming the node and `dreamer`
+/// A reviewer key that reads the node but holds no reviewer role on it is
+/// refused `access.grant_refused` naming the node and `reviewer`
 /// (roles-and-keys.md refusal order, step 3).
 #[tokio::test]
-async fn a_dreamer_reading_but_not_dreaming_on_the_node_is_refused_with_needed_role_dreamer() {
+async fn a_reviewer_reading_but_not_dreaming_on_the_node_is_refused_with_needed_role_reviewer() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let dreamer = issue_with(
+    let reviewer = issue_with(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "dora",
         vec![grant(crew, Role::Reader)],
     )
@@ -10863,35 +10889,35 @@ async fn a_dreamer_reading_but_not_dreaming_on_the_node_is_refused_with_needed_r
     let before = journal(&store, boot.tenant_id).await.len();
 
     let err = app
-        .propose_transition(&dreamer.value, by_name("crew"), WorkareaStatus::Committed)
+        .propose_transition(&reviewer.value, by_name("crew"), WorkspaceStatus::Protected)
         .await
         .unwrap_err();
     assert!(
         matches!(
             err,
-            AppError::GrantRefused { workarea_id, needed_role: Role::Dreamer } if workarea_id == crew
+            AppError::GrantRefused { workspace_id, needed_role: Role::Reviewer } if workspace_id == crew
         ),
         "{err:?}"
     );
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
 }
 
-/// Outside its read access a dreamer cannot tell the node from absence: a
+/// Outside its read access a reviewer cannot tell the node from absence: a
 /// sibling it holds no grant on, and a name no row holds, both answer
 /// `access.not_found` (roles-and-keys.md refusal order, step 2).
 #[tokio::test]
-async fn a_dreamer_outside_read_access_gets_not_found() {
+async fn a_reviewer_outside_read_access_gets_not_found() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let other = workspace(&app, admin, "other", boot.root_workspace_id).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dora", crew).await;
     let before = journal(&store, boot.tenant_id).await.len();
 
     for node in [other.into(), by_name("other"), by_name("no-such-node")] {
         let err = app
-            .propose_transition(&dreamer.value, node, WorkareaStatus::Committed)
+            .propose_transition(&reviewer.value, node, WorkspaceStatus::Protected)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::NotFound), "{err:?}");
@@ -10901,7 +10927,7 @@ async fn a_dreamer_outside_read_access_gets_not_found() {
 
 /// The ladder refuses before anything is sealed: the same rung, a skipped
 /// rung, and any status on the universe root each answer
-/// `workarea.transition_refused` with its reason, and the journal is
+/// `workspace.transition_refused` with its reason, and the journal is
 /// unchanged (ADR-0009 d1, d3; errors.md).
 #[tokio::test]
 async fn proposing_committed_on_a_committed_node_validated_from_development_or_anything_on_universe_is_transition_refused_and_journals_nothing()
@@ -10910,48 +10936,48 @@ async fn proposing_committed_on_a_committed_node_validated_from_development_or_a
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let ratifier = issue(&app, admin, Role::Dreamer, "dora", crew).await;
-    let fresh = workarea(&app, admin, "fresh", boot.root_workarea_id).await;
+    let ratifier = issue(&app, admin, Role::Reviewer, "dora", crew).await;
+    let fresh = workspace(&app, admin, "fresh", boot.root_workspace_id).await;
     climb(
         &app,
         &store,
         (boot.tenant_id, admin, ratifier.key_id),
         crew,
-        WorkareaStatus::Committed,
+        WorkspaceStatus::Protected,
     )
     .await;
     let before = journal(&store, boot.tenant_id).await.len();
 
-    let root = boot.root_workarea_id;
+    let root = boot.root_workspace_id;
     let cases = [
         (
             crew,
-            WorkareaStatus::Committed,
-            WorkareaStatus::Committed,
+            WorkspaceStatus::Protected,
+            WorkspaceStatus::Protected,
             LadderRefusal::Same,
         ),
         (
             fresh,
-            WorkareaStatus::Development,
-            WorkareaStatus::Validated,
+            WorkspaceStatus::Development,
+            WorkspaceStatus::Frozen,
             LadderRefusal::Skipped,
         ),
         (
             root,
-            WorkareaStatus::Committed,
-            WorkareaStatus::Development,
+            WorkspaceStatus::Protected,
+            WorkspaceStatus::Development,
             LadderRefusal::Universe,
         ),
         (
             root,
-            WorkareaStatus::Committed,
-            WorkareaStatus::Committed,
+            WorkspaceStatus::Protected,
+            WorkspaceStatus::Protected,
             LadderRefusal::Universe,
         ),
         (
             root,
-            WorkareaStatus::Committed,
-            WorkareaStatus::Validated,
+            WorkspaceStatus::Protected,
+            WorkspaceStatus::Frozen,
             LadderRefusal::Universe,
         ),
     ];
@@ -10963,8 +10989,8 @@ async fn proposing_committed_on_a_committed_node_validated_from_development_or_a
         assert!(
             matches!(
                 err,
-                AppError::TransitionRefused { workarea_id, from: f, to: t, reason: r }
-                    if workarea_id == node && f == from && t == to && r == reason
+                AppError::TransitionRefused { workspace_id, from: f, to: t, reason: r }
+                    if workspace_id == node && f == from && t == to && r == reason
             ),
             "{node} {to:?}: {err:?}"
         );
@@ -10972,8 +10998,8 @@ async fn proposing_committed_on_a_committed_node_validated_from_development_or_a
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
 }
 
-/// A step to `validated` needs every child `validated`: with a child
-/// `committed` the proposal is refused `children_not_validated` and
+/// A step to `frozen` needs every child `frozen`: with a child
+/// `protected` the proposal is refused `children_not_frozen` and
 /// journals nothing (ADR-0009 d4).
 #[tokio::test]
 async fn validated_is_refused_while_a_child_is_committed() {
@@ -10981,33 +11007,33 @@ async fn validated_is_refused_while_a_child_is_committed() {
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let quarter = workarea(&app, admin, "q1-2027", crew).await;
-    let ratifier = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let quarter = workspace(&app, admin, "q1-2027", crew).await;
+    let ratifier = issue(&app, admin, Role::Reviewer, "dora", crew).await;
     for node in [crew, quarter] {
         climb(
             &app,
             &store,
             (boot.tenant_id, admin, ratifier.key_id),
             node,
-            WorkareaStatus::Committed,
+            WorkspaceStatus::Protected,
         )
         .await;
     }
     let before = journal(&store, boot.tenant_id).await.len();
 
     let err = app
-        .propose_transition(admin, crew.into(), WorkareaStatus::Validated)
+        .propose_transition(admin, crew.into(), WorkspaceStatus::Frozen)
         .await
         .unwrap_err();
     assert!(
         matches!(
             err,
             AppError::TransitionRefused {
-                workarea_id,
-                from: WorkareaStatus::Committed,
-                to: WorkareaStatus::Validated,
-                reason: LadderRefusal::ChildrenNotValidated,
-            } if workarea_id == crew
+                workspace_id,
+                from: WorkspaceStatus::Protected,
+                to: WorkspaceStatus::Frozen,
+                reason: LadderRefusal::ChildrenNotFrozen,
+            } if workspace_id == crew
         ),
         "{err:?}"
     );
@@ -11019,10 +11045,10 @@ async fn validated_is_refused_while_a_child_is_committed() {
         &store,
         (boot.tenant_id, admin, ratifier.key_id),
         quarter,
-        WorkareaStatus::Validated,
+        WorkspaceStatus::Frozen,
     )
     .await;
-    app.propose_transition(admin, crew.into(), WorkareaStatus::Validated)
+    app.propose_transition(admin, crew.into(), WorkspaceStatus::Frozen)
         .await
         .expect("every child validated");
 }
@@ -11030,48 +11056,48 @@ async fn validated_is_refused_while_a_child_is_committed() {
 // -- the status ladder: ratifying a transition by a second identity
 // (ADR-0009 d3, d4; ADR-0010 R2) ------------------------------------------
 
-/// A dreamer key, held by a service, on `node`.
-async fn service_dreamer(app: &TestApp, admin: &str, principal: &str, node: Uuid) -> IssuedKey {
+/// A reviewer key, used by a service, on `node`.
+async fn service_reviewer(app: &TestApp, admin: &str, principal: &str, node: Uuid) -> IssuedKey {
     app.issue_key(
         admin,
         &IssueKeyRequest {
-            held_by: Some(HeldBy::Service),
-            ..issue_req(Role::Dreamer, principal, vec![grant(node, Role::Dreamer)])
+            used_by: Some(UsedBy::Service),
+            ..issue_req(Role::Reviewer, principal, vec![grant(node, Role::Reviewer)])
         },
     )
     .await
     .expect("issue a service key")
 }
 
-/// Asserts `err` is `workarea.transition_refused` on `node` with `reason`.
+/// Asserts `err` is `workspace.transition_refused` on `node` with `reason`.
 fn assert_refused(err: &AppError, node: Uuid, reason: LadderRefusal) {
     assert!(
         matches!(
             err,
-            AppError::TransitionRefused { workarea_id, reason: r, .. }
-                if *workarea_id == node && *r == reason
+            AppError::TransitionRefused { workspace_id, reason: r, .. }
+                if *workspace_id == node && *r == reason
         ),
         "{err:?}"
     );
 }
 
-/// A dreamer other than the proposer ratifies: the node's status becomes
-/// `to`, and exactly one `workarea.status_transition` is journalled, signed
+/// A reviewer other than the proposer ratifies: the node's status becomes
+/// `to`, and exactly one `workspace.status_transition` is journalled, signed
 /// by the ratifier's principal and key, carrying the catalog's payload with
-/// the policy in force; a step to `validated` adds the precondition it
-/// evaluated, `children_all_validated` (ADR-0009 d3, d4; event-catalog.md).
+/// the policy in force; a step to `frozen` adds the precondition it
+/// evaluated, `children_all_frozen` (ADR-0009 d3, d4; event-catalog.md).
 #[tokio::test]
-async fn a_second_dreamer_ratifies_and_the_workarea_becomes_committed_with_the_policy_snapshot_journalled()
+async fn a_second_reviewer_ratifies_and_the_workspace_becomes_committed_with_the_policy_snapshot_journalled()
  {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let t = boot.tenant_id;
     let admin = &boot.admin_key.value;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
 
     let proposal = app
-        .propose_transition(admin, by_name("crew"), WorkareaStatus::Committed)
+        .propose_transition(admin, by_name("crew"), WorkspaceStatus::Protected)
         .await
         .expect("a proposal");
     let before = journal(&store, t).await.len();
@@ -11080,11 +11106,11 @@ async fn a_second_dreamer_ratifies_and_the_workarea_becomes_committed_with_the_p
         .await
         .expect("a second identity ratifies");
     assert_eq!(
-        (record.workarea_id, record.status),
-        (crew, WorkareaStatus::Committed)
+        (record.workspace_id, record.status),
+        (crew, WorkspaceStatus::Protected)
     );
-    let node = store.workarea(t, crew).await.expect("read").expect("node");
-    assert_eq!(node.status, WorkareaStatus::Committed);
+    let node = store.workspace(t, crew).await.expect("read").expect("node");
+    assert_eq!(node.status, WorkspaceStatus::Protected);
     assert!(
         store
             .pending_transitions(t, crew)
@@ -11098,27 +11124,27 @@ async fn a_second_dreamer_ratifies_and_the_workarea_becomes_committed_with_the_p
     let event = events.last().expect("the ratification");
     assert_eq!(
         event.envelope.event_type,
-        event_types::WORKAREA_STATUS_TRANSITION
+        event_types::WORKSPACE_STATUS_TRANSITION
     );
     assert_eq!(event.envelope.principal, "dora");
     assert_eq!(event.envelope.api_key_id, Some(dora.key_id));
     assert_eq!(
         event.envelope.payload,
         json!({
-            "workarea_id": crew.to_string(),
+            "workspace_id": crew.to_string(),
             "from": "development",
-            "to": "committed",
+            "to": "protected",
             "transition_id": proposal.transition_id.to_string(),
             "proposed_by_key_id": boot.admin_key.key_id.to_string(),
             "ratified_by_key_id": dora.key_id.to_string(),
             "same_user": false,
-            "policy_snapshot": { "k": 1, "required_roles": ["dreamer"] },
+            "policy_snapshot": { "k": 1, "required_roles": ["reviewer"] },
         })
     );
 
-    // The step to validated snapshots the precondition it evaluated.
+    // The step to frozen snapshots the precondition it evaluated.
     let proposal = app
-        .propose_transition(admin, crew.into(), WorkareaStatus::Validated)
+        .propose_transition(admin, crew.into(), WorkspaceStatus::Frozen)
         .await
         .expect("a proposal");
     app.ratify_transition(&dora.value, crew.into(), proposal.transition_id)
@@ -11127,7 +11153,7 @@ async fn a_second_dreamer_ratifies_and_the_workarea_becomes_committed_with_the_p
     let event = journal(&store, t).await.pop().expect("the ratification");
     assert_eq!(
         event.envelope.payload["policy_snapshot"],
-        json!({ "k": 1, "required_roles": ["dreamer"], "children_all_validated": true })
+        json!({ "k": 1, "required_roles": ["reviewer"], "children_all_frozen": true })
     );
 }
 
@@ -11138,9 +11164,9 @@ async fn the_proposing_key_cannot_ratify_its_own_transition() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
-    let dora = issue(&app, &boot.admin_key.value, Role::Dreamer, "dora", crew).await;
+    let dora = issue(&app, &boot.admin_key.value, Role::Reviewer, "dora", crew).await;
     let proposal = app
-        .propose_transition(&dora.value, crew.into(), WorkareaStatus::Committed)
+        .propose_transition(&dora.value, crew.into(), WorkspaceStatus::Protected)
         .await
         .expect("a proposal");
     let before = journal(&store, boot.tenant_id).await.len();
@@ -11151,8 +11177,8 @@ async fn the_proposing_key_cannot_ratify_its_own_transition() {
         .unwrap_err();
     assert!(matches!(err, AppError::RatifierIsProposer), "{err:?}");
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
-    let node = store.workarea(boot.tenant_id, crew).await.expect("read");
-    assert_eq!(node.expect("node").status, WorkareaStatus::Development);
+    let node = store.workspace(boot.tenant_id, crew).await.expect("read");
+    assert_eq!(node.expect("node").status, WorkspaceStatus::Development);
 }
 
 /// R2 compares principals too: a second key of the proposing principal is
@@ -11163,10 +11189,10 @@ async fn a_second_key_of_the_proposing_principal_cannot_ratify() {
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
-    let dora_again = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
+    let dora_again = issue(&app, admin, Role::Reviewer, "dora", crew).await;
     let proposal = app
-        .propose_transition(&dora.value, crew.into(), WorkareaStatus::Committed)
+        .propose_transition(&dora.value, crew.into(), WorkspaceStatus::Protected)
         .await
         .expect("a proposal");
     let before = journal(&store, boot.tenant_id).await.len();
@@ -11179,7 +11205,7 @@ async fn a_second_key_of_the_proposing_principal_cannot_ratify() {
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
 }
 
-/// A `held_by: service` key, and a reader or writer key, are refused
+/// A `used_by: service` key, and a reader or writer key, are refused
 /// `access.verb_ceiling` before any name resolves or any transition is
 /// looked up (roles-and-keys.md refusal order; ADR-0010).
 #[tokio::test]
@@ -11188,18 +11214,18 @@ async fn a_service_key_is_refused_ratification_by_the_verb_ceiling_before_any_lo
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let service = service_dreamer(&app, admin, "reconciler", crew).await;
+    let service = service_reviewer(&app, admin, "reconciler", crew).await;
     let writer = agent(&app, admin, "wanda", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rita", crew).await;
     let proposal = app
-        .propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .propose_transition(admin, crew.into(), WorkspaceStatus::Protected)
         .await
         .expect("a proposal");
     let before = journal(&store, boot.tenant_id).await.len();
     let lookups = store.name_lookups();
 
     for (key, role) in [
-        (&service, Role::Dreamer),
+        (&service, Role::Reviewer),
         (&writer, Role::Writer),
         (&reader, Role::Reader),
     ] {
@@ -11222,54 +11248,54 @@ async fn a_service_key_is_refused_ratification_by_the_verb_ceiling_before_any_lo
 }
 
 /// Ratification acts on the node as it is: a child created after a
-/// proposal to `validated` makes its ratification `transition_refused`
-/// with reason `children_not_validated`, journalling nothing (ADR-0009 d4;
-/// workareas.md, ratification re-checks).
+/// proposal to `frozen` makes its ratification `transition_refused`
+/// with reason `children_not_frozen`, journalling nothing (ADR-0009 d4;
+/// workspaces.md, ratification re-checks).
 #[tokio::test]
 async fn a_child_created_after_the_validated_proposal_makes_its_ratification_transition_refused() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
     climb(
         &app,
         &store,
         (boot.tenant_id, admin, dora.key_id),
         crew,
-        WorkareaStatus::Committed,
+        WorkspaceStatus::Protected,
     )
     .await;
     let proposal = app
-        .propose_transition(admin, crew.into(), WorkareaStatus::Validated)
+        .propose_transition(admin, crew.into(), WorkspaceStatus::Frozen)
         .await
         .expect("no child yet");
-    workarea(&app, admin, "late-child", crew).await;
+    workspace(&app, admin, "late-child", crew).await;
     let before = journal(&store, boot.tenant_id).await.len();
 
     let err = app
         .ratify_transition(&dora.value, crew.into(), proposal.transition_id)
         .await
         .unwrap_err();
-    assert_refused(&err, crew, LadderRefusal::ChildrenNotValidated);
+    assert_refused(&err, crew, LadderRefusal::ChildrenNotFrozen);
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
-    let node = store.workarea(boot.tenant_id, crew).await.expect("read");
-    assert_eq!(node.expect("node").status, WorkareaStatus::Committed);
+    let node = store.workspace(boot.tenant_id, crew).await.expect("read");
+    assert_eq!(node.expect("node").status, WorkspaceStatus::Protected);
 }
 
 /// A ratified proposal is no longer live: a second ratification is
 /// `transition_refused` with reason `stale`, and journals nothing
-/// (workareas.md, ratification re-checks).
+/// (workspaces.md, ratification re-checks).
 #[tokio::test]
 async fn a_transition_ratified_once_is_refused_as_stale_the_second_time() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
-    let dan = issue(&app, admin, Role::Dreamer, "dan", crew).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
+    let dan = issue(&app, admin, Role::Reviewer, "dan", crew).await;
     let proposal = app
-        .propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .propose_transition(admin, crew.into(), WorkspaceStatus::Protected)
         .await
         .expect("a proposal");
     app.ratify_transition(&dora.value, crew.into(), proposal.transition_id)
@@ -11288,18 +11314,18 @@ async fn a_transition_ratified_once_is_refused_as_stale_the_second_time() {
 }
 
 /// A transition is addressed under its node: an id that names another
-/// workarea's proposal, and an id no row holds, both answer
+/// workspace's proposal, and an id no row holds, both answer
 /// `access.not_found` (roles-and-keys.md refusal order).
 #[tokio::test]
-async fn a_transition_id_of_another_workarea_is_not_found() {
+async fn a_transition_id_of_another_workspace_is_not_found() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let quarter = workarea(&app, admin, "q1-2027", crew).await;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let quarter = workspace(&app, admin, "q1-2027", crew).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
     let proposal = app
-        .propose_transition(admin, quarter.into(), WorkareaStatus::Committed)
+        .propose_transition(admin, quarter.into(), WorkspaceStatus::Protected)
         .await
         .expect("a proposal on the child");
     let before = journal(&store, boot.tenant_id).await.len();
@@ -11312,21 +11338,24 @@ async fn a_transition_id_of_another_workarea_is_not_found() {
         assert!(matches!(err, AppError::NotFound), "{err:?}");
     }
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
-    let node = store.workarea(boot.tenant_id, quarter).await.expect("read");
-    assert_eq!(node.expect("node").status, WorkareaStatus::Development);
+    let node = store
+        .workspace(boot.tenant_id, quarter)
+        .await
+        .expect("read");
+    assert_eq!(node.expect("node").status, WorkspaceStatus::Development);
 }
 
-/// The ladder climbs development → committed → validated through the two
-/// verbs, and from `validated` every proposal is refused, backward or same:
-/// no verb moves a workarea down (ADR-0009 d3, d5).
+/// The ladder climbs development → protected → frozen through the two
+/// verbs, and from `frozen` every proposal is refused, backward or same:
+/// no verb moves a workspace down (ADR-0009 d3, d5).
 #[tokio::test]
-async fn no_verb_moves_a_workarea_down_the_ladder() {
+async fn no_verb_moves_a_workspace_down_the_ladder() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
-    for rung in [WorkareaStatus::Committed, WorkareaStatus::Validated] {
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
+    for rung in [WorkspaceStatus::Protected, WorkspaceStatus::Frozen] {
         let proposal = app
             .propose_transition(admin, crew.into(), rung)
             .await
@@ -11340,9 +11369,9 @@ async fn no_verb_moves_a_workarea_down_the_ladder() {
     let before = journal(&store, boot.tenant_id).await.len();
 
     for (to, reason) in [
-        (WorkareaStatus::Development, LadderRefusal::Backward),
-        (WorkareaStatus::Committed, LadderRefusal::Backward),
-        (WorkareaStatus::Validated, LadderRefusal::Same),
+        (WorkspaceStatus::Development, LadderRefusal::Backward),
+        (WorkspaceStatus::Protected, LadderRefusal::Backward),
+        (WorkspaceStatus::Frozen, LadderRefusal::Same),
     ] {
         for key in [admin.as_str(), dora.value.as_str()] {
             let err = app
@@ -11353,13 +11382,13 @@ async fn no_verb_moves_a_workarea_down_the_ladder() {
         }
     }
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
-    let node = store.workarea(boot.tenant_id, crew).await.expect("read");
-    assert_eq!(node.expect("node").status, WorkareaStatus::Validated);
+    let node = store.workspace(boot.tenant_id, crew).await.expect("read");
+    assert_eq!(node.expect("node").status, WorkspaceStatus::Frozen);
 }
 
 /// A tenant whose one principal is its admin cannot freeze an area alone:
 /// the admin's own key, a second admin key of the same principal, and a
-/// dreamer key it issues to itself are each the proposer under R2
+/// reviewer key it issues to itself are each the proposer under R2
 /// (ADR-0009 d3; ADR-0010 R2).
 #[tokio::test]
 async fn a_one_admin_tenant_cannot_freeze_alone() {
@@ -11368,9 +11397,9 @@ async fn a_one_admin_tenant_cannot_freeze_alone() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let second_admin = issue_with(&app, admin, Role::Admin, "alice-admin", Vec::new()).await;
-    let own_dreamer = issue(&app, admin, Role::Dreamer, "alice-admin", crew).await;
+    let own_reviewer = issue(&app, admin, Role::Reviewer, "alice-admin", crew).await;
     let proposal = app
-        .propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .propose_transition(admin, crew.into(), WorkspaceStatus::Protected)
         .await
         .expect("a proposal");
     let before = journal(&store, boot.tenant_id).await.len();
@@ -11378,7 +11407,7 @@ async fn a_one_admin_tenant_cannot_freeze_alone() {
     for key in [
         admin.as_str(),
         second_admin.value.as_str(),
-        own_dreamer.value.as_str(),
+        own_reviewer.value.as_str(),
     ] {
         let err = app
             .ratify_transition(key, crew.into(), proposal.transition_id)
@@ -11387,18 +11416,18 @@ async fn a_one_admin_tenant_cannot_freeze_alone() {
         assert!(matches!(err, AppError::RatifierIsProposer), "{err:?}");
     }
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
-    let node = store.workarea(boot.tenant_id, crew).await.expect("read");
-    assert_eq!(node.expect("node").status, WorkareaStatus::Development);
+    let node = store.workspace(boot.tenant_id, crew).await.expect("read");
+    assert_eq!(node.expect("node").status, WorkspaceStatus::Development);
 }
 
-// -- freeze: a validated area refuses by admission policy, never by grant
+// -- freeze: a frozen area refuses by admission policy, never by grant
 // resolution (ADR-0009 d2, d4, d5) ----------------------------------------
 
-/// Moves `node` to `validated` through the real verbs: the admin proposes
-/// each rung and `ratifier`, a second identity with dreamer access on the
+/// Moves `node` to `frozen` through the real verbs: the admin proposes
+/// each rung and `ratifier`, a second identity with reviewer access on the
 /// node, ratifies it.
 async fn freeze(app: &TestApp, admin: &str, ratifier: &str, node: Uuid) {
-    for rung in [WorkareaStatus::Committed, WorkareaStatus::Validated] {
+    for rung in [WorkspaceStatus::Protected, WorkspaceStatus::Frozen] {
         let proposal = app
             .propose_transition(admin, node.into(), rung)
             .await
@@ -11409,12 +11438,12 @@ async fn freeze(app: &TestApp, admin: &str, ratifier: &str, node: Uuid) {
     }
 }
 
-/// Asserts `err` is `workarea.frozen` on `node` for `op`.
+/// Asserts `err` is `workspace.frozen` on `node` for `op`.
 fn assert_frozen(err: &AppError, node: Uuid, op: FrozenOp) {
     assert!(
         matches!(
             err,
-            AppError::WorkareaFrozen { workarea_id, op: o } if *workarea_id == node && *o == op
+            AppError::WorkspaceFrozen { workspace_id, op: o } if *workspace_id == node && *o == op
         ),
         "{err:?}"
     );
@@ -11423,17 +11452,17 @@ fn assert_frozen(err: &AppError, node: Uuid, op: FrozenOp) {
 /// A writer key holding writer and reader on the root reaches the crew area
 /// by inheritance, a second writer holds them on the crew itself with the
 /// crew as its default, and each submits with and without the header, the
-/// scan's veto marker included: every one is `workarea.frozen`, before the
+/// scan's veto marker included: every one is `workspace.frozen`, before the
 /// scan, and nothing is journalled or queued (ADR-0009 d5;
-/// workareas.md refusal matrix, new claim write).
+/// workspaces.md refusal matrix, new claim write).
 #[tokio::test]
-async fn a_submission_into_a_validated_workarea_is_frozen_for_every_holder_of_write_access_and_journals_nothing()
+async fn a_submission_into_a_validated_workspace_is_frozen_for_every_holder_of_write_access_and_journals_nothing()
  {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
     let on_crew = agent(&app, admin, "crew/agent-7", crew).await;
     let on_root = issue_with(
         &app,
@@ -11441,8 +11470,8 @@ async fn a_submission_into_a_validated_workarea_is_frozen_for_every_holder_of_wr
         Role::Writer,
         "rooted",
         vec![
-            grant(boot.root_workarea_id, Role::Writer),
-            grant(boot.root_workarea_id, Role::Reader),
+            grant(boot.root_workspace_id, Role::Writer),
+            grant(boot.root_workspace_id, Role::Reader),
         ],
     )
     .await;
@@ -11483,15 +11512,15 @@ async fn a_submission_into_a_validated_workarea_is_frozen_for_every_holder_of_wr
 /// Effective access is consulted before status: a key the area is outside
 /// of is `access.not_found`, one that only reads it is
 /// `access.grant_refused`, and a reader key is `access.verb_ceiling`, as
-/// they would be on an open area (workareas.md refusal matrix preamble).
+/// they would be on an open area (workspaces.md refusal matrix preamble).
 #[tokio::test]
-async fn a_key_without_access_to_a_validated_workarea_still_gets_its_access_refusal_first() {
+async fn a_key_without_access_to_a_validated_workspace_still_gets_its_access_refusal_first() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let elsewhere = workarea(&app, admin, "elsewhere", boot.root_workarea_id).await;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let elsewhere = workspace(&app, admin, "elsewhere", boot.root_workspace_id).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
     let outsider = agent(&app, admin, "outsider", elsewhere).await;
     let only_reads = issue_with(
         &app,
@@ -11517,7 +11546,7 @@ async fn a_key_without_access_to_a_validated_workarea_still_gets_its_access_refu
     assert!(
         matches!(
             err,
-            AppError::GrantRefused { workarea_id, needed_role: Role::Writer } if workarea_id == crew
+            AppError::GrantRefused { workspace_id, needed_role: Role::Writer } if workspace_id == crew
         ),
         "{err:?}"
     );
@@ -11530,25 +11559,25 @@ async fn a_key_without_access_to_a_validated_workarea_still_gets_its_access_refu
 }
 
 /// A supersession, a retirement included, of a promoted tip in an area
-/// validated since is `workarea.frozen` at step 5's last check, whether the
-/// author or a dreamer proposing an edit sends it, and journals nothing;
+/// frozen since is `workspace.frozen` at step 5's last check, whether the
+/// author or a reviewer proposing an edit sends it, and journals nothing;
 /// the target-dependent refusals before it still answer first
 /// (roles-and-keys.md supersede, step 5; ADR-0009 d5).
 #[tokio::test]
-async fn a_supersede_whose_target_lies_in_a_validated_workarea_is_frozen() {
+async fn a_supersede_whose_target_lies_in_a_validated_workspace_is_frozen() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let open = workarea(&app, admin, "open", boot.root_workarea_id).await;
+    let open = workspace(&app, admin, "open", boot.root_workspace_id).await;
     let writer = agent(&app, admin, "crew/agent-7", crew).await;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
     let editor = issue_with(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "eddie",
-        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+        vec![grant(crew, Role::Reviewer), grant(crew, Role::Reader)],
     )
     .await;
     let target = promoted(
@@ -11576,35 +11605,38 @@ async fn a_supersede_whose_target_lies_in_a_validated_workarea_is_frozen() {
         assert_frozen(&err, crew, FrozenOp::Write);
     }
 
-    // A body `workarea` other than the target's is answered before freeze.
+    // A body `workspace` other than the target's is answered before freeze.
     let err = app
         .supersede(
             &writer.value,
             &SupersedeRequest {
                 on_similar: Default::default(),
-                workarea: Some(open.into()),
+                workspace: Some(open.into()),
                 ..supersede_req("s5", target, "x")
             },
         )
         .await
         .unwrap_err();
-    assert!(matches!(err, AppError::WorkareaNotTarget { .. }), "{err:?}");
+    assert!(
+        matches!(err, AppError::WorkspaceNotTarget { .. }),
+        "{err:?}"
+    );
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
 }
 
 /// A row held when its area is validated cannot be approved: the approval
-/// is `workarea.frozen` before its verdict is sealed, nothing is journalled,
-/// and the row stays held, visible to its author (ADR-0009 d5; workareas.md
+/// is `workspace.frozen` before its verdict is sealed, nothing is journalled,
+/// and the row stays held, visible to its author (ADR-0009 d5; workspaces.md
 /// refusal matrix, promotion).
 #[tokio::test]
-async fn an_approval_of_a_held_row_in_a_workarea_validated_after_submission_is_frozen_and_the_row_stays_held()
+async fn an_approval_of_a_held_row_in_a_workspace_validated_after_submission_is_frozen_and_the_row_stays_held()
  {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = agent(&app, admin, "crew/agent-7", crew).await;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
     let id = app
         .submit_memory(&writer.value, &submit_req("h1", "the canary drains first"))
         .await
@@ -11632,22 +11664,22 @@ async fn an_approval_of_a_held_row_in_a_workarea_validated_after_submission_is_f
     assert_eq!(own.memory.status, MemoryStatus::Held);
 }
 
-/// No child is created under a validated node, by id or by name, and
-/// nothing is journalled; a child under a committed node is still created
-/// (ADR-0009 d4; workareas.md child-status rule).
+/// No child is created under a frozen node, by id or by name, and
+/// nothing is journalled; a child under a protected node is still created
+/// (ADR-0009 d4; workspaces.md child-status rule).
 #[tokio::test]
-async fn creating_a_child_under_a_validated_workarea_is_frozen() {
+async fn creating_a_child_under_a_validated_workspace_is_frozen() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
-    let committed = workarea(&app, admin, "committed", boot.root_workarea_id).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
+    let committed = workspace(&app, admin, "protected", boot.root_workspace_id).await;
     let proposal = app
-        .propose_transition(admin, committed.into(), WorkareaStatus::Committed)
+        .propose_transition(admin, committed.into(), WorkspaceStatus::Protected)
         .await
         .expect("a proposal");
-    let ratifier = issue(&app, admin, Role::Dreamer, "rita", committed).await;
+    let ratifier = issue(&app, admin, Role::Reviewer, "rita", committed).await;
     app.ratify_transition(&ratifier.value, committed.into(), proposal.transition_id)
         .await
         .expect("ratified");
@@ -11656,36 +11688,36 @@ async fn creating_a_child_under_a_validated_workarea_is_frozen() {
 
     for parent in [Reference::from(crew), by_name("crew")] {
         let err = app
-            .create_workarea(admin, &name("late-child"), Some(parent), None)
+            .create_workspace(admin, &name("late-child"), Some(parent), None)
             .await
             .unwrap_err();
         assert_frozen(&err, crew, FrozenOp::CreateChild);
     }
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
-    workarea(&app, admin, "child", committed).await;
+    workspace(&app, admin, "child", committed).await;
 }
 
-/// The crew-metadata update is one of the three mutations a validated area
-/// admits: the workarea is pointed at a crew record, and that record's
-/// charter is corrected, each journalled (ADR-0009 d5; workareas.md crew
+/// The crew-metadata update is one of the three mutations a frozen area
+/// admits: the workspace is pointed at a crew record, and that record's
+/// charter is corrected, each journalled (ADR-0009 d5; workspaces.md crew
 /// records).
 #[tokio::test]
-async fn a_validated_workareas_crew_record_can_still_be_updated() {
+async fn a_validated_workspaces_crew_record_can_still_be_updated() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
     let record = metals_crew(&app, admin).await;
     freeze(&app, admin, &dora.value, crew).await;
     let before = journal(&store, boot.tenant_id).await.len();
 
     let pointed = app
-        .set_workarea_crew(admin, crew.into(), by_name("metals-crew"))
+        .set_workspace_crew(admin, crew.into(), by_name("metals-crew"))
         .await
         .expect("a frozen area's crew is corrected");
     assert_eq!(pointed.crew_id, Some(record.crew_id));
-    assert_eq!(pointed.status, WorkareaStatus::Validated);
+    assert_eq!(pointed.status, WorkspaceStatus::Frozen);
     let updated = app
         .update_crew(
             admin,
@@ -11698,7 +11730,7 @@ async fn a_validated_workareas_crew_record_can_still_be_updated() {
         .await
         .expect("the record stays correctable");
     let info = app
-        .workarea_info(admin, Some(crew.into()))
+        .workspace_info(admin, Some(crew.into()))
         .await
         .expect("read");
     assert_eq!(info.crew, Some(updated));
@@ -11709,23 +11741,23 @@ async fn a_validated_workareas_crew_record_can_still_be_updated() {
     assert_eq!(
         types,
         [
-            event_types::WORKAREA_CREW_UPDATED,
+            event_types::WORKSPACE_CREW_UPDATED,
             event_types::CREW_UPDATED
         ]
     );
 }
 
 /// Freezing is not archival: the recall and the get of a promoted claim
-/// answer the same after the area is validated as before (workareas.md,
+/// answer the same after the area is validated as before (workspaces.md,
 /// frozen is not read-only-dead).
 #[tokio::test]
-async fn a_validated_workarea_still_serves_recall_and_get_of_its_promoted_claims() {
+async fn a_validated_workspace_still_serves_recall_and_get_of_its_promoted_claims() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = agent(&app, admin, "crew/agent-7", crew).await;
     let rhea = issue(&app, admin, Role::Reader, "rhea", crew).await;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
     let id = promoted(
         &app,
         &writer.value,
@@ -11751,7 +11783,7 @@ async fn a_validated_workarea_still_serves_recall_and_get_of_its_promoted_claims
 
 /// Freezing journals only its transitions: no grant is issued, edited or
 /// denied, and every key's permission epoch stays where it was
-/// (ADR-0009 d2; workareas.md permission epoch).
+/// (ADR-0009 d2; workspaces.md permission epoch).
 #[tokio::test]
 async fn freezing_changes_no_grant_and_no_permission_epoch() {
     let store = MemStore::new();
@@ -11762,9 +11794,9 @@ async fn freezing_changes_no_grant_and_no_permission_epoch() {
     let dora = issue_with(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "dora",
-        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+        vec![grant(crew, Role::Reviewer), grant(crew, Role::Reader)],
     )
     .await;
     let access = || async {
@@ -11772,7 +11804,7 @@ async fn freezing_changes_no_grant_and_no_permission_epoch() {
         for key in [&writer, &dora] {
             let detail = app.key(admin, key.key_id.into()).await.expect("key read");
             let epoch = app
-                .workarea_info(&key.value, Some(crew.into()))
+                .workspace_info(&key.value, Some(crew.into()))
                 .await
                 .expect("a readable node")
                 .permission_epoch;
@@ -11792,8 +11824,8 @@ async fn freezing_changes_no_grant_and_no_permission_epoch() {
     assert!(
         types
             .iter()
-            .all(|t| t == event_types::WORKAREA_STATUS_PROPOSED
-                || t == event_types::WORKAREA_STATUS_TRANSITION),
+            .all(|t| t == event_types::WORKSPACE_STATUS_PROPOSED
+                || t == event_types::WORKSPACE_STATUS_TRANSITION),
         "{types:?}"
     );
 }
@@ -11806,7 +11838,7 @@ async fn freezing_changes_no_grant_and_no_permission_epoch() {
 fn seen_by_another(t: &oml_app::types::TransitionRecord) -> TransitionView {
     TransitionView {
         transition_id: t.transition_id,
-        workarea_id: t.workarea_id,
+        workspace_id: t.workspace_id,
         from: t.from,
         to: t.to,
         state: t.state,
@@ -11817,7 +11849,7 @@ fn seen_by_another(t: &oml_app::types::TransitionRecord) -> TransitionView {
 /// The status read serves the node's stored status, the review policy in
 /// force and its live proposals in proposal order; a ratification makes
 /// every other proposal from the old rung stale, and the read drops them
-/// (http-api.md `GET /v2/workareas/{id}/status`; workareas.md, the status
+/// (http-api.md `GET /v2/workspaces/{id}/status`; workspaces.md, the status
 /// read lists only live proposals; ADR-0009 d3).
 #[tokio::test]
 async fn the_status_read_lists_pending_transitions_in_proposal_order_and_the_policy_in_force() {
@@ -11825,31 +11857,31 @@ async fn the_status_read_lists_pending_transitions_in_proposal_order_and_the_pol
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
     let rita = issue(&app, admin, Role::Reader, "rita", crew).await;
 
     let first = app
-        .propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .propose_transition(admin, crew.into(), WorkspaceStatus::Protected)
         .await
         .expect("a proposal");
     let second = app
-        .propose_transition(&dora.value, crew.into(), WorkareaStatus::Committed)
+        .propose_transition(&dora.value, crew.into(), WorkspaceStatus::Protected)
         .await
         .expect("a second proposal");
     let third = app
-        .propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .propose_transition(admin, crew.into(), WorkspaceStatus::Protected)
         .await
         .expect("a third proposal");
 
     let view = app
-        .workarea_status(&rita.value, by_name("crew"))
+        .workspace_status(&rita.value, by_name("crew"))
         .await
         .expect("a reader reads the status");
-    assert_eq!(view.workarea_id, crew);
-    assert_eq!(view.status, WorkareaStatus::Development);
+    assert_eq!(view.workspace_id, crew);
+    assert_eq!(view.status, WorkspaceStatus::Development);
     assert_eq!(
         view.policy,
-        json!({ "k": 1, "required_roles": ["dreamer"] })
+        json!({ "k": 1, "required_roles": ["reviewer"] })
     );
     assert_eq!(
         view.pending,
@@ -11860,10 +11892,10 @@ async fn the_status_read_lists_pending_transitions_in_proposal_order_and_the_pol
         .await
         .expect("a second identity ratifies");
     let view = app
-        .workarea_status(&rita.value, crew.into())
+        .workspace_status(&rita.value, crew.into())
         .await
         .expect("a reader reads the status");
-    assert_eq!(view.status, WorkareaStatus::Committed);
+    assert_eq!(view.status, WorkspaceStatus::Protected);
     assert!(view.pending.is_empty(), "stale proposals are not live");
     let stored = store
         .pending_transitions(boot.tenant_id, crew)
@@ -11872,11 +11904,11 @@ async fn the_status_read_lists_pending_transitions_in_proposal_order_and_the_pol
     assert_eq!(stored, vec![second, third], "the stale rows stay pending");
 
     let next = app
-        .propose_transition(admin, crew.into(), WorkareaStatus::Validated)
+        .propose_transition(admin, crew.into(), WorkspaceStatus::Frozen)
         .await
         .expect("a proposal from the new rung");
     let view = app
-        .workarea_status(&rita.value, crew.into())
+        .workspace_status(&rita.value, crew.into())
         .await
         .expect("a reader reads the status");
     assert_eq!(view.pending, vec![seen_by_another(&next)]);
@@ -11891,28 +11923,28 @@ async fn an_admin_reads_a_nodes_pending_transitions_without_any_grant() {
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let quarter = workarea(&app, admin, "q1-2027", crew).await;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", quarter).await;
+    let quarter = workspace(&app, admin, "q1-2027", crew).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", quarter).await;
     let bob = issue_with(&app, admin, Role::Admin, "bob-admin", Vec::new()).await;
     let proposal = app
-        .propose_transition(&dora.value, quarter.into(), WorkareaStatus::Committed)
+        .propose_transition(&dora.value, quarter.into(), WorkspaceStatus::Protected)
         .await
-        .expect("a dreamer proposes");
+        .expect("a reviewer proposes");
 
     let view = app
-        .workarea_status(&bob.value, by_name("q1-2027"))
+        .workspace_status(&bob.value, by_name("q1-2027"))
         .await
         .expect("an admin reads structure");
     assert_eq!(
-        (view.workarea_id, view.status, view.pending),
+        (view.workspace_id, view.status, view.pending),
         (
             quarter,
-            WorkareaStatus::Development,
+            WorkspaceStatus::Development,
             vec![seen_by_another(&proposal)]
         )
     );
     let err = app
-        .workarea_status(&bob.value, Uuid::from_u128(0xDEAD).into())
+        .workspace_status(&bob.value, Uuid::from_u128(0xDEAD).into())
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::NotFound), "{err:?}");
@@ -11927,15 +11959,15 @@ async fn a_key_without_read_access_gets_not_found_from_the_status_read() {
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
+    let other = workspace(&app, admin, "other", boot.root_workspace_id).await;
     let outsider = issue(&app, admin, Role::Reader, "otto", other).await;
-    app.propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+    app.propose_transition(admin, crew.into(), WorkspaceStatus::Protected)
         .await
         .expect("a proposal");
 
     for node in [crew.into(), by_name("crew"), by_name("no-such-node")] {
         let err = app
-            .workarea_status(&outsider.value, node)
+            .workspace_status(&outsider.value, node)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::NotFound), "{err:?}");
@@ -11947,7 +11979,7 @@ async fn a_key_without_read_access_gets_not_found_from_the_status_read() {
 /// proposer's principal or the tenant, and it names the proposing key only
 /// to a key in the proposer's own key set, as the tail does: a reader of
 /// the node, an admin among them, learns that a proposal waits, never which
-/// key made it (workareas.md, the status read names the proposing key only
+/// key made it (workspaces.md, the status read names the proposing key only
 /// to its own key set; http-api.md#events-tail; ADR-0025 d15).
 #[tokio::test]
 async fn a_status_read_never_names_the_proposers_principal_and_names_the_proposing_key_only_to_that_key()
@@ -11959,34 +11991,34 @@ async fn a_status_read_never_names_the_proposers_principal_and_names_the_proposi
     let dora = issue_with(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "dora-the-proposer",
-        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+        vec![grant(crew, Role::Reviewer), grant(crew, Role::Reader)],
     )
     .await;
     let rita = issue(&app, admin, Role::Reader, "rita", crew).await;
     let proposal = app
-        .propose_transition(&dora.value, crew.into(), WorkareaStatus::Committed)
+        .propose_transition(&dora.value, crew.into(), WorkspaceStatus::Protected)
         .await
-        .expect("a dreamer proposes");
+        .expect("a reviewer proposes");
     let served = |proposed_by_key_id| TransitionView {
         transition_id: proposal.transition_id,
-        workarea_id: crew,
-        from: WorkareaStatus::Development,
-        to: WorkareaStatus::Committed,
+        workspace_id: crew,
+        from: WorkspaceStatus::Development,
+        to: WorkspaceStatus::Protected,
         state: TransitionState::Pending,
         proposed_by_key_id,
     };
 
     let own = app
-        .workarea_status(&dora.value, crew.into())
+        .workspace_status(&dora.value, crew.into())
         .await
         .expect("the proposer reads the node");
     assert_eq!(own.pending, vec![served(Some(dora.key_id))]);
 
     for reader in [&rita.value, admin] {
         let view = app
-            .workarea_status(reader, crew.into())
+            .workspace_status(reader, crew.into())
             .await
             .expect("a reader of the node");
         assert_eq!(view.pending, vec![served(None)]);
@@ -11997,11 +12029,11 @@ async fn a_status_read_never_names_the_proposers_principal_and_names_the_proposi
     }
 }
 
-/// The workarea read serves the status the row stores: `validated` once a
+/// The workspace read serves the status the row stores: `frozen` once a
 /// second identity ratified the last rung, and the status read agrees
 /// (ADR-0009 d1, d3; ADR-0025 d14).
 #[tokio::test]
-async fn the_workarea_read_serves_validated_after_ratification() {
+async fn the_workspace_read_serves_validated_after_ratification() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
@@ -12009,29 +12041,29 @@ async fn the_workarea_read_serves_validated_after_ratification() {
     let dora = issue_with(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "dora",
-        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+        vec![grant(crew, Role::Reviewer), grant(crew, Role::Reader)],
     )
     .await;
 
     freeze(&app, admin, &dora.value, crew).await;
     let info = app
-        .workarea_info(&dora.value, Some(crew.into()))
+        .workspace_info(&dora.value, Some(crew.into()))
         .await
         .expect("a readable node");
-    assert_eq!(info.workarea.status, WorkareaStatus::Validated);
+    assert_eq!(info.workspace.status, WorkspaceStatus::Frozen);
     let view = app
-        .workarea_status(&dora.value, crew.into())
+        .workspace_status(&dora.value, crew.into())
         .await
         .expect("a readable node");
-    assert_eq!(view.status, info.workarea.status);
+    assert_eq!(view.status, info.workspace.status);
     assert!(view.pending.is_empty());
 }
 
-/// The tail shows `workarea.status_proposed` and
-/// `workarea.status_transition` to a key that reads the node, judged on the
-/// payload's `workarea_id`, and neither to a key that does not
+/// The tail shows `workspace.status_proposed` and
+/// `workspace.status_transition` to a key that reads the node, judged on the
+/// payload's `workspace_id`, and neither to a key that does not
 /// (http-api.md#events-tail; event-catalog.md; ADR-0025 d15).
 #[tokio::test]
 async fn a_reader_of_the_node_sees_status_proposed_and_status_transition_on_the_tail_and_a_non_reader_sees_neither()
@@ -12040,12 +12072,12 @@ async fn a_reader_of_the_node_sees_status_proposed_and_status_transition_on_the_
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
+    let other = workspace(&app, admin, "other", boot.root_workspace_id).await;
     let rita = issue(&app, admin, Role::Reader, "rita", crew).await;
     let otto = issue(&app, admin, Role::Reader, "otto", other).await;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
     let proposal = app
-        .propose_transition(admin, crew.into(), WorkareaStatus::Committed)
+        .propose_transition(admin, crew.into(), WorkspaceStatus::Protected)
         .await
         .expect("a proposal");
     app.ratify_transition(&dora.value, crew.into(), proposal.transition_id)
@@ -12055,7 +12087,7 @@ async fn a_reader_of_the_node_sees_status_proposed_and_status_transition_on_the_
     let status_events = |page: oml_app::types::TailPage| -> Vec<(String, Value)> {
         page.events
             .into_iter()
-            .filter(|e| e.event.envelope.event_type.starts_with("workarea.status_"))
+            .filter(|e| e.event.envelope.event_type.starts_with("workspace.status_"))
             .map(|e| (e.event.envelope.event_type.clone(), e.payload))
             .collect()
     };
@@ -12068,12 +12100,12 @@ async fn a_reader_of_the_node_sees_status_proposed_and_status_transition_on_the_
     assert_eq!(
         types,
         [
-            event_types::WORKAREA_STATUS_PROPOSED,
-            event_types::WORKAREA_STATUS_TRANSITION
+            event_types::WORKSPACE_STATUS_PROPOSED,
+            event_types::WORKSPACE_STATUS_TRANSITION
         ]
     );
     for (_, payload) in &seen {
-        assert_eq!(payload["workarea_id"], json!(crew.to_string()));
+        assert_eq!(payload["workspace_id"], json!(crew.to_string()));
         assert_eq!(
             payload["transition_id"],
             json!(proposal.transition_id.to_string())
@@ -12097,13 +12129,13 @@ async fn the_chain_with_transition_events_verifies() {
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let dora = issue(&app, admin, Role::Reviewer, "dora", crew).await;
 
     freeze(&app, admin, &dora.value, crew).await;
     let events = journal(&store, boot.tenant_id).await;
     let count = |t: &str| events.iter().filter(|e| e.envelope.event_type == t).count();
-    assert_eq!(count(event_types::WORKAREA_STATUS_PROPOSED), 2);
-    assert_eq!(count(event_types::WORKAREA_STATUS_TRANSITION), 2);
+    assert_eq!(count(event_types::WORKSPACE_STATUS_PROPOSED), 2);
+    assert_eq!(count(event_types::WORKSPACE_STATUS_TRANSITION), 2);
 
     let head = app.verify_chain(admin).await.expect("the chain verifies");
     assert_eq!(head.seq, events.last().expect("a chain").envelope.seq);
@@ -12193,8 +12225,8 @@ async fn a_claim_edge_proposed_between_a_verdicts_reviewer_check_and_its_commit_
     let admin = &boot.admin_key.value;
     let alice = issue(&app, admin, Role::Writer, "alice", crew).await;
     let bob_writer = issue(&app, admin, Role::Writer, "bob", crew).await;
-    let bob_dreamer = issue(&app, admin, Role::Dreamer, "bob", crew).await;
-    let pat = issue(&app, admin, Role::Dreamer, "pat", crew).await;
+    let bob_reviewer = issue(&app, admin, Role::Reviewer, "bob", crew).await;
+    let pat = issue(&app, admin, Role::Reviewer, "pat", crew).await;
     let a = app
         .submit_memory(&alice.value, &submit_req("edge-a", "alice's fact"))
         .await
@@ -12211,7 +12243,7 @@ async fn a_claim_edge_proposed_between_a_verdicts_reviewer_check_and_its_commit_
     // The edge joins bob's row to alice's while bob's verdict is in flight.
     propose_before_next_head(&store, pending_edge(boot.tenant_id, &pat, a, b));
     let err = app
-        .post_verdict(&bob_dreamer.value, a, Verdict::Approve, None)
+        .post_verdict(&bob_reviewer.value, a, Verdict::Approve, None)
         .await
         .unwrap_err();
     assert!(
@@ -12240,8 +12272,8 @@ async fn a_claim_edge_proposed_on_an_ancestor_between_a_captures_ancestor_read_a
     let alice = issue(&app, admin, Role::Writer, "alice", crew).await;
     let bob = issue(&app, admin, Role::Writer, "bob", crew).await;
     let carol = agent(&app, admin, "carol", crew).await;
-    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
-    let pat = issue(&app, admin, Role::Dreamer, "pat", crew).await;
+    let dana = issue(&app, admin, Role::Reviewer, "dana", crew).await;
+    let pat = issue(&app, admin, Role::Reviewer, "pat", crew).await;
     let a = promoted(
         &app,
         &alice.value,
@@ -12286,8 +12318,8 @@ async fn a_claim_edge_proposed_on_a_target_between_a_supersedes_target_read_and_
     let admin = &boot.admin_key.value;
     let carol = agent(&app, admin, "carol", crew).await;
     let bob = issue(&app, admin, Role::Writer, "bob", crew).await;
-    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
-    let pat = issue(&app, admin, Role::Dreamer, "pat", crew).await;
+    let dana = issue(&app, admin, Role::Reviewer, "dana", crew).await;
+    let pat = issue(&app, admin, Role::Reviewer, "pat", crew).await;
     let target = promoted(
         &app,
         &carol.value,
@@ -12323,16 +12355,16 @@ async fn a_claim_edge_proposed_on_a_target_between_a_supersedes_target_read_and_
 // Proposing a claim edge (ADR-0008 d5; ADR-0012; ADR-0021 d5)
 // ---------------------------------------------------------------------------
 
-/// A dreamer-role key holding dreamer and reader on `node`: the key that
-/// proposes an edge between two of the node's versions (workareas.md, edge
+/// A reviewer-role key holding reviewer and reader on `node`: the key that
+/// proposes an edge between two of the node's versions (workspaces.md, edge
 /// authority).
 async fn curator(app: &TestApp, admin: &str, principal: &str, node: Uuid) -> IssuedKey {
     issue_with(
         app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         principal,
-        vec![grant(node, Role::Dreamer), grant(node, Role::Reader)],
+        vec![grant(node, Role::Reviewer), grant(node, Role::Reader)],
     )
     .await
 }
@@ -12346,14 +12378,14 @@ fn edge_req(from: Uuid, to: Uuid, label: &str) -> ProposeClaimEdge {
 }
 
 #[tokio::test]
-async fn a_dreamer_proposes_a_claim_edge_and_it_is_journalled_pending_as_claim_edge_proposed() {
+async fn a_reviewer_proposes_a_claim_edge_and_it_is_journalled_pending_as_claim_edge_proposed() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let alice = agent(&app, admin, "alice", crew).await;
     let bob = agent(&app, admin, "bob", crew).await;
-    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let dana = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let pat = curator(&app, admin, "pat", crew).await;
     let a = promoted(&app, &alice.value, &dana.value, &submit_req("prop-a", "a")).await;
     let b = promoted(&app, &bob.value, &dana.value, &submit_req("prop-b", "b")).await;
@@ -12446,23 +12478,24 @@ async fn a_writer_key_proposing_a_claim_edge_is_refused_access_verb_ceiling() {
 }
 
 #[tokio::test]
-async fn a_dreamer_without_dreamer_on_either_endpoints_workarea_is_refused_access_grant_refused() {
+async fn a_reviewer_without_reviewer_on_either_endpoints_workspace_is_refused_access_grant_refused()
+{
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
+    let other = workspace(&app, admin, "other", boot.root_workspace_id).await;
     let alice = agent(&app, admin, "alice", crew).await;
-    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let dana = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let a = promoted(&app, &alice.value, &dana.value, &submit_req("gr-a", "a")).await;
     let b = promoted(&app, &alice.value, &dana.value, &submit_req("gr-b", "b")).await;
-    // Reader on the endpoints' workarea, dreamer only elsewhere.
+    // Reader on the endpoints' workspace, reviewer only elsewhere.
     let rhea = issue_with(
         &app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "rhea",
-        vec![grant(crew, Role::Reader), grant(other, Role::Dreamer)],
+        vec![grant(crew, Role::Reader), grant(other, Role::Reviewer)],
     )
     .await;
     let before = journal(&store, boot.tenant_id).await.len();
@@ -12475,9 +12508,9 @@ async fn a_dreamer_without_dreamer_on_either_endpoints_workarea_is_refused_acces
         matches!(
             err,
             AppError::GrantRefused {
-                workarea_id,
-                needed_role: Role::Dreamer,
-            } if workarea_id == crew
+                workspace_id,
+                needed_role: Role::Reviewer,
+            } if workspace_id == crew
         ),
         "{err:?}"
     );
@@ -12490,14 +12523,14 @@ async fn an_endpoint_outside_the_keys_read_scope_answers_access_not_found_as_an_
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let elsewhere = workarea(&app, admin, "elsewhere", boot.root_workarea_id).await;
+    let elsewhere = workspace(&app, admin, "elsewhere", boot.root_workspace_id).await;
     let alice = agent(&app, admin, "alice", crew).await;
     let erin = agent(&app, admin, "erin", elsewhere).await;
-    let eve = issue(&app, admin, Role::Dreamer, "eve", elsewhere).await;
-    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let eve = issue(&app, admin, Role::Reviewer, "eve", elsewhere).await;
+    let dana = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let pat = curator(&app, admin, "pat", crew).await;
     let a = promoted(&app, &alice.value, &dana.value, &submit_req("scope-a", "a")).await;
-    // Promoted, but in a workarea where pat holds no reader.
+    // Promoted, but in a workspace where pat holds no reader.
     let unseen = promoted(&app, &erin.value, &eve.value, &submit_req("scope-u", "u")).await;
     let before = journal(&store, boot.tenant_id).await.len();
 
@@ -12530,7 +12563,7 @@ async fn a_replayed_idempotency_key_answers_the_first_proposal_and_journals_once
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let alice = agent(&app, admin, "alice", crew).await;
-    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let dana = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let pat = curator(&app, admin, "pat", crew).await;
     let a = promoted(&app, &alice.value, &dana.value, &submit_req("idem-a", "a")).await;
     let b = promoted(&app, &alice.value, &dana.value, &submit_req("idem-b", "b")).await;
@@ -12574,8 +12607,8 @@ async fn a_pending_edge_refuses_a_verdict_on_a_held_row_deriving_from_an_endpoin
     let alice = agent(&app, admin, "alice", crew).await;
     let carol = agent(&app, admin, "carol", crew).await;
     let bob_writer = agent(&app, admin, "bob", crew).await;
-    let bob_dreamer = issue(&app, admin, Role::Dreamer, "bob", crew).await;
-    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let bob_reviewer = issue(&app, admin, Role::Reviewer, "bob", crew).await;
+    let dana = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let pat = curator(&app, admin, "pat", crew).await;
     let c = promoted(&app, &carol.value, &dana.value, &submit_req("verd-c", "c")).await;
     let b = promoted(
@@ -12600,7 +12633,7 @@ async fn a_pending_edge_refuses_a_verdict_on_a_held_row_deriving_from_an_endpoin
         .await
         .expect("propose");
     let err = app
-        .post_verdict(&bob_dreamer.value, a, Verdict::Approve, None)
+        .post_verdict(&bob_reviewer.value, a, Verdict::Approve, None)
         .await
         .unwrap_err();
     assert!(
@@ -12627,8 +12660,8 @@ async fn review_next_never_serves_a_held_row_deriving_from_an_endpoint_to_the_au
     let alice = agent(&app, admin, "alice", crew).await;
     let carol = agent(&app, admin, "carol", crew).await;
     let bob_writer = agent(&app, admin, "bob", crew).await;
-    let bob_dreamer = issue(&app, admin, Role::Dreamer, "bob", crew).await;
-    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let bob_reviewer = issue(&app, admin, Role::Reviewer, "bob", crew).await;
+    let dana = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let pat = curator(&app, admin, "pat", crew).await;
     let c = promoted(&app, &carol.value, &dana.value, &submit_req("queue-c", "c")).await;
     let b = promoted(
@@ -12650,7 +12683,7 @@ async fn review_next_never_serves_a_held_row_deriving_from_an_endpoint_to_the_au
     .await;
 
     let served = app
-        .review_next(&bob_dreamer.value)
+        .review_next(&bob_reviewer.value)
         .await
         .expect("review next")
         .map(|m| m.memory.memory_id);
@@ -12664,7 +12697,7 @@ async fn review_next_never_serves_a_held_row_deriving_from_an_endpoint_to_the_au
         .await
         .expect("propose");
     let served = app
-        .review_next(&bob_dreamer.value)
+        .review_next(&bob_reviewer.value)
         .await
         .expect("review next")
         .map(|m| m.memory.memory_id);
@@ -12673,7 +12706,7 @@ async fn review_next_never_serves_a_held_row_deriving_from_an_endpoint_to_the_au
 
 /// Another author's row is in a key's read scope only once promoted
 /// (roles-and-keys.md footnote 5; `App::readable`): a held, rejected,
-/// demoted or erased one in a workarea where the key holds dreamer and
+/// demoted or erased one in a workspace where the key holds reviewer and
 /// reader answers as an absent row does, and journals nothing.
 #[tokio::test]
 async fn another_authors_held_rejected_demoted_or_erased_endpoint_answers_access_not_found() {
@@ -12682,7 +12715,7 @@ async fn another_authors_held_rejected_demoted_or_erased_endpoint_answers_access
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let alice = agent(&app, admin, "alice", crew).await;
-    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let dana = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let pat = curator(&app, admin, "pat", crew).await;
     let seen = promoted(&app, &alice.value, &dana.value, &submit_req("st-p", "p")).await;
     let held_row = held(&app, &alice.value, &submit_req("st-h", "h")).await;
@@ -12719,7 +12752,7 @@ async fn an_oml_about_proposal_is_refused_request_validation_and_journals_nothin
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let alice = agent(&app, admin, "alice", crew).await;
-    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let dana = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let pat = curator(&app, admin, "pat", crew).await;
     let a = promoted(&app, &alice.value, &dana.value, &submit_req("about-a", "a")).await;
     let b = promoted(&app, &alice.value, &dana.value, &submit_req("about-b", "b")).await;
@@ -12747,12 +12780,12 @@ async fn an_oml_about_proposal_is_refused_request_validation_and_journals_nothin
 // ---------------------------------------------------------------------------
 
 /// A promoted term whose `claim_key` is `curie`, written by `writer` and
-/// approved by `dreamer` (ADR-0021 d2: a term's claim_key is its CURIE).
-async fn term(app: &TestApp, writer: &str, dreamer: &str, idem: &str, curie: &str) -> Uuid {
+/// approved by `reviewer` (ADR-0021 d2: a term's claim_key is its CURIE).
+async fn term(app: &TestApp, writer: &str, reviewer: &str, idem: &str, curie: &str) -> Uuid {
     promoted(
         app,
         writer,
-        dreamer,
+        reviewer,
         &SubmitRequest {
             on_similar: Default::default(),
             kind: MemoryKind::Term,
@@ -12858,7 +12891,7 @@ async fn edge_fixture() -> EdgeFixture {
     let admin = &boot.admin_key.value;
     let alice = agent(&app, admin, "alice", crew).await;
     let bob = agent(&app, admin, "bob", crew).await;
-    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let dana = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let pat = curator(&app, admin, "pat", crew).await;
     let a = promoted(&app, &alice.value, &dana.value, &submit_req("rat-a", "a")).await;
     let b = promoted(&app, &bob.value, &dana.value, &submit_req("rat-b", "b")).await;
@@ -12890,7 +12923,7 @@ fn closure_digest(principals: &[&str], key_ids: &[Uuid]) -> String {
 }
 
 #[tokio::test]
-async fn a_second_dreamer_ratifies_a_pending_edge_and_review_ratify_names_it_with_subject_kind_claim_edge()
+async fn a_second_reviewer_ratifies_a_pending_edge_and_review_ratify_names_it_with_subject_kind_claim_edge()
  {
     let f = edge_fixture().await;
     let admin = &f.boot.admin_key.value;
@@ -12943,7 +12976,7 @@ async fn a_second_dreamer_ratifies_a_pending_edge_and_review_ratify_names_it_wit
             "same_user": false,
             "policy_snapshot": {
                 "k": 1,
-                "required_roles": ["dreamer"],
+                "required_roles": ["reviewer"],
                 "independence_axis": "principal",
                 "human_required": false,
             },
@@ -13066,13 +13099,13 @@ async fn another_key_of_the_proposers_principal_is_refused_review_ratifier_is_pr
 async fn a_ratifier_who_authored_either_endpoint_is_refused_review_author_in_lineage() {
     let f = edge_fixture().await;
     let admin = &f.boot.admin_key.value;
-    // Dreamer keys of each endpoint's author: alice wrote the source, bob
+    // Reviewer keys of each endpoint's author: alice wrote the source, bob
     // the target.
-    let alice_dreamer = curator(&f.app, admin, "alice", f.crew).await;
-    let bob_dreamer = curator(&f.app, admin, "bob", f.crew).await;
+    let alice_reviewer = curator(&f.app, admin, "alice", f.crew).await;
+    let bob_reviewer = curator(&f.app, admin, "bob", f.crew).await;
     let before = journal(&f.store, f.boot.tenant_id).await.len();
 
-    for ratifier in [&alice_dreamer, &bob_dreamer] {
+    for ratifier in [&alice_reviewer, &bob_reviewer] {
         let err = f
             .app
             .ratify_claim_edge(&ratifier.value, f.edge_id, None)
@@ -13097,11 +13130,11 @@ async fn a_service_key_is_refused_claim_edge_ratify_with_access_verb_ceiling_eve
         .issue_key(
             admin,
             &IssueKeyRequest {
-                held_by: Some(HeldBy::Service),
+                used_by: Some(UsedBy::Service),
                 ..issue_req(
-                    Role::Dreamer,
+                    Role::Reviewer,
                     "reconciler",
-                    vec![grant(f.crew, Role::Dreamer), grant(f.crew, Role::Reader)],
+                    vec![grant(f.crew, Role::Reviewer), grant(f.crew, Role::Reader)],
                 )
             },
         )
@@ -13119,7 +13152,7 @@ async fn a_service_key_is_refused_claim_edge_ratify_with_access_verb_ceiling_eve
             matches!(
                 err,
                 AppError::VerbCeiling {
-                    role: Role::Dreamer,
+                    role: Role::Reviewer,
                     verb: "claim_edge.ratify",
                 }
             ),
@@ -13135,7 +13168,7 @@ async fn an_unknown_edge_id_answers_access_not_found() {
     let admin = &f.boot.admin_key.value;
     let rita = curator(&f.app, admin, "rita", f.crew).await;
     // An edge whose endpoints rita cannot read answers as an absent one.
-    let elsewhere = workarea(&f.app, admin, "elsewhere", f.boot.root_workarea_id).await;
+    let elsewhere = workspace(&f.app, admin, "elsewhere", f.boot.root_workspace_id).await;
     let outsider = curator(&f.app, admin, "otto", elsewhere).await;
     let before = journal(&f.store, f.boot.tenant_id).await.len();
 
@@ -13174,7 +13207,7 @@ async fn term_fixture() -> TermFixture {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let alice = agent(&app, admin, "alice", crew).await;
-    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let dana = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let pat = curator(&app, admin, "pat", crew).await;
     let rita = curator(&app, admin, "rita", crew).await;
     let ruth = curator(&app, admin, "ruth", crew).await;
@@ -13299,9 +13332,9 @@ async fn an_is_a_proposal_between_two_terms_whose_claim_keys_are_not_curies_is_r
         .await
         .expect("read")
         .expect("x")
-        .workarea_id;
+        .workspace_id;
     let alice = agent(&t.app, admin, "alice-2", crew).await;
-    let dana = issue(&t.app, admin, Role::Dreamer, "dana-2", crew).await;
+    let dana = issue(&t.app, admin, Role::Reviewer, "dana-2", crew).await;
     let plain = term(&t.app, &alice.value, &dana.value, "t-plain", "claim-plain").await;
     let before = journal(store, t.boot.tenant_id).await.len();
 
@@ -13467,14 +13500,14 @@ async fn of_two_ratifications_racing_to_close_an_is_a_cycle_one_commits_and_the_
 
 fn edges_of(artifact_id: Uuid) -> ClaimEdgeQuery {
     ClaimEdgeQuery {
-        workarea: None,
+        workspace: None,
         artifact_id: Some(artifact_id),
     }
 }
 
-fn edges_in(workarea: Reference) -> ClaimEdgeQuery {
+fn edges_in(workspace: Reference) -> ClaimEdgeQuery {
     ClaimEdgeQuery {
-        workarea: Some(workarea),
+        workspace: Some(workspace),
         artifact_id: None,
     }
 }
@@ -13534,18 +13567,18 @@ async fn the_claim_edges_read_lists_pending_and_ratified_edges_of_a_readable_art
 async fn an_edge_with_an_endpoint_outside_read_scope_is_absent_from_the_read() {
     let f = edge_fixture().await;
     let admin = &f.boot.admin_key.value;
-    let elsewhere = workarea(&f.app, admin, "elsewhere", f.boot.root_workarea_id).await;
+    let elsewhere = workspace(&f.app, admin, "elsewhere", f.boot.root_workspace_id).await;
     let erin = agent(&f.app, admin, "erin", elsewhere).await;
-    let eve = issue(&f.app, admin, Role::Dreamer, "eve", elsewhere).await;
+    let eve = issue(&f.app, admin, Role::Reviewer, "eve", elsewhere).await;
     let unseen = promoted(&f.app, &erin.value, &eve.value, &submit_req("far-u", "u")).await;
-    // A curator reading both workareas joins a to the row rory cannot read.
+    // A curator reading both workspaces joins a to the row rory cannot read.
     let quinn = issue_with(
         &f.app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "quinn",
         vec![
-            grant(f.crew, Role::Dreamer),
+            grant(f.crew, Role::Reviewer),
             grant(f.crew, Role::Reader),
             grant(elsewhere, Role::Reader),
         ],
@@ -13616,7 +13649,7 @@ async fn an_edge_to_a_version_demoted_after_its_proposal_is_absent_for_another_r
 }
 
 #[tokio::test]
-async fn an_edge_whose_endpoint_is_another_authors_held_row_in_a_readable_workarea_is_absent() {
+async fn an_edge_whose_endpoint_is_another_authors_held_row_in_a_readable_workspace_is_absent() {
     let f = edge_fixture().await;
     let admin = &f.boot.admin_key.value;
     let held = f
@@ -13683,7 +13716,7 @@ async fn another_tenants_key_reads_an_empty_page_by_this_tenants_artifact_and_it
         .await
         .expect("bootstrap another tenant");
     let globex_admin = &globex.admin_key.value;
-    let desk = workarea(&f.app, globex_admin, "desk", globex.root_workarea_id).await;
+    let desk = workspace(&f.app, globex_admin, "desk", globex.root_workspace_id).await;
     let gus = issue(&f.app, globex_admin, Role::Reader, "gus", desk).await;
 
     for query in [edges_of(f.a), edges_of(f.b), ClaimEdgeQuery::default()] {
@@ -13707,10 +13740,10 @@ async fn another_tenants_key_reads_an_empty_page_by_this_tenants_artifact_and_it
 }
 
 #[tokio::test]
-async fn a_named_workarea_the_key_holds_no_reader_on_answers_access_not_found() {
+async fn a_named_workspace_the_key_holds_no_reader_on_answers_access_not_found() {
     let f = edge_fixture().await;
     let admin = &f.boot.admin_key.value;
-    let elsewhere = workarea(&f.app, admin, "elsewhere", f.boot.root_workarea_id).await;
+    let elsewhere = workspace(&f.app, admin, "elsewhere", f.boot.root_workspace_id).await;
     let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
     // Wes holds writer on crew and no reader anywhere: a node without
     // reader is unreadable, so the refusal order stops at access.not_found
@@ -13733,12 +13766,12 @@ async fn a_named_workarea_the_key_holds_no_reader_on_answers_access_not_found() 
 }
 
 #[tokio::test]
-async fn a_workarea_filter_serves_an_edge_between_two_claims_in_its_child_workareas() {
+async fn a_workspace_filter_serves_an_edge_between_two_claims_in_its_child_workspaces() {
     let f = edge_fixture().await;
     let admin = &f.boot.admin_key.value;
-    let left = workarea(&f.app, admin, "left", f.crew).await;
-    let right = workarea(&f.app, admin, "right", f.crew).await;
-    let dana = issue(&f.app, admin, Role::Dreamer, "dina", f.crew).await;
+    let left = workspace(&f.app, admin, "left", f.crew).await;
+    let right = workspace(&f.app, admin, "right", f.crew).await;
+    let dana = issue(&f.app, admin, Role::Reviewer, "dina", f.crew).await;
     let l = promoted(
         &f.app,
         &f.alice.value,
@@ -13774,17 +13807,17 @@ async fn a_workarea_filter_serves_an_edge_between_two_claims_in_its_child_workar
 async fn a_page_cursor_resumes_after_the_last_edge() {
     let f = edge_fixture().await;
     let admin = &f.boot.admin_key.value;
-    let elsewhere = workarea(&f.app, admin, "elsewhere", f.boot.root_workarea_id).await;
+    let elsewhere = workspace(&f.app, admin, "elsewhere", f.boot.root_workspace_id).await;
     let erin = agent(&f.app, admin, "erin", elsewhere).await;
-    let eve = issue(&f.app, admin, Role::Dreamer, "eve", elsewhere).await;
+    let eve = issue(&f.app, admin, Role::Reviewer, "eve", elsewhere).await;
     let unseen = promoted(&f.app, &erin.value, &eve.value, &submit_req("pg-u", "u")).await;
     let quinn = issue_with(
         &f.app,
         admin,
-        Role::Dreamer,
+        Role::Reviewer,
         "quinn",
         vec![
-            grant(f.crew, Role::Dreamer),
+            grant(f.crew, Role::Reviewer),
             grant(f.crew, Role::Reader),
             grant(elsewhere, Role::Reader),
         ],
@@ -13835,7 +13868,7 @@ async fn a_cursor_minted_for_another_filter_is_refused_request_validation() {
         edges_of(f.b),
         edges_in(f.crew.into()),
         ClaimEdgeQuery {
-            workarea: Some(f.crew.into()),
+            workspace: Some(f.crew.into()),
             artifact_id: Some(f.a),
         },
     ] {
@@ -13880,7 +13913,7 @@ async fn an_admin_key_reading_claim_edges_is_refused_access_verb_ceiling() {
 }
 
 #[tokio::test]
-async fn a_workarea_named_by_its_name_reads_as_by_its_id() {
+async fn a_workspace_named_by_its_name_reads_as_by_its_id() {
     let f = edge_fixture().await;
     let admin = &f.boot.admin_key.value;
     proposed(&f.app, &f.pat.value, f.b, f.a, "acme:refutes").await;
@@ -13908,11 +13941,11 @@ async fn a_workarea_named_by_its_name_reads_as_by_its_id() {
     assert_eq!(edge_ids(&rest), vec![f.edge_id]);
 }
 
-/// The workarea read carries the status read's fields, so the removed
+/// The workspace read carries the status read's fields, so the removed
 /// status route has one successor and the two can never disagree
 /// (ADR-0039 d9; ADR-0046 d3).
 #[tokio::test]
-async fn the_workarea_read_serves_the_policy_in_force_and_the_nodes_live_proposals_as_the_status_read_does()
+async fn the_workspace_read_serves_the_policy_in_force_and_the_nodes_live_proposals_as_the_status_read_does()
  {
     let store = MemStore::new();
     let app = app_over(store.clone());
@@ -13921,21 +13954,21 @@ async fn the_workarea_read_serves_the_policy_in_force_and_the_nodes_live_proposa
     let dora = curator(&app, admin, "dora", crew).await;
     let rita = issue(&app, admin, Role::Reader, "rita", crew).await;
     let proposal = app
-        .propose_transition(&dora.value, crew.into(), WorkareaStatus::Committed)
+        .propose_transition(&dora.value, crew.into(), WorkspaceStatus::Protected)
         .await
         .expect("a proposal");
 
     let info = app
-        .workarea_info(rita.value.as_str(), Some(crew.into()))
+        .workspace_info(rita.value.as_str(), Some(crew.into()))
         .await
-        .expect("the workarea read");
+        .expect("the workspace read");
     let status = app
-        .workarea_status(&rita.value, crew.into())
+        .workspace_status(&rita.value, crew.into())
         .await
         .expect("the status read");
     assert_eq!(
         info.policy,
-        json!({ "k": 1, "required_roles": ["dreamer"] })
+        json!({ "k": 1, "required_roles": ["reviewer"] })
     );
     assert_eq!(info.policy, status.policy);
     assert_eq!(info.pending_transitions, vec![seen_by_another(&proposal)]);
@@ -13943,17 +13976,17 @@ async fn the_workarea_read_serves_the_policy_in_force_and_the_nodes_live_proposa
 
     // The proposer's own key sees its key id, as on the status read.
     let own = app
-        .workarea_info(dora.value.as_str(), Some(crew.into()))
+        .workspace_info(dora.value.as_str(), Some(crew.into()))
         .await
-        .expect("the workarea read");
+        .expect("the workspace read");
     assert_eq!(
         own.pending_transitions[0].proposed_by_key_id,
         Some(dora.key_id)
     );
 }
 
-// -- the workarea brief: brief edges, their ratification and the brief the
-// workarea read serves (ADR-0046 d7, d8, d9) -------------------------------
+// -- the workspace brief: brief edges, their ratification and the brief the
+// workspace read serves (ADR-0046 d7, d8, d9) -------------------------------
 
 struct BriefRig {
     app: TestApp,
@@ -13987,10 +14020,10 @@ async fn brief_rig() -> BriefRig {
     }
 }
 
-fn brief_req(artifact_id: Uuid, workarea: Uuid) -> ProposeBriefEdge {
+fn brief_req(artifact_id: Uuid, workspace: Uuid) -> ProposeBriefEdge {
     ProposeBriefEdge {
         artifact_id,
-        workarea: workarea.into(),
+        workspace: workspace.into(),
     }
 }
 
@@ -14012,7 +14045,7 @@ async fn into_brief(r: &BriefRig, artifact: Uuid) -> Uuid {
 }
 
 #[tokio::test]
-async fn a_dreamer_proposes_a_promoted_claim_into_a_workarea_brief_and_it_stays_pending_as_one_brief_edge_proposed()
+async fn a_reviewer_proposes_a_promoted_claim_into_a_workspace_brief_and_it_stays_pending_as_one_brief_edge_proposed()
  {
     let r = brief_rig().await;
     let claim = promoted(
@@ -14030,7 +14063,7 @@ async fn a_dreamer_proposes_a_promoted_claim_into_a_workarea_brief_and_it_stays_
         .expect("a proposal");
     assert_eq!(outcome.proposal.state, "pending");
     assert_eq!(outcome.proposal.label, "brief");
-    assert_eq!(outcome.proposal.to_workarea_id, r.crew);
+    assert_eq!(outcome.proposal.to_workspace_id, r.crew);
     let events = journal(&r.store, r.boot.tenant_id).await;
     assert_eq!(events.len(), before + 1);
     assert_eq!(
@@ -14041,9 +14074,9 @@ async fn a_dreamer_proposes_a_promoted_claim_into_a_workarea_brief_and_it_stays_
     // ratifies.
     let info = r
         .app
-        .workarea_info(r.rita.value.as_str(), Some(r.crew.into()))
+        .workspace_info(r.rita.value.as_str(), Some(r.crew.into()))
         .await
-        .expect("the workarea read");
+        .expect("the workspace read");
     assert!(info.brief.items.is_empty());
 }
 
@@ -14068,12 +14101,12 @@ async fn a_held_claim_cannot_join_a_brief_and_a_reader_key_cannot_propose_one() 
         .propose_brief_edge(&r.dora.value, &brief_req(held, r.crew), None)
         .await
         .unwrap_err();
-    // A dreamer reads no other author's held row: absent, not described.
+    // A reviewer reads no other author's held row: absent, not described.
     assert!(matches!(err, AppError::NotFound), "{err:?}");
 }
 
 #[tokio::test]
-async fn a_second_dreamer_ratifies_a_brief_edge_and_its_proposer_never_does() {
+async fn a_second_reviewer_ratifies_a_brief_edge_and_its_proposer_never_does() {
     let r = brief_rig().await;
     let claim = promoted(
         &r.app,
@@ -14119,8 +14152,8 @@ async fn a_second_dreamer_ratifies_a_brief_edge_and_its_proposer_never_does() {
 }
 
 #[tokio::test]
-async fn the_workarea_read_serves_the_ratified_brief_in_ratification_order_cut_by_brief_max_tokens()
-{
+async fn the_workspace_read_serves_the_ratified_brief_in_ratification_order_cut_by_brief_max_tokens()
+ {
     let store = MemStore::new();
     // 12 budget tokens: room for the first two 20-byte members, not a third.
     let app = app_over(store.clone()).with_brief_max_tokens(12);
@@ -14158,9 +14191,9 @@ async fn the_workarea_read_serves_the_ratified_brief_in_ratification_order_cut_b
     into_brief(&r, claims[2]).await;
     let info = r
         .app
-        .workarea_info(r.rita.value.as_str(), Some(r.crew.into()))
+        .workspace_info(r.rita.value.as_str(), Some(r.crew.into()))
         .await
-        .expect("the workarea read");
+        .expect("the workspace read");
     let ids: Vec<Uuid> = info
         .brief
         .items
@@ -14173,7 +14206,7 @@ async fn the_workarea_read_serves_the_ratified_brief_in_ratification_order_cut_b
     // An admin key reads structure and never claim content.
     let admin_view = r
         .app
-        .workarea_info(admin.as_str(), Some(r.crew.into()))
+        .workspace_info(admin.as_str(), Some(r.crew.into()))
         .await
         .expect("the admin's structure read");
     assert!(admin_view.brief.items.is_empty());
@@ -14203,9 +14236,9 @@ async fn a_superseded_brief_member_drops_out_of_the_brief_by_itself() {
         .expect("approve the successor");
     let info = r
         .app
-        .workarea_info(r.rita.value.as_str(), Some(r.crew.into()))
+        .workspace_info(r.rita.value.as_str(), Some(r.crew.into()))
         .await
-        .expect("the workarea read");
+        .expect("the workspace read");
     assert!(info.brief.items.is_empty(), "only served tips are members");
 }
 
@@ -14276,19 +14309,19 @@ async fn keyword_any_matches_any_word_where_keyword_all_needs_every_word() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     let both = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("m1", "deploy on monday"),
     )
     .await;
     let one = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("m2", "deploy rarely"),
     )
     .await;
@@ -14328,19 +14361,19 @@ async fn match_all_falls_back_to_any_word_and_says_so() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     let both = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("m1", "deploy on monday"),
     )
     .await;
     let one = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("m2", "deploy rarely"),
     )
     .await;
@@ -14418,12 +14451,12 @@ async fn an_admin_sets_the_tenants_default_pipeline_journalled_and_recall_follow
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("m1", "deploy rarely"),
     )
     .await;
@@ -14510,19 +14543,19 @@ async fn narrowed_under_a_chosen_default() -> (TestApp, String, Uuid) {
     let (boot, crew) = tenant(&wide).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&wide, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&wide, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&wide, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&wide, admin, Role::Reader, "rhea", crew).await;
     let steer = promoted(
         &wide,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_kind("s1", MemoryKind::Steering, "nothing about the query", crew),
     )
     .await;
     promoted(
         &wide,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("m1", "deploy rarely"),
     )
     .await;
@@ -14640,19 +14673,19 @@ async fn steering_stays_first_and_unranked_under_every_pipeline() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     let steer = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_kind("s1", MemoryKind::Steering, "nothing about the query", crew),
     )
     .await;
     promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("m1", "deploy rarely"),
     )
     .await;
@@ -14667,23 +14700,23 @@ async fn steering_stays_first_and_unranked_under_every_pipeline() {
     }
 }
 
-/// A recall reads each served workarea's ancestry once, however many of its
+/// A recall reads each served workspace's ancestry once, however many of its
 /// hits it serves: the path and the universe test of every hit in one
-/// workarea come from one read, so serving more hits adds no ancestry reads
+/// workspace come from one read, so serving more hits adds no ancestry reads
 /// (retrieval.md; ADR-0024 d4, "never N+1"; ADR-0049 d12).
 #[tokio::test]
-async fn a_recall_reads_each_served_workareas_ancestry_once_however_many_hits_it_serves() {
+async fn a_recall_reads_each_served_workspaces_ancestry_once_however_many_hits_it_serves() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     for i in 0..6 {
         promoted(
             &app,
             &writer.value,
-            &dreamer.value,
+            &reviewer.value,
             &submit_into(
                 &format!("a{i}"),
                 &format!("the canary rollout step {i}"),
@@ -14798,7 +14831,7 @@ async fn rescan_record_held_records_findings_on_held_versions_and_touches_no_pro
     let (boot, crew) = tenant(&before).await;
     let admin = boot.admin_key.value.clone();
     let writer = issue(&before, &admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&before, &admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&before, &admin, Role::Reviewer, "dana", crew).await;
     let held = before
         .submit_memory(&writer.value, &submit_req("held", "[needs-human] held"))
         .await
@@ -14818,7 +14851,7 @@ async fn rescan_record_held_records_findings_on_held_versions_and_touches_no_pro
         .receipt
         .memory_id;
     before
-        .post_verdict(&dreamer.value, promoted, Verdict::Approve, None)
+        .post_verdict(&reviewer.value, promoted, Verdict::Approve, None)
         .await
         .expect("approve");
     assert!(
@@ -14882,7 +14915,7 @@ async fn a_claim_key_or_a_verdict_reason_carrying_a_finding_is_refused() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
-    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let err = app
         .submit_memory(
             &writer.value,
@@ -14903,7 +14936,7 @@ async fn a_claim_key_or_a_verdict_reason_carrying_a_finding_is_refused() {
     let head = journal(&store, boot.tenant_id).await.len();
     let err = app
         .post_verdict(
-            &dreamer.value,
+            &reviewer.value,
             id,
             Verdict::Reject,
             Some("it quotes -----BEGIN PRIVATE KEY-----"),
@@ -14914,7 +14947,7 @@ async fn a_claim_key_or_a_verdict_reason_carrying_a_finding_is_refused() {
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
     // A hold-class finding in a reason does not refuse.
     app.post_verdict(
-        &dreamer.value,
+        &reviewer.value,
         id,
         Verdict::Approve,
         Some("[needs-human] fine"),
@@ -15010,7 +15043,7 @@ fn metered(probe: TestApp, tenant_id: Uuid, quotas: oml_app::domain::signup::Quo
         .with_quota_profiles(oml_app::types::QuotaProfiles::only(quotas))
 }
 
-/// Ada's account: a writer key that also reads, and a dreamer key under
+/// Ada's account: a writer key that also reads, and a reviewer key under
 /// another principal, both naming her and granted on her root alone.
 async fn account_keys(app: &TestApp, admin: &str) -> (IssuedKey, IssuedKey) {
     let on_root = |role: Role| GrantRequest {
@@ -15033,21 +15066,21 @@ async fn account_keys(app: &TestApp, admin: &str) -> (IssuedKey, IssuedKey) {
         )
         .await
         .expect("ada's writer key");
-    let dreamer = app
+    let reviewer = app
         .issue_key(
             admin,
             &IssueKeyRequest {
                 user: Some(name("ada")),
                 ..issue_req(
-                    Role::Dreamer,
+                    Role::Reviewer,
                     "ada-reviewer",
-                    vec![on_root(Role::Dreamer), on_root(Role::Reader)],
+                    vec![on_root(Role::Reviewer), on_root(Role::Reader)],
                 )
             },
         )
         .await
         .expect("ada's reviewer key");
-    (writer, dreamer)
+    (writer, reviewer)
 }
 
 /// What the account `key` belongs to holds on its memories, text bytes and
@@ -15091,7 +15124,7 @@ async fn a_replayed_write_answers_its_record_at_its_accounts_limit_and_is_counte
             .with(Quota::TextBytes, (v1.len() + v2.len()) as u64)
             .with(Quota::WritesPerMonth, 2),
     );
-    let (writer, dreamer) = account_keys(&app, &boot.admin_key.value).await;
+    let (writer, reviewer) = account_keys(&app, &boot.admin_key.value).await;
 
     let first = app
         .submit_memory(&writer.value, &submit_req("i1", v1))
@@ -15109,7 +15142,7 @@ async fn a_replayed_write_answers_its_record_at_its_accounts_limit_and_is_counte
     assert_eq!(metered_writes(&app, &writer.value).await, once);
 
     app.post_verdict(
-        &dreamer.value,
+        &reviewer.value,
         first.receipt.memory_id,
         Verdict::Approve,
         None,
@@ -15158,7 +15191,7 @@ async fn a_refused_write_moves_no_meter_and_keeps_its_own_refusal_at_the_limit()
         boot.tenant_id,
         Quotas::default().with(Quota::Memories, 2),
     );
-    let (writer, dreamer) = account_keys(&app, &boot.admin_key.value).await;
+    let (writer, reviewer) = account_keys(&app, &boot.admin_key.value).await;
     let first = app
         .submit_memory(&writer.value, &submit_req("i1", "the canary drains first"))
         .await
@@ -15230,7 +15263,7 @@ async fn a_refused_write_moves_no_meter_and_keeps_its_own_refusal_at_the_limit()
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::ClaimKeyConflict), "{err:?}");
-    app.post_verdict(&dreamer.value, first, Verdict::Approve, None)
+    app.post_verdict(&reviewer.value, first, Verdict::Approve, None)
         .await
         .expect("approve");
     app.supersede(
@@ -15303,8 +15336,8 @@ async fn a_write_over_quota_is_refused_naming_the_quota_its_limit_and_what_is_us
         let probe = app_over(store.clone());
         let boot = bootstrap(&probe).await;
         let app = metered(probe, boot.tenant_id, quotas);
-        let (writer, dreamer) = account_keys(&app, &boot.admin_key.value).await;
-        let first = promoted(&app, &writer.value, &dreamer.value, &submit_req("i1", v1)).await;
+        let (writer, reviewer) = account_keys(&app, &boot.admin_key.value).await;
+        let first = promoted(&app, &writer.value, &reviewer.value, &submit_req("i1", v1)).await;
         let counted = metered_writes(&app, &writer.value).await;
         assert_eq!(counted, (1, 20, 1));
         let head = journal(&store, boot.tenant_id).await.len();
@@ -15450,12 +15483,12 @@ async fn a_write_reads_its_accounts_limits_once() {
     use oml_app::domain::signup::Quotas;
     let (app, store, _clock, boot) =
         metered_on_a_clock(oml_app::types::QuotaProfiles::only(Quotas::default()), None).await;
-    let (writer, dreamer) = account_keys(&app, &boot.admin_key.value).await;
+    let (writer, reviewer) = account_keys(&app, &boot.admin_key.value).await;
     // The first request of the minute reads the rate; these follow it.
     let first = promoted(
         &app,
         &writer.value,
-        &dreamer.value,
+        &reviewer.value,
         &submit_req("i1", "the canary drains first"),
     )
     .await;

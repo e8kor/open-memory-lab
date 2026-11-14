@@ -137,7 +137,7 @@ impl World {
             "grants": if role == "admin" {
                 json!([])
             } else {
-                json!([{ "workarea": "universe", "role": role }])
+                json!([{ "workspace": "universe", "role": role }])
             },
         });
         for (member, value) in limits.as_object().expect("an object") {
@@ -181,8 +181,8 @@ impl World {
             "name": name,
             "connect_code": true,
             "grants": [
-                { "workarea": "universe", "role": "writer" },
-                { "workarea": "universe", "role": "reader" },
+                { "workspace": "universe", "role": "writer" },
+                { "workspace": "universe", "role": "reader" },
             ],
         });
         for (member, value) in limits.as_object().expect("an object") {
@@ -484,7 +484,7 @@ async fn an_expiry_that_is_a_bare_date_or_past_and_a_rate_out_of_bound_are_refus
         let mut body = json!({
             "role": "reader",
             "name": format!("refused-{n}"),
-            "grants": [{ "workarea": "universe", "role": "reader" }],
+            "grants": [{ "workspace": "universe", "role": "reader" }],
         });
         for (member, value) in limits.as_object().expect("an object") {
             body[member] = value.clone();
@@ -658,10 +658,10 @@ async fn an_agent_key_changes_no_limits_and_an_admin_key_never_its_own() {
     assert_eq!(read["requests_per_minute"], 30);
 }
 
-/// The body of an admin key's issuance, held by an agent, with `limits`
+/// The body of an admin key's issuance, used by an agent, with `limits`
 /// merged in.
 fn admin_key_body(name: &str, limits: &Value) -> Value {
-    let mut body = json!({ "role": "admin", "name": name, "held_by": "agent", "grants": [] });
+    let mut body = json!({ "role": "admin", "name": name, "used_by": "agent", "grants": [] });
     for (member, value) in limits.as_object().expect("an object") {
         body[member] = value.clone();
     }
@@ -875,7 +875,7 @@ async fn each_item_of_the_keys_listing_serves_the_keys_expiry_whether_it_has_com
             "role": "writer",
             "name": name,
             "user": "ada",
-            "grants": [{ "workarea": "ada", "role": "writer" }],
+            "grants": [{ "workspace": "ada", "role": "writer" }],
         });
         for (member, value) in limits.as_object().expect("an object") {
             body[member] = value.clone();

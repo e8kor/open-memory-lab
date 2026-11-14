@@ -2,8 +2,8 @@
 //! base64url (no padding) over JSON — the memory listing's
 //! `{key_id, created_at, artifact_id, issued_at}` (ADR-0025 d13), the
 //! crew listing's `{key_id, after_name, issued_at}` (ADR-0026 d8), and the
-//! workarea tree's `{key_id, after_path, issued_at}` (ADR-0026 d15), and the
-//! claim-edge read's `{key_id, created_at, edge_id, workarea_id,
+//! workspace tree's `{key_id, after_path, issued_at}` (ADR-0026 d15), and the
+//! claim-edge read's `{key_id, created_at, edge_id, workspace_id,
 //! artifact_id, issued_at}`. A cursor carries a position — every page
 //! re-applies the listing's predicates — so a client that forges one for its
 //! own key learns nothing a fresh first page would not. It answers only the
@@ -210,7 +210,7 @@ impl NameCursor {
 /// A decoded tree cursor: the derived path of the last node a tree page
 /// served, the tree being in path order — a node before its children, and
 /// siblings by name in byte order — so the path's names, compared one by
-/// one, are the position (http-api.md workareas and pagination; ADR-0026
+/// one, are the position (http-api.md workspaces and pagination; ADR-0026
 /// d15). The node was readable to the key the page answered, so the
 /// position discloses nothing it had not read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -277,7 +277,7 @@ impl PathCursor {
 
 /// A decoded claim-edge cursor: the `created_at` and id of the last edge a
 /// page served, in the read's newest-first order, and the filter the page
-/// answered, its workarea resolved to an id (http-api.md claim edges and
+/// answered, its workspace resolved to an id (http-api.md claim edges and
 /// pagination). The edge was served, so both its endpoints were readable to
 /// the key, and the position discloses nothing it had not read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -296,7 +296,7 @@ struct ClaimEdgeWire {
     key_id: Uuid,
     created_at: String,
     edge_id: Uuid,
-    workarea_id: Option<Uuid>,
+    workspace_id: Option<Uuid>,
     artifact_id: Option<Uuid>,
     issued_at: String,
 }
@@ -309,7 +309,7 @@ impl ClaimEdgeCursor {
             key_id: self.key_id,
             created_at: self.position.created_at.as_str().to_owned(),
             edge_id: self.position.edge_id,
-            workarea_id: self.filter.workarea_id,
+            workspace_id: self.filter.workspace_id,
             artifact_id: self.filter.artifact_id,
             issued_at: self.issued_at.as_str().to_owned(),
         };
@@ -332,7 +332,7 @@ impl ClaimEdgeCursor {
             },
             filter: ClaimEdgeFilter {
                 artifact_id: wire.artifact_id,
-                workarea_id: wire.workarea_id,
+                workspace_id: wire.workspace_id,
             },
             issued_at: time(&wire.issued_at)?,
         })

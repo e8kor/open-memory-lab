@@ -7,29 +7,29 @@
   "tools": [
     {
       "name": "oml_relate_propose",
-      "description": "Propose a labelled edge - claim-to-claim or workarea-to-workarea. The proposal is journalled and pending; it confers nothing and changes no access until a different dreamer ratifies it (R2 extends to edges). Ratification is not on this surface. Rides the designed POST /v2/edges with kind claim or workarea (ADR-0039 d9).",
+      "description": "Propose a labelled edge - claim-to-claim or workspace-to-workspace. The proposal is journalled and pending; it confers nothing and changes no access until a different reviewer ratifies it (R2 extends to edges). Ratification is not on this surface. Rides the designed POST /v2/edges with kind claim or workspace (ADR-0039 d9).",
       "inputSchema": {
         "type": "object",
         "properties": {
           "kind": {
             "type": "string",
             "enum": [
-              "workarea",
+              "workspace",
               "claim"
             ],
-            "description": "Which graph the edge lives in; endpoints are workareas, by node id or name, or artifact ids accordingly."
+            "description": "Which graph the edge lives in; endpoints are workspaces, by node id or name, or artifact ids accordingly."
           },
           "label": {
             "type": "string",
-            "description": "For workarea edges, the closed set: relates_to | continues | derived_from | mirrors. The claim-edge label vocabulary is not fixed by the design - an open detail tracked in the roadmap."
+            "description": "For workspace edges, the closed set: relates_to | continues | derived_from | mirrors. The claim-edge label vocabulary is not fixed by the design - an open detail tracked in the roadmap."
           },
           "from": {
             "type": "string",
-            "description": "The from endpoint (a workarea's node id or name, or an artifact id, per kind)."
+            "description": "The from endpoint (a workspace's node id or name, or an artifact id, per kind)."
           },
           "to": {
             "type": "string",
-            "description": "The to endpoint (a workarea's node id or name, or an artifact id, per kind)."
+            "description": "The to endpoint (a workspace's node id or name, or an artifact id, per kind)."
           },
           "note": {
             "type": "string",
@@ -59,15 +59,15 @@
               "hierarchy",
               "mappings"
             ],
-            "description": "suggest takes q (and optionally workarea); get and hierarchy take curie; mappings takes term."
+            "description": "suggest takes q (and optionally workspace); get and hierarchy take curie; mappings takes term."
           },
           "q": {
             "type": "string",
             "description": "With action suggest: the prefix+label typeahead text, deterministic matching only - no model runs here."
           },
-          "workarea": {
+          "workspace": {
             "type": "string",
-            "description": "With action suggest: optionally restrict to one granted vocabulary workarea, by node id or name."
+            "description": "With action suggest: optionally restrict to one granted vocabulary workspace, by node id or name."
           },
           "curie": {
             "type": "string",

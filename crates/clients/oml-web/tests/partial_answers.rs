@@ -42,8 +42,8 @@ fn envelope(code: &str) -> Value {
 fn whoami() -> Value {
     json!({
         "key_id": "k1", "name": "alice-web", "role": "user", "principal": "alice",
-        "held_by": "human", "tenant": {"id": "t1", "name": "oml"},
-        "default_workarea": null, "crew": null,
+        "used_by": "person", "tenant": {"id": "t1", "name": "oml"},
+        "default_workspace": null, "crew": null,
         "user": {"id": ROOT, "name": "alice"}, "grants": [],
     })
 }
@@ -196,7 +196,7 @@ async fn the_atlas_json_serves_the_regions_and_marks_the_offers_unavailable_when
     let answer = send(offers_fail(), get("/web/data/memories")).await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
     let value: Value = serde_json::from_str(&answer.body).unwrap();
-    let scope = &value["workareas"]["items"][0];
+    let scope = &value["workspaces"]["items"][0];
     assert_eq!(scope["path"], "universe.alice", "{value}");
     assert_eq!(scope["counts"]["approved"], 2, "{value}");
     assert_eq!(scope["offers_unavailable"], true, "{value}");
@@ -369,7 +369,7 @@ async fn an_allowlist_cursor_cycle_is_refused_as_an_api_fault_at_its_first_repea
 /// One agent key of the person `first`, as `GET /v2/keys` lists it.
 fn agent_key() -> Value {
     json!({
-        "id": "k-agent", "name": "first-agent", "role": "writer", "held_by": "agent",
+        "id": "k-agent", "name": "first-agent", "role": "writer", "used_by": "agent",
         "credential": "bearer", "revoked": false, "cut_off": false, "grants": [],
     })
 }
@@ -590,7 +590,7 @@ async fn an_issue_answered_without_a_value_and_not_as_a_replay_is_refused_by_nam
 #[tokio::test]
 async fn the_memories_hints_read_one_tree_page_and_say_when_they_are_partial() {
     let script: Script = Arc::new(|_, path| {
-        if path.starts_with("/v2/workareas/universe/tree") {
+        if path.starts_with("/v2/workspaces/universe/tree") {
             let page = json!({"items": [
                 {"id": "00000000-0000-4000-8000-0000000000a1", "name": "universe", "path": "universe", "parent_id": null, "user_root": false},
                 {"id": "00000000-0000-4000-8000-0000000000a2", "name": "alice", "path": "universe.alice", "parent_id": "00000000-0000-4000-8000-0000000000a1", "user_root": true},
@@ -603,14 +603,14 @@ async fn the_memories_hints_read_one_tree_page_and_say_when_they_are_partial() {
     let page = send(script, get("/web/memories")).await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.body);
     assert_eq!(
-        calls_to(&page, "GET /v2/workareas/universe/tree"),
+        calls_to(&page, "GET /v2/workspaces/universe/tree"),
         1,
         "{:?}",
         page.calls
     );
     assert!(
         page.body
-            .contains("The hints hold the first 2 workareas: the list is partial. Browse and a typed name still work."),
+            .contains("The hints hold the first 2 workspaces: the list is partial. Browse and a typed name still work."),
         "{}",
         page.body
     );

@@ -4,7 +4,7 @@
 use oml_app::App;
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
-use oml_app::domain::{HeldBy, MemoryKind, Role};
+use oml_app::domain::{MemoryKind, Role, UsedBy};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::search::{MatchMode, Pipeline, SearchConfig, Stage};
 use oml_app::types::{
@@ -39,11 +39,11 @@ async fn reader_with_a_hit(timings: bool) -> (TestApp, String) {
         .await
         .expect("bootstrap");
     let admin = boot.admin_key.value.clone();
-    let root = boot.root_workarea_id;
+    let root = boot.root_workspace_id;
     let mut keys = Vec::new();
     for (n, role) in [
         ("w", Role::Writer),
-        ("d", Role::Dreamer),
+        ("d", Role::Reviewer),
         ("r", Role::Reader),
     ] {
         keys.push(
@@ -54,8 +54,8 @@ async fn reader_with_a_hit(timings: bool) -> (TestApp, String) {
                     role,
                     name: name(&format!("key-{n}")),
                     principal: format!("p-{n}"),
-                    held_by: Some(HeldBy::Agent),
-                    default_workarea: Some(root.into()),
+                    used_by: Some(UsedBy::Agent),
+                    default_workspace: Some(root.into()),
                     crew: None,
                     grants: vec![GrantRequest {
                         node: root.into(),
@@ -88,7 +88,7 @@ async fn reader_with_a_hit(timings: bool) -> (TestApp, String) {
                 verb: None,
                 kind: MemoryKind::Memory,
                 body: "the canary takes five percent of traffic".to_owned(),
-                workarea: None,
+                workspace: None,
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
@@ -115,7 +115,7 @@ fn recall(timings: bool) -> RecallRequest {
         timings,
         query: "canary traffic".to_owned(),
         k: 10,
-        workarea: None,
+        workspace: None,
         kinds: Vec::new(),
         include_text: true,
         include_unreviewed: Some(false),

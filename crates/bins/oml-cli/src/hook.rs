@@ -47,7 +47,7 @@ pub const DEADLINE: Duration = Duration::from_secs(8);
 const COUNT: usize = 10;
 /// What every occurrence of the key value is printed as (d4).
 const REDACTED: &str = "[OML_API_KEY]";
-/// The characters a claim key or the workarea path is printed in at most,
+/// The characters a claim key or the workspace path is printed in at most,
 /// the last one `…` when cut: neither counts toward the budget (d6).
 pub(crate) const KEY_CAP: usize = 120;
 /// The characters a stderr line's reason is cut to: a body the server sent
@@ -144,7 +144,7 @@ pub fn session_start(
         .collect();
     seed_session_cache(var, session.session_id.as_deref(), &served);
 
-    // The default workarea's brief, read after the two answers the context
+    // The default workspace's brief, read after the two answers the context
     // needs; a failure here costs the brief alone, never the context
     // (ADR-0046 d9).
     let brief = default_brief(&client);
@@ -171,22 +171,22 @@ pub fn session_start(
     Ok(document.to_string())
 }
 
-/// The items of the key's default workarea's brief: `GET /v2/whoami` names
-/// the default, and the workarea read serves its brief, already cut by the
+/// The items of the key's default workspace's brief: `GET /v2/whoami` names
+/// the default, and the workspace read serves its brief, already cut by the
 /// server's `brief.max_tokens` (ADR-0046 d8, d9). Empty when the key has no
 /// default, the brief has no member, or either read fails.
 fn default_brief(client: &Client) -> Vec<Value> {
     let Ok((_, me)) = client.get("/v2/whoami") else {
         return Vec::new();
     };
-    let Some(default) = me["default_workarea"]["id"].as_str() else {
+    let Some(default) = me["default_workspace"]["id"].as_str() else {
         return Vec::new();
     };
     let Ok(segment) = crate::client::segment(default) else {
         return Vec::new();
     };
     client
-        .get(&format!("/v2/workareas/{segment}"))
+        .get(&format!("/v2/workspaces/{segment}"))
         .ok()
         .and_then(|(_, node)| node["brief"]["items"].as_array().cloned())
         .unwrap_or_default()
@@ -329,7 +329,7 @@ pub fn query_words(cwd: Option<&str>) -> String {
 /// The two answers, as the context needs them.
 struct Rendered<'a> {
     server: &'a str,
-    /// The default workarea's brief, empty when it has none or it could not
+    /// The default workspace's brief, empty when it has none or it could not
     /// be read (ADR-0046 d9).
     brief: &'a [Value],
     own: &'a [Value],
@@ -350,7 +350,7 @@ impl Rendered<'_> {
         one_line(&(self.redact)(row[name].as_str().unwrap_or("?")))
     }
 
-    /// A stored name, a claim key or the workarea path, redacted, on one
+    /// A stored name, a claim key or the workspace path, redacted, on one
     /// line, then cut to `KEY_CAP`. The key value is printable ASCII, so
     /// neither the flattening nor the cut can alter a substituted
     /// `[OML_API_KEY]`, though the cut may end the line inside it.
@@ -370,17 +370,17 @@ impl Rendered<'_> {
 /// section or the frame, and the lines a cut must not lose come first.
 fn render(r: &Rendered<'_>) -> String {
     let mut out = Vec::new();
-    // Neither answer names the key's default workarea; its newest own row
+    // Neither answer names the key's default workspace; its newest own row
     // names the one it was written to.
-    match r.own.iter().find_map(|m| m["workarea_path"].as_str()) {
+    match r.own.iter().find_map(|m| m["workspace_path"].as_str()) {
         Some(path) => out.push(format!(
-            "OML memory for this session, from {}, workarea {}.",
+            "OML memory for this session, from {}, workspace {}.",
             origin(r.server),
             r.name(path)
         )),
         None => out.push(format!(
-            "OML memory for this session, from {}, in this key's default workarea \
-             (oml_workarea names it).",
+            "OML memory for this session, from {}, in this key's default workspace \
+             (oml_workspace names it).",
             origin(r.server)
         )),
     }
@@ -404,7 +404,7 @@ fn render(r: &Rendered<'_>) -> String {
 
     if !r.brief.is_empty() {
         out.push(String::new());
-        out.push("Brief of this workarea, agreed by its reviewers:".to_owned());
+        out.push("Brief of this workspace, agreed by its reviewers:".to_owned());
         out.extend(
             r.brief
                 .iter()
@@ -805,7 +805,7 @@ pub fn tool_failure(
 }
 
 /// The failure recall's request body: the query, at most three hits under
-/// a 200-token budget with each hit's text, on the key's default workarea,
+/// a 200-token budget with each hit's text, on the key's default workspace,
 /// promoted memories only, so never `include_unreviewed` (ADR-0038 d7, in
 /// ADR-0039 d7's names).
 fn failure_recall_body(query: &str) -> Value {
@@ -1201,17 +1201,17 @@ fn error_digest(query: &str) -> String {
 }
 
 /// The injected text: the data frame, the may-be-irrelevant line, then one
-/// line per hit naming its id, claim key, workarea and recorded time, so
+/// line per hit naming its id, claim key, workspace and recorded time, so
 /// staleness shows (ADR-0038 d8).
 fn render_failure(hits: &[&Value], redact: &dyn Fn(&str) -> String) -> String {
     let field = |m: &Value, name: &str| one_line(&redact(m[name].as_str().unwrap_or("?")));
     let mut out = vec![FRAMING.to_owned(), FAILURE_LINE.to_owned()];
     for m in hits {
         let line = format!(
-            "- {} {} (workarea {}, recorded {}): {}",
+            "- {} {} (workspace {}, recorded {}): {}",
             field(m, "artifact_id"),
             cut(field(m, "claim_key"), KEY_CAP),
-            cut(field(m, "workarea_path"), KEY_CAP),
+            cut(field(m, "workspace_path"), KEY_CAP),
             field(m, "created_at"),
             field(m, "text"),
         );
@@ -1571,14 +1571,14 @@ mod tests {
         let hit = json!({
             "artifact_id": "a-1",
             "claim_key": "sqlx-pool",
-            "workarea_path": "universe.metals",
+            "workspace_path": "universe.metals",
             "created_at": "2026-11-02T10:00:00Z",
             "text": "Rename connect_timeout to acquire_timeout.",
         });
         let context = render_failure(&[&hit], &|t: &str| t.to_owned());
         assert!(
             context.ends_with(
-                "- a-1 sqlx-pool (workarea universe.metals, recorded 2026-11-02T10:00:00Z): \
+                "- a-1 sqlx-pool (workspace universe.metals, recorded 2026-11-02T10:00:00Z): \
                  Rename connect_timeout to acquire_timeout."
             ),
             "{context}"

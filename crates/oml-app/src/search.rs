@@ -44,7 +44,7 @@ pub enum RetrieverKind {
     /// fragments (ADR-0048 S3).
     Trigram,
     /// `Bm25`'s score read from integer postings that row security lets an
-    /// index serve, with the readable rows' counts kept per workarea; a word
+    /// index serve, with the readable rows' counts kept per workspace; a word
     /// frequent among the readable rows is pruned from the postings read and
     /// still scored for the rows the others reach, and a query of only such
     /// words is answered by `Bm25`'s scan (ADR-0052 d4, d6).
@@ -705,7 +705,7 @@ pub struct OwnHeldScope {
 /// The health of a tenant's integer postings, for doctor (ADR-0052 d12):
 /// whether its partition exists; how many versions that should have
 /// postings have none (the fill incomplete); how many served versions have
-/// no served postings (behind); how many per-workarea counts disagree with
+/// no served postings (behind); how many per-workspace counts disagree with
 /// the served versions; and, of a sample of word counts, how many disagree
 /// with the served postings.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -713,7 +713,7 @@ pub struct PostingsHealth {
     pub partition: bool,
     pub unfilled: u64,
     pub served_behind: u64,
-    pub workarea_drift: u64,
+    pub workspace_drift: u64,
     pub term_drift: u64,
     pub terms_checked: u64,
     /// Versions waiting for the sparse encoder, due now or later, parked

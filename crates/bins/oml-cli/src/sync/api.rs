@@ -16,7 +16,7 @@ pub struct Listed {
     pub tip: bool,
     pub state: String,
     pub retirement: bool,
-    pub workarea_id: Option<String>,
+    pub workspace_id: Option<String>,
     pub plaintext_digest: String,
     pub anchor: Option<ListedAnchor>,
     pub source_checked: Option<Checked>,
@@ -78,7 +78,7 @@ impl Listed {
             tip: v["tip"].as_bool().unwrap_or(false),
             state: s("state"),
             retirement: v["retirement"].as_bool().unwrap_or(false),
-            workarea_id: v["workarea_id"].as_str().map(ToOwned::to_owned),
+            workspace_id: v["workspace_id"].as_str().map(ToOwned::to_owned),
             plaintext_digest: s("plaintext_digest"),
             anchor,
             source_checked: checked,
@@ -87,10 +87,10 @@ impl Listed {
 }
 
 /// One listing: the key's own rows in every state, or the promoted served
-/// tips, of a workarea's subtree, optionally filtered by origin (d4).
+/// tips, of a workspace's subtree, optionally filtered by origin (d4).
 #[derive(Clone, Debug, Default)]
 pub struct ListQuery {
-    pub workarea: String,
+    pub workspace: String,
     pub own: bool,
     pub anchor_repo: Option<String>,
     pub anchor_path_prefix: Option<String>,
@@ -134,10 +134,10 @@ pub trait SyncApi {
     /// # Errors
     /// The server refuses or cannot be reached.
     fn me(&self) -> Result<Me, CliError>;
-    /// The id of a workarea named by id or name.
+    /// The id of a workspace named by id or name.
     /// # Errors
     /// As [`SyncApi::me`].
-    fn workarea_id(&self, workarea: &str) -> Result<String, CliError>;
+    fn workspace_id(&self, workspace: &str) -> Result<String, CliError>;
     /// Every page of one listing.
     /// # Errors
     /// As [`SyncApi::me`].
@@ -172,10 +172,10 @@ pub trait SyncApi {
             .map(|(a, body, key)| self.source_check(a, body, key))
             .collect()
     }
-    /// Every claim edge in a workarea's subtree.
+    /// Every claim edge in a workspace's subtree.
     /// # Errors
     /// As [`SyncApi::me`].
-    fn claim_edges(&self, workarea_id: &str) -> Result<Vec<EdgeRow>, CliError>;
+    fn claim_edges(&self, workspace_id: &str) -> Result<Vec<EdgeRow>, CliError>;
     /// `POST /v2/edges {kind: claim}`.
     /// # Errors
     /// As [`SyncApi::me`].
@@ -242,20 +242,22 @@ impl SyncApi for HttpApi {
         })
     }
 
-    fn workarea_id(&self, workarea: &str) -> Result<String, CliError> {
+    fn workspace_id(&self, workspace: &str) -> Result<String, CliError> {
         let (_, node) = self
             .client
-            .get(&format!("/v2/workareas/{}", segment(workarea)?))?;
+            .get(&format!("/v2/workspaces/{}", segment(workspace)?))?;
         node["id"].as_str().map(ToOwned::to_owned).ok_or_else(|| {
-            CliError::local(format!("the workarea {workarea} was served without an id"))
+            CliError::local(format!(
+                "the workspace {workspace} was served without an id"
+            ))
         })
     }
 
     fn list(&self, query: &ListQuery) -> Result<Vec<Listed>, CliError> {
         let mut path = format!(
-            "/v1/memories?own={}&limit=200&workarea={}",
+            "/v1/memories?own={}&limit=200&workspace={}",
             query.own,
-            encode(&query.workarea)
+            encode(&query.workspace)
         );
         if let Some(repo) = &query.anchor_repo {
             path.push_str(&format!("&anchor_repo={}", encode(repo)));
@@ -320,10 +322,10 @@ impl SyncApi for HttpApi {
             .collect()
     }
 
-    fn claim_edges(&self, workarea_id: &str) -> Result<Vec<EdgeRow>, CliError> {
+    fn claim_edges(&self, workspace_id: &str) -> Result<Vec<EdgeRow>, CliError> {
         let path = format!(
-            "/v2/edges?kind=claim&limit=200&workarea_id={}",
-            encode(workarea_id)
+            "/v2/edges?kind=claim&limit=200&workspace_id={}",
+            encode(workspace_id)
         );
         Ok(self.pages(&path)?.iter().map(EdgeRow::of).collect())
     }

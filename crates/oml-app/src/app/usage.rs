@@ -1,7 +1,7 @@
 //! The measurement half of ADR-0054 as accepted: the `feedback` member a
 //! read carries, and a tenant admin's three acts on the recall telemetry:
 //! the query-text setting, the event listing and the real-usage replay.
-//! No agent, writer, reader or dreamer key reads an event, a label or a
+//! No agent, writer, reader or reviewer key reads an event, a label or a
 //! count here (d2); every act but feedback is admin by key role.
 
 use std::collections::BTreeMap;
@@ -321,7 +321,7 @@ where
                     timings: false,
                     query: q.query_text.clone(),
                     k: REPLAY_K,
-                    workarea: Some(q.scope_workarea_id.into()),
+                    workspace: Some(q.scope_workspace_id.into()),
                     kinds: Vec::new(),
                     include_text: false,
                     include_unreviewed: Some(false),
