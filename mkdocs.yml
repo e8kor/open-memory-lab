@@ -15,9 +15,6 @@ exclude_docs: |
 hooks:
   - hooks/status_line.py
 
-extra:
-  oml_series: "0.6"
-
 extra_css:
   - stylesheets/oml.css
   - assets/status.css
