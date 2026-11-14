@@ -49,12 +49,12 @@ A dash means OML refuses the verb with a typed error. For content verbs, the col
 
 Approve, sign and delete appear in no column: approval is an effect of review, `oml-server` signs, and deletion does not exist.
 
-- **A memory written by a key is that key's own.** A bearer key reads its own memories in any state. The signed-in user page also reads every key belonging to that user (ADR-0045 d16). Other keys read `promoted` memories, with three exceptions: a reviewer is served the held memory it judges, a reader inside an [in-progress workarea](workareas.md#in-progress-workareas) recalls held memories there marked unreviewed, and an admin key reads any memory through the [admin read](#the-admin-read).
+- **A memory written by a key is that key's own.** A bearer key reads its own memories in any state. The signed-in user page also reads every key belonging to that user (ADR-0045 d16). Other keys read `promoted` memories. A reviewer key is served the held memory it judges, and a person's reviewer key lists the held memories it may judge, with their text (`GET /v2/review/held`). A reader inside an [in-progress workarea](workareas.md#in-progress-workareas) recalls held memories there, marked unreviewed. Also, an admin of the tenant reads any memory through the journaled [admin read](#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
 - **An admin key reads workarea structure without grants**: names, ids, parents, statuses, crews, children and edges in its tenant. It reads a memory's content only through the [admin read](#the-admin-read).
 - **A global denial on an admin key is refused, `request.validation` with `details.field: key`.**
 - **Recall, search and the read by id need a reader grant, and no admin key can carry one.** An admin key that calls recall gets `access.verb_ceiling`.
 
-A development workarea can let a writer approve its own memories, marked `self_signed` ([workareas](workareas.md)).
+A development workarea letting a writer approve its own memories, marked `self_signed`, is designed ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5) and not built: the server marks no approval `self_signed`.
 
 ## Issuing keys
 

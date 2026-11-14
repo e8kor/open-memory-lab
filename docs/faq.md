@@ -28,7 +28,7 @@ Until a reviewer approves it. How long that takes depends on the reviewers, and 
 
 ### Can review be turned off?
 
-No. Two modes relax it inside one workarea. In an [in-progress workarea](use/workareas.md#in-progress-workareas), readers there recall held memories marked unreviewed, and nothing leaves it until a person commits it with nothing held. A development home with one person is the other: that person's approval of their own memory counts once and is marked `self_signed`. See [why a write is held](concepts/why-a-write-is-held.md#the-exception-a-development-home).
+No. In an [in-progress workarea](use/workareas.md#in-progress-workareas), readers there recall held memories marked unreviewed before review, and nothing leaves it until a person commits it with nothing held; approval still takes a reviewer who did not write the memory. A development workarea where one person's approval of their own memory counts once, marked `self_signed`, is designed ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5) and not built. See [why a write is held](concepts/why-a-write-is-held.md).
 
 ### Which agents does it work with?
 
@@ -80,7 +80,7 @@ The scan found something it blocks, such as a leaked key. `details.finding` name
 
 ### Can an author approve their own memory?
 
-No. The author, and the author of anything the memory derives from, cannot approve it. A development home with one person is the exception: the approval counts once and is marked `self_signed`.
+No. The author, and the author of anything the memory derives from, cannot approve it. A `self_signed` approval in a development workarea is designed and not built.
 
 ### How are many memories reviewed at once?
 

@@ -30,4 +30,4 @@ answers: "the terms the OML docs use and what each means"
 | **steering** | A memory of a kind that tells agents how to work. Recall returns it before hits. |
 | **tip** | The current approved version of a memory. |
 | **recall** | A ranked search over approved memories with `oml read --query` or `oml_read`. |
-| **self-signed** | A memory approved by its own author on a development home. It counts once and is never called a review. |
+| **self-signed** | Designed, not built: a memory approved by its own author in a development workarea. It would count once and never be called a review. |

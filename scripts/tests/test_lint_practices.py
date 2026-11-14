@@ -249,40 +249,58 @@ class Voice(unittest.TestCase):
         self.assertIn("docs/page.md:4: you, we:", problems[0])
 
     def test_each_listed_word_is_flagged_whatever_its_case(self):
-        for word in ("you", "Your", "yours", "We", "our", "us", "My"):
+        words = ("you", "Your", "yours", "yourself", "Yourselves", "We", "our", "ours", "ourselves",
+                 "us", "me", "My", "mine", "Let's", "let’s")
+        for word in words:
             self.assertEqual(1, len(self.lint(f"A line with {word} in it.\n")), word)
 
-    def test_a_word_that_only_contains_one_is_not_flagged(self):
-        self.assertEqual([], self.lint("Youth, ours, myself, usage, bus and Mycelium.\n"))
+    def test_the_pronoun_i_is_flagged_and_numerals_labels_and_units_are_not(self):
+        self.assertEqual(1, len(self.lint("Then I wrote it.\n")))
+        self.assertEqual(1, len(self.lint("Then I'm done.\n")))
+        self.assertEqual([], self.lint("Phase I ends, option II and IV stay, I/O waits.\n"))
+        self.assertEqual([], self.lint("| **I — Exact match** | none |\n"))
+        self.assertEqual([], self.lint("It scored 2.73 I against 3.0 I.\n"))
+        self.assertEqual([], self.lint("Set i to one.\n"))
 
-    def test_code_comments_link_targets_and_compounds_are_not_prose(self):
+    def test_a_word_that_only_contains_one_is_not_flagged(self):
+        self.assertEqual([], self.lint("Youth, myself-made, usage, bus, meet and Mycelium.\n"))
+
+    def test_code_comments_urls_link_targets_and_compounds_are_not_prose(self):
         text = (
             "Run `oml read my-key` and see [the page](your-page.md) or <https://us.example>.\n"
-            "<!-- you may skip this -->\n"
-            "A read-your-writes token and the US region.\n"
-            "```sh\necho you\n```\n"
-            "~~~\nwe\n~~~\n"
+            "Also https://example.com/you/our and a read-your-writes token in the US.\n"
+            "\n<!-- you may skip\nthis, we said -->\n"
+            "\n```sh\necho you\n```\n"
+            "\n~~~\nwe\n~~~\n"
+            "\nA paragraph.\n\n    echo you\n    echo we\n"
         )
         self.assertEqual([], self.lint(text))
 
+    def test_an_indented_list_continuation_is_still_prose(self):
+        problems = self.lint("- an item\n\n    and you continue it.\n")
+        self.assertEqual(1, len(problems), problems)
+
     def test_a_quotation_is_not_prose_even_across_lines(self):
         text = (
-            'The page said "Your keys" and \u201cwe saw it\u201d.\n'
+            'The page said "Your keys" and “we saw it” and \'my label\'.\n'
             '\nThe operator wrote "keep it, as\nwe agreed" on the day.\n'
+            '\nIt said ("did you mean `PgBouncer`").\n'
             "\n> You quote a block.\n"
         )
         self.assertEqual([], self.lint(text))
 
-    def test_a_quotation_left_open_ends_at_the_paragraph(self):
+    def test_a_lone_quotation_mark_hides_nothing(self):
+        problems = self.lint('A 12" screen, and then you read it.\n')
+        self.assertEqual(1, len(problems), problems)
         problems = self.lint('A stray " mark.\n\nThen you read it.\n')
         self.assertEqual(1, len(problems), problems)
         self.assertIn(":3: you:", problems[0])
+        self.assertEqual(1, len(self.lint("The author's key and you.\n")))
 
-    def test_inline_code_that_runs_over_two_lines_is_not_prose(self):
-        self.assertEqual([], self.lint("Prints `ask the operator for\nyour URL` and stops.\n"))
-
-    def test_a_reasoned_escape_clears_one_line(self):
+    def test_a_reasoned_escape_clears_one_line_and_a_bare_one_does_not(self):
         self.assertEqual([], self.lint("*We Have a Package for You!* <!-- lint:allow-voice a paper's title -->\n"))
+        self.assertEqual(1, len(self.lint("*We Have It* <!-- lint:allow-voice -->\n")))
+        self.assertEqual(1, len(self.lint("We have it, lint:allow-voice a reason.\n")))
 
     def test_an_allow_listed_file_is_skipped_and_the_rest_are_not(self):
         root = tree({
@@ -295,8 +313,16 @@ class Voice(unittest.TestCase):
         self.assertIn("docs/page.md", problems[0])
         self.assertEqual(2, len(L.lint_voice(root, False)))
 
-    def test_only_markdown_under_docs_is_read(self):
-        self.assertEqual([], self.lint("You.\n", path="README.md", **{"docs/api/tools.json": '{"d": "you"}'}))
+    def test_change_fragments_are_read_and_other_markdown_is_not(self):
+        self.assertEqual(1, len(self.lint("You.\n", path="changes/x.md")))
+        self.assertEqual([], self.lint("You.\n", path="README.md"))
+
+    def test_the_mcp_tool_descriptions_are_read(self):
+        tools = '{"tools": [{"name": "oml_write", "description": "Stores what you know.",' \
+                ' "inputSchema": {"properties": {"x": {"description": "As `you` read it."}}}}]}'
+        problems = self.lint("Fine.\n", **{"docs/api/mcp-tools.json": tools})
+        self.assertEqual(1, len(problems), problems)
+        self.assertIn("tools[oml_write].description: you", problems[0])
 
     def test_the_committed_docs_are_neutral(self):
         self.assertEqual([], L.lint_voice(Path(__file__).resolve().parents[2], True))

@@ -23,9 +23,11 @@ Two of the four rules declared in [the constitution](https://github.com/e8kor/op
 
 Approval changes visibility, not ranking. A reviewed memory is not scored higher than an unreviewed one would be.
 
-## The exception: a development home
+## In-progress workareas, and a designed exception
 
-On a home server for one person, where one built-in issuer signs everything, there is no second identity. The person's own approval of their own memory counts once and is marked `self_signed`. It is never called a review. In an in-progress workarea, other agents can read held memories labeled `unreviewed`; nothing leaves that workarea until a person commits it with no held memory left ([workareas](../use/workareas.md)).
+In an in-progress workarea, other agents can read held memories labeled `unreviewed`; nothing leaves that workarea until a person commits it with no held memory left ([workareas](../use/workareas.md)).
+
+A development workarea where a person's own approval of their own memory counts once, marked `self_signed` and never called a review, is designed ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5) and not built.
 
 ## What was rejected
 

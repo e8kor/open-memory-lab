@@ -12,7 +12,7 @@ Every write crosses one pipeline before recall serves it to keys other than its 
 
 > capture, scan, hold, non-author review, approval, journal entry, readable.
 
-Recall serves a memory to other keys from its approval on, and approval does not change its rank. Two read paths reach a held memory before that: readers inside an [in-progress workarea](workareas.md#in-progress-workareas), where it is marked unreviewed, and an admin key's journaled [admin read](roles-and-keys.md#the-admin-read).
+Recall serves a memory to other keys from its approval on, and approval does not change its rank. Before that, readers inside an [in-progress workarea](workareas.md#in-progress-workareas) recall it, marked unreviewed. Also, an admin of the tenant reads it through the journaled [admin read](roles-and-keys.md#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
 
 ## The states of a memory
 

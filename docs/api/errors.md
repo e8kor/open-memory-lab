@@ -183,7 +183,7 @@ Reserved. This build serves no attachment uploads.
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `lifecycle.erased` | 410 | The fetched version's key was destroyed by a journaled erase, and this key could read it before. Every other key gets `access.not_found`. |
+| `lifecycle.erased` | 410 | The fetched version's key was destroyed by a journaled erase, and this key could read it before. Every other key gets `access.not_found`. Erasure is designed and not built, so this build never returns it. |
 
 ## `limit` — rate limits
 
