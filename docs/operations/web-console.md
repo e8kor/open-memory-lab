@@ -13,15 +13,15 @@ that has not moved yet.
 
 The pages move one at a time, and each moved page gets its own path under `/web/`. In this build
 `oml-web` serves four views: the Guardrails view of the user page at `GET /web/guardrails`; the
-Workareas view at `/web/workareas` on the user page and `/web/admin/workareas` on the admin page;
+Workspaces view at `/web/workspaces` on the user page and `/web/admin/workspaces` on the admin page;
 the Memories list at `GET /web/memories` and `GET /web/admin/memories`; the Atlas at
 `GET /web/atlas` and `GET /web/admin/atlas`, with the list's JSON at `GET /web/data/memories` and
 `GET /web/admin/data/memories`; the Review view at `/web/review` and `/web/admin/review`; and the
 Keys view at `/web/keys` and `/web/admin/keys`. Every act on them runs through the API as the
-person's session keys, and a form sent twice runs once. Putting a workarea in progress, committing
+person's session keys, and a form sent twice runs once. Putting a workspace in progress, committing
 it, proposing or ratifying a status change, and a bulk verdict are confirmed first. Every page of
 the admin list is one journalled admin read, as before. The Review view holds review next, and on
-the admin page the queue of held memories per workarea and bulk review; the reviewer is never the
+the admin page the queue of held memories per workspace and bulk review; the reviewer is never the
 author, and a verdict the API refuses is shown with its code. On the Keys view a key's value or a
 connect code is shown once, on the page the act lands on: it travels there sealed in a cookie that
 page clears, never in an address or a log line, and `oml-web` keeps no copy. The admin's Keys view
@@ -169,7 +169,7 @@ included. For Caddy (`deploy/caddy/Caddyfile` is the full route table):
 
 ```caddyfile
 memory.example.com {
-	@oml_web path /web/guardrails /web/workareas /web/admin/workareas /web/memories /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/keys /web/admin/keys
+	@oml_web path /web/guardrails /web/workspaces /web/admin/workspaces /web/memories /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/keys /web/admin/keys
 	reverse_proxy @oml_web 127.0.0.1:8091
 	reverse_proxy 127.0.0.1:8090
 }
@@ -204,7 +204,7 @@ been measured ([#170](https://github.com/e8kor/open-memory-lab/issues/170)). Cal
 of kept-alive connections.
 
 When the call a page needs fails, `oml-web` shows the server's error code and message with the
-page's request id. When a secondary part fails, such as the workarea list on the Guardrails view,
+page's request id. When a secondary part fails, such as the workspace list on the Guardrails view,
 the page renders without it and names that call's request id.
 
 A list the page reads a page at a time is read whole or refused, never shown cut short:

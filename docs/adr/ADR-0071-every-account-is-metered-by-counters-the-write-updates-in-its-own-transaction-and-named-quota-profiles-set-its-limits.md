@@ -39,7 +39,7 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
 ## Decision
 
 - **d1 — An account is a person: their user root and everything their keys write. The column is
-  `user_root`.** An account is named by the id of the person's root workarea `universe.<user>`,
+  `user_root`.** An account is named by the id of the person's root workspace `universe.<user>`,
   the `user_root` column of every table below, as in `user_quotas`. A key belongs to the account
   its `api_keys.user_root_id` names, session keys included. A write is charged to the account of
   the key that wrote it. A tenant key, whose `user_root_id` is null, belongs to no account. Its
@@ -52,7 +52,7 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
 
     | Meter | Counts | Kind |
     |---|---|---|
-    | `memories` | live chains the account started: a chain (`workarea_id`, `claim_key`) whose first version a key of the account wrote, that holds a version `held`, `promoted` or `demoted`, and whose promoted tip is not a retirement. A rejected-only, retired or erased chain is not counted. A new version of a chain is not a new memory. | stock |
+    | `memories` | live chains the account started: a chain (`workspace_id`, `claim_key`) whose first version a key of the account wrote, that holds a version `held`, `promoted` or `demoted`, and whose promoted tip is not a retirement. A rejected-only, retired or erased chain is not counted. A new version of a chain is not a new memory. | stock |
     | `text_bytes` | UTF-8 bytes of the claim text, as captured after NFC, of every version a key of the account wrote, rejected versions included, since R4 keeps them | stock |
     | `writes` | versions a key of the account submitted in the UTC calendar month: every remember, learn and supersede that was held, counted on the UTC day of the version's own `created_at`. A refused write and an idempotent replay are not writes | flow, per month |
     | `recalls` | recall requests a key of the account made in the UTC calendar month, on HTTP or MCP, whatever they returned. A recall hands its count to a queue and never waits for the write (d8) | flow, per month |

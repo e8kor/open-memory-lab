@@ -73,13 +73,13 @@ Decided, not built.
     | `bytes_out` | response body length when the body is exact-sized, as every response the lead serves today is, else `null` |
     | `tenant_id`, `key_id`, `key_name`, `principal`, `role` | the resolved key's; `null` when no key resolved, as on `auth.missing` |
     | `credential`, `connection_id` | `bearer` or `connection` ([ADR-0031](ADR-0031-oauth-connections-by-connect-code.md) d7), and the connection's id for a connection |
-    | `workarea_id` | the workarea the handler resolved as its target, by id, never by name; `null` where none is resolved |
+    | `workspace_id` | the workspace the handler resolved as its target, by id, never by name; `null` where none is resolved |
     | `idempotency_replay` | `true` on a stored-response replay, absent otherwise |
     | `client_ip`, `client_ip_source` | d7 |
     | `user_agent` | d9 |
 
     Handlers do not write the line. Each one attaches what it resolved, the key and the
-    workarea, and the refusal's code, to the response as an extension, and the layer reads it.
+    workspace, and the refusal's code, to the response as an extension, and the layer reads it.
     A handler that attaches nothing leaves those fields `null`, which a reader sees as missing,
     never as wrong; a router test asserts that every route of `ROUTES` attaches them. The line
     never carries a request or response body, a query string, recall text, a key value or its
@@ -184,7 +184,7 @@ Decided, not built.
     | Field | Value |
     |---|---|
     | `rpc_method` | `initialize`, `ping`, `tools/list`, `tools/call`, a notification's method, or `unknown` for one the facade does not serve |
-    | `tool` | for `tools/call`, the served name (`oml_write`, `oml_read`, `oml_workarea`), a v0.3.0 alias name, a designed tool's name, or `unknown`; an unrecognized caller-chosen name is never logged |
+    | `tool` | for `tools/call`, the served name (`oml_write`, `oml_read`, `oml_workspace`), a v0.3.0 alias name, a designed tool's name, or `unknown`; an unrecognized caller-chosen name is never logged |
     | `alias_of` | the successor, for an alias; `mcp_alias_called` still logs as [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md) d12 says. Both were removed with the aliases in v0.5.1 (2026-11-04), when a v0.3.0 name became an unknown tool |
     | `mode` | `oml_write`'s `submit` or `supersede`, `oml_read`'s `get`, `recall` or `listing`; `null` for a tool without modes |
     | `outcome` | `result`, `tool_error` (`isError` set) or `rpc_error` |
@@ -328,8 +328,8 @@ Decided, not built.
 | **Serve `/metrics` on the API port, behind an operator key** | The scrape configuration then holds a long-lived operator key, and the endpoint is reachable from the internet through any proxy that forwards the whole origin. A bug in its check would publish every tenant's gauges. |
 | **Serve `/metrics` on the API port, only to loopback peers** | Behind a proxy on the same host every request comes from loopback, so the check admits the internet. That is the documented Caddy shape. |
 | **Push metrics through OTLP and serve no `/metrics`** | It makes a collector mandatory for the one signal the SLO formulas on [observability](../operations/observability.md#slos) are written over, and Prometheus scrapes without one. |
-| **Log the raw path and query** | Paths carry key and workarea names and queries carry cursors and filters: tenant data, and an unbounded label set. |
-| **Log the workarea and key by name only** | A name is readable but is tenant data, and an id joins to the journal. The key name is logged beside its id because the operator asked for it; the workarea is logged by id. |
+| **Log the raw path and query** | Paths carry key and workspace names and queries carry cursors and filters: tenant data, and an unbounded label set. |
+| **Log the workspace and key by name only** | A name is readable but is tenant data, and an id joins to the journal. The key name is logged beside its id because the operator asked for it; the workspace is logged by id. |
 | **Trust loopback, or every private range, as a proxy by default** | Any local process, or any host on the private network, could then write the client address it likes into a log that holds personal data. |
 | **Read RFC 7239 `Forwarded` as well** | The proxies OML documents set `X-Forwarded-For`. A second header doubles the parsing and the precedence rules for no deployment that needs it. |
 | **Export the principal, key name and client IP on spans** | A collector's retention and location are outside d8's 30 days and outside the deployment. The span carries ids, and the log holds the personal fields. |

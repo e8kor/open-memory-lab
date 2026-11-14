@@ -2,7 +2,7 @@
 id: adr/ADR-0062-oml-sync-maps-a-delta-lakes-tables-into-anchored-claims-from-the-log-alone-on-the-client-and-catalogs-and-reviewed-terms-say-what-they-mean
 tier: engineering
 status: proposed
-answers: how a client's Delta Lake tables become memories an agent can recall (what lives where, its schema, its business meaning and its terms); how this differs from ADR-0020's row import and from OML's own lake (ADR-0003); what the `delta` adapter of `oml sync` reads from `_delta_log` and what it never reads; why a minimal log reader in a separately released CLI build and not delta-rs; the anchor of a table and a column, the hashers and the claim keys; which schema changes make which claim stale; how renames are followed through column mapping; what is retired and when; how often a lake is re-checked; who may approve what; how DataHub, OpenMetadata, Glue and Hive metastore are imported, and how their lineage becomes edges; how glossary terms attach to tables and columns, who curates them, and why the mapping is deterministic; the test lake and the eval; volume, cost and review burden at 2,000 tables; workarea layout; privacy and credentials; doctor lines, tests, open questions and the v0.6.x build
+answers: how a client's Delta Lake tables become memories an agent can recall (what lives where, its schema, its business meaning and its terms); how this differs from ADR-0020's row import and from OML's own lake (ADR-0003); what the `delta` adapter of `oml sync` reads from `_delta_log` and what it never reads; why a minimal log reader in a separately released CLI build and not delta-rs; the anchor of a table and a column, the hashers and the claim keys; which schema changes make which claim stale; how renames are followed through column mapping; what is retired and when; how often a lake is re-checked; who may approve what; how DataHub, OpenMetadata, Glue and Hive metastore are imported, and how their lineage becomes edges; how glossary terms attach to tables and columns, who curates them, and why the mapping is deterministic; the test lake and the eval; volume, cost and review burden at 2,000 tables; workspace layout; privacy and credentials; doctor lines, tests, open questions and the v0.6.x build
 -->
 
 # ADR-0062 — `oml sync` maps a Delta Lake's tables into anchored claims read from the log alone on the client, and catalogs and reviewed terms say what they mean
@@ -125,7 +125,7 @@ Decided, not built: this lane wrote no code and ran no build.
   d5), and a manifest `derives_from` the table's promoted schema claim (d6), which ADR-0020 d8
   already admits as a "source-describing claim". So a reviewer of a row import reads the schema
   the mapping spec was written against, reviewed once, not restated in the manifest. ADR-0020
-  d4's dataset workarea and d11's indexing default are unchanged.
+  d4's dataset workspace and d11's indexing default are unchanged.
     - ***Amends ADR-0020 d7: the client reads the snapshot; the server only receives.*** *Decided
       by the operator on 2026-11-05.* The import runner moves out of `oml-server` into the lake
       build of the CLI (d3): under the client's credentials it reads the pinned snapshot, applies
@@ -143,7 +143,7 @@ Decided, not built: this lane wrote no code and ran no build.
       throughput is unmeasured (#161).
 
 - **d2 — The `delta` adapter reads a table's log at one version and only four actions; it never
-  opens a data file.** `oml sync <lake uri> --workarea <w> --adapter delta` reads, for each table
+  opens a data file.** `oml sync <lake uri> --workspace <w> --adapter delta` reads, for each table
   under the source (d10), `_delta_log/_last_checkpoint`, the newest checkpoint at or below the
   version, and the JSON commits after it up to the version, and from them only:
     - **`protocol`**, for its reader and writer features (d4);
@@ -305,7 +305,7 @@ Decided, not built: this lane wrote no code and ran no build.
   not apply to it; what governs the run is a sync file, `oml-lake.toml`, committed in a git
   repository and read at its own `--rev` like any synced document, so a change to what is loaded is
   a reviewed pull request. It names the lake root, `include` and `exclude` globs over table paths,
-  the discovery depth (default 3 prefixes below the root), the workarea per prefix (d17), the
+  the discovery depth (default 3 prefixes below the root), the workspace per prefix (d17), the
   mapping rules (d14), and it refuses a key that looks like a
   credential (d16). A table is a prefix with a `_delta_log/` child, found by delimiter listing.
   Retirement is ADR-0061 d10's, in the `delta/` namespace: a claim whose table is excluded is out
@@ -330,7 +330,7 @@ Decided, not built: this lane wrote no code and ran no build.
 - **d12 — A schema claim, and a table claim with no stated meaning, may be approved by a key that
   re-reads the log at the anchored version; everything that states meaning goes to a person.**
   *Applies ADR-0047 d8 and d9 and ADR-0061 d12.* The re-deriving reviewer is ADR-0047 d8's CI
-  key: a dreamer `held_by: agent`, never `service`, held in the operator's CI next to read-only
+  key: a reviewer `used_by: agent`, never `service`, held in the operator's CI next to read-only
   lake credentials, never on the server. It runs the same reader at the anchor's `uri` and `rev`
   and approves a held claim only when its text and hash are byte-identical to its own
   rendering, rejecting with `mismatch` otherwise. It may approve: schema claims, and table claims
@@ -351,7 +351,7 @@ Decided, not built: this lane wrote no code and ran no build.
       `GetDatabases` and `GetTables` signed by the client's AWS credentials. Hive metastore's
       Thrift API follows in the same phase, after the other three (d21); until then a Hive
       deployment that keeps Delta tables is read by the `delta` adapter from their locations.
-    - **Adapt.** `oml sync <snapshot> --workarea <w> --adapter datahub|openmetadata|glue` is a
+    - **Adapt.** `oml sync <snapshot> --workspace <w> --adapter datahub|openmetadata|glue` is a
       pure function of the snapshot's bytes (ADR-0057 d7). Per dataset with a description, owner,
       tag or glossary term: one claim keyed `catalog/<catalog>/<qualified name>/table`, its text
       the catalog's statements and the storage location; per column with a description or a
@@ -369,15 +369,15 @@ Decided, not built: this lane wrote no code and ran no build.
     - **Edges.** The snapshot's upstream datasets become edge statements `{from: the downstream
       table claim, label: derived_from, to: the upstream table claim}`, and foreign keys
       `references` between table claims. `oml sync <snapshot> --edges` proposes them under a
-      person's dreamer key once both ends are promoted, and `--edges --ratify` under a second
-      dreamer key re-derives them from the snapshot and ratifies, exactly as ADR-0057 d10 does for
+      person's reviewer key once both ends are promoted, and `--edges --ratify` under a second
+      reviewer key re-derives them from the snapshot and ratifies, exactly as ADR-0057 d10 does for
       `amends`. `derived_from` is an open label (ADR-0046 d6) stating data lineage between tables;
       it is not the submission field `derives_from`, it does not enter the lineage closure of R2,
       and it confers nothing.
 
 - **d14 — Terms attach to tables and columns by deterministic rules and catalog assignments,
   proposed in the write and ratified by a person; nothing fuzzy, and no model.**
-    - **Vocabularies.** ADR-0051 d1's facets, as vocabulary workareas: `biz:` for a business
+    - **Vocabularies.** ADR-0051 d1's facets, as vocabulary workspaces: `biz:` for a business
       glossary, imported client-side from a catalog's glossary by ADR-0051 d10's import (a
       DataHub or OpenMetadata glossary maps term by term: name to `pref_label`, synonyms to
       `alt_labels`, definition to `definition`, parent term to an `oml:is_a` proposal, the
@@ -404,8 +404,8 @@ Decided, not built: this lane wrote no code and ran no build.
       is admitted from a `classifier` key and refused from every other key, as before.
     - **The crew.** One ontology crew per lake, `lake-ontology` (ADR-0027 d1, d2), whose
       `term_creator` key runs glossary imports and seeds, whose `classifier` key runs `oml lake
-      classify`, and whose `curator` keys, held by people, review terms and ratify
-      classifications. The sync key is a writer on the lake's workareas and no member of the crew,
+      classify`, and whose `curator` keys, used by people, review terms and ratify
+      classifications. The sync key is a writer on the lake's workspaces and no member of the crew,
       so no key both writes a column claim and ratifies its terms (R2).
 
 - **d15 — No value ever leaves the lake: samples are not built.** *Decided by the operator on
@@ -428,16 +428,16 @@ Decided, not built: this lane wrote no code and ran no build.
   bucket names and table paths are kept for good. No route, setting or tool lets the server reach
   a lake (rejected alternatives).
 
-- **d17 — A lake loads under one parent with one workarea per domain and one per catalog.** Under
+- **d17 — A lake loads under one parent with one workspace per domain and one per catalog.** Under
   the operator's user root `e8kor` (ADR-0044): a parent `lake`; one child `lake-<domain>` per
   domain prefix of the lake root, which the `delta` adapter fills; one child `lake-catalog-<catalog>`
-  per catalog, which its importer fills; and the vocabulary workareas `lake-glossary` (`biz:`) and
-  `lake-privacy` (`pii:`) named by the crew. Workarea names are tenant-unique RFC 1035 labels
+  per catalog, which its importer fills; and the vocabulary workspaces `lake-glossary` (`biz:`) and
+  `lake-privacy` (`pii:`) named by the crew. Workspace names are tenant-unique RFC 1035 labels
   ([ADR-0026](ADR-0026-names-are-keys.md) d2), so the operator's `e8kor.lake.<domain>` is this
-  path, not a name. Recall at `lake` reads every child; each sync diffs only its own workarea
+  path, not a name. Recall at `lake` reads every child; each sync diffs only its own workspace
   (ADR-0057 d8). Keys: one writer key per adapter and lake, `e8kor-lake-sync` and
   `e8kor-catalog-<catalog>-sync`, since a writer supersedes only its own tips; the crew's keys
-  (d14); the CI key (d12); and the operator's two dreamer keys for review and edges.
+  (d14); the CI key (d12); and the operator's two reviewer keys for review and edges.
 
 - **d18 — At 2,000 tables a load is about 4,000 mechanical claims and as many human reviews as
   there are stated meanings; afterwards, review follows schema and meaning changes, not data.**
@@ -493,7 +493,7 @@ Decided, not built: this lane wrote no code and ran no build.
   the `col=` fragment or the four hashers (before the phase that adds them), which the sync also
   refuses before reading anything; lake credentials the chain cannot resolve, naming the chain
   tried and never a value; an `oml-lake.toml` key that looks like a credential; for the key's
-  default workarea, the counts of tables last reported `unsupported` (with the feature),
+  default workspace, the counts of tables last reported `unsupported` (with the feature),
   `unreadable` and `recreated`; claims whose latest check is older than twice `--recheck-after`;
   a `term_policy` of `strict` with an empty vocabulary; rules naming inactive terms; and catalog
   edges waiting for a second key.
@@ -616,7 +616,7 @@ term_policy = "strict"            # or "annotate"
 
 [[source]]
 prefix   = "shop/"
-workarea = "lake-shop"
+workspace = "lake-shop"
 exclude  = ["shop/tmp_*"]
 
 [[terms]]
@@ -632,21 +632,21 @@ about        = ["biz:revenue"]
 **CLI** (lake build):
 
 ```text
-oml sync <lake uri> --workarea <w> --adapter delta [--config oml-lake.toml] --uri-base <uri>
+oml sync <lake uri> --workspace <w> --adapter delta [--config oml-lake.toml] --uri-base <uri>
          [--dry-run | --check [--record]] [--json] [--max-writes <n>] [--recheck-after <dur>]
          [--accept-recreated] [--allow-public-server]
 oml lake fetch datahub|openmetadata|glue [--endpoint <url>] --out <snapshot.json>
-oml sync <snapshot.json> --workarea <w> --adapter datahub|openmetadata|glue [--edges [--ratify]]
-oml lake classify --workarea <w> [--dry-run]
+oml sync <snapshot.json> --workspace <w> --adapter datahub|openmetadata|glue [--edges [--ratify]]
+oml lake classify --workspace <w> [--dry-run]
 oml read --query <q> --anchor-uri-prefix s3://acme-lake/warehouse/shop/orders
 ```
 
 A dry run over the test lake, as it would print (lines elided):
 
 ```text
-$ oml sync testing/lake/tables --uri-base s3://oml-test-lake --workarea lake-shop --adapter delta --dry-run
+$ oml sync testing/lake/tables --uri-base s3://oml-test-lake --workspace lake-shop --adapter delta --dry-run
 source    s3://oml-test-lake  adapter delta  hashers oml-delta-table/1, oml-delta-schema/1, oml-delta-col/1
-workarea  lake-shop  key e8kor-lake-sync
+workspace  lake-shop  key e8kor-lake-sync
 new       delta/shop/orders/table           s3://oml-test-lake/shop/orders @ 5
 new       delta/shop/orders/schema          s3://oml-test-lake/shop/orders @ 5
 new       delta/shop/orders/col/col-3f9a…   s3://oml-test-lake/shop/orders @ 5 #col=total_amount
@@ -685,7 +685,7 @@ plan      … new, 0 changed, 0 removed; 1 unsupported, 1 unreadable, 1 recreate
 |---|---|---|
 | 1 | ADR-0020's row import and the server's lake access | Decided: the client reads and streams the rows; the server never touches a client lake and only receives (d1 amends ADR-0020 d7). |
 | 2 | The lake build's form (d3) | Decided: a second `oml` artifact built with `lake-sync`, released as `oml-lake`; the default CLI is unchanged. |
-| 3 | Workarea and crew names (d17) | Accepted at the recommendation, 2026-11-05: `lake`, `lake-<domain>`, `lake-catalog-<catalog>`, `lake-glossary`, `lake-privacy`, `lake-ontology`. |
+| 3 | Workspace and crew names (d17) | Accepted at the recommendation, 2026-11-05: `lake`, `lake-<domain>`, `lake-catalog-<catalog>`, `lake-glossary`, `lake-privacy`, `lake-ontology`. |
 | 4 | Source checks at scale (d11) | Accepted at the recommendation, 2026-11-05: daily re-checks through the client's batching (#68: at most 4 in flight, 600 checks in 9.5 s), and a server batch route (#161) before a 2,000-table lake. |
 | 5 | Catalog owners (d13) | Decided: groups only, never a person's username. |
 | 6 | The `oml.` table properties (d9) | Accepted at the recommendation, 2026-11-05: `oml.owner`, `oml.grain`, `oml.freshness`. |

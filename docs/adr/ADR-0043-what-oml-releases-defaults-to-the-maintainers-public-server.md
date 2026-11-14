@@ -123,7 +123,7 @@ Every decision below is the maintainer's or follows from that one. Decided, not 
     The cost: the key value has been presented to the maintainer's server, whose operator could
     read it and use it against the server that issued it. A user who sent a key to the wrong
     server treats it as exposed; revocation is not built, and until it is, `oml deny set <key>
-    universe` on the issuing server keeps it from every workarea
+    universe` on the issuing server keeps it from every workspace
     ([CLI reference](../cli/reference.md#oml-keys-issuance-revocation-rotation)).
 
 - **d8 — The checks hold the default.** `scripts/check_plugin.py` checks that `url` declares the

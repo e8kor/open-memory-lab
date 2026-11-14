@@ -10,7 +10,7 @@ Pages for the person who runs an OML server. First time: deploy, then administer
 
 | Task | Page |
 |---|---|
-| Claim the server, create workareas, issue keys | [Administer a server](../guides/administering.md) |
+| Claim the server, create workspaces, issue keys | [Administer a server](../guides/administering.md) |
 | Choose how to run it | [Deploy](deployment.md), [Kubernetes](../guides/kubernetes.md) |
 | See that it is healthy | [Monitor](observability.md), [Metrics](../reference/metrics.md) |
 | Move to a new release | [Upgrade](upgrades.md) |

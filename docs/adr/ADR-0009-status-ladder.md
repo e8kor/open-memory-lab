@@ -2,10 +2,10 @@
 id: adr/ADR-0009-status-ladder
 tier: engineering
 status: accepted design
-answers: why a workarea's status is a forward-only ladder of development, committed, validated, and why medallion words stay in the lake
+answers: why a workspace's status is a forward-only ladder of development, protected, frozen, and why medallion words stay in the lake
 -->
 
-# ADR-0009 — The status ladder: development, committed, validated; forward only; medallion words stay in the lake
+# ADR-0009 — The status ladder: development, protected, frozen; forward only; medallion words stay in the lake
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d1, d4, d5, 2026-11-14)
 
@@ -13,7 +13,7 @@ answers: why a workarea's status is a forward-only ladder of development, commit
 
 ## Context
 
-A workarea mirrors a crew's work, and that work matures: it is explored, then governed, then
+A workspace mirrors a crew's work, and that work matures: it is explored, then governed, then
 finished. A single terminal "archived" or "retired" state cannot express that arc; OML needs
 three stages a lifecycle with only an end cannot say:
 a stage where a tenant may deliberately relax review inside a bounded, marked exception
@@ -28,34 +28,34 @@ of running software.
 
 ## Decision
 
-- **d1 — Three statuses, and no others.** `development`, `committed`, `validated` (frozen).
+- **d1 — Three statuses, and no others.** `development`, `protected`, `frozen`.
   `development`: review runs as everywhere, and tenant policy MAY additionally permit marked
   `self_signed` rows under the one bounded constitutional exception, scoped in
-  [ADR-0001](ADR-0001-the-constitution.md) d5 and widened nowhere. `committed`: full non-author
-  review required; promotions allowed; the permanent status of the universe root. `validated`:
-  frozen — refuses new writes, promotions into it, reassignment in or out, child creation and
+  [ADR-0001](ADR-0001-the-constitution.md) d5 and widened nowhere. `protected`: full non-author
+  review required; promotions allowed; the permanent status of the universe root. `frozen`:
+  refuses new writes, promotions into it, reassignment in or out, child creation and
   re-parenting; serves reads. *(Amended 2026-11-14: the development self-signing exception is retired (ADR-0001 d5); the build never sets `self_signed`, so this text describes nothing that is served.)*
 
-- **d2 — One write-eligibility rule across all statuses.** Who may write into a workarea is
+- **d2 — One write-eligibility rule across all statuses.** Who may write into a workspace is
   decided by effective access ([ADR-0008](ADR-0008-workspace-algebra.md) d4) and by nothing else.
   **Status changes only the review policy applied to what is submitted — never grant
-  resolution.** `validated`'s write refusal is the admission policy of that status, received
+  resolution.** `frozen`'s write refusal is the admission policy of that status, received
   identically by every holder of write access as a typed error, not an edit to anyone's grants.
   Audit questions about access are answered from grants and permission epochs alone; audit
   questions about a refused write are answered from status and policy snapshots alone.
 
 - **d3 — Transitions are forward only, proposed and ratified by different identities.**
-  `development` → `committed` → `validated`, proposed by an admin or a dreamer with effective
-  access on the node, ratified by a **second, non-proposing** dreamer or admin — R2 applies to
+  `development` → `protected` → `frozen`, proposed by an admin or a reviewer with effective
+  access on the node, ratified by a **second, non-proposing** reviewer or admin — R2 applies to
   transitions — and journalled with a snapshot of the review policy in force, so any later
   promotion audit is answered against the policy that actually governed it. Backward transitions
-  do not exist: no verb, journalled or otherwise, moves a workarea down the ladder. Work that
+  do not exist: no verb, journalled or otherwise, moves a workspace down the ladder. Work that
   must continue after validation is a new child elsewhere in the tree, typically with a
   `continues` edge.
 
-- **d4 — The child-status constraint.** An area may become `validated` only when every child is
-  already `validated`, and creating a new child under a `validated` area is refused. Together
-  these make "frozen" mean the whole subtree, by construction rather than by patrol: a validated
+- **d4 — The child-status constraint.** An area may become `frozen` only when every child is
+  already `frozen`, and creating a new child under a `frozen` area is refused. Together
+  these make "frozen" mean the whole subtree, by construction rather than by patrol: a frozen
   node can never acquire an unfrozen descendant.
 
 - **d5 — A frozen area admits exactly three mutations, all journalled.** Demote, erasure
@@ -63,18 +63,18 @@ of running software.
   ([ADR-0008](ADR-0008-workspace-algebra.md) d7). The first two exist because governance and legal
   reality do not freeze — a claim found wrong is demoted, a claim that must go is erased, each
   under its own journal event — and the third because freeze covers claim content and promotions,
-  not workarea metadata. Everything else a frozen area is asked to do is refused.
+  not workspace metadata. Everything else a frozen area is asked to do is refused.
 
 - **d6 — Medallion words name physical lake zones only.** `bronze`, `silver`, `gold` are the
   names of Delta Lake zones, declared in [architecture/storage.md](../architecture/storage.md)
   and [data/delta-tables.md](../data/delta-tables.md), and nothing else. The status ladder keeps
-  its own words. No page, error, log line or CLI output may call a workarea "gold" or a lake zone
-  "validated". The two vocabularies touch at exactly one point, stated where the lake is
+  its own words. No page, error, log line or CLI output may call a workspace "gold" or a lake zone
+  "frozen". The two vocabularies touch at exactly one point, stated where the lake is
   declared: unreviewed content never enters a consumer-readable zone.
 
 ## Consequences
 
-- `status` is one column on `workareas` ([data/postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations)),
+- `status` is one column on `workspaces` ([data/postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations)),
   and every refusal in d1 is a typed error naming the status rule it enforces
   ([api/errors.md](../api/errors.md)). Transition events with policy snapshots join the event
   catalog ([data/event-catalog.md](../data/event-catalog.md)).
@@ -92,33 +92,33 @@ of running software.
   default ([cli/reference.md](../cli/reference.md)).
 - d5 commits the lake path: demote and erasure in a frozen area still flow through the outbox as
   retract operations ([architecture/storage.md](../architecture/storage.md)), so gold tables
-  curated per validated workarea are not immutable snapshots — they are current state under
+  curated per frozen workspace are not immutable snapshots — they are current state under
   journalled demotion and erasure, and the reconciler checks them as such
   ([architecture/reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)).
 - d6 is a standing documentation and review obligation under the fixed vocabulary of
-  [ADR-0018](ADR-0018-the-documentation-set.md): a surface that leaks "gold" for a workarea or
-  "validated" for a zone is a defect.
+  [ADR-0018](ADR-0018-the-documentation-set.md): a surface that leaks "gold" for a workspace or
+  "frozen" for a zone is a defect.
 
 ## Rejected alternatives
 
 - **Per-status grant models** — a second grant table or modifier set per status, so that
-  `validated` areas would carry their own, narrower grants. Rejected because it creates two
+  `frozen` areas would carry their own, narrower grants. Rejected because it creates two
   sources of access truth: every check would reconcile the grant state with the status-local
   state, every audit answer would depend on which table the checker consulted, and a transition
   would become a permission migration with its own failure modes. d2 keeps one truth —
   [ADR-0008](ADR-0008-workspace-algebra.md) d4 decides access, status decides policy — and the
-  cost is that `validated`'s refusals must be implemented as admission policy rather than falling
+  cost is that `frozen`'s refusals must be implemented as admission policy rather than falling
   out of grant resolution.
 - **Reversible freezing** — an unfreeze verb, journalled like any other act. Rejected because it
-  voids the guarantee that is the point of freezing: "this area was validated on date D" is worth
+  voids the guarantee that is the point of freezing: "this area was frozen on date D" is worth
   something to an auditor only if nothing promoted into it afterwards, and a journalled thaw
   window still forces every consumer of the export to verify that no thaw occurred — the
   guarantee degrades from a structural property into a query. Work that must continue gets a new
   child and a `continues` edge (d3); the frozen node stays frozen.
-- **A fourth `archived` status** — a terminal state after `validated` for areas nobody should
+- **A fourth `archived` status** — a terminal state after `frozen` for areas nobody should
   read anymore. Rejected because its two candidate meanings are already covered: stop serving
   the content — that is demotion of the rows, journalled and reversible per row; make the
   content cease to exist — that is erasure by crypto-shredding
-  ([ADR-0005](ADR-0005-erasure-by-crypto-shredding.md)). Both are among d5's permitted mutations inside `validated`.
+  ([ADR-0005](ADR-0005-erasure-by-crypto-shredding.md)). Both are among d5's permitted mutations inside `frozen`.
   A status that hides an entire area without doing either would be a read-path visibility switch
   with no journalled per-row account — exactly the silent disappearance R4 exists to prevent.

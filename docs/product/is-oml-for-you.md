@@ -13,7 +13,7 @@ For a decision, start with [Evaluate OML](evaluate.md): why writes are held, wha
 ## Who it serves
 
 - **Individual users**: one person whose agents remember across sessions, Claude Code, claude.ai and a phone, with personal knowledge kept apart ([scenario](../scenarios/individual.md)).
-- **Engineering teams**: a crew building skills, guardrails and runbooks in a shared development workarea, toward production agents ([scenario](../scenarios/engineering-teams.md)).
+- **Engineering teams**: a crew building skills, guardrails and runbooks in a shared development workspace, toward production agents ([scenario](../scenarios/engineering-teams.md)).
 - **Business-analyst teams**: documents and vocabulary prepared on staging and handed to production ([scenario](../scenarios/analyst-teams.md)).
 
 All three get the same experience: frictionless in development, controlled toward production.
@@ -28,14 +28,14 @@ The store cannot tell a verified finding from a hallucination or a planted instr
 
 OML holds every memory until a second identity approves it. Every write is scanned, held, reviewed by someone who did not write it, signed, and only then readable by others. Read [why a write is held](../concepts/why-a-write-is-held.md) for the reasoning.
 
-Memory lives in workareas that mirror the crews. Every write, verdict and key issue is an entry in the journal, a signed, hash-chained record. The [chain format](../data/chain-format.md) procedure checks that record; `oml audit verify-chain` refuses until the server serves a chain export, which is not built.
+Memory lives in workspaces that mirror the crews. Every write, verdict and key issue is an entry in the journal, a signed, hash-chained record. The [chain format](../data/chain-format.md) procedure checks that record; `oml audit verify-chain` refuses until the server serves a chain export, which is not built.
 
 OML works as a memory provider on its own. Agents write, recall, fetch and replace memories through three tools. See [MCP tools](../api/mcp-plugin.md).
 
 ## What it costs
 
 - **Review effort.** A memory stays held until a reviewer acts. The organization supplies that capacity, usually a reviewing crew with a person as the fallback.
-- **A write that waits.** Other agents do not see a new memory right away. Its author reads it at once, marked unreviewed. Inside a workarea a person put in progress, teammates also recall unreviewed work, marked ([workareas](../use/workspaces.md#in-progress-workareas)).
+- **A write that waits.** Other agents do not see a new memory right away. Its author reads it at once, marked unreviewed. Inside a workspace a person put in progress, teammates also recall unreviewed work, marked ([workspaces](../use/workspaces.md#in-progress-workspaces)).
 - **Running a server.** Self-hosting needs PostgreSQL and backups; the optional lake takes a directory or an object store. A server someone else runs removes that work, at the price of trusting its operator ([install](../start/install.md)).
 
 ## When not to use OML
@@ -54,12 +54,12 @@ Each uses built verbs only. The full flows, with what is designed, are under [Sc
 1. The agent saves the decision through its memory tool. OML answers held.
 2. Later it searches and finds its own memory marked unreviewed.
 3. A reviewer runs `oml review approve`.
-4. Next session, any agent in the workarea finds it.
+4. Next session, any agent in the workspace finds it.
 
 **Run one writer and one reviewer in a crew.**
 
 1. Issue the writer's key with `oml keys issue-agent`.
-2. Issue a reviewer key (role `dreamer`) to a second agent.
+2. Issue a reviewer key (role `reviewer`) to a second agent.
 3. The reviewer runs `oml review next`, which never serves its own writes.
 4. It approves or rejects with a reason ([administer a server](../guides/administering.md)).
 

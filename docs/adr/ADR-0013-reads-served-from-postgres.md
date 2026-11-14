@@ -25,7 +25,7 @@ vector search, fetch, graph read — has to come from exactly one of them, and t
 performance question first. It is an audit question: OML's product claim is that the service can
 answer *who read what, when an auditor asks*, and a read path decides whether that sentence can be
 true. It is also a policy question: every read must apply tenancy (RLS, ADR-0007), grant scope
-(ADR-0008), workarea status (ADR-0009), and the simulation audience predicate (ADR-0011) — rules
+(ADR-0008), workspace status (ADR-0009), and the simulation audience predicate (ADR-0011) — rules
 that live as Postgres rows and are enforced in Postgres.
 
 Two observations frame the answer. Semantic plus keyword retrieval is table stakes for a memory
@@ -43,11 +43,11 @@ composes answers.
   the serving path only (the serving path is the one place that holds DEKs, per ADR-0004 and
   ADR-0005). The lake serves reconciliation, lineage, metadata analytics and future journalled
   exports (ADR-0003) — no client read, ever. One read path means one place where RLS, grants,
-  workarea status and the simulation predicate are all applied, and one place where the read can
+  workspace status and the simulation predicate are all applied, and one place where the read can
   be logged (d2).
 
 - **d2 — Reads are logged, outside the hash chain, with anchored digests and a retention bound.**
-  A read event records key, role, workarea, the memory ids returned or a digest of the query, and
+  A read event records key, role, workspace, the memory ids returned or a digest of the query, and
   a timestamp. Read events live in a retention-bounded log *outside* the journal's hash chain —
   read volume must not contend with the per-tenant chain head (ADR-0002 d3), and a retention
   bound on chain rows would contradict the chain. The bridge is anchoring: each batch of read
@@ -68,7 +68,7 @@ composes answers.
 
 - **d4 — pgvector layout: per-tenant partitions, per-partition HNSW, filters inside the scan.**
   `memory_embeddings` is list-partitioned by `tenant_id` with an HNSW index per partition and RLS
-  on top, iterative scan enabled, and a workarea-path filter column so subtree-scoped queries
+  on top, iterative scan enabled, and a workspace-path filter column so subtree-scoped queries
   filter during the scan rather than after it. Embeddings are computed by `oml-indexer` under its
   own credentials per tenant — never the signing key; it reads promoted text on the serving side
   of decryption, and its exact decrypt-grant shape is bound to the embedding decision
@@ -80,7 +80,7 @@ composes answers.
 - **d5 — Steering is a claim kind with an ordering contract.** A steering row is written by a
   writer key, held on arrival and non-author-reviewed like any claim (ADR-0010, ADR-0012), and
   carried in the `kind` column (`steering`, per the data model). The contract: a recall scoped
-  to a workarea returns the steering in force there **before** the hits,
+  to a workspace returns the steering in force there **before** the hits,
   and a steering row is **never** a ranked hit — direction and relevance do not mix in one list.
   This is R3 applied to reads: the gate (and the steering that passed it) changes visibility and
   position-by-contract, never ranking. There is no separate delivery channel — OML's clients

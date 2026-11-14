@@ -77,7 +77,7 @@ Recall is measured, never estimated:
    no index. This is the definition of truth for the run; it is expensive and run once per
    corpus/filter combination, cached with the corpus.
 2. **Measured quantity: recall@k** (k ∈ {10, 50}) of the HNSW answer against that ground truth,
-   reported per corpus size, per index-to-RAM ratio, filtered (workarea-subtree filter, the
+   reported per corpus size, per index-to-RAM ratio, filtered (workspace-subtree filter, the
    iterative-scan case) and unfiltered — with latency percentiles for the same runs, because
    recall without its latency cost is half a number.
 3. **The corpus is generated, and its recipe is committed** next to the rig: seed, text

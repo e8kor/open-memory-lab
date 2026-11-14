@@ -10,7 +10,7 @@ OML is a memory server for AI agents in which no write is readable by others unt
 
 ## The experience
 
-Frictionless in development, controlled toward production. Inside a development workarea a person puts in progress, the team and its agents read each other's held work at once, marked unreviewed, and a person approves their own agents' work in their own root, marked as the same person's. In committed and validated workareas the author's own person never approves: a reviewer crew or another person approves knowledge, and only a person approves standing instructions. Releases that a second person publishes, keys bound to them, and admin fixes confirmed afterwards are designed and not built ([workarea lifecycle](../architecture/lifecycle.md)).
+Frictionless in development, controlled toward production. Inside a development workspace a person puts in progress, the team and its agents read each other's held work at once, marked unreviewed, and a person approves their own agents' work in their own root, marked as the same person's. In protected and frozen workspaces the author's own person never approves: a reviewer crew or another person approves knowledge, and only a person approves standing instructions. Releases that a second person publishes, keys bound to them, and admin fixes confirmed afterwards are designed and not built ([workspace lifecycle](../architecture/lifecycle.md)).
 
 | Audience | Scenario |
 |---|---|

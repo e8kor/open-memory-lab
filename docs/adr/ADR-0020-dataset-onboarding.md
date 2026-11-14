@@ -32,7 +32,7 @@ The resolution is a change of **grain**: the reviewed claim becomes the dataset 
 the row. [ADR-0001](ADR-0001-the-constitution.md) fixed the rules R1–R4 but never fixed the
 grain of the unit they apply to — so this record changes the grain and amends nothing. At
 manifest grain, every rule holds: R1 — the manifest is submitted by a writer and ratified by a
-dreamer; R2 — the manifest's author and lineage closure exclude its reviewers; R3 — nothing an
+reviewer; R2 — the manifest's author and lineage closure exclude its reviewers; R3 — nothing an
 import carries is visible to anyone before the manifest is ratified; R4 — mapping failures,
 partial loads and refusals are journalled, never silent.
 
@@ -83,15 +83,15 @@ partial loads and refusals are journalled, never silent.
   affecting a fraction *p* of rows escapes a sample of *n* with probability (1−p)^n — sampling
   detects systematic defects and structurally cannot detect rare poisoned rows.
 
-- **d4 — One dataset is one dedicated workarea, and imported rows carry an indelible
-  `review_scope` mark.** Import creates the workarea if absent, under any non-frozen parent:
+- **d4 — One dataset is one dedicated workspace, and imported rows carry an indelible
+  `review_scope` mark.** Import creates the workspace if absent, under any non-frozen parent:
   `claim_key` namespacing prevents collisions, dataset-level demote/erase/validate become
-  workarea-scoped acts, and recall scoping falls out of the existing subtree filter. The ladder
-  ([workareas](../architecture/workspaces.md)) is untouched. Imported data *can* reach
-  `validated` by ordinary propose-and-ratify, but every imported row carries `review_scope` —
+  workspace-scoped acts, and recall scoping falls out of the existing subtree filter. The ladder
+  ([workspaces](../architecture/workspaces.md)) is untouched. Imported data *can* reach
+  `frozen` by ordinary propose-and-ratify, but every imported row carries `review_scope` —
   `sampled(manifest_id)` versus `individual` — in Postgres, silver and curated gold, analogous
   to `self_signed` but weaker: it narrows what the trail attests, not where the row may go.
-  "Validated" then honestly means "a frozen governed set whose admission trail is: manifest
+  "Frozen" then honestly means "a governed set whose admission trail is: manifest
   ratified under policy P, rate r, seed s" — and the evidence export says exactly that. A row
   sheds the mark only by passing the normal pipeline individually — a journalled per-row
   serve, verdict and promote referencing the manifest. Escalation is available row by row,
@@ -187,8 +187,8 @@ partial loads and refusals are journalled, never silent.
   alternative (`connector` plus `simulation_id`) would force rewriting the read-fence predicate
   on every read path — containment-critical code — and is not worth a label.
 
-- **d13 — Export is the mirror image.** `gold.curated_<workarea>` already is "a validated
-  workarea as a stable Delta dataset", in ciphertext; the readable version is exactly
+- **d13 — Export is the mirror image.** `gold.curated_<workspace>` already is "a frozen
+  workspace as a stable Delta dataset", in ciphertext; the readable version is exactly
   #125. This record adds one requirement: exports emit a
   manifest-shaped descriptor — snapshot pin, row count, Merkle roots — so that an OML export
   can be re-imported elsewhere verifiably. Import and export are symmetric.
@@ -221,7 +221,7 @@ partial loads and refusals are journalled, never silent.
        assumption, now with a second appId scheme to conformance-test.
 - **The smallest useful slice** (critical path M5): pinned-file
   sources only (Parquet/CSV by digest), full-replace only, the exclusion fence reduced to
-  refusing re-import of erased digests, one dataset workarea per import under `committed`, no
+  refusing re-import of erased digests, one dataset workspace per import under `protected`, no
   FTS or vector indexing, no simulation targeting, a hard 1M-row cap under the inline lake
   budget. The slice exercises every structural decision at a scale where the unmeasured
   foundations (#98, #101, #99) are least likely to collapse; everything after is relaxing

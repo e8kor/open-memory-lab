@@ -14,7 +14,7 @@ Every write crosses one pipeline before recall serves it to keys other than its 
 
 > capture, scan, journal entry and hold, non-author review, approval (journaled), readable.
 
-Recall serves a memory to other keys from its approval on, and approval does not change its rank. Before that, readers inside an [in-progress workarea](workspaces.md#in-progress-workareas) recall it, marked unreviewed, unless the scan held it. Also, an admin of the tenant reads it through the journaled [admin read](roles-and-keys.md#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
+Recall serves a memory to other keys from its approval on, and approval does not change its rank. Before that, readers inside an [in-progress workspace](workspaces.md#in-progress-workspaces) recall it, marked unreviewed, unless the scan held it. Also, an admin of the tenant reads it through the journaled [admin read](roles-and-keys.md#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
 
 ## The states of a memory
 
@@ -30,8 +30,8 @@ stateDiagram-v2
 
 | State | Who can read it |
 |---|---|
-| `held` | Its author; the reviewer it is served to; readers of an in-progress workarea that holds it, marked unreviewed, when it is a memory or derived fact the scan raised no finding on; admin keys through the admin read |
-| `promoted` | Every key with read access to the workarea (state after approval) |
+| `held` | Its author; the reviewer it is served to; readers of an in-progress workspace that holds it, marked unreviewed, when it is a memory or derived fact the scan raised no finding on; admin keys through the admin read |
+| `promoted` | Every key with read access to the workspace (state after approval) |
 | `rejected` | Its author, in its own listing |
 | `demoted` | Not served to recall. Designed, not built: no verb demotes in this build |
 
@@ -40,8 +40,8 @@ The `erased` state exists in the API enum. This build has no erase verb.
 ## What happens to a write
 
 1. **Capture.** A person runs `oml write`, or an agent calls `oml_write`. The server normalizes the text to Unicode NFC, then scans it. Unless the scan vetoes it, the server commits one transaction. It holds a signed journal event, the memory row in state `held` and an outbox row. The write is durable once that transaction commits.
-2. **Hold.** Recall shows the held memory to its author with `--include-unreviewed`, and to the readers of an in-progress workarea that holds it when it is a memory or derived fact the scan raised no finding on. Every other read path filters it out, except the review serve and the admin read.
-3. **Review.** A reviewer key (role `dreamer`) claims the memory with `oml review next`. The reviewer reads it and approves or rejects it.
+2. **Hold.** Recall shows the held memory to its author with `--include-unreviewed`, and to the readers of an in-progress workspace that holds it when it is a memory or derived fact the scan raised no finding on. Every other read path filters it out, except the review serve and the admin read.
+3. **Review.** A reviewer key (role `reviewer`) claims the memory with `oml review next`. The reviewer reads it and approves or rejects it.
 4. **Approval.** One approval from a reviewer who is not the author promotes the memory. The journal records the verdict and the review policy it was decided under. A supersession or a retirement passes the same pipeline. It changes the claim's current version only at approval.
 5. **Release.** The outbox drains every journaled event to the lake; the lake records a claim row only once the version is promoted. A lagging lake delays analytics. It does not delay visibility, because reads come from PostgreSQL.
 
@@ -56,7 +56,7 @@ The rule set is `oml-scan/1.2` (`oml-scan/1.1` before the letters-only view was 
 | Action | Findings | Result |
 |---|---|---|
 | Veto | `secret.private_key`, `secret.api_token`, `secret.credential_pair`, `secret.assignment`, `format.scan_bound` (one field over 1 MiB), `secret.keyed_value` (structured formats), `guardrail.too_long` and `guardrail.rule_unparsable` (guardrails), `test.marker` (the veto test marker) | The write is refused with `submission.scan_veto`. `details.finding` names each finding's class, rule and place, up to five. |
-| Hold | `injection.override`, `injection.role`, `injection.tool_call`, `unicode.bidi`, `unicode.invisible`, `encoding.base64_blob`, `test.marker` (the hold test marker) | The memory is held for a reviewer to judge, and an in-progress workarea does not serve it to other readers. In an anchor, a hold finding refuses the write. |
+| Hold | `injection.override`, `injection.role`, `injection.tool_call`, `unicode.bidi`, `unicode.invisible`, `encoding.base64_blob`, `test.marker` (the hold test marker) | The memory is held for a reviewer to judge, and an in-progress workspace does not serve it to other readers. In an anchor, a hold finding refuses the write. |
 
 A held version stores every finding behind its verdict, one row each in its findings list: the class, the rule, the rule set, the field (`/body`, `/title`, or `/body/` and a decoded view's path), the line, the view the rule read (`raw`, `clean`, `spaced`, `letters`), the byte range in that view, and who recorded it (`admission`, or a recording `rescan`). Never the matched text. The review card and the admin page's bulk table show the list, and `POST /v2/review/next` and `GET /v2/review/held` serve it as `scan_findings`. Design record: [ADR-0074](../adr/ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings.md) d23.
 
@@ -73,13 +73,13 @@ No model reviews in OML. Reviewers are agents or people that hold reviewer keys 
 - A person uses `oml review next`, `oml review approve` and `oml review reject`.
 - A crew's agent calls the same routes. See [reviewer crews](../api/reviewer-crews.md).
 
-Every workarea uses one fixed policy: one approving verdict from a reviewer key ratifies. A policy with several approvals, a required human verdict or a held-item expiry is not available.
+Every workspace uses one fixed policy: one approving verdict from a reviewer key ratifies. A policy with several approvals, a required human verdict or a held-item expiry is not available.
 
 A verdict counts only against a serve. The server hands one held memory to one reviewer key, and the verdict applies to that memory. OML checks independence at approval. It cannot make an external reviewer diligent. The quality and speed of review depend on the reviewers, not on OML.
 
 ## When no reviewer is available
 
-Nothing promotes. A workarea with no reviewer key that is allowed to judge its memories accumulates held memories until one exists. The server does not relax the rule, widen the roles or approve on a timeout. An under-staffed review queue looks like an outage for new knowledge. The alternative, failing open, turns a capacity problem into a trust problem.
+Nothing promotes. A workspace with no reviewer key that is allowed to judge its memories accumulates held memories until one exists. The server does not relax the rule, widen the roles or approve on a timeout. An under-staffed review queue looks like an outage for new knowledge. The alternative, failing open, turns a capacity problem into a trust problem.
 
 A failure inside the pipeline is typed and names its rule ([errors](../api/errors.md)). An unclassifiable failure refuses the write rather than admitting it unscanned.
 

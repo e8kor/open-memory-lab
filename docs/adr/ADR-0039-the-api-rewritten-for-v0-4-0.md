@@ -2,7 +2,7 @@
 id: adr/ADR-0039-the-api-rewritten-for-v0-4-0
 tier: engineering
 status: accepted design · 2026-11-04
-answers: why the agent and HTTP surfaces are rewritten for v0.4.0 while OML is pre-release instead of layered; the three MCP tools that replace the eight served ones, their hints and their argument rules; why the events tail leaves MCP and no file tool returns; the server-derived claim_key beside a required idempotency_key; one workarea field in place of the X-OML-Workarea header; one include_unreviewed flag; which HTTP routes collapse and where the 49 declared-but-unrouted operations go; the old-to-new mapping that shows nothing is lost; the breaking changes, their migration and the alias window; one error shape on HTTP and MCP; the URL and key that are every client's only start settings, and the whoami read that derives the rest; the build plan and its tests
+answers: why the agent and HTTP surfaces are rewritten for v0.4.0 while OML is pre-release instead of layered; the three MCP tools that replace the eight served ones, their hints and their argument rules; why the events tail leaves MCP and no file tool returns; the server-derived claim_key beside a required idempotency_key; one workspace field in place of the X-OML-Workspace header; one include_unreviewed flag; which HTTP routes collapse and where the 49 declared-but-unrouted operations go; the old-to-new mapping that shows nothing is lost; the breaking changes, their migration and the alias window; one error shape on HTTP and MCP; the URL and key that are every client's only start settings, and the whoami read that derives the rest; the build plan and its tests
 -->
 
 # ADR-0039 — The API is rewritten for v0.4.0 while OML is pre-release: three task-shaped MCP tools, a contract that declares only what is served, one URL and one key to start, and nothing lost
@@ -23,8 +23,8 @@ every use case (`docs/engineering/use-case-call-map.md` on `feat/use-cases`, not
 Every decision below is the maintainer's. Five facts, checked against `feat/v0.3.1` (`beba0fc`):
 [openapi.yaml](../api/openapi.yaml) declares 71 operations, the router serves 22 plus `/mcp`
 (`crates/transports/oml-transport-http/src/lib.rs:192-225`), and the SDKs generated from all 71
-offer calls answered with 404. The own-work listing has four names, and a workarea seven
-spellings, the `X-OML-Workarea` header among them ([mcp-tools.json](../api/mcp-tools.json)). The
+offer calls answered with 404. The own-work listing has four names, and a workspace seven
+spellings, the `X-OML-Workspace` header among them ([mcp-tools.json](../api/mcp-tools.json)). The
 writes are one endpoint behind three tools (`mcp.rs:287-288`), each needing a `claim_key` the
 agent invents. Four built CLI verbs are in no row of [the CLI reference](../cli/reference.md),
 which documents `bootstrap claim --token-stdin` where the build takes `--token <value>`
@@ -51,15 +51,15 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
   (d12). A removal without a successor needs its own record. #150 stays open, and d10's table
   is the test a reviewer runs for "without loss"; every early adopter migrates once.
 
-- **d2 — The served MCP catalog is three tools: `oml_write`, `oml_read` and `oml_workarea`.**
+- **d2 — The served MCP catalog is three tools: `oml_write`, `oml_read` and `oml_workspace`.**
 
     | Tool | Task | Rides |
     |---|---|---|
     | `oml_write` | store a claim, a derived claim, a new version, or a proposal to retire one | `POST /v1/memories`, or `…/{artifact_id}/supersede` when `replaces` is sent |
     | `oml_read` | find, fetch or list claims | `POST /v1/memories/recall`, `GET /v1/memories/{artifact_id}`, `GET /v1/memories` |
-    | `oml_workarea` | see one workarea as this key may see it | `GET /v2/workareas/{workarea}` |
+    | `oml_workspace` | see one workspace as this key may see it | `GET /v2/workspaces/{workspace}` |
 
-    `my_work` folds into `oml_read`, the same ring read; `oml_workarea` returns a node, not claim
+    `my_work` folds into `oml_read`, the same ring read; `oml_workspace` returns a node, not claim
     items. **The events tail leaves MCP** (call map C1): an agent's one use for it, learning
     whether a write was approved or rejected, is `oml_read` with `state` over its own work, with
     no cursor and one permission rule fewer. It stays on `GET /v2/events`, the SDKs' `events` and
@@ -72,18 +72,18 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
 
 - **d3 — `oml_write` takes one flat argument set, and the server chooses the endpoint and the
   verb from which fields are present.** `text` and `idempotency_key` are required; `claim_key`,
-  `kind` (default `memory`, call map D3), `derives_from`, `workarea`, `replaces`, `retirement` and
+  `kind` (default `memory`, call map D3), `derives_from`, `workspace`, `replaces`, `retirement` and
   `reason` are optional. Without `replaces` it is a submission, journalled `submission.learn`
   when `derives_from` is non-empty and `submission.remember` otherwise, as
   [the HTTP API](../api/http-api.md#submit-post-v1memories) defines `learn`; `retirement` and
   `reason` are refused. With `replaces` it supersedes that version, and `retirement: true` makes
   it ADR-0025 d11's retire-proposal, `text` stating why; refused are `claim_key` (the successor
-  takes the target's), a `workarea` not the target's (`app.rs:2744-2750`), a `kind` other than
+  takes the target's), a `workspace` not the target's (`app.rs:2744-2750`), a `kind` other than
   `memory`, `derived_fact` or `steering`, and a vocabulary-kind target, since the facade sets
   `refuse_vocabulary_target` as `oml_supersede` does ([ADR-0021](ADR-0021-ai-human-ontologies.md)).
   Each refusal is `request.validation` with `details.field` (ADR-0025 d16), amending ADR-0025
   d12's "no conditionally required fields" to one rule per flat field. The output is `{mode,
-  artifact_id, claim_key, version, state, workarea, retirement, replaces, idempotent_replay}`.
+  artifact_id, claim_key, version, state, workspace, retirement, replaces, idempotent_replay}`.
 
 - **d4 — `oml_read` chooses its mode the same way: `artifact_id` fetches, `query` recalls, and
   neither lists.** An argument outside its mode, or both `artifact_id` and `query`, is refused
@@ -92,24 +92,24 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
     | Mode | Arguments | Rides |
     |---|---|---|
     | get | `artifact_id`; designed: `lineage` (`ancestors` \| `descendants`), `depth` | `GET /v1/memories/{artifact_id}`; the designed lineage read |
-    | recall | `query`, `workarea`, `k`, `kinds`, `include_unreviewed`, `max_tokens` | `POST /v1/memories/recall` |
-    | listing | `own` (default `true`), `workarea`, `claim_key`, `state`, `kind`, `since`, `until`, `limit`, `cursor` | `GET /v1/memories` |
+    | recall | `query`, `workspace`, `k`, `kinds`, `include_unreviewed`, `max_tokens` | `POST /v1/memories/recall` |
+    | listing | `own` (default `true`), `workspace`, `claim_key`, `state`, `kind`, `since`, `until`, `limit`, `cursor` | `GET /v1/memories` |
 
-    `workarea` names the subtree read. Omitted, recall and the scoped listing (`own: false`, new
-    on MCP) read the key's default workarea, and the own-work listing everything the key wrote.
+    `workspace` names the subtree read. Omitted, recall and the scoped listing (`own: false`, new
+    on MCP) read the key's default workspace, and the own-work listing everything the key wrote.
     Every mode returns ADR-0025 d12's claim item, with its text, under a `mode` field. The lineage
     mode is served once the lineage read is routed. **One flag for unreviewed rows** (call map
     M3): `include_unreviewed` replaces `include_own_held` everywhere; in v0.4.0 it reaches the
     key's own held rows (ADR-0025 d4), default `false`. The proposed ADR-0030 widens its reach and
     sets its default inside an in-progress subtree, under this name, with no flag of its own.
 
-- **d5 — Each tool declares its MCP annotations.** `oml_read` and `oml_workarea` carry
+- **d5 — Each tool declares its MCP annotations.** `oml_read` and `oml_workspace` carry
   `readOnlyHint: true` and `idempotentHint: true`; `oml_write` carries `readOnlyHint: false`,
   `destructiveHint: false` and `idempotentHint: true`; all three `openWorldHint: false`. A write
   is held for review and a retirement is a proposal; `idempotency_key` makes a repeat replay.
   `oml_write` keeps `destructiveHint: false` because a call only adds a held row and never changes
   or deletes an existing one ([ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workspace-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) d1). Each tool also carries a `title`, Remember, Recall and
-  Workarea, which the Connectors Directory asks for.
+  Workspace, which the Connectors Directory asks for.
   Claude Code runs read-only calls in parallel and may repeat a pending idempotent one
   ([MCP in Claude Code](https://code.claude.com/docs/en/mcp), fetched 2026-11-03).
 
@@ -125,21 +125,21 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
   agents recording one fact leave two claims for the reviewer.
 
 - **d7 — One spelling per concept in requests on every surface; responses keep their field
-  names, except `body`.** A request field that references a workarea, crew, key or tenant is
+  names, except `body`.** A request field that references a workspace, crew, key or tenant is
   named after the kind and takes an id or a name ([ADR-0026](ADR-0026-names-are-keys.md) d4):
 
     | Where | v0.3.0 | v0.4.0 |
     |---|---|---|
-    | `POST /v2/keys` | `default_workarea_id`; `tenant_id`; each grant's `workarea_node_id`; `deny[].subtree_node_id` | `default_workarea`; `tenant`; `workarea`; `deny[].workarea` |
-    | `POST /v2/keys/{key}/denials`; `POST /v2/workareas` | `workarea_node_id`; `parent_id` | `workarea`; `parent` |
-    | `POST /v1/memories`, `…/supersede`, `…/recall` | header `X-OML-Workarea` | body field `workarea` |
-    | `GET /v1/memories`, `GET /v2/events` | header `X-OML-Workarea` and query `workarea_id` | query `workarea` |
-    | recall, every surface; MCP `oml_recall`, `oml_events_tail` | `include_own_held`; `scope` | `include_unreviewed` (d4); `workarea` |
-    | path parameters | `{workarea_id}`, `{crew_id}`, `{key_id}` | `{workarea}`, `{crew}`, `{key}` |
+    | `POST /v2/keys` | `default_workspace_id`; `tenant_id`; each grant's `workspace_node_id`; `deny[].subtree_node_id` | `default_workspace`; `tenant`; `workspace`; `deny[].workspace` |
+    | `POST /v2/keys/{key}/denials`; `POST /v2/workspaces` | `workspace_node_id`; `parent_id` | `workspace`; `parent` |
+    | `POST /v1/memories`, `…/supersede`, `…/recall` | header `X-OML-Workspace` | body field `workspace` |
+    | `GET /v1/memories`, `GET /v2/events` | header `X-OML-Workspace` and query `workspace_id` | query `workspace` |
+    | recall, every surface; MCP `oml_recall`, `oml_events_tail` | `include_own_held`; `scope` | `include_unreviewed` (d4); `workspace` |
+    | path parameters | `{workspace_id}`, `{crew_id}`, `{key_id}` | `{workspace}`, `{crew}`, `{key}` |
 
-    **The header goes (call map M7).** ADR-0022 d4's `X-OML-Workarea` is a second form of an
+    **The header goes (call map M7).** ADR-0022 d4's `X-OML-Workspace` is a second form of an
     argument every other request carries as a field, and on the listing it sat beside a
-    `workarea_id` filter with another meaning. One `workarea` field, the subtree the call reads or
+    `workspace_id` filter with another meaning. One `workspace` field, the subtree the call reads or
     writes in, replaces both, with d4's defaults. Responses keep their v0.3.0 names, since a
     response names a stored record by its id where a request may use the name; the one rename is
     `body` → `text` (`include_bodies` → `include_text`), "body" staying
@@ -155,27 +155,27 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
     - **Designed.** `docs/api/openapi-designed.yaml` holds under `paths` the 45 designed
       operations, and under `x-oml-designed-fields`, keyed by `operationId`, served operations'
       designed fields: the vocabulary fields, `attachments`, `simulation_id` with
-      `simulated_time`, and `getWorkarea`'s review-policy and pending-transition fields. Nothing
+      `simulated_time`, and `getWorkspace`'s review-policy and pending-transition fields. Nothing
       is generated from it; an entry moves to openapi.yaml in the change that serves it, and a
       designed field sent to a served operation answers its v0.3.0 code. `check_contract_sync.py`
       compares http-api.md with the union of both documents' `paths` and fails on a path in both.
-    - **Removed and merged.** `GET /v2/workareas/{id}/status` duplicates the workarea read and goes.
-      The claim-edge and workarea-edge families, three operations each, become one designed
-      `/v2/edges` family of three with `kind` ∈ `claim` | `workarea`, each kind keeping its
+    - **Removed and merged.** `GET /v2/workspaces/{id}/status` duplicates the workspace read and goes.
+      The claim-edge and workspace-edge families, three operations each, become one designed
+      `/v2/edges` family of three with `kind` ∈ `claim` | `workspace`, each kind keeping its
       authority, refusal codes and journal events ([HTTP API](../api/http-api.md#the-surface)):
       49 − 1 − 3 = 45. `searchMemories` → `listMemories`, `proposeSupersession` →
-      `supersedeMemory`, `updateCrewMetadata` → `setWorkareaCrew` (`lib.rs:218-221`).
+      `supersedeMemory`, `updateCrewMetadata` → `setWorkspaceCrew` (`lib.rs:218-221`).
 
 - **d10 — Every served tool, route, CLI verb and SDK method maps to its successor.**
 
     | v0.3.0 | v0.4.0 |
     |---|---|
-    | `oml_remember`, `oml_learn` `{workarea, claim_key, text, kind, derives_from, idempotency_key}` | `oml_write`, `claim_key` and `kind` optional; `derives_from` journals learn (d3) |
+    | `oml_remember`, `oml_learn` `{workspace, claim_key, text, kind, derives_from, idempotency_key}` | `oml_write`, `claim_key` and `kind` optional; `derives_from` journals learn (d3) |
     | `oml_supersede {artifact_id, …, retirement?, reason}` | `oml_write {replaces, …, retirement?, reason}` |
-    | `oml_recall {query, scope, k, include_own_held, max_tokens}` | `oml_read {query, workarea, k, include_unreviewed, max_tokens}`, and `kinds` |
+    | `oml_recall {query, scope, k, include_own_held, max_tokens}` | `oml_read {query, workspace, k, include_unreviewed, max_tokens}`, and `kinds` |
     | `oml_get {artifact_id}` | `oml_read {artifact_id}` |
-    | `oml_my_work {workarea, claim_key, state, limit, cursor}` | `oml_read` listing, and `kind`, `since`, `until`; `own: false` is new on MCP |
-    | `oml_workarea_info {workarea}` | `oml_workarea {workarea}` |
+    | `oml_my_work {workspace, claim_key, state, limit, cursor}` | `oml_read` listing, and `kind`, `since`, `until`; `own: false` is new on MCP |
+    | `oml_workspace_info {workspace}` | `oml_workspace {workspace}` |
     | `oml_events_tail {scope, after_seq, limit}` | `GET /v2/events`, SDK `events`, `oml events`; for an agent's own writes, `oml_read {state}` (d2) |
     | `attachments`, `attachments_bound`; `simulation_id`, `simulated_time` | the designed annex (d9), answering their v0.3.0 codes |
     | `oml_attach`, `oml_graph` (listed, never served) | the designed upload verbs; `oml_read`'s lineage mode (d2) |
@@ -189,17 +189,17 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
 
     | CLI, v0.3.0 | v0.4.0 |
     |---|---|
-    | `oml submit --claim <text> [--verb] [--claim-key] [--derives-from …] [--workarea]` | `oml write <text> [--claim-key] [--kind] [--derives-from …] [--workarea]` |
+    | `oml submit --claim <text> [--verb] [--claim-key] [--derives-from …] [--workspace]` | `oml write <text> [--claim-key] [--kind] [--derives-from …] [--workspace]` |
     | `oml supersede …` | `oml write <text> --replaces <artifact_id> [--retirement] [--reason]` |
-    | `oml recall --query <q> [--k] [--workarea]` | `oml read --query <q> …`; `oml read <artifact_id>`; `oml read [--own\|--all] [filters]` |
+    | `oml recall --query <q> [--k] [--workspace]` | `oml read --query <q> …`; `oml read <artifact_id>`; `oml read [--own\|--all] [filters]` |
     | `oml review verdict --memory <uuid> --approve\|--reject [--reason]` | `oml review approve [<serve_id>] [--note]`, `oml review reject [<serve_id>] --reason <text>` |
-    | — | `oml events [--after-seq] [--workarea] [--limit]`; `oml login <url>` (d15) |
+    | — | `oml events [--after-seq] [--workspace] [--limit]`; `oml login <url>` (d15) |
     | `--server`, `--key`; `OML_CLI_SERVER`, `OML_CLI_KEY` | `--url`, `--api-key`; `OML_URL`, `OML_API_KEY` (d15) |
     | `oml bootstrap claim <key-name> --token <secret>` | `oml bootstrap claim <key-name> --url <https://…> --token-stdin` |
 
     `--token-stdin` keeps the enrollment secret out of argv and shell history, and `--token` gets
     no alias, which would keep that path open. Other verbs keep their names, with d7's flags.
-    **SDKs:** the wrappers take `write`, `read`, `workarea`, `events`, `review_next`, `approve` and
+    **SDKs:** the wrappers take `write`, `read`, `workspace`, `events`, `review_next`, `approve` and
     `reject`, replacing `remember`, `learn`, `supersede`, `recall`, `get`, the listings and
     `verdict`; the raising stub `upload_attachment` leaves until uploads are built.
 
@@ -229,11 +229,11 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
       are not one contained deletion, since 30 of the facade's Postgres suite's end-to-end tests
       (`crates/bins/oml-server-lead/tests/mcp_facade.rs`) still drive the MCP surface through the
       v0.3.0 names and assert their v0.3.0 shapes, and each must first move to `oml_write`,
-      `oml_read` and `oml_workarea`. v0.5.1 rewrites those tests on the three tools and then
+      `oml_read` and `oml_workspace`. v0.5.1 rewrites those tests on the three tools and then
       removes the eight names, the four verbs, `--server`, `--key` and a v0.3.0 credentials file's
       `server` and `key` (d15) together.
     - **Removed in v0.5.1 (2026-11-04).** The facade tests drive `oml_write`, `oml_read` and
-      `oml_workarea`, and then the window closed: each of the eight names answers JSON-RPC -32602
+      `oml_workspace`, and then the window closed: each of the eight names answers JSON-RPC -32602
       with the `Unknown tool` message, as any tool not served does; `mcp_alias_called` and the
       `mcp_call` line's `alias_of` field are gone; the four verbs, `--server` and `--key` are the
       CLI's usage errors, exit 2, with nothing sent; and a v0.3.0 credentials file's `server`
@@ -243,7 +243,7 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
 
     | Break | Who it reaches | Migration |
     |---|---|---|
-    | Three tool names replace the eight | `permissions.allow` rules naming old read tools | allow `mcp__plugin_oml_oml__oml_read` and `__oml_workarea`, or the server-wide `mcp__plugin_oml_oml`; the README carries both (amends ADR-0029 d8) |
+    | Three tool names replace the eight | `permissions.allow` rules naming old read tools | allow `mcp__plugin_oml_oml__oml_read` and `__oml_workspace`, or the server-wide `mcp__plugin_oml_oml`; the README carries both (amends ADR-0029 d8) |
     | The events tail leaves MCP | callers of `oml_events_tail` | `oml_read {state}` for an agent's own writes; `GET /v2/events`, SDK `events` or `oml events` to audit; the alias answers until v0.5.0 |
     | The cached skill and the hook name old tools | plugin 0.3.0 installs | `claude plugin update oml@open-memory-lab` and the v0.4.0 CLI (amends ADR-0029 d6) |
     | Request renames and the header removed (d7), `auto-` keys refused (d6) | HTTP callers, the CLI, the hook | upgrade the CLI with the server; the refusal names the new spelling. The hook sends `include_text` and `include_unreviewed` (amends ADR-0029 d2) |
@@ -266,8 +266,8 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
        quickstart, the CLI's and the hook's request spellings and the hook's lines; `info.version`
        becomes `0.4.0-design`. `the_served_openapi_document_declares_exactly_the_routed_operations`,
        `tools_list_names_three_tools_each_with_its_annotations`,
-       `the_x_oml_workarea_header_is_refused_naming_workarea`,
-       `whoami_answers_any_live_key_with_its_tenant_role_name_and_default_workarea`.
+       `the_x_oml_workspace_header_is_refused_naming_workspace`,
+       `whoami_answers_any_live_key_with_its_tenant_role_name_and_default_workspace`.
     2. **The write, read and review rules.**
        `a_write_without_claim_key_is_stored_under_the_key_derived_from_its_author_and_text`,
        `a_derived_claim_key_conflict_reveals_no_other_keys_text`,
@@ -302,20 +302,20 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
       follows d12's reading, which the maintainer has not decided**; under the other reading
       v0.4.0 reads only `url` and `api_key`.
     - **`GET /v2/whoami` derives the rest**, since no served read does: `getKey` is admin-only and
-      needs the key's own reference, and `getWorkarea` names no tenant, role or key. Any live key
-      calls it for itself and gets `{key_id, name, role, principal, held_by, tenant,
-      default_workarea, crew, grants}`, each reference as `{id, name}` and the workarea with its
-      `path`, and each grant as `{grant_id, workarea_node_id, role, epoch}`. It omits denials and
+      needs the key's own reference, and `getWorkspace` names no tenant, role or key. Any live key
+      calls it for itself and gets `{key_id, name, role, principal, used_by, tenant,
+      default_workspace, crew, grants}`, each reference as `{id, name}` and the workspace with its
+      `path`, and each grant as `{grant_id, workspace_node_id, role, epoch}`. It omits denials and
       the grants' per-grant deny masks, both of which name subtrees the key may not read, logs no
       read, since it reads no claim, and gains the guardrail scope when ADR-0037's is built.
       Amended by [ADR-0070](ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core.md)
       (2026-11-12, #343; accepted by the operator the same day): a `<user>-web` session key's
       record also carries `denied`, a boolean: whether the key holds a denial in force on any
-      workarea. It names no workarea, no count, no author and no time. Every other key's record
+      workspace. It names no workspace, no count, no author and no time. Every other key's record
       has no such member, so an agent key or an admin key still learns nothing of its denials.
       The flag tells a person nothing the refusal of a key act does not already tell them.
     - **`oml doctor` checks the pair alone**: each value's source, never the key; `/readyz`; and
-      `whoami`, printing role, tenant and default workarea.
+      `whoami`, printing role, tenant and default workspace.
     - **Admin extras stay off the start path**: the enrollment secret and `--signing-key` are read
       only by the verbs that take them. A new client setting is derivable through `whoami` or
       defaulted, or its record says why it is neither.
@@ -325,7 +325,7 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
 - **The surfaces change at build, not now**: the contract pages, the CLI reference, sdks.md and
   the skill keep v0.3.0 until d14's step 1. At acceptance the amended records gain `· amended by
   ADR-0039`, and the D13 and D14 rows of the [D-register](index.md) name it.
-- **What the agent learns shrinks** to three tools, one `workarea` and no invented `claim_key`
+- **What the agent learns shrinks** to three tools, one `workspace` and no invented `claim_key`
   (18,893 characters for today's twelve catalog entries; the build records the new figure).
 - **Rebases owed.** The proposed ADR-0027, ADR-0030, ADR-0031, ADR-0035, ADR-0036, ADR-0037 and
   ADR-0038 rebase onto d2, d7 and d9: ADR-0030 uses `include_unreviewed` (d4) rather than its own
@@ -348,10 +348,10 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
 | **Delete the 45 designed operations** | They are decided design cited from accepted records (ADR-0010, ADR-0011, ADR-0020, ADR-0021). |
 | **One MCP tool for everything, or three write tools** | Reads and writes differ in what Claude Code runs without asking (d5); the three writes are one endpoint and one supersede path. |
 | **Keep `oml_events` on MCP** (the first draft's d2) | `oml_read {state}` answers an agent's one use with no cursor, and the tool costs a permission rule (call map C1). |
-| **Fold `oml_workarea` into `oml_read`** | It returns a node with the caller's verbs, not claim items. |
+| **Fold `oml_workspace` into `oml_read`** | It returns a node with the caller's verbs, not claim items. |
 | **Keep `oml_graph`, its fold left to a later record** (the first draft) | Lineage returns claim items, so it passes d4's one-shape test as a mode (call map M4). |
 | **`oml_attach` returning when uploads are built** | MCP carries no file bytes; the agent would still need a terminal for the parts (call map C2). |
-| **Keep `X-OML-Workarea` beside the `workarea` field** (the first draft's d7) | Two forms of one argument, with different meanings on the listing (call map M7). |
+| **Keep `X-OML-Workspace` beside the `workspace` field** (the first draft's d7) | Two forms of one argument, with different meanings on the listing (call map M7). |
 | **Keep `include_own_held` beside `include_unreviewed`, or name the one flag `include_held`** | Two flags for one question; ADR-0030 already uses `include_unreviewed`, and the maintainer chose it. |
 | **`kind` required on `POST /v1/memories`** | `memory` is MCP's default already and covers the common write (call map D3). |
 | **`serve_id` required on approve** (the first draft's d10) | The reviewer copies what `review next` printed though it holds one item (call map D5). |
@@ -362,5 +362,5 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
 | **Keep `OML_CLI_SERVER` and `OML_CLI_KEY` beside the plugin's pair** (call map K7) | Two names for one pair. An admin key still never feeds an agent's context: the hook never reads the credentials file (ADR-0040 d3), and an admin key recalls no claim content ([roles and keys](../architecture/roles-and-keys.md)). |
 | **Resolve the URL and the key independently across sources** | A flag's URL could be paired with an exported key meant for another server. |
 | **`GET /v2/keys/me` for the self read** | `me` fits the name grammar (ADR-0026 d2), so a tenant may hold it, and the key read carries denials. |
-| **Keep tenant and workarea ids in the credentials file** (v0.3.0) | They go stale when an admin changes the key's grants. |
+| **Keep tenant and workspace ids in the credentials file** (v0.3.0) | They go stale when an admin changes the key's grants. |
 | **Leave the simulation fields on the served writes** | The server refuses every `simulation_id` (`lib.rs:1973-1976`). |

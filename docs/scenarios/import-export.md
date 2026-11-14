@@ -1,16 +1,16 @@
 ---
 status: Beta
 verified: 2026-11-14
-answers: "how a workarea moves between servers or into a copy on one server: what a bundle carries and never carries, how trust is re-established on the target, how an import is rolled back, where export and import sit in the lifecycle, and what is built today"
+answers: "how a workspace moves between servers or into a copy on one server: what a bundle carries and never carries, how trust is re-established on the target, how an import is rolled back, where export and import sit in the lifecycle, and what is built today"
 ---
 
 # Import and export
 
-A workarea leaves a server as a published release in a signed, encrypted bundle. It lands on the target held, in an in-progress development workarea, and is reviewed again there before any agent outside that workarea reads it. Nothing in this flow is built. It is decided in [ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md), and builds after releases ([ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md)).
+A workspace leaves a server as a published release in a signed, encrypted bundle. It lands on the target held, in an in-progress development workspace, and is reviewed again there before any agent outside that workspace reads it. Nothing in this flow is built. It is decided in [ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md), and builds after releases ([ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md)).
 
 <figure markdown="span">
-  [![Export and import view: on the source server, payments.dev in progress, a published release payments.dev@1.4.0 and an export by a person's key; the oml-bundle/1 file carries claim versions of every kind, verdicts as provenance under pseudonyms, signed source events and a signed manifest, encrypted to named recipients, and never keys, grants, crews, bindings or settings. On the target, an import lands held in an in-progress workarea, a person reviews it again, two persons publish a release there, and an import rollback rejects or, as an admin fix, demotes. On one server, a copy streams from a release. All designed.](../architecture/img/exchange-light.svg#only-light)](../architecture/img/exchange.svg)
-  [![Export and import view: on the source server, payments.dev in progress, a published release payments.dev@1.4.0 and an export by a person's key; the oml-bundle/1 file carries claim versions of every kind, verdicts as provenance under pseudonyms, signed source events and a signed manifest, encrypted to named recipients, and never keys, grants, crews, bindings or settings. On the target, an import lands held in an in-progress workarea, a person reviews it again, two persons publish a release there, and an import rollback rejects or, as an admin fix, demotes. On one server, a copy streams from a release. All designed.](../architecture/img/exchange-dark.svg#only-dark)](../architecture/img/exchange.svg)
+  [![Export and import view: on the source server, payments.dev in progress, a published release payments.dev@1.4.0 and an export by a person's key; the oml-bundle/1 file carries claim versions of every kind, verdicts as provenance under pseudonyms, signed source events and a signed manifest, encrypted to named recipients, and never keys, grants, crews, bindings or settings. On the target, an import lands held in an in-progress workspace, a person reviews it again, two persons publish a release there, and an import rollback rejects or, as an admin fix, demotes. On one server, a copy streams from a release. All designed.](../architecture/img/exchange-light.svg#only-light)](../architecture/img/exchange.svg)
+  [![Export and import view: on the source server, payments.dev in progress, a published release payments.dev@1.4.0 and an export by a person's key; the oml-bundle/1 file carries claim versions of every kind, verdicts as provenance under pseudonyms, signed source events and a signed manifest, encrypted to named recipients, and never keys, grants, crews, bindings or settings. On the target, an import lands held in an in-progress workspace, a person reviews it again, two persons publish a release there, and an import rollback rejects or, as an admin fix, demotes. On one server, a copy streams from a release. All designed.](../architecture/img/exchange-dark.svg#only-dark)](../architecture/img/exchange.svg)
   <figcaption>Every element is designed (ADR-0084, ADR-0085, ADR-0089). A target never takes the source's verdicts as its own: trusting a source server is ADR-0088, proposed and deferred.</figcaption>
 </figure>
 
@@ -18,7 +18,7 @@ The reviewer pairs that count on the target are those of [producers and reviewer
 
 ## Place in the lifecycle
 
-Export from a shared workarea starts from a **published release**, the last step on the source ([workarea lifecycle](../architecture/lifecycle.md)). A personal root has no release, so its export carries its history instead (below). Import ends in a **development workarea in progress** on the target, the first step there. A move between servers therefore runs the whole review on the target again: import, review, cut, publish.
+Export from a shared workspace starts from a **published release**, the last step on the source ([workspace lifecycle](../architecture/lifecycle.md)). A personal root has no release, so its export carries its history instead (below). Import ends in a **development workspace in progress** on the target, the first step there. A move between servers therefore runs the whole review on the target again: import, review, cut, publish.
 
 | Path | When | What it costs |
 |---|---|---|
@@ -32,7 +32,7 @@ Export from a shared workarea starts from a **published release**, the last step
 |---|---|
 | Claim versions of every kind: memories, steering, terms, guardrails, skills, documents, tests | Keys, connect codes, connections |
 | Each version's format, anchor, valid time, kind fields, `derives_from` and `origin`, as signed | Grants, denies, crews, quotas, review policy |
-| Verdicts, as provenance: the reviewer's kind, `same_user`, the approval time, and a pseudonym | Bindings, release gate records, workarea mode, federation settings |
+| Verdicts, as provenance: the reviewer's kind, `same_user`, the approval time, and a pseudonym | Bindings, release gate records, workspace mode, federation settings |
 | Each version's and verdict's source journal event, as signed | Other people's held, rejected or demoted versions |
 | Edges whose two ends are both exported | The salt behind the pseudonyms |
 | Attachments and bodies over 64 KiB, by digest | |
@@ -52,7 +52,7 @@ Export from a shared workarea starts from a **published release**, the last step
 
 Until step 6, only `tip` keys inside the target's in-progress subtree, and, designed, `tip` keys on its ancestor chain, read the imported content, marked unreviewed (ADR-0080 d16).
 
-**Who acts.** A person's key exports, under the tenant's export policy: `off`, `own_root` (the default: a person's own root only) or `allowed`. An admin may allow one shared workarea's export, which reads no content. No agent, admin or service key exports, and only a person's writer key imports (ADR-0084 d10, d11). No MCP tool exists for either (R1).
+**Who acts.** A person's key exports, under the tenant's export policy: `off`, `own_root` (the default: a person's own root only) or `allowed`. An admin may allow one shared workspace's export, which reads no content. No agent, admin or service key exports, and only a person's writer key imports (ADR-0084 d10, d11). No MCP tool exists for either (R1).
 
 **A repeated import** adds only what is new. Each claim key is planned as `oml sync` plans it: new, changed, removed, unchanged or in conflict. A conflict never writes over the target's tip; it lands as a held supersession marked `conflict`. An older bundle is refused `import.bundle_older` unless `--allow-older` is given, and `--dry-run` prints the plan and writes nothing (ADR-0084 d8).
 
@@ -70,23 +70,23 @@ Designed (ADR-0084 d15):
 
 ```sh
 # on the source, as a person
-oml workareas export payments.dev --release 1.4.0 --recipient age1… --out payments-1.4.0.oml
+oml workspaces export payments.dev --release 1.4.0 --recipient age1… --out payments-1.4.0.oml
 # on the target, as a person with writer there
-oml workareas import payments-1.4.0.oml --into payments.dev --identity key.txt --expect-key <fingerprint> --dry-run
-oml workareas import payments-1.4.0.oml --into payments.dev --identity key.txt --expect-key <fingerprint>
+oml workspaces import payments-1.4.0.oml --into payments.dev --identity key.txt --expect-key <fingerprint> --dry-run
+oml workspaces import payments-1.4.0.oml --into payments.dev --identity key.txt --expect-key <fingerprint>
 # a same-server copy from a release
-oml workareas import --from payments.dev@1.4.0 --into payments.copy
-# a same-server copy of a personal workarea, streamed from its history
-oml workareas import --from dana.project --into payments.dev
+oml workspaces import --from payments.dev@1.4.0 --into payments.copy
+# a same-server copy of a personal workspace, streamed from its history
+oml workspaces import --from dana.project --into payments.dev
 ```
 
-The console's personal side gains Export and Import pages. The HTTP routes are `POST /v2/workareas/{workarea}/exports`, `POST /v2/imports` and `GET /v2/imports/{id}`.
+The console's personal side gains Export and Import pages. The HTTP routes are `POST /v2/workspaces/{workspace}/exports`, `POST /v2/imports` and `GET /v2/imports/{id}`.
 
 ## Built today
 
 | Need | Built path |
 |---|---|
 | A person's own data out of a server | The console's export, `GET /v2/web/export`: everything in the person's root as one JSON file. Nothing imports it. |
-| Repository documents into a workarea | [`oml sync`](../use/sync.md), which plans, writes held and proposes changes, as an import will. |
+| Repository documents into a workspace | [`oml sync`](../use/sync.md), which plans, writes held and proposes changes, as an import will. |
 | Guardrails for a harness without the plugin | [`oml guardrails export`](../use/guardrails.md): promoted text as a file, labelled "text, not enforcement". |
 | A whole server | [Back up and restore](../operations/restore.md): the database and the keyring together. A bundle is never a backup and never a tenant move (ADR-0084 d16). |

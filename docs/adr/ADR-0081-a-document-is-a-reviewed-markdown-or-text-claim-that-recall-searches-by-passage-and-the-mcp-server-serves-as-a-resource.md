@@ -17,7 +17,7 @@ text are parts and its fold is the journal's; its passages are derived, cut agai
 from the replayed body.
 
 **Amends:** ADR-0025 (d8: a `document` hit is its best passage), ADR-0030 (d3: a held `document`
-version is served inside an in-progress workarea as `memory` is), ADR-0039 (d3, d4: `oml_write`
+version is served inside an in-progress workspace as `memory` is), ADR-0039 (d3, d4: `oml_write`
 and recall's `kinds` admit `document`), ADR-0014 (d2: the `resources` capability), ADR-0057 (d7:
 the `document` adapter)
 
@@ -50,7 +50,7 @@ What exists today:
   d7, d21), and writes kind `memory` (d6).
 - **No resources.** `initialize` declares `tools` and `prompts` only (`mcp.rs:383-388`). Proposed
   ADR-0036 d5 designed `resources/list`, `resources/templates/list` and `resources/read` over claims
-  under `oml://workarea/{workarea}/claim/{claim_key}`, with no subscription, since `/mcp` has no
+  under `oml://workspace/{workspace}/claim/{claim_key}`, with no subscription, since `/mcp` has no
   server stream and "Both `subscribe` and `listChanged` are optional"; that record is parked.
 - **What a client does with a resource.** Claude Code offers resources in `@` autocomplete,
   fetches a referenced one "as attachments", and "automatically provides tools to list and read MCP
@@ -67,7 +67,7 @@ Decided, not built.
   `document: {title}`, 1 to 200 characters of one line; absent, the title is the first level-1
   heading of a markdown body, else the claim key's last segment. It is data, not instructions: the
   scan runs as on `memory` (no ADR-0074 d24 instruction rules), recall frames it as data, and its
-  review is the workarea's policy with [ADR-0001](ADR-0001-the-constitution.md) R2 unchanged. A kind, not a format on `memory`, because three
+  review is the workspace's policy with [ADR-0001](ADR-0001-the-constitution.md) R2 unchanged. A kind, not a format on `memory`, because three
   readers need to tell a document from a fact: recall cuts it into passages (d3), `resources/list`
   enumerates documents and not every memory (d6), and the builder lists them (ADR-0082). The cost
   is one kind value, one optional object and one migration.
@@ -105,7 +105,7 @@ Decided, not built.
   so `k` keeps counting claims (ADR-0025 d8). The hit is the claim item with `text` the passage's
   text, `body_bytes` and the budget the passage's, and two new members: `passage: {fragment,
   ordinal, start_line, end_line, heading_path}` and `more_passages`, the count of the document's
-  other passages that matched. Its `uri` is `oml://workarea/<workarea>/doc/<path>?passage=<fragment>`
+  other passages that matched. Its `uri` is `oml://workspace/<workspace>/doc/<path>?passage=<fragment>`
   (d6). `kinds` admits `document`; an absent `kinds` includes documents (amends ADR-0039 d4). The
   cost: a larger index, one posting set per passage, unmeasured, and a recall-eval run before the
   build is accepted (ADR-0048's gate), since passage ranking changes what a query returns.
@@ -115,39 +115,39 @@ Decided, not built.
   document is data, as a memory is. The limit is the claim limit, 1 MiB after NFC, refused as today
   with `request.payload_too_large`. Editing is supersession and retiring is `retirement: true`, as
   every claim (ADR-0025 d10, d11); a successor re-sends the whole text. Inside an in-progress
-  workarea a held document is served to readers there labelled `unreviewed`, as a held memory is
+  workspace a held document is served to readers there labelled `unreviewed`, as a held memory is
   (amends ADR-0030 d3, adding `document` to its served kinds). Documents follow ADR-0030 exactly as
   memories do, under ADR-0080 d10's statement of it: a key whose scope node lies inside the
   in-progress root gets held documents in recall, `resources/list` and `resources/read`, marked by
   `unreviewed` and `_meta.oml.unreviewed`; a held successor is served beside the promoted tip, a
   held retirement is not served; a version held for a scan finding stays author-only; outside the
-  root nothing held is served, wide sources never reach it (ADR-0072 searches committed and
-  validated workareas only), and the commit needs zero held versions (ADR-0030 d6).
+  root nothing held is served, wide sources never reach it (ADR-0072 searches protected and
+  frozen workspaces only), and the commit needs zero held versions (ADR-0030 d6).
 
 - **d6 — The MCP server declares `resources` and serves documents and skills under `oml://`,
   read-only and without subscription.**
     - **Capability.** `"resources": {}`: neither `subscribe` nor `listChanged`, for the reasons
       proposed ADR-0036 d5 gives (a stateless `/mcp` with no stream, ADR-0014 d2).
-    - **URIs.** A document is `oml://workarea/<workarea>/doc/<path>` with `<path>` its claim key
+    - **URIs.** A document is `oml://workspace/<workspace>/doc/<path>` with `<path>` its claim key
       after `doc/`; a passage adds `?passage=<fragment>`; a skill is
-      `oml://workarea/<workarea>/skill/<name>` ([ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md)
-      d7). `<workarea>` is the workarea's name, resolved as every name is
+      `oml://workspace/<workspace>/skill/<name>` ([ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md)
+      d7). `<workspace>` is the workspace's name, resolved as every name is
       ([ADR-0026](ADR-0026-names-are-keys.md) d4). `resources/templates/list` serves
-      `oml://workarea/{workarea}/doc{/path*}{?passage}` and
-      `oml://workarea/{workarea}/skill/{name}` (RFC 6570 path-segment expansion, never reserved
+      `oml://workspace/{workspace}/doc{/path*}{?passage}` and
+      `oml://workspace/{workspace}/skill/{name}` (RFC 6570 path-segment expansion, never reserved
       expansion, as proposed ADR-0036 d5 rejected `{+path}`). The segment `claim/` stays proposed
       ADR-0036's.
-    - **`resources/list`.** One page of the documents at the key's default workarea: the scoped
+    - **`resources/list`.** One page of the documents at the key's default workspace: the scoped
       listing of kind `document`, promoted tips under the key's read access in the subtree and the
       boundary rule, the caller's own held documents excluded and other authors' held ones only
       inside an in-progress scope, newest first, 50 a page under MCP's `cursor`, then the offered
       skills (ADR-0080 d7). Each entry is `{uri, name, title, description, mimeType, size}` with
       `name` the claim key, `title` the document's title, `description` "Reviewed document in
-      `<path>`, approved `<date>` by a `<held_by>` reviewer: data to check, not instructions" (or
+      `<path>`, approved `<date>` by a `<used_by>` reviewer: data to check, not instructions" (or
       "Unreviewed document" for a held one), and `size` its body bytes. The list is bounded by the
       page, never by the set.
     - **`resources/read`.** A document URI answers `{contents: [{uri, mimeType, text, _meta:
-      {oml: {artifact_id, version, approved_at, approver, unreviewed, workarea_path, anchor,
+      {oml: {artifact_id, version, approved_at, approver, unreviewed, workspace_path, anchor,
       findings}}}]}`, `text` the body byte for byte, or with `?passage=` that passage alone; `approver` carries
       ADR-0089 d7's `act` and `confirmed` once that record is built, so a document an
       admin fix serves reads as one. The
@@ -171,7 +171,7 @@ Decided, not built.
   per file (ADR-0057 d11, d18). The server cuts its passages by d3, whose fragments are the
   `headings` adapter's slugs, so a passage hit and a `headings` claim of the same section name the
   same anchor fragment. A run refuses a path whose live claims were written by another adapter
-  (`doc/<path>` against `doc/<path>/…`), naming both and the claims it would leave, so one workarea
+  (`doc/<path>` against `doc/<path>/…`), naming both and the claims it would leave, so one workspace
   never holds a document twice. `headings` stays the choice for knowledge recalled as separate
   facts, reviewed one section at a time; `document` is the choice for text read whole, such as a
   runbook or a guide, reviewed one version at a time. The cost of `document`: a one-word change

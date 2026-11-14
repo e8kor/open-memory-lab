@@ -39,10 +39,10 @@ BLURB = {
     "Storage and data": "Where memory lives, how it is encrypted, drained to the lake and erased.",
     "Search and recall": "How recall finds, ranks and filters memories.",
     "Writing and review": "What a write may carry and how review judges it.",
-    "Sources and sync": "Where a memory came from and how a workarea follows a repository or a chat.",
+    "Sources and sync": "Where a memory came from and how a workspace follows a repository or a chat.",
     "Integrations and agents": "The API, the MCP tools, the plugin and the hooks agents use.",
     "Operations and security": "Deployment, identity, observability and the web pages.",
-    "Architecture and platform": "The stack, the workarea tree and how decisions are recorded.",
+    "Architecture and platform": "The stack, the workspace tree and how decisions are recorded.",
 }
 
 

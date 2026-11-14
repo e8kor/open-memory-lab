@@ -5,7 +5,7 @@ status: accepted design · amended by ADR-0025, ADR-0089, ADR-0091
 answers: why exactly five roles exist; how API keys are issued, scoped and banned; where provider-level bootstrap authority lives
 -->
 
-# ADR-0010 — Roles and keys: reader, writer, dreamer, admin, operator
+# ADR-0010 — Roles and keys: reader, writer, reviewer, admin, operator
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d6, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d1, d5, 2026-11-14)
 
@@ -13,23 +13,23 @@ answers: why exactly five roles exist; how API keys are issued, scoped and banne
 
 ## Context
 
-OML authenticates agents with API keys that carry a role and workarea-scoped grants. OML is
+OML authenticates agents with API keys that carry a role and workspace-scoped grants. OML is
 multi-tenant, has no web UI, and its callers are agents and crews first; the administration surface is a CLI
 speaking the same HTTP API. The role set, the issuance rules, the provider-level bootstrap and
 the ban mechanism all need one record. The role-by-verb matrix, grant resolution and deny
 semantics are owned by [roles and keys](../architecture/roles-and-keys.md) and
-[workareas](../architecture/workspaces.md); this record makes the decisions those pages document.
+[workspaces](../architecture/workspaces.md); this record makes the decisions those pages document.
 Everything here is decided, not built.
 
 ## Decision
 
-- **d1 — Five roles, each a verb ceiling.** `reader`, `writer`, `dreamer`, `admin` at tenant
+- **d1 — Five roles, each a verb ceiling.** `reader`, `writer`, `reviewer`, `admin` at tenant
   level, `operator` at provider level. A role is a ceiling on reachable verbs
   ([ADR-0001](ADR-0001-the-constitution.md) d1), never a hint to a handler: reader recalls,
   reads, searches and reads graphs within scope, with every read logged
   ([retrieval](../architecture/retrieval.md)); writer remembers and learns (held on arrival),
   uploads attachments, proposes supersessions of its own claims and writes steering rows (held
-  and reviewed like any claim), and never records a verdict; dreamer proposes and reviews (d5);
+  and reviewed like any claim), and never records a verdict; reviewer proposes and reviews (d5);
   admin administers and never reviews (d6); operator provisions tenants and never touches
   content (d2). The full matrix lives in
   [roles and keys](../architecture/roles-and-keys.md).
@@ -44,7 +44,7 @@ Everything here is decided, not built.
 
 - **d3 — Issuer ceiling.** A key is issued with a role no higher than its issuer's. Operator
   issues operator keys (its own rotation path) and each tenant's first admin key; admin issues
-  reader, writer, dreamer and admin within the tenant. There is no escalation path by issuance: authority can be delegated
+  reader, writer, reviewer and admin within the tenant. There is no escalation path by issuance: authority can be delegated
   sideways or down, never up. Issuance and revocation are journalled acts; key values are shown
   once and stored only as hashes.
 
@@ -55,25 +55,25 @@ Everything here is decided, not built.
   separate, journalled act). The CLI previews a ban's reach with `--dry-run` before it takes
   effect ([CLI reference](../cli/reference.md)).
 
-- **d5 — Dreamer is one role with two capability classes, split at promotion.** Class (a),
+- **d5 — Reviewer is one role with two capability classes, split at promotion.** Class (a),
   propose: edit-as-proposal (a new attributed submission carrying `derives_from`) and connection
-  proposals, claim↔claim and workarea↔workarea. Class (b), review: verdicts and connection-edge
-  ratification. The split is enforced where it matters — at promotion time: a dreamer's verdict
-  is refused when that dreamer's key or principal appears anywhere in the row's lineage closure,
+  proposals, claim↔claim and workspace↔workspace. Class (b), review: verdicts and connection-edge
+  ratification. The split is enforced where it matters — at promotion time: a reviewer's verdict
+  is refused when that reviewer's key or principal appears anywhere in the row's lineage closure,
   pending and ratified edges alike ([ADR-0001](ADR-0001-the-constitution.md) d2), and a
-  dreamer's own proposals need another reviewer. One key may legitimately hold both classes;
+  reviewer's own proposals need another reviewer. One key may legitimately hold both classes;
   what it may never do is exercise both on the same lineage. The closure check is only as good
   as the declared graph (ADR-0001 d6).
 
 - **d6 — Admin is not a reviewer.** Admin verdicts on content are refused by the server, and the
   rule is enforced structurally at issuance: the service refuses to mint or amend a key that
-  combines the admin role with dreamer-class grants (typed refusal `access.role_exclusive`,
+  combines the admin role with reviewer-class grants (typed refusal `access.role_exclusive`,
   [errors](../api/errors.md)) — a person holding both duties holds two keys. An
   admin needing to write an ordinary claim uses a writer-scoped key; that write is held and
   non-author-reviewed like any other. "Edit or create by hand" is this path and no other *(amended 2026-11-14 by ADR-0089 d14: except an admin's marked fix, served at once and confirmed or reverted by a person afterwards)* —
   free-form manipulation of content exists only inside the simulation channel
   ([ADR-0011](ADR-0011-simulations.md)), marked as such. Admin's own verbs — issue/revoke keys,
-  create/relate/re-parent/status workareas, reassign claims, ban, demote, erase, crew metadata,
+  create/relate/re-parent/status workspaces, reassign claims, ban, demote, erase, crew metadata,
   run simulations — are enumerated in [roles and keys](../architecture/roles-and-keys.md).
 
 - **d7 — Keys are the agent credential; identity metadata feeds the independence axis.** Every
@@ -129,9 +129,9 @@ The user-facing page [roles and keys](../architecture/roles-and-keys.md) keeps w
 - **Rejected: independence from a single principal check.** One person can hold many keys, so the check runs at approval against the author and the derivation lineage, not at issuance.
 - **Rejected: a salted, slow hash for keys.** The keys are random and the hash sits on every request path.
 - **Why admin verdicts are refused on the server.** Otherwise the authority that issued an author's key could act as reviewer by fiat. An admin who writes uses a separate writer key, so the journal holds no unreviewed admin write; an admin fixing a typo waits for a reviewer like everyone else.
-- **Why the independence metadata is read as journaled.** A later reshuffle of crews does not change what was independent at approval time. Every workarea has the same base review policy; a `committed` workarea can require a differing reviewer crew or external manager.
+- **Why the independence metadata is read as journaled.** A later reshuffle of crews does not change what was independent at approval time. Every workspace has the same base review policy; a `protected` workspace can require a differing reviewer crew or external manager.
 - **Connect-code guess bound.** With L live codes and G wrong entries during their life, the chance that any wrong entry hits a live code is at most L·G / 2^60. The code is never in a log, URL or journal payload and the database holds a digest only; a newer code, a revoked connection or a revoked key voids it.
 - **Connection liveness.** A connection that stops being live (key unusable or newest refresh token expired) stays `open` in the table without a journal event, because no actor ended it. A revoked connection never reopens; the key needs a new code. OML accepts a token nowhere but `/mcp`, so a connection can do at most what its key can.
-- **Session keys.** `<user>-review` has its own principal, so the review check lets it approve the person's agents' writes and never a version it proposed itself. A user's separate dreamer key can review their own agents' writes; the journal shows both keys name the same user.
+- **Session keys.** `<user>-review` has its own principal, so the review check lets it approve the person's agents' writes and never a version it proposed itself. A user's separate reviewer key can review their own agents' writes; the journal shows both keys name the same user.
 - **Costs.** A person who administers and reviews carries two keys. Writes wait for a reviewer, an admin included. Lineage exclusion knows only what writers declare, and nothing stops two distinct principals approving each other's work; how often that happens has not been measured.
 

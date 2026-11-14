@@ -106,7 +106,7 @@ nav:
       - Use:
           - Write and read memories: use/remember-and-recall.md
           - Review held memories: guides/reviewing.md
-          - Organize memory in workareas: use/workspaces.md
+          - Organize memory in workspaces: use/workspaces.md
           - Capture chat memory: use/chat-memory.md
           - Sync docs and code: use/sync.md
           - Give agents rules: use/guardrails.md
@@ -152,10 +152,10 @@ nav:
       - Compliance: product/compliance.md
   - Architecture:
       - Architecture views: architecture/views.md
-      - Workarea lifecycle: architecture/lifecycle.md
+      - Workspace lifecycle: architecture/lifecycle.md
       - Architecture overview: architecture/overview.md
       - How a write is admitted: architecture/admission.md
-      - How workareas grant access: architecture/workspaces.md
+      - How workspaces grant access: architecture/workspaces.md
       - Roles and keys: architecture/roles-and-keys.md
       - Security: architecture/security.md
       - Storage: architecture/storage.md

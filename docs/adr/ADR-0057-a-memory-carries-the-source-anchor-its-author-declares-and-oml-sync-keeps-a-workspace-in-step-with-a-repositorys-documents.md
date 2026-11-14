@@ -2,10 +2,10 @@
 id: adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents
 tier: engineering
 status: accepted design · 2026-11-05
-answers: why source mapping's first slice is its own record beside ADR-0047; what a memory's anchor holds, who declares it, what the server checks and what it never computes; how recall and the listing filter by origin and how a hit shows its anchor and whether its source moved; what `oml sync` reads, how its adapters extract, how claim keys and hashes are derived, how it diffs against a workarea and what each outcome writes; how runs are batched for bulk review and kept idempotent; how cross-document edges are proposed and ratified; how staleness is checked and confirmed; how a moved span, a concurrent supersession and a rollback are handled; what a fragment may name; how each retriever's list is capped before fusion; how ADR-0047's eleven questions are answered and which this slice exercises; what v0.5.8 builds and what waits for code; how OML's own ADRs are loaded and re-synced; the tests, doctor lines and costs; the contract the build lane starts from
+answers: why source mapping's first slice is its own record beside ADR-0047; what a memory's anchor holds, who declares it, what the server checks and what it never computes; how recall and the listing filter by origin and how a hit shows its anchor and whether its source moved; what `oml sync` reads, how its adapters extract, how claim keys and hashes are derived, how it diffs against a workspace and what each outcome writes; how runs are batched for bulk review and kept idempotent; how cross-document edges are proposed and ratified; how staleness is checked and confirmed; how a moved span, a concurrent supersession and a rollback are handled; what a fragment may name; how each retriever's list is capped before fusion; how ADR-0047's eleven questions are answered and which this slice exercises; what v0.5.8 builds and what waits for code; how OML's own ADRs are loaded and re-synced; the tests, doctor lines and costs; the contract the build lane starts from
 -->
 
-# ADR-0057 — A memory carries the source anchor its author declares, and `oml sync` keeps a workarea in step with a repository's documents
+# ADR-0057 — A memory carries the source anchor its author declares, and `oml sync` keeps a workspace in step with a repository's documents
 
 **Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.8,
 with d18 to d22 added the same day from the competitor source studies (basic-memory, Hindsight) · amended by [ADR-0076](ADR-0076-releases-ship-no-default-server-and-setup-asks-for-the-server-or-reads-it-from-the-key-or-the-environment.md) · amended by [ADR-0081](ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource.md) (d7, 2026-11-14)
@@ -34,8 +34,8 @@ open questions are settled at its own recommended answers.
 
 **Why a record of its own, and not an amendment inside ADR-0047.** ADR-0047 is proposed, has no
 release, and gates everything past its skill text on an evaluation harness (d17) and on the
-in-progress workareas of ADR-0030 (d5–d7). This slice needs neither: it adds no hook, injects
-nothing into a session, creates no workarea per branch and serves no new kind. Written into
+in-progress workspaces of ADR-0030 (d5–d7). This slice needs neither: it adds no hook, injects
+nothing into a session, creates no workspace per branch and serves no new kind. Written into
 ADR-0047, the register would have to show one record as both "planned for v0.5.8" and "gated,
 not assigned", and its `dN` handles, which later records amend by number, would shift. A separate
 record can be accepted with v0.5.8 while ADR-0047 stays proposed for code; ADR-0047 points here
@@ -79,7 +79,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
   on kind `code`" stands for when `code` is built, and its "refused on every other kind" is
   withdrawn. This replaces ADR-0047 d3's field list: `commit` is `rev`, `symbol` is `fragment`
   with ADR-0047 d4's hasher `oml-span/1`, and `branch` is added by ADR-0047 d5 when branch
-  workareas are built. ADR-0050 d5's `sources`, proposed on its branch, stay free citations
+  workspaces are built. ADR-0050 d5's `sources`, proposed on its branch, stay free citations
   (a URL, an issue, a session); the anchor is the one structured origin, the one a read filters
   by and staleness compares.
 
@@ -136,7 +136,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
   was compared with the repository at a commit: `POST /v1/memories/{artifact_id}/source-check
   {rev, result, hash?}`, `result` one of `fresh`, `equivalent`, `moved`, `changed` or `removed`, `hash` the
   span's current hash, and, for `moved` alone, the span's new `path` and `fragment` (d18). It admits only a promoted, anchored served tip, and only from the
-  version's author key or a dreamer on its workarea; it journals `source.checked`, changes no
+  version's author key or a reviewer on its workspace; it journals `source.checked`, changes no
   text and no anchor, and moves nothing through review, since it states an observation, as the
   anchor itself does, and is no more verified than the anchor. `oml sync` records one for every
   anchored tip it compares (d8), and `oml sync --check --record` records them without writing a
@@ -151,7 +151,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
   check supersedes an older one's mark, so a source reverted to the anchored text reads `fresh`
   again.
 
-- **d6 — `oml sync <source> --workarea <workarea>` reads committed markdown at one commit, through
+- **d6 — `oml sync <source> --workspace <workspace>` reads committed markdown at one commit, through
   the HTTP API under the caller's key.** `<source>` is a file or directory inside a git clone;
   the run reads the tree at `--rev` (default `HEAD`) through git's object store, never the
   working tree, so an untracked, ignored or uncommitted file is never read and staleness is by
@@ -204,16 +204,16 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
     Every key fits ADR-0050 d2's proposed grammar (1 to 128 of `a-z 0-9 . _ : / -`); a key that
     would be longer keeps its first 111 characters and ends in `-` and the first 16 hex digits of
     the SHA-256 of the full key. A claim key is a function of the anchor's path and fragment, so
-    a workarea's memories of one source are found by key as well as by anchor.
+    a workspace's memories of one source are found by key as well as by anchor.
 
-- **d8 — The run diffs the adapter's items against the workarea by claim key, and each outcome has
+- **d8 — The run diffs the adapter's items against the workspace by claim key, and each outcome has
   one action.** It lists the key's own rows and the promoted tips anchored in this repository
-  under the source's path (d4), in the named workarea itself and not its children, so a child's
+  under the source's path (d4), in the named workspace itself and not its children, so a child's
   claims (d14's drafts) are never diffed against a parent's source, and for each item and each listed claim decides:
 
     | Outcome | When | Action |
     |---|---|---|
-    | `new` | no held, promoted or demoted version of the key lives in the workarea | `POST /v1/memories` with the claim key, text and anchor |
+    | `new` | no held, promoted or demoted version of the key lives in the workspace | `POST /v1/memories` with the claim key, text and anchor |
     | `changed` | the tip's anchor differs from the item's in `path`, `fragment` or `hash`, or its `plaintext_digest` differs from the item text's, and the change is not `equivalent`, `moved` or `rollback` | a source check `changed`, then supersede the tip with the item's text and anchor, naming the claim's latest version (d19) |
     | `removed` | a listed claim anchored under the source's path is yielded by no item at this `rev` | a source check `removed`, then supersede with `retirement: true`, the text naming the repository, `rev` and path, the anchor without a hash |
     | `moved` | the claim's span hash is found, with the same extracted text, at another `path` or `fragment` under the source, and no item yields the claim's own key (d18) | a source check `moved` naming the new `path` and `fragment`: nothing is written and nothing is reviewed |
@@ -227,40 +227,40 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
 
     A claim whose tip is promoted and whose source changed again before review stays `pending`
     until its held version is judged. The run reads committed content only, so the outcome of a
-    run at a `rev` against a workarea's state is fixed; a second run at the same `rev` writes
+    run at a `rev` against a workspace's state is fixed; a second run at the same `rev` writes
     nothing.
 
 - **d9 — A run is idempotent, capped for bulk review, and shows its plan before it writes.**
     - **Order:** by path, then document order; a path's retirements after its writes.
-    - **Idempotency:** each write's key is `sync:<workarea>:<claim_key>:<outcome>:` and the first
+    - **Idempotency:** each write's key is `sync:<workspace>:<claim_key>:<outcome>:` and the first
       16 hex digits of the span hash (`removed` for a retirement), so a retried run replays inside
       the server's window, and the diff (d8) keeps a later run from repeating a write after it.
     - **Batches:** a run writes at most `--max-writes` items, 200 unless set, the request cap of
       ADR-0055 d3, so one run is one bulk verdict request; the next run continues where it
       stopped. It ends by printing the review command for what it wrote:
-      `oml review list --workarea <w> --author-key <key>`, then
+      `oml review list --workspace <w> --author-key <key>`, then
       `oml review approve --ids -`.
     - **Dry run:** `--dry-run` sends no write and prints one line per item (outcome, claim key,
       anchor) and the counts; `--json` prints the plan as one object (Contract sketch), the same
-      plan the run then executes, byte for byte, while the workarea does not change between
+      plan the run then executes, byte for byte, while the workspace does not change between
       them.
     - **Exit codes:** 0 when every planned write was accepted; 1 when any item was `diverged`,
       `foreign`, `conflict`, `rollback`, `unreadable` or refused; 2 for a usage error.
 
-- **d10 — Edges between documents are proposed by a person's dreamer key after the claims promote,
+- **d10 — Edges between documents are proposed by a person's reviewer key after the claims promote,
   and ratified by another.** The `adr` adapter reads `**Amends:** ADR-0025 (d10, d12), ADR-0039
   (d3)` as edges labelled `amends` from the amending record's summary to each named decision
   (`adr-0025-d10`, `adr-0025-d12`, `adr-0039-d3`), or to the target's summary where no `dN` is
-  named; `**Supersedes:**` the same with label `supersedes`. A target not in the workarea is
+  named; `**Supersedes:**` the same with label `supersedes`. A target not in the workspace is
   reported `unresolved`. Inverse lines (`amended by` on a Status line) are not read, so the two
   can never disagree inside OML. `amends` and `supersedes` are open labels (ADR-0046 d6); a claim
   edge never moves a tip, so `supersedes` between records is not OML's supersession.
-  `oml sync <source> --workarea <w> --edges` proposes, under the calling key, each stated edge
+  `oml sync <source> --workspace <w> --edges` proposes, under the calling key, each stated edge
   between the two claims' promoted served tips that has no edge with the same endpoints and
   label, through `POST /v2/edges {kind: claim}`; an edge with an endpoint not yet promoted is
-  `waiting`. Claim edges need dreamer (ADR-0046 d4), so the sync's writer key cannot propose
-  them and no agent key does (R1); the operator runs it under a dreamer key of their own
-  (`held_by: human`). `oml sync … --edges --ratify`, under a second dreamer key of another
+  `waiting`. Claim edges need reviewer (ADR-0046 d4), so the sync's writer key cannot propose
+  them and no agent key does (R1); the operator runs it under a reviewer key of their own
+  (`used_by: person`). `oml sync … --edges --ratify`, under a second reviewer key of another
   principal, re-derives the stated edges from the source and ratifies each pending edge that
   matches one, one `POST /v2/edges/{edge_id}/ratify` each; ADR-0046 d2's `same_user` marks the
   solo case. When an endpoint is superseded, its old edges stay on the old version, which recall
@@ -270,10 +270,10 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
   edge (#138).
 
 - **d11 — Staleness is checked against a commit; a confirmation is a reviewed supersession, never
-  a silent re-anchor; and an equivalent change refreshes nothing.** `oml sync <source> --workarea
+  a silent re-anchor; and an equivalent change refreshes nothing.** `oml sync <source> --workspace
   <w> --check` runs d8's diff at `--rev` without writing a memory and prints each anchored claim
   as `fresh`, `equivalent`, `stale` (`changed`), `removed`, `pending` (the key's own held
-  version), `untracked` (in the source, not in the workarea) or `unhashed` (anchored without a
+  version), `untracked` (in the source, not in the workspace) or `unhashed` (anchored without a
   hash), and each edge as `stated`, `waiting` or `unstated`; it exits 1 when any claim is
   `stale`, `removed` or `untracked`, so CI on the repository can run it after every merge, and
   with `--record` it records d5's source checks. Hits show `stale` (d5).
@@ -301,10 +301,10 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
     | # | Answer | Exercised by v0.5.8 |
     |---|---|---|
     | 1 | a: a confirmation is a supersession with the same text and a fresh anchor, reviewed | yes, d11 |
-    | 2 | a: one workarea per branch, merge = commit | no: branch workareas wait (d13) |
+    | 2 | a: one workspace per branch, merge = commit | no: branch workspaces wait (d13) |
     | 3 | a: a release-record child per release | no |
     | 4 | a: the reviewer proposes the merge commit, the CI key ratifies | no |
-    | 5 | a: a writer creates branch workareas under an admin-marked branch parent | no |
+    | 5 | a: a writer creates branch workspaces under an admin-marked branch parent | no |
     | 6 | a: compaction is a journalled erasure by a person's act, after ADR-0005 | no |
     | 7 | a: counts and a link to the forge, text only on `--post-text` | no |
     | 8 | a: OML beats no memory and is no worse than the `AGENTS.md` export, at no more tokens | no: the gate's scope is narrowed (d13) |
@@ -323,7 +323,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
   `HEAD`, so an agent with a terminal can pass it to `oml_write`; ADR-0047 d3's verb, for
   documents), and `oml write --anchor`. Waiting, as ADR-0047 has them: kind `code`, the skeleton
   and the CI key's re-derived approvals (d1, d2, d8, d9); symbol spans and `oml-span/1` (d4);
-  branch workareas, pull requests as review batches and merges as commits (d5–d7); the release
+  branch workspaces, pull requests as review batches and merges as commits (d5–d7); the release
   record (d10); the hooks that mark and ask (d11, d13); `oml code export` (d12's output half);
   author revision of a held version (d15 c, RS-17); `anchor_symbol` and a `uri` adapter for wikis.
   **ADR-0047 d17's gate is narrowed** to those parts: its harness measures whether stored code
@@ -334,45 +334,45 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
 
 - **d14 — OML's own ADRs are loaded into `oml-design` under `oml-knowledge` in the operator's root,
   reviewed in bulk, and re-synced after every change on `main`.**
-    1. **The workareas.** *Decided by the operator on 2026-11-05.* One parent,
+    1. **The workspaces.** *Decided by the operator on 2026-11-05.* One parent,
        `oml-knowledge`, a child of the operator's user root
        ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)),
-       holds one workarea per source, each `development` like every new workarea: `oml-design`
+       holds one workspace per source, each `development` like every new workspace: `oml-design`
        for `docs/adr` with the `adr` adapter; `oml-design-pr-<n>` for a draft pull request's
        records (item 3), also `adr`; `oml-docs` for `docs` with `--exclude 'docs/adr/**'` and the
        `headings` adapter; and `oml-code` for the Rust sources with the `rust` adapter, from
        v0.6.1 ([ADR-0061](https://github.com/e8kor/open-memory-lab/pull/70)).
-       `oml workareas create e8kor oml-knowledge`, then `oml workareas create oml-knowledge
+       `oml workspaces create e8kor oml-knowledge`, then `oml workspaces create oml-knowledge
        oml-design` and the same for `oml-docs`; a draft's `oml-design-pr-<n>` is created under
        `oml-knowledge` when its pull request is first loaded. Recall at `oml-knowledge` reads all
-       of them. Each workarea answers for one source with one adapter: a run diffs only its
+       of them. Each workspace answers for one source with one adapter: a run diffs only its
        adapter's claim-key namespace, keeps the adapter its claims were written by unless
        `--change-adapter`, and treats `--exclude`d paths as out of the source, never retired.
     2. **The keys.** The operator issues a writer key for the sync, `e8kor-design-sync`, with
        writer and reader on `oml-knowledge` and its children, to an owner-only file (`--out`). It
        stays the sync key for good, since a writer supersedes only its own tips (d8 `foreign`).
        The 2026-11-05 script never ran, so nothing is adopted. Reviews and
-       edges use two dreamer keys `held_by: human` with distinct principals: the reviewer key
+       edges use two reviewer keys `used_by: person` with distinct principals: the reviewer key
        that runs `oml review` and `oml sync --edges`, and a second that runs `--edges --ratify`.
     3. **The source.** `docs/adr` of `github.com/e8kor/open-memory-lab` at a commit of `main`.
        **Drafts** (*decided by the operator on 2026-11-05*) load
-       into a workarea per draft pull request under `oml-knowledge`, `oml-design-pr-<n>`, as ADR-0047 d5 gives a
-       branch its own workarea: `oml sync docs/adr/ADR-0047-….md --workarea oml-design-pr-59
+       into a workspace per draft pull request under `oml-knowledge`, `oml-design-pr-<n>`, as ADR-0047 d5 gives a
+       branch its own workspace: `oml sync docs/adr/ADR-0047-….md --workspace oml-design-pr-59
        --rev origin/design/code-map-r2`, naming only the records the pull request adds or
        changes. A sync of `main` diffs `oml-design` alone (d8), so it never retires a draft's
-       claims. When the pull request merges or closes, `oml sync <the same files> --workarea
+       claims. When the pull request merges or closes, `oml sync <the same files> --workspace
        oml-design-pr-<n> --retire-all` proposes retiring every claim the key wrote there, reviewed
        in bulk like any batch; a merged record then arrives in `oml-design` through the next sync
        of `main`. The cost: a draft's decisions are reviewed twice, once as a draft and once on
        `main`, and a reader at `oml-design` sees both until the draft's retirements are approved.
-    4. **The first load.** `oml sync docs/adr --workarea oml-design --adapter adr
+    4. **The first load.** `oml sync docs/adr --workspace oml-design --adapter adr
        --allow-public-server --dry-run`, then three runs without `--dry-run`. At `ca61c9e` the
        plan is 523 items (435 decisions, 45 summaries, 43 rejected-alternatives memories) and 133
        `amends` edges with none unresolved (117 when this record was proposed, a count that read
        only the first handle of a parenthesis of `;` parts), so three batches of 200, 200 and 123.
-       The documents follow: `oml sync docs --workarea oml-docs --adapter headings --exclude
+       The documents follow: `oml sync docs --workspace oml-docs --adapter headings --exclude
        'docs/adr/**' --allow-public-server --dry-run`, then the runs.
-    5. **Review.** After each run, `oml review list --workarea oml-design --author-key
+    5. **Review.** After each run, `oml review list --workspace oml-design --author-key
        e8kor-design-sync` to read the batch, then the same with `--ids-only`
        piped to `oml review approve --ids -`; each verdict is marked `same_user` (ADR-0055 d7).
     6. **Edges.** Once the batches are promoted, `--edges` under the reviewer key and
@@ -408,7 +408,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
        `review_next_and_the_held_listing_serve_the_anchor`,
        `an_anchor_filtered_recall_never_under_returns`,
        `recall_without_anchor_filters_is_byte_identical_to_v0_5_7`,
-       `a_source_check_admits_only_a_promoted_anchored_tip_from_its_author_or_a_dreamer`,
+       `a_source_check_admits_only_a_promoted_anchored_tip_from_its_author_or_a_reviewer`,
        `stale_is_the_latest_source_check_of_the_served_version`,
        `a_held_successor_never_marks_its_served_version_stale`.
     2. **Adapters:** `extraction_is_a_pure_function_of_path_and_bytes`,
@@ -430,7 +430,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
        `a_sync_of_a_parent_never_retires_a_childs_claims`, `retire_all_proposes_retiring_every_claim_the_key_wrote`,
        `sync_refuses_the_public_server_without_allow_public_server`,
        `check_exits_1_on_stale_removed_or_untracked`.
-    4. **Edges:** `edges_are_proposed_only_between_promoted_tips_under_a_dreamer_key`,
+    4. **Edges:** `edges_are_proposed_only_between_promoted_tips_under_a_reviewer_key`,
        `ratify_ratifies_only_pending_edges_the_source_states`,
        `an_unresolved_target_is_reported_and_not_proposed`.
     5. **The load:** `the_adr_load_at_ca61c9e_plans_523_items_and_133_amends_edges`, against a
@@ -446,7 +446,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
   accept anchors (before v0.5.8), which `oml sync` also refuses before reading anything; an
   `origin` remote that carries credentials in its URL, which sync strips and the line asks to
   remove from `.git/config`; the public default server without `--allow-public-server` recorded
-  for this clone; and, for the key's default workarea, the count of served versions marked
+  for this clone; and, for the key's default workspace, the count of served versions marked
   `stale` and of claim edges waiting for a second key.
 
 - **d18 — A span found by its hash at a new path or fragment is `moved`: a source check records
@@ -470,7 +470,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
   (`mcp/tools/write.py:71-72, 142-148`).* `POST /v1/memories/{artifact_id}/supersede`, `oml_write`
   with `replaces` and `oml write --replaces` take a required `expected_version`, the ordinal of
   the claim's latest version the caller can read, as it last read it: the greatest `version`
-  among the claim's promoted versions (where the caller reads the workarea) and the held and
+  among the claim's promoted versions (where the caller reads the workspace) and the held and
   promoted versions its own keys wrote, the tip's own when there is none. When that differs, the
   write is refused with `submission.version_conflict` and `details.current_version`, after the
   readability check and before the tip check, and nothing is captured. Two sessions of one key
@@ -480,7 +480,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
   read (R3; *amended 2026-11-05 on review of #69*); rival successors by different keys remain
   possible, as ADR-0025 d10 allows, and the compare-and-set at ratification decides between them. A
   rejected or demoted version does not count, so a rejection never blocks the next proposal.
-  The web console's dreamer edit sends the version it rendered. Pre-release (ADR-0060's rule
+  The web console's reviewer edit sends the version it rendered. Pre-release (ADR-0060's rule
   for OML, ADR-0039 d11): the field is required, not defaulted, so no caller supersedes blind.
 
 - **d20 — Sync never writes a rollback.** *Added 2026-11-05 from basic-memory's lineage check
@@ -572,7 +572,7 @@ get mode.
 **CLI.**
 
 ```text
-oml sync <source> --workarea <workarea>
+oml sync <source> --workspace <workspace>
          [--adapter adr|headings|lines] [--rev <commit>] [--repo <repo>]
          [--dry-run | --check [--record]] [--json] [--max-writes <n>] [--adopt] [--retire-all]
          [--edges [--ratify]] [--allow-public-server] [--allow-rollback]
@@ -587,9 +587,9 @@ oml read [--own | --all] [--anchor-repo <repo>] [--anchor-path-prefix <prefix>] 
 A dry run, as it would print at `ca61c9e` (lines elided):
 
 ```text
-$ oml sync docs/adr --workarea oml-design --adapter adr --allow-public-server --dry-run
+$ oml sync docs/adr --workspace oml-design --adapter adr --allow-public-server --dry-run
 source    github.com/e8kor/open-memory-lab @ ca61c9edd258  docs/adr  adapter adr  hasher oml-md/1
-workarea  oml-design  key e8kor-design-sync
+workspace  oml-design  key e8kor-design-sync
 new       adr-0001-summary     docs/adr/ADR-0001-the-constitution.md
 new       adr-0001-d1          docs/adr/ADR-0001-the-constitution.md#d1
 …
@@ -612,7 +612,7 @@ diverged  adr-0012-d4          the tip has no anchor; --adopt supersedes it
 {
   "source": {"repo": "github.com/e8kor/open-memory-lab", "rev": "ca61c9edd25895702e4ddc89df1848aae696d9ba",
              "path": "docs/adr", "adapter": "adr", "hasher": "oml-md/1"},
-  "workarea": "oml-design",
+  "workspace": "oml-design",
   "items": [
     {"outcome": "new", "claim_key": "adr-0001-d1",
      "anchor": {"repo": "github.com/e8kor/open-memory-lab", "rev": "ca61c9edd25895702e4ddc89df1848aae696d9ba",
@@ -656,7 +656,7 @@ diverged  adr-0012-d4          the tip has no anchor; --adopt supersedes it
 | Alternative | Why not |
 |---|---|
 | **Origin only in the text**, as the 2026-11-05 extractor wrote `Source: docs/adr/….md` | Nothing can filter, list or diff by it; the commit and the hash have nowhere to go, so staleness cannot be checked; moving a file rewrites the text; and the reviewer cannot tell a claim's words from its citation. |
-| **One workarea per document** | 45 workarea names now and one per new record, each kept for good ([ADR-0026](ADR-0026-names-are-keys.md) d10); recall across them needs ADR-0048 S4's multi-workarea scope, capped at four; and every `amends` edge would cross workareas. The anchor's path prefix and the claim-key prefix already group a document's memories inside one workarea. |
+| **One workspace per document** | 45 workspace names now and one per new record, each kept for good ([ADR-0026](ADR-0026-names-are-keys.md) d10); recall across them needs ADR-0048 S4's multi-workspace scope, capped at four; and every `amends` edge would cross workspaces. The anchor's path prefix and the claim-key prefix already group a document's memories inside one workspace. |
 | **`derives_from` for document structure**, each decision deriving from its record's summary | `derives_from` is lineage of reasoning, and it widens the reviewer-exclusion closure (R2): whoever wrote a summary could never review its decisions. A decision does not follow from its summary; both are read from the same document, which is what the anchor says. |
 | **A `part_of` edge from every decision to its record** | 435 proposals and 435 ratifications that say what the claim key and the anchor's path already say, and an edge read per decision to answer "what belongs to this record", which the listing by origin answers in one call. |
 | **A server-side crawler** that fetches repositories and wikis and writes their memories | The server would hold credentials for private repositories, make outbound requests on a tenant's behalf, and author memories under no person's key, so R1 and R2 would have no author to check. The client already has the checkout and the credentials, and its writes are a key's like any other. |
@@ -665,7 +665,7 @@ diverged  adr-0012-d4          the tip has no anchor; --adopt supersedes it
 | **Idempotency keys alone for re-runs** | The server keeps a record for at least 24 hours; a later run would write everything again. The diff by claim key and hash is what makes a re-run write nothing. |
 | **A re-anchor act without review** (ADR-0047 question 1 b) | It would change what a promoted memory claims to come from without a second identity; a supersession with the same text costs one review and keeps every promoted change reviewed. |
 | **Load draft records from their branches**, as the extractor did | A sync reads one commit, and the next sync of `main` would retire every memory read from a branch; drafts change daily and each change costs a review. They enter when they land. |
-| **Propose edges under the sync's writer key** | A claim edge needs dreamer (ADR-0046 d4), and an agent key never proposes (R1). |
+| **Propose edges under the sync's writer key** | A claim edge needs reviewer (ADR-0046 d4), and an agent key never proposes (R1). |
 | **Edges between records' summaries only** | "ADR-0047 amends ADR-0025" loses which decisions; the `Amends:` lines name them, and the decision memories exist to be pointed at. |
 | **A server-computed `stale` from the repository** | It is the crawler above. A source check is recorded by the client that holds the checkout. |
 | **`stale` inferred from a held successor** | It tells every reader of a served version that a held row exists, which R3 does not grant; a check recorded from the source says the same thing without it. |

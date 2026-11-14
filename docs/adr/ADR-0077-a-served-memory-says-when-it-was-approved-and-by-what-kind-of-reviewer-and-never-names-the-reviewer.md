@@ -7,7 +7,7 @@ answers: what a served memory says about its approval over HTTP, MCP and the SDK
 
 # ADR-0077 — A served memory says when it was approved and by what kind of reviewer, and never names the reviewer
 
-**Status:** accepted design · 2026-11-12, by the operator, with its three open questions closed as the Decision records them (1: the reviewer is not named to readers, and an admin reads who through the journalled admin read; 2: `approver` is the verdict whose arrival met the policy, and a build with k > 1 adds a list of approving verdicts beside it without changing its meaning; 3: `held_by` is served to every reader of the memory, with the residuals d2 states) · proposed the same day with #175 · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d2, d5, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d2, 2026-11-14)
+**Status:** accepted design · 2026-11-12, by the operator, with its three open questions closed as the Decision records them (1: the reviewer is not named to readers, and an admin reads who through the journalled admin read; 2: `approver` is the verdict whose arrival met the policy, and a build with k > 1 adds a list of approving verdicts beside it without changing its meaning; 3: `used_by` is served to every reader of the memory, with the residuals d2 states) · proposed the same day with #175 · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d2, d5, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d2, 2026-11-14)
 
 **Release:** v0.7.2, the release `openapi.yaml` names for the two new members
 
@@ -32,7 +32,7 @@ of a memory may; a third, ADR-0044 d9, says it of `universe` claims alone:
   tail*: "Every reader would see which reviewer ratified a row … which the review queue and
   `oml_my_work` withhold."
 - **[ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
-  d5.** A served guardrail carries `verdicts: [{held_by, at}]`: "No reviewer key name is
+  d5.** A served guardrail carries `verdicts: [{used_by, at}]`: "No reviewer key name is
   served: ADR-0025 d15 keeps review events in the evidence export. The cost: every reader in
   scope learns how many reviewers ratified a rule and how many of them were human."
 - **[ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
@@ -62,25 +62,25 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   from `openapi.yaml`. Both are null on a version that is not promoted. The cost is two more
   members on every served item.
 
-- **d2 — `approver` says what kind of reviewer approved, never who.** It is `{held_by,
-  same_user}`: the reviewing key's attestation, `agent`, `human` or `service`
+- **d2 — `approver` says what kind of reviewer approved, never who.** It is `{used_by,
+  same_user}`: the reviewing key's attestation, `agent`, `person` or `service`
   ([roles and keys](../architecture/roles-and-keys.md)), as ADR-0037 d5 serves it for a
   guardrail's verdicts, and ADR-0055 d7's mark, `true` when the reviewing key and the authoring
   key act for one person. It carries no key id, key name, principal or crew, on any surface, to
   any reader. That is the answer to #175's "a memory approved by a crew or by a self-review
-  shows that, not a person": a crew's reviewer reads `held_by: "agent"`
-  ([ADR-0012](ADR-0012-admission-and-review.md) d2), a person reads `held_by: "human"`, and a
+  shows that, not a person": a crew's reviewer reads `used_by: "agent"`
+  ([ADR-0012](ADR-0012-admission-and-review.md) d2), a person reads `used_by: "person"`, and a
   person approving their own agents' writes
   ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
   d8) reads `same_user: true`. No reader is shown a person's name as an approver, since no
   reader is shown one today. The cost is ADR-0037 d5's, now on every memory: each reader of a
   memory learns whether an agent or a person reviewed it, and whether that was the author's
-  own person. `same_user` is already theirs to read on `GET /v2/events`; `held_by` on a memory
-  is new. Three things a reader can still learn from `held_by` and `same_user`, which the
+  own person. `same_user` is already theirs to read on `GET /v2/events`; `used_by` on a memory
+  is new. Three things a reader can still learn from `used_by` and `same_user`, which the
   decision accepts and a later record may narrow:
-    - Where a workarea has exactly one human reviewer, `held_by: "human"` names that person to
+    - Where a workspace has exactly one human reviewer, `used_by: "person"` names that person to
       anyone who knows the staffing.
-    - `held_by` is the issuing admin's attestation, unverified. A key issued with no attestation
+    - `used_by` is the issuing admin's attestation, unverified. A key issued with no attestation
       is stored as `agent`, so `agent` can mean "never attested" and not "an agent reviewed it".
     - `same_user: true` beside the served `principal` identifies the reviewer's person as the
       author's person. It is readable already on `GET /v2/events`.
@@ -102,12 +102,12 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   `approver` are null wherever `principal` is, as `author_key_id` and `scan_finding` are. Its
   author is served its own row as every author is. A hit from a federated source
   ([ADR-0072](ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)
-  d8) is a row the key already reads, served as any hit of its workarea is. The cost: a reader
+  d8) is a row the key already reads, served as any hit of its workspace is. The cost: a reader
   of `universe` learns when a curated claim was promoted and nothing of how it was reviewed.
 
 - **d5 — A hit served unreviewed carries neither, and every other hit's reviewer is not its
   author.** The caller's own held rows, and other authors' held rows inside an in-progress
-  workarea ([ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
+  workspace ([ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
   d3, d4), are served with `unreviewed: true` and `approver` null. A law holds R2 on the read
   path: for every hit not served unreviewed, the journal's approving verdict is by another key
   and another principal than the author's, and the served `approved_at` is that verdict's. The
@@ -117,7 +117,7 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
 - **d6 — What a read serves of the approval is stored on the version's row when it is
   promoted, and the reviewer is not.** The fold of `lifecycle.promote` and
   `lifecycle.supersede` writes three columns of `memories` beside `promoted_at` (migration
-  0044): `approver_held_by`, `approver_same_user` and `approved_at`. A read of a memory
+  0044): `approver_used_by`, `approver_same_user` and `approved_at`. A read of a memory
   therefore reads no journal row and no key row: the guardrail read finds its verdicts by one
   pass over the tenant's chain (`App::approvals`), which a recall of up to 100 hits cannot pay.
   The row names no reviewing key and no principal, so the reviewer's identity stays in one
@@ -125,8 +125,8 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   journal: each version's latest promotion event and the verdict it names, as
   `ratification_event_id` or, as v0.1.0 wrote it, `verdict_event_id`. A promotion whose event
   names no verdict the journal holds leaves its row unfilled, and the version is served with
-  `approver` null, even where an earlier promotion of the version names one. `approver_held_by` is the attestation when the verdict was given; no act
-  changes a key's `held_by` after issuance. The cost: three nullable columns, and one update of
+  `approver` null, even where an earlier promotion of the version names one. `approver_used_by` is the attestation when the verdict was given; no act
+  changes a key's `used_by` after issuance. The cost: three nullable columns, and one update of
   every promoted row at the upgrade. Measured on a loaded shared host under PostgreSQL 18, the
   fill took 0.84 to 1.5 s at 10,000 promoted rows and 13.4 to 21.6 s at 100,000, and `memories`
   grew about 70% until vacuum ([upgrades](../operations/upgrades.md#migration-0044-fills-each-promoted-versions-approval)).
@@ -137,7 +137,7 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   serves one (d2). The reviewer's identity is where it was, in the envelope of the
   `review.approve` event, which #146 has to cover with every other journalled actor whatever
   this record does.
-  `held_by` and `same_user` name no one. If a later record serves a reviewer's identity (Closed
+  `used_by` and `same_user` name no one. If a later record serves a reviewer's identity (Closed
   questions, 1), it names the field it reads, and that field joins #146's inventory with it.
 
 ## Closed questions and one open point
@@ -152,7 +152,7 @@ The operator closed three questions on 2026-11-12, accepting the record as built
 2. **Which verdict is the approver under a policy with k > 1?** The verdict whose arrival met the
    policy, as d3 reads it. A build with k > 1 adds a list of the approving verdicts beside
    `approver`, as ADR-0037 d5 serves a guardrail's, and does not change what `approver` means.
-3. **Is `held_by` on every memory acceptable?** Yes. d2 extends ADR-0037 d5's disclosure from
+3. **Is `used_by` on every memory acceptable?** Yes. d2 extends ADR-0037 d5's disclosure from
    guardrails to memories, and states the three residuals that go with it.
 
 Open point: **should the events tail stop serving `same_user` on a `universe` promotion?** The
@@ -198,7 +198,7 @@ promotion, since ADR-0044 d9's rule for the tail removes key ids and the princip
 | **Serve the reviewing key's crew** | A crew's name is not served on any read of a memory, and it narrows who the reviewer is. |
 | **One `kind` member: `person`, `crew` or `self_review`** | A third vocabulary for two marks the API already has; a self-review by an agent's key and by a person's key would read alike. |
 | **Read the approval from the journal at each read** | One pass over the tenant's chain per recall, as the guardrail read pays for a handful of rules. |
-| **Join `api_keys` at each read for `held_by`** | A second table on every memory read, for a value the row can keep. |
+| **Join `api_keys` at each read for `used_by`** | A second table on every memory read, for a value the row can keep. |
 | **Store the reviewing key's id on the row** | No read serves it, and a second copy of who reviewed is one more field for #146 to erase. |
 | **Serve `promoted_at` as the approval time** | It is the promotion's time. They differ by the gap between two seals today, and need not under a policy that ratifies later than its last verdict. |
 | **Leave rows promoted before the migration unfilled** | Every memory a server holds at the upgrade would read as approved by no one. |

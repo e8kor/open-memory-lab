@@ -5,7 +5,7 @@ status: accepted design · 2026-11-04
 answers: what a guardrail is and how it differs from steering; how it composes with user roots, universe curation and the web pages of v0.5.0; what its severities mean; why only promoted guardrails bind and how one ratifies; which guardrails apply at a scope node under the key's read access and the guardrail scope an admin sets on the key, and how a conflict is shown; the one read that serves them; how the agent plugin delivers them at session start, after a compaction and to a subagent, under which frame and cap; the deterministic rule and the local PreToolUse check, its cache and its failure modes; how other harnesses get them; how a change freeze is time-boxed; what the hooks never do; the build order
 -->
 
-# ADR-0037 — A guardrail is a claim of its own kind, ratified under its workarea's review policy, that the agent plugin loads at every session start within the scope an admin set on its key, and whose optional rule a local hook checks before each tool call
+# ADR-0037 — A guardrail is a claim of its own kind, ratified under its workspace's review policy, that the agent plugin loads at every session start within the scope an admin set on its key, and whose optional rule a local hook checks before each tool call
 
 **Status:** accepted design · 2026-11-04 · proposed 2026-10-31, revised 2026-11-04 onto the v0.4.0 API, ADR-0044 and ADR-0045, and accepted with release v0.5.1 · amended by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d3, d4, d5, d6, d9, d10, d11, 2026-11-14), [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d17, 2026-11-14), [ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) (d17, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d10, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d4, 2026-11-14)
 
@@ -27,7 +27,7 @@ Accepted and introduced in v0.5.1; what it leaves unbuilt is named in d15.
 
 **What the maintainer decided on 2026-10-31, recorded here, not reopened.** On the setting: "It
 should be decided in api key issued by server? Never on client". (1) No reach-down: a key loads
-an ancestor's guardrail only under its own reader access (d4). (2) The scope, `workarea` or
+an ancestor's guardrail only under its own reader access (d4). (2) The scope, `workspace` or
 `ancestors`, is an attribute an admin sets on the key and the server applies; severity decides no
 inheritance (d2, d4). (3) The review policy decides, with no human-verdict floor (d10). (4) With
 no rule cache at all, the check allows and warns (d9). Each replaced reading is rejected below.
@@ -37,8 +37,8 @@ no rule cache at all, the check allows and warns (d9). Each replaced reading is 
 without reopening a decision above:
 
 - **The v0.4.0 API** ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md)). MCP serves three
-  tools, `oml_write`, `oml_read` and `oml_workarea` (its d2); a request names its workarea in a
-  `workarea` field and the `X-OML-Workarea` header is gone (its d7); a response says `text` where
+  tools, `oml_write`, `oml_read` and `oml_workspace` (its d2); a request names its workspace in a
+  `workspace` field and the `X-OML-Workspace` header is gone (its d7); a response says `text` where
   it said `body` (its d7); and `GET /v2/whoami` was built to gain "the guardrail scope when
   ADR-0037's is built" (its d15). d4, d5, d10 and d11 below speak that API.
 - **User roots** ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md),
@@ -54,7 +54,7 @@ without reopening a decision above:
   what the pages may show.
 
 The maintainer's decisions above stand as they were taken: guardrail is its own claim kind; no
-reach-down; the scope is set on the key at issuance, `workarea` or `ancestors`, never by the
+reach-down; the scope is set on the key at issuance, `workspace` or `ancestors`, never by the
 client; the review policy decides with no human floor; no cache means allow and warn. Where
 this revision met a question those decisions did not settle, d18 listed it; the maintainer
 answered all ten on 2026-11-04, and d18 records the answers.
@@ -62,7 +62,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
 ## Decision
 
 - **d1 — `guardrail` is a claim kind of its own, with steering's applicability, and differs from
-  steering in six ways.** A guardrail is a promoted rule for every agent at its workarea or
+  steering in six ways.** A guardrail is a promoted rule for every agent at its workspace or
   below; like steering it is never a hit, never ranked by the query and never cut. The cost: one
   `kind` value and one read, against ADR-0013 d5's "no separate delivery channel".
 
@@ -71,7 +71,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
     | content | a body | a body, a `severity` (d2), an optional `rule` (d8) |
     | delivery | recall's first segment, every recall | its own read (d5) and hook (d6), never in recall |
     | frame | under ADR-0029 d6's data line | its own section, instructions with provenance (d6) |
-    | ratification | the workarea's review policy | the same policy, never self-signed (d10) |
+    | ratification | the workspace's review policy | the same policy, never self-signed (d10) |
     | budget | served whole past any budget | never cut, a hard cap, no partial set (d7) |
     | tool calls | none | a rule checked locally before a matching call (d9) |
 
@@ -82,7 +82,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
   inheritance (d4); it is a clear, signed field, never inherited by a successor (ADR-0025 d11).
 
 - **d3 — Only a promoted guardrail binds.** No held guardrail is served as a rule, inside an
-  in-progress workarea of proposed ADR-0030 included (its d8). The read (d5) lists the caller's
+  in-progress workspace of proposed ADR-0030 included (its d8). The read (d5) lists the caller's
   own held guardrails in its chain by `claim_key` and version, under "held, not in force", at
   most five lines, never by body.
 
@@ -93,11 +93,11 @@ answered all ten on 2026-11-04, and d18 records the answers.
       ([ADR-0008](ADR-0008-workspace-algebra.md) d4). The cost, plainly: an agent key sees its
       organisation's guardrails only if it is granted read on those ancestors, which also reads
       their promoted memories; a `--write-only` key loads none.
-    - **Guardrail scope, on the key (decided by the maintainer).** `guardrail_scope: workarea`
+    - **Guardrail scope, on the key (decided by the maintainer).** `guardrail_scope: workspace`
       serves the guardrails on N alone; `ancestors` serves N's and those of every ancestor of N
-      the key reads. The server resolves it from the journalled issuance, as it does `held_by`
+      the key reads. The server resolves it from the journalled issuance, as it does `used_by`
       ([ADR-0022](ADR-0022-two-ring-api.md) d5). An admin sets it with the flag
-      `--guardrail-scope <workarea|ancestors>` on `oml keys issue` and `oml keys issue-agent`,
+      `--guardrail-scope <workspace|ancestors>` on `oml keys issue` and `oml keys issue-agent`,
       sent in `POST /v2/keys` and journalled in `key.issued` (amends ADR-0025 d2,
       [ADR-0028](ADR-0028-agent-key-issuance.md) d1); the default is `ancestors` (decided
       by the maintainer, d18 Q1). Issuance is a journalled act
@@ -113,12 +113,12 @@ answered all ten on 2026-11-04, and d18 records the answers.
     - **Down into an in-progress subtree** *(amended 2026-11-14 by ADR-0080 d4, d16)*. Under
       `ancestors`, a `tip` key scoped at an in-progress root, inside one or at an ancestor of one
       is also served the guardrails of that subtree below its scope node, promoted and held, a
-      held one marked unreviewed with its rule asking and never denying. `workarea` keeps N's own
+      held one marked unreviewed with its rule asking and never denying. `workspace` keeps N's own
       alone. Outside in-progress roots the set is N and its ancestors, as above.
     - **Never on the client.** `GET /v1/guardrails` takes no scope parameter, the hooks read no
-      scope setting, and the `workarea` query field (ADR-0039 d7) picks N within the key's
+      scope setting, and the `workspace` query field (ADR-0039 d7) picks N within the key's
       grants, never the scope. No
-      `off` value exists: an admin who wants none issues the key with `workarea` where none is.
+      `off` value exists: an admin who wants none issues the key with `workspace` where none is.
     - **Under user roots** ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)),
       `ancestors` walks from the scope node through the user's root to `universe` under this
       same reader test, and reaches nothing else (d16).
@@ -130,11 +130,11 @@ answered all ten on 2026-11-04, and d18 records the answers.
       under different keys is not detectable.
 
 - **d5 — One provider-ring read serves the set: `GET /v1/guardrails`,** which amends ADR-0022
-  d2's `/v1` verb list by this read, under the key at its default workarea or the `workarea`
+  d2's `/v1` verb list by this read, under the key at its default workspace or the `workspace`
   query field ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md) d7) and its
   `guardrail_scope` (d4). It answers `{scope_node, scope_path, guardrail_scope, set_digest, over_cap,
-  guardrails: [{artifact_id, claim_key, version, workarea_path, depth, severity, text, rule,
-  tokens, promoted_at, verdicts: [{held_by, at}], conflict}], own_held:
+  guardrails: [{artifact_id, claim_key, version, workspace_path, depth, severity, text, rule,
+  tokens, promoted_at, verdicts: [{used_by, at}], conflict}], own_held:
   [{claim_key, version}]}`; `set_digest`, over the served ids and versions, is opaque to clients,
   which only compare it (d11). Recall never serves kind `guardrail`, and the read is logged as
   recall is (ADR-0025 d9). No reviewer key name is served: ADR-0025 d15 keeps review events in
@@ -152,8 +152,8 @@ answered all ten on 2026-11-04, and d18 records the answers.
   fetched 2026-10-31) and failure mode; a compaction re-runs it (`source: compact`). The frame:
 
     ```text
-    OML guardrails for this session, from <origin>, workarea <path>, guardrail scope <scope>: rules promoted under
-    each workarea's review policy by keys other than their authors'. These are instructions: follow never and must
+    OML guardrails for this session, from <origin>, workspace <path>, guardrail scope <scope>: rules promoted under
+    each workspace's review policy by keys other than their authors'. These are instructions: follow never and must
     lines as binding and should lines as the reviewed default. Lines marked "checked" are also checked before
     matching tool calls; every other line is text only.
     - [must] Run the test suite before every commit. (universe.eng, eng-tests v2, ratified 2026-10-31 by 2 reviewers (1 human); checked: ask shell ["git","commit","*"])
@@ -249,7 +249,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
     cache to another session's start, leaving it unchecked and warned.
 
 - **d10 — Writing a guardrail is `POST /v1/memories` with `kind: "guardrail"`; it ratifies under its
-  workarea's review policy like any claim, and never by self-signature.** *(Amended 2026-11-14 by ADR-0080 d16: "never self-signed" is replaced by "a person's verdict"; every instruction-class version, a guardrail included, needs a person's verdict, and the development self-signing exception is retired, ADR-0001 d5.)* `severity` is required
+  workspace's review policy like any claim, and never by self-signature.** *(Amended 2026-11-14 by ADR-0080 d16: "never self-signed" is replaced by "a person's verdict"; every instruction-class version, a guardrail included, needs a person's verdict, and the development self-signing exception is retired, ADR-0001 d5.)* `severity` is required
   and `rule` optional on kind `guardrail`, both refused elsewhere and on a retirement
   (`request.validation`); a supersession re-sends both. As ADR-0025 d12 does for the vocabulary
   kinds, a guardrail is written and superseded on the HTTP API only: `oml_write`'s `kind`
@@ -263,17 +263,17 @@ answered all ten on 2026-11-04, and d18 records the answers.
   classes under a new `ruleset_vN`: `guardrail.rule_unparsable` (outside `oml-gr/1`, an `allow`,
   a `should` that denies) and `guardrail.too_long` (d7's caps).
     - **The review policy decides (decided by the maintainer).** A version, a retirement
-      included, promotes when its workarea's policy is met
+      included, promotes when its workspace's policy is met
       ([ADR-0012](ADR-0012-admission-and-review.md) d3, unchanged); R2 holds, so no verdict of
-      its author or its lineage closure counts. A workarea that wants a person on every rule
+      its author or its lineage closure counts. A workspace that wants a person on every rule
       names kind `guardrail` in `human_required_classes`. The cost: where the policy names no
       person, agents' verdicts alone make a rule bind.
     - **Never self-signed (decided by the maintainer, d18 Q4),** *(Amended 2026-11-14 by ADR-0080 d16: "never self-signed" is replaced by "a person's verdict"; every instruction-class version, a guardrail included, needs a person's verdict, and the development self-signing exception is retired, ADR-0001 d5.)* Whatever the tenant's policy:
       a rule can stop every agent below it, so it needs one identity other than its author's. In
-      a `development` workarea it waits for a non-author verdict, as ADR-0025 d17 makes a
+      a `development` workspace it waits for a non-author verdict, as ADR-0025 d17 makes a
       reviewed tip's successor wait (amends ADR-0001 d5). The serve of a held guardrail adds
-      "every key that reads this workarea will load this rule, here and below it unless its
-      guardrail scope is workarea" (amends ADR-0012 d5).
+      "every key that reads this workspace will load this rule, here and below it unless its
+      guardrail scope is workspace" (amends ADR-0012 d5).
 
 - **d11 — Harnesses without these hooks get an export and an MCP prompt, each text only.**
   `oml guardrails export --format agents-md | claude-md --out <path> [--check]` reads
@@ -286,7 +286,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
   guardrail scope, count and `set_digest`, and "text, not enforcement; do not edit"; `--check`
   exits 1 when the live digest differs. The costs: a copy no erasure or demotion reaches
   (#137), read by the repository's readers, stale until re-exported. An MCP prompt,
-  `guardrails`, renders d6's text for the key's default workarea; prompts are "designed to be
+  `guardrails`, renders d6's text for the key's default workspace; prompts are "designed to be
   user-controlled" ([prompts](https://modelcontextprotocol.io/specification/2025-06-18/server/prompts),
   fetched 2026-10-31), so it reaches Claude's apps only when a person invokes it (amends ADR-0014
   d2 with the prompts capability, and ADR-0039 d2 by one prompt beside its three tools, which
@@ -320,10 +320,10 @@ answered all ten on 2026-11-04, and d18 records the answers.
 
     | Term | Means | Never |
     |---|---|---|
-    | guardrail | a claim of kind `guardrail`: a promoted rule with a severity, ratified under its workarea's review policy and never self-signed, served by its own read under its own frame | "policy" (review policy objects own it); "enforced" without "harness-enforced where installed" |
+    | guardrail | a claim of kind `guardrail`: a promoted rule with a severity, ratified under its workspace's review policy and never self-signed, served by its own read under its own frame | "policy" (review policy objects own it); "enforced" without "harness-enforced where installed" |
     | guardrail rule | a guardrail's optional `oml-gr/1` predicate on one tool call, effect `deny` or `ask`, checked by the local hook | "allow rule" |
     | severity | `never`, `must` or `should` on a guardrail; the first key of the order, and it decides no inheritance | "priority" |
-    | guardrail scope | a key's issuance attribute, `workarea` or `ancestors`, set by an admin, that bounds which applicable guardrails the key loads | "reach" |
+    | guardrail scope | a key's issuance attribute, `workspace` or `ancestors`, set by an admin, that bounds which applicable guardrails the key loads | "reach" |
 
 - **d15 — The build shipped in v0.5.1, after v0.5.0, in six steps, each closed by its tests.**
   S1, S2 and the pure core of S3 and S4 rest on the v0.4.0 API alone and may land before
@@ -331,12 +331,12 @@ answered all ten on 2026-11-04, and d18 records the answers.
 
     | Step | Lands | Check, tests named as sentences |
     |---|---|---|
-    | S1 | d2, d10, d14 and d4's key attribute: kind, severity, rule, scan classes, `guardrail_scope` on issuance and on `whoami`, the serve | `a_guardrail_without_a_severity_is_refused`, `severity_and_rule_are_refused_on_any_other_kind_and_on_a_retirement`, `a_guardrail_target_admits_only_kind_guardrail`, `a_rule_outside_oml_gr_1_or_with_allow_is_vetoed_as_guardrail_rule_unparsable`, `a_body_over_300_bytes_is_vetoed_as_guardrail_too_long`, `a_guardrail_promotes_under_its_workarea_policy_and_no_author_verdict_counts`, `a_guardrail_is_never_self_signed_whatever_the_tenant_policy`, `the_serve_of_a_held_guardrail_carries_the_load_warning`, `oml_write_refuses_kind_guardrail_and_a_guardrail_target`, `a_key_issued_without_guardrail_scope_folds_as_ancestors`, `a_key_is_issued_with_guardrail_scope_ancestors_unless_the_admin_names_workarea`, `key_issued_journals_the_guardrail_scope`, `whoami_serves_the_guardrail_scope`; with simulations, `a_simulation_write_of_kind_guardrail_is_refused`; with rotation, `a_rotation_keeps_the_guardrail_scope_unless_it_names_one` |
-    | S2 | d3, d4, d5: the read | `a_held_guardrail_is_never_served_as_a_rule`, `recall_never_serves_kind_guardrail`, `an_ancestor_guardrail_is_served_only_to_a_key_whose_reader_access_covers_that_ancestor`, `guardrail_scope_workarea_serves_the_scope_node_alone`, `no_parameter_or_field_changes_the_guardrail_scope`, `the_set_orders_by_severity_then_depth_then_promoted_at_then_artifact_id`, `rows_of_one_claim_key_with_different_severities_each_name_the_others_in_conflict`, `a_set_over_twelve_is_served_whole_with_over_cap_true`, `the_read_logs_the_served_ids`; with ADR-0030, `…_even_inside_an_in_progress_workarea` |
-    | S3 | d6, d7: `oml hook guardrails` and its SessionStart and SubagentStart entries | `every_line_names_its_workarea_claim_key_version_and_reviewer_count`, `a_conflict_line_names_the_other_artifact_ids`, `over_the_cap_no_guardrail_line_is_printed_and_the_user_is_told`, `a_compact_source_prints_the_whole_set_again`, `the_header_names_the_guardrail_scope_the_server_applied`, `the_key_value_is_redacted_in_every_line`; `check_plugin.py` holds both entries as ADR-0029 d7 holds its own |
+    | S1 | d2, d10, d14 and d4's key attribute: kind, severity, rule, scan classes, `guardrail_scope` on issuance and on `whoami`, the serve | `a_guardrail_without_a_severity_is_refused`, `severity_and_rule_are_refused_on_any_other_kind_and_on_a_retirement`, `a_guardrail_target_admits_only_kind_guardrail`, `a_rule_outside_oml_gr_1_or_with_allow_is_vetoed_as_guardrail_rule_unparsable`, `a_body_over_300_bytes_is_vetoed_as_guardrail_too_long`, `a_guardrail_promotes_under_its_workspace_policy_and_no_author_verdict_counts`, `a_guardrail_is_never_self_signed_whatever_the_tenant_policy`, `the_serve_of_a_held_guardrail_carries_the_load_warning`, `oml_write_refuses_kind_guardrail_and_a_guardrail_target`, `a_key_issued_without_guardrail_scope_folds_as_ancestors`, `a_key_is_issued_with_guardrail_scope_ancestors_unless_the_admin_names_workspace`, `key_issued_journals_the_guardrail_scope`, `whoami_serves_the_guardrail_scope`; with simulations, `a_simulation_write_of_kind_guardrail_is_refused`; with rotation, `a_rotation_keeps_the_guardrail_scope_unless_it_names_one` |
+    | S2 | d3, d4, d5: the read | `a_held_guardrail_is_never_served_as_a_rule`, `recall_never_serves_kind_guardrail`, `an_ancestor_guardrail_is_served_only_to_a_key_whose_reader_access_covers_that_ancestor`, `guardrail_scope_workspace_serves_the_scope_node_alone`, `no_parameter_or_field_changes_the_guardrail_scope`, `the_set_orders_by_severity_then_depth_then_promoted_at_then_artifact_id`, `rows_of_one_claim_key_with_different_severities_each_name_the_others_in_conflict`, `a_set_over_twelve_is_served_whole_with_over_cap_true`, `the_read_logs_the_served_ids`; with ADR-0030, `…_even_inside_an_in_progress_workspace` |
+    | S3 | d6, d7: `oml hook guardrails` and its SessionStart and SubagentStart entries | `every_line_names_its_workspace_claim_key_version_and_reviewer_count`, `a_conflict_line_names_the_other_artifact_ids`, `over_the_cap_no_guardrail_line_is_printed_and_the_user_is_told`, `a_compact_source_prints_the_whole_set_again`, `the_header_names_the_guardrail_scope_the_server_applied`, `the_key_value_is_redacted_in_every_line`; `check_plugin.py` holds both entries as ADR-0029 d7 holds its own |
     | S4 | d8, d9: the rule cache, `oml hook pre-tool-use` and its PreToolUse entry | `a_matching_deny_rule_answers_deny_with_the_guardrail_id_and_body`, `deny_wins_over_ask`, `no_input_ever_answers_allow`, `the_check_sends_no_request`, `an_unreadable_cache_denies_every_call`, `a_cache_whose_digest_line_does_not_match_denies_every_call`, `a_session_with_no_cache_decides_nothing_and_warns_in_one_line`, `a_cache_not_written_prints_no_line_as_checked_and_names_the_cause`, `a_subagent_start_writes_no_cache`, `a_cache_file_older_than_thirty_days_is_removed_at_start`, `an_edit_of_the_cache_directory_or_a_shell_word_naming_it_asks`, `each_mapped_tool_is_matched_on_its_argument_and_no_other_tool_by_any_rule`, `a_shell_segment_after_a_control_operator_is_matched`, `a_quoted_operator_splits_no_segment`, `a_command_that_does_not_tokenise_or_holds_a_substitution_asks`, `a_final_star_word_matches_zero_or_more_words_from_the_first_word_on`, `a_path_and_its_glob_are_normalised_against_the_input_cwd`, `a_star_stops_at_a_slash_and_a_double_star_does_not`, `a_fetch_host_is_the_whatwg_host_lower_cased_without_a_trailing_dot`, `a_glob_of_many_stars_matches_a_long_command_in_linear_time`; `check_plugin.py` holds the PreToolUse matcher equal to d8's tools, the timeout, `onFailure` and the status message, and runs the command under `/bin/sh` with no `oml`, with a stand-in older `oml` and with one whose verb fails: the first two exit 0 with no output, the third exits non-zero |
     | S5 | d11: export and the MCP prompt; d12 | `export_writes_promoted_guardrails_only`, `export_refuses_a_scope_inside_an_in_progress_subtree`, `the_header_carries_origin_scope_node_guardrail_scope_and_set_digest`, `check_exits_one_when_the_set_changed`, `agents_md_refuses_a_file_without_exactly_one_marker_pair`, `the_prompt_renders_the_hook_text`, `a_freeze_applies_only_inside_its_interval` |
-    | S6 | d16, d17: user roots and the pages, after ADR-0044 and ADR-0045 W3 | `a_user_key_with_scope_ancestors_loads_universes_guardrails_through_its_node_grant`, `a_user_key_with_scope_workarea_loads_no_universe_guardrail`, `no_guardrail_of_another_users_root_is_ever_served`, `a_user_keys_guardrail_write_into_universe_is_refused_as_universe_curated`, `a_universe_guardrail_is_served_with_origin_universe_and_no_source`, `the_users_reviewer_key_ratifies_a_guardrail_its_agents_propose_in_its_root`, `the_user_page_shows_guardrail_scope_and_selects_nested_workareas` |
+    | S6 | d16, d17: user roots and the pages, after ADR-0044 and ADR-0045 W3 | `a_user_key_with_scope_ancestors_loads_universes_guardrails_through_its_node_grant`, `a_user_key_with_scope_workspace_loads_no_universe_guardrail`, `no_guardrail_of_another_users_root_is_ever_served`, `a_user_keys_guardrail_write_into_universe_is_refused_as_universe_curated`, `a_universe_guardrail_is_served_with_origin_universe_and_no_source`, `the_users_reviewer_key_ratifies_a_guardrail_its_agents_propose_in_its_root`, `the_user_page_shows_guardrail_scope_and_selects_nested_workspaces` |
 
 - **d16 — Under user roots, `ancestors` walks from the scope node through the user's root to
   `universe`, under the same reader test, and `universe`'s guardrails are the curators'.** This
@@ -347,21 +347,21 @@ answered all ten on 2026-11-04, and d18 records the answers.
       `universe`, each only where the key's reader effective access covers that node (d4).
       ADR-0044 d3 puts every grant of a user key inside its root and adds one reader grant on
       `universe` with `covers: node`, so the walk meets the user's own nodes and `universe`, and
-      no shared workarea or other user's root is an ancestor of N: ADR-0044 d1 never moves a
+      no shared workspace or other user's root is an ancestor of N: ADR-0044 d1 never moves a
       node across a root's boundary. This is the reading ADR-0044 d10 already states.
-      `workarea` serves N's alone, so a user key issued with it loads none of `universe`'s; that
+      `workspace` serves N's alone, so a user key issued with it loads none of `universe`'s; that
       is the issuing admin's choice, as for every key (d4).
     - **Who writes them.** A user key writes only inside its root (ADR-0044 d3), so a person's
-      agents propose guardrails there alone, ratified under that workarea's review policy; the
+      agents propose guardrails there alone, ratified under that workspace's review policy; the
       person's `<user>-review` key may approve them, never its own (R2 per key and principal,
       ADR-0044 d8; ADR-0045 d6). A guardrail on `universe` is a claim on `universe`, and only a
       curator key writes there, held and reviewed by a second identity (ADR-0044 d7): so
       `universe`'s guardrails are admin-curated, the admin choosing who curates by issuing the
       curator keys. A user key's guardrail write into `universe` is ADR-0044 d14's
-      `submission.universe_refused`, as every user write there is. A shared workarea's
+      `submission.universe_refused`, as every user write there is. A shared workspace's
       guardrails, crews' included (ADR-0044 d13), are its tenant writers', as before.
     - **What is served.** A guardrail on `universe` is served to every key outside its authoring
-      key set under ADR-0044 d9: `workarea_path` `universe`, nothing below it, and d5 serves no
+      key set under ADR-0044 d9: `workspace_path` `universe`, nothing below it, and d5 serves no
       author in any case; the hook's line names its origin `universe`. Its `verdicts`, attestation
       and time, are served as on every guardrail, since they name no key (decided by the
       maintainer, d18 Q6).
@@ -373,10 +373,10 @@ answered all ten on 2026-11-04, and d18 records the answers.
     - **Session keys load nothing.** A session key has no value, so it never reaches `/v1` or
       `/mcp` (ADR-0045 d6), and no hook ever runs under one; its `guardrail_scope` matters only
       to a page that reads the set through it.
-    - **The user page shows the set in force at a selected workarea**, read-only: a selector
+    - **The user page shows the set in force at a selected workspace**, read-only: a selector
       lists the person's root and its descendants, defaulting to the root. The page names the
       selected path, whether the key reads it alone or its readable parents too, and each rule's
-      source workarea. Its own-held list is `<user>-web`'s, which writes no guardrail, so the
+      source workspace. Its own-held list is `<user>-web`'s, which writes no guardrail, so the
       person's agents' held guardrails show on the memories view. It reads no rule cache and
       checks no call.
     - **Review shows the load warning.** A held guardrail served on either page's review view
@@ -392,9 +392,9 @@ answered all ten on 2026-11-04, and d18 records the answers.
       revokes and reissues.
     - **Q3 — A key issued before the build folds as `ancestors`** (d4), its row holding that
       value and its journal unchanged.
-    - **Q4 — A guardrail is never self-signed**, in a `development` workarea included (d10). *(Amended 2026-11-14 by ADR-0080 d16: "never self-signed" is replaced by "a person's verdict"; every instruction-class version, a guardrail included, needs a person's verdict, and the development self-signing exception is retired, ADR-0001 d5.)*
+    - **Q4 — A guardrail is never self-signed**, in a `development` workspace included (d10). *(Amended 2026-11-14 by ADR-0080 d16: "never self-signed" is replaced by "a person's verdict"; every instruction-class version, a guardrail included, needs a person's verdict, and the development self-signing exception is retired, ADR-0001 d5.)*
     - **Q5 — A key a person issues on the user page takes the issuance default**, and the page
-      offers no choice (d17): only an admin issuing a key sets `workarea`.
+      offers no choice (d17): only an admin issuing a key sets `workspace`.
     - **Q6 — A `universe` guardrail is served with its verdicts' attestations and times** (d5,
       d16), which name no key, curator or source.
     - **Q7 — The listings serve kind `guardrail` like any kind, and recall refuses
@@ -451,7 +451,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
 | **d9 — An `exit 0` fallback after the check, as ADR-0029 d7 has** | A crash of the verb would allow the call, so `onFailure: "block"` would cover a timeout alone. |
 | **d9 — With no cache, the newest cache of another session** | The check makes no request, so it cannot know the key's scope node, and another session's file may come from another key. |
 | **d9 — Fail closed with no cache at all** | Rejected by the maintainer on 2026-10-31: with no cache the hook knows no rule, and denying everything would stop every user whose server was down at session start. |
-| **d10 — A human verdict on every guardrail version that no policy removes, amending ADR-0012 d3** (the earlier reading) | Rejected by the maintainer on 2026-10-31: the workarea's review policy decides, and a workarea that wants a person names kind `guardrail` in `human_required_classes`. |
+| **d10 — A human verdict on every guardrail version that no policy removes, amending ADR-0012 d3** (the earlier reading) | Rejected by the maintainer on 2026-10-31: the workspace's review policy decides, and a workspace that wants a person names kind `guardrail` in `human_required_classes`. |
 | **d10 — A guardrail crew or a curator profile owning guardrails** | A new profile in the grant algebra for a kind the review policy already governs, and a crew that writes and reviews its own rules works against R2. |
 | **d18 Q5 — The user page offers the scope** | A person could issue their agents keys that skip `universe`'s admin-curated guardrails; the scope is the issuing admin's to set. |
 | **d18 Q7 — Recall answers `kinds: ["guardrail"]` with nothing** | An empty answer reads as "no guardrail applies"; a refusal names where the set is served. |

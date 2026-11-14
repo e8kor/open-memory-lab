@@ -2,10 +2,10 @@
 id: adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read
 tier: engineering
 status: accepted · phase 1 built for v0.7.0 (#205), 2026-11-10 · the widen hint on a precomputed signal proposed (#244), 2026-11-11
-answers: what recall searches today and what federated recall adds; who gains from it and how the gain is measured; which workareas are trusted sources and why no new flag; what a workarea's descriptor holds, who writes and reviews it, how it is scanned and how far it can move a selection; why advertising grants nothing and whether a key can discover a workarea it cannot read; how a recall chooses its sources (candidates, the reference set, the selection estimate, the cap, the descriptor slots, the tail) and why a hit's score never depends on which sources were selected; the `sources` argument, its two modes and its fixed list, answered whole or refused; the hint that tells an agent to widen; the per-workarea and tenant policies; what each answer and each refusal may name; what makes the answer repeatable; the cost, limits and latency budget; the eval; the three phases and their leakage tests; what the operator still has to answer
+answers: what recall searches today and what federated recall adds; who gains from it and how the gain is measured; which workspaces are trusted sources and why no new flag; what a workspace's descriptor holds, who writes and reviews it, how it is scanned and how far it can move a selection; why advertising grants nothing and whether a key can discover a workspace it cannot read; how a recall chooses its sources (candidates, the reference set, the selection estimate, the cap, the descriptor slots, the tail) and why a hit's score never depends on which sources were selected; the `sources` argument, its two modes and its fixed list, answered whole or refused; the hint that tells an agent to widen; the per-workspace and tenant policies; what each answer and each refusal may name; what makes the answer repeatable; the cost, limits and latency budget; the eval; the three phases and their leakage tests; what the operator still has to answer
 -->
 
-# ADR-0072 — Recall searches the trusted workareas a key already reads, chosen per query by reviewed descriptors, and never widens what it may read
+# ADR-0072 — Recall searches the trusted workspaces a key already reads, chosen per query by reviewed descriptors, and never widens what it may read
 
 **Status:** accepted · 2026-11-10, with the operator's decisions on both open questions;
 phase 1 built for v0.7.0 (#205), see [Phase 1 as built](#phase-1-as-built-2026-11-10); the widen
@@ -14,7 +14,7 @@ hint served on a precomputed signal, proposed for the operator's acceptance (#24
 2026-11-08 · revised after review round 1, 2026-11-08, round 2, 2026-11-10 and round 3,
 2026-11-10 (review log at the end)
 
-**In short.** Recall can search the trusted workareas a key already reads: `sources: "wide"`, or a
+**In short.** Recall can search the trusted workspaces a key already reads: `sources: "wide"`, or a
 fixed list such as `sources: ["acme.legal", "acme.product"]`. It is off until a tenant admin enables
 it. Every hit says where it came from, and a list is answered whole or refused. A `scope` answer
 says when widening would find more, read off a signal built in the background, so the `scope`
@@ -26,12 +26,12 @@ join only in phase 2, and only if phase 1's measurements ask for them.
 
 | | Decision | Phase |
 |---|---|---|
-| d1 | A trusted source is a `committed` or `validated` node outside every in-progress subtree; no new flag | 1 |
-| d2 | A descriptor is a reviewed claim of kind `descriptor`, one live per workarea | 2 |
+| d1 | A trusted source is a `protected` or `frozen` node outside every in-progress subtree; no new flag | 1 |
+| d2 | A descriptor is a reviewed claim of kind `descriptor`, one live per workspace | 2 |
 | d3 | A descriptor is scanned, checked and bounded; a hold finding never advertises | 2 |
 | d4 | Selection runs in the core: the union below the cap, an exact size-aware estimate above it | 1 |
-| d5 | One `sources` field (`scope`, `wide` or a list); one policy per workarea, three per tenant | 1 |
-| d6 | Advertising grants nothing; a key learns of no workarea it cannot read | 1 |
+| d5 | One `sources` field (`scope`, `wide` or a list); one policy per workspace, three per tenant | 1 |
+| d6 | Advertising grants nothing; a key learns of no workspace it cannot read | 1 |
 | d7 | A hit's score never depends on which sources were selected | 1 |
 | d8 | The answer names its sources and why; a normalised-rate hint says when to widen | 1; the hint on a precomputed signal (#244) |
 | d9 | The same inputs give the same answer; no clock, randomness or model | 1 |
@@ -53,8 +53,8 @@ the scope's (ADR-0030 d2). The scope's *ancestors* contribute steering only
 (`steering_in_force` over the readable ancestry, ADR-0025 d8), never hits. The one exception is
 ADR-0044 d10: a scope inside a user root also searches the `universe` node's own claims. So a
 recall at `research-crew.experiments` never meets a reviewed claim in `ops-crew` or in
-`research-crew.lit-review`, even when the key reads both: the agent must know the other workarea's
-name and recall there. The scope is the agent's default workarea unless it names another
+`research-crew.lit-review`, even when the key reads both: the agent must know the other workspace's
+name and recall there. The scope is the agent's default workspace unless it names another
 (ADR-0039 d4), and agents rarely name one.
 
 **What the operator asked, on 2026-11-08.** "Recall will happen not only from one workarea or its
@@ -64,32 +64,32 @@ workarea metadata, its ontology etc, we will use it in recall call or not." Two 
 the premise, from the code above: hits come from the scope's subtree, not its parents; and
 "production-ready" has no field today, so this record has to say which existing status means it.
 
-**Who gains, and how it is measured.** A key gains only when it reads a trusted workarea outside
+**Who gains, and how it is measured.** A key gains only when it reads a trusted workspace outside
 its scope's subtree. An agent key granted reader on its own crew's subtree, the common shape, has
 at most `universe` outside it and gains little. Three uses gain:
 
-1. **Cross-team reuse.** A team grants another crew reader on its committed area; that crew's
+1. **Cross-team reuse.** A team grants another crew reader on its protected area; that crew's
    agents' recalls then find the area's reviewed claims without naming it. The owner's only act
    is the grant (`accept_federated` is on by default, d5).
 2. **A person's or a lead agent's key with broad reader**, which today must recall once per
-   workarea it suspects.
+   workspace it suspects.
 3. **A production RAG application on a fixed set**, for instance "the legal and product
-   workareas, nothing else", which today makes one recall per workarea and fuses the lists
+   workspaces, nothing else", which today makes one recall per workspace and fuses the lists
    itself, losing the single ranking of d7. It names the set as a `sources` list (d5) and gets
-   one ranking over those workareas alone, no selection, and the same answer for the same inputs,
+   one ranking over those workspaces alone, no selection, and the same answer for the same inputs,
    or a named refusal, never a partial answer.
 
 The gain is measured, not assumed. Before phase 1 is built, #205 reports the distribution of the
 candidate count |C| (d4) over the live keys of the public server, a one-off read of each key's
 readable trusted nodes. If most agent keys have |C| ≤ 1, phase 1's value rests on uses 1 and 3,
 and the documentation leads with the grant that enables use 1. The eval (d11) then measures what
-the reach buys: success@5 and nDCG@10 on cross-workarea queries against `scope`, and selection
+the reach buys: success@5 and nDCG@10 on cross-workspace queries against `scope`, and selection
 precision and recall where a cap selects.
 
 **The forces.**
 
 - **Access is the boundary, and nothing here may move it.** Effective access is computed per
-  request from grants and denials and cached nowhere ([workareas](../architecture/workspaces.md#effective-access));
+  request from grants and denials and cached nowhere ([workspaces](../architecture/workspaces.md#effective-access));
   every retriever receives the node list the core computed and filters before its own `LIMIT`
   (ADR-0049 d2). Federation may only search *more of what the key could already read*.
 - **R3.** The gate changes visibility, not ranking, and review never reorders results
@@ -100,8 +100,8 @@ precision and recall where a cap selects.
   algorithm behind it.
 - **Repeatability.** The same key, query, approved set and time give the same answer (#176); the
   default pipeline is model-free at recall time ([ADR-0049](ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d9; #201's design constraints).
-- **OML is not a federation of strangers.** Every workarea of a tenant sits in one PostgreSQL
-  partition, under one postings table, with BM25 statistics kept per workarea and summed over the
+- **OML is not a federation of strangers.** Every workspace of a tenant sits in one PostgreSQL
+  partition, under one postings table, with BM25 statistics kept per workspace and summed over the
   readable nodes at query time ([ADR-0052](ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) d5),
   counting served rows only. The hard half of distributed retrieval, merging scores from engines
   that do not share statistics, does not arise here (d7). In one database the union of every
@@ -141,8 +141,8 @@ precision and recall where a cap selects.
   (doc2query): "we propose a simple method that predicts which queries will be issued for a given
   document", the write-time mirror of a query-time hypothetical answer, which #201 adopts.
 
-In OML's terms: a *resource description* is the per-workarea statistics ADR-0052 already keeps,
-complete rather than sampled, and in phase 2 a workarea descriptor (d2); *resource ranking* is
+In OML's terms: a *resource description* is the per-workspace statistics ADR-0052 already keeps,
+complete rather than sampled, and in phase 2 a workspace descriptor (d2); *resource ranking* is
 source selection (d4), needed only above the cap; *result-merging* is unnecessary because every
 source shares one index and one set of statistics (d7). OML is the mix ReDDE warns about, with
 `universe` near 100,000 memories ([scale](../benchmarks/scale.md)) beside crews of hundreds, and
@@ -191,67 +191,67 @@ sequenceDiagram
   H->>K: key read off the credential, scope, query
   K->>K: effective access from grants and denials
   K->>K: C = trusted, accepting nodes outside subtree(scope) the key reads
-  K->>P: search_workarea_rows and search_term_rows for R = served(scope) ∪ C
+  K->>P: search_workspace_rows and search_term_rows for R = served(scope) ∪ C
   P-->>K: n, total_len and df per node and query word, less expired versions
   K->>K: R's statistics and pruned words, then order C by E(s) and name above max_sources
   K->>P: pipeline over served(scope) ∪ selected, statistics fixed to R
   P-->>K: scored candidates
   K->>K: re-check every row's node against C, cut by k and max_tokens
   K-->>H: hits with via, and search.sources {mode, considered, searched, cut}
-  H-->>A: answer, and MCP renders workarea_path and via per hit
+  H-->>A: answer, and MCP renders workspace_path and via per hit
 ```
 
-- **d1 — A trusted source is a `committed` or `validated` workarea outside every in-progress
+- **d1 — A trusted source is a `protected` or `frozen` workspace outside every in-progress
   subtree; no new flag.** Both statuses hold R2 and R3 without exception (ADR-0001 d5): every
   promoted row in them was reviewed by a non-author, and nothing in them is `self_signed`. A
-  `development` workarea is never a source, even where the key reads it, because tenant policy
-  may relax review there and its marked rows are "readable only inside that workarea" (ADR-0001
+  `development` workspace is never a source, even where the key reads it, because tenant policy
+  may relax review there and its marked rows are "readable only inside that workspace" (ADR-0001
   d5); every node of an in-progress subtree is `development` by construction (ADR-0030 d1), so
-  it is excluded twice. `universe` is permanently `committed` and is a source like any other for
+  it is excluded twice. `universe` is permanently `protected` and is a source like any other for
   a scope outside a user root, served under ADR-0044 d9 (no author, no source); a user root's
-  recall still searches it under `scope`, as ADR-0044 d10 says. A user root and the workareas
-  under it reach `committed` with `same_user` review (ADR-0046 d1, d2) and are trusted for the
+  recall still searches it under `scope`, as ADR-0044 d10 says. A user root and the workspaces
+  under it reach `protected` with `same_user` review (ADR-0046 d1, d2) and are trusted for the
   only keys that read them, their user's. No setting widens the set to `development`. A source is
-  one **node**, judged on its own status: a `committed` parent with a `development` child is a
+  one **node**, judged on its own status: a `protected` parent with a `development` child is a
   source; the child is not.
-  The cost: "production-ready" is read as `committed`, the working state of a governed space,
-  and not as `validated`, which is frozen. A tenant whose committed areas are drafts has no
+  The cost: "production-ready" is read as `protected`, the working state of a governed space,
+  and not as `frozen`, which is frozen. A tenant whose protected areas are drafts has no
   narrowing switch in phase 1: its owners turn `accept_federated` off on those areas (d5), and a
   `min_status` setting returns as an amendment when a tenant names that use. *(Amended 2026-11-14: the development self-signing exception is retired (ADR-0001 d5); the build never sets `self_signed`, so this text describes nothing that is served.)*
 
-- **d2 — A descriptor is a reviewed claim of a new kind, `descriptor`, on the workarea it
-  describes, one live per workarea; promoting it is the owner's opt-in to selection by it.** Its
+- **d2 — A descriptor is a reviewed claim of a new kind, `descriptor`, on the workspace it
+  describes, one live per workspace; promoting it is the owner's opt-in to selection by it.** Its
   claim key is fixed, `oml:descriptor`, and its format is `application/json` under ADR-0056's
   strict parse, with a closed schema:
 
     | Field | Written by | Holds |
     |---|---|---|
-    | `summary` | the author | at most 600 characters: what the workarea holds and for whom |
+    | `summary` | the author | at most 600 characters: what the workspace holds and for whom |
     | `about` | the author | at most 8 terms, each a CURIE of a readable active term (ADR-0051 d2, d4), linked as `oml:about` edges ratified with the descriptor |
-    | `questions` | the author | at most 8 questions the workarea's promoted rows answer (phase 3 adds generated ones, d10; parked by ADR-0075 d13, 2026-11-11, so none are added) |
-    | `owner` | served, never authored | the workarea's crew record (ADR-0008 d7) or, in a user root, its user |
-    | `status` | served | the workarea's ladder status |
-    | `freshness` | served | the descriptor's promotion time and the workarea's latest promotion time |
+    | `questions` | the author | at most 8 questions the workspace's promoted rows answer (phase 3 adds generated ones, d10; parked by ADR-0075 d13, 2026-11-11, so none are added) |
+    | `owner` | served, never authored | the workspace's crew record (ADR-0008 d7) or, in a user root, its user |
+    | `status` | served | the workspace's ladder status |
+    | `freshness` | served | the descriptor's promotion time and the workspace's latest promotion time |
 
-  A writer key with writer access on the workarea writes it, an agent's included: the agents
-  working in a workarea know best what it answers. A write naming `oml:descriptor` on any other
-  workarea is refused `request.validation`, and a second live descriptor is a supersession, never
-  a sibling (ADR-0050 d2). It is held, scanned (d3) and reviewed by a non-author dreamer on the
-  same workarea, R2 against the lineage closure, like every claim, with one difference decided by
-  the operator on 2026-11-10: the reviewer must be a person, a reviewer with `held_by: human`, so
-  an agent's key never promotes a descriptor; a validated workarea refuses a
+  A writer key with writer access on the workspace writes it, an agent's included: the agents
+  working in a workspace know best what it answers. A write naming `oml:descriptor` on any other
+  workspace is refused `request.validation`, and a second live descriptor is a supersession, never
+  a sibling (ADR-0050 d2). It is held, scanned (d3) and reviewed by a non-author reviewer on the
+  same workspace, R2 against the lineage closure, like every claim, with one difference decided by
+  the operator on 2026-11-10: the reviewer must be a person, a reviewer with `used_by: person`, so
+  an agent's key never promotes a descriptor; a frozen workspace refuses a
   new descriptor as it refuses every write (ADR-0009 d1), so its last promoted descriptor stands.
   The descriptor is not a hit kind: it is never a recall candidate, never in `HIT_KINDS`, and it
-  is served by the workarea read (`oml_workarea`) beside `brief` (ADR-0046 d9), a held one to its
+  is served by the workspace read (`oml_workspace`) beside `brief` (ADR-0046 d9), a held one to its
   author alone. The author-written fields are signed with the descriptor; the served fields are
   read at recall time and never signed, so a descriptor cannot lie about its own status or
   freshness. A promoted descriptor is the opt-in: there is no separate `advertise` switch, and
   `accept_federated` (d5) is the owner's off switch for federation as a whole. A descriptor
   matters only when a key's candidates exceed `max_sources` (d4): below the cap every candidate is
   searched and the descriptor changes nothing.
-  The cost: a new kind, one more row per described workarea, and a review per change. The brief
-  (ADR-0046 d7) is not reused: it lists claims for an agent entering a workarea, and a descriptor
-  describes the workarea to a query that has not entered it.
+  The cost: a new kind, one more row per described workspace, and a review per change. The brief
+  (ADR-0046 d7) is not reused: it lists claims for an agent entering a workspace, and a descriptor
+  describes the workspace to a query that has not entered it.
 
 - **d3 — A descriptor is kept honest by scanning, by review with a check its reviewer sees, and
   by a bounded reach that cannot touch a hit's score.** Four layers, the last the one that holds:
@@ -261,12 +261,12 @@ sequenceDiagram
      lands. A refuse finding refuses the write, as for any claim. One rule is stricter here: a
      descriptor version that carries a **hold** finding, recorded at write or added later by a
      rescan under a newer rule set (ADR-0074 d14), never advertises. It is not indexed for
-     selection, it scores no candidate, and the workarea is selected by content alone, as if it
+     selection, it scores no candidate, and the workspace is selected by content alone, as if it
      had no descriptor, whatever verdict the version received. A person may still approve it
      under ADR-0074 d2, and a person may dismiss its finding under ADR-0074 d19; either serves it
-     on the workarea read with its findings (ADR-0074 d12), and neither restores selection. The
+     on the workspace read with its findings (ADR-0074 d12), and neither restores selection. The
      author supersedes it with text that scans clean. The reason is the reader: an ordinary
-     claim's hold finding is judged by a person for the people who read that workarea, while a
+     claim's hold finding is judged by a person for the people who read that workspace, while a
      descriptor's text steers selection for every crew that reads it, so no single verdict covers
      its audience. Before ADR-0074 lands, ADR-0065's `injection.*` findings, which hold (ADR-0065
      d5), are the hold findings meant here. An annotate finding (ADR-0074 d1) is served to the
@@ -274,9 +274,9 @@ sequenceDiagram
      in a recall answer: `matched` (d8) names words, a descriptor version and question indices,
      never text, so instruction-shaped text has no path into another agent's context through
      recall.
-  2. **Review, by a person.** The reviewer is a non-author dreamer on the workarea who is a person,
-     `held_by: human` (decided by the operator, 2026-11-10); a verdict from a reviewer of any other
-     `held_by` does not promote a descriptor. The reviewer reads the workarea the descriptor
+  2. **Review, by a person.** The reviewer is a non-author reviewer on the workspace who is a person,
+     `used_by: person` (decided by the operator, 2026-11-10); a verdict from a reviewer of any other
+     `used_by` does not promote a descriptor. The reviewer reads the workspace the descriptor
      describes and accepts or rejects the descriptor whole. A descriptor steers other crews'
      selection and changes rarely, so the cost is a few reviews per tenant.
   3. **The answer check.** At hold time, in the scanner's queue and off the write path, the
@@ -312,8 +312,8 @@ sequenceDiagram
      Computed per request from grants and denials, like every access decision, cached nowhere.
   2. **The reference set.** Under `scope` and `wide`, R = served(scope) ∪ C; under a list, R =
      the listed nodes alone, which are also the searched set (d5), so a list's answer is a
-     function of the listed workareas and nothing else: the availability, cost and churn of every
-     other workarea the key reads cannot move it. R is fixed once per request, with the key's
+     function of the listed workspaces and nothing else: the availability, cost and churn of every
+     other workspace the key reads cannot move it. R is fixed once per request, with the key's
      access (d6). Its statistics, BM25's `n`, `avgdl` and
      per-word `df`, are summed over R from ADR-0052 d5's counts, which count served rows only,
      less the versions expired at `now`, which the counts still hold and `bm25-postings` already
@@ -327,8 +327,8 @@ sequenceDiagram
      and R does not depend on which sources are selected, so d7's scores do not either. **A source
      that cannot be reached for R's statistics** (ADR-0073 d9's first round) is never dropped
      from R silently, since every score would move with nothing in the answer to show why. Under a
-     list it refuses the recall `503 cluster.source_unavailable {workarea, reason}`, the same
-     error as a listed source that cannot answer (d5; ADR-0073), and no other workarea's state
+     list it refuses the recall `503 cluster.source_unavailable {workspace, reason}`, the same
+     error as a listed source that cannot answer (d5; ADR-0073), and no other workspace's state
      can cause it. Under `wide` the candidate is dropped from C and from R together and listed in
      `search.sources.missing` with its reason (ADR-0073), and `recall_events` records R's node
      ids, so replay computes the same R. A scope node that cannot be reached fails the recall
@@ -345,7 +345,7 @@ sequenceDiagram
      hold the word, so a source of 300 rows holding five of the six rows that contain a rare word
      outranks `universe` holding the sixth, and a large source ranks high only by holding most of
      the matches: ReDDE's size correction, computed from complete counts instead of a sample. It
-     has no tuned constant. Candidates are ordered by E descending, then by workarea name
+     has no tuned constant. Candidates are ordered by E descending, then by workspace name
      ascending (names are tenant-unique and immutable, ADR-0026), and the first `max_sources` are
      searched; a candidate with E = 0 holds no kept word and is ordered last, by name.
   5. **Descriptor slots (phase 2).** Under the tenant selector `described` (d5, phase 2), the last
@@ -364,12 +364,12 @@ sequenceDiagram
      maximum over w of Σ over s in the cut of df_s(w), so an agent knows what it did not search
      (d8). No hit comes from the cut, and the cut's statistics stay in R, so every searched hit
      scores as if the cut had been searched and returned nothing above it.
-  The cost: a key whose grants reach many trusted workareas pays for a statistics read over all
-  of them on every `wide` recall; a list pays for the listed workareas alone, and a `scope`
+  The cost: a key whose grants reach many trusted workspaces pays for a statistics read over all
+  of them on every `wide` recall; a list pays for the listed workspaces alone, and a `scope`
   recall pays nothing (d12 as amended).
 
-- **d5 — Controls: one `sources` field on recall, `"scope"`, `"wide"` or a list of workarea
-  names, default `"scope"`; one policy per workarea and three per tenant in phase 1, each
+- **d5 — Controls: one `sources` field on recall, `"scope"`, `"wide"` or a list of workspace
+  names, default `"scope"`; one policy per workspace and three per tenant in phase 1, each
   journalled.**
   - **`sources`** on `oml_read` recall and `POST /v1/memories/recall` says where to search. A
     string is a mode and an array is a fixed set:
@@ -380,7 +380,7 @@ sequenceDiagram
       `federation.selector`, `content` or `described` (d4.5), and a selector other than `content`
       is admitted only after it passed ADR-0049 d9's gate on the eval (d11).
     - **a list**, for instance `["acme.legal", "acme.product"]`, of 1 to `max_sources` distinct
-      workarea names: the search is the listed nodes **alone**, as one d7 ranking, with no
+      workspace names: the search is the listed nodes **alone**, as one d7 ranking, with no
       selection. The scope still supplies steering and guardrails (ADR-0025 d8), but not
       statistics: R is the listed nodes alone (d4.2), so a listed node's rows score as one
       collection of exactly what was named. They differ from the same rows' scores under `wide` or
@@ -389,13 +389,13 @@ sequenceDiagram
       wants and the call of an agent that knows where to look. Each name is checked before the
       search: a name the key cannot read and a name that does not exist are each refused
       `access.not_found`, byte for byte as they are for a scope today; a readable name that is
-      not a trusted source (d1), or that lies outside subtree(scope) on a workarea that declines
+      not a trusted source (d1), or that lies outside subtree(scope) on a workspace that declines
       federated reads, is refused `request.validation` with `details.field: /sources/<i>` and its
       reason, `source_untrusted` or `source_declines_federation`. A name inside subtree(scope) is
       accepted whenever it passes d1. **A list is answered whole or refused, never in part**: the
       first unusable name refuses the request, and under ADR-0073 a listed source that no node
       can answer, in the statistics round or in the search, fails the recall `503
-      cluster.source_unavailable {workarea, reason}`, as the scope does. Only `wide` may be
+      cluster.source_unavailable {workspace, reason}`, as the scope does. Only `wide` may be
       answered without a source, and it says so (ADR-0073's `missing`). **Validation order**,
       each step before any search: (1) the shape of `/sources`: an empty list, a duplicate name,
       more than `max_sources` names, or a non-string element is `request.validation` with
@@ -405,7 +405,7 @@ sequenceDiagram
       for an unreadable and an absent name, so a RAG application can find its stale name; the
       index names a position the caller sent and discloses nothing. A name inside subtree(scope)
       must pass d1 like any other: a `development` or in-progress scope (ADR-0030) cannot list
-      its own nodes, so "these workareas plus mine" is not expressible from there, while `wide`
+      its own nodes, so "these workspaces plus mine" is not expressible from there, while `wide`
       searches the scope whatever its status.
   - Absent, `sources` is the tenant's `federation.default_sources`, `"scope"` unless a tenant
     admin sets `"wide"`, which is admitted only after `wide` passed the same gate; a list is never
@@ -415,47 +415,47 @@ sequenceDiagram
     changes nothing for any caller, keeps every existing eval number and pinned expectation valid,
     and is the only one with evidence today; `"wide"` becomes a default the way `bm25` did, by
     measurement.
-  - **Per workarea**, served by the workarea read under `federation` beside `policy`, set by
-    `POST /v2/workareas/{workarea}/federation` and `oml workareas federation`, journalled
-    `workarea.federation_set {workarea_id, field, value, from}`, by a dreamer key `held_by:
-    human` with dreamer access on the node or by a tenant admin (an agent key is refused
+  - **Per workspace**, served by the workspace read under `federation` beside `policy`, set by
+    `POST /v2/workspaces/{workspace}/federation` and `oml workspaces federation`, journalled
+    `workspace.federation_set {workspace_id, field, value, from}`, by a reviewer key `used_by:
+    person` with reviewer access on the node or by a tenant admin (an agent key is refused
     `access.verb_ceiling`, reason `federation_is_human_only`, ADR-0030 d1's predicate):
     `accept_federated` (default `true` on a trusted source): recalls scoped elsewhere may search
-    this workarea. It grants nothing, and nothing changes until a tenant enables federation and a
-    caller asks; turning it off changes no access, since a key that reads the workarea still
+    this workspace. It grants nothing, and nothing changes until a tenant enables federation and a
+    caller asks; turning it off changes no access, since a key that reads the workspace still
     recalls there by naming it as the scope.
   - **Per tenant**, `federation` in the tenant policy, journalled `federation.policy_set`, by a
     tenant admin: `enabled` (default `false`), `default_sources`, `max_sources` (default 8,
     unmeasured, #205). Phase 2 adds `selector` and `descriptor_slots`.
-  The cost: one per-workarea field and three tenant fields, each a refusal to name and a doctor
+  The cost: one per-workspace field and three tenant fields, each a refusal to name and a doctor
   line to keep. A per-scope `exclude` list and a tenant `min_status` were drafted and left out
   until a tenant names a use for them (Occam, ADR-0039); each returns as an amendment with its
   case. A caller with a fixed list must keep its names current, since a source that turned
   untrusted or declines federation is refused rather than skipped.
 
-- **d6 — Advertising grants nothing, and a key can never learn of a workarea it cannot read
-  through recall, its refusals or its timing; discovery without read is a directory workarea, not
+- **d6 — Advertising grants nothing, and a key can never learn of a workspace it cannot read
+  through recall, its refusals or its timing; discovery without read is a directory workspace, not
   a new grant.** C and R are subsets of the nodes the key reads, so a descriptor, a statistic, a
-  name or a count of an unreadable workarea never enters a score, an estimate, a list, a hint, a
+  name or a count of an unreadable workspace never enters a score, an estimate, a list, a hint, a
   refusal or a response. What a key could otherwise learn, and what stops it:
 
     | Channel | Would leak | Closed by |
     |---|---|---|
     | hits, scores, order | an unreadable row's content or rarity | R holds readable nodes only (d4.2); ADR-0049's law `a_row_outside_the_scope_never_changes_a_candidates_score` holds with R as the scope |
-    | `search.sources`, `considered`, `cut`, `widen` | an unreadable workarea's name, existence or size | every list and count is over C, and the key's access is fixed once per request, as `now` is (d9): the same grants and denials decide C, R and the answer, so a source's statistics never stay in R after it is dropped from the answer. A grant revoked during a request applies to the next |
+    | `search.sources`, `considered`, `cut`, `widen` | an unreadable workspace's name, existence or size | every list and count is over C, and the key's access is fixed once per request, as `now` is (d9): the same grants and denials decide C, R and the answer, so a source's statistics never stay in R after it is dropped from the answer. A grant revoked during a request applies to the next |
     | refusals | which names exist | an unreadable and an absent name give the same `access.not_found` bytes; a reason that names a status or a policy is served only after the read check passes (d5) |
     | `did_you_mean` | a spelling held only by an unreadable or unsearched source | spellings come from the searched nodes alone (ADR-0049 d6's rule with the searched nodes as the scope) |
     | descriptor text | its topics, in another crew's agent's context | never served by recall (d3.1); a held descriptor is served to its author only (d2); a version with a hold finding never selects (d3.1) |
     | the answer check | whether a denied child holds an answer | runs over the node alone, under the author's access, off the request path (d3.3) |
     | score values, `estimate`, `cut`, `widen` counts, and differential queries (varying the query, or comparing `scope`, `wide` and lists) | an unreadable row's words or their frequencies, by subtraction | every value is a function of the query and R's rows, and R holds readable, served, unexpired rows only, so any difference of two answers is a function of rows the key reads. The exact per-word counts are deliberate and not quantised: they are readable counts, which the key could compute by reading each node of R, and quantising them would hide nothing it cannot read while breaking d7's exact scores. A change to R's definition is reviewed against this row |
-    | timing | the size of an unreadable workarea | the statements read only R's rows, so a recall's work depends on readable candidates alone. The gate holds the work, deterministically: with and without W's rows, the answers are equal, the rows the in-memory store's recall reads visit are equal, and on PostgreSQL the tuples its statements read from the memories and search tables (by the statistics collector, after `VACUUM ANALYZE`: `seq_tup_read` and `idx_tup_fetch` of the tables and `idx_tup_read` of their indexes, which is all an index-only read of the covering `search_postings_served` counts) are equal with 2,500 and with 5,000 of W's rows. Two large sizes are compared because the planner may pick a seq scan for a table of a few rows and an index for one of thousands, a plan change the gate does not count as W's rows read (d13 test 7, [#278](https://github.com/e8kor/open-memory-lab/issues/278)). The wall-clock p50/p95 comparison runs weekly in the bench workflow and does not gate, since it moves with the host's load. The one inherited channel is a list name's lookup: a name that exists and fails the read check may take a different time from a miss, as a scope does today; test 4 holds the two refusals' bytes and work equal, rows visited on the double and tuples read on PostgreSQL, and compares the two latencies weekly in the bench workflow (#295) |
+    | timing | the size of an unreadable workspace | the statements read only R's rows, so a recall's work depends on readable candidates alone. The gate holds the work, deterministically: with and without W's rows, the answers are equal, the rows the in-memory store's recall reads visit are equal, and on PostgreSQL the tuples its statements read from the memories and search tables (by the statistics collector, after `VACUUM ANALYZE`: `seq_tup_read` and `idx_tup_fetch` of the tables and `idx_tup_read` of their indexes, which is all an index-only read of the covering `search_postings_served` counts) are equal with 2,500 and with 5,000 of W's rows. Two large sizes are compared because the planner may pick a seq scan for a table of a few rows and an index for one of thousands, a plan change the gate does not count as W's rows read (d13 test 7, [#278](https://github.com/e8kor/open-memory-lab/issues/278)). The wall-clock p50/p95 comparison runs weekly in the bench workflow and does not gate, since it moves with the host's load. The one inherited channel is a list name's lookup: a name that exists and fails the read check may take a different time from a miss, as a scope does today; test 4 holds the two refusals' bytes and work equal, rows visited on the double and tuples read on PostgreSQL, and compares the two latencies weekly in the bench workflow (#295) |
     | review timing | when a descriptor is judged | the answer check runs in the scanner's queue, on no request a non-author makes; findings and verdicts are served to the author and the reviewer |
 
-  A person who wants others to find a workarea they cannot read publishes a description as an
-  ordinary reviewed claim in a **directory workarea** the audience reads (for instance a node
+  A person who wants others to find a workspace they cannot read publishes a description as an
+  ordinary reviewed claim in a **directory workspace** the audience reads (for instance a node
   `directory` under `universe` or under a crew): reader on the directory *is* the discover grant,
   its entries are reviewed text whose fields the publisher chose, and no live count or freshness
-  is served from it. Reading the directory grants nothing on the described workarea; access is
+  is served from it. Reading the directory grants nothing on the described workspace; access is
   still a grant an admin issues. This needs no new role, no new grant attribute and no new rule,
   and it is buildable today; phase 1 ships a documented recipe for it.
   The cost: a directory entry is a copy that can go stale, and federated recall never routes to
@@ -468,13 +468,13 @@ sequenceDiagram
   tenant's pipeline runs once over it, with BM25's `n`, `avgdl`, document frequencies and pruned
   words taken from R (d4.2), not from the searched nodes. Under a list the searched nodes are the
   listed ones alone (d5), and R is the same nodes, so every listed row scores against exactly the
-  listed workareas. Under `scope` nothing here applies: hits score with
+  listed workspaces. Under `scope` nothing here applies: hits score with
   the scope's statistics, as today, and R is not read (d12 as amended). Precisely:
   1. **Score independence.** A row's retriever score is a function of the row, the query and R's
      statistics. It is the same whether or not any other source was selected, whatever the
      selector or the descriptor slots. Under a list the same holds for any listed set: R is the
      listed nodes, and the score is independent of which of them are searched and of every
-     unlisted workarea. A row's score under a list may differ from its score under `wide`, whose R is
+     unlisted workspace. A row's score under a list may differ from its score under `wide`, whose R is
      larger. The pruned words are R's too, so a selection that would have pushed a
      word over `POSTING_BUDGET` prunes nothing it would not have pruned anyway.
   2. **Stability under adding or removing a source.** Under a single-list pipeline (`Single`, the
@@ -508,14 +508,14 @@ sequenceDiagram
 - **d8 — Explainability: the answer lists the sources it searched and why, each hit says whether
   it came from the scope or a federated source, and a scope answer says when a candidate is
   richer per row than the scope.** Under `wide` or a list the answer's `search` (ADR-0049 d6) gains `sources`:
-  `{mode, considered, searched: [{workarea_id, workarea_path, via, estimate, matched}],
+  `{mode, considered, searched: [{workspace_id, workspace_path, via, estimate, matched}],
   cut: {count, matches_at_least}}`, where `mode` is `wide` or `list`, `via` is `scope` or
   `federated`, `considered` is |C|,
   `estimate` is E(s), and `matched` is `{words, descriptor_version, question_indices}`, empty for
   the scope and never descriptor text; phase 2 adds `selector`. With `explain: true` the cut's
-  workarea paths are served
-  too. Each federated answer's hits gain `via` and their `workarea_path`, so the agent knows a hit
-  came from another team's context. The MCP rendering carries `workarea_path` and `via` per hit
+  workspace paths are served
+  too. Each federated answer's hits gain `via` and their `workspace_path`, so the agent knows a hit
+  came from another team's context. The MCP rendering carries `workspace_path` and `via` per hit
   and the `cut` line; the full block is served over HTTP and under `explain: true`.
   **The widen hint.** *Deferred from phase 1, 2026-11-11, and returned on a precomputed signal
   (#244, proposed):* computing it on the request path cost every `scope` recall about 58 ms p95 on
@@ -542,8 +542,8 @@ sequenceDiagram
   from a populated scope; the eval found the opposite on scopes of 12 to 25 memories. A candidate that is proportionally richer in the query's rare words is the
   signal that the scope is the wrong place. `candidates` counts the
   candidates with E > 0 and `matches_at_least` is d4.6's lower bound taken over all of C, which an
-  agent reads as, for instance, "at least 14 memories in 3 trusted workareas you read share a
-  word with the query", and may retry with `sources: "wide"`. It names no workarea and counts
+  agent reads as, for instance, "at least 14 memories in 3 trusted workspaces you read share a
+  word with the query", and may retry with `sources: "wide"`. It names no workspace and counts
   readable candidates only. d11 measures how often it fires and how often widening then helps,
   and gates the factor. When it returns, the MCP server instructions gain one line, "a recall answer with
   `search.widen` may be retried with `sources: "wide"`": a hint in the answer, not a tool, as
@@ -562,8 +562,8 @@ sequenceDiagram
   demotion, supersession or retirement in any node of R; a policy or setting change; a grant
   change; and, in phase 3, a question set written, regenerated or dropped (ADR-0075 d4; none is,
   while ADR-0075 d13 parks generated questions).
-  `recall_events` gains `sources` (the mode, or the list as workarea ids), `federated_workarea_ids`
-  and `reference_workarea_ids` (R's nodes after any round-1 miss, d4.2), and in phase 2 `selector`, so ADR-0054 d11's replay reproduces a
+  `recall_events` gains `sources` (the mode, or the list as workspace ids), `federated_workspace_ids`
+  and `reference_workspace_ids` (R's nodes after any round-1 miss, d4.2), and in phase 2 `selector`, so ADR-0054 d11's replay reproduces a
   federated recall; all fall under recall telemetry's erasure row (ADR-0054 d4). `now` is one
   point, fixed once per request, and the one value every statement reads, bound as `$NOW`.
   Under ADR-0073, where the nodes of R sit on different servers, the coordinator passes that
@@ -574,7 +574,7 @@ sequenceDiagram
 - **d10 — Phase 3's two selection lists read reviewed content only.** **Ontology overlap**: the
   terms the query matches by ADR-0051 d6's label matcher, scored per candidate by the count of
   matched terms among its descriptor's `about` and among the `oml:about` edges of its promoted
-  memories, from a per-workarea term count kept as ADR-0052 d5 keeps word counts. **Generated
+  memories, from a per-workspace term count kept as ADR-0052 d5 keeps word counts. **Generated
   questions**: #201's questions, stored per promoted memory with model and prompt version, indexed
   as postings; a candidate scores by BM25 over its memories' questions, so a source is found by
   the questions its rows answer. No model runs at recall. A question of a held, demoted or erased
@@ -588,12 +588,12 @@ sequenceDiagram
     phase 0 measured per-memory recall, not source selection. The text above is kept as the
     design a reopening starts from.
 
-- **d11 — The recall eval gains a cross-workarea split, a skew split and an adversarial
+- **d11 — The recall eval gains a cross-workspace split, a skew split and an adversarial
   descriptor, and every mode is measured against `scope` and against the union.** The
-  200-memory corpus is loaded as one `committed` workarea per `topic` (11, from
+  200-memory corpus is loaded as one `protected` workspace per `topic` (11, from
   `eval/recall/corpus.json`), and new labelled queries are scoped at one topic with relevant
   memories in others; the existing queries run scoped at their relevant memory's topic. A **skew
-  split** pads one topic's workarea with SciFact abstracts ([scale](../benchmarks/scale.md)) to at
+  split** pads one topic's workspace with SciFact abstracts ([scale](../benchmarks/scale.md)) to at
   least 100 times the others' size, the shape of `universe` beside a crew, and sets `max_sources`
   below the topic count so that the estimate must choose. Reported per mode (`scope`, `wide` under
   each selector, and the union of R as the upper reference): success@5, nDCG@10 and
@@ -622,9 +622,9 @@ sequenceDiagram
 
 - **d12 — Scale: a budget, a cap, an index already built, and no access cache.** Candidates per
   recall are bounded by the trusted nodes the key reads; descriptors per tenant by its
-  workareas. Phase 1's statistics read takes `search_term_rows` and `search_workarea_rows` by
-  their primary key `(tenant_id, workarea_id, kind, memory_kind, token_id)` with
-  `workarea_id = ANY($r)` and `token_id = ANY($words)`, leakproof equalities that serve the serving
+  workspaces. Phase 1's statistics read takes `search_term_rows` and `search_workspace_rows` by
+  their primary key `(tenant_id, workspace_id, kind, memory_kind, token_id)` with
+  `workspace_id = ANY($r)` and `token_id = ANY($words)`, leakproof equalities that serve the serving
   role (ADR-0052 d1); one read serves R's statistics, the pruned words, the estimate and the
   hint, and the expired subtraction of d4.2 is the second. Both run on every `wide` recall;
   under a list they run over the listed nodes alone (d4.2); under `scope`, federation on or off,
@@ -632,13 +632,13 @@ sequenceDiagram
   federation on it reads its widen signal once, the query's word forms, which reads no table
   (#244, [as built](#the-widen-hint-as-built-2026-11-11)). Phase 2 indexes
   descriptor text as `search_postings` rows of memory kind 3, under the same partition, policy,
-  trigger and erase, read with the candidates as the workarea list and excluded from the hit
+  trigger and erase, read with the candidates as the workspace list and excluded from the hit
   retrievers; phase 3's term counts and question postings follow the same shape. Nothing is
   cached beyond these materialised counts, so a revoked grant applies to the next recall. Budget:
   the two reads add at most 10 ms p95 at 1,000 candidate sources, inside the 128 ms
   first-stage recall SLO ([operating](../operations/operating.md)). **Measured, 2026-11-10 and
-  11** (`pg_store`'s `federation_overhead_at_1000_candidates`, release build, 1,000 committed
-  workareas of one memory each, `bm25-postings`, `k` 10, 40 runs per mode after one warm-up,
+  11** (`pg_store`'s `federation_overhead_at_1000_candidates`, release build, 1,000 protected
+  workspaces of one memory each, `bm25-postings`, `k` 10, 40 runs per mode after one warm-up,
   the p95 of each on a host other builds shared): the two reads, the cap-candidate selection's
   statistics, take 10.9 ms p95, at the budget within the host's noise; a whole `wide` recall at
   `max_sources` 8 takes 113 ms p95 at worst against the 128 ms SLO; a `scope` recall takes the
@@ -661,7 +661,7 @@ sequenceDiagram
   reach limit would not be. The counts are **exact**, never a sketch: d4.2's statistics, d7's
   score independence and d13's test 6 rest on exact `df`, and a sampled or compact summary would
   make a federated answer approximate. Under ADR-0073 the statistics read is a network round
-  unless the per-workarea counts travel with the tenant's spine; that record answers how (its
+  unless the per-workspace counts travel with the tenant's spine; that record answers how (its
   d9), and states what exact counts on a node that does not hold the unit disclose to it (its d2,
   d11).
 
@@ -670,7 +670,7 @@ sequenceDiagram
 
     | Phase | Builds | Issue | Built when | Leakage and invariance tests (each red first by breaking its clause) |
     |---|---|---|---|---|
-    | 1 | `sources` (`"scope"`, `"wide"`, a list), d1's trust set, R with its expired subtraction and pruned words, d4's estimate and cap, d5's policies (`enabled`, `default_sources`, `max_sources`, `accept_federated`), d7, d8 with the widen hint on a precomputed signal (#244), d9, the eval's cross and skew splits, the directory recipe | #205 | after the candidate-count distribution is reported | (1) an unreadable W (a per-grant deny on a child of a readable parent) whose rows match every query changes no byte of `sources`, `considered`, `cut`, `widen`, hits, scores, `did_you_mean`, `explain` counts or `recall_events`, against W absent; (2) the same for W readable but `development`, in progress or `accept_federated: false`; (3) a reader of the scope without reader on W reads the scope workarea: W's id and name are absent from the whole body; (4) an unreadable W named in a `sources` list gives `access.not_found` byte-identical to a nonexistent name, and a list with one unusable name is refused whole, never answered from the rest, with the latency of an unreadable name compared to an absent one over many runs, and each list-shape refusal (empty, duplicate, over `max_sources`, `Cc`) in the order of d5; (5) reader on S revoked, then a recall at once: S absent, no candidate cache; (6) a scope hit's score is identical whether source X is selected or not, and the `bm25` answer for any searched set equals the union's restricted to it, on `bm25` and on `bm25-postings` with a selection whose postings would cross `POSTING_BUDGET`; (7) timing over many runs, W with 0 against 100,000 matching rows: p50 and p95 within noise; (8) with federation off `scope` reproduces today byte for byte and `wide` and a list are refused; (9a) a list's scores and answer are byte-identical whatever the unlisted workareas hold, and whether any of them is unreachable; an unreachable listed unit refuses `503 cluster.source_unavailable` and an unreachable candidate under `wide` is in `missing` and absent from `reference_workarea_ids`; (9b) the widen hint stays silent on a scope whose rate equals the candidates' and on a candidate's single stray row, and fires on a candidate twice as rich per row, rebuilt on the signal with the signal's own laws (#244) |
+    | 1 | `sources` (`"scope"`, `"wide"`, a list), d1's trust set, R with its expired subtraction and pruned words, d4's estimate and cap, d5's policies (`enabled`, `default_sources`, `max_sources`, `accept_federated`), d7, d8 with the widen hint on a precomputed signal (#244), d9, the eval's cross and skew splits, the directory recipe | #205 | after the candidate-count distribution is reported | (1) an unreadable W (a per-grant deny on a child of a readable parent) whose rows match every query changes no byte of `sources`, `considered`, `cut`, `widen`, hits, scores, `did_you_mean`, `explain` counts or `recall_events`, against W absent; (2) the same for W readable but `development`, in progress or `accept_federated: false`; (3) a reader of the scope without reader on W reads the scope workspace: W's id and name are absent from the whole body; (4) an unreadable W named in a `sources` list gives `access.not_found` byte-identical to a nonexistent name, and a list with one unusable name is refused whole, never answered from the rest, with the latency of an unreadable name compared to an absent one over many runs, and each list-shape refusal (empty, duplicate, over `max_sources`, `Cc`) in the order of d5; (5) reader on S revoked, then a recall at once: S absent, no candidate cache; (6) a scope hit's score is identical whether source X is selected or not, and the `bm25` answer for any searched set equals the union's restricted to it, on `bm25` and on `bm25-postings` with a selection whose postings would cross `POSTING_BUDGET`; (7) timing over many runs, W with 0 against 100,000 matching rows: p50 and p95 within noise; (8) with federation off `scope` reproduces today byte for byte and `wide` and a list are refused; (9a) a list's scores and answer are byte-identical whatever the unlisted workspaces hold, and whether any of them is unreachable; an unreachable listed unit refuses `503 cluster.source_unavailable` and an unreachable candidate under `wide` is in `missing` and absent from `reference_workspace_ids`; (9b) the widen hint stays silent on a scope whose rate equals the candidates' and on a candidate's single stray row, and fires on a candidate twice as rich per row, rebuilt on the signal with the signal's own laws (#244) |
     | 2 | kind `descriptor`, d3's hold rule, check and yield, memory-kind-3 postings, the `selector` setting and the `described` selector with `descriptor_slots` | #206 | only if, after phase 1, content selection's recall on the skew split is below 0.90 or more than two queries below the exact ReDDE analogue (d11), **and** a tenant's measured candidate count exceeds `max_sources`; its admission gate is d11's numeric floor, and open question 1 is decided (2026-11-10: a person promotes a descriptor) | (9) held, rejected and superseded descriptors select exactly what no descriptor selects, and a held descriptor is not served to a non-author; (10) a descriptor on an unreadable W changes no byte; (11) an adversarial descriptor matching every query lowers selection recall by at most one query and displaces at most `descriptor_slots` sources; (12) a descriptor version with a hold finding, at write or added by a rescan after promotion, selects exactly what no descriptor selects, whether a person approved it or dismissed the finding, and no descriptor text appears in any recall answer; (13) memory-kind-3 postings (descriptor postings, not ADR-0075's posting kind 3) are never hits and do not change R's statistics |
     | 3 | d10's ontology and question lists, fused by RRF into the descriptor score (the question list parked by ADR-0075 d13, 2026-11-11: ontology overlap alone) | #207 | after ADR-0051 and #201 land, and phase 2 is built (#201 closed as not planned, 2026-11-11) | (14) a term or question held only by unreadable rows selects nothing and changes no count; (15) a question of a held, demoted or erased memory never scores a source, and erasure removes its postings (parked with the question list by ADR-0075 d13) |
 
@@ -681,10 +681,10 @@ left a reading open, or named a surface main does not have, the build took the r
 
 | Decision | Reading | Why |
 |---|---|---|
-| d4.4, d8 | A word's `df` in a source is its most frequent form's, the exact word or its English stem, from the per-workarea counts | the counts are kept per form; the BM25 statements score a word by its best form, and a row holding both forms is counted once by neither sum, so the most frequent form is exact where the sum would double count |
+| d4.4, d8 | A word's `df` in a source is its most frequent form's, the exact word or its English stem, from the per-workspace counts | the counts are kept per form; the BM25 statements score a word by its best form, and a row holding both forms is counted once by neither sum, so the most frequent form is exact where the sum would double count |
 | d4.2, d5, d13 test 9a | No source is ever unreachable: `search.sources.missing` and `503 cluster.source_unavailable` are not served, and test 9a proves its first half | both are ADR-0073's, which is proposed; on one database every node of R answers or the recall fails whole, as a scope does today |
-| d5 | The tenant policy is read and set at `GET` and `POST /v2/federation`, admin by key role, and from the CLI with `oml search federation`; `max_sources` is 0 to 64; a list name is a workarea name or id, as a scope is | d5 names the fields and the event, not the route; 64 keeps a list's validation and a wide recall's selection bounded |
-| d8 | The recall body has no `explain` member, so a cut's workarea paths are not served; `search.sources.cut` serves its count and lower bound | ADR-0049 d6's block is served as `search` on every answer; serving the paths waits for a member that asks for them |
+| d5 | The tenant policy is read and set at `GET` and `POST /v2/federation`, admin by key role, and from the CLI with `oml search federation`; `max_sources` is 0 to 64; a list name is a workspace name or id, as a scope is | d5 names the fields and the event, not the route; 64 keeps a list's validation and a wide recall's selection bounded |
+| d8 | The recall body has no `explain` member, so a cut's workspace paths are not served; `search.sources.cut` serves its count and lower bound | ADR-0049 d6's block is served as `search` on every answer; serving the paths waits for a member that asks for them |
 | d12, d8 | A `scope` recall makes no federation read, federation on or off, sources sent or absent; a recall naming no `sources` reads the tenant's default with its default pipeline off one row, the read main makes for the pipeline; one that names a pipeline but no `sources` still reads that row, since `default_sources` may be `wide`, the one read more than main; the widen hint is deferred (#244) | the default path pays nothing for federation: with the hint, a `scope` recall at 1,000 candidates took 98.7 ms p95 against 43.8 ms with federation off |
 | d8, d11 | The widen hint, when it returns, fires on rule 1 alone, a candidate twice as rich per row with a word on two of its rows; rule 2, the thin answer, is dropped | d11's gate, measured: with both rules the hint was silent on 15.7% of the scope-answerable queries (90% asked) with 93.3% precision on the cross split; rule 1 alone was silent on 91.7% with 93.5% precision. Rule 2 fired on 101 of 102 firings, because a scope of 12 to 25 memories rarely holds `k` 10 matches. d11 changes the hint by amendment when it fails; the factor 2 and the floor stand |
 | d9 | `query_digest` gains `sources` only under `wide` or a list, so a `scope` recall digests as it did before | ADR-0059's members joined the digest the same way, only when sent |
@@ -711,9 +711,9 @@ answers without the hint. The readings below are this build's; d8, d12 and d13 p
 | d12 | **When it is built.** A `scope` recall that finds no usable signal asks for one; the transport runs a refresh once the answer is composed, off the request path. One refresh runs at a time in the process. It takes the asked-for signals one at a time: the tenants waiting in turn, the tenant whose last build began longest ago first, and each tenant's in the order its recalls asked, so a tenant waits at most one build for each other tenant waiting (#268). The refresh stops a build past 30 s; the database cancels each statement of the build's read at 25 s (`statement_timeout`). The limit is per statement and the read runs up to four, so a stopped build's last statement can run on for at most 25 s; builds are stopped at least 30 s apart, so at most one such statement runs at a time (#268). A signal older than 60 s still serves and is rebuilt after the recall; one 300 s old or older serves nothing. A build that fails, is stopped or passes the tenant's share is counted as failed and marked, alone: no recall asks for that signal again for 300 s, and the builds behind it go on | the counts behind a served hint are at most 300 s old. Building on demand spends nothing on a key that never recalls at a scope; one build at a time, tenants in turn, with the timeouts and the marks, keeps builds from competing with recalls, repeating on every recall, or starving a tenant behind another (reviews F1, R3, R4; strict request order did not interleave tenants, final review of #260, L3). The share bounds the lead's memory; the statement timeout bounds the database's work, though not to the build's 30 s: bounding the whole read would need `transaction_timeout`, which PostgreSQL has only from 17, for an overrun of one read-only statement (final review, L2) |
 | d6, d12 | **Under which grants.** A signal serves only a recall whose key's permission epoch (ADR-0025 d14) is the one it was built under, and whose served nodes equal the signal's; otherwise no hint, and a rebuild | a grant, a denial or a revocation moves the epoch, so counts of a node the key no longer reads never reach an answer. Re-parenting, the other change to what a key reads, is not built; it joins the epoch when it is |
 | d8, d12 | **Missing fails closed.** No signal, a stale one, one built under another epoch, or a failed read: no hint, never one from older or wider counts. Each tenant counts `unserved` recalls, `built` signals and `failed` builds with the last reason; `GET /v2/federation` serves them as `widen_signal`, and `oml doctor` warns on a failed build and on recalls that found no signal while none was ever built | d12: every failure mode has a doctor line |
-| d5, d8 | **What drops a signal at once.** The commit of `lifecycle.erase`, `lifecycle.demote`, `workarea.mode_set`, `workarea.status_transition`, `federation.policy_set` or `workarea.federation_set` drops the tenant's signals and marks in the process that commits it, and raises the tenant's drop generation: a build that began before the drop is discarded when it ends, and never serves. Every use case commits through one helper, `App::commit_requests`, which applies the drop; a test fails if the app commits to the journal around it. Erase and demote are not built yet; when they are, they must commit through that helper, never through the journal directly or by SQL. A commit that fails after the database committed drops nothing, and the 300 s bound covers it. A promotion, a supersession or a retirement reaches the hint within the 300 s bound | no count over an erased or demoted row survives its commit (ADR-0005's inventory lists the signal), and leakage clause (2) holds at once for a node leaving the trust set (reviews F4, F5, R1, R6). A promotion, a supersession or a retirement changes counts of rows the key read, which the bound covers |
+| d5, d8 | **What drops a signal at once.** The commit of `lifecycle.erase`, `lifecycle.demote`, `workspace.mode_set`, `workspace.status_transition`, `federation.policy_set` or `workspace.federation_set` drops the tenant's signals and marks in the process that commits it, and raises the tenant's drop generation: a build that began before the drop is discarded when it ends, and never serves. Every use case commits through one helper, `App::commit_requests`, which applies the drop; a test fails if the app commits to the journal around it. Erase and demote are not built yet; when they are, they must commit through that helper, never through the journal directly or by SQL. A commit that fails after the database committed drops nothing, and the 300 s bound covers it. A promotion, a supersession or a retirement reaches the hint within the 300 s bound | no count over an erased or demoted row survives its commit (ADR-0005's inventory lists the signal), and leakage clause (2) holds at once for a node leaving the trust set (reviews F4, F5, R1, R6). A promotion, a supersession or a retirement changes counts of rows the key read, which the bound covers |
 | d8 | **Where no hint is served.** An as-of recall, one that sends `now`, `wide` and a list carry none, nor a recall that read its tenant's policy as off. A build that finds federation off marks the tenant for 300 s, and its `scope` recalls ask for no signal meanwhile | a signal holds today's counts at the server's now. The mark spares a tenant with federation off one build per explicit `scope` recall |
-| d12 | **Memory.** A signal keeps each node's forms as a sorted vector of (form, count), 16 bytes a pair and about 100 bytes a node. One tenant's signals hold at most 2,000,000 pairs (about 32 MB); past that the tenant drops its own oldest first. The lead holds at most 8,000,000 pairs (about 128 MB); past that it drops the oldest of a tenant above its share, then the oldest of all, also when the signal just built is past its tenant's share alone and its tenant has no older one to drop (#268). The signal just built always stays. A signal weighs its pairs and its nodes, so one of no pairs still counts; signals and marks past the 300 s bound are swept whenever a signal is held. An evicted signal is counted (`widen_signal.evicted`, a doctor line) and marked: it is not rebuilt for 300 s, so a tenant whose scopes outgrow its share loses the hint at the oldest scopes instead of rebuilding them in turn. A build reads at most one pair past the tenant's share and stops, so a vocabulary too large is never read whole; it holds the rows read, 32 bytes each, while it builds the signal, 16 bytes a pair: an estimated 100 MB at the share, beside what the lead holds. **Measured, 2026-11-12, after round 3's read change** (#268; `federation_timing`'s `the_widen_signal_on_a_tenant_of_100k_rows`, release build, PostgreSQL 18, a shared host at load 2.6 to 7.9): 100,000 promoted rows over 50 committed workareas, each row 30 words drawn from a 50,000-word vocabulary skewed toward its first words (word ⌊50,000 · u³⌋), loaded by SQL through the postings triggers. The build took 1.4 s and held 1,332,730 pairs, about 21.3 MB estimated. The test process's resident set went from 9.1 to 30.7 MB, and its peak over the whole run, the SQL data load included, was 72.5 MB: the build added at most 63.4 MB above the 9.1 MB it started from, an upper bound, since the peak is the whole process's and the load is in it. Scaled linearly to the 2,000,000-pair share, that is about 95 MB, so the 100 MB estimate holds. A `scope` recall with that signal held took 8.1 ms p50 and 14.6 ms p95 over 40 runs. The first measurement, on 2026-11-11 before the read change, took 5.0 s and peaked at 94 MB | a signal holds R's vocabulary per node, so its size follows R's; the share keeps one tenant from evicting another (reviews F2, F3, R2, R5), and sits above the measured tenant so it is served. The corpus is synthetic: a real vocabulary's size per workarea is not measured. A key's signals at several scopes hold near copies of one vocabulary: a vocabulary per node, shared by a tenant's keys with C kept per key, would remove them. It is not built: it needs its own invalidation per node, and the share bounds the copies meanwhile |
+| d12 | **Memory.** A signal keeps each node's forms as a sorted vector of (form, count), 16 bytes a pair and about 100 bytes a node. One tenant's signals hold at most 2,000,000 pairs (about 32 MB); past that the tenant drops its own oldest first. The lead holds at most 8,000,000 pairs (about 128 MB); past that it drops the oldest of a tenant above its share, then the oldest of all, also when the signal just built is past its tenant's share alone and its tenant has no older one to drop (#268). The signal just built always stays. A signal weighs its pairs and its nodes, so one of no pairs still counts; signals and marks past the 300 s bound are swept whenever a signal is held. An evicted signal is counted (`widen_signal.evicted`, a doctor line) and marked: it is not rebuilt for 300 s, so a tenant whose scopes outgrow its share loses the hint at the oldest scopes instead of rebuilding them in turn. A build reads at most one pair past the tenant's share and stops, so a vocabulary too large is never read whole; it holds the rows read, 32 bytes each, while it builds the signal, 16 bytes a pair: an estimated 100 MB at the share, beside what the lead holds. **Measured, 2026-11-12, after round 3's read change** (#268; `federation_timing`'s `the_widen_signal_on_a_tenant_of_100k_rows`, release build, PostgreSQL 18, a shared host at load 2.6 to 7.9): 100,000 promoted rows over 50 protected workspaces, each row 30 words drawn from a 50,000-word vocabulary skewed toward its first words (word ⌊50,000 · u³⌋), loaded by SQL through the postings triggers. The build took 1.4 s and held 1,332,730 pairs, about 21.3 MB estimated. The test process's resident set went from 9.1 to 30.7 MB, and its peak over the whole run, the SQL data load included, was 72.5 MB: the build added at most 63.4 MB above the 9.1 MB it started from, an upper bound, since the peak is the whole process's and the load is in it. Scaled linearly to the 2,000,000-pair share, that is about 95 MB, so the 100 MB estimate holds. A `scope` recall with that signal held took 8.1 ms p50 and 14.6 ms p95 over 40 runs. The first measurement, on 2026-11-11 before the read change, took 5.0 s and peaked at 94 MB | a signal holds R's vocabulary per node, so its size follows R's; the share keeps one tenant from evicting another (reviews F2, F3, R2, R5), and sits above the measured tenant so it is served. The corpus is synthetic: a real vocabulary's size per workspace is not measured. A key's signals at several scopes hold near copies of one vocabulary: a vocabulary per node, shared by a tenant's keys with C kept per key, would remove them. It is not built: it needs its own invalidation per node, and the share bounds the copies meanwhile |
 | d12 | **Per process.** Signals live in the lead's memory and start empty on a restart. The drops above happen in the process that commits the event. This holds while one lead serves a deployment, as the chart runs it (ADR-0033 d2). With several lead replicas, a federation-off or `accept_federated` change on one would not drop another's signals; an explicit `scope` recall reads no policy, so another replica could serve the hint for up to 300 s after federation is turned off, and two replicas may answer different hints | the first `scope` recall at each scope after a start carries no hint. Replicas need the policy read on every `scope` recall, or a shared invalidation, before they serve the hint (review F8) |
 | d9 | The hint is a function of the signal's counts, not of the request's: two recalls within the bound may differ in the hint, never in a hit. It is not recorded in `recall_events` | the hint moves no hit, score or source; replay reproduces the answer's hits |
 | d11 | Rule 1 is phase 1's, so its gate stands: silent on 91.7% of the scope-answerable queries, precision 93.5% on the cross split. The eval runs on a static corpus, where a signal and the request's counts agree | the eval was not rerun; on a live tenant a signal may lag the counts by the writes of the last 300 s |
@@ -770,8 +770,8 @@ evidence that descriptors do not help.
 | d11 | The split is the one phase 1 built: the floor pools the cross and skew splits (242 queries), and "scope-only queries" is the scoped split | d11 names the splits; phase 1 fixed their shape (Phase 1 as built) |
 | d11 | Pooled over 242 queries, the 3-point floor is about 7 queries, not d11's "four of the 121" | d11 states the floor in points; pooling the two splits doubles the queries it takes. Either reading fails: 1 query was gained |
 | d13 | The ReDDE clause, "more than two queries below the exact ReDDE analogue", is read on success@5; selection recall is reported too | the clause names queries, which success@5 counts. Content leads on both readings: 8.3 points of success@5, and selection recall 0.975 against 0.880 |
-| d2, d11 | The eval's descriptors were written once, from `corpus.json`, by the lane that ran the gate, which attests that it had not read `queries.json`. One commit holds both, so the order cannot be checked. Each descriptor has a summary and eight questions; `about` is empty | an author describes a workarea without seeing the queries; ADR-0051's terms are not on main. Two questions echo query wording found in no corpus row (q073, q067), and neither touches q063, the one query gained |
-| d4.5 | The descriptor score is BM25 over the candidates' descriptors alone, read from a served `bm25` recall whose `sources` lists one descriptor workarea per candidate | memory-kind-3 postings are not built, and a list's R is the listed nodes alone, which is d4.5's reference set |
+| d2, d11 | The eval's descriptors were written once, from `corpus.json`, by the lane that ran the gate, which attests that it had not read `queries.json`. One commit holds both, so the order cannot be checked. Each descriptor has a summary and eight questions; `about` is empty | an author describes a workspace without seeing the queries; ADR-0051's terms are not on main. Two questions echo query wording found in no corpus row (q073, q067), and neither touches q063, the one query gained |
+| d4.5 | The descriptor score is BM25 over the candidates' descriptors alone, read from a served `bm25` recall whose `sources` lists one descriptor workspace per candidate | memory-kind-3 postings are not built, and a list's R is the listed nodes alone, which is d4.5's reference set |
 | d7.2, d11 | Each selector is replayed offline from the union's ranking at depth 100. Under `bm25-sparse`, which `wide` refuses, both legs are read over R and fused before the restriction, a model of a pipeline not yet served | d7.2 makes a searched set's answer the union's restricted to it; the replay matched the served `wide` answer of `content` on all 385 queries. For `Cc` the 264 matched `scope` answers check only the fusion arithmetic, not fusing over R and then restricting, which no served path does today |
 | d11 | α is the largest value from 0.0 to 1.0, in steps of 0.1, with the best selection recall on a seeded half of the skew split (0.4), and it is reported on the held-out half; `descriptor_slots` stays 2 | d11 sets α by selection recall on half the skew split; ties go to the value that fills the fewest slots. The one gain, q063, falls in the tuning half |
 | d11 | The interval is a paired percentile bootstrap, and the gate reports an oracle ceiling that ignores d4.5's E > 0 rule | d11 names the floor, not how its noise is stated. The oracle bounds any selector; the bound under d4.5 is the 1 query above |
@@ -779,14 +779,14 @@ evidence that descriptors do not help.
 
 ## Consequences
 
-- `docs/architecture/retrieval.md` gains a section on source selection, and `workareas.md` the
-  per-workarea `federation` policy and the directory recipe, when phase 1 is built; `errors.md`,
+- `docs/architecture/retrieval.md` gains a section on source selection, and `workspaces.md` the
+  per-workspace `federation` policy and the directory recipe, when phase 1 is built; `errors.md`,
   `openapi.yaml` and `http-api.md` gain `sources`, their refusals, `search.widen` (#244)
-  and `workarea.federation_set` then, not before (ADR-0039 d9).
+  and `workspace.federation_set` then, not before (ADR-0039 d9).
 - **Route and usage.** ADR-0074 d12 names the recall route `POST /v2/recall`; main has
   `/v1/memories/recall`, which this record uses, and ADR-0074 follows it (a one-word fix there).
   A hit served `via: federated` is recorded in `recall_events` but does not count as another
-  reader's use toward the memory's rank in its home workarea (ADR-0054): otherwise crew B's
+  reader's use toward the memory's rank in its home workspace (ADR-0054): otherwise crew B's
   agents would move crew A's ranking within ADR-0054's bound. A later amendment may count it,
   with its case.
 - `oml-domain` gains the trust predicate as a pure function beside `effective_roles` and the
@@ -797,7 +797,7 @@ evidence that descriptors do not help.
   statistics the core hands it.
 - Two metrics with closed labels, `oml_recall_sources_total{mode}` and
   `oml_recall_federated_hits_total`, inside ADR-0054 d1's series budget. Doctor lines: federation
-  enabled with `max_sources` 0; a descriptor with unanswered questions; a workarea whose live
+  enabled with `max_sources` 0; a descriptor with unanswered questions; a workspace whose live
   descriptor carries a hold finding and so advertises nothing (d3.1); a source whose
   `selection_yield` is below the floor; a key with more than 1,000 candidate sources (tenant
   admin only).
@@ -806,16 +806,16 @@ evidence that descriptors do not help.
   not hold the unit stated there; the request's single `now` as a point (d9); each source's
   answering position logged (d9); each node returning every retriever's list to the depth the
   pipeline uses for it (ADR-0049), so a fused or reranked answer equals one node's; a list
-  answered whole or refused `503 cluster.source_unavailable` (d5), so a region-pinned workarea
+  answered whole or refused `503 cluster.source_unavailable` (d5), so a region-pinned workspace
   named in a list is a refusal for a caller in another region, not a silent omission; and a
   coordinator whose own view of the key's access is leased, so that a `missing` list names only
-  readable workareas (d6's rule).
+  readable workspaces (d6's rule).
 - The constitution holds, row by row:
 
     | | R1 | R2 | R3 | R4 |
     |---|---|---|---|---|
     | `sources` | a read | — | searches readable rows only; no verdict and no selection enters a score | — |
-    | descriptor | a held write; the agent promotes nothing | a non-author dreamer on the workarea who is a person (`held_by: human`, d2); a person for a hold finding (ADR-0074 d2), which still never advertises | invisible until promoted; once promoted and free of hold findings it can move at most `descriptor_slots` sources into the search and never a hit's score | superseded, never deleted |
+    | descriptor | a held write; the agent promotes nothing | a non-author reviewer on the workspace who is a person (`used_by: person`, d2); a person for a hold finding (ADR-0074 d2), which still never advertises | invisible until promoted; once promoted and free of hold findings it can move at most `descriptor_slots` sources into the search and never a hit's score | superseded, never deleted |
     | policies | a person's or an admin's act, never an agent's | — | they change what is searched, never who reads | journalled |
 
 - Issues: #205 (phase 1), #206 (phase 2, conditional), #207 (phase 3, after ADR-0051 and #201),
@@ -827,17 +827,17 @@ evidence that descriptors do not help.
 | Decision | Alternative | Why not |
 |---|---|---|
 | d1 | **A new `production_ready` flag** | A second word for what the ladder already attests through a two-identity transition (ADR-0009 d3), and a field that can disagree with the status it would shadow. |
-| d1 | **`validated` only** | Frozen areas are the minority; a governed working area is the source most recalls need. A tenant narrowing to it (`min_status`) waits for a tenant that asks (d5). |
-| d1 | **Every readable workarea** | Brings `development` rows, including `self_signed` ones ADR-0001 d5 keeps inside their workarea. |
-| d1 | **A source is a subtree** | A `committed` node can have `development` children; judging each node keeps the trust predicate one comparison. |
-| d2 | **Descriptor as unreviewed metadata on the workarea row** | It would steer every reader's recall with text no second identity read, the one thing R2 exists to prevent. |
-| d2 | **Descriptor in a central catalog workarea** | Its reviewers would not read the workarea it describes, so they could not judge it; d6 keeps that shape for discovery only. |
-| d2 | **Reuse the brief (ADR-0046 d7)** | The brief is for an agent inside the workarea and is cut by a token budget; a descriptor is matched against queries from outside. |
+| d1 | **`frozen` only** | Frozen areas are the minority; a governed working area is the source most recalls need. A tenant narrowing to it (`min_status`) waits for a tenant that asks (d5). |
+| d1 | **Every readable workspace** | Brings `development` rows, including `self_signed` ones ADR-0001 d5 keeps inside their workspace. |
+| d1 | **A source is a subtree** | A `protected` node can have `development` children; judging each node keeps the trust predicate one comparison. |
+| d2 | **Descriptor as unreviewed metadata on the workspace row** | It would steer every reader's recall with text no second identity read, the one thing R2 exists to prevent. |
+| d2 | **Descriptor in a central catalog workspace** | Its reviewers would not read the workspace it describes, so they could not judge it; d6 keeps that shape for discovery only. |
+| d2 | **Reuse the brief (ADR-0046 d7)** | The brief is for an agent inside the workspace and is cut by a token budget; a descriptor is matched against queries from outside. |
 | d2 | **A `memory` with a reserved key** | It would be a recall hit and compete with the rows it describes. |
-| d2 | **An `advertise` switch beside the descriptor** | A second opt-in after a reviewed descriptor, a human-only act per workarea and a doctor line for the mismatch, for no effect the promotion does not already have. |
-| d3 | **Veto a descriptor that fails the answer check** | The check runs under one pipeline and could refuse an honest descriptor of a workarea whose vocabulary that pipeline misses; a reviewer judges. |
-| d3 | **Refuse a descriptor with an injection finding** | ADR-0074 d1 reserves refuse for text no true memory needs, and a workarea about prompt injection may describe itself in those words; the version is kept, served with its findings, and simply never advertises. |
-| d3 | **Let a person's approval or dismissal restore a descriptor with a hold finding** | The person judges for the workarea's own readers, while a descriptor steers selection for every crew that reads it, so no single verdict covers its audience; the author's rewrite costs one supersession on a record that changes rarely. |
+| d2 | **An `advertise` switch beside the descriptor** | A second opt-in after a reviewed descriptor, a human-only act per workspace and a doctor line for the mismatch, for no effect the promotion does not already have. |
+| d3 | **Veto a descriptor that fails the answer check** | The check runs under one pipeline and could refuse an honest descriptor of a workspace whose vocabulary that pipeline misses; a reviewer judges. |
+| d3 | **Refuse a descriptor with an injection finding** | ADR-0074 d1 reserves refuse for text no true memory needs, and a workspace about prompt injection may describe itself in those words; the version is kept, served with its findings, and simply never advertises. |
+| d3 | **Let a person's approval or dismissal restore a descriptor with a hold finding** | The person judges for the workspace's own readers, while a descriptor steers selection for every crew that reads it, so no single verdict covers its audience; the author's rewrite costs one supersession on a record that changes rarely. |
 | d3 | **Feed `selection_yield` back into selection** | Ranking by usage is ADR-0054's bounded, opt-in pipeline; doing it here would add a second, unbounded usage loop. |
 | d4, d7 | **Statistics summed over the selected sources only** | The selected set would then move every hit's IDF and `avgdl`, so a descriptor that won a slot would shift the scope's own scores, and an over-advertising one would gain by it; R fixes the statistics before selection. |
 | d4 | **CORI's belief as the estimate** | Three constants (the default belief and K's two), and ReDDE's quoted finding that it is weak where small and very large sources mix, which is OML's shape; E(s) uses the complete counts ReDDE's correction needs and has no constant. |
@@ -851,15 +851,15 @@ evidence that descriptors do not help.
 | d5 | **A new tool, `oml_federated_recall`** | ADR-0039 d8: a parameter first. |
 | d5 | **Silently answer `scope` when federation is off, or drop an unusable list name** | Fails open in the sense that matters: the caller believes it searched more than it did. Refused by name, as `terms`. |
 | d5 | **Two fields, `sources: scope \| wide` and `source_list`** | One intent, where to search, in two mutually exclusive parameters, which costs a third refusal for giving both and one more field in openapi, the MCP schema and `recall_events`. A string is a mode and an array is a set. |
-| d4, d5 | **R over every candidate for a list** | A two-name list would pay the statistics read of every trusted workarea the key reads, and its answer would move with their churn and fail on their unavailability, for a use whose promise is the same answer for the same inputs. R over the listed nodes is exactly the collection named. |
+| d4, d5 | **R over every candidate for a list** | A two-name list would pay the statistics read of every trusted workspace the key reads, and its answer would move with their churn and fail on their unavailability, for a use whose promise is the same answer for the same inputs. R over the listed nodes is exactly the collection named. |
 | d4 | **Drop a candidate that misses the statistics round without saying so** | R would change and every score of the answer with it, with nothing to show why; `wide` lists it in `missing` and logs R, a list refuses. |
-| d5 | **A list searched together with the scope** | Cannot express its own use case, "these workareas, nothing else": a RAG application's answer would carry the key's default workarea. The list names the scope when the caller wants it. |
-| d5 | **Answer a list from the sources that are reachable** | The same inputs would give a narrower answer flagged only in `search.sources`, which a RAG application does not read; under ADR-0073 a region-pinned workarea would be silently missing for every caller elsewhere. |
+| d5 | **A list searched together with the scope** | Cannot express its own use case, "these workspaces, nothing else": a RAG application's answer would carry the key's default workspace. The list names the scope when the caller wants it. |
+| d5 | **Answer a list from the sources that are reachable** | The same inputs would give a narrower answer flagged only in `search.sources`, which a RAG application does not read; under ADR-0073 a region-pinned workspace would be silently missing for every caller elsewhere. |
 | d5 | **A per-scope `exclude` list and a tenant `min_status` in phase 1** | No tenant has asked for either; `exclude` alone needed a filtered serve rule, two leakage tests and a doctor line. Each returns as an amendment with its use case (Occam, ADR-0039). |
 | d5 | **Let an agent set the policies** | They change what other keys' recalls search; ADR-0030 d1 makes such marks a person's act. |
 | d5 | **`accept_federated` off until an owner opts in** | Cross-team reuse would then need an act from every owner on top of the grant that already lets the other crew read; it grants nothing and does nothing until a tenant enables federation, and the tenant's `enabled`, default off, is the opt-in. The security review preferred it. |
-| d6 | **A `discover` grant role** | A new role in the ceiling matrix, a grant that reads something without reader, and a second visibility rule to audit; a directory workarea gives the same capability with reader alone. |
-| d6 | **Route through descriptors of unreadable workareas and say "ask for access"** | Every descriptor field leaks something (its name, topics, owner or activity), and a route that names a workarea the key cannot read is a disclosure. |
+| d6 | **A `discover` grant role** | A new role in the ceiling matrix, a grant that reads something without reader, and a second visibility rule to audit; a directory workspace gives the same capability with reader alone. |
+| d6 | **Route through descriptors of unreadable workspaces and say "ask for access"** | Every descriptor field leaks something (its name, topics, owner or activity), and a route that names a workspace the key cannot read is a disclosure. |
 | d6 | **Quantise score values and counts** | Every value is already a function of rows the key reads (d6's table); rounding would hide nothing beyond the boundary and would break the exact scores of d7. |
 | d7 | **Search each source separately and fuse by RRF** | RRF discards score magnitude, so a weak source's first hit ties a strong source's; N searches instead of one; and per-source statistics would make the same row score differently by where it was searched. One shared index makes the single virtual collection exact. |
 | d7 | **Per-source score normalisation (CORI merge)** | A heuristic for engines that do not share statistics; OML's do. |
@@ -868,27 +868,27 @@ evidence that descriptors do not help.
 | d8 | **No hint; tell agents always to pass `wide`** | The default would then mean nothing, and every agent would pay `wide`'s search, not only its statistics read. |
 | d8 | **A hint on raw counts of the rarest word** | A raw count carries the size bias E(s) removes, so `universe` or any large candidate fires it on almost every recall and agents learn to ignore it; rates per readable row compare like with like. |
 | d8 | **The hint only on fewer than `k` hits** | Under OR-semantics BM25 a populated scope returns `k` weak hits for almost any query, so the hint would stay silent exactly when the scope answered poorly. The phase 1 eval reversed the premise on small scopes (fewer than `k` hits on 108 of 121 queries); the rule was dropped (Phase 1 as built). |
-| d12 | **Cache each key's candidate set** | Effective access is cached nowhere ([workareas](../architecture/workspaces.md#grants-bind-to-node-ids)); a revoked grant must apply to the next recall. |
+| d12 | **Cache each key's candidate set** | Effective access is cached nowhere ([workspaces](../architecture/workspaces.md#grants-bind-to-node-ids)); a revoked grant must apply to the next recall. |
 | d12 | **Refuse a recall above a candidate count** | A second, hidden reach limit beside access; the doctor line and the measured budget come first. |
 
 ## Open questions for the operator
 
 1. **Who reviews a descriptor.** Decided by the operator, 2026-11-10: promoting a descriptor needs
-   a person, a reviewer with `held_by: human`. An agent's key may write a descriptor (d2) and may
+   a person, a reviewer with `used_by: person`. An agent's key may write a descriptor (d2) and may
    never promote one; d2 and d3.2 say so. The reasons were the Round 1 security and Round 2
-   product reviews': a descriptor steers other crews' selection, there is one per workarea, and
+   product reviews': a descriptor steers other crews' selection, there is one per workspace, and
    it changes rarely, so the cost is a few reviews per tenant.
 2. **Cross-tenant federation.** Decided by the operator, 2026-11-10: it stays out. Every source is
-   in the key's tenant ([workareas](../architecture/workspaces.md#the-tree)), the tenant is the
+   in the key's tenant ([workspaces](../architecture/workspaces.md#the-tree)), the tenant is the
    isolation unit (ADR-0007), and `universe` already carries curated shared knowledge.
 
 Answered in this revision, on the product review's recommendations: no reserved floor for scope
-hits (d7); `accept_federated` on by default (d5); the directory workarea is the discovery path and
-recall never routes to an unreadable workarea (d6); any writer may author a descriptor (d2); no
+hits (d7); `accept_federated` on by default (d5); the directory workspace is the discovery path and
+recall never routes to an unreadable workspace (d6); any writer may author a descriptor (d2); no
 refusal by candidate count, a narrowing by the cap and a doctor line instead, reach being anything
 the key reads (d12); `universe` is a source for scopes outside a user root, and ADR-0044 d10 is
 unchanged under `scope` (d1). Answered in round 2: one `sources` field, a list searched alone and
-answered whole or refused (d5); three tenant fields and one workarea field in phase 1, with
+answered whole or refused (d5); three tenant fields and one workspace field in phase 1, with
 `selector` in phase 2 (d5); a descriptor with a hold finding never advertises (d3.1).
 
 ## Review log
@@ -956,7 +956,7 @@ this record. What changed:
   says so, and quantising is rejected (d6).
 - **Descriptors and ADR-0074 (PR #219).** The injection veto is replaced: a descriptor is scanned
   by ADR-0065 and `oml-scan/2`, a refuse finding refuses it, and a version with a hold finding,
-  at write or from a rescan, never advertises, whatever a person later decides; the workarea
+  at write or from a rescan, never advertises, whatever a person later decides; the workspace
   read serves it with its findings (d3.1, d13 test 12, a doctor line). This also answers product
   minor 1, the citation of an unpushed record.
 - **The widen hint (product M4, minor 2).** It fires on the query's rarest kept word as well as
@@ -977,10 +977,10 @@ this record. What changed:
 leak across the access boundary, no blocker, 3 majors and 8 minors, all text-level. What changed:
 
 - **A list's reference set (M1).** For a list R is the listed nodes alone, so its answer cannot
-  move with, cost for, or fail on an unrelated workarea; list scores differ from `wide`'s, and the
+  move with, cost for, or fail on an unrelated workspace; list scores differ from `wide`'s, and the
   clause tying them is gone (d4.2, d5, d7). A candidate missed in ADR-0073's statistics round
   refuses a list `503 cluster.source_unavailable`, and under `wide` is dropped from C and R
-  together, listed in `missing` and absent from `reference_workarea_ids` in `recall_events`
+  together, listed in `missing` and absent from `reference_workspace_ids` in `recall_events`
   (d4.2, d9); tests 9a and a changed test 4.
 - **The widen hint (M2).** It compares rates, matches per readable row weighted by rarity, with a
   factor of 2 and a two-row floor, so `universe` weighs by its own rate; d11 gates its firing and

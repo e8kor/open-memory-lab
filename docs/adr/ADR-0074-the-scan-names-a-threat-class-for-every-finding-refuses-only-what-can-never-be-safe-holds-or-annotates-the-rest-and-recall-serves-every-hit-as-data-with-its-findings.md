@@ -90,7 +90,7 @@ Read on `main` at `71e4fc4c`, 2026-11-08.
 - **What it holds.** `injection.*`, `unicode.*` and `encoding.base64_blob` record a finding on a
   held version (`rules.rs:246-291`; `lib.rs:130-133`, `:342`, `:568-585`). Every write is held
   until another identity reviews it anyway, so a hold finding is a recorded reason, not a
-  second gate. It changes nothing about who may approve: "Every workarea uses one fixed policy:
+  second gate. It changes nothing about who may approve: "Every workspace uses one fixed policy:
   one approving verdict from a reviewer key ratifies" (admission line 70). The finding is
   stored as `scan_finding` (`crates/oml-app/src/types.rs:1059`) and shown on the author's
   memory page (`crates/transports/oml-transport-http/src/web/memories.rs:350-356`). The review
@@ -221,10 +221,10 @@ record does not re-decide them.
 
 Two definitions are in force on `main`, and neither is a credential an agent cannot hold.
 
-- **A `held_by: human` dreamer key.** The bulk verdict (`require_person_reviewer`,
+- **A `used_by: person` reviewer key.** The bulk verdict (`require_person_reviewer`,
   `crates/oml-app/src/app.rs:395-403`) and the in-progress mode (`may_set_mode`,
-  `crates/oml-domain/src/in_progress.rs:174-176`) admit any dreamer key whose `held_by` is
-  `human`. `held_by` is the issuing admin's word (ADR-0055 d1), so a bearer admin key can issue
+  `crates/oml-domain/src/in_progress.rs:174-176`) admit any reviewer key whose `used_by` is
+  `person`. `used_by` is the issuing admin's word (ADR-0055 d1), so a bearer admin key can issue
   one.
 - **A session key.** A session key has no value an agent can present (ADR-0045 d6). But the
   allowlist that names its person is kept by any admin key, bearer included:
@@ -235,7 +235,7 @@ Two definitions are in force on `main`, and neither is a credential an agent can
   `oml` under the operator's stored admin key.
 
 This grants nothing on `main` that the bearer admin key could not already do: it can issue a
-`held_by: human` dreamer key with any grant, and no verb on `main` trusts a session key above
+`used_by: person` reviewer key with any grant, and no verb on `main` trusts a session key above
 that. It becomes an escalation the moment d2 trusts a session key, so d25 closes it in the same
 phase.
 
@@ -281,11 +281,11 @@ flowchart TD
 - **d2 — A hold finding is approved only by a person, and a person is a session key with a
   reviewer grant.** An agent reviewer approving a held injection is the case ADR-0065 rejects a
   model scanner for: "an injected instruction aimed at a model is exactly what a model reading
-  the body can be talked into passing". On `main` a key carries a `role`, a `held_by` of
-  `agent`, `human` or `service`, a `credential` of `bearer`, `connection` or `session`, an
+  the body can be talked into passing". On `main` a key carries a `role`, a `used_by` of
+  `agent`, `person` or `service`, a `credential` of `bearer`, `connection` or `session`, an
   optional `crew_id`, `user`, `session_user` and `profile` (`crates/oml-app/src/types.rs:76-126`;
-  `crates/oml-domain/src/model.rs:40`). `held_by` is declared by the issuing admin (ADR-0055 d1:
-  "it is as true as the admin's word"), so a bearer key marked `human` can sit in an agent's
+  `crates/oml-domain/src/model.rs:40`). `used_by` is declared by the issuing admin (ADR-0055 d1:
+  "it is as true as the admin's word"), so a bearer key marked `person` can sit in an agent's
   environment, and a user key (ADR-0044) is a bearer key like any other: an agent with
   `OML_API_KEY` in its shell can call `POST /v2/review` over HTTP whatever the MCP surface
   allows. A session key is the one credential an agent cannot present: it has no value, is
@@ -305,17 +305,17 @@ flowchart TD
        is checked; GitHub's OAuth flow carries no `auth_time`, so a GitHub sign-in counts by the
        server's own clock and the verdict records `auth_time: unattested`. A local session
        re-proves with its second factor (d27);
-    4. `role = dreamer`, `held_by = human`, no `crew_id`, no `profile`: the predicate ADR-0055 d1
+    4. `role = reviewer`, `used_by = person`, no `crew_id`, no `profile`: the predicate ADR-0055 d1
        and ADR-0030 d1 already use for a person's reviewer key (`app.rs:396`;
        `in_progress.rs:175`);
-    5. dreamer is in the key's effective access on the version's workarea, through its grants
+    5. reviewer is in the key's effective access on the version's workspace, through its grants
        and the ancestry, as for every verdict: the grant, not the key type, says it may judge
        this row;
     6. the key is not the author key (R2). Whether the person may be the author key's user is
        d26: yes in a single-person tenant and, in a team, in the author's own private user root, marked
        `same_user`; elsewhere in a team no.
 
-  Every other key, a `held_by: human` bearer dreamer key included, may reject or refer (d19)
+  Every other key, a `used_by: person` bearer reviewer key included, may reject or refer (d19)
   and never approve; the attempt answers `review.person_required` with `details.reason` one of
   `hold_finding`, `unconfirmed_person`, `stale_sign_in` or `same_user_in_team`, and journals
   nothing. The bulk verdict (ADR-0055) skips a hold-finding row for any key that fails this
@@ -326,8 +326,8 @@ flowchart TD
   open, never counts for this predicate.
 
   **Two definitions of a person, and why they differ.** ADR-0055 d1's bulk review and ADR-0030
-  d1's mode setting keep `held_by: human` (Context, "Who `main` treats as a person"): they guard
-  against an agent's crew acting in bulk or freezing a workarea, where the admin's word is the
+  d1's mode setting keep `used_by: person` (Context, "Who `main` treats as a person"): they guard
+  against an agent's crew acting in bulk or freezing a workspace, where the admin's word is the
   control. d2 guards against a model being talked round by the text it judges, where the admin's
   word is not enough, because a bearer key works from any shell an agent runs. A hold verdict
   needs both.
@@ -729,7 +729,7 @@ flowchart TD
   scope. The finding stores the contradicted artifact id and never its text. **Every viewer is
   filtered at serve time**: the writer, the reviewer, and every reader of a hit see the
   contradicted claim's key and a link only when their own key may read that claim now; anyone
-  else sees "contradicts a claim you cannot read" with no id, key or workarea. The rule is the
+  else sees "contradicts a claim you cannot read" with no id, key or workspace. The rule is the
   same for every reference a finding carries. It annotates: a new fact that contradicts an old
   one is how a team corrects itself, and a supersession is the honest form of it, so the
   reviewer is shown the pair and asked whether this should supersede. It is a check outside the
@@ -740,7 +740,7 @@ flowchart TD
 - **d12 — Recall serves every hit as data, with its findings, and shows hidden characters
   instead of passing them on, on every surface that returns stored text to a model.** Defence
   in depth, for what review let through and for findings a later rule set adds (d14). The
-  surfaces are `oml_read`, `POST /v2/recall`, the session-start hook, `oml_workarea` (its
+  surfaces are `oml_read`, `POST /v2/recall`, the session-start hook, `oml_workspace` (its
   descriptor and brief, when ADR-0072's descriptors land) and every read verb d14 lists.
     - **Findings travel with hits.** Each hit carries `findings` only when it has any, at most
       five, the hold ones first, with `findings_total` when there are more. Each entry is
@@ -822,7 +822,7 @@ flowchart TD
       recall, read by id, as-of and history reads (ADR-0036), superseded versions, the web memory
       page, FTS snippets and highlights, near-copy candidates (ADR-0050), exports, the lake's
       silver and gold zones and `oml fs`. A withheld hit is served as its id, claim key,
-      workarea and findings, no text, until an admin retires or erases it, or clears the flag with
+      workspace and findings, no text, until an admin retires or erases it, or clears the flag with
       `oml admin scan clear <artifact> --reason`, which is journalled. Clearing re-serves a body
       the scan judged a secret, so it is a person-session act (d25), never a bearer key's. A test lists every read
       verb and asserts each serves no withheld byte, as ADR-0030 d2's boundary test does. Withholding
@@ -923,7 +923,7 @@ flowchart TD
   (ADR-0069): amber for a hold, grey for annotate, never the triangle `stale` already uses.
   Doctor adds: `scan: oml-scan/2.0, n rules`; `scan_rescan_due` (d14); `scan_person_queue` with
   the count and the oldest age of unresolved hold findings (d19); `scan_person_reviewer` for a
-  workarea holding one where no person may review, or where every person who may is the author's
+  workspace holding one where no person may review, or where every person who may is the author's
   user in a team (d26); `scan_person_queue_top_author` with the author key holding the most
   unresolved hold findings and its count (d19); `scan_person_minted_by_bearer: n` for persons
   not yet confirmed (d25); `scan_person_refusals` counting bearer attempts at a person-session
@@ -1062,7 +1062,7 @@ flowchart TD
       review list.
     - **The writer is told.** The write answer carries each finding's `class` and `verdict` and
       `needs_person: true`, and `review_route: none` when doctor's `scan_person_reviewer`
-      condition holds for the workarea, so an agent can tell its user the write waits for a
+      condition holds for the workspace, so an agent can tell its user the write waits for a
       person. The rule, field and line are the reviewer's, which keeps the writer from tuning
       text against the exact rule; the rules are open source, so the class costs nothing to show.
       `scan.evasion_suspected` annotates a new version whose text differs from a held version
@@ -1090,10 +1090,10 @@ flowchart TD
   name, so ADR-0065 d1's "same text, same findings" holds per name; the fix of d28 is that case.
 
 - **d22 — Each tenant has a scan policy: a verdict ceiling per class, allowlists that expire,
-  dismissals, and an audit trail.** A tenant whose ops workareas trip a class daily needs a lever
+  dismissals, and an audit trail.** A tenant whose ops workspaces trip a class daily needs a lever
   other than waiting for the next rule set.
     - **Ceiling.** A person session (d25) may lower a class's `hold` to `annotate`, for the
-      tenant or for one workarea subtree; any admin key may raise one. The class is never
+      tenant or for one workspace subtree; any admin key may raise one. The class is never
       disabled: its findings are still recorded and served. **Fixed floors**, which no ceiling,
       allowlist, dismissal or setting lowers: every `secret.*` rule that refuses (the provider
       shapes, the `/1` refuse rules, `secret.url_query` / `presigned-url`), `format.*`, the
@@ -1177,7 +1177,7 @@ flowchart TD
   The person session must meet d2's conditions 1 to 3 (a confirmed person, freshly signed in)
   and hold the admin capacity, the `<user>-admin` session key of ADR-0045 d6, or a local person
   session bound as an admin (d27). Dismissing a finding (d19) also weakens the scan, but it is a
-  reviewer's act: it needs d2's whole predicate on the version's workarea, not the admin
+  reviewer's act: it needs d2's whole predicate on the version's workspace, not the admin
   capacity. The CLI keeps these verbs: it prints a one-time link to the
   admin page's form for the act, which a person completes signed in; it never performs them with
   the stored key.
@@ -1207,8 +1207,8 @@ flowchart TD
   team needs another person.** *(Accepted 2026-11-14 by the operator, limited: a person's own
   approval or dismissal of a hold finding on a write by one of their own keys counts only in the
   development and in-progress parts of that person's own root, marked `same_user`, as ADR-0001
-  d5's second exception allows. Everywhere else, a single-person tenant's shared workareas and any
-  `committed` or `validated` workarea included, another person clears the hold. The
+  d5's second exception allows. Everywhere else, a single-person tenant's shared workspaces and any
+  `protected` or `frozen` workspace included, another person clears the hold. The
   single-person-tenant clause below is read within that limit.)* ADR-0044 d8 and ADR-0046 d2 let
   a person ratify or approve their own agents' work through another key, marked `same_user`, so
   that a solo user can move their own work. d2's first draft refused the author's user outright,
@@ -1220,7 +1220,7 @@ flowchart TD
       agent key of their own user wrote counts, and the verdict records `same_user: true` and
       `tenant_persons: 1`. The threat d2 guards against is a model talked round by the text it
       judges, not a person approving their own agent's text.
-    - **A team**, two or more confirmed users, needs, in a shared workarea, a person whose user
+    - **A team**, two or more confirmed users, needs, in a shared workspace, a person whose user
       differs from the author key's: a same-user approval there answers `review.person_required`
       with `details.reason: same_user_in_team`.
     - **A team's private user root (the third case, decided by the operator, 2026-11-10).** Inside
@@ -1228,7 +1228,7 @@ flowchart TD
       while that root's readers are that user's keys alone. Once an admin grants another user
       reader on the root, the team rule above applies there from then on; the approvals already
       given stay, marked. A user root's readers are its own user's agents, the exposure a
-      single-person tenant already accepts, and anything curated out of it into a shared workarea
+      single-person tenant already accepts, and anything curated out of it into a shared workspace
       is a new version, scanned again, which needs another person there. The alternative, a
       colleague granted review on a private root, would show them its held rows for no gain over
       the person's own judgment.
@@ -1240,13 +1240,13 @@ flowchart TD
       starts refusing same-user approvals of hold findings from then on; the approvals already
       given stay, marked. A removal that would make a team single-person is a person-session
       act (d25).
-    - Doctor's `scan_person_reviewer` also fires, as an error, where a workarea holds an
+    - Doctor's `scan_person_reviewer` also fires, as an error, where a workspace holds an
       unresolved hold finding and every person who may review it there is the author's user in
       a team.
     - **Open sign-up** ([ADR-0068](ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md),
       proposed). A self-signed-up entry is added by the person's own provider-verified sign-in,
       with no key involved, so it is confirmed for review on its own user root, never with the
-      admin capacity. No second person may read that root (ADR-0068 d3), so d26's shared-workarea
+      admin capacity. No second person may read that root (ADR-0068 d3), so d26's shared-workspace
       rule can never be met there; the private-root case above is what lets a hold finding there
       be approved.
 
@@ -1382,7 +1382,7 @@ flowchart TD
   new colleague does it on the admin page from the second person on.
 - A person approving a hold finding signs in again when their sign-in is more than 15 minutes
   old (d2). A GitHub sign-in's freshness is the server's own clock, recorded as unattested.
-- A team tenant's hold findings in a shared workarea need a second person; in one person's own
+- A team tenant's hold findings in a shared workspace need a second person; in one person's own
   user root that person's same-user approval counts, marked `same_user`, until an admin grants
   another user reader on it (d26).
 - A CLI-only deployment that wants hold findings approved binds a `[[person]]` in its boot
@@ -1405,7 +1405,7 @@ flowchart TD
 |---|---|
 | **Refuse injection, exfil or destructive-command text** | It would refuse true memories about those attacks and the runbooks a team keeps, which ADR-0065 already declined for injection. A hold puts a person in front of the claim instead. |
 | **Let any reviewer key clear a hold finding** | The reviewer most likely to be talked round by an injection is a model, which is why ADR-0065 kept models out of the write path. A person's verdict is the one control that does not read the text as a model does. |
-| **A person defined by key type: a user key not issued as an agent key, or any `held_by: human` key** | `held_by` is an admin's declaration and a bearer key works from any shell an agent runs; a user key in `OML_API_KEY` approves over HTTP. Only a session key cannot be presented by an agent (d2). |
+| **A person defined by key type: a user key not issued as an agent key, or any `used_by: person` key** | `used_by` is an admin's declaration and a bearer key works from any shell an agent runs; a user key in `OML_API_KEY` approves over HTTP. Only a session key cannot be presented by an agent (d2). |
 | **A CLI approval on a TTY counts as a person** | An agent runs commands in a pseudo-terminal as easily as a person does, so a TTY proves nothing the server can check. |
 | **A bearer admin key may lower a ceiling, extend an allowlist, clear a withheld body or add a web person** | Each makes d2's person unnecessary or makes one, and the stored admin key is in agents' hands through the CLI. A person session for widenings and person-defining acts, with any admin key free to narrow, keeps the lever and closes the route (d25). |
 | **An admin's CLI verdict on a hold finding, marked `person_unverified`, where there is no sign-in** | It is a bearer act, so it reopens what d25 closes; the mark tells an auditor after the fact and stops nothing. A local session bound to an OS user and a second factor proves a person (d27). |
@@ -1418,7 +1418,7 @@ flowchart TD
 | **Group dismissal for every class** | A group mixes a malicious item with benign twins written to explain the same phrase, and one dismissal clears all of them. Groups are kept for locator classes, never across authors (d17). |
 | **`poison.retrieval_bait` against the tenant's index** | It would not reproduce from the pin (ADR-0065 d1); a field-local share keeps it in the rule set (d4). |
 | **Tenant-trusted crews may clear holds** | It reopens the model-reviewer hole d2 closes. The tenant's lever is the explicit, journalled ceiling of d22, which a person sets per class. |
-| **A hold-finding version expires on the normal clock** | A true runbook in a crew-only workarea would age out with nobody told. It stays held, and the age is on doctor (d19). |
+| **A hold-finding version expires on the normal clock** | A true runbook in a crew-only workspace would age out with nobody told. It stays held, and the age is on doctor (d19). |
 | **A model classifier in the write path, or one that can hold** | Not reproducible from a pin, adds a model's latency and failure to every write, and is itself an injection target (ADR-0065). Off the path and annotate-only keeps the deterministic verdict the record. |
 | **Strip hidden characters at write** | The stored text is the signed source; stripping would sign a text the author did not write and destroy the evidence the reviewer needs. Escaping at output keeps both. |
 | **Strip hidden characters at read** | It hides from the reader that the memory carried them, and changes bytes a client verifies. Escaping shows them. |
@@ -1432,7 +1432,7 @@ flowchart TD
 | **Accept any tag run after U+1F3F4** | That is the shipped bypass: a flag prefix lets an ASCII-smuggled payload through. Only the listed sequences pass. |
 | **Serve findings' references to every reader** | A contradiction finding would name a claim the reader may not read; claim keys are names, so that is a read-scope leak (d11). |
 | **Contradiction as a hold** | A team corrects itself by contradicting old facts; holding every correction for a person would punish the supersession the design wants. A flag and a link to the old claim inform the reviewer without blocking. |
-| **An "operations" workarea mode that silences annotations** | A finding is part of the scan's repeatable output and should not vary with a mode. The allowlist and the ceiling (d22) handle recurring hosts, and the card collapses annotates under the hold lines. |
+| **An "operations" workspace mode that silences annotations** | A finding is part of the scan's repeatable output and should not vary with a mode. The allowlist and the ceiling (d22) handle recurring hosts, and the card collapses annotates under the hold lines. |
 | **A separate scan service or an external classifier API** | It ships every body to another process or vendor, the leak the scan exists to stop (ADR-0065). |
 
 ## Open questions
@@ -1509,14 +1509,14 @@ is taken; the minors are taken but for the design-system glyph's exact form, lef
 artifact. What changed:
 
 - **The person (security B4, product M6).** A person is now a session key with a reviewer
-  grant on the workarea, read from the key's credential kind, `held_by`, crew, profile and
-  grants on `main`; bearer keys, user keys and `held_by: human` dreamer keys may reject or refer
+  grant on the workspace, read from the key's credential kind, `used_by`, crew, profile and
+  grants on `main`; bearer keys, user keys and `used_by: person` reviewer keys may reject or refer
   and never approve a hold finding (d2). The TTY and trusted-crew readings are rejected.
 - **The route for held findings (product B1, security m8).** A person lane that `review/next`
   never offers to a key that cannot approve it, a `refer` verb, a journalled `dismiss` with a
   reason, no expiry, an age on doctor and the admin's list (d19). The writer is told the class,
   the verdict and whether anyone can approve (product M2, M3; security M2a, M2c).
-- **In-progress workareas (security B1).** A held version with a hold finding is author-only
+- **In-progress workspaces (security B1).** A held version with a hold finding is author-only
   inside, as held steering is; ADR-0030 d3 is amended (d20).
 - **Normalisation (security B2, M4, m7).** Every rule reads normalised views built in a fixed
   order: decoding to depth 3 under a separate budget, ignorables removed, spaces, NFKC with case

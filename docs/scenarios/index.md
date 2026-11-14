@@ -13,7 +13,7 @@ Each page below walks one audience through one flow, step by step, with the comm
 | Audience | Flow | Page |
 |---|---|---|
 | One person, with Claude Code, claude.ai and a phone | capture, recall, approve in their own root, withdraw, keep personal knowledge apart | [Individual users](individual.md) |
-| An engineering team and its agent crew | a shared development workarea, skills and guardrails as claims, tests, a release, production, admin fixes, rollback | [Engineering teams](engineering-teams.md) |
+| An engineering team and its agent crew | a shared development workspace, skills and guardrails as claims, tests, a release, production, admin fixes, rollback | [Engineering teams](engineering-teams.md) |
 | A business-analyst team | documents and vocabulary prepared on staging, reviewed, released, exported and imported to production | [Business-analyst teams](analyst-teams.md) |
 | Any team moving work between servers | what a bundle carries, how trust is rebuilt, rollback | [Import and export](import-export.md) |
 
@@ -22,10 +22,10 @@ Each page below walks one audience through one flow, step by step, with the comm
 | Stage | Who decides | What it costs the person |
 |---|---|---|
 | Write | nobody: every write lands held | nothing; the author reads its own held work at once |
-| Develop, in progress | nobody yet; the team reads held work, marked | one switch, `oml workareas mode <w> in_progress`, by a person |
+| Develop, in progress | nobody yet; the team reads held work, marked | one switch, `oml workspaces mode <w> in_progress`, by a person |
 | Approve in a person's own root | that person's review key, marked `same_user` | one click on the console's Review page |
-| Approve in a shared workarea | a key outside the version's lineage | a second identity's time |
+| Approve in a shared workspace | a key outside the version's lineage | a second identity's time |
 | Publish a release (designed, [ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md)) | one person cuts, another publishes | a second person's time per release, not per item |
 | Fix production at once (designed, [ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)) | an admin, confirmed afterwards by another person | nothing waits; the fix is marked until confirmed |
 
-[Producers and reviewers](../concepts/producers-and-reviewers.md) lists every producer and reviewer pair by class and scope, with Euler views of what one key sees. The [workarea lifecycle](../architecture/lifecycle.md) draws these stages and where loose turns strict. The [architecture views](../architecture/views.md) draw what runs today.
+[Producers and reviewers](../concepts/producers-and-reviewers.md) lists every producer and reviewer pair by class and scope, with Euler views of what one key sees. The [workspace lifecycle](../architecture/lifecycle.md) draws these stages and where loose turns strict. The [architecture views](../architecture/views.md) draw what runs today.

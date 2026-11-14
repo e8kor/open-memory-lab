@@ -2,13 +2,13 @@
 id: adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied
 tier: engineering
 status: accepted design · 2026-11-14
-answers: which rules every claim kind follows by its class (knowledge, instruction, vocabulary); what a skill is in OML, how an agent's proposed or updated skill reaches its author key at once, why skills are kept in OML rather than on disk and what the plugin's hook asks and which fields it carries; how its name is unique and how a new version replaces an old one; who may write one and how it is reviewed; which skills a session is offered; how MCP prompts/list and prompts/get name and serve them beside the guardrails prompt; how an agent reads one without a person invoking it; what the session-start hook says about skills; the size caps; what is metered; how a served skill is framed; when a held skill or guardrail is served inside an in-progress workarea and how it is marked
+answers: which rules every claim kind follows by its class (knowledge, instruction, vocabulary); what a skill is in OML, how an agent's proposed or updated skill reaches its author key at once, why skills are kept in OML rather than on disk and what the plugin's hook asks and which fields it carries; how its name is unique and how a new version replaces an old one; who may write one and how it is reviewed; which skills a session is offered; how MCP prompts/list and prompts/get name and serve them beside the guardrails prompt; how an agent reads one without a person invoking it; what the session-start hook says about skills; the size caps; what is metered; how a served skill is framed; when a held skill or guardrail is served inside an in-progress workspace and how it is marked
 -->
 
 # ADR-0080 — A skill is a reviewed claim the MCP server lists as a prompt and serves as a resource, loaded live and never copied
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its open
-question 8 decided at its recommendation (putting a workarea in progress stays a person's act and
+question 8 decided at its recommendation (putting a workspace in progress stays a person's act and
 is never an admin fix act), every other default as drafted, and, the same day, d14 revised and
 d16 added so that a skill follows the rules of every claim of its class with no exception of its
 own (the operator: "Skills is another type of claim it should obey same rules as others") · proposed the same day, tracking
@@ -21,8 +21,8 @@ are parts and its fold is the journal's; the offered set, the index and the prom
 those rows and store nothing.
 
 **Amends:** ADR-0001 (d5: the in-progress exception reaches the subtree's ancestor chain, reads and offers alike, d16), ADR-0030 (d2, d4: an in-progress subtree's held items reach keys scoped at its ancestors, d16), ADR-0025 (d8: kind `skill` joins the kinds never served as a recall hit, d16), ADR-0030 (d3: held `steering`, `guardrail` and
-`skill` versions are served inside an in-progress workarea, marked unreviewed, d10, d16), ADR-0037
-(d3, d5, d6, d9: held guardrails are served inside an in-progress workarea, marked, and to their
+`skill` versions are served inside an in-progress workspace, marked unreviewed, d10, d16), ADR-0037
+(d3, d5, d6, d9: held guardrails are served inside an in-progress workspace, marked, and to their
 author key, d10, d14; d10: every guardrail version needs a person, d16; d11: the prompts
 capability serves more than the one prompt `guardrails`), ADR-0039 (d3: `oml_write` admits kind
 `skill`), ADR-0074 (d24, superseded: every instruction-class version needs a person, d16; d20: the hold-finding rule applies to every kind's in-progress serving, d16)
@@ -31,7 +31,7 @@ capability serves more than the one prompt `guardrails`), ADR-0039 (d3: `oml_wri
 
 ## Context
 
-On 2026-11-14 the operator asked for a workarea builder that introduces and edits skills,
+On 2026-11-14 the operator asked for a workspace builder that introduces and edits skills,
 guardrails and documents, with the MCP server "loading and using those items in session without
 downloading or putting copy locally", and chose, among the options put to them, that a skill is a
 reviewed claim kind served as an MCP prompt (#374).
@@ -42,7 +42,7 @@ What exists today:
   (`crates/transports/oml-transport-http/src/mcp.rs:383-388`); `prompts/list` answers the single
   listing `guardrails` (`mcp.rs:110-120`, `mcp.rs:395`), and `prompts/get` refuses every other
   name with `-32602`, "prompts/get names one prompt: guardrails" (`mcp.rs:396-404`). The prompt
-  renders the guardrail frame for the key's default workarea (`mcp.rs:431-457`;
+  renders the guardrail frame for the key's default workspace (`mcp.rs:431-457`;
   [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
   d11). The endpoint is stateless and has no server-to-client stream (`mcp.rs:1-5`;
   [ADR-0014](ADR-0014-http-api-and-mcp-facade.md) d2).
@@ -75,7 +75,7 @@ What exists today:
   2026-11-14).
 
 The decision has to say what a skill is, who sees which, how it is served without a local copy,
-and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md)'s R1 to R4 and restates none of them; d16 widens ADR-0001 d5's first exception, the in-progress workarea, as that exception's own text records. Decided, not built.
+and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md)'s R1 to R4 and restates none of them; d16 widens ADR-0001 d5's first exception, the in-progress workspace, as that exception's own text records. Decided, not built.
 
 ## Decision
 
@@ -95,10 +95,10 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
   columns; the gain is that a skill is reviewed, versioned, erased and audited exactly as every
   claim is, with no second store.
 
-- **d2 — A skill's name is unique per workarea, because its claim key is, and a new version is a
-  supersession.** One live claim per (tenant, workarea, claim key) already holds
+- **d2 — A skill's name is unique per workspace, because its claim key is, and a new version is a
+  supersession.** One live claim per (tenant, workspace, claim key) already holds
   ([http-api.md](../api/http-api.md) submit, `claim_key`), so `skill/<name>` makes the name unique
-  in its workarea with no new rule. Editing is `POST /v1/memories/{artifact_id}/supersede` with
+  in its workspace with no new rule. Editing is `POST /v1/memories/{artifact_id}/supersede` with
   kind `skill`; the successor re-sends `skill` and may change `description` but not `name` (a
   renamed skill is a retirement of the old and a new claim, so a slash command never changes
   meaning under a person's hands). Retiring is the same act with `retirement: true`
@@ -110,9 +110,9 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
   admits `kind: "skill"` with its `skill` object, and a `replaces` that names a skill (amends
   ADR-0039 d3, which today refuses only `guardrail` there, `mcp.rs:1181`); any key with writer on
   the node may propose one over HTTP or MCP, and the console writes through ADR-0082's keys. A
-  person approves: for kind `skill`, a verdict counts only from a session key held by a person
-  (ADR-0074 d2's definition of a person), whatever the workarea's policy, so an agent key or a
-  service key holding dreamer is refused `review.person_required` (the refusal ADR-0074 d2 names) with `details.reason:
+  person approves: for kind `skill`, a verdict counts only from a session key used by a person
+  (ADR-0074 d2's definition of a person), whatever the workspace's policy, so an agent key or a
+  service key holding reviewer is refused `review.person_required` (the refusal ADR-0074 d2 names) with `details.reason:
   instruction_needs_person` and the version stays held. This is the instruction class's rule (d16),
   which holds for steering and guardrails alike: an instruction runs with the weight of the
   person whose agent follows it, so an agent may draft one and a person decides. ADR-0001 R2 holds unchanged on top (the author's key and lineage never
@@ -123,38 +123,38 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
   d24): `injection.tool_coercion` does not run, and `exec.*`, `exfil.*`, `phish.*` and `ssrf.*`
   hold instead of annotating. Every instruction-class version lands in the person lane with
   `needs_person: true` and `details.reason: instruction_needs_person` (d16).
-  A held skill served to a reviewer adds the sentence "every key that reads this workarea will be
-  offered this skill as a command, here and below it unless its guardrail scope is workarea", the
+  A held skill served to a reviewer adds the sentence "every key that reads this workspace will be
+  offered this skill as a command, here and below it unless its guardrail scope is workspace", the
   counterpart of ADR-0037 d10's load warning (`LOAD_WARNING`,
-  `crates/oml-domain/src/guardrail/mod.rs:19`). The cost: a workarea whose only reviewers are
+  `crates/oml-domain/src/guardrail/mod.rs:19`). The cost: a workspace whose only reviewers are
   agents, such as a crew's, publishes no skill until a person reviews it.
 
 - **d4 — The skills a session is offered are the applicable set of kind `skill` at the key's
-  default workarea, under the key's own read access and its guardrail scope.** The rule is
+  default workspace, under the key's own read access and its guardrail scope.** The rule is
   ADR-0037 d4's, word for word, for kind `skill`: a skill on N or an ancestor of N applies only
   where the key's reader effective access covers that node
-  ([ADR-0008](ADR-0008-workspace-algebra.md) d4), and `guardrail_scope: workarea` keeps N's own,
+  ([ADR-0008](ADR-0008-workspace-algebra.md) d4), and `guardrail_scope: workspace` keeps N's own,
   `ancestors` adds every readable ancestor's; under user roots `ancestors` walks the user's root
   to `universe` and reaches nothing else (ADR-0037 d16). Nothing in a request widens it: the
-  `workarea` argument picks N within the key's grants, never the scope. Only promoted tips are
+  `workspace` argument picks N within the key's grants, never the scope. Only promoted tips are
   offered, except inside an in-progress root (d10). Outside in-progress roots a skill in a child
-  workarea is not offered at its parent, since a skill written for one project should not reach
+  workspace is not offered at its parent, since a skill written for one project should not reach
   its siblings. Inside one, the offer also reaches down (the operator, 2026-11-14, d16): a key
   bound to `tip` whose scope node N is an in-progress root, a node inside one, or an ancestor of
   one, with `guardrail_scope: ancestors`, is also offered the instruction items of that
   in-progress subtree below N (the operator, 2026-11-14, confirmed for a key inside the subtree
   too: any `tip` key there is offered the instruction items below its own node), promoted and held (held ones marked unreviewed), wherever its
   reader access covers them; siblings and other branches of N are never offered anything below
-  them. `guardrail_scope: workarea` keeps N's own alone, in both directions. The cost: the issuance field named for guardrails also
+  them. `guardrail_scope: workspace` keeps N's own alone, in both directions. The cost: the issuance field named for guardrails also
   scopes skills, so an admin who wants a key to see its organisation's guardrails but not its
   skills cannot say so; the operator kept one field on 2026-11-14 (d13).
 
-- **d5 — `prompts/list` names each offered skill by its bare name, the nearest workarea wins a
+- **d5 — `prompts/list` names each offered skill by its bare name, the nearest workspace wins a
   name shared along the chain, and `guardrails` stays reserved.** Each entry is
   `{name, title, description, arguments: [{name: "input", description: "Text appended after the
   skill's instructions", required: false}]}` with `name` the skill's name, `title` the name and
-  the source workarea's path, and `description` the reviewed description. The order is depth from
-  the scope node, nearest first, then name; when two offered workareas hold one name, the one
+  the source workspace's path, and `description` the reviewed description. The order is depth from
+  the scope node, nearest first, then name; when two offered workspaces hold one name, the one
   nearer the scope node by tree distance, up or down, is listed, an ancestor winning a tie with a
   descendant, and the other is reachable only as a resource (d7), and the nearer's
   `description` ends "(overrides <path>)". `guardrails` is a reserved skill name, and so is any name ending in `-unreviewed` (d10), refused at write
@@ -168,8 +168,8 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
 
 - **d6 — `prompts/get` answers one user message: a header with the skill's provenance and
   approval, the reviewed body, and the optional input after it.** The header is one line,
-  "OML skill `<name>` from `<workarea path>`, version `<n>`, approved `<approved_at>` by a
-  `<held_by>` reviewer" with ", the author's own person" when `approver.same_user` is true
+  "OML skill `<name>` from `<workspace path>`, version `<n>`, approved `<approved_at>` by a
+  `<used_by>` reviewer" with ", the author's own person" when `approver.same_user` is true
   ([ADR-0077](ADR-0077-a-served-memory-says-when-it-was-approved-and-by-what-kind-of-reviewer-and-never-names-the-reviewer.md)
   d1, d2); no reviewer is named. A version an admin fix serves (ADR-0089 d7, PR #377:
   `approver.act: "admin_fix"`) reads instead "changed by an admin fix on `<at>`", followed by ", not
@@ -185,7 +185,7 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
 
 - **d7 — Each offered skill is also a resource, so the model can read one without a person
   running it.** Under ADR-0081 d6's capability and scheme, a skill's URI is
-  `oml://workarea/<workarea>/skill/<name>`, `mimeType: "text/markdown"`, and `resources/read`
+  `oml://workspace/<workspace>/skill/<name>`, `mimeType: "text/markdown"`, and `resources/read`
   answers the d6 header and body as one text content. `resources/list` serves the offered skills
   (d4, d5's order and shadowing) after the documents, under the same cursor. This is the
   progressive disclosure the Agent Skills format describes: d8's index puts names and
@@ -196,7 +196,7 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
   capped, and never a body.** `oml hook session-start`
   ([ADR-0029](ADR-0029-session-start-hook.md) d1, d6) gains one section after its recall,
   "OML skills at `<scope path>`", one line per offered skill, "`<name>`: `<description>` (read
-  `oml://workarea/<workarea>/skill/<name>`, or run /oml:`<name>`)", at most 20 lines in d5's
+  `oml://workspace/<workspace>/skill/<name>`, or run /oml:`<name>`)", at most 20 lines in d5's
   order, then "and N more" with no partial line. It reads `GET /v1/skills` (d11), one more
   request on the provider ring beside ADR-0029 d2's two, and fails open as the hook does (d5 of
   ADR-0029). The cost is up to 20 lines of context in every session that has skills, whose token
@@ -211,7 +211,7 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
   every other kind. `prompts/get` and `resources/read` serve a skill whole or refuse it; they never
   truncate an instruction.
 
-- **d10 — Inside a workarea a person put in progress, held skills, guardrails and steering are
+- **d10 — Inside a workspace a person put in progress, held skills, guardrails and steering are
   served and offered, marked unreviewed, to d16's in-progress audience, as every held claim is;
   everywhere else no held one is served** (the operator, 2026-11-14: "Same rule should work for guardrail and
   skill for in progress workspaces, it still should be accessible by agents connected there
@@ -219,7 +219,7 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
     - **Who.** d16's in-progress audience, one rule for reading and offering: a key bound to `tip`
       with reader access on node D, where D lies in an in-progress root's subtree, gets D's held
       version when the key's scope node is in that subtree or on its ancestor chain. For a skill,
-      a guardrail or steering the scope node is the key's default workarea (or the `workarea`
+      a guardrail or steering the scope node is the key's default workspace (or the `workspace`
       field, d11; ADR-0037 d5), and offering follows d4, which inside an in-progress root reaches
       down as well as up, so a held item in the root is read, recalled and offered, marked, to
       keys inside the root and at its ancestors alike. ADR-0030 d3 is amended: its served held kinds become
@@ -227,9 +227,9 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
       `test`, `steering`, `guardrail`, `skill` and the vocabulary kinds: every kind (d16). A version the scan held for a finding, or one not yet scanned, stays
       author-only as ADR-0030 d3 and ADR-0074 d20 have it; a skill held only because every skill
       needs a person (d3, d16) is not held by a finding and is served, as is held steering.
-    - **Who puts a workarea in progress.** A person's key, never an agent's (ADR-0030 d1), and
+    - **Who puts a workspace in progress.** A person's key, never an agent's (ADR-0030 d1), and
       never an admin act: the mode is not among ADR-0089's fix acts (its d2), so an admin
-      cannot open a workarea's held skills and guardrails to its agents (the operator, 2026-11-14,
+      cannot open a workspace's held skills and guardrails to its agents (the operator, 2026-11-14,
       d13, answer 8).
     - **Where.** Held steering joins the recall answer's steering list, marked `unreviewed: true`
       and in the session-start text with the prefix `[unreviewed]`, after the promoted rows and
@@ -244,7 +244,7 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
       which serves the held rule with `effect_inside: "ask"` beside its signed `effect`, and the
       hook reads that field; the stored rule is unchanged, so on approval the same version binds
       with its own effect. A promoted guardrail's rule is never downgraded. This
-      amends ADR-0037 d3 ("No held guardrail is served as a rule, inside an in-progress workarea …
+      amends ADR-0037 d3 ("No held guardrail is served as a rule, inside an in-progress workspace …
       included") for in-progress roots alone; its `own_held` list stays for every other scope.
     - **Marked.** Every served held item says so where an agent reads it: a prompt's header
       (d6) begins "UNREVIEWED: not yet approved by a reviewer." in place of the approval clause;
@@ -267,8 +267,8 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
         - a held edit of a promoted skill gives two commands: `<name>` serves the approved version
           as it does outside, and `<name>-unreviewed` serves the held edit with the d6 header's
           unreviewed mark. The session index shows both lines, the second ending
-          "(unreviewed)". The resources follow the same rule: `oml://workarea/<w>/skill/<name>`
-          reads the approved version and `oml://workarea/<w>/skill/<name>-unreviewed` the held
+          "(unreviewed)". The resources follow the same rule: `oml://workspace/<w>/skill/<name>`
+          reads the approved version and `oml://workspace/<w>/skill/<name>-unreviewed` the held
           edit, with `_meta.oml.unreviewed: true`. A held version 1 with no approved version is
           served under `<name>` itself, marked, since nothing approved holds the name. The suffix
           `-unreviewed` is reserved: a skill name ending in it is refused at write,
@@ -278,21 +278,21 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
       holds), and no held skill is served except to its author key (d14); d4 offers
       promoted tips to everyone else, and recall never serves either kind as
       a hit (amends ADR-0025 d8). Federation and wide sources never carry one: ADR-0072 searches
-      only committed and validated workareas, and an in-progress workarea is a `development` one;
+      only protected and frozen workspaces, and an in-progress workspace is a `development` one;
       an `ancestors` walk from a scope node outside the root never enters it (ADR-0030 d2). The
       commit still needs zero held versions in the subtree (ADR-0030 d6), held skills and
       guardrails among them, so every one is approved by a person or rejected before anything
       leaves.
     - **The cost, stated.** An agent connected inside can run skill text no reviewer has approved
       yet, and an unreviewed rule can make it ask before a tool call; an unreviewed rule never
-      stops the agent. The mark tells it what is unreviewed, and the person who put the workarea
+      stops the agent. The mark tells it what is unreviewed, and the person who put the workspace
       in progress chose that. Every second command doubles a skill's lines in the index while its
       edit is held.
 
 - **d11 — One provider-ring read serves the offered set: `GET /v1/skills`.** Under the key at its
-  default workarea or the `workarea` query field ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md)
+  default workspace or the `workspace` query field ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md)
   d7), it answers `{scope_node, scope_path, guardrail_scope, set_digest, skills: [{artifact_id,
-  claim_key, name, description, version, workarea_path, depth, overrides, approved_at, approver,
+  claim_key, name, description, version, workspace_path, depth, overrides, approved_at, approver,
   uri}], next_cursor}`, no bodies, paged as d5. A body is `GET /v1/memories/{artifact_id}`, which
   already serves any readable promoted row. `set_digest` is opaque, as ADR-0037 d5's. The MCP
   methods and the hook are its clients, so the set is computed in one place.
@@ -315,14 +315,14 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
   skill an agent proposes or updates is served at once, marked, to the key that wrote it, as every
   held claim is to its author (d14, revised the same day: the operator asked that a skill obey the
   same rules as other claims, with no exception of its own). (10) Skills are kept in OML over disk, and the plugin asks before a local skill file
-  is written (d15). (8) Putting a workarea in progress stays a person's act and is never an admin
+  is written (d15). (8) Putting a workspace in progress stays a person's act and is never an admin
   fix act: ADR-0030 d1 is unchanged and ADR-0089's fix acts never include the mode, since the mode
   decides whether unreviewed instructions reach agents, and an admin who wants to fix content has
   ADR-0089's acts (accepted at the recommendation, the operator, 2026-11-14).
 
 - **d14 — A skill's author key is served its own held skill at once, marked unreviewed, as every
   author is served its own held claims; nobody else gets it before review except inside an
-  in-progress workarea** (the operator, 2026-11-14, revised the same day: "Skills is another type
+  in-progress workspace** (the operator, 2026-11-14, revised the same day: "Skills is another type
   of claim it should obey same rules as others").
     - **The rule it follows.** A key's own held rows are its to read: recall's
       `include_own_held` (ADR-0025 d4; default `true` inside an in-progress scope, ADR-0030 d4)
@@ -336,7 +336,7 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
       the author key's own held guardrail.
     - **Who else.** No other key, of the same person or not, gets a held skill before review,
       except a reviewer judging it and d16's in-progress audience (d10). A person whose several
-      agents should share a draft puts the workarea in progress, as for any claim.
+      agents should share a draft puts the workspace in progress, as for any claim.
     - **Versioned updates.** `oml_write` with `replaces` naming a skill and the `expected_version`
       it last read ([ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md)
       d19) supersedes it (d2, d3); the held successor is served to its author key by d10's naming:
@@ -395,10 +395,10 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
   | | Knowledge | Instruction | Vocabulary | Why the classes differ |
   |---|---|---|---|---|
   | **Who writes** | any writer key, agent or person, over HTTP and `oml_write` (`test` over HTTP, ADR-0086 d1) | any writer key, agent or person; `oml_write` admits `steering` and `skill`, a `guardrail` is written over HTTP (ADR-0037 d10) | any writer key, over HTTP only (ADR-0025 d12) | not by class: `oml_write`'s inputs stay flat, so a kind with its own required fields (a guardrail's `severity` and `rule`, the vocabulary fields) is written over HTTP; this is the one kind-level difference left, named below |
-  | **Who approves** | a dreamer key outside the version's lineage (R2) under the workarea's review policy, a person or a crew; in a production scope (a `committed` or `validated` workarea, or what a release serves) any such key that is not a key of the author's person, a reviewer crew's agent key included (the operator, 2026-11-14: "Agents approve knowledge"); in a person's own root, which never leaves development (ADR-0085 d17), that person's review key may approve, marked `same_user` (ADR-0001 d5, the second exception) | the same, and only a person's verdict counts (`review.person_required`, `details.reason: instruction_needs_person`) | as knowledge | an instruction is followed, not weighed as data, so it carries the weight of a person's look; this replaces two per-kind rules, ADR-0074 d24's for steering by an agent and this record's former skill rule |
+  | **Who approves** | a reviewer key outside the version's lineage (R2) under the workspace's review policy, a person or a crew; in a production scope (a `protected` or `frozen` workspace, or what a release serves) any such key that is not a key of the author's person, a reviewer crew's agent key included (the operator, 2026-11-14: "Agents approve knowledge"); in a person's own root, which never leaves development (ADR-0085 d17), that person's review key may approve, marked `same_user` (ADR-0001 d5, the second exception) | the same, and only a person's verdict counts (`review.person_required`, `details.reason: instruction_needs_person`) | as knowledge | an instruction is followed, not weighed as data, so it carries the weight of a person's look; this replaces two per-kind rules, ADR-0074 d24's for steering by an agent and this record's former skill rule |
   | **What its author sees while held** | its own held rows in the `own` listing and in recall with `include_own_held` (ADR-0025 d4), marked by state | the same rule, carried to where the kind is served: its own held steering, guardrail or skill, marked unreviewed, under the in-progress mechanics below (d14) | its own held rows in the listing | none: one read-your-writes rule, applied where each class is served |
   | **Held, in progress** | every held version inside an in-progress root is served, and an instruction offered, marked unreviewed, to every key bound to `tip` with reader access whose scope node is in the root's subtree or on its ancestor chain, a crew's and a team's keys alike; never a held retirement, never a version the scan held or has not scanned; never to a sibling, another branch, federation or a wide source | the same | the same | none: one audience for every kind (the operator, 2026-11-14) |
-  | **Serving mechanics while held** | a held version is a row of its own beside the promoted tip (ADR-0030) | a held version only adds beside the approved one and never replaces it (a skill edit as `<name>-unreviewed`, steering after the promoted rows prefixed `[unreviewed]`, a guardrail as its own line); a held rule asks and never denies; it is offered along d4's scope, the key's own workarea and its ancestors and, inside an in-progress root, the subtree below the key's workarea, so a parent's agent is offered a child's held instruction, marked | a held version is listed and read, marked, and joins query matching only once promoted | instruction: a held version must never loosen or replace what review approved, so it can only add a question or a marked line; vocabulary: matching applies to every query at once, so a held term would change other readers' results rather than add a row they can see marked |
+  | **Serving mechanics while held** | a held version is a row of its own beside the promoted tip (ADR-0030) | a held version only adds beside the approved one and never replaces it (a skill edit as `<name>-unreviewed`, steering after the promoted rows prefixed `[unreviewed]`, a guardrail as its own line); a held rule asks and never denies; it is offered along d4's scope, the key's own workspace and its ancestors and, inside an in-progress root, the subtree below the key's workspace, so a parent's agent is offered a child's held instruction, marked | a held version is listed and read, marked, and joins query matching only once promoted | instruction: a held version must never loosen or replace what review approved, so it can only add a question or a marked line; vocabulary: matching applies to every query at once, so a held term would change other readers' results rather than add a row they can see marked |
   | **Withdraw while held** | the author key, an agent's included, over HTTP or `oml_withdraw`, and the console for any of its person's keys' held versions; the version is kept as `withdrawn` and never served (ADR-0083 d13) | the same | the same | none |
   | **What a release binding serves** | the manifest's members for every kind, the key's own held rows still (ADR-0085 d5), never another key's held version | as knowledge | as knowledge | none |
   | **What an admin fix may do** | ADR-0089 d2's six acts; an edit is scanned as its kind requires (ADR-0089 d4) | the same; an edit is scanned as an instruction (ADR-0074 d24), and a fix that removes or weakens an instruction of any of the three kinds raises ADR-0089 d6's alert | as knowledge | an instruction removed or weakened can let an agent do what it was told not to, so a person is told at once |
@@ -423,7 +423,7 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
   Release binding wins (ADR-0085 d6): a key bound to `latest` or a pin reads the release and never
   a held item, wherever it sits; only a key bound to `tip` gets the vertical held view.
   Horizontal reads, federation and wide sources (ADR-0072, as ADR-0085 d15 amends it) serve only
-  promoted rows of committed or validated workareas or a published release. This widens ADR-0001
+  promoted rows of protected or frozen workspaces or a published release. This widens ADR-0001
   d5's in-progress exception from the subtree to the subtree and its ancestors, and adds no other.
 
   Kind-level mechanics that remain, each a matter of how the kind is served and not of who may
@@ -434,7 +434,7 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
   skill served to every key of its author's person (d14 now follows the author rule); "only a
   person approves" as a skill rule (now the instruction class's); the person-lane reasons
   `skill_by_agent` and `skill` (now `instruction_needs_person`);
-  held steering and held vocabulary kept author-only inside an in-progress workarea (now served as every kind is).
+  held steering and held vocabulary kept author-only inside an in-progress workspace (now served as every kind is).
   This amends ADR-0037 d10 (a guardrail needs a person's verdict) and supersedes ADR-0074 d24 (a steering version from a person
   session needs a person's verdict too).
 
@@ -470,8 +470,8 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
 | **A skill as `kind: memory` with a `text/markdown` body and a naming convention** | Recall would serve it as a hit framed as data, review would apply no instruction-kind scan, and no field could carry the name and description a prompt listing needs. |
 | **Skills exported to `.claude/skills/` by the CLI, as guardrails are to `.claude/rules/`** | The operator asked for no local copy; an export is a copy no supersession, demotion or erasure reaches (ADR-0037 d11's stated cost). |
 | **Skills as tools** | A tool is model-invoked with typed arguments and runs code; a skill is text. ADR-0039 d2 keeps three tools and admits prompts beside them; a tool per skill would also grow `tools/list` with every write. |
-| **Workarea-qualified prompt names (`<workarea>.<name>`) for every skill** | Long slash commands for the common case of one workarea, and a moved scope renames every command. Shadowing by depth keeps short names, and the farther skill stays readable by URI. |
-| **No held skill or guardrail served anywhere, in-progress workareas included** (this record's first draft) | The operator chose on 2026-11-14 that in-progress workareas serve them to the agents connected there, as they serve memories; the mark and the commit's zero-held rule carry the safety. |
+| **Workspace-qualified prompt names (`<workspace>.<name>`) for every skill** | Long slash commands for the common case of one workspace, and a moved scope renames every command. Shadowing by depth keeps short names, and the farther skill stays readable by URI. |
+| **No held skill or guardrail served anywhere, in-progress workspaces included** (this record's first draft) | The operator chose on 2026-11-14 that in-progress workspaces serve them to the agents connected there, as they serve memories; the mark and the commit's zero-held rule carry the safety. |
 | **Held guardrails served inside as text only, never checked by the hook** | The operator chose on 2026-11-14 that a held rule is checked and asks; text alone would give the person at the session no prompt before the call the rule names. |
 | **A held guardrail's rule takes full effect at once, `deny` included** | An unreviewed rule could stop every agent connected inside until a person rejects it; the operator chose ask, never deny, on 2026-11-14. |
 | **A held edit replaces its promoted guardrail inside, so it may loosen it** | An unreviewed edit could switch off an approved rule; the operator chose "only add" on 2026-11-14, which is also what ADR-0030's rule for memories gives. |
@@ -481,9 +481,9 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
 | **Recall serves skills as hits** | Recall's text is data and never instructions (`mcp.rs:69-70`); mixing would make a recalled skill read as either. |
 | **`listChanged: true` with notifications** | `/mcp` is stateless with no server stream (ADR-0014 d2); a declared capability with no sender is a broken promise. |
 | **`oml_write` refuses `skill`, as it refuses `guardrail`** | The operator chose on 2026-11-14 that agents may propose skills; the person-only approval (d3) carries the safety the refusal would have. |
-| **Agents' verdicts count on skills where the workarea's policy admits agents** | A skill carries the weight of the person who runs it; an agent approving another agent's instructions would put unreviewed-by-a-person text behind a slash command. |
-| **A held skill served at once to every key of its author's person** | The first answer of 2026-11-14; it made skills the one kind whose held rows reach keys other than their author outside an in-progress workarea, an exception to R3. The operator withdrew it the same day: a skill obeys the rules of every claim, and in-progress mode shares a draft. |
-| **A held skill served at once to every key in scope** | Other people's agents would run instructions nobody but an agent reviewed; outside an in-progress workarea R3 keeps a held row to its author. |
+| **Agents' verdicts count on skills where the workspace's policy admits agents** | A skill carries the weight of the person who runs it; an agent approving another agent's instructions would put unreviewed-by-a-person text behind a slash command. |
+| **A held skill served at once to every key of its author's person** | The first answer of 2026-11-14; it made skills the one kind whose held rows reach keys other than their author outside an in-progress workspace, an exception to R3. The operator withdrew it the same day: a skill obeys the rules of every claim, and in-progress mode shares a draft. |
+| **A held skill served at once to every key in scope** | Other people's agents would run instructions nobody but an agent reviewed; outside an in-progress workspace R3 keeps a held row to its author. |
 | **The local skill write denied outright** | The person could not keep a skill on disk when they mean to; `ask` leaves the call to them. |
 | **No hook, instructions only** | An agent following its harness's habit writes to `.claude/skills/` anyway; the operator asked that OML take priority over disk. |
 | **Front matter inside the body as the source of name and description** | Two sources for one field, and a body edit could rename a command without a field change a reviewer sees. |

@@ -31,7 +31,7 @@ holds, how it is fed and what may read it back.
   `signed_bytes`, `payload`, `principal`, `api_key_id` and `outbox_seq`
   (`crates/bins/oml-lakewriter/src/lib.rs:816`; the read is `source.rs:240`). A failed bronze
   commit fails the batch, which is retried; it is never dead-lettered (`lib.rs:451`). The named
-  queries `writes-per-kind-per-day` and `top-workareas` read it
+  queries `writes-per-kind-per-day` and `top-workspaces` read it
   (`crates/adapters/oml-lake/src/query.rs:33`, `:75`–`79`, `:108`).
 - `silver.claims` takes a version only when a `lifecycle.*` event names it, read from `memories`
   as it stands at drain time (`lib.rs:543`, `source.rs:300`); a version with no `promoted_at` is
@@ -108,7 +108,7 @@ Decided, not built.
   images.** Per tenant prefix:
   - **`bronze.events` is the twin journal.** Its rows are never dead-lettered, skipped or
     rewritten except by compaction that preserves them; verdicts, grants, denials, names, quotas,
-    policies, guardrail scope, workarea marks and transitions ride here as events.
+    policies, guardrail scope, workspace marks and transitions ride here as events.
   - **`twin/inputs`, append-only, one row per staged part (d3).** Columns: `tenant_id`,
     `journal_seq` (null for a part staged outside a commit), `stage_seq`, `outbox_seq`, `part`
     (a closed set, d4), `key_ref`, `sealed`, `plaintext_digest`, `ciphertext_digest`.
@@ -181,7 +181,7 @@ Decided, not built.
   | `authorization_insert`, `take_authorization_by_handle`, `oauth_client_insert`, `upsert_cimd`, `touch_cimd`, `insert_dcr`, `remove_unused_dcr` | `oauth_authorizations`, `oauth_clients` | excluded | none; a client registers or is fetched again |
   | `web_session_open`, `web_session_end`, `web_sessions_sweep`, `end_entry_sessions` | `web_sessions`, `web_session_credentials` | excluded | none; everyone signs in again |
   | `telemetry.rs` writers | `recall_events`, `recall_outcomes` | excluded | none; the lake's daily counts stay |
-  | `align_pre_0017_statuses` | `workareas.status`, at startup | derived | the lead runs it on the rebuilt database |
+  | `align_pre_0017_statuses` | `workspaces.status`, at startup | derived | the lead runs it on the rebuilt database |
   | the lake writer | `artifact_keys`, `lake_dead_letter` | `twin/keys`; dead letters excluded | loaded from `twin/keys` |
 
   The law (d12) is column-level over every table: each column of each table is in exactly one
@@ -234,7 +234,7 @@ Decided, not built.
   version, so a rebuild cut before an erase still never opens what was erased later. Amends
   ADR-0005 d4 with three inventory rows (`lake_staging`, `twin/inputs`, `twin/keys`), and ADR-0005
   d3 to name what crypto-shredding cannot reach: clear text inside signed payloads, today a
-  version's `title`, a verdict's `reason` (`app.rs:6054`), a workarea's or key's `name`, an
+  version's `title`, a verdict's `reason` (`app.rs:6054`), a workspace's or key's `name`, an
   anchor's `uri`, `path` and `fragment`, a crew's `charter_uri` and `external_manager`
   (`app.rs:1323`), and, once ADR-0089 is built, an `admin.fix` reason. The admission scan reads the
   title at write (`app.rs:7423`) and the reason under the veto scan (`app.rs:5963`); the text is
@@ -368,7 +368,7 @@ Decided, not built.
   that a rebuild cannot reproduce: `review_queue.held_by_key` and `held_since`; kind-2 postings
   under a different model; and every column set by `now()` at commit rather than from the event's
   `at`: the columns whose default is `now()` where the insert does not set them (`created_at` of
-  `tenants`, `workareas`, `api_keys` and `outbox`, migration 0001), and
+  `tenants`, `workspaces`, `api_keys` and `outbox`, migration 0001), and
   `idempotency.committed_at` and `artifact_keys.created_at`. `memories.created_at` is different:
   it is a separate application clock read, `self.clock.now()` in the `MemoryRecord`
   (`app.rs:5428`), not the event's `at`. The build moves it to the event's `at` on the live

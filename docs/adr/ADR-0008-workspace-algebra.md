@@ -2,10 +2,10 @@
 id: adr/ADR-0008-workspace-algebra
 tier: engineering
 status: accepted design · amended by ADR-0025
-answers: why workareas are one algebra — per-tenant universe tree, node-id grants, deny semantics, edges — rather than several separate objects
+answers: why workspaces are one algebra — per-tenant universe tree, node-id grants, deny semantics, edges — rather than several separate objects
 -->
 
-# ADR-0008 — Workarea algebra: per-tenant universe tree, node-id grants, deny semantics, edges
+# ADR-0008 — Workspace algebra: per-tenant universe tree, node-id grants, deny semantics, edges
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)
 
@@ -21,19 +21,19 @@ bolted on later. OML is multi-tenant
 (ADR-0007), has no single operator, and must answer subtree questions — "grant this crew
 everything under `experiments`", "freeze this whole branch" — that a flat set of named spaces
 cannot express.
-This record decides one object: the **workarea**, a governed node in one tree per tenant. A
-workarea exists before it is written to — created by a journalled admin act, never conjured by a
-typo, so a write naming an unknown workarea is refused — and a claim lives in exactly one
-workarea. The rules this record decides are declared in full, with worked examples, on
+This record decides one object: the **workspace**, a governed node in one tree per tenant. A
+workspace exists before it is written to — created by a journalled admin act, never conjured by a
+typo, so a write naming an unknown workspace is refused — and a claim lives in exactly one
+workspace. The rules this record decides are declared in full, with worked examples, on
 [architecture/workspaces.md](../architecture/workspaces.md); this record states the decisions and
 what was rejected. Nothing here is built.
 
 ## Decision
 
-- **d1 — One tree per tenant, rooted at `universe`.** Every workarea of a tenant is a node in
+- **d1 — One tree per tenant, rooted at `universe`.** Every workspace of a tenant is a node in
   exactly one tree, rooted at that tenant's `universe` node. The universe root is permanently
-  `committed`, cannot be frozen, deleted or re-parented, and refuses direct claim writes — claims
-  live in crew workareas beneath it. It exists so that paths, subtree grants and subtree denies
+  `protected`, cannot be frozen, deleted or re-parented, and refuses direct claim writes — claims
+  live in crew workspaces beneath it. It exists so that paths, subtree grants and subtree denies
   have a well-defined top, not so that anything is stored at the top. The tree never crosses a
   tenant boundary; cross-tenant "whole world" mapping is explicitly future (federation,
   #151 in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)).
@@ -43,7 +43,7 @@ what was rejected. Nothing here is built.
   every subtree question — containment, grant coverage, deny masking, the child-status rule of
   [ADR-0009](ADR-0009-status-ladder.md) — has exactly one answer.
 
-- **d3 — Grants bind to node ids, never paths.** A grant names a workarea node id; the path
+- **d3 — Grants bind to node ids, never paths.** A grant names a workspace node id; the path
   (Postgres `ltree`) is derived from the tree at check time. Renaming or re-parenting a node never
   invalidates or rescopes a grant, and a path string is never an authority — anything that
   compares paths is a derived view as of the current permission epoch, reproducible from
@@ -59,11 +59,11 @@ what was rejected. Nothing here is built.
   [architecture/workspaces.md](../architecture/workspaces.md).
 
 - **d5 — Relations are labelled edges that confer zero access, governed under R2.** `related` is a
-  separate edge kind between two workarea nodes with a closed label set (`relates_to`,
+  separate edge kind between two workspace nodes with a closed label set (`relates_to`,
   `continues`, `derived_from`, `mirrors`). An edge is recorded structure for lineage and
   navigation, never an input to access computation. Edges follow the propose/ratify split:
-  proposing requires `dreamer(propose)` effective access on at least one endpoint and reader
-  effective access on both; ratifying requires `dreamer(review)` on **both** endpoints; the
+  proposing requires `reviewer(propose)` effective access on at least one endpoint and reader
+  effective access on both; ratifying requires `reviewer(review)` on **both** endpoints; the
   ratifier is never the proposer — **R2 extends to edges**
   ([ADR-0001](ADR-0001-the-constitution.md) d2).
 
@@ -72,13 +72,13 @@ what was rejected. Nothing here is built.
   transaction, so no read observes a tree in which a path and its parent pointer disagree. Because
   of d3 no grant is touched; the act bumps the permission epoch because cached subtree resolutions
   computed against the old paths are now wrong. The cost is a lock proportional to the moved
-  subtree, accepted. Re-parenting into a `validated` destination is refused
+  subtree, accepted. Re-parenting into a `frozen` destination is refused
   ([ADR-0009](ADR-0009-status-ladder.md)).
 
-- **d7 — A workarea records its crew; the record is operated by nobody.** Crew name, charter URI
+- **d7 — A workspace records its crew; the record is operated by nobody.** Crew name, charter URI
   and external manager are recorded metadata — OML never contacts the manager, schedules the crew
   or validates the charter beyond storing it. Crew-metadata update is a journalled admin act and
-  is permitted on `validated` areas: freeze covers claim content and promotions, not workarea
+  is permitted on `frozen` areas: freeze covers claim content and promotions, not workspace
   metadata. The reviewer-independence axis
   ([architecture/admission.md](../architecture/admission.md)) resolves reviewer crew and manager
   from this journalled metadata at promotion time, which is why its updates must be journalled
@@ -86,9 +86,9 @@ what was rejected. Nothing here is built.
 
 ## Consequences
 
-- The schema realizes d1–d7 as `workareas` (id, tenant, parent_id, derived `ltree` path, status,
-  crew jsonb), `workarea_edges` (pending/ratified, proposer, ratifier), `grants` (key, role,
-  workarea node id, deny entries, epoch) and `key_denials` (global per-key deny objects) —
+- The schema realizes d1–d7 as `workspaces` (id, tenant, parent_id, derived `ltree` path, status,
+  crew jsonb), `workspace_edges` (pending/ratified, proposer, ratifier), `grants` (key, role,
+  workspace node id, deny entries, epoch) and `key_denials` (global per-key deny objects) —
   [data/postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations). RLS by tenant applies to all of them
   (ADR-0007).
 - Every access check in the system — write admission, recall scoping, graph reads, edge acts —
@@ -98,7 +98,7 @@ what was rejected. Nothing here is built.
   ([architecture/audit-and-lineage.md](../architecture/audit-and-lineage.md)).
 - d3 makes rename and re-parent cheap for authority and pays for it in d6's path rewrite: the
   derived-path column must be maintained transactionally, and the lock cost of moving a large
-  subtree is real. Lake rows keep `workarea_id` as the stable key with path-at-write as history,
+  subtree is real. Lake rows keep `workspace_id` as the stable key with path-at-write as history,
   so re-parenting never rewrites the lake ([architecture/storage.md](../architecture/storage.md)).
 - d4's per-grant deny masking means a deny does not compose across grants: operators who want an
   absolute prohibition must use the global per-key deny, and the documentation must say so where
@@ -111,7 +111,7 @@ what was rejected. Nothing here is built.
 
 ## Rejected alternatives
 
-- **DAG membership (a workarea with multiple parents).** Letting one area sit under two parents
+- **DAG membership (a workspace with multiple parents).** Letting one area sit under two parents
   would let one crew's space appear in two branches without edges. Rejected because access
   computation becomes ambiguous: with two parents, a node's path is not unique, so "the subtree a
   grant covers" and "the subtree a deny masks" stop having one answer, and a deny inherited down

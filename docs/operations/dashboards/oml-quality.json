@@ -369,7 +369,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Duplicate writes",
-      "description": "Writes whose text a served memory of the same workarea already holds (same_text) or not (none) (oml_remember_duplicates_total). A write repeating a claim_key is refused as submission.claim_key_conflict and shows in oml_http_request_duration_seconds{route=\"/v1/memories\",status=\"409\"}.",
+      "description": "Writes whose text a served memory of the same workspace already holds (same_text) or not (none) (oml_remember_duplicates_total). A write repeating a claim_key is refused as submission.claim_key_conflict and shows in oml_http_request_duration_seconds{route=\"/v1/memories\",status=\"409\"}.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -475,7 +475,7 @@
       "id": 16,
       "type": "timeseries",
       "title": "Similar check: named relation by on_similar, and p95",
-      "description": "Writes whose text a served memory of the same workarea already holds (same_text) or not (none) (oml_remember_duplicates_total). A write repeating a claim_key is refused as submission.claim_key_conflict and shows in oml_http_request_duration_seconds{route=\"/v1/memories\",status=\"409\"}.",
+      "description": "Writes whose text a served memory of the same workspace already holds (same_text) or not (none) (oml_remember_duplicates_total). A write repeating a claim_key is refused as submission.claim_key_conflict and shows in oml_http_request_duration_seconds{route=\"/v1/memories\",status=\"409\"}.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"

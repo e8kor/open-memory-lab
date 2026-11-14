@@ -276,7 +276,7 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   one window of at most 1,000 journal events, loads their versions in one statement, and runs the
   composed scanner over every stored version but an erased one: the body, each anchor field, and
   the path rule (d4), with any anchor finding reported as a veto, as admission treats it. It
-  answers each finding as `artifact_id`, `workarea_id`, `version`, `state`, class, rule, action
+  answers each finding as `artifact_id`, `workspace_id`, `version`, `state`, class, rule, action
   and place, plus the counts by rule and the next window's `after_seq`. It journals nothing,
   because it reveals no text and decides nothing. A version it would veto stays where it is,
   promoted or held. Deleting it would be the silent drop R4 forbids
@@ -359,7 +359,7 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
 - Rows written before this change are not re-scanned at admission (d1). `oml admin rescan`
   finds them (d13), and a person retires them. Nothing retires them on its own.
 - After an upgrade to `oml-scan/1.1`, run `oml admin rescan --record-held`. Until it runs,
-  sibling agents in an in-progress workarea do not see held versions written before the
+  sibling agents in an in-progress workspace do not see held versions written before the
   upgrade (d15): it records each held version under `/1.1`, keeps the ones the amended rules
   flag their author's, and serves the rest inside again. A promoted version it reports keeps its
   state; a person reads each with `oml admin read` and demotes or retires it. Doctor warns with

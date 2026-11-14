@@ -5,14 +5,14 @@ status: proposed
 answers: roles and forwarding (d1); the unit and the spine (d2); placement (d3); moves (d4); replication to the synchronous standby's flush (d5); routing (d6); read-your-writes (d7); narrowing on every node before its answer, lead succession and restarts (d8); federated recall (d9); failure (d10); node identity, unit keys and a compromised node (d11); observability (d12); phases (d13); upgrades (d14). The decision table under In short indexes them
 -->
 
-# ADR-0073 — A leader signs every write and nodes serve the workareas placed on them, each read routed to the closest, less busy replica fresh enough for it
+# ADR-0073 — A leader signs every write and nodes serve the workspaces placed on them, each read routed to the closest, less busy replica fresh enough for it
 
 **Status:** proposed · 2026-11-08 · revised 2026-11-10 (Round 3)
 
 **In short.** Phase 1a is a standby lead on the same database, so upgrades and restarts stop
 stopping the API: 2 processes, 1 PostgreSQL, nothing else to run. Phase 1b adds read nodes holding
 whole tenants in one region, and with them a synchronous standby for the authority database. Phase
-2 adds regions; phase 3 places workarea subtrees, not whole tenants, and serves federated recall
+2 adds regions; phase 3 places workspace subtrees, not whole tenants, and serves federated recall
 across nodes. Each step has its own cost, and the table under Consequences says when not to take it.
 What a key may read never widens: a narrowing act applies on every node before its caller hears it.
 
@@ -21,7 +21,7 @@ What a key may read never widens: a narrowing act applies on every node before i
 | d | Decided | Phase | Main names |
 |---|---|---|---|
 | d1 | One lead writes; a standby lead forwards; nodes serve promoted reads of placed units; held reads go to the lead | 1a / 1b | `oml-server-follower`, placement map |
-| d2 | The unit is a workarea subtree; holders of any unit hold the spine: no content per row, but every version's event metadata | 1b / 3 | `oml placement set` |
+| d2 | The unit is a workspace subtree; holders of any unit hold the spine: no content per row, but every version's event metadata | 1b / 3 | `oml placement set` |
 | d3 | Weighted rendezvous, top R across zones, recomputed on membership only | 1b | `placement.replicas`, `placement.load_slack` |
 | d4 | Make before break; a joiner loads only signed checkpoint state | 1b | `system.checkpoint`, `replica.snapshot_verify` |
 | d5 | Ship the journal up to the sync standby's flush; verify every event; quorum or degrade, promote only the most advanced standby | 1b | commit index, `cluster.authority_unsynced`, `cluster.standby_stale` |
@@ -71,11 +71,11 @@ data. **The operator asked on 2026-11-08** for a provider where the "leader will
 closest less busy node, and workareas will be replicated across nodes".
 
 **Five forces bound the answer.** The chain has one writer per tenant. "A revoked grant or a new
-denial applies to the key's next request" ([workareas](../architecture/workspaces.md#grants-bind-to-node-ids)),
+denial applies to the key's next request" ([workspaces](../architecture/workspaces.md#grants-bind-to-node-ids)),
 and R3 makes review change visibility, through a failover too. A node is a new copy of content, so
 erasure must reach it. An upgrade must not stop the API. And
 [ADR-0072](ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)
-(proposed, PR #208) lets one recall search several workareas, which may sit on different nodes.
+(proposed, PR #208) lets one recall search several workspaces, which may sit on different nodes.
 
 Decided, not built.
 
@@ -126,25 +126,25 @@ flowchart LR
   a cluster stream; no content, no spine). An entry node that holds none of the request's tenant
   forwards it to a replica the map names, chosen by d6, which decides access itself (d11); a stale
   map costs a second hop, never a wrong answer. Every write verb, every read of the caller's own
-  held rows, every read inside an in-progress workarea
+  held rows, every read inside an in-progress workspace
   ([ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)),
   and every read no replica qualifies for (d6) is forwarded to the lead over ADR-0024 d9's pooled
   HTTP/2 channel, never a redirect, so held content never leaves the authority. The cost: write
   throughput stays one lead's per tenant; a far agent pays a cross-region round trip per write
   (unmeasured, #210); the map tells every node which tenants exist and where.
 
-- **d2 — The unit of placement is a workarea subtree; a node holding any unit of a tenant holds
-  its spine.** A placement root is a workarea an admin marks (`oml placement set`); its subtree, down
+- **d2 — The unit of placement is a workspace subtree; a node holding any unit of a tenant holds
+  its spine.** A placement root is a workspace an admin marks (`oml placement set`); its subtree, down
   to the next root, is one unit. The tenant root is always one, and before phase 3 the only one. From
   phase 3 each user root ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md))
   is one by default; doctor suggests a root when a unit outgrows a node and never makes one. The
-  **spine** is what access and routing read: the workarea tree, key hashes and roles, grants,
-  denials, crews, policies, ADR-0072's promoted descriptors, two exact aggregates per workarea
+  **spine** is what access and routing read: the workspace tree, key hashes and roles, grants,
+  denials, crews, policies, ADR-0072's promoted descriptors, two exact aggregates per workspace
   (its promoted row count and total length, numbers only, never a sketch), and the journal
   envelopes from the latest checkpoint, whose payloads are digests over sealed bytes. **No content
   per row is spine:** no body, posting, word or per-word count; versions, the token dictionary and
   every per-term count stay on the unit's holders. **The envelopes are metadata per version:** each
-  names its event type, workarea, author key, time, body digest and, for a promoted content event,
+  names its event type, workspace, author key, time, body digest and, for a promoted content event,
   the body's length in bytes, all under the signature. So a spine holder learns who wrote how much,
   where and when in every unit of the tenant, and a digest confirms a guessed exact body (d11's
   table). Per-unit envelopes would hide that and were rejected, because one seq per tenant orders
@@ -163,7 +163,7 @@ flowchart LR
   R (`placement.replicas`) is 1 on one zone and 2 across zones; the authority's copy is not
   counted. Region, zone and `w_n` are set by the admin at enrolment and bound into the node's
   certificate (d11), so a node cannot attract units. A region hint (`placement.regions`) also means
-  a `wide` federated recall coordinated in another region skips the unit, and the workarea's
+  a `wide` federated recall coordinated in another region skips the unit, and the workspace's
   federation policy shows that. The lead journals each change as `system.placement_changed` under a
   placement epoch, on the tenant's chain and in the placement map, and recomputes only on
   enrolment, removal or an admin's change, never on health.
@@ -272,7 +272,7 @@ flowchart LR
   the lead was computed at a snapshot whose applied seq is ≥ *s*. Leases are how a node that does not
   report still obeys it.
     1. **Which events narrow.** A closed predicate, narrowing by default. Only *widening* events (a
-       promotion, a grant added, a workarea created, a promoted descriptor, a node enrolled, a
+       promotion, a grant added, a workspace created, a promoted descriptor, a node enrolled, a
        placement added, a checkpoint, a no-op, an `oml admin scan clear` of
        [ADR-0074](https://github.com/e8kor/open-memory-lab/pull/219)) and *held-only* events skip
        the barrier. A test fails on an event type in neither list. The **waiting set** for *s* is
@@ -456,11 +456,11 @@ flowchart LR
   **before round 1**, because ADR-0072 d4.2 subtracts the versions expired at `now` from the counts.
     1. **Round 1, statistics.** Per unit holding the scope or a candidate, the coordinator picks a
        replica by d6 in its region. Each opens a `REPEATABLE READ` snapshot, returns its snapshot
-       seq and, for the query's kept words (as text), the exact per-workarea counts, lengths and
+       seq and, for the query's kept words (as text), the exact per-workspace counts, lengths and
        document frequencies ADR-0072 d4 and d7 need, including the counts that decide postings
        pruning. The coordinator sums them over R, selects (ADR-0072 d4), and fixes the scoring
        statistics and pruning before any search. It learns, per request, counts of the caller's own
-       words in workareas the caller reads, and nothing at rest.
+       words in workspaces the caller reads, and nothing at rest.
     2. **Round 2, search.** Each selected source's replica searches **in the snapshot it opened**,
        under the fixed statistics, `now` and pruning, and returns each retriever's list to the
        pipeline's depth for that retriever (ADR-0049: `k` for single, at least 50 for `Rrf`, at
@@ -476,12 +476,12 @@ flowchart LR
        round 2 to a second replica under the already fixed statistics, at a snapshot of its own at
        or past the first's, and the log records it; the single-node equality is claimed only where
        no hedge won. Under `sources: "wide"`, a missing source leaves its hits out and every other
-       score stands; `search.sources.missing: [{workarea_id, reason}]` with `timeout`, `no_replica`,
+       score stands; `search.sources.missing: [{workspace_id, reason}]` with `timeout`, `no_replica`,
        `lease` or `remote`, filtered through the coordinator's leased access. Under a **list**
        (`sources: [names]`), the answer is never partial: a source with no in-region replica sends
        the whole recall to the lead, which holds every unit, as does a source dropped as `lease`
        (by itself or by the coordinator's send check), and any other missing source fails
-       `503 cluster.source_unavailable {workarea, reason}`. The scope is never partial either:
+       `503 cluster.source_unavailable {workspace, reason}`. The scope is never partial either:
        `503 cluster.scope_unavailable`. Each node authenticates the caller and computes access itself;
        the coordinator's view grants nothing.
 
@@ -539,9 +539,9 @@ flowchart LR
         | It can | It cannot |
         |---|---|
         | read the promoted content, spine and unit keys of units placed on it, while placed | forge, insert, reorder or drop an event: every peer checks signatures and links |
-        | read the event metadata of every unit of the tenant (type, workarea, author key, time, digest, body length), and confirm a guessed exact body by its digest | open a DEK wrapped after its removal: removal re-wraps its units |
+        | read the event metadata of every unit of the tenant (type, workspace, author key, time, digest, body length), and confirm a guessed exact body by its digest | open a DEK wrapped after its removal: removal re-wraps its units |
         | keep plaintext and unit keys it already held, so an erasure does not reach what it kept | obtain a unit, a wrapped DEK or a unit key not placed on it, or the tenant KEK |
-        | read and replay the credentials of requests entering at it; the signed envelope makes a replay visible | learn another unit's words: the spine holds two numbers per workarea, and per-word counts arrive only for the words of a request it coordinates |
+        | read and replay the credentials of requests entering at it; the signed envelope makes a replay visible | learn another unit's words: the spine holds two numbers per workspace, and per-word counts arrive only for the words of a request it coordinates |
         | answer its callers with anything it holds, a denied row included | attract units by claiming another weight or zone |
         | learn which tenants exist and where, from the placement map | |
 
@@ -691,7 +691,7 @@ sequenceDiagram
   apart from the term row; its holder is a process incarnation, not a configured name.
   ADR-0024 d9's LSN fence becomes the token. ADR-0002 d2's synchronous domain is the authority
   alone. ADR-0005 d1 gains the unit key. ADR-0072 composes with d9: the spine carries two aggregates
-  per workarea, per-word statistics come from round 1 on the sources' replicas, the token is one
+  per workspace, per-word statistics come from round 1 on the sources' replicas, the token is one
   seq, `now` is a point, and a `sources` list is never partial.
 - **New events:** `system.lead_acquired` (on the cluster stream), `system.placement_changed`, `system.node_enrolled`, `system.node_removed`,
   `system.copy_destroyed`, `system.checkpoint`, `system.noop`. **New errors:** `cluster.no_replica`,
@@ -746,7 +746,7 @@ sequenceDiagram
 | **Spine statistics per word, or a sketch of them** | Put every unit's vocabulary on every node of the tenant, survive erasure on nodes that never held the unit, and a sketch is not exact. |
 | **Shipping the tenant KEK to nodes** | Any node could unwrap any DEK of the tenant, and keep doing so after an erasure it has not applied. |
 | **Per-unit position vectors in the token** | Two answers can be incomparable; every node applies the whole chain, so one seq orders them. |
-| **PostgreSQL logical replication per workarea** | Trusted copy, DDL not replicated, apply as table owner. |
+| **PostgreSQL logical replication per workspace** | Trusted copy, DDL not replicated, apply as table owner. |
 | **Physical streaming replicas behind a router** | Every replica holds every tenant; replay cancels queries. |
 | **Raft per tenant or per unit** | A second authority beside PostgreSQL; the chain lock and the term already order writes. |
 | **Every node signs** | Many key copies and a chain two writers could extend. |
@@ -757,7 +757,7 @@ sequenceDiagram
 | **Persisting every grant** | A write per node per renewal, against a wait paid once per unplanned failover. |
 | **Replicating held content** | Unreviewed bodies on more machines for author-only reads. |
 | **A topology-aware client** | ADR-0022's dumb client; the token is the only cluster fact a client sees. |
-| **Per-workarea placement first** | Rebalance risk before any tenant outgrows a node. |
+| **Per-workspace placement first** | Rebalance risk before any tenant outgrows a node. |
 
 ## Open questions for the operator
 
@@ -786,7 +786,7 @@ record) and product (2 blockers, 11 majors, 13 minors). What changed here:
   clock-step and failover interleaving is argued (d8 items 2, 3, 7, 9).
 - **Reads in flight** (B2, m2): a send check against the reported floor under a lock the report
   takes, with its proof, and the invariant restated over answers (d8 item 5).
-- **Statistics and keys** (M4, M5): two aggregates per workarea in the spine, per-word statistics
+- **Statistics and keys** (M4, M5): two aggregates per workspace in the spine, per-word statistics
   from round 1 on the sources' replicas; unit keys between the tenant KEK and the DEKs, delivered
   only to nodes that reached the floor (d2, d9, d11).
 - **The synchronous standby** (M1; product B2): the commit index follows the sync standby's

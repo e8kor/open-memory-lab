@@ -165,12 +165,12 @@
 </header>
 
 <main id="main">
-  <canvas id="gl" aria-label="Interactive 3D visualization: trading crews recalling market data along grants and remembering signals into their own workareas; every memory can be clicked and read"></canvas>
+  <canvas id="gl" aria-label="Interactive 3D visualization: trading crews recalling market data along grants and remembering signals into their own workspaces; every memory can be clicked and read"></canvas>
   <div id="labels"></div>
   <div class="hud" id="hud"></div>
   <div class="panel" id="panel" hidden></div>
   <div class="steps" id="steps" hidden></div>
-  <div class="hint" id="hint">drag to orbit · scroll to zoom · click a memory, a workarea, or the core</div>
+  <div class="hint" id="hint">drag to orbit · scroll to zoom · click a memory, a workspace, or the core</div>
   <div class="tourcap" id="tourCap" hidden></div>
   <button class="skip" id="tourSkip" hidden>skip intro ✕</button>
   <div class="fade" id="fade"></div>
@@ -197,7 +197,7 @@ const THEME = {
   c: {held:0xe8b45a, prom:0x46d684, rej:0xf0716e, sup:0x64748b, dem:0xb08968, ers:0x232c48,
       sim:0xb48af2, agent:0x7aa2ff, human:0xffffff, gold:0xe8b45a, grant:0xffdf9e,
       edge:0x5a74b8, review:0x8bd5ff, recall:0x4fd8c0, remember:0xe8b45a, link:0x46d684},
-  ladder: {development:0x9fb0d8, committed:0x7aa2ff, 'validated/frozen':0xb6c5de},
+  ladder: {development:0x9fb0d8, protected:0x7aa2ff, 'frozen':0xb6c5de},
   fog:.005, dprMax:2,
   pt:{size:.62, glowSize:1.15, hubGlow:1.9, hubHalo:4.8, agent:.8, pulse:1.9},
   dur:{flow:1.5, remember:1.0, ceremony:1.15, fly:.9},
@@ -290,7 +290,7 @@ const journal = {
   }
 };
 /* the desk was alive before arrival */
-[['workarea.create','wa:ref-taxonomy under the universe root',1468],
+[['workspace.create','wa:ref-taxonomy under the universe root',1468],
  ['grant.issued','reader on wa:market-data → key_a41f09 (crew:signal-desk)',1469],
  ['lifecycle.promote','eurusd-vol-1w-8c21 · wa:market-data · k=1',1470]].forEach(([k,d,s])=>{
   const el=document.createElement('div');
@@ -303,17 +303,17 @@ document.getElementById('btnLive').onclick=e=>{LIVE=!LIVE;
   e.currentTarget.textContent=LIVE?'pause traffic':'resume traffic';
   journal.emit('recall',LIVE?'traffic resumed — the desk keeps working':'traffic paused — the scene holds, the journal holds with it','note');};
 
-/* ═══ workareas: one desk crew per area; reads follow grants, never status ═ */
+/* ═══ workspaces: one desk crew per area; reads follow grants, never status ═ */
 const WAS = [
-  {name:'market-data',      crew:'crew:feed-handlers',   r:10, speed:.085, ladder:'committed',        n:34, y:0.6,  k:1, human:false,
+  {name:'market-data',      crew:'crew:feed-handlers',   r:10, speed:.085, ladder:'protected',        n:34, y:0.6,  k:1, human:false,
    grants:['compliance-vault'], child:'fx-spot-feed'},
   {name:'trading-signals',  crew:'crew:signal-desk',     r:16, speed:.06,  ladder:'development',      n:30, y:-1.4, k:1, human:false,
    grants:['market-data','compliance-vault'], sim:{id:'sim_backtest_26q3', audience:2}},
-  {name:'risk-limits',      crew:'crew:risk-officers',   r:21, speed:.044, ladder:'committed',        n:20, y:1.9,  k:1, human:false,
+  {name:'risk-limits',      crew:'crew:risk-officers',   r:21, speed:.044, ladder:'protected',        n:20, y:1.9,  k:1, human:false,
    grants:['market-data','ref-taxonomy']},
-  {name:'ref-taxonomy',     crew:'crew:data-stewards',   r:26, speed:.034, ladder:'committed',        n:18, y:-0.7, k:2, human:true,
+  {name:'ref-taxonomy',     crew:'crew:data-stewards',   r:26, speed:.034, ladder:'protected',        n:18, y:-0.7, k:2, human:true,
    grants:['compliance-vault'], vocab:true},
-  {name:'compliance-vault', crew:'crew:audit-archive',   r:31, speed:.025, ladder:'validated/frozen', n:28, y:1.0,  k:1, human:false,
+  {name:'compliance-vault', crew:'crew:audit-archive',   r:31, speed:.025, ladder:'frozen', n:28, y:1.0,  k:1, human:false,
    grants:[]},
 ];
 const byName = n=>WAS.find(w=>w.name===n);
@@ -629,7 +629,7 @@ function Universe(){
   const MARK_ERS=new THREE.SpriteMaterial({map:RING,color:0x64748b,transparent:true,opacity:.5,blending:THREE.AdditiveBlending,depthWrite:false});
 
   WAS.forEach((w,wi)=>{
-    const frozen=w.ladder==='validated/frozen';
+    const frozen=w.ladder==='frozen';
     w.ring=ringLine(w.r,LADDER[w.ladder],frozen?.14:THEME.op.ring,w.y);
     system.add(w.ring);
     w.group=new THREE.Group();w.angle=w.angle??rnd(0,Math.PI*2);
@@ -713,7 +713,7 @@ function Universe(){
     w.lbl.innerHTML=`<span class="st" style="background:${dotColor}"></span>${w.name}<small>${w.crew} · ${w.ladder}</small>`;
   }
   const coreLbl=document.createElement('div');coreLbl.className='lbl';
-  coreLbl.innerHTML=`universe root<small>permanently committed · no claims live here<br>journal: per-tenant signed chain — click to verify</small>`;
+  coreLbl.innerHTML=`universe root<small>permanently protected · no claims live here<br>journal: per-tenant signed chain — click to verify</small>`;
   labelsEl.appendChild(coreLbl);
 
   /* standing structure: solid cool = relationships, dashed pale gold = permission */
@@ -749,8 +749,8 @@ function Universe(){
           <button id="goPipe" class="cta">admission pipeline ▸</button>
           <button id="goChain" class="cta">journal chain ▸</button>`);
   document.getElementById('goPipe').onclick=()=>{
-    const w=byName('ref-taxonomy').ladder!=='validated/frozen'?byName('ref-taxonomy')
-          :WAS.find(x=>x.ladder!=='validated/frozen')||WAS[0];
+    const w=byName('ref-taxonomy').ladder!=='frozen'?byName('ref-taxonomy')
+          :WAS.find(x=>x.ladder!=='frozen')||WAS[0];
     switchMode('reactor',w,w.group.position.clone());};
   document.getElementById('goChain').onclick=()=>switchMode('ledger',null,core.position.clone());
   setLegend([
@@ -758,8 +758,8 @@ function Universe(){
     {grp:'state'},['#fff','◌ ring = held'],['var(--promoted)','● promoted'],['var(--demoted)','demoted'],['var(--sim)','backtest (fenced)'],
     {grp:'structure'},['var(--grant)','◆ grant lane'],['var(--edge)','related edge'],['var(--lad-val)','frozen archive']]);
   hint.textContent=matchMedia('(pointer:coarse)').matches
-    ?'drag to orbit · pinch to zoom · tap a memory, a workarea, or the core'
-    :'drag to orbit · scroll to zoom · click a memory, a workarea, or the core';
+    ?'drag to orbit · pinch to zoom · tap a memory, a workspace, or the core'
+    :'drag to orbit · scroll to zoom · click a memory, a workspace, or the core';
 
   function refreshMarks(w){
     if(!w.marks||w.marks.parent!==w.pts){w.marks=new THREE.Group();w.pts.add(w.marks);} /* child of pts: spins for free */
@@ -790,7 +790,7 @@ function Universe(){
     w.claims[i]=mkClaim(w,status);
     setParticle(w,i,status);return i;
   }
-  const activeAreas=()=>WAS.filter(x=>x.ladder!=='validated/frozen');
+  const activeAreas=()=>WAS.filter(x=>x.ladder!=='frozen');
   const grantedSources=w=>w.grants.map(byName).filter(Boolean);
 
   /* choreography: at most two flights speak at once; every flight is a
@@ -903,16 +903,16 @@ function Universe(){
   }
   function maybeCeremony(w){
     if(w.ceremony)return;
-    const next=w.ladder==='development'&&w.promotions>=6?'committed'
-             :w.ladder==='committed'&&w.promotions>=12?'validated/frozen':null;
+    const next=w.ladder==='development'&&w.promotions>=6?'protected'
+             :w.ladder==='protected'&&w.promotions>=12?'frozen':null;
     if(!next)return;
-    if(next==='validated/frozen'&&w.child){
-      journal.emit('workarea.status_proposed',`wa:${w.name} → validated · child ${w.child} is development (child-status rule)`,'refuse');
+    if(next==='frozen'&&w.child){
+      journal.emit('workspace.status_proposed',`wa:${w.name} → frozen · child ${w.child} is development (child-status rule)`,'refuse');
       w.promotions=8;
       return;
     }
-    if(next==='validated/frozen'&&w.sim){
-      journal.emit('workarea.status_proposed',`wa:${w.name} → validated · a simulation is fenced on the subtree — end it first`,'refuse');
+    if(next==='frozen'&&w.sim){
+      journal.emit('workspace.status_proposed',`wa:${w.name} → frozen · a simulation is fenced on the subtree — end it first`,'refuse');
       journal.emit('simulation.ended',`${w.sim.id} · tainted rows demoted · fence lifted`);
       if(w.simGroup){disposeGroup(w.simGroup);w.group.remove(w.simGroup);w.simGroup=null;}
       if(w.simLbl){w.simLbl.remove();w.simLbl=null;}
@@ -923,10 +923,10 @@ function Universe(){
     const [a,b2]=[w.agents[0],w.agents[1]];
     flow.send(w.group.position.clone().add(a.position),()=>w.group.position.clone(),CLR.human,{arc:2.2,dur:1.1,burstScale:.5,
       onArrive:()=>{
-        journal.emit('workarea.status_proposed',`wa:${w.name} · ${w.ladder} → ${next} · proposer key_${hex(6)}`);
+        journal.emit('workspace.status_proposed',`wa:${w.name} · ${w.ladder} → ${next} · proposer key_${hex(6)}`);
         flow.send(w.group.position.clone().add(b2.position),()=>w.group.position.clone(),CLR.grant,{arc:2.6,dur:THEME.dur.ceremony,shape:DIA,burstScale:1.2,
           onArrive:()=>{
-            journal.emit('workarea.status_transition',`wa:${w.name} · ${w.ladder} → ${next} · ratifier ≠ proposer (R2) · policy snapshot pinned`);
+            journal.emit('workspace.status_transition',`wa:${w.name} · ${w.ladder} → ${next} · ratifier ≠ proposer (R2) · policy snapshot pinned`);
             transitionArea(w,next);
             w.ceremony=null;
           }});
@@ -935,7 +935,7 @@ function Universe(){
   function transitionArea(w,next){
     w.ladder=next;w.promotions=0;
     const c=LADDER[next];
-    const frozen=next==='validated/frozen';
+    const frozen=next==='frozen';
     w.glowMain.material.color.set(c);w.glowHalo.material.color.set(c);
     if(frozen){w.glowMain.material.opacity=.6;w.glowHalo.material.opacity=.1;}
     system.remove(w.ring);w.ring.geometry.dispose();w.ring.material.dispose();
@@ -944,7 +944,7 @@ function Universe(){
     updateLbl(w);
     if(frozen){
       w.cage=makeCage(w);
-      WAS.filter(p=>p!==w&&p.ladder!=='validated/frozen').forEach((p,i)=>{
+      WAS.filter(p=>p!==w&&p.ladder!=='frozen').forEach((p,i)=>{
         timers.push(setTimeout(()=>{
           if(p.grants.includes(w.name))return;
           p.grants.push(w.name);
@@ -955,7 +955,7 @@ function Universe(){
       });
       const story=document.getElementById('hudStory');
       if(story)story.innerHTML=`<b>${w.name}</b> froze: new writes refuse, reads serve · crews gained reader grants on it`;
-      timers.push(setTimeout(()=>journal.emit('submission.remember',`wa:${w.name} · workarea.frozen — frozen areas serve reads, never writes`,'refuse'),2600));
+      timers.push(setTimeout(()=>journal.emit('submission.remember',`wa:${w.name} · workspace.frozen — frozen areas serve reads, never writes`,'refuse'),2600));
     }
   }
   /* the fence fences: periodically a non-audience read is refused at the shell */
@@ -1062,7 +1062,7 @@ function Universe(){
         if(w.childGroup){const ca=REDUCED?2.1:t*.35;w.childGroup.position.set(Math.cos(ca)*4.6,.9,Math.sin(ca)*4.6);}
         if(w.simGroup){const sa=REDUCED?4.2:t*.28+2;w.simGroup.position.set(Math.cos(sa)*4.9,-1.1,Math.sin(sa)*4.9);
           w.simKeys.forEach(kg=>{kg.position.set(Math.cos(t*.8*MOT+kg._a)*2.1,0,Math.sin(t*.8*MOT+kg._a)*2.1);});}
-        const frozen=w.ladder==='validated/frozen';
+        const frozen=w.ladder==='frozen';
         w.glowHalo.material.opacity=w.hovered?.55:(frozen?.1:THEME.op.halo+Math.sin(t*1.3+w.r)*.06*MOT);
       });
       /* labels: project through the tilted system */
@@ -1108,11 +1108,11 @@ function Universe(){
         const w=WAS.find(x=>x.hub===hit[0].object);
         const c={held:0,prom:0,sup:0,dem:0,ers:0};w.statuses.forEach(s=>c[s]=(c[s]||0)+1);
         const prog=w.ladder==='development'?Math.min(100,w.promotions/6*100)
-                  :w.ladder==='committed'?Math.min(100,Math.max(0,w.promotions)/12*100):100;
+                  :w.ladder==='protected'?Math.min(100,Math.max(0,w.promotions)/12*100):100;
         sel=null;selMarker.visible=false;
         panel.innerHTML=`<button class="x" id="pxw">✕</button>
           <div class="head"><h4>${w.name}</h4>
-          <div class="crew">${w.crew} — writer keys with reader grants, plus dreamer keys</div></div>
+          <div class="crew">${w.crew} — writer keys with reader grants, plus reviewer keys</div></div>
           <div class="body"><table>
           <tr><td>status ladder</td><td>${w.ladder}</td></tr>
           ${w.child?`<tr><td>children</td><td>${w.child} (development)</td></tr>`:''}
@@ -1124,11 +1124,11 @@ function Universe(){
           <tr><td>reads</td><td>own subtree + grants:<br>${w.grants.join(', ')||'—'}</td></tr>
           <tr><td>writes</td><td>own subtree (writer grant)</td></tr></table>
           <div class="bar"><i style="width:${prog}%"></i></div>
-          ${w.ladder==='validated/frozen'?'<div class="docsrow">frozen: serves reads · refuses new writes · demote and erase stay journalled</div>'
-            :w.child&&w.ladder==='committed'?`<div class="docsrow">validate blocked while child ${w.child} is development (child-status rule)</div>`
+          ${w.ladder==='frozen'?'<div class="docsrow">frozen: serves reads · refuses new writes · demote and erase stay journalled</div>'
+            :w.child&&w.ladder==='protected'?`<div class="docsrow">freeze blocked while child ${w.child} is development (child-status rule)</div>`
             :'<div class="docsrow">bar = promotions since last transition (mock pacing — transitions are propose + ratify acts)</div>'}
-          <div class="docsrow">docs: <a href="../architecture/workspaces/">workareas</a> · <a href="../architecture/admission/">admission</a> · <a href="../architecture/roles-and-keys/">roles &amp; keys</a></div>
-          ${w.ladder!=='validated/frozen'?'<button class="go cta" id="goReactor">enter the admission pipeline →</button>':''}</div>`;
+          <div class="docsrow">docs: <a href="../architecture/workspaces/">workspaces</a> · <a href="../architecture/admission/">admission</a> · <a href="../architecture/roles-and-keys/">roles &amp; keys</a></div>
+          ${w.ladder!=='frozen'?'<button class="go cta" id="goReactor">enter the admission pipeline →</button>':''}</div>`;
         panel.hidden=false;
         document.getElementById('pxw').onclick=clearSelection;
         const go=document.getElementById('goReactor');
@@ -1139,7 +1139,7 @@ function Universe(){
   };
 }
 
-/* ════════════════════════ MODE: reactor (per workarea) ══════════════════ */
+/* ════════════════════════ MODE: reactor (per workspace) ══════════════════ */
 function Reactor(w){
   const group=new THREE.Group();
   const timers=[];
@@ -1154,18 +1154,18 @@ function Reactor(w){
   const humanGate=glow(CLR.human,1.8,.95);humanGate.position.set(10,6,0);group.add(humanGate);
   group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(10,.4,0),new THREE.Vector3(10,5.4,0)]),
     new THREE.LineBasicMaterial({color:0xffffff,transparent:true,opacity:.22})));
-  const dreamers=[];
+  const reviewers=[];
   for(let i=0;i<3;i++){const d=glow(CLR.agent,1.2,.95);d._a=i/3*Math.PI*2;
-    d.material.color.offsetHSL(i*.06,0,i*.04);  /* dreamers are individuals */
+    d.material.color.offsetHSL(i*.06,0,i*.04);  /* reviewers are individuals */
     const dot=glow(0xffffff,.28,.9);dot.position.set(0,.8,0);d.add(dot);
-    group.add(d);dreamers.push(d);}
+    group.add(d);reviewers.push(d);}
   const shelf=new THREE.Group();shelf.position.set(20,-1.9,0);group.add(shelf);let shelfN=0;
   const rejShelf=new THREE.Group();rejShelf.position.set(10,-1.9,-5);group.add(rejShelf);let rejN=0;
   const claims=new Set();
   let humanOn=w.human,kNeed=w.k;
   const counts={held:0,prom:0,rej:0};
 
-  setHud(`<span class="tag">workarea <b>${w.name}</b> · ${w.crew} · writes <b>/v1</b>, verdicts <b>/v2</b></span>
+  setHud(`<span class="tag">workspace <b>${w.name}</b> · ${w.crew} · writes <b>/v1</b>, verdicts <b>/v2</b></span>
     <span class="tag">held <b class="num" id="rHeld">0</b> · promoted <b class="num" id="rProm">0</b> · rejected <b class="num" id="rRej">0</b></span>
     <button id="rHuman" aria-pressed="${humanOn}">human_required: vocab.*</button>
     <button id="rK" aria-pressed="${kNeed===2}">k = 2 — two approving verdicts</button>
@@ -1174,7 +1174,7 @@ function Reactor(w){
   document.getElementById('rK').onclick=e=>{kNeed=kNeed===2?1:2;e.currentTarget.setAttribute('aria-pressed',kNeed===2);};
   setLegend([
     {grp:'claims'},['var(--held)','◌ held'],['var(--promoted)','● promoted'],['var(--rejected)','◌ rejected / vetoed (kept in view)'],
-    {grp:'actors'},['var(--accent)','dreamer'],['#fff','human'],
+    {grp:'actors'},['var(--accent)','reviewer'],['#fff','human'],
     {grp:'marks'},['var(--lad-dev)','■ attachment'],['var(--gold)','◆ vocab finding']]);
   hint.textContent=`write path of ${w.name} · click a claim to read it · a reject is journalled — a scan veto refuses before capture · Esc to go back`;
 
@@ -1212,7 +1212,7 @@ function Reactor(w){
     exit(){timers.forEach(clearTimeout);showTip(null);},
     frame(t,dt){
       const sm=k=>1-Math.exp(-k*dt);   /* frame-rate-independent lerps */
-      dreamers.forEach(d=>{d._a+=1.2*dt*(REDUCED?.2:1);d.position.set(10+Math.cos(d._a)*3.2,.2,Math.sin(d._a)*3.2);});
+      reviewers.forEach(d=>{d._a+=1.2*dt*(REDUCED?.2:1);d.position.set(10+Math.cos(d._a)*3.2,.2,Math.sin(d._a)*3.2);});
       humanGate.position.y=6+Math.sin(t*1.4)*.15*MOT;
       if(LIVE&&(spawnAcc+=dt)>(REDUCED?4:1.6)){spawnAcc=0;if(claims.size<26)spawn();}
       claims.forEach(c=>{
@@ -1235,12 +1235,12 @@ function Reactor(w){
           case 'review':{const tx=10+Math.cos(c._a)*2.2,tz=Math.sin(c._a)*2.2;
               c.position.x+=(tx-c.position.x)*sm(3.6);c.position.z+=(tz-c.position.z)*sm(3.6);
               if(!c._served){c._served=true;
-                if(LIVE){journal.emit('review.serve',`${c._name} → dreamer · served_digests pinned${c._att?' · attachment served':''}`);note(c._cl,'review.serve');}}
+                if(LIVE){journal.emit('review.serve',`${c._name} → reviewer · served_digests pinned${c._att?' · attachment served':''}`);note(c._cl,'review.serve');}}
               if(c._t>1.8){
                 let reviewer=(Math.random()*3)|0;
                 if(reviewer===c._author){
                   if(LIVE)journal.emit('review.author_in_lineage',`${c._name} · reviewer = author — verdict refused`,'refuse');
-                  const d=dreamers[reviewer];const orig=d.material.color.clone();
+                  const d=reviewers[reviewer];const orig=d.material.color.clone();
                   d.material.color.set(CLR.rej);
                   timers.push(setTimeout(()=>d.material.color.copy(orig),600));
                   c._t=.9;break;
@@ -1250,8 +1250,8 @@ function Reactor(w){
                 c._reviews++;c._served=false;
                 const willReject=c._reviews===kNeed&&Math.random()<.15;
                 if(LIVE&&!willReject){
-                  journal.emit('review.approve',`${c._name} · dreamer ${reviewer} · verdict ${c._reviews} of ${kNeed}`);note(c._cl,'review.approve');}
-                if(willReject){reject(c,`dreamer ${reviewer} verdict: reject`);break;}
+                  journal.emit('review.approve',`${c._name} · reviewer ${reviewer} · verdict ${c._reviews} of ${kNeed}`);note(c._cl,'review.approve');}
+                if(willReject){reject(c,`reviewer ${reviewer} verdict: reject`);break;}
                 if(c._reviews<kNeed){c._t=0;break;}
                 if(c._vocab&&humanOn){c._phase='human';c._t=0;}
                 else{c._phase='out';c.material.color.set(CLR.prom);c.material.map=CORE;c._cl.status='prom';counts.held--;counts.prom++;
@@ -1260,10 +1260,10 @@ function Reactor(w){
                     journal.emit('lifecycle.promote',`${c._name} · wa:${w.name} · ratification ev_${hex(8)}`);note(c._cl,'lifecycle.promote');}}}break;}
           case 'human': c.position.y+=(5.6-c.position.y)*sm(4.8);
               if(c._t>2.2){
-                if(Math.random()<.15){c.position.y=0;reject(c,'held_by:human verdict: reject');break;}
+                if(Math.random()<.15){c.position.y=0;reject(c,'used_by:person verdict: reject');break;}
                 c._phase='out';c.material.color.set(CLR.prom);c.material.map=CORE;c._cl.status='prom';counts.held--;counts.prom++;
                 els.held.textContent=counts.held;els.prom.textContent=counts.prom;
-                if(LIVE){journal.emit('review.approve',`${c._name} · held_by:human · finding vocab.deprecation_replaced_by`);note(c._cl,'review.approve');
+                if(LIVE){journal.emit('review.approve',`${c._name} · used_by:person · finding vocab.deprecation_replaced_by`);note(c._cl,'review.approve');
                   journal.emit('review.ratify',`${c._name} · policy satisfied (human gate)`);note(c._cl,'review.ratify');
                   journal.emit('lifecycle.promote',`${c._name} · wa:${w.name} · ratification ev_${hex(8)}`);note(c._cl,'lifecycle.promote');}}break;
           case 'rejected':{const tx=10,tz=-5;
@@ -1326,14 +1326,14 @@ function Ledger(){
   const HELIX_R=7,STEP=1.15,TURN=.62;
   let blocks=[],links=[],broken=-1,erased=false,growAcc=0;
   const REVIEW_BLUE=THEME.c.review;
-  const KINDS=[['tenant.genesis',0xffffff],['workarea.create',CLR.agent],['key.issued',CLR.agent],
+  const KINDS=[['tenant.genesis',0xffffff],['workspace.create',CLR.agent],['key.issued',CLR.agent],
     ['submission.remember',CLR.held],['review.approve',REVIEW_BLUE],['review.ratify',REVIEW_BLUE],
     ['lifecycle.promote',CLR.prom],['lifecycle.supersede',CLR.sup],['submission.remember',CLR.held]];
-  const GROW_DETAIL={'key.issued':()=>'role dreamer · held_by agent','submission.remember':()=>mkClaim(byName('trading-signals'),'held').key,
+  const GROW_DETAIL={'key.issued':()=>'role reviewer · used_by agent','submission.remember':()=>mkClaim(byName('trading-signals'),'held').key,
     'review.approve':()=>'verdict against a fresh serve','review.ratify':()=>'policy satisfied',
     'lifecycle.promote':()=>`${mkClaim(byName('market-data'),'prom').key} · ratification ev_${hex(8)}`,
     'lifecycle.supersede':()=>`tip moved · ratification ev_${hex(8)}`,
-    'workarea.create':()=>'node under the universe root'};
+    'workspace.create':()=>'node under the universe root'};
   const posAt=i=>{const a=i*TURN;return new THREE.Vector3(Math.cos(a)*HELIX_R,i*STEP-8,Math.sin(a)*HELIX_R);};
   const helix=new THREE.Group();group.add(helix);
   const verifier=glow(0xffffff,1.1,.9);group.add(verifier);

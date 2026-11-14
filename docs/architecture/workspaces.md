@@ -1,36 +1,36 @@
 ---
 status: Stable
 verified: 2026-11-14
-answers: "how workareas grant access: the tree and its universe root, user roots, node-id grants, how effective access is computed, claim links and the brief, crew records, the status ladder, and in-progress workareas"
+answers: "how workspaces grant access: the tree and its universe root, user roots, node-id grants, how effective access is computed, claim links and the brief, crew records, the status ladder, and in-progress workspaces"
 ---
 
-# How workareas grant access
+# How workspaces grant access
 
-A workarea is a node in one tree per tenant, rooted at `universe`. Keys read and write through grants on nodes. A grant covers its node and everything below it. A denial always wins. A status never changes a grant: `validated` refuses new writes, approvals and child workareas for every key alike, and review runs the same way at every status.
+A workspace is a node in one tree per tenant, rooted at `universe`. Keys read and write through grants on nodes. A grant covers its node and everything below it. A denial always wins. A status never changes a grant: `frozen` refuses new writes, approvals and child workspaces for every key alike, and review runs the same way at every status.
 
-The [serving view](views.md#logical-one-agent-key-and-everything-it-is-served) draws what one key reads in the tree, and the [workarea lifecycle](lifecycle.md) draws development, release and sharing.
+The [serving view](views.md#logical-one-agent-key-and-everything-it-is-served) draws what one key reads in the tree, and the [workspace lifecycle](lifecycle.md) draws development, release and sharing.
 
-OML mirrors an externally managed crew with a workarea. It records which governed space a crew's memories live in. It never runs the crew.
+OML mirrors an externally managed crew with a workspace. It records which governed space a crew's memories live in. It never runs the crew.
 
 ## The tree
 
-Every workarea except `universe` has exactly one parent, so the tree has no cycles and each node has one path from the root. A workarea's name is one label, unique in the tenant's shared namespace or within one user root, and never changes. A node can be referred to by name or by id.
+Every workspace except `universe` has exactly one parent, so the tree has no cycles and each node has one path from the root. A workspace's name is one label, unique in the tenant's shared namespace or within one user root, and never changes. A node can be referred to by name or by id.
 
 The root, `universe`, has three fixed properties:
 
-- It stays `committed`. It never moves to `development` or `validated`.
-- It cannot be deleted; no workarea can.
-- It takes writes only from curators. See [user roots](#the-workarea-of-each-user).
+- It stays `protected`. It never moves to `development` or `frozen`.
+- It cannot be deleted; no workspace can.
+- It takes writes only from curators. See [user roots](#the-workspace-of-each-user).
 
 The diagram shows one tenant. Solid arrows are the tree.
 
 ```mermaid
 flowchart TD
-    U["universe<br/>(committed)"]
-    RC["research-crew<br/>(committed)"]
+    U["universe<br/>(protected)"]
+    RC["research-crew<br/>(protected)"]
     OC["ops-crew<br/>(development)"]
-    LR["lit-review<br/>(validated)"]
-    EX["experiments<br/>(committed)"]
+    LR["lit-review<br/>(frozen)"]
+    EX["experiments<br/>(protected)"]
     RG["run-grid<br/>(development)"]
     U --> RC
     U --> OC
@@ -41,9 +41,9 @@ flowchart TD
 
 A tenant's tree never spans tenants. Nothing on this page reaches across a tenant boundary.
 
-## The workarea of each user
+## The workspace of each user
 
-When a person's first key is issued, OML creates a workarea of their own under `universe`, named for them. Their keys write, read and create workareas there. With alice's key, `oml workareas create alice project` creates `universe.alice.project`. Two people can each have a `project`.
+When a person's first key is issued, OML creates a workspace of their own under `universe`, named for them. Their keys write, read and create workspaces there. With alice's key, `oml workspaces create alice project` creates `universe.alice.project`. Two people can each have a `project`.
 
 ```mermaid
 flowchart TD
@@ -60,13 +60,13 @@ flowchart TD
     B --> BP
 ```
 
-- **A user key reaches its own root and the `universe` node, nothing else.** It reads memories placed on `universe` itself. It never reads another user's root or a shared workarea.
+- **A user key reaches its own root and the `universe` node, nothing else.** It reads memories placed on `universe` itself. It never reads another user's root or a shared workspace.
 - **Recall.** A recall inside the root also searches `universe`. A memory shown from `universe` carries no author and no source.
 - **Only the keys start a memory in the root.** A reviewer granted there reads, reviews and proposes edits and retirements. Its new memory is refused with `submission.user_root_refused`, and so is putting a retired memory back. The keys of the web session belong to the user: the `<user>-review` key puts the user's retired memory back, and in another person's root it is a granted reviewer like any other.
 - **Curation.** `universe` holds only memories that curators place there. A second identity reviews each one like any write. No user key writes to it directly.
-- **Climbing the ladder.** A user root reaches `committed` and no further.
+- **Climbing the ladder.** A user root reaches `protected` and no further.
 
-Workareas and keys made before user roots existed stay where they are and belong to no person.
+Workspaces and keys made before user roots existed stay where they are and belong to no person.
 
 ## Grants bind to node ids
 
@@ -80,7 +80,7 @@ Effective access is the union of the key's grants, minus anything a global deny 
 
 1. **Per-grant deny.** A deny entry sits inside one grant and cuts a subtree out of that grant only.
 2. **Union.** The key's grants are combined. A subtree denied in grant A is still reachable if grant B covers it without a deny.
-3. **Global deny.** A key-wide deny names subtrees the key cannot reach, whatever the grants yield. Set one with `oml deny set <key> <workarea>`.
+3. **Global deny.** A key-wide deny names subtrees the key cannot reach, whatever the grants yield. Set one with `oml deny set <key> <workspace>`.
 
 On the example tree, grant A is reader on `research-crew` with a deny on `experiments`. Grant B is reader on `experiments`. A global deny names `run-grid`.
 
@@ -95,11 +95,11 @@ A `node` grant covers its node and no descendant. Every user key carries one as 
 
 ### Who may write
 
-Effective access decides. A key with writer access on a node may submit there. A status never recomputes or edits a grant. A `validated` workarea refuses new writes with a typed error that every writer receives alike.
+Effective access decides. A key with writer access on a node may submit there. A status never recomputes or edits a grant. A `frozen` workspace refuses new writes with a typed error that every writer receives alike.
 
 ## Links and the brief
 
-A claim link connects two memories with a label: any non-empty label outside the `oml:` prefix, or `oml:is_a` or `oml:part_of` between two terms. A **brief** is the few reviewed memories an agent most needs on entering a workarea. A link or a brief entry follows the propose-and-ratify rule: one key proposes, and a second key confirms. The ratifier is never the proposer.
+A claim link connects two memories with a label: any non-empty label outside the `oml:` prefix, or `oml:is_a` or `oml:part_of` between two terms. A **brief** is the few reviewed memories an agent most needs on entering a workspace. A link or a brief entry follows the propose-and-ratify rule: one key proposes, and a second key confirms. The ratifier is never the proposer.
 
 ```sh
 oml edges propose --help
@@ -107,77 +107,77 @@ oml edges ratify --help
 oml edges list --help
 ```
 
-A pending edge grants nothing and shows as pending. A link may join memories in two workareas the proposer reads, with dreamer on at least one of them; one that crosses an in-progress subtree's boundary is refused with `workarea.in_progress_refused`, reason `edge_crosses`.
+A pending edge grants nothing and shows as pending. A link may join memories in two workspaces the proposer reads, with reviewer on at least one of them; one that crosses an in-progress subtree's boundary is refused with `workspace.in_progress_refused`, reason `edge_crosses`.
 
 ## Crews
 
-A crew is a named record: a name, a charter URI and an external manager. A workarea names at most one crew, and a crew can serve many workareas. A key can name one crew when it is issued.
+A crew is a named record: a name, a charter URI and an external manager. A workspace names at most one crew, and a crew can serve many workspaces. A key can name one crew when it is issued.
 
-OML never contacts the external manager and never schedules the crew. It stores the charter URI without checking it. An admin creates and updates crew records with `oml crews`. Admins can correct a crew record whatever the status of the workareas that name it.
+OML never contacts the external manager and never schedules the crew. It stores the charter URI without checking it. An admin creates and updates crew records with `oml crews`. Admins can correct a crew record whatever the status of the workspaces that name it.
 
 ## The status ladder
 
-A workarea is in one of three statuses. Transitions go forward only. There is no unfreeze. To change a frozen space, create a new workarea elsewhere.
+A workspace is in one of three statuses. Transitions go forward only. There is no unfreeze. To change a frozen space, create a new workspace elsewhere.
 
 ```mermaid
 stateDiagram-v2
     [*] --> development : create
-    development --> committed : propose + ratify
-    committed --> validated : propose + ratify<br/>(all children validated)
-    validated --> [*]
+    development --> protected : propose + ratify
+    protected --> frozen : propose + ratify<br/>(all children frozen)
+    frozen --> [*]
 ```
 
 | Status | What it means |
 |---|---|
-| `development` | New workareas start here. Review runs as everywhere. |
-| `committed` | The working state of a governed space. Promotions are allowed. |
-| `validated` | Frozen. Reads continue. The workarea accepts a crew record update and a rejection of a held memory, and nothing else. |
+| `development` | New workspaces start here. Review runs as everywhere. |
+| `protected` | The working state of a governed space. Promotions are allowed. |
+| `frozen` | Reads continue. The workspace accepts a crew record update and a rejection of a held memory, and nothing else. |
 
 One key proposes a step and a different key ratifies it:
 
 ```sh
-oml workareas status propose project --to committed
-oml workareas status ratify project <transition-id>
+oml workspaces status propose project --to protected
+oml workspaces status ratify project <transition-id>
 ```
 
-`oml workareas status pending` lists the live proposals. A step to `validated` needs every child already `validated`. A ratification checks the workarea as it is at that moment. A stale proposal is refused with `workarea.transition_refused`, with a reason such as `stale` or `children_not_validated`.
+`oml workspaces status pending` lists the live proposals. A step to `frozen` needs every child already `frozen`. A ratification checks the workspace as it is at that moment. A stale proposal is refused with `workspace.transition_refused`, with a reason such as `stale` or `children_not_frozen`.
 
 ### What each status refuses
 
-| Operation | `development` | `committed` | `validated` |
+| Operation | `development` | `protected` | `frozen` |
 |---|---|---|---|
 | New memory write | held | held | **refused** |
 | Approve a memory | allowed | allowed | **refused** |
 | Reject a held memory | allowed | allowed | allowed |
-| Create a child workarea | allowed | allowed | **refused** |
+| Create a child workspace | allowed | allowed | **refused** |
 | Update the crew record | allowed | allowed | allowed |
 | Read | by effective access | by effective access | by effective access |
 
-A frozen workarea keeps serving reads. Freezing is not archiving. A held memory left behind by a freeze can still be rejected.
+A frozen workspace keeps serving reads. Freezing is not archiving. A held memory left behind by a freeze can still be rejected.
 
-## In-progress workareas
+## In-progress workspaces
 
-A person can put a development workarea in progress, when every workarea below it is `development` too, with `oml workareas mode <workarea> in_progress`, using their own reviewer key (role `dreamer`, held by a human). Inside an in-progress workarea, readers recall held memories and derived facts, labeled unreviewed, when the scan did not hold them and they were last scanned under the current rule set; a retirement version is never served there. Nothing leaves the workarea until its mode returns to standard: a reader scoped outside it sees nothing from inside, approved rows included. The `standard` mode that returns it is refused while any memory is held. See [Organize memory in workareas](../use/workspaces.md) for the commands.
+A person can put a development workspace in progress, when every workspace below it is `development` too, with `oml workspaces mode <workspace> in_progress`, using their own reviewer key (role `reviewer`, used by a person). Inside an in-progress workspace, readers recall held memories and derived facts, labeled unreviewed, when the scan did not hold them and they were last scanned under the current rule set; a retirement version is never served there. Nothing leaves the workspace until its mode returns to standard: a reader scoped outside it sees nothing from inside, approved rows included. The `standard` mode that returns it is refused while any memory is held. See [Organize memory in workspaces](../use/workspaces.md) for the commands.
 
 ## Federated recall
 
-A recall searches its workarea's subtree. An admin can turn federation on for the tenant. Then a recall with `sources: "wide"` also searches the `committed` and `validated` workareas the key reads elsewhere. A list such as `["legal", "product"]` searches exactly those ([retrieval](retrieval.md#searching-beyond-the-scope); [ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). Nothing becomes readable that was not: a source is a workarea the key reads, and a key never learns of one it cannot read.
+A recall searches its workspace's subtree. An admin can turn federation on for the tenant. Then a recall with `sources: "wide"` also searches the `protected` and `frozen` workspaces the key reads elsewhere. A list such as `["legal", "product"]` searches exactly those ([retrieval](retrieval.md#searching-beyond-the-scope); [ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). Nothing becomes readable that was not: a source is a workspace the key reads, and a key never learns of one it cannot read.
 
 | Setting | Who sets it | Default | Command |
 |---|---|---|---|
 | Federation on the tenant: `enabled`, `default_sources`, `max_sources` | an admin key | off, `scope`, 8 | `oml search federation --enabled on` |
-| Whether recalls scoped elsewhere may search a workarea: `accept_federated` | a person's reviewer key on the workarea, or an admin key | on | `oml workareas federation <workarea> off` |
+| Whether recalls scoped elsewhere may search a workspace: `accept_federated` | a person's reviewer key on the workspace, or an admin key | on | `oml workspaces federation <workspace> off` |
 
-`accept_federated` grants nothing. Turned off, a key that reads the workarea still recalls there by naming it as the scope. A `development` workarea, and every workarea inside an in-progress subtree, is never searched by another scope's recall, whatever its setting. Each change is journalled, `federation.policy_set` and `workarea.federation_set`. The policy takes an admin key; `accept_federated` takes an admin key or a person-held dreamer key with dreamer on the workarea, and any other agent-held key is refused.
+`accept_federated` grants nothing. Turned off, a key that reads the workspace still recalls there by naming it as the scope. A `development` workspace, and every workspace inside an in-progress subtree, is never searched by another scope's recall, whatever its setting. Each change is journalled, `federation.policy_set` and `workspace.federation_set`. The policy takes an admin key; `accept_federated` takes an admin key or a person-held reviewer key with reviewer on the workspace, and any other agent-held key is refused.
 
-### A directory workarea
+### A directory workspace
 
-Federated recall searches only what a key reads, so it never tells a crew that a workarea it cannot read exists. A team that wants others to find its work writes a description as an ordinary claim. It goes in a workarea the audience reads, such as a node `directory` under `universe`:
+Federated recall searches only what a key reads, so it never tells a crew that a workspace it cannot read exists. A team that wants others to find its work writes a description as an ordinary claim. It goes in a workspace the audience reads, such as a node `directory` under `universe`:
 
 ```sh
-oml workareas create universe directory
-oml write --workarea directory --claim-key legal-crew "acme.legal holds the contract templates and the review checklist; ask the legal crew's admin for reader."
+oml workspaces create universe directory
+oml write --workspace directory --claim-key legal-crew "acme.legal holds the contract templates and the review checklist; ask the legal crew's admin for reader."
 ```
 
-The claim is reviewed like any other. Reader on `directory` is the discover grant. Reading an entry grants nothing on the workarea it describes; access is still a grant an admin issues. An entry is a copy that can go stale, and federated recall never routes to the workarea it names.
+The claim is reviewed like any other. Reader on `directory` is the discover grant. Reading an entry grants nothing on the workspace it describes; access is still a grant an admin issues. An entry is a copy that can go stale, and federated recall never routes to the workspace it names.
 

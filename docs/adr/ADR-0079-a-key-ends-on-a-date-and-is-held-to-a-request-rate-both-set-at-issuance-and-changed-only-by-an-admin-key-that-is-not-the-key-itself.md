@@ -30,7 +30,7 @@ The other two do not exist (#323):
   d3) bounds when a connection may open, not how long it lasts.
 - **No key has a rate of its own.** [ADR-0068](ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md)
   d5 counts `requests_per_minute` for the keys of a person of the sign-up tenant, from that
-  person's quota. A tenant key, which is what an operator issues for a demo workarea, is under no
+  person's quota. A tenant key, which is what an operator issues for a demo workspace, is under no
   rate, and [security](../architecture/security.md) lists that as limit 7.
 
 So this record decides the parts those records left open: where the date and the rate are set,

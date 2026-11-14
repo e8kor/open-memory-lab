@@ -2,10 +2,10 @@
 id: adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards
 tier: engineering
 status: accepted design · 2026-11-14
-answers: which acts an admin key may take on a workarea's content, on which targets, and with which key; why each takes effect at once and what makes it break-glass; how an admin edit is scanned; how a fix reaches keys bound to a release; how a fix that loosens a guardrail is alerted; what readers see; who confirms or reverts a fix, who authors a revert and what it may not revert; what an admin may read and on which surfaces; what happens in a frozen workarea and in universe; exactly which constitutional sentences this changes and which earlier record already changed one; the person-side read, doctor lines and metrics; and the questions left for the operator
+answers: which acts an admin key may take on a workspace's content, on which targets, and with which key; why each takes effect at once and what makes it break-glass; how an admin edit is scanned; how a fix reaches keys bound to a release; how a fix that loosens a guardrail is alerted; what readers see; who confirms or reverts a fix, who authors a revert and what it may not revert; what an admin may read and on which surfaces; what happens in a frozen workspace and in universe; exactly which constitutional sentences this changes and which earlier record already changed one; the person-side read, doctor lines and metrics; and the questions left for the operator
 -->
 
-# ADR-0089 — An admin fixes a production workarea at once by a marked break-glass act that a person confirms or reverts afterwards
+# ADR-0089 — An admin fixes a production workspace at once by a marked break-glass act that a person confirms or reverts afterwards
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its five questions decided at their
 recommendations and every other default as drafted, and its amendment of ADR-0001 d5 accepted with
@@ -29,7 +29,7 @@ d4.
 - ADR-0077:
   - d2: `approver` gains `act` and `confirmed`;
   - d5: the read-path law admits a marked fix.
-- ADR-0009 (d5): a frozen workarea refuses an admin edit or retirement.
+- ADR-0009 (d5): a frozen workspace refuses an admin edit or retirement.
 - ADR-0025 (d11): an admin's demotion can be reverted.
 - ADR-0011 (d3): outside a simulation, a marked admin fix changes served content before review.
 - ADR-0044 (d7): an admin may fix `universe`, marked.
@@ -58,7 +58,7 @@ What exists today:
 
 - Demotion is designed (ADR-0009 d5, ADR-0010 d6) and not built: no transition reaches `Demoted`
   (`crates/oml-domain/src/model.rs:139`).
-- An admin key cannot hold dreamer grants (`crates/oml-domain/src/access.rs:131`).
+- An admin key cannot hold reviewer grants (`crates/oml-domain/src/access.rs:131`).
 - An admin key already reads every memory of its tenant, held rows included, on two routes, each
   read journalled as `memory.admin_read`
   ([ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
@@ -68,37 +68,37 @@ Decided, not built.
 
 ## Decision
 
-- **d1 — A fix is defined by its target, and is taken by an admin key held by a person.**
+- **d1 — A fix is defined by its target, and is taken by an admin key used by a person.**
   - The target is any version, release or import of the admin key's tenant, whatever its
-    workarea's status or mode, except as d12 and d13 restrict.
-  - The admin key must be `held_by: human` (the operator, 2026-11-14). A service-held admin key is
+    workspace's status or mode, except as d12 and d13 restrict.
+  - The admin key must be `used_by: person` (the operator, 2026-11-14). A service-held admin key is
     refused `admin.fix_requires_person`.
   - No agent key, service key or operator key takes a fix, on any transport.
 
 - **d2 — Six fix acts.** A ladder move is not one of them: it keeps ADR-0009 d3's two
-  identities, so no admin moves a workarea alone.
+  identities, so no admin moves a workspace alone.
 
   | Act | Effect |
   |---|---|
   | **demote** | A version stops being served. The claim's tip becomes its previous promoted version if there is one, and the bytes are kept (ADR-0009 d5). |
   | **edit** | A supersession written by the admin key becomes the tip at once, under d4. |
   | **retire** | A retirement by the admin key takes effect at once. |
-  | **roll back a release** | Withdraw the release, or re-point a workarea's `latest` to an earlier published release until a person publishes again (ADR-0085 d13). |
-  | **roll back an import** | For one `workarea.imported` event ([ADR-0084](ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d11), each promoted version it brought in is demoted, restoring the tip it replaced, and each claim key it created is retired. Its held versions are marked `import_rolled_back`. |
+  | **roll back a release** | Withdraw the release, or re-point a workspace's `latest` to an earlier published release until a person publishes again (ADR-0085 d13). |
+  | **roll back an import** | For one `workspace.imported` event ([ADR-0084](ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d11), each promoted version it brought in is demoted, restoring the tip it replaced, and each claim key it created is retired. Its held versions are marked `import_rolled_back`. |
   | **erase** | A crypto-shred, as a legal act ([ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) d2). |
 
 - **d3 — Every fix is break-glass.**
   - It takes effect in its own transaction, never waiting for review.
   - It is journalled as `admin.fix {act, targets, reason, loosens_guardrail}`. The reason is
     required, stored in clear and scanned (ADR-0074).
-  - In the same transaction it opens a confirmation item for the persons who hold dreamer on the
-    target's workarea (d15).
+  - In the same transaction it opens a confirmation item for the persons who hold reviewer on the
+    target's workspace (d15).
 
 - **d4 — An admin edit's body passes the scan its kind requires.**
   - The body is scanned like any write of its kind (ADR-0074, including d24's instruction kinds).
   - A veto refuses the edit with `submission.scan_veto`.
   - A finding that would hold the write also refuses the edit as a fix
-    (`admin.fix_held_by_scan`), because a fix serves at once and a held finding needs a person
+    (`admin.fix_used_by_scan`), because a fix serves at once and a held finding needs a person
     first. The admin can demote instead, which serves already-reviewed text.
 
 - **d5 — A fix reaches release-bound keys as a marked overlay.** For every release that lists the
@@ -126,7 +126,7 @@ Decided, not built.
     for a version served because of a fix (an edit or retirement, or a version a demotion or
     rollback made the tip again).
   - It also gains `confirmed`: `false` until confirmed, `null` when `act` is `verdict`.
-  - For a fix, `held_by` is `human`. `approver.same_user` is `false` until the fix is confirmed,
+  - For a fix, `used_by` is `person`. `approver.same_user` is `false` until the fix is confirmed,
     and `true` once a development-scope confirmation is by the admin's own person (d8). No reader
     learns which admin.
   - A release re-pointed by an admin reads `latest_by: "admin_fix"`.
@@ -135,8 +135,8 @@ Decided, not built.
 - **d8 — In a production scope, a person other than the admin's own confirms or reverts the fix;
   in a development scope the admin's own person may. A revert is authored by the server and may
   not revert a superseded fix.**
-  - **Who, in a production scope.** A person's dreamer key (`held_by: human`) with dreamer on the
-    workarea, of a person other than the admin's own (never `same_user`). In a development scope, the rule below lets the admin's own person confirm,
+  - **Who, in a production scope.** A person's reviewer key (`used_by: person`) with reviewer on the
+    workspace, of a person other than the admin's own (never `same_user`). In a development scope, the rule below lets the admin's own person confirm,
     marked `same_user`.
   - **Confirm** journals `admin.fix_confirmed`.
   - **Revert** journals `admin.fix_reverted` and writes the inverse as new state:
@@ -153,9 +153,9 @@ Decided, not built.
   - **Erasure** is confirmed and never reverted.
   - **Loose in development, strict in production** (the operator, 2026-11-14: "decisions are loose
     for in-development\in-progress areas, but strict once we are publishing and preparing for
-    production"). On a target in a `development` workarea or an in-progress subtree, a dreamer
+    production"). On a target in a `development` workspace or an in-progress subtree, a reviewer
     key of the admin's own person may confirm or revert the fix, the confirmation marked
-    `same_user`. On a target in a `committed` or `validated` workarea, and for the overlay a fix
+    `same_user`. On a target in a `protected` or `frozen` workspace, and for the overlay a fix
     places on a published release (d5), only a person other than the admin's own (never `same_user`) confirms or reverts.
     The cost: a one-person tenant confirms its own fixes in development, but a fixed item stays
     unconfirmed in a production scope, excluded from every cut (ADR-0085 d1), until a second
@@ -183,7 +183,7 @@ Decided, not built.
 
 - **d11 — Admin keys stay off the agent surfaces.**
   - These remain refused to an admin key with `access.verb_ceiling`:
-    - MCP: `oml_read`, `oml_write`, `oml_workarea`, prompts and resources;
+    - MCP: `oml_read`, `oml_write`, `oml_workspace`, prompts and resources;
     - `/v1` recall, listing and get;
     - the session-start and guardrail hooks.
   - Why:
@@ -192,9 +192,9 @@ Decided, not built.
     - separate surfaces keep "the gate is not callable by the thing being gated" true for every
       agent key.
 
-- **d12 — In a frozen workarea an admin demotes and erases, and never edits or retires.**
-  - A `validated` workarea admits demotion, erasure and crew metadata (ADR-0009 d5).
-  - An admin edit or retirement there is refused `workarea.frozen` (the operator, 2026-11-14).
+- **d12 — In a frozen workspace an admin demotes and erases, and never edits or retires.**
+  - A `frozen` workspace admits demotion, erasure and crew metadata (ADR-0009 d5).
+  - An admin edit or retirement there is refused `workspace.frozen` (the operator, 2026-11-14).
 
 - **d13 — In `universe` an admin may edit and retire, marked.**
   - A `universe` row served because of a fix carries `approver.act: "admin_fix"` and nothing else.
@@ -208,18 +208,18 @@ Decided, not built.
   - **R2 changes in its order:**
     - an admin edit is served before any identity other than its author has reviewed it;
     - it is reviewed afterwards: by a person other than the admin's own (never `same_user`) in a production scope, and in a
-      development scope by any person holding dreamer there, its own person's key marked
+      development scope by any person holding reviewer there, its own person's key marked
       `same_user` (d8).
   - **R3 changes in its first sentence:** an admin's edit is readable by others before it is
     ratified.
   - **ADR-0045 d21 already relaxed R3** for admin reads of held rows, without recording it in
     ADR-0001. This exception records it.
   - **ADR-0001 d5's "Outside the three exceptions R2 and R3 hold without exception"** names this exception
-    among the three, so it holds in `committed` and `validated` workareas too, for exactly this.
+    among the three, so it holds in `protected` and `frozen` workspaces too, for exactly this.
   - **Conditions.** The exception holds only when all of these are true:
-    - the admin key is `held_by: human`;
+    - the admin key is `used_by: person`;
     - a reason is given;
-    - the act is one of d2's, and in a `validated` workarea not an edit or a retirement (d12);
+    - the act is one of d2's, and in a `frozen` workspace not an edit or a retirement (d12);
     - every reader sees the fix's mark (d7), a release rollback's `latest_by` and an erasure's
       record included;
     - the act is queued for confirmation, by a person other than the admin's own (never `same_user`) in a production scope (d8);
@@ -227,7 +227,7 @@ Decided, not built.
   - **Numbering.** It is the third exception. ADR-0088, if accepted, would be the fourth.
   - **The admin read is separate from these conditions.** Any admin key may read claim text with
     a reason, on the admin routes alone, never on an agent surface, each read journalled and bound
-    to an investigation's reason (d10) (the operator, 2026-11-14: no `held_by: human` requirement).
+    to an investigation's reason (d10) (the operator, 2026-11-14: no `used_by: person` requirement).
   - **No other record** widens it.
   - **The text** is edited into ADR-0001 d5, accepted with this record on 2026-11-14.
   - **ADR-0010 d6's sentence** "Edit or create by hand is this path and no other" gains: "except
@@ -241,10 +241,10 @@ Decided, not built.
     - `GET /v2/admin/investigations?state=open`, the admin key's open investigations with their
       reason, id, read count and age, for ADR-0083 d11's admin To do page.
   - **Person-side read:**
-    - `GET /v2/review/fixes` takes a person's dreamer key: the `<user>-review` key the
+    - `GET /v2/review/fixes` takes a person's reviewer key: the `<user>-review` key the
       Personal To do page reads with (ADR-0083 d8 makes "Admin fixes to confirm" a To do group,
-      one page per fix at `/web/todo/fix`), or a tenant dreamer key.
-    - It serves the unconfirmed fixes on workareas where that key holds dreamer. Their count is
+      one page per fix at `/web/todo/fix`), or a tenant reviewer key.
+    - It serves the unconfirmed fixes on workspaces where that key holds reviewer. Their count is
       the `fixes` member of ADR-0083 d11's counts read, `GET /v2/todo/counts`.
     - Each entry carries the act, the target version, the replaced version, the reason, the time
       and `loosens_guardrail`. It never names the admin key, principal or user.
@@ -258,7 +258,7 @@ Decided, not built.
   - **Doctor:**
     - unconfirmed fixes, with the oldest's age;
     - fixes that loosen a guardrail;
-    - fixes on workareas with no person holding dreamer;
+    - fixes on workspaces with no person holding reviewer;
     - fixes visible only to the admin's own principal;
     - reverted fixes.
   - **Metrics:**
@@ -275,7 +275,7 @@ Decided, not built.
 - In a tenant whose only person is the admin, fixes in production scopes stay unconfirmed and
   out of every cut until a second person confirms them (d8), and the doctor names them.
 - The operator's answers of 2026-11-14, each the recommendation: an admin key that fixes is
-  `held_by: human` (d1); a frozen workarea refuses an admin edit or retirement (d12); a `universe`
+  `used_by: person` (d1); a frozen workspace refuses an admin edit or retirement (d12); a `universe`
   fix carries the mark (d13); a fix in a development scope may be confirmed by the admin's own
   person, marked `same_user`, and one in a production scope only by a person other than the admin's own (never `same_user`) (d8, which
   replaced the one-person `self_signed` confirmation the same day); an unconfirmed fix never expires, and stays served and marked until a
@@ -288,7 +288,7 @@ Decided, not built.
 | **Erasure only** | It leaves no fast lever between "served" and "shredded". |
 | **Fixes held for review** | That is the developer path (ADR-0085 d9, d11), too slow where a fix is needed. |
 | **Unmarked fixes** | Readers would take an unreviewed version for a reviewed one. |
-| **A ladder move as a fix** | It would let one admin move a workarea's status alone; ADR-0009 d3's two identities stay. |
+| **A ladder move as a fix** | It would let one admin move a workspace's status alone; ADR-0009 d3's two identities stay. |
 | **Admin edits that skip the scan** | A fix would be the one write path where a leaked key or an injection reaches readers at once. |
 | **A revert authored by the confirming person** | That person would author text another person approved before; R2 would have to be bent twice. |
 | **Fixes do not reach release-bound keys** | A production agent on `latest` would keep the bad version until a person cuts again, which defeats the fix. |

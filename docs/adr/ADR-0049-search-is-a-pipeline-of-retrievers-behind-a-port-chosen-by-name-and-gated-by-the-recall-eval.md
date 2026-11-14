@@ -194,7 +194,7 @@ reorders results, and steering rows, which precede hits, are never ranked"
     0.83, 0.92 and 0.95 success@5 for the last three: ties break by artifact ids a fresh load draws
     anew, so a run moves by about one query. `keyword-any` measured 0.81, above ADR-0048's 0.73
     for `simple` OR, which ranked by `ts_rank_cd`; this pipeline ranks by `ts_rank`. The eval's
-    caveats hold: one model wrote the corpus, queries and labels; no held rows, one workarea, no
+    caveats hold: one model wrote the corpus, queries and labels; no held rows, one workspace, no
     unanswerable query, so false positives from any-word matching are unmeasured (#105).
     Latency: ADR-0048 d11's budget, a p95 at most twice the every-word recall's, is met by
     `keyword-any` (1.6 times) and missed by `bm25` (2.8 times) and `bm25-trigram` (5.4 times).
@@ -210,7 +210,7 @@ reorders results, and steering rows, which precede hits, are never ranked"
   0020's `oml_search_text` normaliser and `oml_search_vector`, BM25 in SQL over the readable rows)
   and `bm25-trigram` (S3: `pg_trgm`, reciprocal rank fusion, `did_you_mean`), the eval job, and the
   default set by the gate. *Next:* S4, filters inside the candidate scope (`kinds` as today;
-  `since`/`until`; up to four `workareas`; ADR-0047's anchors), which extend `CandidateScope`,
+  `since`/`until`; up to four `workspaces`; ADR-0047's anchors), which extend `CandidateScope`,
   never an adapter's own predicate; the `explain` counts of ADR-0048 d9; eval version 2
   (unanswerable, filter, held and supersession queries; #105). *Then:* S6, a `Reranker` port
   (`rerank(query, candidates) -> reordered candidates`, reading only candidates the core
@@ -280,25 +280,25 @@ reorders results, and steering rows, which precede hits, are never ranked"
        an inflected word had two positions; an independent review found it, the law above
        failed on it (0.396 against 0.288), and the numbers in item 6 are measured after the fix.
     3. **Statistics stay per query over the readable scope.** Two readings were measured on
-       SciFact ×10 (51,830 rows, ten workareas), statement only: (a) document frequencies taken
+       SciFact ×10 (51,830 rows, ten workspaces), statement only: (a) document frequencies taken
        from the rows that hold a query form, inside the readable scope, which are exactly the
        scope's document frequencies, with the row count and mean length from `search_len`; (b)
-       per-workarea counts kept at write time and summed over the readable workareas. (b) saved
+       per-workspace counts kept at write time and summed over the readable workspaces. (b) saved
        about 4% (p50 802 against 836 ms at 50k rows, 80.8 against 80.5 ms at 5k), because the
        cost is reading the candidates' term frequencies, which (b) still pays, while it would add
        a counter to every promotion, supersession, retirement and demotion. (a) is built; no table
-       holds a statistic across workareas, as the rejected alternative below requires.
+       holds a statistic across workspaces, as the rejected alternative below requires.
     4. **`did_you_mean` from a maintained vocabulary, only when thin.** `search_vocabulary` holds,
-       per workarea, the `simple` words of its promoted served tips of the kinds recall serves
+       per workspace, the `simple` words of its promoted served tips of the kinds recall serves
        (`memory`, `derived_fact`) that are no retirement version, with the count of those rows; a trigger adds and removes words in the write's own
        transaction, and 0020 fills it for the rows already promoted. A recall offers spellings
        only when it found fewer than three hits (`DID_YOU_MEAN_BELOW`, or fewer than its `k`),
        for the words no hit holds, read from the readable nodes' vocabulary, under every pipeline
-       but `keyword-all`, whose v0.5.0 answer had none. A held row's, another workarea's, a
+       but `keyword-all`, whose v0.5.0 answer had none. A held row's, another workspace's, a
        steering row's, another tenant's on the same node id, a replaced version's and a retired
        claim's words are never offered
        (`did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the_scope`). The serving
-       role scans the readable nodes' vocabulary: 58 ms per word over SciFact's workarea
+       role scans the readable nodes' vocabulary: 58 ms per word over SciFact's workspace
        vocabulary of about 50,000 words in the served database, against about 2 s before. A
        trigram index on `word` does not help it: on a 50,001-word table under forced row
        security, `word % q` with `pg_trgm.similarity_threshold` 0.4 ran a sequential scan in 158
@@ -325,16 +325,16 @@ reorders results, and steering rows, which precede hits, are never ranked"
        categories, 22 queries one model wrote, should not outweigh 2,158 queries others wrote.
        `bm25-trigram` stays available to a deployment that enables it for misspellings, and a
        thin misspelt recall under `bm25` offers `did_you_mean`.
-    7. **Hydration.** At `k` 100 a recall read each hit's workarea ancestry with its own
-       recursive query; recall now reads each workarea's once
-       (`a_recall_reads_each_served_workareas_ancestry_once_however_many_hits_it_serves`).
+    7. **Hydration.** At `k` 100 a recall read each hit's workspace ancestry with its own
+       recursive query; recall now reads each workspace's once
+       (`a_recall_reads_each_served_workspaces_ancestry_once_however_many_hits_it_serves`).
        SciFact's `bm25` at `k` 100 went from 176 / 214 ms (p50 / p95) to 88 / 119 ms on that
        change alone, and measures 83 / 113 ms after the review's fixes; at `k` 10 it measures
        71 / 99 ms, inside the target of a 100 ms p95 at 5,000 rows on abstract-length rows, the
        worst case OML's short claims meet. LoCoMo's turns answer in 31 / 38 ms at `k` 100.
     8. **Latency grows with the readable rows; it is not solved.** Under row security every
        pipeline reads the stored lexemes of every row the key may read. Measured: served `bm25`
-       over 51,830 abstracts in one workarea, 604 / 849 ms at `k` 100 and 572 / 807 ms at `k` 10;
+       over 51,830 abstracts in one workspace, 604 / 849 ms at `k` 100 and 572 / 807 ms at `k` 10;
        the statement alone over 51,830 abstracts in the lab, 639 / 947 ms (before the stem fix),
        where the first build's statement took 15.3 s at its median. The scale lane
        (`bench/scale/REPORT-baseline.md`) puts an every-word match over a stored `simple` vector past 50 ms near
@@ -532,7 +532,7 @@ reorders results, and steering rows, which precede hits, are never ranked"
 | **Per-request free-form pipelines** | A caller composing retrievers and fusion constants would make every request a new, unmeasured ranking, unbounded metric labels, and no gate to pass. Named pipelines are measured before they are served. |
 | **One hard-coded strategy, replaced in place** | Each stage would rewrite the recall use case and lose the comparison baseline; a tenant could not keep the old behaviour while the new one is judged. |
 | **A runtime plugin per retriever (`dyn`, loaded at start)** | The ports are generic for `Send` futures without boxing (ADR-0019); a retriever is few and slow to add, so a release per kind costs less than an ABI. Revisit for provider-backed embedders. |
-| **Per-workarea document frequencies kept at write time** (d12) | Measured 4% faster than computing them per query, because reading the candidates' term frequencies is the cost either way; it would add a counter to every state change of a row and a second source of truth for ranking. |
+| **Per-workspace document frequencies kept at write time** (d12) | Measured 4% faster than computing them per query, because reading the candidates' term frequencies is the cost either way; it would add a counter to every state change of a row and a second source of truth for ranking. |
 | **Improving `bm25-trigram` as the default (trigram only for words with no match)** (d12) | Its trigram list scans the tenant's partition under row security whatever words it is given, so the gain would be quality on misspellings alone; the external sets have none, and `did_you_mean` from the vocabulary now answers a thin misspelt recall. Left opt-in. |
 | **A tenant-wide statistics table for BM25** | Lets rows a key cannot read move the ranks of rows it can (ADR-0048 d3); the law `a_row_outside_the_scope_never_changes_a_candidates_score` forbids it. |
 | **Keeping "every word" as the default until 1.0** | The eval's 0.17 against 0.94 is the product's main gap, and pre-release breaking changes are allowed (ADR-0039); `keyword-all` stays nameable for anyone who needs it. |

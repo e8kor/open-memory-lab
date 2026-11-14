@@ -104,7 +104,7 @@ smallest possible runtime. The hot-path rules the stack must obey are recorded i
 
     | Layer | Crates | Holds |
     |---|---|---|
-    | Domain | `oml-domain` | the pure core — admission state machine, workarea algebra, role/verb ceilings, status ladder, taint predicate; **every constitution invariant, and nothing with I/O** |
+    | Domain | `oml-domain` | the pure core — admission state machine, workspace algebra, role/verb ceilings, status ladder, taint predicate; **every constitution invariant, and nothing with I/O** |
     | Application | `oml-app` | the port traits and the use-cases that drive the domain through them |
     | Driven adapters | `oml-pg` (sqlx), `oml-lake` (delta-rs), `oml-objectstore` (object_store), `oml-kms` | one crate per infrastructure dependency, implementing its port, holding no policy |
     | Driving adapters | `oml-transport-http`, `oml-transport-mcp` | the HTTP surface (both rings, [ADR-0022](ADR-0022-two-ring-api.md)) and the MCP facade as adapters over `oml-app` |

@@ -26,7 +26,7 @@ becomes an opportunity to route around them.
 
 The system also has points where deployments legitimately differ — which scan rules run, which
 embedding model is used, what an evidence bundle looks like — and points where they must never
-differ: the admission state machine, the workarea algebra, the status ladder. A modular design
+differ: the admission state machine, the workspace algebra, the status ladder. A modular design
 has to make the first kind cheap to swap and the second kind impossible to swap.
 
 Both pressures point at the same well-known shape: a hexagonal (ports and adapters)
@@ -37,8 +37,8 @@ infrastructure — including the plugin points — behind an adapter boundary.
 
 - **d1 — The domain core is a pure crate, and every constitution invariant lives in it, only.**
   `oml-domain` has no I/O: no database driver, no HTTP, no clock read, no KMS call. It holds the
-  admission state machine ([admission](../architecture/admission.md)), the workarea algebra and
-  status ladder ([workareas](../architecture/workspaces.md)), the role and verb ceilings
+  admission state machine ([admission](../architecture/admission.md)), the workspace algebra and
+  status ladder ([workspaces](../architecture/workspaces.md)), the role and verb ceilings
   ([roles and keys](../architecture/roles-and-keys.md)), and the simulation taint predicate
   ([simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)). R1–R4 and the one bounded development
   exception are encoded here as types and transition functions, nowhere else — so no adapter,

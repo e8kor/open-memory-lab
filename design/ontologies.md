@@ -32,21 +32,21 @@ default cost for this page existing: one extra MCP tool in `tools/list`
 Nothing below exists as code. The v1 slice is #149; every unmeasured
 claim on this page names the issue that will measure it.
 
-## A vocabulary is a workarea with a prefix
+## A vocabulary is a workspace with a prefix
 
-A vocabulary is a dedicated workarea subtree ([workareas](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workspaces.md)) created with one extra,
+A vocabulary is a dedicated workspace subtree ([workspaces](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workspaces.md)) created with one extra,
 optional field: a **prefix**, registered in a journalled, tenant-scoped registry
 (`vocab_prefixes`, UNIQUE per tenant — never globally, because a global unique would leak
-namespace existence across tenants). Workarea creation is admin-only, and that is the whole brake
+namespace existence across tenants). Workspace creation is admin-only, and that is the whole brake
 on vocabulary sprawl: no new ceremony, no issuer-ceiling clone. Because a prefix registration is
 irreversible in meaning, the CLI confirms permanence before the act, per the
 preview discipline of [cli/reference.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/cli/reference.md), which extends its
 preview-every-mass-act rule to irreversible single acts like this one.
 
 Everything inside the vocabulary rides the ordinary machinery. Grants are ordinary: the vocabulary
-workarea grants writer to the crews it serves, dreamer to its curators
-([roles-and-keys](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/roles-and-keys.md)). Status is ordinary: trunk vocabulary lives at `committed`;
-`validated` (frozen) is vocabulary **retirement** — a freeze, not a revocation: terms stay
+workspace grants writer to the crews it serves, reviewer to its curators
+([roles-and-keys](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/roles-and-keys.md)). Status is ordinary: trunk vocabulary lives at `protected`;
+`frozen` is vocabulary **retirement** — a freeze, not a revocation: terms stay
 resolvable forever, and no past verdict is retro-invalidated, because every scan verdict recorded
 the release id and scanner version it was taken against. The `oml:` prefix is reserved in every
 tenant's namespace for the provider-published upper vocabulary (`is_a`, `part_of`, `replaced_by`,
@@ -93,13 +93,13 @@ promotion) and is bounded by what already exists: journalled rate and quota gran
 held-item expiry, and queue depth in `oml status` and `oml doctor`.
 
 One consequence is worth its own sentence: **simulations cannot mint vocabulary.** Vocabulary
-workareas refuse `provenance=simulation` submissions of the vocabulary kinds — otherwise a demoted
+workspaces refuse `provenance=simulation` submissions of the vocabulary kinds — otherwise a demoted
 simulation row would squat a permanent CURIE forever ([simulations](simulations.md)).
 
 ## Releases and the materialized closure
 
 A release is a claim of kind `vocab_release`: a journalled **pin**, never a copy. Its body carries
-the vocabulary workarea id, the pinned journal `seq`, and a Merkle root over the then-active term
+the vocabulary workspace id, the pinned journal `seq`, and a Merkle root over the then-active term
 set whose leaves cover definition bytes, not just identity (the construction is #148's one
 specification, shared with [ADR-0020](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0020-dataset-onboarding.md)). Releases accumulate
 as claims; nothing ever cuts one automatically — a release is always an explicit, ratified act,
@@ -129,21 +129,21 @@ Mappings between vocabularies are SSSOM-shaped claims of kind `term_mapping`: su
 object CURIE, predicate (`exactMatch`, `closeMatch`, `broadMatch`, `narrowMatch`, `relatedMatch`),
 justification (human-curated, lexical, logical), note. A mapping is never a merge — both terms
 persist, and the mapping is revocable by supersession. Because a ratified mapping becomes shared
-structure of **two** vocabularies, its ratification requires dreamer(review) on both endpoints'
-vocabularies with ratifier ≠ proposer — the same argument [workareas](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workspaces.md) makes for
-workarea edges, stated as an extension of that rule. Cross-tenant mappings are
+structure of **two** vocabularies, its ratification requires reviewer(review) on both endpoints'
+vocabularies with ratifier ≠ proposer — the same argument [workspaces](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workspaces.md) makes for
+workspace edges, stated as an extension of that rule. Cross-tenant mappings are
 #151, future.
 
 ## Where the humans sit
 
-Volume is AI work. Any writer key proposes terms — mid-task, at agent speed — and dreamer crews
+Volume is AI work. Any writer key proposes terms — mid-task, at agent speed — and reviewer crews
 drain the review queue the way they drain every other queue; provenance distinguishes agent from
 human authors without privileging either. The human loop is placed by `human_required_classes`
 exactly where a mistake is expensive and judgment-shaped: by shipped default, a **deprecation with
 `replaced_by`** (automation rewires against it), an **`exactMatch` mapping** (shared structure of
 two vocabularies), and a **release pin** (served as a diff a person can actually judge). Everything
 else — new terms, edits, the other mapping predicates, hierarchy ratified in batch at release —
-drains through AI dreamers. The full defaults table is in
+drains through AI reviewers. The full defaults table is in
 [ADR-0021](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0021-ai-human-ontologies.md) d7, every row tenant-tunable.
 
 The routing is deterministic, not ceremonial: `vocab_release` routes by kind, and the two
@@ -154,10 +154,10 @@ being configured — scanner selection is journalled, so an auditor can always a
 gate active". Auditable, not unmissable.
 
 What "human" means is itself an honesty boundary. A human verdict rests on a journalled,
-issuance-time attestation — a key attribute `held_by: human`, attested by the issuing admin and
+issuance-time attestation — a key attribute `used_by: person`, attested by the issuing admin and
 shown in evidence exports ([roles-and-keys](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/roles-and-keys.md)). The server verifies the
 attestation, never the humanness. `oml doctor` warns when a policy names human-required classes
-and no attested-human dreamer key is in scope — the queue would otherwise fill silently.
+and no attested-human reviewer key is in scope — the queue would otherwise fill silently.
 
 **The zero-human configuration is blessed.** A 100%-agent tenant may tune every human-required
 class off and run vocabularies end to end with zero humans — explicitly supported, under four
@@ -171,7 +171,7 @@ reversible — the same posture ordinary claims already hold.
 
 Claims gain an optional `terms: [CURIE, …]` field — clear, non-erasable annotation metadata that
 enters the signed bytes and keeps labelling a claim even after its body is erased. Whether anyone
-checks those citations is a per-workarea choice: `vocabulary_policy {vocabulary, release,
+checks those citations is a per-workspace choice: `vocabulary_policy {vocabulary, release,
 enforcement: require | annotate | off}`, **default off** ([admission](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/admission.md) owns the
 policy objects). The scanner is a plugin, deliberately **not** in the default scanner set — a
 tenant that never registers a vocabulary never runs it.
@@ -209,7 +209,7 @@ A working agent's loop, with no human in sight:
    `terms: [biz:churn-risk]` and, under `annotate`, nothing ever blocks.
 2. **Propose mid-task.** No term fits, so the agent submits one — `oml_write`, kind `term` —
    and keeps working. Under `annotate`, citing the held CURIE records `vocab.term_pending`; after
-   a curator-crew dreamer promotes the term, the agent re-cites and the finding class goes quiet.
+   a curator-crew reviewer promotes the term, the agent re-cites and the finding class goes quiet.
 3. **Self-heal on deprecation.** A later citation of a deprecated term returns
    `vocab.inactive_curie` carrying the successor CURIE(s) and relation in its details; for
    `replaced_by` the rewrite is a mechanical one-hop, and `oml_vocab get` returns `term_status`
@@ -218,7 +218,7 @@ A working agent's loop, with no human in sight:
 
 Vocabulary rows themselves stay out of the shared FTS and vector indexes by default — reference
 data must not drown organic memories in recall ([retrieval](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/retrieval.md)); a vocabulary
-workarea's policy may opt in, mirroring [ADR-0020](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0020-dataset-onboarding.md) d11.
+workspace's policy may opt in, mirroring [ADR-0020](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0020-dataset-onboarding.md) d11.
 
 ## What this is not
 
@@ -236,8 +236,8 @@ workarea's policy may opt in, mirroring [ADR-0020](https://github.com/e8kor/open
 ## Curation economics
 
 A junk-drawer vocabulary — registered, half-filled, unreviewed — is the designed-against failure
-mode, and the defenses are structural, not exhortative. A vocabulary workarea requires a named
-curator crew at creation. `oml doctor` flags a vocabulary with no active dreamer grant as
+mode, and the defenses are structural, not exhortative. A vocabulary workspace requires a named
+curator crew at creation. `oml doctor` flags a vocabulary with no active reviewer grant as
 orphaned and names "propose freeze" as the next action; retirement is the ordinary two-party
 status ceremony, and a frozen vocabulary keeps serving reads forever. The prefix permanence
 confirmation at creation makes the one irreversible act deliberate.
@@ -256,6 +256,6 @@ structure of two vocabularies and future features will build on it.
 This page's decisions are registered as
 [ADR-0021](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0021-ai-human-ontologies.md) ([decision register](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/index.md)). The
 policy objects and scanner context are owned by [admission](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/admission.md); roles and the
-`held_by: human` attestation by [roles-and-keys](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/roles-and-keys.md); recall semantics by
+`used_by: person` attestation by [roles-and-keys](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/roles-and-keys.md); recall semantics by
 [retrieval](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/retrieval.md); the import path by
 [ADR-0020](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0020-dataset-onboarding.md).

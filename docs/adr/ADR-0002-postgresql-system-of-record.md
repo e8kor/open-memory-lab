@@ -18,7 +18,7 @@ this record decides and gives the reasons.
 ## Context
 
 OML's journal is the record of every act — capture, verdict, ratification, promotion, demotion,
-erasure, grant, ban — and the metadata beside it (memories, workareas, grants, idempotency
+erasure, grant, ban — and the metadata beside it (memories, workspaces, grants, idempotency
 records) is what locates, indexes, audits and traces every memory. A write the service has
 acknowledged must be a write the journal holds, and a write the journal holds must be a write the
 metadata and the outbox agree on. That is a statement about a transaction, and only one store can

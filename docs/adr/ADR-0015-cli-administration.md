@@ -31,7 +31,7 @@ A web console was considered and declined — a product decision whose reasons s
 rejected alternatives below. `oml` is one binary talking to the
 same HTTP API as every agent (ADR-0014 d1) — on its lab ring, `/v2`
 ([ADR-0022](ADR-0022-two-ring-api.md)), since every ceremony is administration — with operator, admin or
-dreamer keys; it holds no verb the API lacks, and no service stands between it and `oml-server` —
+reviewer keys; it holds no verb the API lacks, and no service stands between it and `oml-server` —
 no backend-for-frontend, no admin service holding its own state between a person and the
 service.
 
@@ -112,4 +112,4 @@ service.
 - An admin key cannot be cut off today (a denial on it is refused), so the admin credentials file stays on one machine and a second admin key goes only to a person who needs one.
 - If an issuance reaches the server but returns nothing usable, the CLI cannot tell whether the key exists; `oml keys show <key-name>` finds out, and a key whose value was lost is denied and replaced under a new name.
 - `oml keys issue` takes `--label <text>`; keys do not expire; a retired key's name stays taken.
-- A reviewer key also takes a reader grant on the workarea, or it sees a held memory without its sources.
+- A reviewer key also takes a reader grant on the workspace, or it sees a held memory without its sources.
