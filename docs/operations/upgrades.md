@@ -92,8 +92,8 @@ workareas become workspaces, the role `dreamer` becomes `reviewer`, the statuses
 `human` becoming `person`. A v0.8.0 server reads a former name as unknown input: a former path
 answers 404, a former field or enum value is `request.validation`, and a former header, query
 parameter or environment variable is ignored. A v0.7 client that names its workspace only by the
-`X-OML-Workarea` header or the `workarea` query parameter is therefore not refused, and its write
-lands, held, in its key's default workspace.
+former header or query parameter is therefore not refused, and its write lands, held, in its key's
+default workspace.
 
 **Clients upgrade first.** Every key holder upgrades the CLI, the plugins and the SDKs to v0.8.0
 before the server is upgraded; a v0.8.0 client speaks only the new names. The notice to send to
