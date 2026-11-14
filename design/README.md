@@ -5,8 +5,8 @@
   <img src="assets/oml-wordmark-dark.svg#gh-dark-mode-only" height="32" alt="Open Memory Lab">
 </p>
 
-Every Open Memory Lab surface (the `/web` pages, the docs site, this repository's README and
-the landing page) draws from the files here ([ADR-0069](../docs/adr/ADR-0069-oml-s-design-system-is-the-source-of-truth-for-every-surface.md)).
+Every Open Memory Lab surface in this repository (the `/web` pages, the docs site and this
+repository's README) draws from the files here ([ADR-0069](../docs/adr/ADR-0069-oml-s-design-system-is-the-source-of-truth-for-every-surface.md)).
 The full system, with every component, screen and the contrast table, is the
 [design system artifact](https://claude.ai/artifact/FNfuqHMqkNAheL2aKkc8es). This page is the
 short form.
@@ -23,11 +23,10 @@ short form.
 
 After a copy, run `python scripts/gen_design_tokens.py`. It writes the web pages'
 `tokens.css` and `brand.rs`, the docs site's `docs/stylesheets/oml.css` and its copies of the
-marks and fonts, `assets/review-gate-{dark,light}.svg`, and the landing site's inputs in
-`site/design/`; then run `python site/build.py`, which rebuilds the landing pages in `site/dist/`
-from them ([site/README.md](../site/README.md)). CI runs both with `--check` and runs
-`python scripts/check_contrast.py`; any of them fails the pull request when an output is stale or a
-pair drops below its floor.
+marks and fonts, and `assets/review-gate-{dark,light}.svg`. CI runs it with `--check` and runs
+`python scripts/check_contrast.py`; either fails the pull request when an output is stale or a
+pair drops below its floor. The landing page is not in this repository (ADR-0070 d12, as amended
+on 2026-11-14); it takes the design system from here at a tagged revision.
 
 ## Voice
 
