@@ -201,8 +201,8 @@ Decided, not built.
     ratified.
   - **ADR-0045 d21 already relaxed R3** for admin reads of held rows, without recording it in
     ADR-0001. This exception records it.
-  - **ADR-0001 d5's "R2 and R3 hold unconditionally in `committed` and `validated` workareas"**
-    is overridden for exactly this exception.
+  - **ADR-0001 d5's "Outside them R2 and R3 hold without exception"** names this exception
+    among the three, so it holds in `committed` and `validated` workareas too, for exactly this.
   - **Conditions.** The exception holds only when all of these are true:
     - the admin key is `held_by: human`;
     - a reason is given;

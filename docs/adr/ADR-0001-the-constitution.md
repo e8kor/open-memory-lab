@@ -1,20 +1,20 @@
 <!--
 id: adr/ADR-0001-the-constitution
 tier: engineering
-status: accepted design · amended by ADR-0025, ADR-0037, ADR-0030, ADR-0080, ADR-0089
-answers: what the four constitutional rules R1–R4 commit, and what each bounded exception permits, marks and requires: development self-signing, an in-progress subtree's held rows to the keys in it and on its ancestor chain, and an admin's fixes; and how an admin reads claim text
+status: accepted design · amended by ADR-0025, ADR-0037, ADR-0030, ADR-0044, ADR-0080, ADR-0089
+answers: what the four constitutional rules R1–R4 commit, and what each of the three bounded exceptions permits, marks and requires: an in-progress subtree's held rows to the keys in it and on its ancestor chain, own-root same-person approval, and an admin's fixes with the admin read
 -->
 
-# ADR-0001 — The constitution: four rules and their bounded exceptions
+# ADR-0001 — The constitution: four rules, three bounded exceptions
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md), [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d5, the in-progress exception widened, 2026-11-14), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (d5, same-person approval named, 2026-11-14), [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d5, the in-progress exception widened, 2026-11-14), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14)
 
 **Release:** partly in v0.1.0 and v0.6.0; the rest not built ([releases](../changelog.md))
 
 ## Context
 
 Open Memory Lab's governing rules are the product: four rules that every surface, schema and
-service exists to enforce, plus bounded exceptions, the first for development work. They are stated in
+service exists to enforce, plus three bounded exceptions. They are stated in
 OML's own terms — roles, workareas, journalled tenant policy. This record is the single
 declaration site for the four rules, R1–R4, and for their exceptions; every other page links
 here and restates nothing. The rules were written before any code: each is a design commitment
@@ -44,35 +44,43 @@ rest is not built; [releases](../changelog.md) says which part each release buil
   demotion keeps the bytes. The erasure inventory and its honest boundary are owned by
   [audit and lineage](../architecture/audit-and-lineage.md).
 
-- **d5 — The bounded exceptions, scoped here and nowhere else.** The first: R2 and R3 hold
-  unconditionally in `committed` and `validated` workareas. A `development` workarea MAY relax
-  them by journalled tenant policy. Rows written under the relaxation are marked
-  `self_signed`, are readable only inside that workarea, never promote beyond it, and never
-  enter the silver or gold lake zones. The exception is named in the constitution on the day it
-  is made, not discovered later; the mark is indelible; and a marked self-signature is recorded
-  but never called a review. No other page may widen this scope; a change to it is a new
-  decision on this record. *(Amended 2026-11-05 — a second bounded exception, of R3's first
-  sentence only, inside a workarea a person put in progress: [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d3. R2 holds there
-  without exception. Widened 2026-11-14 by ADR-0080 d16: a held version of any kind in the
-  in-progress subtree is served, marked unreviewed, to keys with reader access scoped in that
-  subtree or on its ancestor chain and bound to `tip` (ADR-0085 d6); never to a sibling, another
-  branch, federation or a wide source, never a version the scan held or has not scanned, and
-  never a held retirement.)* *(Amended 2026-11-14 — a third bounded exception, of R2's order
-  and R3's first sentence, for admin keys only, in every workarea status:
-  [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d14. It overrides "R2 and R3 hold
-  unconditionally in `committed` and `validated` workareas" for exactly this, and holds only while
-  every one of these is true: the admin key is `held_by: human`; a reason is given; the act is one
-  of ADR-0089 d2's fix acts (demote, edit, retire, release rollback, import rollback, erasure),
-  except that a `validated` workarea refuses an edit or a retirement (ADR-0089 d12); every reader
-  sees the fix's mark (ADR-0089 d7); the act is journalled and queued for a person of another
-  principal to confirm or revert; and, while unconfirmed, the version is excluded from every
-  release cut. Such a fix is served before any non-author review and is reviewed afterwards. The
-  conditions above govern fixes. Separately, an admin key reads claim text, held rows included,
-  tenant-wide, on the admin routes alone, never on an agent surface, journalled, and only when it
-  is `held_by: human` (*operator to confirm*); with ADR-0089 d10 each read is bound to an
-  investigation's reason. That read is the relaxation of R3 that
-  [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21 already made, recorded here. R1 is
-  unchanged: no agent key gains anything. No other record widens this exception.)*
+- **d5 — Three bounded exceptions, scoped here and nowhere else.** Outside them R2 and R3 hold
+  without exception. Each is named here on the day it is made, marks what it serves indelibly,
+  and is widened only by a new decision on this record; no other page may widen one. *(Amended
+  2026-11-14 by the operator: the development self-signing exception of 2026-10-29, never built,
+  is retired, and the list below replaces the earlier amendments.)*
+
+  1. **The in-progress workarea** ([ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d2, d3, widened by
+     [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16). Of R3's first sentence only. Inside a workarea a
+     person put in progress, a held version of any kind is served, marked unreviewed, to keys with
+     reader access scoped in that subtree or on its ancestor chain and bound to `tip` (ADR-0085 d6);
+     never to a sibling, another branch, federation or a wide source, which read only promoted
+     rows of committed or validated workareas or a published release; never a version the scan
+     held or has not scanned, and never a held retirement. R2 holds there without exception.
+  2. **Own-root same-person approval** ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d8; ADR-0045 d11,
+     d20; ADR-0046 d2; ADR-0055 d7). Of R2 at the person level: R2 excludes the keys and
+     principals of a row's lineage, not its person, so inside a person's own root their review
+     key may approve a write by their own agents' keys or their web key. It holds in that root
+     only, and every such approval is marked `same_user` to every reader (ADR-0077 d2). Outside
+     the root a person's session-key writes count no verdict from a key of the same person
+     (ADR-0082 d7).
+  3. **Admin fixes, with the admin read** ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d14;
+     [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21). Of R2's order and R3's first sentence, for admin keys
+     only, in every workarea status. A fix holds only while every one of these is true: the admin
+     key is `held_by: human`; a reason is given; the act is one of ADR-0089 d2's fix acts (demote,
+     edit, retire, release rollback, import rollback, erasure), except that a `validated`
+     workarea refuses an edit or a retirement (ADR-0089 d12); every reader sees the fix's mark
+     (ADR-0089 d7); the act is journalled and queued for a person of another principal to confirm
+     or revert; and, while unconfirmed, the version is excluded from every release cut. Such a fix
+     is served before any non-author review and is reviewed afterwards. The conditions above
+     govern fixes. Separately, an admin key reads claim text, held rows included, tenant-wide, on
+     the admin routes alone, never on an agent surface, journalled, and only when it is
+     `held_by: human` (*operator to confirm*); with ADR-0089 d10 each read is bound to an
+     investigation's reason. That read is the relaxation of R3 that ADR-0045 d21 already made,
+     recorded here.
+
+  R1 has no exception: no agent key gains anything under any of the three. ADR-0088, deferred,
+  would be the fourth.
 
 - **d6 — The honest limit on R2.** Undeclared derivation — a writer omitting `derives_from` —
   is not detectable by the service. Lineage-closure exclusion is exactly as good as the
@@ -85,11 +93,11 @@ rest is not built; [releases](../changelog.md) says which part each release buil
 - Every architecture page enforces or links these rules; none restates them. The verb ceiling
   binds [roles and keys](../architecture/roles-and-keys.md), the
   [HTTP API](../api/http-api.md) and the [MCP plugin](../api/mcp-plugin.md); closure
-  enforcement binds [admission](../architecture/admission.md); the exception's workarea
-  mechanics bind [workareas](../architecture/workareas.md); the silver/gold exclusion of
-  `self_signed` rows binds [storage](../architecture/storage.md) and the schema pages.
-- The `self_signed` mark is a schema and lake commitment: the Postgres row and every lake row
-  must carry it so the silver/gold exclusion is checkable by the reconciler, not asserted.
+  enforcement binds [admission](../architecture/admission.md); the in-progress exception's
+  workarea mechanics bind [workareas](../architecture/workareas.md).
+- Each exception's mark is a schema commitment: `unreviewed` on every served held item,
+  `same_user` on every own-root approval, `approver.act: "admin_fix"` on every fix. The records
+  that still describe `self_signed` rows are amended in a later pass; the mark is never set.
 - R2's cost is liveness: review is a dependency, and the system fails closed when no eligible
   reviewer exists — a held item waits or expires under its workarea's review policy
   ([admission](../architecture/admission.md)). Review throughput is unmeasured; the

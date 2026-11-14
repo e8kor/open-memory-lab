@@ -16,7 +16,7 @@ The rules that make a write held, reviewed by someone else and signed.
 
 | Decision |
 |---|
-| [The constitution: four rules and their bounded exceptions](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) |
+| [The constitution: four rules, three bounded exceptions](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) |
 | [Tenancy is first-class](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0007-tenancy-first-class.md) |
 | [The status ladder: development, committed, validated; forward only; medallion words stay in the lake](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0009-status-ladder.md) |
 | [Roles and keys: reader, writer, dreamer, admin, operator](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0010-roles-and-keys.md) |
