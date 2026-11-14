@@ -12,7 +12,7 @@ Every write has a producer and needs a reviewer who is not that producer. Three 
 
 - **A verdict needs a `dreamer` key.** Every other role is refused. A key `held_by: service` is refused every review verb, whatever its grants. An admin key never gives a verdict.
 - **R2 is checked per key and per principal.** A verdict is refused `review.author_in_lineage` when the reviewer's key id or principal is anywhere in the version's lineage closure, its author included (`crates/oml-domain/src/model.rs`, `check_reviewer`). The recorded policy is one verdict, role `dreamer`, independence axis `principal`, no person required.
-- **Two keys of one person with different principals count as two reviewers.** The person is not part of the check. It decides only the mark: `same_user` is `true` when the reviewing and authoring keys act for the same person, read from the key's user root or its console session.
+- **Two keys of one person with different principals count as two reviewers.** The person is not part of the check, although the records decide that a production scope needs a different person, not only a different principal (ADR-0001 d5 and ADR-0082 d7, [#377](https://github.com/e8kor/open-memory-lab/pull/377), [#375](https://github.com/e8kor/open-memory-lab/pull/375)). It decides only the mark: `same_user` is `true` when the reviewing and authoring keys act for the same person, read from the key's user root or its console session.
 - **The console counts as a person.** `<user>-review`, created at first sign-in, is a `dreamer` key `held_by: human` with dreamer and reader on the person's root. Console writes and console-issued agent keys each have their key name as principal, so the person's review key approves them, marked `same_user`.
 - **No verdict travels over MCP.** An agent with a reviewer key judges over HTTP, `/v2` ([reviewer crews](../api/reviewer-crews.md)). An agent's own key never promotes or signs (R1); a reviewer crew's verdict is a review act by a different key.
 
@@ -20,13 +20,13 @@ Every write has a producer and needs a reviewer who is not that producer. Three 
 
 | Class | Producer | Reviewer | Counts in development and in-progress scopes | Counts in committed, validated and published scopes | Marking | Built |
 |---|---|---|---|---|---|---|
-| Knowledge: `memory`, `derived_fact` | agent key A | a person (dreamer, `held_by: human`) of another principal | yes | yes | `approver.held_by: human` | built |
+| Knowledge: `memory`, `derived_fact` | agent key A | another person's dreamer key, `held_by: human` (the built check: another key and principal) | yes | yes | `approver.held_by: human` | built |
 | Knowledge | agent key A of person P | P's review key, inside P's own root | yes | no: another person approves (ADR-0082 d7) | `same_user: true` | built for development scopes; the production-scope refusal is designed |
 | Knowledge | agent key A of person P | a key of P, outside P's root | no (ADR-0082 d7, refused `same_person`) | no | none | designed; today it counts when the principals differ |
 | Knowledge | agent key A | agent key B: a reviewer crew's dreamer key, `held_by: agent`, over HTTP | yes | yes | `approver.held_by: agent` | built |
 | Knowledge | person A | person B | yes | yes | `held_by: human` | built |
 | Knowledge: `document`, `test` | as `memory` | as `memory` | as `memory` | as `memory` | as `memory` | designed kinds (ADR-0081, ADR-0086) |
-| Instruction: `steering`, `guardrail` | agent key A or a person | a person of another principal | yes | yes | `held_by: human` | built |
+| Instruction: `steering`, `guardrail` | agent key A or a person | another person (the built check: another key and principal) | yes | yes | `held_by: human` | built |
 | Instruction | agent key A of person P | P's review key, inside P's own root | yes | no | `same_user: true` | built for development scopes |
 | Instruction | agent key A | agent key B (`held_by: agent`) | no: `review.person_required` (ADR-0080 d16) | no | none | designed; today an agent's verdict counts on a guardrail or steering row |
 | Instruction: `skill` | agent key A or a person | a person, as above | as above | as above | as above | designed kind (ADR-0080) |
@@ -34,7 +34,7 @@ Every write has a producer and needs a reviewer who is not that producer. Three 
 | Any class | any key | the author's key, or any key sharing a principal with the lineage | no | no | none | built: refused `review.author_in_lineage` |
 | Any class, in progress | any key | an agent `curator` profile | never approves; rejects, proposes retirements, flags contradictions | not applicable | none | built |
 
-Two more acts follow the same split, both designed: a release is cut by one person and published by a second, or by the same user's second key in their own root, marked `same_user` (ADR-0085 d4); an admin fix is confirmed by the admin's own person in a development scope, marked `same_user`, and only by a person of another principal in a production scope (ADR-0089 d8). The decisions are on pull requests [#375](https://github.com/e8kor/open-memory-lab/pull/375) and [#377](https://github.com/e8kor/open-memory-lab/pull/377).
+Two more acts follow the same split, both designed: a release is cut by one person and published by another person, in a user root too, since a published release is a production scope (ADR-0085 d4); an admin fix is confirmed by the admin's own person in a development scope, marked `same_user`, and only by another person in a production scope or on a release's overlay (ADR-0089 d8). The decisions are on pull requests [#375](https://github.com/e8kor/open-memory-lab/pull/375) and [#377](https://github.com/e8kor/open-memory-lab/pull/377).
 
 ## Who sees what where
 

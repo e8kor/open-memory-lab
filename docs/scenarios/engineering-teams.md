@@ -134,7 +134,7 @@ oml admin fix demote <artifact_id> --reason "refund-flow step 3 refunds twice"
 
 - `tip` keys get the previous promoted version at once. Every release that lists the bad version serves the previous one as a marked overlay, `approver.act: "admin_fix"`, `confirmed: false`, and reads `degraded`.
 - No one can cut 1.4.1 over an unconfirmed fix.
-- In the morning bob sees the fix in To do, or with `oml review fixes`, reads the reason, and confirms or reverts it. The admin is never named to him. In a production scope only a person of another principal confirms.
+- In the morning bob sees the fix in To do, or with `oml review fixes`, reads the reason, and confirms or reverts it. The admin is never named to him. In a production scope only another person confirms, never the admin's own.
 
 Admin fixes are demote, edit, retire, release rollback, import rollback and erasure. Each takes an admin key held by a person and a reason, is marked to every reader, and is journalled. An admin key never reaches an agent surface.
 
