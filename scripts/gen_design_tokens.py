@@ -18,7 +18,6 @@ Outputs:
                                                              docs theme, which the theme's toggle picks
   docs/architecture/img/<view>.svg                           the same view standalone: paper, and night
                                                              under prefers-color-scheme: dark
-  site/design/{tokens,fonts}.css, site/design/brand.json    the landing's inputs; site/build.py
                                                              writes the pages (site/README.md)
 
 Standard library only.
@@ -46,7 +45,7 @@ DOCS_BRAND = (
     "oml-lockup-dark.svg", "oml-lockup-light.svg", "readme-hero-dark.svg",
     "readme-hero-light.svg", "social-preview.svg", "social-preview.png",
 )
-# The landing's design inputs; site/build.py turns them and site/src/ into site/dist/.
+# Where the landing's own repository keeps the files site_inputs() returns; nothing here writes them.
 SITE_DESIGN = ROOT / "site/design"
 # The glyphs the web pages draw inline: the states and markers, and the actors.
 WEB_GLYPHS = (
@@ -332,8 +331,12 @@ def inline_diagram(src: Path, cls: str) -> str:
 
 
 def site_inputs(t: dict) -> dict[Path, bytes]:
-    """What the landing pages take from the design system, as files under site/design/:
-    site/build.py assembles the pages from them and from site/src/ (site/README.md)."""
+    """What the landing takes from the design system, as the files it keeps under site/design/.
+
+    Public, and written nowhere by this repository (outputs() and --check leave it out): the
+    landing lives in the operator's own repository (ADR-0070 d12, as amended 2026-11-14), which
+    vendors these files and checks its copy against this function at a tagged revision of this
+    repository."""
     ground = next(tok["value"] for tok in t["color"]["tokens"] if tok["name"] == "ground")
     newsreader = next(f for f in t["type"]["fonts"] if f["family"] == "Newsreader")
     b64 = base64.b64encode((DESIGN / "fonts" / Path(newsreader["file"]).name).read_bytes()).decode()
@@ -372,7 +375,6 @@ def outputs() -> dict[Path, bytes]:
         out[DOCS / "architecture/img" / f"{view}.svg"] = arch_view(src, t, "adaptive").encode()
         for theme in THEMES:
             out[DOCS / "architecture/img" / f"{view}-{theme}.svg"] = arch_view(src, t, theme).encode()
-    out |= site_inputs(t)
     for name in DOCS_BRAND:
         out[DOCS / "assets/brand" / name] = (DESIGN / "assets" / name).read_bytes()
     for f in sorted((DESIGN / "fonts").iterdir()):

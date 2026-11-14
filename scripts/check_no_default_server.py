@@ -14,9 +14,9 @@ The pattern is narrow on purpose: an allowlist of hosts over crates/ would
 trip on scan-rule fixtures and cited references. Left out are the records
 and history that name the hosted service as a fact of the past: the ADRs,
 the changelog and its fragments, the number registry and the generated
-design-records page that list ADR titles, the hosted service's legal drafts
-and landing (which leave with #194), the landing's test, and the frozen ADR
-copies the sync tests read as data.
+design-records page that list ADR titles, and the frozen ADR copies the
+sync tests read as data. The hosted service's landing and legal drafts are
+not in this repository (ADR-0070 d12, as amended 2026-11-14).
 
 Run by .github/workflows/practices.yml. Dependencies: stdlib and git.
 Exit status 0 when nothing is found, 1 with each finding otherwise.
@@ -36,9 +36,6 @@ EXCLUDED = (
     "changes/",
     "docs/NUMBERS.md",
     "docs/reference/design-records.md",
-    "docs/legal/",
-    "site/",
-    "scripts/tests/test_site_build.py",
     "crates/bins/oml-cli/tests/fixtures/",
     "scripts/check_no_default_server.py",
 )
