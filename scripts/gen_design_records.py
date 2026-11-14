@@ -30,7 +30,7 @@ CATEGORIES = {
     "Sources and sync": [47, 57, 61, 62, 63],
     "Integrations and agents": [14, 22, 25, 28, 29, 31, 37, 38, 39, 40, 67, 76, 77, 80, 81],
     "Operations and security": [15, 16, 23, 26, 33, 34, 41, 42, 43, 44, 45, 46, 58, 71, 79, 82, 83, 84],
-    "Architecture and platform": [6, 8, 18, 19, 24, 66, 70],
+    "Architecture and platform": [6, 8, 18, 19, 24, 66, 70, 91],
 }
 BLURB = {
     "Trust and governance": "The rules that make a write held, reviewed by someone else and signed.",
@@ -45,9 +45,9 @@ BLURB = {
 
 
 # Records the page leaves out although they are accepted: ADR-0064, ADR-0080 to ADR-0087,
-# ADR-0089 and ADR-0090 are decided and not built (ADR-0088 is deferred, not decided), and
+# ADR-0089 to ADR-0091 are decided and not built (ADR-0088 is deferred, not decided), and
 # ADR-0066 is about how this repository tracks work, which readers of the site do not need.
-HELD_BACK = {64, 66, 80, 81, 82, 83, 84, 85, 86, 87, 89, 90}
+HELD_BACK = {64, 66, 80, 81, 82, 83, 84, 85, 86, 87, 89, 90, 91}
 
 
 def record(path: pathlib.Path) -> tuple[int, str, str, str]:
