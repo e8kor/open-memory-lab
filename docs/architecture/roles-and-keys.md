@@ -14,11 +14,11 @@ The four rules, R1 to R4, are declared once, in [the constitution](https://githu
 
 | Role | What it does |
 |---|---|
-| `reader` | Recalls, reads, searches and reads the graph within its scope. Every read is logged. |
+| `reader` | Recalls, reads, searches and reads the graph within its scope. Each recall is recorded in recall telemetry for 30 days. |
 | `writer` | Writes memories, held on arrival, and proposes a new version of its own. Never gives a verdict. |
 | `dreamer` | The reviewer role. Proposes edits and connections to other keys' memories, gives verdicts, ratifies connection proposals. |
 | `admin` | Governs a tenant: keys, workareas, crews, grants and denials. Its verdicts on content are refused. |
-| `operator` | Runs the provider level: creates tenants and issues each tenant's first admin key. Never writes, reads or reviews content. |
+| `operator` | Designed and not built: would run the provider level, create tenants and issue each tenant's first admin key, and never write, read or review content. No path issues an operator key. |
 
 Roles do not imply one another: a crew member who writes and recalls holds a writer key with a reader grant beside the writer grant. The grant decides, not the role name.
 
@@ -40,16 +40,19 @@ A dash means OML refuses the verb with a typed error. For content verbs, the col
 | Verdict on a held memory | — | — | yes | refused | — |
 | Ratify a connection proposal | — | — | yes | — | — |
 | Propose or ratify a workarea status change | — | — | yes | yes | — |
-| Issue keys, set grants and denials | — | — | — | yes | yes (operator and first admin keys only) |
-| Mint a connect code, revoke a connection | — | — | — | yes | — |
-| Create workareas and crews | — | writer in its own user root only | — | yes | — |
-| Create a tenant, issue its first admin key | — | — | — | — | yes |
+| Issue keys, set grants and denials | — | `<user>-web` only, see below | — | yes | designed, not built |
+| Mint a connect code, revoke a connection | — | `<user>-web` only, see below | — | yes | — |
+| Create workareas | — | writer in its own user root only | — | yes | — |
+| Create crews | — | — | — | yes | — |
+| Create a tenant, issue its first admin key | — | — | — | — | designed, not built |
 | Read any memory's text and attribution ([admin read](#the-admin-read)) | — | — | — | yes, journalled | — |
 | Read, write or review content | — | — | — | — | refused |
 
+The `<user>-web` [session key](#session-keys), a writer key, also issues reader and writer keys in its person's root, mints their connect codes and cuts them off with a denial.
+
 Approve, sign and delete appear in no column: approval is an effect of review, `oml-server` signs, and deletion does not exist.
 
-- **A memory written by a key is that key's own.** A bearer key reads its own memories in any state. The signed-in user page also reads every key belonging to that user (ADR-0045 d16). Other keys read `promoted` memories. A reviewer key is served the held memory it judges, and a person's reviewer key lists the held memories it may judge, with their text (`GET /v2/review/held`). A reader inside an [in-progress workarea](workareas.md#in-progress-workareas) recalls held memories there, marked unreviewed. Also, an admin of the tenant reads any memory through the journaled [admin read](#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
+- **A memory written by a key is that key's own.** A bearer key reads its own memories in any state. The signed-in user page also reads every key belonging to that user (ADR-0045 d16). Other keys read `promoted` memories. A reviewer key is served the held memory it judges, and a person's reviewer key lists the held memories it may judge, with their text (`GET /v2/review/held`). A reader inside an [in-progress workarea](workareas.md#in-progress-workareas) recalls held memories and derived facts there, marked unreviewed, except those the scan held or last scanned under an older rule set. Also, an admin of the tenant reads any memory through the journaled [admin read](#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
 - **An admin key reads workarea structure without grants**: names, ids, parents, statuses, crews, children and edges in its tenant. It reads a memory's content only through the [admin read](#the-admin-read).
 - **A global denial on an admin key is refused, `request.validation` with `details.field: key`.**
 - **Recall, search and the read by id need a reader grant, and no admin key can carry one.** An admin key that calls recall gets `access.verb_ceiling`.
@@ -58,10 +61,10 @@ A development workarea letting a writer approve its own memories, marked `self_s
 
 ## Issuing keys
 
-A key is issued with a role no higher than its issuer's. Only admin and operator keys issue.
+A key is issued with a role no higher than its issuer's. Admin keys issue, and the `<user>-web` session key issues reader and writer keys in its person's root.
 
-- A tenant admin issues reader, writer, dreamer and admin keys inside its tenant. No tenant key can mint an operator key.
-- An operator key issues operator keys and each tenant's first admin key, only for a tenant that has never held a key.
+- A tenant admin issues reader, writer, dreamer and admin keys inside its own tenant. No tenant key can mint an operator key.
+- The operator tier is designed and not built: no route creates a tenant and no path issues an operator key.
 
 | Key role | Grant roles it may carry |
 |---|---|
@@ -72,7 +75,7 @@ A key is issued with a role no higher than its issuer's. Only admin and operator
 
 A grant outside that set is refused with `access.issuer_ceiling`. An admin key with a dreamer grant is refused with `access.role_exclusive`: the two-key rule. A person who administers and reviews holds two keys, so the journal shows which capacity acted.
 
-Checks run in this order, first failure answers: role exclusivity, issuer ceiling, grant admissibility, node existence, name free (`name.taken`).
+After the request's names resolve and its limits are checked, checks run in this order, first failure answers: role exclusivity, issuer ceiling, grant admissibility, node and crew existence, deny containment, coverage of the default workarea, connection eligibility (with `--connect-code`), name free (`name.taken`).
 
 `oml keys issue` and `oml keys issue-agent` print the key value once. OML stores a SHA-256 hash only, so there is no "show me the key again". `oml keys show` displays grants, denials, crew and connections, never the value.
 
@@ -115,7 +118,7 @@ A writer supersedes only its own memory; another key's readable memory answers `
 | Effective grant role | Verbs (`my_effective_verbs`) |
 |---|---|
 | `reader` | `recall`, `read`, `graph_read`, `events_tail` |
-| `writer` | `remember`, `learn`, `supersede` |
+| `writer` | `remember`, `learn`, `attach`, `supersede` |
 | `dreamer` | `propose`, `review`, `supersede` |
 
 A `service` key omits `review`.
@@ -126,7 +129,7 @@ OML limits which rows a dreamer may review, and checks it when approving.
 
 - **Lineage exclusion.** If the reviewing key or its principal appears in the memory's lineage closure (every memory it derives from, through declared `derives_from` and connection edges, pending or ratified), the verdict is refused with `review.author_in_lineage`. A reviewer cannot propose an edit and then approve it.
 - **Rival successors.** While several successors of one memory are held, each author is excluded from reviewing the others.
-- **Different principals.** A `committed` workarea can require more: a reviewer crew or external manager that differs from the author's crew. OML uses the metadata journaled at approval. A verdict that cannot establish the requirement does not count, and the memory stays held.
+- **Different principals.** A requirement that the reviewer's crew or external manager differ from the author's is designed and not built: every workarea takes one dreamer verdict from outside the memory's lineage.
 
 OML cannot see undeclared derivation or prove two principals do not collude.
 
@@ -142,7 +145,7 @@ Demotion ([ADR-0010](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr
 
 ## The operator and the first admin key
 
-The operator creates tenants, issues operator keys and each tenant's first admin key, and holds no grant inside any tenant. A single-use enrollment token starts a new server. `oml bootstrap claim` exchanges it for the first key and stores the URL and key in an owner-only file (mode 0600).
+The operator tier is designed and not built. A single-use enrollment token starts a new server: `oml bootstrap claim` exchanges it for the first admin key of the server's tenant and stores the URL and key in an owner-only file (mode 0600). No route creates a further tenant.
 
 ## User keys
 
@@ -163,10 +166,10 @@ A **session key** has the credential `session`: no value, no connection. It acts
 |---|---|
 | `<user>-web` | User key: writer and reader on `universe.<user>`, node read on `universe` |
 | `<user>-review` | Dreamer key: dreamer and reader on `universe.<user>` |
-| `<user>-curate` | Tenant writer key: writer on the `universe` node |
+| `<user>-curate` | Tenant writer key: writer on the `universe` node alone, and reader on each workarea it is designated to curate from |
 | `<user>-admin` | Tenant admin key, no grants |
 
-`<user>-web` and `<user>-review` are created at first sign-in. Each session key's principal is its own name. `<user>-admin` reads memory text through the journaled [admin read](#the-admin-read) and gives no verdicts.
+`<user>-web` and `<user>-review` are created at first sign-in, and `<user>-admin` too for an admin entry; `<user>-curate` is created when an admin designates the person a curator. Each session key's principal is its own name. `<user>-admin` reads memory text through the journaled [admin read](#the-admin-read) and gives no verdicts.
 
 A session key that carries a denial, on any workarea, runs none of its key acts: a denied `<user>-web` issues no key, mints no connect code and cuts no key off. Each act answers `access.verb_ceiling` with `details.reason: session_key_denied` and journals nothing. The key it would issue holds the person's whole root, which a key denied inside that root or on `universe` no longer does; a denial on any other workarea masks nothing the key reads and refuses the three acts all the same. The refusal is permanent: no route lifts a denial, and every sign-in finds the same `<user>-web`, also after the person's entry is removed and added back. The session still opens the pages, lists the person's keys, downloads their export, files their deletion request and ends by sign-out; the Keys and Start pages draw none of the three forms and say so, and `GET /v2/whoami` tells `<user>-web`, and no other key, whether it carries a denial (`denied`, a boolean).
 
