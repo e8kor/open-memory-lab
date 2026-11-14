@@ -57,8 +57,9 @@ rest is not built; [releases](../changelog.md) says which part each release buil
     agent key included (a dreamer grant under the review policy, not an agent-surface verb; R1
     unchanged) for the knowledge class (the operator, 2026-11-14: "Agents approve knowledge"); a
     verdict on the instruction class (ADR-0080 d16), every admin-fix confirmation (ADR-0089 d8)
-    and every release publication (ADR-0085 d4) come from a different person; and no unreviewed content is served, except an
-    admin fix's marked overlay, which a different person must confirm.
+    and every release publication (ADR-0085 d4) come from a different person; and no unreviewed
+    content is served, except an admin fix's marked overlay, which a different person must
+    confirm.
 
   Outside the three exceptions R2 and R3 hold without exception. Each is named here on the day it
   is made, marks what it serves indelibly, and is widened only by a new decision on this record.
