@@ -218,7 +218,7 @@ Decided, not built.
   - **When a guardrail loosens.** The previous release may lack a guardrail, or hold it at lower
     severity, or lack a skill. The withdrawal still takes effect at once, and it:
     - raises `oml_release_withdrawals_total{loosens_guardrail="true"}`;
-    - raises a doctor alert until a person of another principal acknowledges it
+    - raises a doctor alert until another person acknowledges it
       (`workarea.release_withdrawal_acknowledged`).
   - This amends ADR-0037 d10 and ADR-0080 d3, which made every change to what binds a ratified
     act.

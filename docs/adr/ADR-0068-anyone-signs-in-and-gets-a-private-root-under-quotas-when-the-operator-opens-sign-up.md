@@ -133,7 +133,7 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
   d2; ADR-0055 d7). An auditor reading the export sees a person approving their own agents'
   work, and the pages say "(you)" beside such a verdict. Nothing here self-signs. ADR-0001 d5's
   development exception is untouched. The cost is the one ADR-0044 d8 states: R2 holds per
-  credential, not per person, inside a user root.
+  credential, not per person, inside a user root. *(Self-signing retired 2026-11-14 (ADR-0001 d5); no row carries the mark.)*
 
 - **d5 — Every person of the sign-up tenant is under quotas, and an admin raises a person's
   quota as a journalled act.** A quota applies to a user, the root a user key names, in the

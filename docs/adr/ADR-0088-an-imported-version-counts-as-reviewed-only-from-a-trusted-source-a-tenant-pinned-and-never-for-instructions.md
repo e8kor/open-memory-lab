@@ -39,7 +39,7 @@ workarea (`crates/oml-domain/src/federation.rs:29`, `is_trusted_source`). Every 
   - the bundle verifies under ADR-0084;
   - the verdict's source event signature checks against the pinned key;
   - the event names the pinned tenant;
-  - the verdict's key was `held_by: human`, not `same_user`, and not `self_signed`;
+  - the verdict's key was `held_by: human`, not `same_user`, and not `self_signed`; *(Self-signing retired 2026-11-14 (ADR-0001 d5); no row carries the mark.)*
   - the reviewed digest equals the imported version's digest.
 
   A version failing any check lands held, as ADR-0084 d6 says.

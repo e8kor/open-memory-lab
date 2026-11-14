@@ -231,8 +231,8 @@ Decided, not built.
       "Nothing waits for this account." and links to Memories, Submitted.
     - **Administration, `/web/admin/todo`.** Title `Admin · To do · OML`, no filter, admin work
       only: **Admin fixes, unconfirmed** (fixes this admin key took, with their alert), 
-      **Guardrail-loosening alerts** (withdrawals that stopped a guardrail, until a person of
-      another principal acknowledges them; an alert raised by one of the admin's own fixes is
+      **Guardrail-loosening alerts** (withdrawals that stopped a guardrail, until another
+      person acknowledges them; an alert raised by one of the admin's own fixes is
       listed with that fix) and **Open investigations** (ADR-0089 d10; the row opens the
       investigation). No row offers a verdict, a ratification, a confirmation or an
       acknowledgement: those are a person's acts (ADR-0001 R1).
@@ -263,7 +263,7 @@ Decided, not built.
           name and a gate summary.
         - Withdrawal alerts to acknowledge, an API change decided here:
           `GET /v2/review/withdrawals?workarea=&cursor=`, the withdrawals that loosened a guardrail
-          and wait for acknowledgement by a person of another principal (ADR-0085 d9).
+          and wait for acknowledgement by another person (ADR-0085 d9).
         - Gate overrides, an API change decided here: `GET /v2/review/gates?workarea=&cursor=`, the
           blocking tests and impact gates (ADR-0086 d6) of proposals the key may ratify, each with
           its case or finding.
