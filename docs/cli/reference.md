@@ -37,18 +37,18 @@ Per-command sections below omit these options.
 | `oml keys limit` | Set or clear a key's expiry and its requests per minute; needs an admin key other than the key itself, and journals key.limits_set. |
 | `oml keys disconnect` | Revoke one connector-key connection and journal connection.revoked |
 | `oml deny set` | Create or extend a global deny over a subtree, overriding all grants; journals key.denied |
-| `oml chat init` | Open the key's `chat` workarea under its user root and print OML_CHAT_WORKAREA for plugin capture and recall. |
-| `oml workareas create` | Create a child workarea in development status |
-| `oml workareas tree` | List a workarea tree with each node's path, id, status, and crew |
-| `oml workareas show` | Show a workarea's path, status, crew, and children |
-| `oml workareas mode` | Set in_progress to recall labelled unreviewed memories within the workarea, or standard to commit. |
-| `oml workareas federation` | Set whether recalls scoped elsewhere may search this workarea when they ask for wider sources; grants nothing. |
-| `oml workareas crew set` | Set the workarea's crew record, including on validated workareas; journals workarea.crew_updated |
-| `oml workareas status propose` | Propose the next forward rung; it waits for a second identity |
-| `oml workareas status ratify` | Ratify a pending proposal under a key that did not propose it |
-| `oml workareas status pending` | The workarea's live proposals and the review policy in force |
+| `oml chat init` | Open the key's `chat` workspace under its user root and print OML_CHAT_WORKSPACE for plugin capture and recall. |
+| `oml workspaces create` | Create a child workspace in development status |
+| `oml workspaces tree` | List a workspace tree with each node's path, id, status, and crew |
+| `oml workspaces show` | Show a workspace's path, status, crew, and children |
+| `oml workspaces mode` | Set in_progress to recall labelled unreviewed memories within the workspace, or standard to commit. |
+| `oml workspaces federation` | Set whether recalls scoped elsewhere may search this workspace when they ask for wider sources; grants nothing. |
+| `oml workspaces crew set` | Set the workspace's crew record, including on frozen workspaces; journals workspace.crew_updated |
+| `oml workspaces status propose` | Propose the next forward rung; it waits for a second identity |
+| `oml workspaces status ratify` | Ratify a pending proposal under a key that did not propose it |
+| `oml workspaces status pending` | The workspace's live proposals and the review policy in force |
 | `oml edges propose claim` | Link claims with a label such as supports, contradicts, relates_to, or continues |
-| `oml edges propose brief` | Propose a promoted claim for a workarea's brief |
+| `oml edges propose brief` | Propose a promoted claim for a workspace's brief |
 | `oml edges ratify` | Ratify a pending edge under a key that did not propose it |
 | `oml edges list` | List one page of pending and ratified edges, newest first |
 | `oml crews create` | Create a crew record with an immutable name; journals crew.created |
@@ -64,12 +64,12 @@ Per-command sections below omit these options.
 | `oml usage settings` | Show recall recording and query-text settings; --query-text changes and journals query-text retention (telemetry.settings_set) |
 | `oml usage events` | List the tenant's recalls from the last 30 days with reader follow-up, newest first |
 | `oml usage eval` | Replay labelled recalls through each pipeline under the original keys' scopes; print only scores |
-| `oml admin read` | Read one memory with text and attribution, or search all organisation memories with --query, --workarea, or --state; journals memory.admin_read |
+| `oml admin read` | Read one memory with text and attribution, or search all organisation memories with --query, --workspace, or --state; journals memory.admin_read |
 | `oml admin rescan` | Report by rule and location which stored versions current rules would refuse or hold; never prints text or changes data |
 | `oml write` | Submit a claim for review, replace one with --replaces, or propose its retirement |
 | `oml read` | Fetch a memory by artifact id, recall with --query, or list memories |
 | `oml events` | Tail journal event digests within the key's reader access |
-| `oml sync` | Sync a workarea with committed repository documents: extract, diff, write, check, or link claims |
+| `oml sync` | Sync a workspace with committed repository documents: extract, diff, write, check, or link claims |
 | `oml anchor` | Print a JSON source anchor for a committed file or fragment at --rev, for oml write --anchor |
 | `oml review next` | Claim and serve one held item for this key |
 | `oml review list` | List held items this key may judge, with text, oldest first, without claiming them. |
@@ -144,7 +144,7 @@ oml guardrails show [OPTIONS]
 
 | Option | Meaning |
 |---|---|
-| `--workarea <WORKAREA>` | Scope workarea by id or name; omitted, the key's default |
+| `--workspace <WORKSPACE>` | Scope workspace by id or name; omitted, the key's default |
 
 ### `oml guardrails export`
 
@@ -159,7 +159,7 @@ oml guardrails export [OPTIONS] --format <FORMAT> --out <OUT>
 | `--format <FORMAT>` | agents-md \| claude-md [possible values: agents-md, claude-md] |
 | `--out <OUT>` | File to write |
 | `--check` | Write nothing; exit 1 if the file differs from the live set |
-| `--workarea <WORKAREA>` | Scope workarea by id or name; omitted, the key's default |
+| `--workspace <WORKSPACE>` | Scope workspace by id or name; omitted, the key's default |
 
 
 ## `oml keys`
@@ -180,17 +180,17 @@ oml keys issue [OPTIONS] --role <ROLE> <KEY_NAME>
 
 | Option | Meaning |
 |---|---|
-| `--role <ROLE>` | reader \| writer \| dreamer \| admin |
-| `--held-by <HELD_BY>` | agent \| human \| service [default: agent] |
-| `--default-workarea <DEFAULT_WORKAREA>` | Default workarea (id or name) for provider requests without one; must be covered by a grant. Defaults to the first grant's workarea |
-| `--grant <GRANTS>` | Grant <workarea>:<role>, or <workarea>:<role>:node for one node; workarea may be id or name. Repeatable. Writer grants include reader access unless --write-only |
+| `--role <ROLE>` | reader \| writer \| reviewer \| admin |
+| `--used-by <USED_BY>` | agent \| person \| service [default: agent] |
+| `--default-workspace <DEFAULT_WORKSPACE>` | Default workspace (id or name) for provider requests without one; must be covered by a grant. Defaults to the first grant's workspace |
+| `--grant <GRANTS>` | Grant <workspace>:<role>, or <workspace>:<role>:node for one node; workspace may be id or name. Repeatable. Writer grants include reader access unless --write-only |
 | `--crew <CREW>` | Crew record (id or name), fixed for the key's life |
-| `--user <USER>` | User the key acts for. Grants must be under `universe.<user>`, where workarea names resolve; the first key creates that root |
+| `--user <USER>` | User the key acts for. Grants must be under `universe.<user>`, where workspace names resolve; the first key creates that root |
 | `--write-only` | Send writer grants without matching reader grants |
 | `--principal <PRINCIPAL>` | Principal the key acts as |
 | `--label <LABEL>` |  |
-| `--guardrail-scope <GUARDRAIL_SCOPE>` | Guardrail scope: workarea loads only the default workarea's guardrails; ancestors also loads every readable ancestor. Defaults to ancestors [possible values: workarea, ancestors] |
-| `--profile <PROFILE>` | Key profile: curator is an agent-held dreamer that narrows within an in-progress workarea and never promotes [possible values: curator] |
+| `--guardrail-scope <GUARDRAIL_SCOPE>` | Guardrail scope: workspace loads only the default workspace's guardrails; ancestors also loads every readable ancestor. Defaults to ancestors [possible values: workspace, ancestors] |
+| `--profile <PROFILE>` | Key profile: curator is an agent-held reviewer that narrows within an in-progress workspace and never promotes [possible values: curator] |
 | `--expires <INSTANT>` | Instant the key stops authenticating, RFC 3339 with its offset, such as 2026-12-01T17:00:00Z; must be later than now. Omitted, the key does not expire. Refused for an admin key |
 | `--requests-per-minute <N>` | Requests the key may make in one UTC minute, from 1 to 1000000. Omitted, the key has no rate of its own. Refused for an admin key |
 
@@ -209,14 +209,14 @@ oml keys issue-agent [OPTIONS] --principal <PRINCIPAL> <KEY_NAME>
 | Option | Meaning |
 |---|---|
 | `--principal <PRINCIPAL>` | Principal the key acts as; give each agent its own |
-| `--workarea <WORKAREA>` | Workarea (id or name) to write and recall, and its default. With --user, optional and resolved in that user's namespace; defaults to the user's root |
+| `--workspace <WORKSPACE>` | Workspace (id or name) to write and recall, and its default. With --user, optional and resolved in that user's namespace; defaults to the user's root |
 | `--user <USER>` | User the key acts for, under `universe.<user>`; the first key for a user creates that root |
 | `--crew <CREW>` | Crew record (id or name), fixed for the key's life |
-| `--held-by <HELD_BY>` | Who holds the key [default: agent] [possible values: agent, human] |
+| `--used-by <USED_BY>` | Who holds the key [default: agent] [possible values: agent, person] |
 | `--write-only` | Send the writer grant without a matching reader grant |
 | `--out <OUT>` | Write the key to a new 0600 file without overwriting and print a line that reads it instead of the value |
 | `--connect-code` | Issue a claude.ai custom-connector key with a single-use connect code instead of a key value |
-| `--guardrail-scope <GUARDRAIL_SCOPE>` | Guardrail scope: workarea loads only the default workarea's guardrails; ancestors also loads every readable ancestor. Defaults to ancestors [possible values: workarea, ancestors] |
+| `--guardrail-scope <GUARDRAIL_SCOPE>` | Guardrail scope: workspace loads only the default workspace's guardrails; ancestors also loads every readable ancestor. Defaults to ancestors [possible values: workspace, ancestors] |
 | `--expires <INSTANT>` | Instant the key stops authenticating, RFC 3339 with its offset, such as 2026-12-01T17:00:00Z; must be later than now. Omitted, the key does not expire. Refused for an admin key |
 | `--requests-per-minute <N>` | Requests the key may make in one UTC minute, from 1 to 1000000. Omitted, the key has no rate of its own. Refused for an admin key |
 
@@ -246,7 +246,7 @@ oml keys connect-code [OPTIONS] <KEY>
 
 | Option | Meaning |
 |---|---|
-| `--ttl <DURATION>` | Code lifetime, such as 90s, 45m, 12h, or 7d, up to 30d; defaults to 10m. Longer than 10m requires a key granted on exactly one non-universe workarea |
+| `--ttl <DURATION>` | Code lifetime, such as 90s, 45m, 12h, or 7d, up to 30d; defaults to 10m. Longer than 10m requires a key granted on exactly one non-universe workspace |
 
 ### `oml keys limit`
 
@@ -300,7 +300,7 @@ oml deny set [OPTIONS] <KEY> <SUBTREE>
 | Argument | Meaning |
 |---|---|
 | `<KEY>` | Key to deny, by id or name |
-| `<SUBTREE>` | Workarea (id or name) whose subtree the key can no longer access |
+| `<SUBTREE>` | Workspace (id or name) whose subtree the key can no longer access |
 
 | Option | Meaning |
 |---|---|
@@ -313,7 +313,7 @@ Manage a person's chat memory
 
 ### `oml chat init`
 
-Open the key's `chat` workarea under its user root and print OML_CHAT_WORKAREA for plugin capture and recall. Requires a person's key
+Open the key's `chat` workspace under its user root and print OML_CHAT_WORKSPACE for plugin capture and recall. Requires a person's key
 
 ```
 oml chat init [OPTIONS]
@@ -324,150 +324,150 @@ oml chat init [OPTIONS]
 | `--parent <PARENT>` | Parent by id or name; omitted, the key's user root |
 
 
-## `oml workareas`
+## `oml workspaces`
 
-Manage workareas
+Manage workspaces
 
-### `oml workareas create`
+### `oml workspaces create`
 
-Create a child workarea in development status
+Create a child workspace in development status
 
 ```
-oml workareas create [OPTIONS] <PARENT> <NAME>
+oml workspaces create [OPTIONS] <PARENT> <NAME>
 ```
 
 | Argument | Meaning |
 |---|---|
-| `<PARENT>` | Parent workarea, by id or name |
-| `<NAME>` | New workarea name, unique in the tenant and immutable |
+| `<PARENT>` | Parent workspace, by id or name |
+| `<NAME>` | New workspace name, unique in the tenant and immutable |
 
 | Option | Meaning |
 |---|---|
 | `--crew <CREW>` | Crew record to assign, by id or name |
 
-### `oml workareas tree`
+### `oml workspaces tree`
 
-List a workarea tree with each node's path, id, status, and crew
+List a workspace tree with each node's path, id, status, and crew
 
 ```
-oml workareas tree [OPTIONS] [ROOT]
+oml workspaces tree [OPTIONS] [ROOT]
 ```
 
 | Argument | Meaning |
 |---|---|
-| `[ROOT]` | Root workarea, by id or name |
+| `[ROOT]` | Root workspace, by id or name |
 
 | Option | Meaning |
 |---|---|
-| `--root <ROOT>` | Root workarea, by id or name |
+| `--root <ROOT>` | Root workspace, by id or name |
 
-### `oml workareas show`
+### `oml workspaces show`
 
-Show a workarea's path, status, crew, and children
-
-```
-oml workareas show [OPTIONS] <WORKAREA>
-```
-
-| Argument | Meaning |
-|---|---|
-| `<WORKAREA>` | Workarea id or name |
-
-### `oml workareas mode`
-
-Set in_progress to recall labelled unreviewed memories within the workarea, or standard to commit. Person-held dreamer keys only; commit is refused while items are held
+Show a workspace's path, status, crew, and children
 
 ```
-oml workareas mode [OPTIONS] <WORKAREA> <MODE>
+oml workspaces show [OPTIONS] <WORKSPACE>
 ```
 
 | Argument | Meaning |
 |---|---|
-| `<WORKAREA>` | Workarea id or name |
+| `<WORKSPACE>` | Workspace id or name |
+
+### `oml workspaces mode`
+
+Set in_progress to recall labelled unreviewed memories within the workspace, or standard to commit. Person-held reviewer keys only; commit is refused while items are held
+
+```
+oml workspaces mode [OPTIONS] <WORKSPACE> <MODE>
+```
+
+| Argument | Meaning |
+|---|---|
+| `<WORKSPACE>` | Workspace id or name |
 | `<MODE>` | `in_progress`, or `standard` to commit [possible values: in_progress, standard] |
 
-### `oml workareas federation`
+### `oml workspaces federation`
 
-Set whether recalls scoped elsewhere may search this workarea when they ask for wider sources; grants nothing. Person-held dreamer keys or an admin key; journals workarea.federation_set
+Set whether recalls scoped elsewhere may search this workspace when they ask for wider sources; grants nothing. Person-held reviewer keys or an admin key; journals workspace.federation_set
 
 ```
-oml workareas federation [OPTIONS] <WORKAREA> <ACCEPT>
+oml workspaces federation [OPTIONS] <WORKSPACE> <ACCEPT>
 ```
 
 | Argument | Meaning |
 |---|---|
-| `<WORKAREA>` | Workarea id or name |
+| `<WORKSPACE>` | Workspace id or name |
 | `<ACCEPT>` | `on` lets federated recalls search it (the default); `off` declines [possible values: on, off] |
 
-### `oml workareas crew`
+### `oml workspaces crew`
 
-Set a workarea's crew record (admin key)
+Set a workspace's crew record (admin key)
 
-### `oml workareas crew set`
+### `oml workspaces crew set`
 
-Set the workarea's crew record, including on validated workareas; journals workarea.crew_updated
+Set the workspace's crew record, including on frozen workspaces; journals workspace.crew_updated
 
 ```
-oml workareas crew set [OPTIONS] --crew <CREW> <WORKAREA>
+oml workspaces crew set [OPTIONS] --crew <CREW> <WORKSPACE>
 ```
 
 | Argument | Meaning |
 |---|---|
-| `<WORKAREA>` | Workarea id or name |
+| `<WORKSPACE>` | Workspace id or name |
 
 | Option | Meaning |
 |---|---|
 | `--crew <CREW>` | Crew record id or name |
 
-### `oml workareas status`
+### `oml workspaces status`
 
-Move through development, committed, and validated; each step needs proposal and ratification by different keys
+Move through development, protected and frozen; each step needs proposal and ratification by different keys
 
-### `oml workareas status propose`
+### `oml workspaces status propose`
 
 Propose the next forward rung; it waits for a second identity
 
 ```
-oml workareas status propose [OPTIONS] --to <TO> <WORKAREA>
+oml workspaces status propose [OPTIONS] --to <TO> <WORKSPACE>
 ```
 
 | Argument | Meaning |
 |---|---|
-| `<WORKAREA>` | The workarea, by id or name |
+| `<WORKSPACE>` | The workspace, by id or name |
 
 | Option | Meaning |
 |---|---|
-| `--to <TO>` | The rung proposed: committed or validated |
+| `--to <TO>` | The rung proposed: protected or frozen |
 
-### `oml workareas status ratify`
+### `oml workspaces status ratify`
 
 Ratify a pending proposal under a key that did not propose it
 
 ```
-oml workareas status ratify [OPTIONS] <WORKAREA> <TRANSITION_ID>
+oml workspaces status ratify [OPTIONS] <WORKSPACE> <TRANSITION_ID>
 ```
 
 | Argument | Meaning |
 |---|---|
-| `<WORKAREA>` | The workarea, by id or name |
+| `<WORKSPACE>` | The workspace, by id or name |
 | `<TRANSITION_ID>` | The proposal's transition id |
 
-### `oml workareas status pending`
+### `oml workspaces status pending`
 
-The workarea's live proposals and the review policy in force
+The workspace's live proposals and the review policy in force
 
 ```
-oml workareas status pending [OPTIONS] <WORKAREA>
+oml workspaces status pending [OPTIONS] <WORKSPACE>
 ```
 
 | Argument | Meaning |
 |---|---|
-| `<WORKAREA>` | The workarea, by id or name |
+| `<WORKSPACE>` | The workspace, by id or name |
 
 
 ## `oml edges`
 
-Manage claim links and workarea brief entries, proposed and ratified by different keys
+Manage claim links and workspace brief entries, proposed and ratified by different keys
 
 ### `oml edges propose`
 
@@ -492,16 +492,16 @@ oml edges propose claim [OPTIONS] --label <LABEL> <FROM> <TO>
 
 ### `oml edges propose brief`
 
-Propose a promoted claim for a workarea's brief
+Propose a promoted claim for a workspace's brief
 
 ```
-oml edges propose brief [OPTIONS] <ARTIFACT> <WORKAREA>
+oml edges propose brief [OPTIONS] <ARTIFACT> <WORKSPACE>
 ```
 
 | Argument | Meaning |
 |---|---|
 | `<ARTIFACT>` | Claim artifact id |
-| `<WORKAREA>` | Workarea id or name |
+| `<WORKSPACE>` | Workspace id or name |
 
 ### `oml edges ratify`
 
@@ -526,7 +526,7 @@ oml edges list [OPTIONS] --kind <KIND>
 | Option | Meaning |
 |---|---|
 | `--kind <KIND>` | claim or brief |
-| `--workarea <WORKAREA>` | For claim, filter by subtree; for brief, required workarea |
+| `--workspace <WORKSPACE>` | For claim, filter by subtree; for brief, required workspace |
 | `--artifact <ARTIFACT>` | For claim, only edges touching this artifact |
 | `--limit <LIMIT>` | Page size |
 | `--cursor <CURSOR>` | Previous page's next_cursor |
@@ -669,7 +669,7 @@ oml search federation [OPTIONS]
 |---|---|
 | `--enabled <ENABLED>` | `on` lets recalls ask for wider sources; `off` refuses them [possible values: on, off] |
 | `--default-sources <DEFAULT_SOURCES>` | The sources an absent `sources` reads: `scope` or `wide` [possible values: scope, wide] |
-| `--max-sources <MAX_SOURCES>` | The most workareas a wide recall searches beside its scope, and the most a sources list names, 0 to 64 |
+| `--max-sources <MAX_SOURCES>` | The most workspaces a wide recall searches beside its scope, and the most a sources list names, 0 to 64 |
 
 
 ## `oml usage`
@@ -719,7 +719,7 @@ Read or rescan memories; admin reads are recorded in history (admin key)
 
 ### `oml admin read`
 
-Read one memory with text and attribution, or search all organisation memories with --query, --workarea, or --state; journals memory.admin_read
+Read one memory with text and attribution, or search all organisation memories with --query, --workspace, or --state; journals memory.admin_read
 
 ```
 oml admin read [OPTIONS] [MEMORY]
@@ -732,7 +732,7 @@ oml admin read [OPTIONS] [MEMORY]
 | Option | Meaning |
 |---|---|
 | `--query <QUERY>` | Full-text search using recall matching |
-| `--workarea <WORKAREA>` | Limit to this workarea subtree (id, name, or qualified name) |
+| `--workspace <WORKSPACE>` | Limit to this workspace subtree (id, name, or qualified name) |
 | `--state <STATE>` | held, promoted, rejected, superseded or demoted |
 
 ### `oml admin rescan`
@@ -745,7 +745,7 @@ oml admin rescan [OPTIONS]
 
 | Option | Meaning |
 |---|---|
-| `--record-held` | Also record each held version's findings under current rules, so a held version written before an upgrade is served inside an in-progress workarea again when nothing is found; journals scan.findings_recorded |
+| `--record-held` | Also record each held version's findings under current rules, so a held version written before an upgrade is served inside an in-progress workspace again when nothing is found; journals scan.findings_recorded |
 | `--rates` | Print only aggregates for the operator, not for publication: per class, per origin kind and per class within an origin, how many versions the scan would refuse or hold and their share of those scanned, counts under 5 as <5; no artifact id, claim key or text |
 
 
@@ -769,7 +769,7 @@ oml write [OPTIONS] <TEXT>
 | `--severity <SEVERITY>` | Guardrail severity: never, must, or should; required for non-retirement guardrails [possible values: never, must, should] |
 | `--rule <RULE>` | Guardrail oml-gr/1 rule as one JSON object; deny or ask, never allow |
 | `--derives-from <DERIVES_FROM>` | Lineage artifact id; repeatable. Journals submissions with lineage as learn |
-| `--workarea <WORKAREA>` | Workarea (id or name); defaults to the key's default, or the target's with --replaces, which it may not change |
+| `--workspace <WORKSPACE>` | Workspace (id or name); defaults to the key's default, or the target's with --replaces, which it may not change |
 | `--replaces <REPLACES>` | Promoted tip artifact id to replace with a new held version |
 | `--expected-version <EXPECTED_VERSION>` | Required with --replaces: latest version last read. The server rejects moved claims with submission.version_conflict |
 | `--anchor <ANCHOR>` | Source anchor as a JSON object or @file: {repo, rev, path, fragment?, hash?, hasher?} or {uri, rev?, …} |
@@ -802,10 +802,10 @@ oml read [OPTIONS] [ARTIFACT_ID]
 | `--include-unreviewed` | Include this key's own held rows beside promoted hits |
 | `--search <SEARCH>` | Served search pipeline to run (see `oml search show`); defaults to the tenant's default |
 | `--match <MATCH_MODE>` | any (default) or all. all requires every query word; if no memory matches them all, any-word hits are returned and marked fallback |
-| `--sources <SOURCES>` | Where to search: scope (default), wide (also the committed workareas this key reads elsewhere), or comma-separated workarea names searched alone. Needs federation on (`oml search federation`) |
-| `--workarea <WORKAREA>` | Subtree (id or name) to read; defaults to the key's workarea, or all workareas this key wrote in for --own |
+| `--sources <SOURCES>` | Where to search: scope (default), wide (also the protected workspaces this key reads elsewhere), or comma-separated workspace names searched alone. Needs federation on (`oml search federation`) |
+| `--workspace <WORKSPACE>` | Subtree (id or name) to read; defaults to the key's workspace, or all workspaces this key wrote in for --own |
 | `--own` | List this key's own rows in every state (default listing) |
-| `--all` | List promoted tips in the workarea subtree instead |
+| `--all` | List promoted tips in the workspace subtree instead |
 | `--state <STATE>` | Filter by state: held, promoted, demoted, rejected, or erased |
 | `--kind <KIND>` | Filter by kind |
 | `--since <SINCE>` | List versions written at or after this RFC 3339 instant |
@@ -829,17 +829,17 @@ oml events [OPTIONS]
 | Option | Meaning |
 |---|---|
 | `--after-seq <AFTER_SEQ>` | Resume after this sequence number, using the previous page's next_after_seq |
-| `--workarea <WORKAREA>` | Subtree to tail (id or name); defaults to the key's workarea |
+| `--workspace <WORKSPACE>` | Subtree to tail (id or name); defaults to the key's workspace |
 | `--limit <LIMIT>` | Journal events scanned per call |
 
 
 ## `oml sync`
 
-Sync a workarea with committed repository documents: extract, diff, write, check, or link claims
+Sync a workspace with committed repository documents: extract, diff, write, check, or link claims
 
 
 ```
-oml sync [OPTIONS] --workarea <WORKAREA> <SOURCE>
+oml sync [OPTIONS] --workspace <WORKSPACE> <SOURCE>
 ```
 
 | Argument | Meaning |
@@ -848,7 +848,7 @@ oml sync [OPTIONS] --workarea <WORKAREA> <SOURCE>
 
 | Option | Meaning |
 |---|---|
-| `--workarea <WORKAREA>` | Workarea (id or name) to sync; with --pr, the parent of `<workarea>-pr-<n>` |
+| `--workspace <WORKSPACE>` | Workspace (id or name) to sync; with --pr, the parent of `<workspace>-pr-<n>` |
 | `--adapter <ADAPTER>` | Adapter: adr, headings or lines. Defaults to adr for decision-record Markdown files and headings otherwise. Not released yet (next release). `rust` (one claim per crate and module doc, never inferred) and `delta` (Delta Lake tables, requiring the oml-lake build) |
 | `--rev <REV>` | Commit to read; never the working tree [default: HEAD] |
 | `--repo <REPO>` | Repository name for anchors; omitted, derived from the `origin` remote |
@@ -858,12 +858,12 @@ oml sync [OPTIONS] --workarea <WORKAREA> <SOURCE>
 | `--max-writes <MAX_WRITES>` | Maximum memories one run writes; each run is one bulk verdict and the next run continues [default: 200] [alias: --batch] |
 | `--adopt` | Supersede a tip with no anchor in this repository as changed |
 | `--retire-all` | Propose retiring every claim this key wrote under the source, as when a draft pull request closes |
-| `--edges` | Propose source-stated edges between promoted tips (dreamer key) |
+| `--edges` | Propose source-stated edges between promoted tips (reviewer key) |
 | `--ratify` | With --edges, ratify matching pending edges proposed by another key |
 | `--allow-public-server` | Allow a server that declares itself shared and record consent for its origin in this clone. Its admins can read submissions; supersession or retirement does not erase submitted text or anchors |
 | `--allow-rollback` | Treat a source matching an older promoted version as a deliberate revert |
 | `--change-adapter` | Allow changing the adapter used for this source; retires claims written by the old adapter |
-| `--pr <PR>` | Draft pull request <n>: sync records changed between --base and --rev into `<workarea>-pr-<n>` |
+| `--pr <PR>` | Draft pull request <n>: sync records changed between --base and --rev into `<workspace>-pr-<n>` |
 | `--exclude <EXCLUDE>` | Glob of source paths to exclude; repeatable, for example `docs/adr/**`. Excluded paths are never read, compared, or retired; the set is recorded for this clone |
 | `--change-exclude` | Allow an exclude set different from the recorded one |
 | `--base <BASE>` | With --pr, the pull request's target branch [default: origin/main] |
@@ -904,7 +904,7 @@ oml review next [OPTIONS]
 
 ### `oml review list`
 
-List held items this key may judge, with text, oldest first, without claiming them. Person-held dreamer keys only
+List held items this key may judge, with text, oldest first, without claiming them. Person-held reviewer keys only
 
 ```
 oml review list [OPTIONS]
@@ -912,7 +912,7 @@ oml review list [OPTIONS]
 
 | Option | Meaning |
 |---|---|
-| `--workarea <WORKAREA>` | Only this workarea's subtree, by id or name |
+| `--workspace <WORKSPACE>` | Only this workspace's subtree, by id or name |
 | `--author-key <AUTHOR_KEY>` | Only rows written by this author key (id or name) |
 | `--claim-key-prefix <CLAIM_KEY_PREFIX>` | Only claim keys starting with this literal text |
 | `--limit <LIMIT>` | Rows per page, 1 to 200 [default: 50] |
@@ -1108,13 +1108,13 @@ Write demonstration data through the public API
 Create 30 fictional-team memories (20 approved, 4 superseded, 6 held), then fence their author and reviewer identities. Admin key; no keys are printed
 
 ```
-oml demo seed [OPTIONS] <WORKAREA>
+oml demo seed [OPTIONS] <WORKSPACE>
 ```
 
 | Argument | Meaning |
 |---|---|
-| `<WORKAREA>` | New workarea name; it must not exist |
+| `<WORKSPACE>` | New workspace name; it must not exist |
 
 | Option | Meaning |
 |---|---|
-| `--parent <PARENT>` | Parent workarea [default: universe] |
+| `--parent <PARENT>` | Parent workspace [default: universe] |
