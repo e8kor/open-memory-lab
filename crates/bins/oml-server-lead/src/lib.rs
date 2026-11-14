@@ -1634,11 +1634,12 @@ pub async fn startup_former_names_check(store: &PgStore, tenants: &[Uuid]) -> Re
     for tenant_id in tenants {
         let mut from_seq = 1_u64;
         loop {
-            let events = oml_app::ports::JournalStore::events_range(store, *tenant_id, from_seq, PAGE)
-                .await
-                .map_err(|e| {
-                    format!("journal_unmapped_former_name: the journal could not be read: {e}")
-                })?;
+            let events =
+                oml_app::ports::JournalStore::events_range(store, *tenant_id, from_seq, PAGE)
+                    .await
+                    .map_err(|e| {
+                        format!("journal_unmapped_former_name: the journal could not be read: {e}")
+                    })?;
             for event in &events {
                 let envelope = &event.envelope;
                 for name in oml_app::domain::former_names::unmapped_former_names(
