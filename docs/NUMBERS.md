@@ -84,7 +84,8 @@ branch that reserved later renumbers.
 | adr | 0061 | `main` |  | oml sync reads a rust workspace as one claim per crate and one per mod | used |
 | adr | 0062 | `main` |  | oml sync maps a delta lakes tables into anchored claims from the log a | used |
 | adr | 0063 | `main` |  | a chat turn becomes memory only when the agent in it writes the fact a | used |
-| adr | 0064 | `design/adr-0064-on-main` | #346 | a repositorys knowledge is captured implicitly by git hooks and agent  | open |
+| adr | 0064 | `design/adr-0064-on-main` | #346 | a repositorys knowledge is captured implicitly by git hooks and agent | open |
+| adr | 0064 | `main` |  | a repositorys knowledge is captured implicitly by git hooks and agent  | used |
 | adr | 0065 | `main` |  | the scan is a versioned compiled in rule set that vetoes leaked keys a | used |
 | adr | 0066 | `main` |  | open work is tracked as github issues and the roadmap fr numbers and d | used |
 | adr | 0067 | `main` |  | a directory reviewer reaches a demo workarea through a connect code th | used |
@@ -99,7 +100,12 @@ branch that reserved later renumbers.
 | adr | 0076 | `main` |  | releases ship no default server and setup asks for the server or reads | used |
 | adr | 0077 | `main` |  | a served memory says when it was approved and by what kind of reviewer | used |
 | adr | 0078 | `design/recall-improvement` |  | better recall combines cross-encoder reranking with an optional learned sparse retrieval stage measured against OML's standing eval | reserved |
-| adr | 0079 | `bulk/v0.7.3b` |  | a key ends on a date and is held to a request rate, both set at issuance and changed only by an admin key that is not the key itself | reserved |
+| adr | 0079 | `main` |  | a key ends on a date and is held to a request rate both set at issuanc | used |
+| adr | 0080 | `design/workarea-builder` |  | a skill is a reviewed claim the mcp server lists as a prompt and serves as a resource loaded live and never copied | reserved |
+| adr | 0081 | `design/workarea-builder` |  | a document is a reviewed markdown or text claim that recall searches by passage and the mcp server serves as a resource | reserved |
+| adr | 0082 | `design/workarea-builder` |  | a person builds and edits a workareas skills guardrails and documents in the console each edit a held version under the persons own keys | reserved |
+| adr | 0083 | `design/workarea-builder` |  | the memories page is one cockpit with approved to review and submitted views and held rows never appear as approved | reserved |
+| adr | 0084 | `design/workarea-lifecycle` |  | a workarea moves between servers as a signed bundle that lands held or in progress and is reviewed again unless its source server is pinned | reserved |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |
@@ -142,4 +148,4 @@ branch that reserved later renumbers.
 | migration | 0043 | `main` |  | scan findings | used |
 | migration | 0044 | `main` |  | memory approval | used |
 | migration | 0045 | `main` |  | usage metering | used |
-| migration | 0046 | `bulk/v0.7.3b` |  | key limits | reserved |
+| migration | 0046 | `main` |  | key limits | used |
