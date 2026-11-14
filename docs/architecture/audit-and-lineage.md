@@ -13,7 +13,7 @@ Two records answer that question. The **journal** says what happened, in order, 
 The journal is the system of record. It is a signed, hash-chained, append-only sequence of events for each tenant. Each event holds an actor, a timestamp and references to its content. The journal records:
 
 - every write, with the scan rule set that ran;
-- every approval and rejection, with the digest of the body served to the reviewer and the review policy in force;
+- every approval and rejection, with the digest of the body served to the reviewer; an approval's `review.ratify` also carries the review policy in force, and a rejection carries none;
 - every promotion and supersession;
 - key issuance, grants, denials and workarea changes.
 

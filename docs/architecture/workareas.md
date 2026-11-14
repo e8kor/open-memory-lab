@@ -155,7 +155,7 @@ A frozen workarea keeps serving reads. Freezing is not archiving. A held memory 
 
 ## In-progress workareas
 
-A person can put a development workarea in progress, when every workarea below it is `development` too, with `oml workareas mode <workarea> in_progress`, using their own reviewer key (role `dreamer`, held by a human). Inside an in-progress workarea, readers recall held memories and derived facts the scan did not hold, labeled unreviewed. Nothing leaves the workarea until its mode returns to standard: a reader scoped outside it sees nothing from inside, approved rows included. The `standard` mode that returns it is refused while any memory is held. See [Organize memory in workareas](../use/workareas.md) for the commands.
+A person can put a development workarea in progress, when every workarea below it is `development` too, with `oml workareas mode <workarea> in_progress`, using their own reviewer key (role `dreamer`, held by a human). Inside an in-progress workarea, readers recall held memories and derived facts, labeled unreviewed, when the scan did not hold them and they were last scanned under the current rule set; a retirement version is never served there. Nothing leaves the workarea until its mode returns to standard: a reader scoped outside it sees nothing from inside, approved rows included. The `standard` mode that returns it is refused while any memory is held. See [Organize memory in workareas](../use/workareas.md) for the commands.
 
 ## Federated recall
 

@@ -39,7 +39,7 @@ flowchart LR
 
 - **Agent crews** call three MCP tools. None of them can promote, sign, demote or delete. See [MCP plugin](../api/mcp-plugin.md).
 - **Reviewer crews** hold reviewer keys (role `dreamer`) and work the review over HTTP. See [roles and keys](roles-and-keys.md) and [admission](admission.md).
-- **Admins and the operator** use the `oml` CLI with admin or operator keys. People sign in with Google or GitHub: the lead serves the sign-in, and a separate process, `oml-web`, serves the user and admin pages on the same origin.
+- **Admins and the operator.** Admins use the `oml` CLI with admin keys; the operator runs the deployment. People sign in with Google or GitHub: the lead serves the sign-in, and a separate process, `oml-web`, serves the user and admin pages on the same origin.
 
 The server derives the tenant from the API key, never from the request.
 
@@ -49,7 +49,7 @@ Three binaries run beside PostgreSQL, behind a reverse proxy. Only `oml-server-l
 
 | Part | Role |
 |---|---|
-| Reverse proxy (Caddy in production and Compose, an Ingress in the Helm chart) | Terminates TLS and routes by path: each console page to `oml-web`, every other path to the lead. |
+| Reverse proxy (Caddy in production and Compose, an Ingress, when enabled, in the Helm chart) | Terminates TLS and routes by path: each console page to `oml-web`, every other path to the lead. |
 | `oml-web` | Serves the console pages over the lead's public HTTP API, as the signed-in person. It has no database access and no signing key. |
 | `oml-server-lead` | The only API surface. It commits each write in one PostgreSQL transaction. |
 | `oml-lakewriter` | Drains the outbox into the Delta lake under a lease, with a database role and a sealing key of its own. It cannot sign journal events. Compose and the Helm chart do not run it. |

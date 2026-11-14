@@ -6,27 +6,27 @@ answers: "the four architecture views of OML as built: who uses it and what it d
 
 # Architecture views
 
-Four views of one system, each answering one question. The context view says who and what OML talks to. The deployment view follows a request from the client to the disk. The two logical views follow a single memory through the review gate, and a single agent key to everything it is served. Every element is built unless it is drawn dashed.
+Four views of one system, each answering one question. The context view says who and what OML talks to. The deployment view follows a request from the client to the disk. The two logical views follow a single memory through the review gate, and a single agent key to everything it is served. Every element is built; one drawn dashed is built and not installed. Proposed designs appear only in the table at the end.
 
-In the figures, a solid box is a process or component. A dashed box is built and not installed, or served only in one mode. A tinted box with an amber edge is the element the view turns on, and an amber dashed outline is a trust boundary. The pages linked under each view hold the contracts; the views hold no rule of their own.
+In the figures, a solid box is a process or component, and a dashed box is built and not installed. A dashed arrow is a path taken only in one mode. A tinted box with an amber edge is the element the view turns on, and an amber dashed outline is a trust boundary. The pages linked under each view hold the contracts; the views hold no rule of their own.
 
 ## Context: who uses OML and what it depends on
 
 <figure markdown="span">
-  [![Context view: people, admins and AI agents use Open Memory Lab; OML depends on Google and GitHub for sign-in and on GitHub Releases for signed builds, and feeds a Delta lake to analytics tools.](img/context.svg#only-light)](img/context.svg)
-  [![Context view: people, admins and AI agents use Open Memory Lab; OML depends on Google and GitHub for sign-in and on GitHub Releases for signed builds, and feeds a Delta lake to analytics tools.](img/context-dark.svg#only-dark)](img/context-dark.svg)
-  <figcaption>OML runs no generative model and calls no model provider: agents bring their own model and reach OML over MCP. The optional sparse and rerank search stages run small local models on the lead. The lead's outbound calls are the sign-in code exchange with Google or GitHub, an MCP client's metadata document, and, when an operator turns it on, the search models' files.</figcaption>
+  [![Context view: people, admins and AI agents use Open Memory Lab; OML depends on Google and GitHub for sign-in and on GitHub Releases for signed builds, and feeds a Delta lake to analytics tools.](img/context-light.svg#only-light)](img/context.svg)
+  [![Context view: people, admins and AI agents use Open Memory Lab; OML depends on Google and GitHub for sign-in and on GitHub Releases for signed builds, and feeds a Delta lake to analytics tools.](img/context-dark.svg#only-dark)](img/context.svg)
+  <figcaption>OML runs no generative model and calls no model provider: agents bring their own model and reach OML over MCP. The optional sparse and rerank search stages run small local models on the lead. The lead's outbound calls are the sign-in code exchange with Google or GitHub, an MCP client's metadata document, and, when configured, the search models' files and the OTLP collector.</figcaption>
 </figure>
 
 The actors and their keys are on [the overview](overview.md#who-talks-to-oml) and [roles and keys](roles-and-keys.md); what the lake holds is on [storage](storage.md#the-lake-and-the-outbox).
 
 ## Deployment: a request from the client to the disk
 
-One host, as production runs it. Compose runs the same lead, `oml-web`, Caddy and PostgreSQL; the Helm chart runs the lead and `oml-web` behind an Ingress, with PostgreSQL outside it; neither runs the lake writer. The lead is the only process that holds the signing key, so it sits alone inside the trust boundary.
+One host, as production runs it. Compose runs the same lead, `oml-web`, Caddy and PostgreSQL; the Helm chart runs the lead and `oml-web`, behind an Ingress when enabled, with PostgreSQL outside it; neither runs the lake writer. The lead is the only process that holds the signing key, so it sits alone inside the trust boundary.
 
 <figure markdown="span">
-  [![Deployment view: clients reach Caddy over HTTPS; Caddy routes console pages to oml-web, every other path to oml-server-lead, and landing paths to static files; oml-web calls the lead's public API; the lead commits each write to PostgreSQL in one transaction and signs with a key file on its host; oml-lakewriter drains the outbox into the Delta lake.](img/deployment.svg#only-light)](img/deployment.svg)
-  [![Deployment view: clients reach Caddy over HTTPS; Caddy routes console pages to oml-web, every other path to oml-server-lead, and landing paths to static files; oml-web calls the lead's public API; the lead commits each write to PostgreSQL in one transaction and signs with a key file on its host; oml-lakewriter drains the outbox into the Delta lake.](img/deployment-dark.svg#only-dark)](img/deployment-dark.svg)
+  [![Deployment view: clients reach Caddy over HTTPS; Caddy routes console pages to oml-web, every other path to oml-server-lead, and landing paths to static files; oml-web calls the lead's public API; the lead commits each write to PostgreSQL in one transaction and signs with a key file on its host; oml-lakewriter drains the outbox into the Delta lake.](img/deployment-light.svg#only-light)](img/deployment.svg)
+  [![Deployment view: clients reach Caddy over HTTPS; Caddy routes console pages to oml-web, every other path to oml-server-lead, and landing paths to static files; oml-web calls the lead's public API; the lead commits each write to PostgreSQL in one transaction and signs with a key file on its host; oml-lakewriter drains the outbox into the Delta lake.](img/deployment-dark.svg#only-dark)](img/deployment.svg)
   <figcaption>A write enters through Caddy, is decided by the lead, and becomes durable only when one PostgreSQL transaction commits the signed journal event, the state change and an outbox row. Everything downstream (indexes, the lake) derives from that commit. The ports are production's: the lead listens on 127.0.0.1:8080 unless configured, and Compose keeps 8080. The operations row is the production host's own tooling, kept outside this repository.</figcaption>
 </figure>
 
@@ -43,8 +43,8 @@ One host, as production runs it. Compose runs the same lead, `oml-web`, Caddy an
 The same path for every kind of claim: a memory, a guardrail, steering. The four rules ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md)) are where the path cannot bend.
 
 <figure markdown="span">
-  [![The review gate: a write is scanned in the same call, lands held, is reviewed by a different identity, and only then is promoted and served. A veto refuses the write, a rejected version is kept but never served, and inside an in-progress workarea a held version the scan did not hold is served marked unreviewed.](img/gate.svg#only-light)](img/gate.svg)
-  [![The review gate: a write is scanned in the same call, lands held, is reviewed by a different identity, and only then is promoted and served. A veto refuses the write, a rejected version is kept but never served, and inside an in-progress workarea a held version the scan did not hold is served marked unreviewed.](img/gate-dark.svg#only-dark)](img/gate-dark.svg)
+  [![The review gate: a write is scanned in the same call, lands held, is reviewed by a different identity, and only then is promoted and served. A veto refuses the write, a rejected version is kept but never served, and inside an in-progress workarea a held version the scan did not hold is served marked unreviewed.](img/gate-light.svg#only-light)](img/gate.svg)
+  [![The review gate: a write is scanned in the same call, lands held, is reviewed by a different identity, and only then is promoted and served. A veto refuses the write, a rejected version is kept but never served, and inside an in-progress workarea a held version the scan did not hold is served marked unreviewed.](img/gate-dark.svg#only-dark)](img/gate.svg)
   <figcaption>Step 3 is the only door to step 4, and no agent key can open it (R1). The scan's hold findings still reach a reviewer, who sees them on the card; a veto, such as a leaked key, writes nothing. An in-progress workarea is the one bounded exception to step 2's privacy: keys inside it see held work, marked unreviewed, and nothing leaves until a person commits the workarea.</figcaption>
 </figure>
 
@@ -55,8 +55,8 @@ The pipeline's contract is [admission](admission.md); the in-progress mode is in
 The key decides everything; the request decides nothing. Its default workarea places it in the tree, and the tree decides what reaches the agent and by which path.
 
 <figure markdown="span">
-  [![Serving view: an agent key whose default workarea is universe.payments.dev receives approved guardrails from dev and each ancestor it reads at session start, steering from the same nodes first in each recall, recalls from dev and its subtree with held work marked unreviewed because dev is in progress, and recalls from other committed or validated workareas it reads through federation.](img/serving.svg#only-light)](img/serving.svg)
-  [![Serving view: an agent key whose default workarea is universe.payments.dev receives approved guardrails from dev and each ancestor it reads at session start, steering from the same nodes first in each recall, recalls from dev and its subtree with held work marked unreviewed because dev is in progress, and recalls from other committed or validated workareas it reads through federation.](img/serving-dark.svg#only-dark)](img/serving-dark.svg)
+  [![Serving view: an agent key whose default workarea is dev, tree path universe.payments.dev, receives approved guardrails from dev and each ancestor it reads at session start, steering from the same nodes first in each recall, recalls from dev and its subtree with held work marked unreviewed because dev is in progress, and recalls from other committed or validated workareas it reads through federation.](img/serving-light.svg#only-light)](img/serving.svg)
+  [![Serving view: an agent key whose default workarea is dev, tree path universe.payments.dev, receives approved guardrails from dev and each ancestor it reads at session start, steering from the same nodes first in each recall, recalls from dev and its subtree with held work marked unreviewed because dev is in progress, and recalls from other committed or validated workareas it reads through federation.](img/serving-dark.svg#only-dark)](img/serving.svg)
   <figcaption>The Claude Code plugin loads guardrails at session start and checks a guardrail's rule locally before each matching tool call; the agent kit's other tools get no local check. Recall is the only per-question read, and steering rides at its head. A request may name another workarea, which the key's grants still bound. A reader outside the in-progress subtree sees none of it, approved rows included, until a person with a reviewer key commits the workarea; the commit is refused while anything in it is held.</figcaption>
 </figure>
 
