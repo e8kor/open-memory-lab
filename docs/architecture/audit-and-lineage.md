@@ -6,7 +6,7 @@ answers: "who approved this memory, what the journal records and never records, 
 
 # Who approved this memory
 
-Two records answer that question. The **journal** says what happened, in order, and who decided each step. **Lineage** says what a memory came from and which version of a claim is current.
+Two records answer that question; the [gate view](views.md#logical-one-memory-through-the-review-gate) draws where each is written. The **journal** says what happened, in order, and who decided each step. **Lineage** says what a memory came from and which version of a claim is current.
 
 ## What the journal records
 

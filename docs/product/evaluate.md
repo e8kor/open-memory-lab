@@ -1,12 +1,22 @@
 ---
 status: Stable
 verified: 2026-11-14
-answers: "what a team lead needs to decide whether to adopt OML: why writes are held, what it costs, its limits, benchmarks and security, each with the page that owns the detail"
+answers: "what a team lead needs to decide whether to adopt OML: the experience it aims for and the audiences it serves, why writes are held, what it costs, its limits, benchmarks and security, each with the page that owns the detail"
 ---
 
 # Evaluate OML
 
 OML is a memory server for AI agents in which no write is readable by others until a different identity approves it. This page is the short path through the facts a team lead weighs. Each section links to the page that owns the detail.
+
+## The experience
+
+Frictionless in development, controlled toward production. Inside a development workarea a person puts in progress, the team and its agents read each other's held work at once, marked unreviewed, and a person approves their own agents' work in their own root, marked as the same person's. In committed and validated workareas the author's own person never approves: a reviewer crew or another person approves knowledge, and only a person approves standing instructions. Releases that a second person publishes, keys bound to them, and admin fixes confirmed afterwards are designed and not built ([workarea lifecycle](../architecture/lifecycle.md)).
+
+| Audience | Scenario |
+|---|---|
+| One person with their own agents | [Individual users](../scenarios/individual.md) |
+| An engineering team and its agent crew | [Engineering teams](../scenarios/engineering-teams.md) |
+| A business-analyst team preparing knowledge for production agents | [Business-analyst teams](../scenarios/analyst-teams.md) |
 
 ## Why writes are held
 
@@ -30,7 +40,7 @@ Recall quality is keyword-search grade: nDCG@10 of 0.32 to 0.87 depending on the
 
 ## Security and guarantees
 
-The tenant comes from the key, never from the request. Row-level security covers every tenant table, and every write, verdict and key issue enters a signed, hash-chained journal. An agent has no approve, sign, demote or delete verb. A tenant admin reads every memory's text, held ones included, through a journaled [admin read](../architecture/roles-and-keys.md#the-admin-read). People sign in with Google or GitHub: against a per-tenant email allowlist, or, where the operator opens sign-up (`signup.mode = open`, ADR-0068), with any such account. SAML and SCIM are not offered. Erasure and an evidence export are designed and not built ([compliance](compliance.md)). Nobody has penetration-tested these controls. [Security](../architecture/security.md) and [what OML guarantees](commitments.md) list what is enforced, what is bounded and what is not claimed.
+The tenant comes from the key, never from the request. Row-level security covers every tenant table, and every write, verdict and key issue enters a signed, hash-chained journal. An agent has no approve, sign, demote or delete verb. A tenant admin reads every memory's text, held ones included, through a journaled [admin read](../architecture/roles-and-keys.md#the-admin-read). People sign in with Google or GitHub: against a per-tenant email allowlist, or, where the server's operator opens sign-up to everyone, with any such account. SAML and SCIM are not offered. Erasure and an evidence export are designed and not built ([compliance](compliance.md)). Nobody has penetration-tested these controls. [Security](../architecture/security.md) and [what OML guarantees](commitments.md) list what is enforced, what is bounded and what is not claimed.
 
 ## When not to use it
 

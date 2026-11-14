@@ -1,0 +1,113 @@
+<!-- The architecture reach view (docs/concepts/producers-and-reviewers.md). Every colour is a design token, referenced in the style element alone; scripts/gen_design_tokens.py resolves them per theme. A dashed box tagged designed is not built. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="610" viewBox="0 0 1100 610" role="img" aria-labelledby="title desc">
+<title id="title">Who sees what where: one agent key&#x27;s reach over nested workareas</title>
+<desc id="desc">Euler view. Each workarea is a region nested in its parent. payments is a committed team root holding payments.dev, a development workarea in progress with two children, and payments.ops, a validated sibling. universe.dana is a person&#x27;s own root, drawn apart. Key A is an agent key bound to tip and scoped in payments.dev; its reach is the outlined region over payments. Inside the in-progress subtree key A reads held memories, marked unreviewed, and held skills, guardrails and steering once ADR-0080 d10 is built (designed). In the sibling it reads promoted items only; a held item there is not served to it. Nothing in universe.dana is in its reach. Held items are hollow circles, promoted items solid, items not served to this key faint, dotted and struck, and designed items a heavy dashed ring.</desc>
+<style>
+.plate{fill:var(--ground);stroke:var(--rule)}
+text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+.box{fill:var(--ground-alt);stroke:var(--edge);stroke-width:1.3}
+.box.soft{fill:var(--panel)}
+.box.acc{fill:var(--held-soft);stroke:var(--star)}
+.box.ip{fill:var(--in-progress-soft);stroke:var(--in-progress)}
+.box.plan{stroke-dasharray:5 4}
+.zone{fill:none;stroke:var(--star);stroke-width:1.3;stroke-dasharray:6 5}
+.zone.ip{stroke:var(--in-progress)}
+.lane{fill:none;stroke:var(--rule);stroke-width:1}
+.tree{fill:none;stroke:var(--rule);stroke-width:1.6}
+.t{fill:var(--ink);font-size:13px;font-weight:700}
+.s{fill:var(--ink-dim);font-size:11.5px}
+.lanet{fill:var(--ink-faint);font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;letter-spacing:.06em}
+.lanet.hi{fill:var(--star)}
+.e{fill:none;stroke:var(--edge);stroke-width:1.3}
+.e.acc{stroke:var(--star)}
+.e.ip{stroke:var(--in-progress)}
+.e.dash{stroke-dasharray:5 4}
+.ah{fill:var(--edge)}
+.aha{fill:var(--star)}
+.ahi{fill:var(--in-progress)}
+.el{fill:var(--ink);font-size:11.5px;paint-order:stroke;stroke:var(--ground);stroke-width:5px;stroke-linejoin:round}
+.acct{fill:var(--star);font-size:11.5px;font-weight:700;paint-order:stroke;stroke:var(--ground);stroke-width:5px;stroke-linejoin:round}
+.ipt{fill:var(--in-progress);font-size:11.5px;font-weight:700;paint-order:stroke;stroke:var(--ground);stroke-width:5px;stroke-linejoin:round}
+.tag{fill:var(--ground);stroke:var(--ink-faint);stroke-dasharray:3 2}
+.tagt{fill:var(--ink-faint);font-size:10px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;letter-spacing:.04em}
+.reg{fill:var(--ground-alt);stroke:var(--edge);stroke-width:1.2}
+.reg.outer{fill:var(--panel)}
+.reg.ip{fill:var(--in-progress-soft);stroke:var(--in-progress);stroke-width:1.6}
+.reg.plan{stroke-dasharray:5 4}
+.reach{fill:none;stroke:var(--star);stroke-width:3}
+.reach.b{stroke:var(--ice)}
+.reach.plan{stroke-dasharray:9 5}
+.gh{fill:var(--ground);stroke:var(--ink);stroke-width:1.6}
+.gs{fill:var(--ink);stroke:var(--ink);stroke-width:1.6}
+.gd{fill:var(--ground);stroke:var(--ink);stroke-width:2.2;stroke-dasharray:4.5 2.4}
+.gx{fill:none;stroke:var(--ink-faint);stroke-width:1.4;stroke-dasharray:2 2}
+.it{fill:var(--ink);font-size:11.5px}
+.it.dim{fill:var(--ink-faint)}
+.icet{fill:var(--ice);font-size:11.5px;font-weight:700;paint-order:stroke;stroke:var(--ground);stroke-width:5px;stroke-linejoin:round}
+.no{fill:none;stroke:var(--rejected);stroke-width:2}
+</style>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0 L10 5 L0 10 z"/></marker><marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="aha" d="M0 0 L10 5 L0 10 z"/></marker><marker id="ai" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ahi" d="M0 0 L10 5 L0 10 z"/></marker></defs>
+<rect class="plate" x="0.5" y="0.5" width="1099" height="609" rx="6"/>
+<text class="lanet hi" x="24" y="30">KEY A: AN AGENT KEY, WRITER, BOUND TO TIP, SCOPED IN payments.dev</text>
+<rect class="reg outer" x="40" y="50" width="690" height="480" rx="12"/>
+<text class="t" x="54" y="72">payments</text>
+<text class="s" x="54" y="89">team root, committed</text>
+<circle class="gs" cx="266" cy="72" r="5.5"/>
+<text class="it" x="278" y="76">guardrail · promoted</text>
+<rect class="reg ip" x="58" y="110" width="432" height="404" rx="12"/>
+<text class="t" x="72" y="132">payments.dev</text>
+<text class="s" x="72" y="149">development, in progress (the root)</text>
+<circle class="gd" cx="266" cy="130" r="5.5"/>
+<text class="it" x="278" y="134">steering · held (designed)</text>
+<rect class="reg " x="74" y="196" width="200" height="302" rx="12"/>
+<text class="t" x="88" y="218">…dev.api</text>
+<text class="s" x="88" y="235">in progress</text>
+<circle class="gh" cx="94" cy="264" r="5.5"/>
+<text class="it" x="106" y="268">memory · held</text>
+<circle class="gd" cx="94" cy="288" r="5.5"/>
+<text class="it" x="106" y="292">skill · held (designed)</text>
+<circle class="gs" cx="94" cy="312" r="5.5"/>
+<text class="it" x="106" y="316">guardrail · promoted</text>
+<circle class="gs" cx="94" cy="336" r="5.5"/>
+<text class="it" x="106" y="340">memory · promoted</text>
+<rect class="reg " x="284" y="196" width="196" height="302" rx="12"/>
+<text class="t" x="298" y="218">…dev.docs</text>
+<text class="s" x="298" y="235">in progress</text>
+<circle class="gh" cx="304" cy="264" r="5.5"/>
+<text class="it" x="316" y="268">memory · held</text>
+<circle class="gd" cx="304" cy="288" r="5.5"/>
+<text class="it" x="316" y="292">guardrail · held (designed)</text>
+<circle class="gd" cx="304" cy="312" r="5.5"/>
+<text class="it" x="316" y="316">skill · promoted (designed)</text>
+<rect class="reg " x="506" y="110" width="210" height="404" rx="12"/>
+<text class="t" x="520" y="132">payments.ops</text>
+<text class="s" x="520" y="149">validated; a sibling</text>
+<circle class="gd" cx="526" cy="178" r="5.5"/>
+<text class="it" x="538" y="182">skill · promoted (designed)</text>
+<circle class="gs" cx="526" cy="202" r="5.5"/>
+<text class="it" x="538" y="206">memory · promoted</text>
+<circle class="gx" cx="526" cy="226" r="5.5"/><path class="gx" d="M521 231 L531 221"/>
+<text class="it dim" x="538" y="230">memory · held</text>
+<text class="el" x="520" y="270">promoted or published only</text>
+<rect class="reach " x="30" y="42" width="710" height="498" rx="18"/>
+<text class="lanet hi" x="48" y="556">KEY A&#x27;S REACH</text>
+<text class="s" x="156" y="556">held work inside the in-progress subtree, marked; promoted work everywhere else it reads</text>
+<rect class="reg " x="770" y="50" width="310" height="480" rx="12"/>
+<text class="t" x="784" y="72">universe.dana</text>
+<text class="s" x="784" y="89">a person&#x27;s own root, apart</text>
+<circle class="gx" cx="792" cy="116" r="5.5"/><path class="gx" d="M787 121 L797 111"/>
+<text class="it dim" x="804" y="120">memory · held</text>
+<circle class="gx" cx="792" cy="140" r="5.5"/><path class="gx" d="M787 145 L797 135"/>
+<text class="it dim" x="804" y="144">memory · promoted</text>
+<text class="el" x="786" y="186">outside key A&#x27;s reach:</text>
+<text class="el" x="786" y="202">a user root is read by</text>
+<text class="el" x="786" y="218">that person&#x27;s keys alone</text>
+<circle class="gh" cx="26" cy="588" r="5.5"/>
+<text class="it" x="38" y="592">held: served marked unreviewed</text>
+<circle class="gs" cx="276" cy="588" r="5.5"/>
+<text class="it" x="288" y="592">promoted, or published in a release</text>
+<circle class="gx" cx="556" cy="588" r="5.5"/><path class="gx" d="M551 593 L561 583"/>
+<text class="it dim" x="568" y="592">not served to this key</text>
+<circle class="gd" cx="766" cy="588" r="5.5"/>
+<text class="it" x="778" y="592">dashed ring: designed</text>
+</svg>

@@ -6,7 +6,7 @@ answers: "which verbs each of the five roles may perform; how a key is issued, s
 
 # Roles and keys
 
-An agent holds a key with one role. Grants give that key access to workarea subtrees. OML works out what the key may do from its effective access at call time.
+An agent holds a key with one role. Grants give that key access to workarea subtrees. OML works out what the key may do from its effective access at call time. The [serving view](views.md#logical-one-agent-key-and-everything-it-is-served) draws one key's reach, and [producers and reviewers](../concepts/producers-and-reviewers.md) lists which reviewer pairs count.
 
 The four rules, R1 to R4, are declared once, in [the constitution](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md). This page holds the role matrix that R1's verb ceiling refers to and the independence check that enforces R2.
 
@@ -57,7 +57,7 @@ Approve, sign and delete appear in no column: approval is an effect of review, `
 - **A global denial on an admin key is refused, `request.validation` with `details.field: key`.**
 - **Recall, search and the read by id need a reader grant, and no admin key can carry one.** An admin key that calls recall gets `access.verb_ceiling`.
 
-A development workarea letting a writer approve its own memories, marked `self_signed`, is designed ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5) and not built: the server marks no approval `self_signed`.
+Self-signing was retired on 2026-11-14 ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5). In a person's own root, their review key approves their agents' work, marked `same_user`.
 
 ## Issuing keys
 
@@ -70,7 +70,7 @@ A key is issued with a role no higher than its issuer's. Admin keys issue, and t
 |---|---|
 | `reader` | `reader` |
 | `writer` | `reader`, `writer` |
-| `dreamer` | `reader`, `dreamer`; an agent-held `curator` profile may also carry `writer` inside an in-progress scope (ADR-0030 d8) |
+| `dreamer` | `reader`, `dreamer`; an agent-held `curator` profile may also carry `writer` inside an in-progress scope ([ADR-0030](../adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d8) |
 | `admin`, `operator` | none |
 
 A grant outside that set is refused with `access.issuer_ceiling`. An admin key with a dreamer grant is refused with `access.role_exclusive`: the two-key rule. A person who administers and reviews holds two keys, so the journal shows which capacity acted.

@@ -1,7 +1,7 @@
 ---
 status: Stable
-verified: 2026-11-06
-answers: "what Open Memory Lab is, which door to take, and the commands that reach a first recall"
+verified: 2026-11-14
+answers: "what Open Memory Lab is, the experience it aims for, the three audiences it serves, which door to take, and the commands that reach a first recall"
 ---
 
 # Open Memory Lab
@@ -9,6 +9,14 @@ answers: "what Open Memory Lab is, which door to take, and the commands that rea
 Agents write memories. A different identity reviews them before anyone else can recall them.
 
 OML is an open-source memory server for AI agents. Agents reach it over MCP from Claude Code, Codex, Cursor and other tools, and the server can be self-hosted or the public one used.
+
+**Frictionless in development, controlled toward production.** While work is being built, the people and agents building it read it at once, marked unreviewed. Once it is published toward production, a different person decides what agents receive. An agent never promotes, signs, demotes or deletes.
+
+| Audience | Starts at |
+|---|---|
+| One person with their own agents | [Individual users](scenarios/individual.md) |
+| An engineering team and its agent crew | [Engineering teams](scenarios/engineering-teams.md) |
+| A business-analyst team preparing knowledge for production agents | [Business-analyst teams](scenarios/analyst-teams.md) |
 
 <div class="grid cards" markdown>
 
@@ -59,10 +67,12 @@ OML_API_KEY=$A oml read --query "deploy"                       # found
 | Tab | What it holds |
 |---|---|
 | [Get started](start/index.md) | install, quickstart, connect an agent |
+| [Scenarios](scenarios/index.md) | one flow per audience, from development to production; import and export |
 | [Guides](guides/index.md) | tasks: remember, review, organize, sync |
 | [Operate](operations/index.md) | run a server: deploy, monitor, upgrade, back up |
 | [Reference](reference/index.md) | CLI, HTTP API, MCP tools, settings, errors, limits, glossary |
-| [Concepts](concepts.md) | why a write is held, roles, workareas, search, security |
+| [Concepts](concepts.md) | why a write is held, who approves what, the guarantees |
+| [Architecture](architecture/views.md) | four views of what runs, the workarea lifecycle, then each part in depth |
 | [Benchmarks](benchmarks/index.md) | recall quality and latency, with method |
 | [Help](faq.md) | FAQ, troubleshooting, release notes |
 

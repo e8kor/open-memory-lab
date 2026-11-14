@@ -1,0 +1,94 @@
+<!-- The architecture sharing view (docs/architecture/lifecycle.md). Every colour is a design token, referenced in the style element alone; scripts/gen_design_tokens.py resolves them per theme. A dashed box tagged designed is not built. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="570" viewBox="0 0 1100 570" role="img" aria-labelledby="title desc">
+<title id="title">Sharing: held work vertically inside an in-progress subtree, promoted work horizontally</title>
+<desc id="desc">One workarea tree. payments.dev is an in-progress development root with two children. Tip keys scoped inside the subtree read its held work, marked unreviewed. Tip keys at an ancestor, payments, will read the subtree&#x27;s held items too, marked (designed). A sibling, payments.ops, reads nothing of the subtree until a person commits it or a release is published. Another branch, risk, reads across the tree only through federation: promoted rows of committed or validated workareas, and, designed, a published release of the in-progress subtree. A key bound to latest reads the release and never a held item (designed).</desc>
+<style>
+.plate{fill:var(--ground);stroke:var(--rule)}
+text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+.box{fill:var(--ground-alt);stroke:var(--edge);stroke-width:1.3}
+.box.soft{fill:var(--panel)}
+.box.acc{fill:var(--held-soft);stroke:var(--star)}
+.box.ip{fill:var(--in-progress-soft);stroke:var(--in-progress)}
+.box.plan{stroke-dasharray:5 4}
+.zone{fill:none;stroke:var(--star);stroke-width:1.3;stroke-dasharray:6 5}
+.zone.ip{stroke:var(--in-progress)}
+.lane{fill:none;stroke:var(--rule);stroke-width:1}
+.tree{fill:none;stroke:var(--rule);stroke-width:1.6}
+.t{fill:var(--ink);font-size:13px;font-weight:700}
+.s{fill:var(--ink-dim);font-size:11.5px}
+.lanet{fill:var(--ink-faint);font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;letter-spacing:.06em}
+.lanet.hi{fill:var(--star)}
+.e{fill:none;stroke:var(--edge);stroke-width:1.3}
+.e.acc{stroke:var(--star)}
+.e.ip{stroke:var(--in-progress)}
+.e.dash{stroke-dasharray:5 4}
+.ah{fill:var(--edge)}
+.aha{fill:var(--star)}
+.ahi{fill:var(--in-progress)}
+.el{fill:var(--ink);font-size:11.5px;paint-order:stroke;stroke:var(--ground);stroke-width:5px;stroke-linejoin:round}
+.acct{fill:var(--star);font-size:11.5px;font-weight:700;paint-order:stroke;stroke:var(--ground);stroke-width:5px;stroke-linejoin:round}
+.ipt{fill:var(--in-progress);font-size:11.5px;font-weight:700;paint-order:stroke;stroke:var(--ground);stroke-width:5px;stroke-linejoin:round}
+.tag{fill:var(--ground);stroke:var(--ink-faint);stroke-dasharray:3 2}
+.tagt{fill:var(--ink-faint);font-size:10px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;letter-spacing:.04em}
+.reg{fill:var(--ground-alt);stroke:var(--edge);stroke-width:1.2}
+.reg.outer{fill:var(--panel)}
+.reg.ip{fill:var(--in-progress-soft);stroke:var(--in-progress);stroke-width:1.6}
+.reg.plan{stroke-dasharray:5 4}
+.reach{fill:none;stroke:var(--star);stroke-width:3}
+.reach.b{stroke:var(--ice)}
+.reach.plan{stroke-dasharray:9 5}
+.gh{fill:var(--ground);stroke:var(--ink);stroke-width:1.6}
+.gs{fill:var(--ink);stroke:var(--ink);stroke-width:1.6}
+.gd{fill:var(--ground);stroke:var(--ink);stroke-width:2.2;stroke-dasharray:4.5 2.4}
+.gx{fill:none;stroke:var(--ink-faint);stroke-width:1.4;stroke-dasharray:2 2}
+.it{fill:var(--ink);font-size:11.5px}
+.it.dim{fill:var(--ink-faint)}
+.icet{fill:var(--ice);font-size:11.5px;font-weight:700;paint-order:stroke;stroke:var(--ground);stroke-width:5px;stroke-linejoin:round}
+.no{fill:none;stroke:var(--rejected);stroke-width:2}
+</style>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0 L10 5 L0 10 z"/></marker><marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="aha" d="M0 0 L10 5 L0 10 z"/></marker><marker id="ai" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ahi" d="M0 0 L10 5 L0 10 z"/></marker></defs>
+<rect class="plate" x="0.5" y="0.5" width="1099" height="569" rx="6"/>
+<rect class="box" x="450" y="24" width="200" height="52" rx="5"/><text class="t" x="464" y="48">universe</text><text class="s" x="464" y="67">the tenant&#x27;s root</text>
+<rect class="box" x="250" y="120" width="210" height="60" rx="5"/><text class="t" x="264" y="144">payments</text><text class="s" x="264" y="163">committed; an ancestor</text>
+<rect class="box" x="820" y="120" width="230" height="60" rx="5"/><text class="t" x="834" y="144">risk</text><text class="s" x="834" y="163">committed; another branch</text>
+<rect class="box ip" x="40" y="250" width="300" height="60" rx="5"/><text class="t" x="54" y="274">payments.dev</text><text class="s" x="54" y="293">development, in progress (the root)</text>
+<rect class="box" x="470" y="250" width="220" height="60" rx="5"/><text class="t" x="484" y="274">payments.ops</text><text class="s" x="484" y="293">committed; a sibling</text>
+<rect class="box" x="40" y="380" width="140" height="60" rx="5"/><text class="t" x="54" y="404">…dev.api</text><text class="s" x="54" y="423">development</text>
+<rect class="box" x="200" y="380" width="140" height="60" rx="5"/><text class="t" x="214" y="404">…dev.docs</text><text class="s" x="214" y="423">development</text>
+<rect class="zone ip" x="24" y="232" width="332" height="226" rx="8"/>
+<text class="lanet" x="34" y="476">IN-PROGRESS SUBTREE</text>
+<path class="tree" d="M550 76 V98 H355 V118"/>
+<path class="tree" d="M550 98 H935 V118"/>
+<path class="tree" d="M355 180 V214 H190 V248"/>
+<path class="tree" d="M355 214 H580 V248"/>
+<path class="tree" d="M190 310 V346 H110 V378"/>
+<path class="tree" d="M190 346 H270 V378"/>
+<text class="ipt" x="60" y="352">held work, marked, to tip keys here</text>
+<path class="e ip dash" d="M300 248 V196 H330 V182" marker-end="url(#ai)"/>
+<text class="ipt" x="380" y="222">held items, marked, to ancestor tip keys</text>
+<rect class="tag" x="640" y="209" width="64" height="16" rx="3"/><text class="tagt" x="672" y="221" text-anchor="middle">designed</text>
+<path class="e" d="M340 280 H466" marker-end="url(#a)"/>
+<path class="no" d="M396 272 L412 288 M412 272 L396 288"/>
+<text class="el" x="470" y="340">a sibling reads nothing of the subtree</text>
+<text class="el" x="470" y="356">until a commit or a published release</text>
+<path class="e" d="M690 280 H930 V182" marker-end="url(#a)"/>
+<text class="el" x="700" y="268">federation: promoted rows of</text>
+<text class="el" x="700" y="284">committed or validated workareas</text>
+<path class="e dash" d="M356 420 H990 V182" marker-end="url(#a)"/>
+<text class="el" x="520" y="412">federation: a published release of the subtree</text>
+<rect class="tag" x="800" y="399" width="64" height="16" rx="3"/><text class="tagt" x="832" y="411" text-anchor="middle">designed</text>
+<rect class="box plan" x="720" y="456" width="360" height="50" rx="5"/><text class="t" x="734" y="480">latest key at payments</text><text class="s" x="734" y="499">reads the release; never a held item</text><rect class="tag" x="1006" y="448" width="64" height="16" rx="3"/><text class="tagt" x="1038" y="460" text-anchor="middle">designed</text>
+<text class="lanet hi" x="20" y="520">VERTICAL</text>
+<text class="s" x="96" y="520">held items stay inside the subtree and its ancestor chain</text>
+<text class="lanet hi" x="530" y="520">HORIZONTAL</text>
+<text class="s" x="620" y="520">only promoted rows or a published release cross</text>
+<path class="e" d="M580 552 H620" marker-end="url(#a)"/>
+<text class="s" x="630" y="556">a built path</text>
+<path class="e dash" d="M720 552 H760" marker-end="url(#a)"/>
+<text class="s" x="770" y="556">a designed path</text>
+<rect class="box" x="20" y="545" width="26" height="14" rx="3"/>
+<text class="s" x="54" y="556">built</text>
+<rect class="box plan" x="100" y="545" width="26" height="14" rx="3"/>
+<rect class="tag" x="132" y="544" width="64" height="16" rx="3"/><text class="tagt" x="164" y="556" text-anchor="middle">designed</text>
+<text class="s" x="204" y="556">designed, not built: an accepted record, linked in the caption</text>
+</svg>
