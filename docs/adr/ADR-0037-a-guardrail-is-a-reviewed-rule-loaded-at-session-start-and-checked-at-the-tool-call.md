@@ -7,7 +7,7 @@ answers: what a guardrail is and how it differs from steering; how it composes w
 
 # ADR-0037 — A guardrail is a claim of its own kind, ratified under its workarea's review policy, that the agent plugin loads at every session start within the scope an admin set on its key, and whose optional rule a local hook checks before each tool call
 
-**Status:** accepted design · 2026-11-04 · proposed 2026-10-31, revised 2026-11-04 onto the v0.4.0 API, ADR-0044 and ADR-0045, and accepted with release v0.5.1
+**Status:** accepted design · 2026-11-04 · proposed 2026-10-31, revised 2026-11-04 onto the v0.4.0 API, ADR-0044 and ADR-0045, and accepted with release v0.5.1 · amended by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d3, d4, d5, d6, d9, d10, d11, 2026-11-14), [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workareas-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d17, 2026-11-14), [ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) (d17, 2026-11-14)
 
 **Release:** introduced in v0.5.1 ([releases](../changelog.md))
 
@@ -110,6 +110,11 @@ answered all ten on 2026-11-04, and d18 records the answers.
       every key issued before the build included, folds as `ancestors`, the issuance default, and
       `api_keys` holds that value for it; nothing in the journal is rewritten (decided by the
       maintainer, d18 Q3).
+    - **Down into an in-progress subtree** *(amended 2026-11-14 by ADR-0080 d4, d16)*. Under
+      `ancestors`, a `tip` key scoped at an in-progress root, inside one or at an ancestor of one
+      is also served the guardrails of that subtree below its scope node, promoted and held, a
+      held one marked unreviewed with its rule asking and never denying. `workarea` keeps N's own
+      alone. Outside in-progress roots the set is N and its ancestors, as above.
     - **Never on the client.** `GET /v1/guardrails` takes no scope parameter, the hooks read no
       scope setting, and the `workarea` query field (ADR-0039 d7) picks N within the key's
       grants, never the scope. No
@@ -244,7 +249,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
     cache to another session's start, leaving it unchecked and warned.
 
 - **d10 — Writing a guardrail is `POST /v1/memories` with `kind: "guardrail"`; it ratifies under its
-  workarea's review policy like any claim, and never by self-signature.** `severity` is required
+  workarea's review policy like any claim, and never by self-signature.** *(Amended 2026-11-14 by ADR-0080 d16: "never self-signed" is replaced by "a person's verdict"; every instruction-class version, a guardrail included, needs a person's verdict, and the development self-signing exception is retired, ADR-0001 d5.)* `severity` is required
   and `rule` optional on kind `guardrail`, both refused elsewhere and on a retirement
   (`request.validation`); a supersession re-sends both. As ADR-0025 d12 does for the vocabulary
   kinds, a guardrail is written and superseded on the HTTP API only: `oml_write`'s `kind`
@@ -263,7 +268,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
       its author or its lineage closure counts. A workarea that wants a person on every rule
       names kind `guardrail` in `human_required_classes`. The cost: where the policy names no
       person, agents' verdicts alone make a rule bind.
-    - **Never self-signed (decided by the maintainer, d18 Q4),** whatever the tenant's policy:
+    - **Never self-signed (decided by the maintainer, d18 Q4),** *(Amended 2026-11-14 by ADR-0080 d16: "never self-signed" is replaced by "a person's verdict"; every instruction-class version, a guardrail included, needs a person's verdict, and the development self-signing exception is retired, ADR-0001 d5.)* Whatever the tenant's policy:
       a rule can stop every agent below it, so it needs one identity other than its author's. In
       a `development` workarea it waits for a non-author verdict, as ADR-0025 d17 makes a
       reviewed tip's successor wait (amends ADR-0001 d5). The serve of a held guardrail adds
@@ -387,7 +392,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
       revokes and reissues.
     - **Q3 — A key issued before the build folds as `ancestors`** (d4), its row holding that
       value and its journal unchanged.
-    - **Q4 — A guardrail is never self-signed**, in a `development` workarea included (d10).
+    - **Q4 — A guardrail is never self-signed**, in a `development` workarea included (d10). *(Amended 2026-11-14 by ADR-0080 d16: "never self-signed" is replaced by "a person's verdict"; every instruction-class version, a guardrail included, needs a person's verdict, and the development self-signing exception is retired, ADR-0001 d5.)*
     - **Q5 — A key a person issues on the user page takes the issuance default**, and the page
       offers no choice (d17): only an admin issuing a key sets `workarea`.
     - **Q6 — A `universe` guardrail is served with its verdicts' attestations and times** (d5,
