@@ -180,6 +180,176 @@ async fn fresh_store(created: &Mutex<Vec<String>>) -> PgStore {
     store
 }
 
+// ---------------------------------------------------------------------------
+// Seeding a schema before 0047 (ADR-0091 d6)
+// ---------------------------------------------------------------------------
+
+/// A full-schema store to seed through the current adapter, and its database
+/// name: the rows a schema before 0047 is then seeded with in SQL.
+async fn seed_store(created: &Mutex<Vec<String>>) -> (String, PgStore) {
+    let name = fresh_database(created).await;
+    let store = PgStore::connect(&serving_url(&name))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&name));
+    store
+        .migrate(&owner_url(&name))
+        .await
+        .expect("embedded migrations apply");
+    (name, store)
+}
+
+/// `db` through `DATABASE_URL`'s own login, which the suites run as a
+/// superuser: row security and triggers do not bind it while it copies.
+fn superuser_url(db: &str) -> String {
+    let base = base_url();
+    let (head, _) = base
+        .rsplit_once('/')
+        .expect("DATABASE_URL names a database");
+    format!("{head}/{db}")
+}
+
+/// The relation a schema before 0047 names for `table` (ADR-0091 d6).
+fn renamed_relation(former: &str) -> String {
+    former.replace("workarea", "workspace")
+}
+
+/// One row of the current schema in the names and values a schema before
+/// 0047 holds: its column names and the stored role, holder, scope, status
+/// and act values 0047 rewrites (ADR-0091 d6, d13, d14, d15).
+fn row_before_rename(table: &str, row: &Value) -> Value {
+    let Value::Object(fields) = row else {
+        return row.clone();
+    };
+    let back = |v: &Value, pairs: &[(&str, &str)]| match v.as_str() {
+        Some(s) => pairs
+            .iter()
+            .find(|(now, _)| *now == s)
+            .map_or_else(|| v.clone(), |(_, then)| Value::from(*then)),
+        None => v.clone(),
+    };
+    let statuses = [("protected", "committed"), ("frozen", "validated")];
+    fields
+        .iter()
+        .map(|(key, value)| {
+            let column = key
+                .replace("workspace", "workarea")
+                .replace("used_by", "held_by");
+            let value = match (table, column.as_str()) {
+                ("workareas", "status") | ("workarea_transitions", "from_status" | "to_status") => {
+                    back(value, &statuses)
+                }
+                ("api_keys" | "grants", "role") => back(value, &[("reviewer", "dreamer")]),
+                ("api_keys" | "memories", "held_by" | "approver_held_by") => {
+                    back(value, &[("person", "human")])
+                }
+                ("api_keys", "guardrail_scope") => back(value, &[("workspace", "workarea")]),
+                ("idempotency", "key") => value.as_str().map_or_else(
+                    || value.clone(),
+                    |k| Value::from(k.replacen(":workspace.", ":workarea.", 1)),
+                ),
+                _ => value.clone(),
+            };
+            (column, value)
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into()
+}
+
+/// Seeds `target`, a database at a schema before 0047, in SQL with every row
+/// the seed database holds, as that schema names them: each tenant's
+/// partitions through `target_store`, then each table the schema has, its
+/// columns that schema has, with triggers and foreign keys off for the copy,
+/// and every sequence moved past the rows copied. The current adapter writes
+/// only the renamed schema, so a law over a migration before 0047 seeds its
+/// rows this way (ADR-0091 d6).
+async fn seed_before_rename(seed_db: &str, target_db: &str, target_store: &PgStore) {
+    let mut seed = PgConnection::connect(&superuser_url(seed_db))
+        .await
+        .expect("seed connect");
+    let tenants: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM tenants ORDER BY id")
+        .fetch_all(&mut seed)
+        .await
+        .expect("tenants");
+    for tenant in &tenants {
+        target_store
+            .create_tenant_partitions(*tenant)
+            .await
+            .expect("the tenant's partitions at the earlier schema");
+    }
+    let mut target = PgConnection::connect(&superuser_url(target_db))
+        .await
+        .expect("target connect");
+    target
+        .execute("SET session_replication_role = replica")
+        .await
+        .expect("copy without triggers");
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT relname::text FROM pg_class \
+          WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p') \
+            AND NOT relispartition AND relname <> '_sqlx_migrations' ORDER BY relname",
+    )
+    .fetch_all(&mut target)
+    .await
+    .expect("tables");
+    for table in tables {
+        let source = renamed_relation(&table);
+        let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+            .bind(&source)
+            .fetch_one(&mut seed)
+            .await
+            .expect("source table");
+        if !exists {
+            continue;
+        }
+        let rows: Vec<Value> = sqlx::query_scalar(&format!("SELECT to_jsonb(t) FROM {source} t"))
+            .fetch_all(&mut seed)
+            .await
+            .unwrap_or_else(|e| panic!("{source}: {e}"));
+        if rows.is_empty() {
+            continue;
+        }
+        let columns: Vec<String> = sqlx::query_scalar(
+            "SELECT quote_ident(attname) FROM pg_attribute \
+              WHERE attrelid = $1::regclass AND attnum > 0 AND NOT attisdropped \
+                AND attgenerated = '' ORDER BY attnum",
+        )
+        .bind(&table)
+        .fetch_all(&mut target)
+        .await
+        .expect("columns");
+        let columns = columns.join(", ");
+        let rows: Vec<Value> = rows.iter().map(|r| row_before_rename(&table, r)).collect();
+        sqlx::query(&format!(
+            "INSERT INTO {table} ({columns}) \
+             SELECT {columns} FROM jsonb_populate_recordset(NULL::{table}, $1)"
+        ))
+        .bind(Value::Array(rows))
+        .execute(&mut target)
+        .await
+        .unwrap_or_else(|e| panic!("{table}: {e}"));
+    }
+    target
+        .execute(
+            "DO $seq$ DECLARE r record; BEGIN \
+             FOR r IN SELECT c.relname, a.attname, pg_get_serial_sequence(c.relname, a.attname) AS seq \
+                        FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid \
+                       WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p') \
+                         AND NOT c.relispartition AND a.attnum > 0 AND NOT a.attisdropped LOOP \
+               IF r.seq IS NOT NULL THEN \
+                 EXECUTE format('SELECT setval(%L, greatest((SELECT max(%I) FROM %I), 1))', \
+                                r.seq, r.attname, r.relname); \
+               END IF; \
+             END LOOP; END $seq$",
+        )
+        .await
+        .expect("sequences past the rows copied");
+    target
+        .execute("SET session_replication_role = origin")
+        .await
+        .expect("triggers on");
+}
+
 /// A connection to `store`'s database through its owner login, for what
 /// only the owner may do: DDL, `ANALYZE`, `_sqlx_migrations`, the journal
 /// guard law (ADR-0034 d8).
@@ -7610,7 +7780,6 @@ async fn vocabulary(store: &PgStore, tenant: Uuid, wa: Uuid) -> Vec<(String, i32
 /// nothing is journalled, and bm25 ranks as it does over the same rows
 /// written after 0020 (ADR-0049 d12; upgrades.md).
 #[tokio::test]
-#[ignore = "seeds through the current adapter at a schema before migration 0047, which names what 0047 renames; to be reseeded in SQL or retired (ADR-0091 d6, #398)"]
 async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_rows_lexemes_and_ranking_as_a_fresh_one()
  {
     if !splits().await {
@@ -7622,12 +7791,15 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
         .await
         .expect("connect")
         .with_owner_url(&owner_url(&db));
-    // A schema before 0044 takes a promotion with no approval; the twin's
+    // Seeded at the full schema, its approval included, then copied in SQL
+    // into the earlier schema, which keeps none (ADR-0091 d6); the twin.s
     // full schema is sent one.
-    let mut rig = ChainRig::new(562).before_approval();
-    rig.seed_chain(&upgraded, 0).await;
+    let (seed_db, seed) = seed_store(&created).await;
+    let mut rig = ChainRig::new(562);
+    rig.seed_chain(&seed, 0).await;
     let wa = Uuid::from_u128(0xE2);
-    lexeme_rows(&mut rig, &upgraded, wa).await;
+    lexeme_rows(&mut rig, &seed, wa).await;
+    seed_before_rename(&seed_db, &db, &upgraded).await;
     let journal_before: i64 = sqlx::query_scalar("SELECT count(*) FROM journal")
         .fetch_one(&mut conn)
         .await
@@ -8494,7 +8666,6 @@ async fn the_bm25_postings_statement_reads_the_postings_by_their_index_under_row
 /// written after 0021, nothing is journalled, and `bm25_postings` ranks as
 /// it does over them (ADR-0052 d8, d12).
 #[tokio::test]
-#[ignore = "seeds through the current adapter at a schema before migration 0047, which names what 0047 renames; to be reseeded in SQL or retired (ADR-0091 d6, #398)"]
 async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it() {
     if !splits().await {
         return;
@@ -8505,13 +8676,16 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
         .await
         .expect("connect")
         .with_owner_url(&owner_url(&db));
-    // A schema before 0044 takes a promotion with no approval; the twin's
+    // Seeded at the full schema, its approval included, then copied in SQL
+    // into the earlier schema, which keeps none (ADR-0091 d6); the twin.s
     // full schema is sent one.
-    let mut rig = ChainRig::new(575).before_approval();
-    rig.seed_chain(&upgraded, 0).await;
+    let (seed_db, seed) = seed_store(&created).await;
+    let mut rig = ChainRig::new(575);
+    rig.seed_chain(&seed, 0).await;
     let wa = Uuid::from_u128(0xE2);
-    lexeme_rows(&mut rig, &upgraded, wa).await;
-    lifecycle_rows(&mut rig, &upgraded).await;
+    lexeme_rows(&mut rig, &seed, wa).await;
+    lifecycle_rows(&mut rig, &seed).await;
+    seed_before_rename(&seed_db, &db, &upgraded).await;
     let journal_before: i64 = sqlx::query_scalar("SELECT count(*) FROM journal")
         .fetch_one(&mut conn)
         .await
@@ -10309,7 +10483,6 @@ async fn tip_moves_state(conn: &mut PgConnection) -> (Vec<(String, bool)>, i64, 
 /// an in-progress scope until the recording rescan reads it (ADR-0074 d18
 /// phase 1, d28).
 #[tokio::test]
-#[ignore = "seeds through the current adapter at a schema before migration 0047, which names what 0047 renames; to be reseeded in SQL or retired (ADR-0091 d6, #398)"]
 async fn the_migration_marks_every_existing_version_scanned_under_oml_scan_1() {
     if !splits().await {
         return;
@@ -10321,14 +10494,15 @@ async fn the_migration_marks_every_existing_version_scanned_under_oml_scan_1() {
         .await
         .expect("connect")
         .with_owner_url(&owner_url(&db));
+    let (seed_db, seed) = seed_store(&created).await;
     let mut rig = ChainRig::new(380);
-    rig.seed_chain(&store, 0).await;
+    rig.seed_chain(&seed, 0).await;
     let wa = Uuid::from_u128(0x380A);
     let key = Uuid::from_u128(0x380B);
     let ids = [Uuid::from_u128(0x380C), Uuid::from_u128(0x380D)];
     for (n, id) in ids.iter().enumerate() {
         rig.commit(
-            &store,
+            &seed,
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
@@ -10346,6 +10520,7 @@ async fn the_migration_marks_every_existing_version_scanned_under_oml_scan_1() {
         .await
         .expect("a version stored at 0037");
     }
+    seed_before_rename(&seed_db, &db, &store).await;
     store
         .migrate(&owner_url(&db))
         .await
@@ -10368,7 +10543,6 @@ async fn the_migration_marks_every_existing_version_scanned_under_oml_scan_1() {
 /// version with no finding; doctor's unlisted count is then zero
 /// (ADR-0074 d23).
 #[tokio::test]
-#[ignore = "seeds through the current adapter at a schema before migration 0047, which names what 0047 renames; to be reseeded in SQL or retired (ADR-0091 d6, #398)"]
 async fn migration_0043_lists_each_finding_a_stored_scan_finding_names_as_an_admission_finding() {
     if !splits().await {
         return;
@@ -10380,8 +10554,9 @@ async fn migration_0043_lists_each_finding_a_stored_scan_finding_names_as_an_adm
         .await
         .expect("connect")
         .with_owner_url(&owner_url(&db));
+    let (seed_db, seed) = seed_store(&created).await;
     let mut rig = ChainRig::new(430);
-    rig.seed_chain(&store, 0).await;
+    rig.seed_chain(&seed, 0).await;
     let wa = Uuid::from_u128(0x430A);
     let key = Uuid::from_u128(0x430B);
     let flagged = Uuid::from_u128(0x430C);
@@ -10389,7 +10564,7 @@ async fn migration_0043_lists_each_finding_a_stored_scan_finding_names_as_an_adm
     let stored = "injection.override: ignore-instructions at /body line 3; unicode.bidi: bidi-control at /body line 1";
     let receipt = rig
         .commit(
-            &store,
+            &seed,
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": flagged.to_string() }),
             MetadataFold::MemoryHeld {
@@ -10406,7 +10581,7 @@ async fn migration_0043_lists_each_finding_a_stored_scan_finding_names_as_an_adm
         .await
         .expect("a flagged version stored at 0041");
     rig.commit(
-        &store,
+        &seed,
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": clean.to_string() }),
         MetadataFold::MemoryHeld {
@@ -10422,6 +10597,7 @@ async fn migration_0043_lists_each_finding_a_stored_scan_finding_names_as_an_adm
     )
     .await
     .expect("a clean version stored at 0041");
+    seed_before_rename(&seed_db, &db, &store).await;
     store
         .migrate(&owner_url(&db))
         .await
@@ -10483,7 +10659,6 @@ async fn migration_0043_lists_each_finding_a_stored_scan_finding_names_as_an_adm
 /// not, and a stored refuse-class finding keeps the refuse verdict
 /// (ADR-0074 d14, d23).
 #[tokio::test]
-#[ignore = "seeds through the current adapter at a schema before migration 0047, which names what 0047 renames; to be reseeded in SQL or retired (ADR-0091 d6, #398)"]
 async fn a_recording_rescan_after_migration_0043_lists_each_migrated_finding_once() {
     use oml_app::ports::RecordedVersion;
     use oml_app::types::{FindingVerdict, FoundBy, VersionFinding};
@@ -10497,8 +10672,9 @@ async fn a_recording_rescan_after_migration_0043_lists_each_migrated_finding_onc
         .await
         .expect("connect")
         .with_owner_url(&owner_url(&db));
+    let (seed_db, seed) = seed_store(&created).await;
     let mut rig = ChainRig::new(431);
-    rig.seed_chain(&store, 0).await;
+    rig.seed_chain(&seed, 0).await;
     let wa = Uuid::from_u128(0x431A);
     let key = Uuid::from_u128(0x431B);
     let stored = [
@@ -10518,7 +10694,7 @@ async fn a_recording_rescan_after_migration_0043_lists_each_migrated_finding_onc
     ];
     for (id, text) in stored {
         rig.commit(
-            &store,
+            &seed,
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
@@ -10536,6 +10712,7 @@ async fn a_recording_rescan_after_migration_0043_lists_each_migrated_finding_onc
         .await
         .expect("a version stored at 0041");
     }
+    seed_before_rename(&seed_db, &db, &store).await;
     store
         .migrate(&owner_url(&db))
         .await
@@ -10686,7 +10863,6 @@ async fn a_recording_rescan_after_migration_0043_lists_each_migrated_finding_onc
 /// finding stands for one place only: the rescan's second place of the same
 /// rule is listed (ADR-0074 d23).
 #[tokio::test]
-#[ignore = "seeds through the current adapter at a schema before migration 0047, which names what 0047 renames; to be reseeded in SQL or retired (ADR-0091 d6, #398)"]
 async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_rescan_lists_none_twice()
  {
     use oml_app::ports::RecordedVersion;
@@ -10701,8 +10877,9 @@ async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_re
         .await
         .expect("connect")
         .with_owner_url(&owner_url(&db));
+    let (seed_db, seed) = seed_store(&created).await;
     let mut rig = ChainRig::new(432);
-    rig.seed_chain(&store, 0).await;
+    rig.seed_chain(&seed, 0).await;
     let wa = Uuid::from_u128(0x432A);
     let key = Uuid::from_u128(0x432B);
     let body = Uuid::from_u128(0x432C);
@@ -10741,7 +10918,7 @@ async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_re
     ];
     for (id, text) in stored {
         rig.commit(
-            &store,
+            &seed,
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
@@ -10759,6 +10936,7 @@ async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_re
         .await
         .expect("a version stored at 0041");
     }
+    seed_before_rename(&seed_db, &db, &store).await;
     store
         .migrate(&owner_url(&db))
         .await
@@ -10974,7 +11152,6 @@ async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_re
 /// the filled counters, and a commit past a limit the stored rows already
 /// reach is refused (ADR-0071 d3, Consequences).
 #[tokio::test]
-#[ignore = "seeds through the current adapter at a schema before migration 0047, which names what 0047 renames; to be reseeded in SQL or retired (ADR-0091 d6, #398)"]
 async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_it_and_leaves_no_drift()
  {
     use oml_app::domain::signup::{Quota, QuotaReached, Quotas};
@@ -10990,8 +11167,9 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
         .await
         .expect("connect")
         .with_owner_url(&owner_url(&db));
+    let (seed_db, seed) = seed_store(&created).await;
     let mut rig = ChainRig::new(440);
-    rig.seed_chain(&store, 0).await;
+    rig.seed_chain(&seed, 0).await;
     let t = rig.tenant_id;
     let universe = workspace_record(t, Uuid::from_u128(0x4400), None, "universe");
     let root = oml_app::types::WorkspaceRecord {
@@ -11010,7 +11188,7 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
         "crew",
     );
     for w in [universe, root.clone(), crew.clone()] {
-        rig.create_workspace(&store, w).await;
+        rig.create_workspace(&seed, w).await;
     }
     let account = root.workspace_id;
     let (ada_key, old_key, tenant_key) = (
@@ -11024,7 +11202,7 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
         (tenant_key, None),
     ] {
         rig.issue_key(
-            &store,
+            &seed,
             KeyRecord {
                 user,
                 ..key_record(t, key_id, Role::Writer, None)
@@ -11032,7 +11210,7 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
         )
         .await;
     }
-    rig.revoke_key(&store, old_key).await.expect("revoke");
+    rig.revoke_key(&seed, old_key).await.expect("revoke");
     // The versions are stored now, so the fill's 62 days and this month
     // hold them whenever the suite runs.
     let now = EventTime::from_unix_micros(
@@ -11058,7 +11236,7 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
     );
     for memory in [&kept, &rejected, &approved, &crews] {
         rig.commit(
-            &store,
+            &seed,
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": memory.memory_id.to_string() }),
             MetadataFold::MemoryHeld {
@@ -11071,18 +11249,18 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
         .await
         .expect("a version stored at 0043");
     }
-    reject(&mut rig, &store, rejected.memory_id)
+    reject(&mut rig, &seed, rejected.memory_id)
         .await
         .expect("reject");
     rig.commit(
-        &store,
+        &seed,
         event_types::LIFECYCLE_PROMOTE,
         json!({ "artifact_id": approved.memory_id.to_string() }),
-        // A schema at 0043 keeps no approval, and takes a promotion without
-        // one (ADR-0077 d6).
+        // Seeded at the full schema, which keeps an approval; the copy into
+        // the schema at 0043 keeps none (ADR-0077 d6; ADR-0091 d6).
         MetadataFold::MemoryPromoted {
             memory_id: approved.memory_id,
-            approval: None,
+            approval: Some(oml_port_contracts::fixture_approval()),
         },
         None,
     )
@@ -11093,23 +11271,21 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
         user: Some(account),
         ..connector_key(t, Uuid::from_u128(0x4413))
     };
-    rig.issue_key(&store, connector.clone()).await;
+    rig.issue_key(&seed, connector.clone()).await;
     let (code, connection) = (Uuid::from_u128(0x4430), Uuid::from_u128(0x4431));
-    rig.mint_code(&store, connect_code(code, connector.key_id), None)
+    rig.mint_code(&seed, connect_code(code, connector.key_id), None)
         .await
         .expect("mint");
     let spent_at = EventTime::parse("2026-10-29T13:00:20.000000Z").expect("fixture time");
-    assert!(store.spend_code(t, code, &spent_at).await.expect("redeem"));
-    store
-        .authorization_insert(authorization_request(t, connector.key_id, code, connection))
+    assert!(seed.spend_code(t, code, &spent_at).await.expect("redeem"));
+    seed.authorization_insert(authorization_request(t, connector.key_id, code, connection))
         .await
         .expect("request");
-    store
-        .connection_connect(&handle_hash(connection), connect_grant(connection))
+    seed.connection_connect(&handle_hash(connection), connect_grant(connection))
         .await
         .expect("connect");
     rig.commit(
-        &store,
+        &seed,
         event_types::CONNECTION_OPENED,
         json!({
             "connection_id": connection.to_string(),
@@ -11126,6 +11302,7 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
     .await
     .expect("the connection opens at 0043");
 
+    seed_before_rename(&seed_db, &db, &store).await;
     store
         .migrate(&owner_url(&db))
         .await
