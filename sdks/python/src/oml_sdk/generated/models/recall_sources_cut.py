@@ -10,7 +10,7 @@ T = TypeVar("T", bound="RecallSourcesCut")
 
 @_attrs_define
 class RecallSourcesCut:
-    """The workareas holding a query word that wide did not search because max_sources was reached; their statistics still
+    """The workspaces holding a query word that wide did not search because max_sources was reached; their statistics still
     scored every hit.
 
         Attributes:

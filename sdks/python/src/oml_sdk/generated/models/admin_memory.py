@@ -27,7 +27,7 @@ class AdminMemory:
         claim_key (str):
         version (int):
         state (AdminMemoryState):
-        workarea_path (str):
+        workspace_path (str):
         text (str):
         key (None | str): The authoring key's name; null for a key that has no name, which key_id names (ADR-0070 d5).
         created_at (datetime.datetime):
@@ -38,7 +38,7 @@ class AdminMemory:
         user (None | str | Unset):
         format_ (str | Unset): The media type signed with the version (ADR-0056 d1).
         title (None | str | Unset): The title signed with the version, or null (ADR-0056 d10).
-        held_by (None | str | Unset): The authoring key's holder, agent, human or service (ADR-0045 d32; ADR-0070 d5).
+        used_by (None | str | Unset): The authoring key's holder, agent, person or service (ADR-0045 d32; ADR-0070 d5).
             Since v0.7.0.
         promoted_at (datetime.datetime | None | Unset): When the version was promoted, or null. Since v0.7.0.
         valid_from (None | str | Unset): When the version says it begins to hold, as signed, or null (ADR-0059 d2).
@@ -54,7 +54,7 @@ class AdminMemory:
     claim_key: str
     version: int
     state: AdminMemoryState
-    workarea_path: str
+    workspace_path: str
     text: str
     key: None | str
     created_at: datetime.datetime
@@ -64,7 +64,7 @@ class AdminMemory:
     user: None | str | Unset = UNSET
     format_: str | Unset = UNSET
     title: None | str | Unset = UNSET
-    held_by: None | str | Unset = UNSET
+    used_by: None | str | Unset = UNSET
     promoted_at: datetime.datetime | None | Unset = UNSET
     valid_from: None | str | Unset = UNSET
     valid_until: None | str | Unset = UNSET
@@ -83,7 +83,7 @@ class AdminMemory:
 
         state = self.state.value
 
-        workarea_path = self.workarea_path
+        workspace_path = self.workspace_path
 
         text = self.text
 
@@ -118,11 +118,11 @@ class AdminMemory:
         else:
             title = self.title
 
-        held_by: None | str | Unset
-        if isinstance(self.held_by, Unset):
-            held_by = UNSET
+        used_by: None | str | Unset
+        if isinstance(self.used_by, Unset):
+            used_by = UNSET
         else:
-            held_by = self.held_by
+            used_by = self.used_by
 
         promoted_at: None | str | Unset
         if isinstance(self.promoted_at, Unset):
@@ -166,7 +166,7 @@ class AdminMemory:
                 "claim_key": claim_key,
                 "version": version,
                 "state": state,
-                "workarea_path": workarea_path,
+                "workspace_path": workspace_path,
                 "text": text,
                 "key": key,
                 "created_at": created_at,
@@ -184,8 +184,8 @@ class AdminMemory:
             field_dict["format"] = format_
         if title is not UNSET:
             field_dict["title"] = title
-        if held_by is not UNSET:
-            field_dict["held_by"] = held_by
+        if used_by is not UNSET:
+            field_dict["used_by"] = used_by
         if promoted_at is not UNSET:
             field_dict["promoted_at"] = promoted_at
         if valid_from is not UNSET:
@@ -212,7 +212,7 @@ class AdminMemory:
 
         state = AdminMemoryState(d.pop("state"))
 
-        workarea_path = d.pop("workarea_path")
+        workspace_path = d.pop("workspace_path")
 
         text = d.pop("text")
 
@@ -263,14 +263,14 @@ class AdminMemory:
 
         title = _parse_title(d.pop("title", UNSET))
 
-        def _parse_held_by(data: object) -> None | str | Unset:
+        def _parse_used_by(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
             return cast(None | str | Unset, data)
 
-        held_by = _parse_held_by(d.pop("held_by", UNSET))
+        used_by = _parse_used_by(d.pop("used_by", UNSET))
 
         def _parse_promoted_at(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -338,7 +338,7 @@ class AdminMemory:
             claim_key=claim_key,
             version=version,
             state=state,
-            workarea_path=workarea_path,
+            workspace_path=workspace_path,
             text=text,
             key=key,
             created_at=created_at,
@@ -348,7 +348,7 @@ class AdminMemory:
             user=user,
             format_=format_,
             title=title,
-            held_by=held_by,
+            used_by=used_by,
             promoted_at=promoted_at,
             valid_from=valid_from,
             valid_until=valid_until,

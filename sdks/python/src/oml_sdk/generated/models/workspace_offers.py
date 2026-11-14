@@ -7,50 +7,52 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.workarea_offers_mode import WorkareaOffersMode
+from ..models.workspace_offers_mode import WorkspaceOffersMode
 
 if TYPE_CHECKING:
-    from ..models.workarea_offers_commit import WorkareaOffersCommit
-    from ..models.workarea_offers_mode_change_type_0 import (
-        WorkareaOffersModeChangeType0,
+    from ..models.workspace_offers_commit import WorkspaceOffersCommit
+    from ..models.workspace_offers_mode_change_type_0 import (
+        WorkspaceOffersModeChangeType0,
     )
-    from ..models.workarea_offers_refused_item import WorkareaOffersRefusedItem
-    from ..models.workarea_offers_transitions_item import WorkareaOffersTransitionsItem
+    from ..models.workspace_offers_refused_item import WorkspaceOffersRefusedItem
+    from ..models.workspace_offers_transitions_item import (
+        WorkspaceOffersTransitionsItem,
+    )
 
 
-T = TypeVar("T", bound="WorkareaOffers")
+T = TypeVar("T", bound="WorkspaceOffers")
 
 
 @_attrs_define
-class WorkareaOffers:
+class WorkspaceOffers:
     """
     Attributes:
-        workarea_id (UUID):
+        workspace_id (UUID):
         status (str):
-        mode (WorkareaOffersMode):
-        transitions (list[WorkareaOffersTransitionsItem]):
-        mode_change (None | WorkareaOffersModeChangeType0): Putting the workarea in progress, where offered; null
+        mode (WorkspaceOffersMode):
+        transitions (list[WorkspaceOffersTransitionsItem]):
+        mode_change (None | WorkspaceOffersModeChangeType0): Putting the workspace in progress, where offered; null
             otherwise.
-        commit (WorkareaOffersCommit):
-        refused (list[WorkareaOffersRefusedItem]): Each act of propose committed, propose validated, mode in_progress
-            and mode standard that is not offered, with the refusal its verb would answer now (ADR-0045 d28). Since v0.6.4.
+        commit (WorkspaceOffersCommit):
+        refused (list[WorkspaceOffersRefusedItem]): Each act of propose protected, propose frozen, mode in_progress and
+            mode standard that is not offered, with the refusal its verb would answer now (ADR-0045 d28). Since v0.6.4.
     """
 
-    workarea_id: UUID
+    workspace_id: UUID
     status: str
-    mode: WorkareaOffersMode
-    transitions: list[WorkareaOffersTransitionsItem]
-    mode_change: None | WorkareaOffersModeChangeType0
-    commit: WorkareaOffersCommit
-    refused: list[WorkareaOffersRefusedItem]
+    mode: WorkspaceOffersMode
+    transitions: list[WorkspaceOffersTransitionsItem]
+    mode_change: None | WorkspaceOffersModeChangeType0
+    commit: WorkspaceOffersCommit
+    refused: list[WorkspaceOffersRefusedItem]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.workarea_offers_mode_change_type_0 import (
-            WorkareaOffersModeChangeType0,
+        from ..models.workspace_offers_mode_change_type_0 import (
+            WorkspaceOffersModeChangeType0,
         )
 
-        workarea_id = str(self.workarea_id)
+        workspace_id = str(self.workspace_id)
 
         status = self.status
 
@@ -62,7 +64,7 @@ class WorkareaOffers:
             transitions.append(transitions_item)
 
         mode_change: dict[str, Any] | None
-        if isinstance(self.mode_change, WorkareaOffersModeChangeType0):
+        if isinstance(self.mode_change, WorkspaceOffersModeChangeType0):
             mode_change = self.mode_change.to_dict()
         else:
             mode_change = self.mode_change
@@ -78,7 +80,7 @@ class WorkareaOffers:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "workarea_id": workarea_id,
+                "workspace_id": workspace_id,
                 "status": status,
                 "mode": mode,
                 "transitions": transitions,
@@ -92,57 +94,57 @@ class WorkareaOffers:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.workarea_offers_commit import WorkareaOffersCommit
-        from ..models.workarea_offers_mode_change_type_0 import (
-            WorkareaOffersModeChangeType0,
+        from ..models.workspace_offers_commit import WorkspaceOffersCommit
+        from ..models.workspace_offers_mode_change_type_0 import (
+            WorkspaceOffersModeChangeType0,
         )
-        from ..models.workarea_offers_refused_item import WorkareaOffersRefusedItem
-        from ..models.workarea_offers_transitions_item import (
-            WorkareaOffersTransitionsItem,
+        from ..models.workspace_offers_refused_item import WorkspaceOffersRefusedItem
+        from ..models.workspace_offers_transitions_item import (
+            WorkspaceOffersTransitionsItem,
         )
 
         d = dict(src_dict)
-        workarea_id = UUID(d.pop("workarea_id"))
+        workspace_id = UUID(d.pop("workspace_id"))
 
         status = d.pop("status")
 
-        mode = WorkareaOffersMode(d.pop("mode"))
+        mode = WorkspaceOffersMode(d.pop("mode"))
 
         transitions = []
         _transitions = d.pop("transitions")
         for transitions_item_data in _transitions:
-            transitions_item = WorkareaOffersTransitionsItem.from_dict(
+            transitions_item = WorkspaceOffersTransitionsItem.from_dict(
                 transitions_item_data
             )
 
             transitions.append(transitions_item)
 
-        def _parse_mode_change(data: object) -> None | WorkareaOffersModeChangeType0:
+        def _parse_mode_change(data: object) -> None | WorkspaceOffersModeChangeType0:
             if data is None:
                 return data
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                mode_change_type_0 = WorkareaOffersModeChangeType0.from_dict(data)
+                mode_change_type_0 = WorkspaceOffersModeChangeType0.from_dict(data)
 
                 return mode_change_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(None | WorkareaOffersModeChangeType0, data)
+            return cast(None | WorkspaceOffersModeChangeType0, data)
 
         mode_change = _parse_mode_change(d.pop("mode_change"))
 
-        commit = WorkareaOffersCommit.from_dict(d.pop("commit"))
+        commit = WorkspaceOffersCommit.from_dict(d.pop("commit"))
 
         refused = []
         _refused = d.pop("refused")
         for refused_item_data in _refused:
-            refused_item = WorkareaOffersRefusedItem.from_dict(refused_item_data)
+            refused_item = WorkspaceOffersRefusedItem.from_dict(refused_item_data)
 
             refused.append(refused_item)
 
-        workarea_offers = cls(
-            workarea_id=workarea_id,
+        workspace_offers = cls(
+            workspace_id=workspace_id,
             status=status,
             mode=mode,
             transitions=transitions,
@@ -151,8 +153,8 @@ class WorkareaOffers:
             refused=refused,
         )
 
-        workarea_offers.additional_properties = d
-        return workarea_offers
+        workspace_offers.additional_properties = d
+        return workspace_offers
 
     @property
     def additional_keys(self) -> list[str]:

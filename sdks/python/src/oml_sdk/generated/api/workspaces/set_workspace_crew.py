@@ -6,15 +6,15 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
-from ...models.workarea import Workarea
-from ...models.workarea_crew_update import WorkareaCrewUpdate
+from ...models.workspace import Workspace
+from ...models.workspace_crew_update import WorkspaceCrewUpdate
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
-    workarea: str,
+    workspace: str,
     *,
-    body: WorkareaCrewUpdate,
+    body: WorkspaceCrewUpdate,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -34,8 +34,8 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v2/workareas/{workarea}/crew".format(
-            workarea=quote(str(workarea), safe=""),
+        "url": "/v2/workspaces/{workspace}/crew".format(
+            workspace=quote(str(workspace), safe=""),
         ),
     }
 
@@ -49,9 +49,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope | Workarea:
+) -> ErrorEnvelope | Workspace:
     if response.status_code == 200:
-        response_200 = Workarea.from_dict(response.json())
+        response_200 = Workspace.from_dict(response.json())
 
         return response_200
 
@@ -67,7 +67,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope | Workarea]:
+) -> Response[ErrorEnvelope | Workspace]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -77,24 +77,24 @@ def _build_response(
 
 
 def sync_detailed(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
-    body: WorkareaCrewUpdate,
+    body: WorkspaceCrewUpdate,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> Response[ErrorEnvelope | Workarea]:
-    """Journalled crew-metadata update — points the workarea at a crew record, by id or name; allowed on
-    validated areas (freeze covers claims, not metadata).
+) -> Response[ErrorEnvelope | Workspace]:
+    """Journalled crew-metadata update — points the workspace at a crew record, by id or name; allowed on
+    frozen areas (freeze covers claims, not metadata).
 
-     Requires: admin key role. Journals workarea.crew_updated with the crew's id (ADR-0026 d8); a crew
-    that names no crew record of the tenant answers access.not_found, checked after the workarea. The
+     Requires: admin key role. Journals workspace.crew_updated with the crew's id (ADR-0026 d8); a crew
+    that names no crew record of the tenant answers access.not_found, checked after the workspace. The
     crew record itself is updated at POST /v2/crews/{crew}/update.
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -104,18 +104,18 @@ def sync_detailed(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WorkareaCrewUpdate):
+        body (WorkspaceCrewUpdate):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | Workarea]
+        Response[ErrorEnvelope | Workspace]
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         body=body,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
@@ -131,24 +131,24 @@ def sync_detailed(
 
 
 def sync(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
-    body: WorkareaCrewUpdate,
+    body: WorkspaceCrewUpdate,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> ErrorEnvelope | Workarea | None:
-    """Journalled crew-metadata update — points the workarea at a crew record, by id or name; allowed on
-    validated areas (freeze covers claims, not metadata).
+) -> ErrorEnvelope | Workspace | None:
+    """Journalled crew-metadata update — points the workspace at a crew record, by id or name; allowed on
+    frozen areas (freeze covers claims, not metadata).
 
-     Requires: admin key role. Journals workarea.crew_updated with the crew's id (ADR-0026 d8); a crew
-    that names no crew record of the tenant answers access.not_found, checked after the workarea. The
+     Requires: admin key role. Journals workspace.crew_updated with the crew's id (ADR-0026 d8); a crew
+    that names no crew record of the tenant answers access.not_found, checked after the workspace. The
     crew record itself is updated at POST /v2/crews/{crew}/update.
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -158,18 +158,18 @@ def sync(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WorkareaCrewUpdate):
+        body (WorkspaceCrewUpdate):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | Workarea
+        ErrorEnvelope | Workspace
     """
 
     return sync_detailed(
-        workarea=workarea,
+        workspace=workspace,
         client=client,
         body=body,
         x_request_id=x_request_id,
@@ -180,24 +180,24 @@ def sync(
 
 
 async def asyncio_detailed(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
-    body: WorkareaCrewUpdate,
+    body: WorkspaceCrewUpdate,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> Response[ErrorEnvelope | Workarea]:
-    """Journalled crew-metadata update — points the workarea at a crew record, by id or name; allowed on
-    validated areas (freeze covers claims, not metadata).
+) -> Response[ErrorEnvelope | Workspace]:
+    """Journalled crew-metadata update — points the workspace at a crew record, by id or name; allowed on
+    frozen areas (freeze covers claims, not metadata).
 
-     Requires: admin key role. Journals workarea.crew_updated with the crew's id (ADR-0026 d8); a crew
-    that names no crew record of the tenant answers access.not_found, checked after the workarea. The
+     Requires: admin key role. Journals workspace.crew_updated with the crew's id (ADR-0026 d8); a crew
+    that names no crew record of the tenant answers access.not_found, checked after the workspace. The
     crew record itself is updated at POST /v2/crews/{crew}/update.
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -207,18 +207,18 @@ async def asyncio_detailed(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WorkareaCrewUpdate):
+        body (WorkspaceCrewUpdate):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | Workarea]
+        Response[ErrorEnvelope | Workspace]
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         body=body,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
@@ -232,24 +232,24 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
-    body: WorkareaCrewUpdate,
+    body: WorkspaceCrewUpdate,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> ErrorEnvelope | Workarea | None:
-    """Journalled crew-metadata update — points the workarea at a crew record, by id or name; allowed on
-    validated areas (freeze covers claims, not metadata).
+) -> ErrorEnvelope | Workspace | None:
+    """Journalled crew-metadata update — points the workspace at a crew record, by id or name; allowed on
+    frozen areas (freeze covers claims, not metadata).
 
-     Requires: admin key role. Journals workarea.crew_updated with the crew's id (ADR-0026 d8); a crew
-    that names no crew record of the tenant answers access.not_found, checked after the workarea. The
+     Requires: admin key role. Journals workspace.crew_updated with the crew's id (ADR-0026 d8); a crew
+    that names no crew record of the tenant answers access.not_found, checked after the workspace. The
     crew record itself is updated at POST /v2/crews/{crew}/update.
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -259,19 +259,19 @@ async def asyncio(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WorkareaCrewUpdate):
+        body (WorkspaceCrewUpdate):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | Workarea
+        ErrorEnvelope | Workspace
     """
 
     return (
         await asyncio_detailed(
-            workarea=workarea,
+            workspace=workspace,
             client=client,
             body=body,
             x_request_id=x_request_id,

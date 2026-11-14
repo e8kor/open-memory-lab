@@ -7,11 +7,11 @@ from attrs import define as _attrs_define
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="WorkareaCreate")
+T = TypeVar("T", bound="WorkspaceCreate")
 
 
 @_attrs_define
-class WorkareaCreate:
+class WorkspaceCreate:
     """
     Attributes:
         name (str): A new name, in a creation body: the creation grammar. A lowercase RFC 1035 label, 1-63 characters,
@@ -19,7 +19,7 @@ class WorkareaCreate:
             names hold; a creation that sends that form is request.validation. Unique in its namespace, immutable, never
             released; compared byte for byte, never lowercased (docs/api/http-api.md, Names and ids; ADR-0026 d1, d2).
             References use NameRef.
-        parent (str | Unset): A workarea, by its node id, its name or its qualified name. Resolved server-side before
+        parent (str | Unset): A workspace, by its node id, its name or its qualified name. Resolved server-side before
             any check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a
             bare name in its own user root's namespace, plus universe and its root's name; every other key in the shared
             namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
@@ -80,10 +80,10 @@ class WorkareaCreate:
 
         crew = _parse_crew(d.pop("crew", UNSET))
 
-        workarea_create = cls(
+        workspace_create = cls(
             name=name,
             parent=parent,
             crew=crew,
         )
 
-        return workarea_create
+        return workspace_create

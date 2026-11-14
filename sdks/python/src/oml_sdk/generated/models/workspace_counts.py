@@ -9,28 +9,28 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.workarea_counts_items_item import WorkareaCountsItemsItem
-    from ..models.workarea_offers import WorkareaOffers
+    from ..models.workspace_counts_items_item import WorkspaceCountsItemsItem
+    from ..models.workspace_offers import WorkspaceOffers
 
 
-T = TypeVar("T", bound="WorkareaCounts")
+T = TypeVar("T", bound="WorkspaceCounts")
 
 
 @_attrs_define
-class WorkareaCounts:
-    """GET /v2/workareas/{workarea}/tree with counts=true (ADR-0045 d30; ADR-0070 d5).
+class WorkspaceCounts:
+    """GET /v2/workspaces/{workspace}/tree with counts=true (ADR-0045 d30; ADR-0070 d5).
 
     Attributes:
-        items (list[WorkareaCountsItemsItem]):
+        items (list[WorkspaceCountsItemsItem]):
         next_cursor (None):
         truncated (bool): The node or the row count stopped at 2000.
-        offers (WorkareaOffers | Unset):
+        offers (WorkspaceOffers | Unset):
     """
 
-    items: list[WorkareaCountsItemsItem]
+    items: list[WorkspaceCountsItemsItem]
     next_cursor: None
     truncated: bool
-    offers: WorkareaOffers | Unset = UNSET
+    offers: WorkspaceOffers | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,14 +63,14 @@ class WorkareaCounts:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.workarea_counts_items_item import WorkareaCountsItemsItem
-        from ..models.workarea_offers import WorkareaOffers
+        from ..models.workspace_counts_items_item import WorkspaceCountsItemsItem
+        from ..models.workspace_offers import WorkspaceOffers
 
         d = dict(src_dict)
         items = []
         _items = d.pop("items")
         for items_item_data in _items:
-            items_item = WorkareaCountsItemsItem.from_dict(items_item_data)
+            items_item = WorkspaceCountsItemsItem.from_dict(items_item_data)
 
             items.append(items_item)
 
@@ -79,21 +79,21 @@ class WorkareaCounts:
         truncated = d.pop("truncated")
 
         _offers = d.pop("offers", UNSET)
-        offers: WorkareaOffers | Unset
+        offers: WorkspaceOffers | Unset
         if isinstance(_offers, Unset):
             offers = UNSET
         else:
-            offers = WorkareaOffers.from_dict(_offers)
+            offers = WorkspaceOffers.from_dict(_offers)
 
-        workarea_counts = cls(
+        workspace_counts = cls(
             items=items,
             next_cursor=next_cursor,
             truncated=truncated,
             offers=offers,
         )
 
-        workarea_counts.additional_properties = d
-        return workarea_counts
+        workspace_counts.additional_properties = d
+        return workspace_counts
 
     @property
     def additional_keys(self) -> list[str]:

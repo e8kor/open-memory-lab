@@ -77,12 +77,12 @@ def sync_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> Response[AdminSearchMemoriesResponse200 | ErrorEnvelope]:
-    """Search every memory of the tenant, in every state, workarea and user root, with its text and
+    """Search every memory of the tenant, in every state, workspace and user root, with its text and
     attribution.
 
      Requires: admin key role (ADR-0045 d21); the operator and every other role answer
     access.verb_ceiling. query is the recall full-text search without the visibility filter; state and
-    workarea narrow it. A POST so that the query travels in a body, never a path or query string. Each
+    workspace narrow it. A POST so that the query travels in a body, never a path or query string. Each
     answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a
     query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no
     serve binding. Since v0.5.0.
@@ -123,12 +123,12 @@ def sync(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> AdminSearchMemoriesResponse200 | ErrorEnvelope | None:
-    """Search every memory of the tenant, in every state, workarea and user root, with its text and
+    """Search every memory of the tenant, in every state, workspace and user root, with its text and
     attribution.
 
      Requires: admin key role (ADR-0045 d21); the operator and every other role answer
     access.verb_ceiling. query is the recall full-text search without the visibility filter; state and
-    workarea narrow it. A POST so that the query travels in a body, never a path or query string. Each
+    workspace narrow it. A POST so that the query travels in a body, never a path or query string. Each
     answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a
     query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no
     serve binding. Since v0.5.0.
@@ -164,12 +164,12 @@ async def asyncio_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> Response[AdminSearchMemoriesResponse200 | ErrorEnvelope]:
-    """Search every memory of the tenant, in every state, workarea and user root, with its text and
+    """Search every memory of the tenant, in every state, workspace and user root, with its text and
     attribution.
 
      Requires: admin key role (ADR-0045 d21); the operator and every other role answer
     access.verb_ceiling. query is the recall full-text search without the visibility filter; state and
-    workarea narrow it. A POST so that the query travels in a body, never a path or query string. Each
+    workspace narrow it. A POST so that the query travels in a body, never a path or query string. Each
     answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a
     query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no
     serve binding. Since v0.5.0.
@@ -208,12 +208,12 @@ async def asyncio(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> AdminSearchMemoriesResponse200 | ErrorEnvelope | None:
-    """Search every memory of the tenant, in every state, workarea and user root, with its text and
+    """Search every memory of the tenant, in every state, workspace and user root, with its text and
     attribution.
 
      Requires: admin key role (ADR-0045 d21); the operator and every other role answer
     access.verb_ceiling. query is the recall full-text search without the visibility filter; state and
-    workarea narrow it. A POST so that the query travels in a body, never a path or query string. Each
+    workspace narrow it. A POST so that the query travels in a body, never a path or query string. Each
     answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a
     query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no
     serve binding. Since v0.5.0.

@@ -6,13 +6,13 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
-from ...models.workarea_counts import WorkareaCounts
-from ...models.workarea_page import WorkareaPage
+from ...models.workspace_counts import WorkspaceCounts
+from ...models.workspace_page import WorkspacePage
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
-    workarea: str,
+    workspace: str,
     *,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
@@ -46,8 +46,8 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v2/workareas/{workarea}/tree".format(
-            workarea=quote(str(workarea), safe=""),
+        "url": "/v2/workspaces/{workspace}/tree".format(
+            workspace=quote(str(workspace), safe=""),
         ),
         "params": params,
     }
@@ -58,21 +58,21 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope | WorkareaCounts | WorkareaPage:
+) -> ErrorEnvelope | WorkspaceCounts | WorkspacePage:
     if response.status_code == 200:
 
-        def _parse_response_200(data: object) -> WorkareaCounts | WorkareaPage:
+        def _parse_response_200(data: object) -> WorkspaceCounts | WorkspacePage:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                response_200_type_0 = WorkareaPage.from_dict(data)
+                response_200_type_0 = WorkspacePage.from_dict(data)
 
                 return response_200_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
             if not isinstance(data, dict):
                 raise TypeError()
-            response_200_type_1 = WorkareaCounts.from_dict(data)
+            response_200_type_1 = WorkspaceCounts.from_dict(data)
 
             return response_200_type_1
 
@@ -87,7 +87,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope | WorkareaCounts | WorkareaPage]:
+) -> Response[ErrorEnvelope | WorkspaceCounts | WorkspacePage]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -97,7 +97,7 @@ def _build_response(
 
 
 def sync_detailed(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
@@ -107,15 +107,15 @@ def sync_detailed(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> Response[ErrorEnvelope | WorkareaCounts | WorkareaPage]:
+) -> Response[ErrorEnvelope | WorkspaceCounts | WorkspacePage]:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
-    workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    workspace in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
     permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -134,11 +134,11 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | WorkareaCounts | WorkareaPage]
+        Response[ErrorEnvelope | WorkspaceCounts | WorkspacePage]
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         limit=limit,
         cursor=cursor,
         counts=counts,
@@ -156,7 +156,7 @@ def sync_detailed(
 
 
 def sync(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
@@ -166,15 +166,15 @@ def sync(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> ErrorEnvelope | WorkareaCounts | WorkareaPage | None:
+) -> ErrorEnvelope | WorkspaceCounts | WorkspacePage | None:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
-    workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    workspace in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
     permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -193,11 +193,11 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | WorkareaCounts | WorkareaPage
+        ErrorEnvelope | WorkspaceCounts | WorkspacePage
     """
 
     return sync_detailed(
-        workarea=workarea,
+        workspace=workspace,
         client=client,
         limit=limit,
         cursor=cursor,
@@ -210,7 +210,7 @@ def sync(
 
 
 async def asyncio_detailed(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
@@ -220,15 +220,15 @@ async def asyncio_detailed(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> Response[ErrorEnvelope | WorkareaCounts | WorkareaPage]:
+) -> Response[ErrorEnvelope | WorkspaceCounts | WorkspacePage]:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
-    workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    workspace in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
     permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -247,11 +247,11 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | WorkareaCounts | WorkareaPage]
+        Response[ErrorEnvelope | WorkspaceCounts | WorkspacePage]
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         limit=limit,
         cursor=cursor,
         counts=counts,
@@ -267,7 +267,7 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
@@ -277,15 +277,15 @@ async def asyncio(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> ErrorEnvelope | WorkareaCounts | WorkareaPage | None:
+) -> ErrorEnvelope | WorkspaceCounts | WorkspacePage | None:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
-    workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    workspace in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
     permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -304,12 +304,12 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | WorkareaCounts | WorkareaPage
+        ErrorEnvelope | WorkspaceCounts | WorkspacePage
     """
 
     return (
         await asyncio_detailed(
-            workarea=workarea,
+            workspace=workspace,
             client=client,
             limit=limit,
             cursor=cursor,

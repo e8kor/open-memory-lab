@@ -6,11 +6,11 @@ from typing import Any, Self, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-T = TypeVar("T", bound="WorkareaOffersCommit")
+T = TypeVar("T", bound="WorkspaceOffersCommit")
 
 
 @_attrs_define
-class WorkareaOffersCommit:
+class WorkspaceOffersCommit:
     """
     Attributes:
         offered (bool): Committing the in-progress root is offered now.
@@ -50,13 +50,13 @@ class WorkareaOffersCommit:
 
         held = _parse_held(d.pop("held"))
 
-        workarea_offers_commit = cls(
+        workspace_offers_commit = cls(
             offered=offered,
             held=held,
         )
 
-        workarea_offers_commit.additional_properties = d
-        return workarea_offers_commit
+        workspace_offers_commit.additional_properties = d
+        return workspace_offers_commit
 
     @property
     def additional_keys(self) -> list[str]:

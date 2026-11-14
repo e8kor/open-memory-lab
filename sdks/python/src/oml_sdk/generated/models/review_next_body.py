@@ -11,7 +11,7 @@ T = TypeVar("T", bound="ReviewNextBody")
 
 @_attrs_define
 class ReviewNextBody:
-    """The queue is served whole: the subtree filter workarea is a designed field (openapi-designed.yaml x-oml-designed-
+    """The queue is served whole: the subtree filter workspace is a designed field (openapi-designed.yaml x-oml-designed-
     fields), refused with request.validation until it is built (ADR-0039 d9).
 
     """

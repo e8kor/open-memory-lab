@@ -16,13 +16,13 @@ class Denial:
     """
     Attributes:
         denial_id (str):
-        workarea_node_id (str):
+        workspace_node_id (str):
         epoch (int):
         lifted (bool | Unset):
     """
 
     denial_id: str
-    workarea_node_id: str
+    workspace_node_id: str
     epoch: int
     lifted: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -30,7 +30,7 @@ class Denial:
     def to_dict(self) -> dict[str, Any]:
         denial_id = self.denial_id
 
-        workarea_node_id = self.workarea_node_id
+        workspace_node_id = self.workspace_node_id
 
         epoch = self.epoch
 
@@ -41,7 +41,7 @@ class Denial:
         field_dict.update(
             {
                 "denial_id": denial_id,
-                "workarea_node_id": workarea_node_id,
+                "workspace_node_id": workspace_node_id,
                 "epoch": epoch,
             }
         )
@@ -55,7 +55,7 @@ class Denial:
         d = dict(src_dict)
         denial_id = d.pop("denial_id")
 
-        workarea_node_id = d.pop("workarea_node_id")
+        workspace_node_id = d.pop("workspace_node_id")
 
         epoch = d.pop("epoch")
 
@@ -63,7 +63,7 @@ class Denial:
 
         denial = cls(
             denial_id=denial_id,
-            workarea_node_id=workarea_node_id,
+            workspace_node_id=workspace_node_id,
             epoch=epoch,
             lifted=lifted,
         )

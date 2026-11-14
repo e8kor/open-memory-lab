@@ -5,11 +5,11 @@ from typing import Any, Self, TypeVar
 
 from attrs import define as _attrs_define
 
-T = TypeVar("T", bound="SetWorkareaFederationResponse200")
+T = TypeVar("T", bound="SetWorkspaceFederationResponse200")
 
 
 @_attrs_define
-class SetWorkareaFederationResponse200:
+class SetWorkspaceFederationResponse200:
     """
     Attributes:
         accept_federated (bool):
@@ -35,8 +35,8 @@ class SetWorkareaFederationResponse200:
         d = dict(src_dict)
         accept_federated = d.pop("accept_federated")
 
-        set_workarea_federation_response_200 = cls(
+        set_workspace_federation_response_200 = cls(
             accept_federated=accept_federated,
         )
 
-        return set_workarea_federation_response_200
+        return set_workspace_federation_response_200

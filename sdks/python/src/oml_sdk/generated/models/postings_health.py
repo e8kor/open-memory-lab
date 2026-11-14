@@ -17,7 +17,7 @@ class PostingsHealth:
             partition (bool): The tenant's postings partition exists.
             unfilled (int): Memory versions that should have postings and have none: the fill incomplete.
             served_behind (int): Served memories with no served posting, which bm25-postings cannot find.
-            workarea_drift (int): Per-workarea counts that disagree with the served memories.
+            workspace_drift (int): Per-workspace counts that disagree with the served memories.
             term_drift (int): Sampled word counts that disagree with the served postings, or are missing.
             terms_checked (int): How many word counts were sampled.
             sparse_backlog (int): Memory versions waiting for the learned sparse encoder, parked ones aside, absent from
@@ -32,7 +32,7 @@ class PostingsHealth:
     partition: bool
     unfilled: int
     served_behind: int
-    workarea_drift: int
+    workspace_drift: int
     term_drift: int
     terms_checked: int
     sparse_backlog: int
@@ -47,7 +47,7 @@ class PostingsHealth:
 
         served_behind = self.served_behind
 
-        workarea_drift = self.workarea_drift
+        workspace_drift = self.workspace_drift
 
         term_drift = self.term_drift
 
@@ -68,7 +68,7 @@ class PostingsHealth:
                 "partition": partition,
                 "unfilled": unfilled,
                 "served_behind": served_behind,
-                "workarea_drift": workarea_drift,
+                "workspace_drift": workspace_drift,
                 "term_drift": term_drift,
                 "terms_checked": terms_checked,
                 "sparse_backlog": sparse_backlog,
@@ -89,7 +89,7 @@ class PostingsHealth:
 
         served_behind = d.pop("served_behind")
 
-        workarea_drift = d.pop("workarea_drift")
+        workspace_drift = d.pop("workspace_drift")
 
         term_drift = d.pop("term_drift")
 
@@ -107,7 +107,7 @@ class PostingsHealth:
             partition=partition,
             unfilled=unfilled,
             served_behind=served_behind,
-            workarea_drift=workarea_drift,
+            workspace_drift=workspace_drift,
             term_drift=term_drift,
             terms_checked=terms_checked,
             sparse_backlog=sparse_backlog,

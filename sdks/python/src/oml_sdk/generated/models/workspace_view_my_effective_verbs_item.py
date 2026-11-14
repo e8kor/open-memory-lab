@@ -1,7 +1,7 @@
 from enum import StrEnum
 
 
-class WorkareaViewMyEffectiveVerbsItem(StrEnum):
+class WorkspaceViewMyEffectiveVerbsItem(StrEnum):
     ATTACH = "attach"
     EVENTS_TAIL = "events_tail"
     GRAPH_READ = "graph_read"

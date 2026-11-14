@@ -21,24 +21,24 @@ T = TypeVar("T", bound="RecallSourcesSearchedItem")
 class RecallSourcesSearchedItem:
     """
     Attributes:
-        workarea_id (UUID):
-        workarea_path (str):
+        workspace_id (UUID):
+        workspace_path (str):
         via (RecallSourcesSearchedItemVia):
         estimate (float): The share of the matching rows it holds, weighted by each word's rarity over every source
             searched or considered: the order selection reads above max_sources (d4.4).
         matched (RecallSourcesSearchedItemMatched):
     """
 
-    workarea_id: UUID
-    workarea_path: str
+    workspace_id: UUID
+    workspace_path: str
     via: RecallSourcesSearchedItemVia
     estimate: float
     matched: RecallSourcesSearchedItemMatched
 
     def to_dict(self) -> dict[str, Any]:
-        workarea_id = str(self.workarea_id)
+        workspace_id = str(self.workspace_id)
 
-        workarea_path = self.workarea_path
+        workspace_path = self.workspace_path
 
         via = self.via.value
 
@@ -50,8 +50,8 @@ class RecallSourcesSearchedItem:
 
         field_dict.update(
             {
-                "workarea_id": workarea_id,
-                "workarea_path": workarea_path,
+                "workspace_id": workspace_id,
+                "workspace_path": workspace_path,
                 "via": via,
                 "estimate": estimate,
                 "matched": matched,
@@ -67,9 +67,9 @@ class RecallSourcesSearchedItem:
         )
 
         d = dict(src_dict)
-        workarea_id = UUID(d.pop("workarea_id"))
+        workspace_id = UUID(d.pop("workspace_id"))
 
-        workarea_path = d.pop("workarea_path")
+        workspace_path = d.pop("workspace_path")
 
         via = RecallSourcesSearchedItemVia(d.pop("via"))
 
@@ -78,8 +78,8 @@ class RecallSourcesSearchedItem:
         matched = RecallSourcesSearchedItemMatched.from_dict(d.pop("matched"))
 
         recall_sources_searched_item = cls(
-            workarea_id=workarea_id,
-            workarea_path=workarea_path,
+            workspace_id=workspace_id,
+            workspace_path=workspace_path,
             via=via,
             estimate=estimate,
             matched=matched,

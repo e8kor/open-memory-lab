@@ -5,12 +5,12 @@ from typing import Any, Self, TypeVar
 
 from attrs import define as _attrs_define
 
-T = TypeVar("T", bound="WhoamiWorkarea")
+T = TypeVar("T", bound="WhoamiWorkspace")
 
 
 @_attrs_define
-class WhoamiWorkarea:
-    """The calling key's default workarea, by its id and its name, with the path derived from its ancestry, root first
+class WhoamiWorkspace:
+    """The calling key's default workspace, by its id and its name, with the path derived from its ancestry, root first
     (ADR-0039 d15).
 
         Attributes:
@@ -51,10 +51,10 @@ class WhoamiWorkarea:
 
         path = d.pop("path")
 
-        whoami_workarea = cls(
+        whoami_workspace = cls(
             id=id,
             name=name,
             path=path,
         )
 
-        return whoami_workarea
+        return whoami_workspace

@@ -7,19 +7,19 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.workarea_mode import WorkareaMode
-from ..models.workarea_status import WorkareaStatus
+from ..models.workspace_mode import WorkspaceMode
+from ..models.workspace_status import WorkspaceStatus
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.crew import Crew
 
 
-T = TypeVar("T", bound="Workarea")
+T = TypeVar("T", bound="Workspace")
 
 
 @_attrs_define
-class Workarea:
+class Workspace:
     """
     Attributes:
         id (str):
@@ -27,11 +27,11 @@ class Workarea:
         parent_id (None | str): Null only for the tenant universe root.
         path (str): Derived ltree path, the names from universe joined with "."; never the grant target, and never
             accepted as a reference.
-        status (WorkareaStatus):
-        crew (Crew | None | Unset): The crew record the workarea names, or null.
+        status (WorkspaceStatus):
+        crew (Crew | None | Unset): The crew record the workspace names, or null.
         user_root (bool | Unset): Whether the node is a user root, universe.<user>, which only the issuance of the first
             key naming its user creates (ADR-0044 d1, d11).
-        mode (WorkareaMode | Unset): in_progress when a person's key put the node in progress: readers inside recall
+        mode (WorkspaceMode | Unset): in_progress when a person's key put the node in progress: readers inside recall
             unreviewed memories, labelled, and nothing inside reaches a read from outside until the commit (ADR-0030 d1,
             d2).
         created_at (datetime.datetime | Unset):
@@ -41,10 +41,10 @@ class Workarea:
     name: str
     parent_id: None | str
     path: str
-    status: WorkareaStatus
+    status: WorkspaceStatus
     crew: Crew | None | Unset = UNSET
     user_root: bool | Unset = UNSET
-    mode: WorkareaMode | Unset = UNSET
+    mode: WorkspaceMode | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -120,7 +120,7 @@ class Workarea:
 
         path = d.pop("path")
 
-        status = WorkareaStatus(d.pop("status"))
+        status = WorkspaceStatus(d.pop("status"))
 
         def _parse_crew(data: object) -> Crew | None | Unset:
             if data is None:
@@ -142,11 +142,11 @@ class Workarea:
         user_root = d.pop("user_root", UNSET)
 
         _mode = d.pop("mode", UNSET)
-        mode: WorkareaMode | Unset
+        mode: WorkspaceMode | Unset
         if isinstance(_mode, Unset):
             mode = UNSET
         else:
-            mode = WorkareaMode(_mode)
+            mode = WorkspaceMode(_mode)
 
         _created_at = d.pop("created_at", UNSET)
         created_at: datetime.datetime | Unset
@@ -155,7 +155,7 @@ class Workarea:
         else:
             created_at = datetime.datetime.fromisoformat(_created_at)
 
-        workarea = cls(
+        workspace = cls(
             id=id,
             name=name,
             parent_id=parent_id,
@@ -167,8 +167,8 @@ class Workarea:
             created_at=created_at,
         )
 
-        workarea.additional_properties = d
-        return workarea
+        workspace.additional_properties = d
+        return workspace
 
     @property
     def additional_keys(self) -> list[str]:

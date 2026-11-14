@@ -1,9 +1,9 @@
 from enum import StrEnum
 
 
-class ServedGuardrailVerdictsItemHeldBy(StrEnum):
+class KeyUsedByType1(StrEnum):
     AGENT = "agent"
-    HUMAN = "human"
+    PERSON = "person"
     SERVICE = "service"
 
     def __str__(self) -> str:

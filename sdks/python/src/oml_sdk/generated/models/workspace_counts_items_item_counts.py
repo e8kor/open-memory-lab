@@ -6,11 +6,11 @@ from typing import Any, Self, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-T = TypeVar("T", bound="WorkareaCountsItemsItemCounts")
+T = TypeVar("T", bound="WorkspaceCountsItemsItemCounts")
 
 
 @_attrs_define
-class WorkareaCountsItemsItemCounts:
+class WorkspaceCountsItemsItemCounts:
     """
     Attributes:
         promoted (int): Promoted tips.
@@ -58,15 +58,15 @@ class WorkareaCountsItemsItemCounts:
 
         other = d.pop("other")
 
-        workarea_counts_items_item_counts = cls(
+        workspace_counts_items_item_counts = cls(
             promoted=promoted,
             held=held,
             in_progress=in_progress,
             other=other,
         )
 
-        workarea_counts_items_item_counts.additional_properties = d
-        return workarea_counts_items_item_counts
+        workspace_counts_items_item_counts.additional_properties = d
+        return workspace_counts_items_item_counts
 
     @property
     def additional_keys(self) -> list[str]:

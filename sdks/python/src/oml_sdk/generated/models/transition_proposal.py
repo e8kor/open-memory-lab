@@ -14,7 +14,7 @@ T = TypeVar("T", bound="TransitionProposal")
 class TransitionProposal:
     """
     Attributes:
-        to (TransitionProposalTo): Forward only; backward transitions do not exist, and a user root climbs to committed
+        to (TransitionProposalTo): Forward only; backward transitions do not exist, and a user root climbs to protected
             at most (ADR-0046 d1).
     """
 

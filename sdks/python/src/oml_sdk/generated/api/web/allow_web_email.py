@@ -95,8 +95,8 @@ def sync_detailed(
 
      Requires: admin key role (ADR-0045 d2). The email is unique in the deployment and compared ASCII
     case-insensitively (409 name.taken, details.kind email); user is a name under the creation grammar
-    of at most 56 characters, refused 409 name.taken when a shared workarea holds it or when a key holds
-    one of the names <user>-web, <user>-review, <user>-curate, <user>-admin. Journalled as
+    of at most 56 characters, refused 409 name.taken when a shared workspace holds it or when a key
+    holds one of the names <user>-web, <user>-review, <user>-curate, <user>-admin. Journalled as
     web.email_allowed or web.email_changed with an email digest, never the address. A change ends the
     entry's sessions. Since v0.5.0.
 
@@ -143,8 +143,8 @@ def sync(
 
      Requires: admin key role (ADR-0045 d2). The email is unique in the deployment and compared ASCII
     case-insensitively (409 name.taken, details.kind email); user is a name under the creation grammar
-    of at most 56 characters, refused 409 name.taken when a shared workarea holds it or when a key holds
-    one of the names <user>-web, <user>-review, <user>-curate, <user>-admin. Journalled as
+    of at most 56 characters, refused 409 name.taken when a shared workspace holds it or when a key
+    holds one of the names <user>-web, <user>-review, <user>-curate, <user>-admin. Journalled as
     web.email_allowed or web.email_changed with an email digest, never the address. A change ends the
     entry's sessions. Since v0.5.0.
 
@@ -186,8 +186,8 @@ async def asyncio_detailed(
 
      Requires: admin key role (ADR-0045 d2). The email is unique in the deployment and compared ASCII
     case-insensitively (409 name.taken, details.kind email); user is a name under the creation grammar
-    of at most 56 characters, refused 409 name.taken when a shared workarea holds it or when a key holds
-    one of the names <user>-web, <user>-review, <user>-curate, <user>-admin. Journalled as
+    of at most 56 characters, refused 409 name.taken when a shared workspace holds it or when a key
+    holds one of the names <user>-web, <user>-review, <user>-curate, <user>-admin. Journalled as
     web.email_allowed or web.email_changed with an email digest, never the address. A change ends the
     entry's sessions. Since v0.5.0.
 
@@ -232,8 +232,8 @@ async def asyncio(
 
      Requires: admin key role (ADR-0045 d2). The email is unique in the deployment and compared ASCII
     case-insensitively (409 name.taken, details.kind email); user is a name under the creation grammar
-    of at most 56 characters, refused 409 name.taken when a shared workarea holds it or when a key holds
-    one of the names <user>-web, <user>-review, <user>-curate, <user>-admin. Journalled as
+    of at most 56 characters, refused 409 name.taken when a shared workspace holds it or when a key
+    holds one of the names <user>-web, <user>-review, <user>-curate, <user>-admin. Journalled as
     web.email_allowed or web.email_changed with an email digest, never the address. A change ends the
     entry's sessions. Since v0.5.0.
 

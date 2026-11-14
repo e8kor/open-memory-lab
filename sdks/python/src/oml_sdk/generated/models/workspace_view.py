@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.workarea_mode import WorkareaMode
-from ..models.workarea_status import WorkareaStatus
-from ..models.workarea_view_my_effective_verbs_item import (
-    WorkareaViewMyEffectiveVerbsItem,
+from ..models.workspace_mode import WorkspaceMode
+from ..models.workspace_status import WorkspaceStatus
+from ..models.workspace_view_my_effective_verbs_item import (
+    WorkspaceViewMyEffectiveVerbsItem,
 )
 from ..types import UNSET, Unset
 
@@ -20,16 +20,16 @@ if TYPE_CHECKING:
     from ..models.review_policy import ReviewPolicy
     from ..models.transition import Transition
     from ..models.whoami_ref import WhoamiRef
-    from ..models.workarea_view_children_item import WorkareaViewChildrenItem
-    from ..models.workarea_view_edges_item import WorkareaViewEdgesItem
-    from ..models.workarea_view_federation import WorkareaViewFederation
+    from ..models.workspace_view_children_item import WorkspaceViewChildrenItem
+    from ..models.workspace_view_edges_item import WorkspaceViewEdgesItem
+    from ..models.workspace_view_federation import WorkspaceViewFederation
 
 
-T = TypeVar("T", bound="WorkareaView")
+T = TypeVar("T", bound="WorkspaceView")
 
 
 @_attrs_define
-class WorkareaView:
+class WorkspaceView:
     """One node with the calling key's view of it; every value below is relative to that key, and children outside read
     access are absent (ADR-0025 d14).
 
@@ -39,56 +39,56 @@ class WorkareaView:
             parent_id (None | str): Null only for the tenant universe root.
             path (str): Derived ltree path, the names from universe joined with "."; never the grant target, and never
                 accepted as a reference.
-            status (WorkareaStatus):
+            status (WorkspaceStatus):
             stale_versions (int): The promoted served tips on this node whose latest source check found the source changed
                 or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's
-                default workarea.
-            children (list[WorkareaViewChildrenItem]): The readable immediate children, ordered by path_leaf ascending in
+                default workspace.
+            children (list[WorkspaceViewChildrenItem]): The readable immediate children, ordered by path_leaf ascending in
                 byte order, then id; a child's path_leaf is its name.
-            edges (list[WorkareaViewEdgesItem]): The workarea edges touching the node whose other endpoint the key can read,
-                in either direction, ordered by edge_id ascending; edge_id is the id the events tail reports.
-            my_effective_verbs (list[WorkareaViewMyEffectiveVerbsItem]): The effective-verbs table of
+            edges (list[WorkspaceViewEdgesItem]): The workspace edges touching the node whose other endpoint the key can
+                read, in either direction, ordered by edge_id ascending; edge_id is the id the events tail reports.
+            my_effective_verbs (list[WorkspaceViewMyEffectiveVerbsItem]): The effective-verbs table of
                 docs/architecture/roles-and-keys.md, unioned over the grant roles effective on the node and listed in table
-                order (the reader, writer and dreamer rows, each left to right) without duplicates; the access conferred, not
+                order (the reader, writer and reviewer rows, each left to right) without duplicates; the access conferred, not
                 what this server build serves.
-            permission_epoch (int): The calling key's permission epoch as declared in docs/architecture/workareas.md
+            permission_epoch (int): The calling key's permission epoch as declared in docs/architecture/workspaces.md
                 (ADR-0025 d14).
             policy (ReviewPolicy): The review policy in force, the one a transition's policy_snapshot records (ADR-0009 d3).
             pending_transitions (list[Transition]): The node's live proposals in proposal order, the pending rows whose from
                 is the node's status (ADR-0039 d9; ADR-0046 d3).
-            brief (Brief): The workarea's ratified brief as this key reads it, in ratification order, cut by
+            brief (Brief): The workspace's ratified brief as this key reads it, in ratification order, cut by
                 brief.max_tokens; empty for an admin key (ADR-0046 d8, d9).
-            crew (Crew | None | Unset): The crew record the workarea names, or null.
+            crew (Crew | None | Unset): The crew record the workspace names, or null.
             user_root (bool | Unset): Whether the node is a user root, universe.<user>, which only the issuance of the first
                 key naming its user creates (ADR-0044 d1, d11).
-            mode (WorkareaMode | Unset): in_progress when a person's key put the node in progress: readers inside recall
+            mode (WorkspaceMode | Unset): in_progress when a person's key put the node in progress: readers inside recall
                 unreviewed memories, labelled, and nothing inside reaches a read from outside until the commit (ADR-0030 d1,
                 d2).
             created_at (datetime.datetime | Unset):
-            in_progress_root (None | Unset | WhoamiRef): The in-progress workarea this node lies inside, itself for a root,
+            in_progress_root (None | Unset | WhoamiRef): The in-progress workspace this node lies inside, itself for a root,
                 by id and name; null outside every in-progress subtree (ADR-0030 d13).
-            federation (WorkareaViewFederation | Unset): The node's federation field (ADR-0072 d5).
+            federation (WorkspaceViewFederation | Unset): The node's federation field (ADR-0072 d5).
     """
 
     id: str
     name: str
     parent_id: None | str
     path: str
-    status: WorkareaStatus
+    status: WorkspaceStatus
     stale_versions: int
-    children: list[WorkareaViewChildrenItem]
-    edges: list[WorkareaViewEdgesItem]
-    my_effective_verbs: list[WorkareaViewMyEffectiveVerbsItem]
+    children: list[WorkspaceViewChildrenItem]
+    edges: list[WorkspaceViewEdgesItem]
+    my_effective_verbs: list[WorkspaceViewMyEffectiveVerbsItem]
     permission_epoch: int
     policy: ReviewPolicy
     pending_transitions: list[Transition]
     brief: Brief
     crew: Crew | None | Unset = UNSET
     user_root: bool | Unset = UNSET
-    mode: WorkareaMode | Unset = UNSET
+    mode: WorkspaceMode | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
     in_progress_root: None | Unset | WhoamiRef = UNSET
-    federation: WorkareaViewFederation | Unset = UNSET
+    federation: WorkspaceViewFederation | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -205,9 +205,9 @@ class WorkareaView:
         from ..models.review_policy import ReviewPolicy
         from ..models.transition import Transition
         from ..models.whoami_ref import WhoamiRef
-        from ..models.workarea_view_children_item import WorkareaViewChildrenItem
-        from ..models.workarea_view_edges_item import WorkareaViewEdgesItem
-        from ..models.workarea_view_federation import WorkareaViewFederation
+        from ..models.workspace_view_children_item import WorkspaceViewChildrenItem
+        from ..models.workspace_view_edges_item import WorkspaceViewEdgesItem
+        from ..models.workspace_view_federation import WorkspaceViewFederation
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -223,28 +223,28 @@ class WorkareaView:
 
         path = d.pop("path")
 
-        status = WorkareaStatus(d.pop("status"))
+        status = WorkspaceStatus(d.pop("status"))
 
         stale_versions = d.pop("stale_versions")
 
         children = []
         _children = d.pop("children")
         for children_item_data in _children:
-            children_item = WorkareaViewChildrenItem.from_dict(children_item_data)
+            children_item = WorkspaceViewChildrenItem.from_dict(children_item_data)
 
             children.append(children_item)
 
         edges = []
         _edges = d.pop("edges")
         for edges_item_data in _edges:
-            edges_item = WorkareaViewEdgesItem.from_dict(edges_item_data)
+            edges_item = WorkspaceViewEdgesItem.from_dict(edges_item_data)
 
             edges.append(edges_item)
 
         my_effective_verbs = []
         _my_effective_verbs = d.pop("my_effective_verbs")
         for my_effective_verbs_item_data in _my_effective_verbs:
-            my_effective_verbs_item = WorkareaViewMyEffectiveVerbsItem(
+            my_effective_verbs_item = WorkspaceViewMyEffectiveVerbsItem(
                 my_effective_verbs_item_data
             )
 
@@ -285,11 +285,11 @@ class WorkareaView:
         user_root = d.pop("user_root", UNSET)
 
         _mode = d.pop("mode", UNSET)
-        mode: WorkareaMode | Unset
+        mode: WorkspaceMode | Unset
         if isinstance(_mode, Unset):
             mode = UNSET
         else:
-            mode = WorkareaMode(_mode)
+            mode = WorkspaceMode(_mode)
 
         _created_at = d.pop("created_at", UNSET)
         created_at: datetime.datetime | Unset
@@ -316,13 +316,13 @@ class WorkareaView:
         in_progress_root = _parse_in_progress_root(d.pop("in_progress_root", UNSET))
 
         _federation = d.pop("federation", UNSET)
-        federation: WorkareaViewFederation | Unset
+        federation: WorkspaceViewFederation | Unset
         if isinstance(_federation, Unset):
             federation = UNSET
         else:
-            federation = WorkareaViewFederation.from_dict(_federation)
+            federation = WorkspaceViewFederation.from_dict(_federation)
 
-        workarea_view = cls(
+        workspace_view = cls(
             id=id,
             name=name,
             parent_id=parent_id,
@@ -344,8 +344,8 @@ class WorkareaView:
             federation=federation,
         )
 
-        workarea_view.additional_properties = d
-        return workarea_view
+        workspace_view.additional_properties = d
+        return workspace_view
 
     @property
     def additional_keys(self) -> list[str]:

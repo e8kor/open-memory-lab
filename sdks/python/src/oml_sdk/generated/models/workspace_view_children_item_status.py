@@ -1,10 +1,10 @@
 from enum import StrEnum
 
 
-class WorkareaViewChildrenItemStatus(StrEnum):
-    COMMITTED = "committed"
+class WorkspaceViewChildrenItemStatus(StrEnum):
     DEVELOPMENT = "development"
-    VALIDATED = "validated"
+    FROZEN = "frozen"
+    PROTECTED = "protected"
 
     def __str__(self) -> str:
         return str(self.value)

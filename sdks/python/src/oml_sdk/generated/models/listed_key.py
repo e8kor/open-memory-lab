@@ -8,7 +8,7 @@ from uuid import UUID
 from attrs import define as _attrs_define
 
 from ..models.listed_key_credential import ListedKeyCredential
-from ..models.listed_key_held_by import ListedKeyHeldBy
+from ..models.listed_key_used_by import ListedKeyUsedBy
 from ..models.role import Role
 from ..types import UNSET, Unset
 
@@ -26,7 +26,7 @@ class ListedKey:
         id (UUID):
         name (None | str):
         role (Role):
-        held_by (ListedKeyHeldBy):
+        used_by (ListedKeyUsedBy):
         credential (ListedKeyCredential):
         user_root_id (None | UUID):
         revoked (bool):
@@ -42,7 +42,7 @@ class ListedKey:
     id: UUID
     name: None | str
     role: Role
-    held_by: ListedKeyHeldBy
+    used_by: ListedKeyUsedBy
     credential: ListedKeyCredential
     user_root_id: None | UUID
     revoked: bool
@@ -60,7 +60,7 @@ class ListedKey:
 
         role = self.role.value
 
-        held_by = self.held_by.value
+        used_by = self.used_by.value
 
         credential = self.credential.value
 
@@ -102,7 +102,7 @@ class ListedKey:
                 "id": id,
                 "name": name,
                 "role": role,
-                "held_by": held_by,
+                "used_by": used_by,
                 "credential": credential,
                 "user_root_id": user_root_id,
                 "revoked": revoked,
@@ -135,7 +135,7 @@ class ListedKey:
 
         role = Role(d.pop("role"))
 
-        held_by = ListedKeyHeldBy(d.pop("held_by"))
+        used_by = ListedKeyUsedBy(d.pop("used_by"))
 
         credential = ListedKeyCredential(d.pop("credential"))
 
@@ -199,7 +199,7 @@ class ListedKey:
             id=id,
             name=name,
             role=role,
-            held_by=held_by,
+            used_by=used_by,
             credential=credential,
             user_root_id=user_root_id,
             revoked=revoked,

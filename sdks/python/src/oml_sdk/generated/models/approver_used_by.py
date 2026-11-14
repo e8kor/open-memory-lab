@@ -1,9 +1,9 @@
 from enum import StrEnum
 
 
-class KeyHeldByType2Type1(StrEnum):
+class ApproverUsedBy(StrEnum):
     AGENT = "agent"
-    HUMAN = "human"
+    PERSON = "person"
     SERVICE = "service"
 
     def __str__(self) -> str:

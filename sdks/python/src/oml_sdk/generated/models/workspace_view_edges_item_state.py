@@ -1,7 +1,7 @@
 from enum import StrEnum
 
 
-class WorkareaViewEdgesItemState(StrEnum):
+class WorkspaceViewEdgesItemState(StrEnum):
     PENDING = "pending"
     RATIFIED = "ratified"
 

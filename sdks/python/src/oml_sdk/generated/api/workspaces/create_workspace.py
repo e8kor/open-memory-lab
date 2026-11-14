@@ -5,14 +5,14 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
-from ...models.workarea import Workarea
-from ...models.workarea_create import WorkareaCreate
+from ...models.workspace import Workspace
+from ...models.workspace_create import WorkspaceCreate
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
-    body: WorkareaCreate,
+    body: WorkspaceCreate,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -32,7 +32,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v2/workareas",
+        "url": "/v2/workspaces",
     }
 
     _kwargs["json"] = body.to_dict()
@@ -45,9 +45,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope | Workarea:
+) -> ErrorEnvelope | Workspace:
     if response.status_code == 201:
-        response_201 = Workarea.from_dict(response.json())
+        response_201 = Workspace.from_dict(response.json())
 
         return response_201
 
@@ -68,7 +68,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope | Workarea]:
+) -> Response[ErrorEnvelope | Workspace]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -80,38 +80,38 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: WorkareaCreate,
+    body: WorkspaceCreate,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> Response[ErrorEnvelope | Workarea]:
-    """Create a child workarea in development.
+) -> Response[ErrorEnvelope | Workspace]:
+    """Create a child workspace in development.
 
      Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0
     spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that
     names no crew record of the tenant answers access.not_found, checked after the parent and before
     name.taken. name must be unique in the tenant (409 name.taken, checked after every other check;
-    universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe
+    universe is always taken, by the root). Refused under a frozen parent (workspace.frozen); universe
     cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the
     recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
     body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
     (<user>-web, through its capacity credential) creates under its own root, as the web console's
-    Workareas view does (ADR-0070 d5).
+    Workspaces view does (ADR-0070 d5).
 
     Args:
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WorkareaCreate):
+        body (WorkspaceCreate):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | Workarea]
+        Response[ErrorEnvelope | Workspace]
     """
 
     kwargs = _get_kwargs(
@@ -132,38 +132,38 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    body: WorkareaCreate,
+    body: WorkspaceCreate,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> ErrorEnvelope | Workarea | None:
-    """Create a child workarea in development.
+) -> ErrorEnvelope | Workspace | None:
+    """Create a child workspace in development.
 
      Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0
     spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that
     names no crew record of the tenant answers access.not_found, checked after the parent and before
     name.taken. name must be unique in the tenant (409 name.taken, checked after every other check;
-    universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe
+    universe is always taken, by the root). Refused under a frozen parent (workspace.frozen); universe
     cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the
     recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
     body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
     (<user>-web, through its capacity credential) creates under its own root, as the web console's
-    Workareas view does (ADR-0070 d5).
+    Workspaces view does (ADR-0070 d5).
 
     Args:
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WorkareaCreate):
+        body (WorkspaceCreate):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | Workarea
+        ErrorEnvelope | Workspace
     """
 
     return sync_detailed(
@@ -179,38 +179,38 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: WorkareaCreate,
+    body: WorkspaceCreate,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> Response[ErrorEnvelope | Workarea]:
-    """Create a child workarea in development.
+) -> Response[ErrorEnvelope | Workspace]:
+    """Create a child workspace in development.
 
      Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0
     spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that
     names no crew record of the tenant answers access.not_found, checked after the parent and before
     name.taken. name must be unique in the tenant (409 name.taken, checked after every other check;
-    universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe
+    universe is always taken, by the root). Refused under a frozen parent (workspace.frozen); universe
     cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the
     recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
     body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
     (<user>-web, through its capacity credential) creates under its own root, as the web console's
-    Workareas view does (ADR-0070 d5).
+    Workspaces view does (ADR-0070 d5).
 
     Args:
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WorkareaCreate):
+        body (WorkspaceCreate):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | Workarea]
+        Response[ErrorEnvelope | Workspace]
     """
 
     kwargs = _get_kwargs(
@@ -229,38 +229,38 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    body: WorkareaCreate,
+    body: WorkspaceCreate,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> ErrorEnvelope | Workarea | None:
-    """Create a child workarea in development.
+) -> ErrorEnvelope | Workspace | None:
+    """Create a child workspace in development.
 
      Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0
     spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that
     names no crew record of the tenant answers access.not_found, checked after the parent and before
     name.taken. name must be unique in the tenant (409 name.taken, checked after every other check;
-    universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe
+    universe is always taken, by the root). Refused under a frozen parent (workspace.frozen); universe
     cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the
     recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
     body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
     (<user>-web, through its capacity credential) creates under its own root, as the web console's
-    Workareas view does (ADR-0070 d5).
+    Workspaces view does (ADR-0070 d5).
 
     Args:
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WorkareaCreate):
+        body (WorkspaceCreate):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | Workarea
+        ErrorEnvelope | Workspace
     """
 
     return (

@@ -12,24 +12,24 @@ T = TypeVar("T", bound="GrantRequestDenyItem")
 class GrantRequestDenyItem:
     """
     Attributes:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved server-side before any
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a bare
             name in its own user root's namespace, plus universe and its root's name; every other key in the shared
             namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
             is neither, and is refused (request.validation).
     """
 
-    workarea: str
+    workspace: str
 
     def to_dict(self) -> dict[str, Any]:
-        workarea: str
-        workarea = self.workarea
+        workspace: str
+        workspace = self.workspace
 
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
             {
-                "workarea": workarea,
+                "workspace": workspace,
             }
         )
 
@@ -39,13 +39,13 @@ class GrantRequestDenyItem:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
 
-        def _parse_workarea(data: object) -> str:
+        def _parse_workspace(data: object) -> str:
             return cast(str, data)
 
-        workarea = _parse_workarea(d.pop("workarea"))
+        workspace = _parse_workspace(d.pop("workspace"))
 
         grant_request_deny_item = cls(
-            workarea=workarea,
+            workspace=workspace,
         )
 
         return grant_request_deny_item

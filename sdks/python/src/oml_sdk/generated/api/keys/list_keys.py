@@ -100,7 +100,7 @@ def sync_detailed(
     access.verb_ceiling with details.reason session_key_only, so an agent's key never lists its person's
     keys; the admin key role without user answers request.validation naming user; a person's key naming
     another user answers access.not_found. In name order; next_cursor is opaque. Each key's grants carry
-    the workarea's path; cut_off is a denial on universe. Journals nothing. Since v0.6.4.
+    the workspace's path; cut_off is a denial on universe. Journals nothing. Since v0.6.4.
 
     Args:
         user (str | Unset):
@@ -152,7 +152,7 @@ def sync(
     access.verb_ceiling with details.reason session_key_only, so an agent's key never lists its person's
     keys; the admin key role without user answers request.validation naming user; a person's key naming
     another user answers access.not_found. In name order; next_cursor is opaque. Each key's grants carry
-    the workarea's path; cut_off is a denial on universe. Journals nothing. Since v0.6.4.
+    the workspace's path; cut_off is a denial on universe. Journals nothing. Since v0.6.4.
 
     Args:
         user (str | Unset):
@@ -199,7 +199,7 @@ async def asyncio_detailed(
     access.verb_ceiling with details.reason session_key_only, so an agent's key never lists its person's
     keys; the admin key role without user answers request.validation naming user; a person's key naming
     another user answers access.not_found. In name order; next_cursor is opaque. Each key's grants carry
-    the workarea's path; cut_off is a denial on universe. Journals nothing. Since v0.6.4.
+    the workspace's path; cut_off is a denial on universe. Journals nothing. Since v0.6.4.
 
     Args:
         user (str | Unset):
@@ -249,7 +249,7 @@ async def asyncio(
     access.verb_ceiling with details.reason session_key_only, so an agent's key never lists its person's
     keys; the admin key role without user answers request.validation naming user; a person's key naming
     another user answers access.not_found. In name order; next_cursor is opaque. Each key's grants carry
-    the workarea's path; cut_off is a denial on universe. Journals nothing. Since v0.6.4.
+    the workspace's path; cut_off is a denial on universe. Journals nothing. Since v0.6.4.
 
     Args:
         user (str | Unset):

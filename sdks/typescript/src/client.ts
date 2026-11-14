@@ -2,7 +2,7 @@
 // (docs/engineering/sdks.md). It adds what a generator cannot know: where the
 // URL and key come from, one Idempotency-Key per write that every retry of the
 // call reuses, cursor iteration, the one error type every refusal raises, and
-// the seven verbs of ADR-0039 d10 — write, read, workarea, events, reviewNext,
+// the seven verbs of ADR-0039 d10 — write, read, workspace, events, reviewNext,
 // approve and reject — whose fields choose the route as oml_write's and
 // oml_read's choose theirs. Every path, parameter and body is typed by the
 // generated schema.
@@ -30,7 +30,7 @@ export type MemoryPage = Schemas["MemoryPage"];
 export type SupersedeRequest = Schemas["SupersedeRequest"];
 export type Serve = Schemas["Serve"];
 export type VerdictResult = Schemas["VerdictResult"];
-export type WorkareaView = Schemas["WorkareaView"];
+export type WorkspaceView = Schemas["WorkspaceView"];
 export type EventsPage = Schemas["EventsPage"];
 export type ListQuery = NonNullable<operations["listMemories"]["parameters"]["query"]>;
 export type EventsQuery = NonNullable<operations["tailEvents"]["parameters"]["query"]>;
@@ -46,7 +46,7 @@ export interface WriteInput {
   claim_key?: SubmitRequest["claim_key"];
   kind?: SubmitRequest["kind"];
   derives_from?: string[];
-  workarea?: SubmitRequest["workarea"];
+  workspace?: SubmitRequest["workspace"];
   /** The served tip this write supersedes. */
   replaces?: string;
   /** With `replaces`, required: the claim's latest version as last read (ADR-0057 d19). */
@@ -100,7 +100,7 @@ export interface GetInput {
 }
 /** `read`'s recall: ranked hits over promoted rows, and the caller's held rows with `include_unreviewed`. */
 export type RecallInput = RecallRequest;
-/** `read`'s listing: the key's own rows, or with `own: false` the promoted tips of `workarea`'s subtree. */
+/** `read`'s listing: the key's own rows, or with `own: false` the promoted tips of `workspace`'s subtree. */
 export type ListingInput = ListQuery;
 /** Every field of `read`'s three modes; the fields set choose the mode (ADR-0039 d4). */
 export type ReadInput = Partial<GetInput & RecallInput & ListingInput>;
@@ -138,8 +138,8 @@ const FIRST_BACKOFF_MS = 200; // doubling per attempt, when no Retry-After is se
 const VALIDATION_RULE =
   "The contract is openapi.yaml; what it does not admit is refused, not coerced.";
 const UNRESOLVED_RULE =
-  "The target workarea comes from the request's workarea or, omitted, from the key's " +
-  "default_workarea. A key with neither is refused, never guessed for.";
+  "The target workspace comes from the request's workspace or, omitted, from the key's " +
+  "default_workspace. A key with neither is refused, never guessed for.";
 
 // The fields of read's modes: oml_read's (ADR-0039 d4), and include_text,
 // which the HTTP recall serves beside them.
@@ -147,7 +147,7 @@ const READ_GET: readonly string[] = ["artifact_id", "as_of"];
 const READ_RECALL: readonly string[] = [
   "as_of",
   "query",
-  "workarea",
+  "workspace",
   "k",
   "kinds",
   "include_text",
@@ -163,7 +163,7 @@ const READ_RECALL: readonly string[] = [
 const READ_LISTING: readonly string[] = [
   "as_of",
   "own",
-  "workarea",
+  "workspace",
   "claim_key",
   "state",
   "kind",
@@ -353,9 +353,9 @@ export class OmlClient {
 
   /**
    * Read in oml_read's three modes (ADR-0039 d4): `artifact_id` fetches one version with its text;
-   * `query` recalls over promoted rows in `workarea`, else the key's default workarea, and the
+   * `query` recalls over promoted rows in `workspace`, else the key's default workspace, and the
    * caller's own held rows with `include_unreviewed`; neither lists one page, newest first, of the
-   * key's own rows, or with `own: false` the promoted tips of `workarea`'s subtree. `as_of`, in every
+   * key's own rows, or with `own: false` the promoted tips of `workspace`'s subtree. `as_of`, in every
    * mode, reads memory as it was at that past instant under today's access (ADR-0059 d14). A field outside
    * the mode, and `query` beside `artifact_id`, reject with `request.validation` naming it before
    * anything is sent; only the fields given are sent.
@@ -439,23 +439,23 @@ export class OmlClient {
     for await (const page of this.pages(query)) yield* page.items;
   }
 
-  // -- workareas and the journal (/v2) ----------------------------------------
+  // -- workspaces and the journal (/v2) ----------------------------------------
 
   /**
-   * One workarea node, by id or name, with this key's view of it: its children, edges, effective
-   * verbs and permission epoch. Omitted, the key's default workarea, which `GET /v2/whoami` names;
-   * a key with none rejects with `request.workarea_unresolved`.
+   * One workspace node, by id or name, with this key's view of it: its children, edges, effective
+   * verbs and permission epoch. Omitted, the key's default workspace, which `GET /v2/whoami` names;
+   * a key with none rejects with `request.workspace_unresolved`.
    */
-  async workarea(workarea?: string): Promise<WorkareaView> {
-    let node = workarea;
+  async workspace(workspace?: string): Promise<WorkspaceView> {
+    let node = workspace;
     if (node === undefined) {
       const me = await this.#send((signal) => this.#api.GET("/v2/whoami", { signal }));
-      const fallback = me.data?.default_workarea;
+      const fallback = me.data?.default_workspace;
       if (!fallback) {
         throw refusedLocally(
           422,
-          "request.workarea_unresolved",
-          "no workarea was named and this key has no default_workarea",
+          "request.workspace_unresolved",
+          "no workspace was named and this key has no default_workspace",
           UNRESOLVED_RULE,
           {},
         );
@@ -464,13 +464,13 @@ export class OmlClient {
     }
     const named = node;
     const answer = await this.#send((signal) =>
-      this.#api.GET("/v2/workareas/{workarea}", { params: { path: { workarea: named } }, signal }),
+      this.#api.GET("/v2/workspaces/{workspace}", { params: { path: { workspace: named } }, signal }),
     );
-    return answer.data as WorkareaView;
+    return answer.data as WorkspaceView;
   }
 
   /**
-   * One page of the journal tail of `workarea`'s subtree, else the key's default workarea's, in seq
+   * One page of the journal tail of `workspace`'s subtree, else the key's default workspace's, in seq
    * order after `after_seq`; pass the page's `next_after_seq` back to resume. Digests only, never
    * claim text.
    */
@@ -481,7 +481,7 @@ export class OmlClient {
     return answer.data as EventsPage;
   }
 
-  // -- the review ceremony (/v2), for a dreamer key ---------------------------
+  // -- the review ceremony (/v2), for a reviewer key ---------------------------
 
   /** Serve exactly one held item to this reviewer, or null when nothing waits. */
   async reviewNext(): Promise<Serve | null> {

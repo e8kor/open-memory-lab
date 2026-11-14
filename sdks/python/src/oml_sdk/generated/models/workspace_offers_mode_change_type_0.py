@@ -6,23 +6,23 @@ from typing import Any, Self, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.workarea_offers_mode_change_type_0_to import (
-    WorkareaOffersModeChangeType0To,
+from ..models.workspace_offers_mode_change_type_0_to import (
+    WorkspaceOffersModeChangeType0To,
 )
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="WorkareaOffersModeChangeType0")
+T = TypeVar("T", bound="WorkspaceOffersModeChangeType0")
 
 
 @_attrs_define
-class WorkareaOffersModeChangeType0:
-    """Putting the workarea in progress, where offered; null otherwise.
+class WorkspaceOffersModeChangeType0:
+    """Putting the workspace in progress, where offered; null otherwise.
 
     Attributes:
-        to (WorkareaOffersModeChangeType0To | Unset):
+        to (WorkspaceOffersModeChangeType0To | Unset):
     """
 
-    to: WorkareaOffersModeChangeType0To | Unset = UNSET
+    to: WorkspaceOffersModeChangeType0To | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,18 +42,18 @@ class WorkareaOffersModeChangeType0:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
         _to = d.pop("to", UNSET)
-        to: WorkareaOffersModeChangeType0To | Unset
+        to: WorkspaceOffersModeChangeType0To | Unset
         if isinstance(_to, Unset):
             to = UNSET
         else:
-            to = WorkareaOffersModeChangeType0To(_to)
+            to = WorkspaceOffersModeChangeType0To(_to)
 
-        workarea_offers_mode_change_type_0 = cls(
+        workspace_offers_mode_change_type_0 = cls(
             to=to,
         )
 
-        workarea_offers_mode_change_type_0.additional_properties = d
-        return workarea_offers_mode_change_type_0
+        workspace_offers_mode_change_type_0.additional_properties = d
+        return workspace_offers_mode_change_type_0
 
     @property
     def additional_keys(self) -> list[str]:

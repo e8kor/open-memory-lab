@@ -3,7 +3,7 @@
 It adds what a generator cannot know: where the URL and key come from, one
 Idempotency-Key per write that every retry of the call reuses, cursor
 iteration, the one error type every refusal raises, and the seven verbs of
-ADR-0039 d10 — `write`, `read`, `workarea`, `events`, `review_next`, `approve`
+ADR-0039 d10 — `write`, `read`, `workspace`, `events`, `review_next`, `approve`
 and `reject` — whose fields choose the route as `oml_write`'s and `oml_read`'s
 choose theirs. Every request still goes through a generated operation, with
 generated models.
@@ -33,7 +33,7 @@ from .generated.api.memories import (
     supersede_memory,
 )
 from .generated.api.review import post_verdict, review_next
-from .generated.api.workareas import get_workarea
+from .generated.api.workspaces import get_workspace
 from .generated.client import Client
 from .generated.models import (
     Anchor,
@@ -60,7 +60,7 @@ from .generated.models import (
     VerdictRequest,
     VerdictRequestVerdict,
     VerdictResult,
-    WorkareaView,
+    WorkspaceView,
 )
 from .generated.types import UNSET, Response
 
@@ -77,15 +77,15 @@ FIRST_BACKOFF = 0.2  # seconds, doubling per attempt, when no Retry-After is sen
 # carries, as the server's refusal of the same arguments would.
 VALIDATION_RULE = "The contract is openapi.yaml; what it does not admit is refused, not coerced."
 UNRESOLVED_RULE = (
-    "The target workarea comes from the request's workarea or, omitted, from the key's "
-    "default_workarea. A key with neither is refused, never guessed for."
+    "The target workspace comes from the request's workspace or, omitted, from the key's "
+    "default_workspace. A key with neither is refused, never guessed for."
 )
 
 # The arguments of `read`'s recall and listing modes: oml_read's (ADR-0039
 # d4), and include_text, which the HTTP recall serves beside them.
 READ_RECALL = (
     "as_of",
-    "workarea",
+    "workspace",
     "k",
     "kinds",
     "include_text",
@@ -101,7 +101,7 @@ READ_RECALL = (
 READ_LISTING = (
     "as_of",
     "own",
-    "workarea",
+    "workspace",
     "claim_key",
     "state",
     "kind",
@@ -301,7 +301,7 @@ class OmlClient:
         claim_key: str | None = None,
         kind: str | None = None,
         derives_from: Sequence[str] | None = None,
-        workarea: str | None = None,
+        workspace: str | None = None,
         replaces: str | None = None,
         expected_version: int | None = None,
         retirement: bool | None = None,
@@ -343,7 +343,7 @@ class OmlClient:
                 body=text,
                 claim_key=_opt(claim_key),
                 kind=SubmitRequestKind(kind) if kind is not None else UNSET,
-                workarea=_opt(workarea),
+                workspace=_opt(workspace),
                 derives_from=list(derives_from) if derives_from is not None else UNSET,
                 anchor=Anchor.from_dict(dict(anchor)) if anchor is not None else UNSET,
                 format_=_opt(format),
@@ -372,7 +372,7 @@ class OmlClient:
             expected_version=expected_version,
             anchor=Anchor.from_dict(dict(anchor)) if anchor is not None else UNSET,
             origin=Origin(kind=OriginKind(origin_kind)) if origin_kind is not None else UNSET,
-            workarea=_opt(workarea),
+            workspace=_opt(workspace),
             retirement=_opt(retirement),
             kind=SupersedeRequestKind(kind) if kind is not None else UNSET,
             derives_from=list(derives_from) if derives_from is not None else UNSET,
@@ -392,7 +392,7 @@ class OmlClient:
         artifact_id: str | None = None,
         *,
         query: str | None = None,
-        workarea: str | None = None,
+        workspace: str | None = None,
         k: int | None = None,
         kinds: Sequence[str] | None = None,
         include_text: bool | None = None,
@@ -416,11 +416,11 @@ class OmlClient:
     ) -> Memory | RecallResponse | MemoryPage:
         """Read in `oml_read`'s three modes (ADR-0039 d4). `artifact_id`
         fetches one version with its text, a `Memory`. `query` recalls over
-        promoted rows in `workarea`, else the key's default workarea, and the
+        promoted rows in `workspace`, else the key's default workspace, and the
         caller's own held rows with `include_unreviewed`, a `RecallResponse`.
         Neither lists one page, newest first, of the key's own rows, or with
-        `own=False` the promoted tips of `workarea`'s subtree, a `MemoryPage`.
-        A recall's `sources` is `"scope"`, `"wide"` or a list of workarea names
+        `own=False` the promoted tips of `workspace`'s subtree, a `MemoryPage`.
+        A recall's `sources` is `"scope"`, `"wide"` or a list of workspace names
         searched alone, where the tenant enabled federation (ADR-0072 d5).
         `as_of`, in every mode, reads memory as it was at that past instant
         under today's access; the listing then defaults to `own=False`
@@ -429,7 +429,7 @@ class OmlClient:
         `request.validation` naming it before anything is sent; only the
         fields given are sent."""
         recall = {
-            "workarea": workarea,
+            "workspace": workspace,
             "k": k,
             "kinds": kinds,
             "include_text": include_text,
@@ -469,7 +469,7 @@ class OmlClient:
             _outside_mode(listing, READ_RECALL, "recall")
             request = RecallRequest(
                 query=query,
-                workarea=_opt(workarea),
+                workspace=_opt(workspace),
                 k=_opt(k),
                 kinds=[RecallRequestKindsItem(kind) for kind in kinds]
                 if kinds is not None
@@ -495,13 +495,13 @@ class OmlClient:
                 lambda: recall_memories.sync_detailed(client=self._api, body=request)
             ).parsed
         _outside_mode(recall, READ_LISTING, "listing")
-        return self._listing(workarea=workarea, as_of=as_of, **listing, **origin)
+        return self._listing(workspace=workspace, as_of=as_of, **listing, **origin)
 
     def _listing(
         self,
         *,
         own: bool | None = None,
-        workarea: str | None = None,
+        workspace: str | None = None,
         claim_key: str | None = None,
         state: str | None = None,
         kind: str | None = None,
@@ -525,7 +525,7 @@ class OmlClient:
                 claim_key=_opt(claim_key),
                 state=ListMemoriesState(state) if state is not None else UNSET,
                 kind=ListMemoriesKind(kind) if kind is not None else UNSET,
-                workarea=_opt(workarea),
+                workspace=_opt(workspace),
                 since=_opt(since),
                 until=_opt(until),
                 limit=_opt(limit),
@@ -557,47 +557,47 @@ class OmlClient:
         for page in self.pages(**filters):
             yield from page.items
 
-    # -- workareas and the journal (/v2) -------------------------------------
+    # -- workspaces and the journal (/v2) -------------------------------------
 
-    def workarea(self, workarea: str | None = None) -> WorkareaView:
-        """One workarea node, by id or name, with this key's view of it: its
+    def workspace(self, workspace: str | None = None) -> WorkspaceView:
+        """One workspace node, by id or name, with this key's view of it: its
         children, edges, effective verbs and permission epoch. Omitted, the
-        key's default workarea, which `GET /v2/whoami` names; a key with none
-        raises `request.workarea_unresolved`."""
-        if workarea is None:
+        key's default workspace, which `GET /v2/whoami` names; a key with none
+        raises `request.workspace_unresolved`."""
+        if workspace is None:
             me = self._send(lambda: whoami.sync_detailed(client=self._api)).parsed
-            if me.default_workarea is None:
+            if me.default_workspace is None:
                 raise refused_locally(
                     422,
-                    "request.workarea_unresolved",
-                    "no workarea was named and this key has no default_workarea",
+                    "request.workspace_unresolved",
+                    "no workspace was named and this key has no default_workspace",
                     UNRESOLVED_RULE,
                     None,
                 )
-            workarea = me.default_workarea.id
-        node = workarea
-        return self._send(lambda: get_workarea.sync_detailed(node, client=self._api)).parsed
+            workspace = me.default_workspace.id
+        node = workspace
+        return self._send(lambda: get_workspace.sync_detailed(node, client=self._api)).parsed
 
     def events(
         self,
         *,
         after_seq: int | None = None,
-        workarea: str | None = None,
+        workspace: str | None = None,
         limit: int | None = None,
     ) -> EventsPage:
-        """One page of the journal tail of `workarea`'s subtree, else the key's
-        default workarea's, in seq order after `after_seq`; pass the page's
+        """One page of the journal tail of `workspace`'s subtree, else the key's
+        default workspace's, in seq order after `after_seq`; pass the page's
         `next_after_seq` back to resume. Digests only, never claim text."""
         return self._send(
             lambda: tail_events.sync_detailed(
                 client=self._api,
                 after_seq=_opt(after_seq),
-                workarea=_opt(workarea),
+                workspace=_opt(workspace),
                 limit=_opt(limit),
             )
         ).parsed
 
-    # -- the review ceremony (/v2), for a dreamer key ------------------------
+    # -- the review ceremony (/v2), for a reviewer key ------------------------
 
     def review_next(self) -> Serve | None:
         """Serve exactly one held item to this reviewer, or None when nothing waits."""

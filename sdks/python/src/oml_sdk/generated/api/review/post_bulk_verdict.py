@@ -94,14 +94,14 @@ def sync_detailed(
     """One verdict per named held item, each judged, journalled and signed as a single verdict; outcomes
     per item.
 
-     Requires: a dreamer key held_by human (access.verb_ceiling, details.reason
+     Requires: a reviewer key used_by person (access.verb_ceiling, details.reason
     bulk_review_is_human_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct ids
     the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST
     /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or
     review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying
     same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal's code:
     review.author_in_lineage (R2), review.serve_invalid (no longer held), submission.tip_conflict,
-    access.not_found, access.grant_refused, workarea.frozen; nothing already committed is undone (d5,
+    access.not_found, access.grant_refused, workspace.frozen; nothing already committed is undone (d5,
     d6). Each item records under the Idempotency-Key and its own id: a retry replays decided items with
     replayed true and judges the rest; another verdict or reason for a decided item is
     idempotency.digest_mismatch on that item (d12). reason is required to reject and journalled on each
@@ -149,14 +149,14 @@ def sync(
     """One verdict per named held item, each judged, journalled and signed as a single verdict; outcomes
     per item.
 
-     Requires: a dreamer key held_by human (access.verb_ceiling, details.reason
+     Requires: a reviewer key used_by person (access.verb_ceiling, details.reason
     bulk_review_is_human_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct ids
     the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST
     /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or
     review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying
     same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal's code:
     review.author_in_lineage (R2), review.serve_invalid (no longer held), submission.tip_conflict,
-    access.not_found, access.grant_refused, workarea.frozen; nothing already committed is undone (d5,
+    access.not_found, access.grant_refused, workspace.frozen; nothing already committed is undone (d5,
     d6). Each item records under the Idempotency-Key and its own id: a retry replays decided items with
     replayed true and judges the rest; another verdict or reason for a decided item is
     idempotency.digest_mismatch on that item (d12). reason is required to reject and journalled on each
@@ -199,14 +199,14 @@ async def asyncio_detailed(
     """One verdict per named held item, each judged, journalled and signed as a single verdict; outcomes
     per item.
 
-     Requires: a dreamer key held_by human (access.verb_ceiling, details.reason
+     Requires: a reviewer key used_by person (access.verb_ceiling, details.reason
     bulk_review_is_human_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct ids
     the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST
     /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or
     review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying
     same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal's code:
     review.author_in_lineage (R2), review.serve_invalid (no longer held), submission.tip_conflict,
-    access.not_found, access.grant_refused, workarea.frozen; nothing already committed is undone (d5,
+    access.not_found, access.grant_refused, workspace.frozen; nothing already committed is undone (d5,
     d6). Each item records under the Idempotency-Key and its own id: a retry replays decided items with
     replayed true and judges the rest; another verdict or reason for a decided item is
     idempotency.digest_mismatch on that item (d12). reason is required to reject and journalled on each
@@ -252,14 +252,14 @@ async def asyncio(
     """One verdict per named held item, each judged, journalled and signed as a single verdict; outcomes
     per item.
 
-     Requires: a dreamer key held_by human (access.verb_ceiling, details.reason
+     Requires: a reviewer key used_by person (access.verb_ceiling, details.reason
     bulk_review_is_human_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct ids
     the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST
     /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or
     review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying
     same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal's code:
     review.author_in_lineage (R2), review.serve_invalid (no longer held), submission.tip_conflict,
-    access.not_found, access.grant_refused, workarea.frozen; nothing already committed is undone (d5,
+    access.not_found, access.grant_refused, workspace.frozen; nothing already committed is undone (d5,
     d6). Each item records under the Idempotency-Key and its own id: a retry replays decided items with
     replayed true and judges the rest; another verdict or reason for a decided item is
     idempotency.digest_mismatch on that item (d12). reason is required to reject and journalled on each

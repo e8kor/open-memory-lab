@@ -5,6 +5,12 @@ A client for the Open Memory Lab HTTP API: a layer generated from
 thin hand-written wrapper over it. What the wrapper covers, the pins and the regeneration rule are
 decided in [docs/engineering/sdks.md](https://e8kor.github.io/open-memory-lab/engineering/sdks/).
 
+From v0.8.0 the client speaks the renamed API (ADR-0091): `oml_sdk.generated.api.workspaces`,
+the `Workspace…` models, `create_workspace`, the role `reviewer`, the statuses `protected` and
+`frozen`, and `used_by` with `person`. Code written against a v0.7 client that names a workarea
+type, the `dreamer` role or `held_by` does not import against it, and a v0.7 client does not
+work against a v0.8.0 server: upgrade the client before the server.
+
 Python 3.11 or later. Each release attaches a wheel and an sdist to its GitHub release; install
 the wheel from the file, or install from a checkout of the repository:
 
@@ -39,7 +45,7 @@ with OmlClient() as oml:
         print(row.artifact_id, row.state)
 ```
 
-Seven verbs: `write`, `read`, `workarea`, `events`, `review_next`, `approve` and `reject`.
+Seven verbs: `write`, `read`, `workspace`, `events`, `review_next`, `approve` and `reject`.
 `write`'s arguments choose a submission or, with `replaces`, a supersession; `read`'s choose a
 fetch (`artifact_id`), a recall (`query`) or the listing (neither), as `oml_write` and
 `oml_read` do. Every refusal raises `oml_sdk.ApiError` carrying the envelope of

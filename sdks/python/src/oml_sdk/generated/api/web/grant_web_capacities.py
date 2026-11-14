@@ -91,11 +91,11 @@ def sync_detailed(
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | GrantWebCapacitiesResponse200]:
-    """Give a person's session key a capacity on workareas, review or curation.
+    """Give a person's session key a capacity on workspaces, review or curation.
 
      Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains
-    dreamer and reader on each workarea; curate: <user>-curate, a tenant writer key with writer on the
-    universe node alone, is created at the first designation, and gains reader on each workarea. Each
+    reviewer and reader on each workspace; curate: <user>-curate, a tenant writer key with writer on the
+    universe node alone, is created at the first designation, and gains reader on each workspace. Each
     grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none
     and journal_seq is null. A user with no session key of that capacity answers access.not_found. This
     is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the
@@ -147,11 +147,11 @@ def sync(
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | GrantWebCapacitiesResponse200 | None:
-    """Give a person's session key a capacity on workareas, review or curation.
+    """Give a person's session key a capacity on workspaces, review or curation.
 
      Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains
-    dreamer and reader on each workarea; curate: <user>-curate, a tenant writer key with writer on the
-    universe node alone, is created at the first designation, and gains reader on each workarea. Each
+    reviewer and reader on each workspace; curate: <user>-curate, a tenant writer key with writer on the
+    universe node alone, is created at the first designation, and gains reader on each workspace. Each
     grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none
     and journal_seq is null. A user with no session key of that capacity answers access.not_found. This
     is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the
@@ -198,11 +198,11 @@ async def asyncio_detailed(
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | GrantWebCapacitiesResponse200]:
-    """Give a person's session key a capacity on workareas, review or curation.
+    """Give a person's session key a capacity on workspaces, review or curation.
 
      Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains
-    dreamer and reader on each workarea; curate: <user>-curate, a tenant writer key with writer on the
-    universe node alone, is created at the first designation, and gains reader on each workarea. Each
+    reviewer and reader on each workspace; curate: <user>-curate, a tenant writer key with writer on the
+    universe node alone, is created at the first designation, and gains reader on each workspace. Each
     grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none
     and journal_seq is null. A user with no session key of that capacity answers access.not_found. This
     is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the
@@ -252,11 +252,11 @@ async def asyncio(
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | GrantWebCapacitiesResponse200 | None:
-    """Give a person's session key a capacity on workareas, review or curation.
+    """Give a person's session key a capacity on workspaces, review or curation.
 
      Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains
-    dreamer and reader on each workarea; curate: <user>-curate, a tenant writer key with writer on the
-    universe node alone, is created at the first designation, and gains reader on each workarea. Each
+    reviewer and reader on each workspace; curate: <user>-curate, a tenant writer key with writer on the
+    universe node alone, is created at the first designation, and gains reader on each workspace. Each
     grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none
     and journal_seq is null. A user with no session key of that capacity answers access.not_found. This
     is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the

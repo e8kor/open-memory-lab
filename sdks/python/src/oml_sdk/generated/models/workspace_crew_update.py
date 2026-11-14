@@ -5,11 +5,11 @@ from typing import Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
-T = TypeVar("T", bound="WorkareaCrewUpdate")
+T = TypeVar("T", bound="WorkspaceCrewUpdate")
 
 
 @_attrs_define
-class WorkareaCrewUpdate:
+class WorkspaceCrewUpdate:
     """
     Attributes:
         crew (str): A crew record, by its id or its name, resolved server-side like every reference (ADR-0026 d4).
@@ -40,8 +40,8 @@ class WorkareaCrewUpdate:
 
         crew = _parse_crew(d.pop("crew"))
 
-        workarea_crew_update = cls(
+        workspace_crew_update = cls(
             crew=crew,
         )
 
-        return workarea_crew_update
+        return workspace_crew_update

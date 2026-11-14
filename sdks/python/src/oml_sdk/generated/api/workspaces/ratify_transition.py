@@ -11,7 +11,7 @@ from ...types import Response
 
 
 def _get_kwargs(
-    workarea: str,
+    workspace: str,
     transition_id: str,
     *,
     idempotency_key: str,
@@ -21,8 +21,8 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v2/workareas/{workarea}/transitions/{transition_id}/ratify".format(
-            workarea=quote(str(workarea), safe=""),
+        "url": "/v2/workspaces/{workspace}/transitions/{transition_id}/ratify".format(
+            workspace=quote(str(workspace), safe=""),
             transition_id=quote(str(transition_id), safe=""),
         ),
     }
@@ -61,7 +61,7 @@ def _build_response(
 
 
 def sync_detailed(
-    workarea: str,
+    workspace: str,
     transition_id: str,
     *,
     client: AuthenticatedClient | Client,
@@ -69,14 +69,14 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | Transition]:
     """Ratify a pending transition; journalled with the policy snapshot.
 
-     Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2
-    extends to transitions). A held_by: service key is refused with access.verb_ceiling before any
+     Requires: a second, non-proposing reviewer or admin (review.ratifier_is_proposer otherwise — R2
+    extends to transitions). A used_by: service key is refused with access.verb_ceiling before any
     lookup (ADR-0025 d1). A resubmission under the same Idempotency-Key answers the recorded
     ratification with Idempotency-Replay: true and ratifies nothing again; the same key on another
     request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -94,7 +94,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         transition_id=transition_id,
         idempotency_key=idempotency_key,
     )
@@ -107,7 +107,7 @@ def sync_detailed(
 
 
 def sync(
-    workarea: str,
+    workspace: str,
     transition_id: str,
     *,
     client: AuthenticatedClient | Client,
@@ -115,14 +115,14 @@ def sync(
 ) -> ErrorEnvelope | Transition | None:
     """Ratify a pending transition; journalled with the policy snapshot.
 
-     Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2
-    extends to transitions). A held_by: service key is refused with access.verb_ceiling before any
+     Requires: a second, non-proposing reviewer or admin (review.ratifier_is_proposer otherwise — R2
+    extends to transitions). A used_by: service key is refused with access.verb_ceiling before any
     lookup (ADR-0025 d1). A resubmission under the same Idempotency-Key answers the recorded
     ratification with Idempotency-Replay: true and ratifies nothing again; the same key on another
     request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -140,7 +140,7 @@ def sync(
     """
 
     return sync_detailed(
-        workarea=workarea,
+        workspace=workspace,
         transition_id=transition_id,
         client=client,
         idempotency_key=idempotency_key,
@@ -148,7 +148,7 @@ def sync(
 
 
 async def asyncio_detailed(
-    workarea: str,
+    workspace: str,
     transition_id: str,
     *,
     client: AuthenticatedClient | Client,
@@ -156,14 +156,14 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | Transition]:
     """Ratify a pending transition; journalled with the policy snapshot.
 
-     Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2
-    extends to transitions). A held_by: service key is refused with access.verb_ceiling before any
+     Requires: a second, non-proposing reviewer or admin (review.ratifier_is_proposer otherwise — R2
+    extends to transitions). A used_by: service key is refused with access.verb_ceiling before any
     lookup (ADR-0025 d1). A resubmission under the same Idempotency-Key answers the recorded
     ratification with Idempotency-Replay: true and ratifies nothing again; the same key on another
     request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -181,7 +181,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         transition_id=transition_id,
         idempotency_key=idempotency_key,
     )
@@ -192,7 +192,7 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    workarea: str,
+    workspace: str,
     transition_id: str,
     *,
     client: AuthenticatedClient | Client,
@@ -200,14 +200,14 @@ async def asyncio(
 ) -> ErrorEnvelope | Transition | None:
     """Ratify a pending transition; journalled with the policy snapshot.
 
-     Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2
-    extends to transitions). A held_by: service key is refused with access.verb_ceiling before any
+     Requires: a second, non-proposing reviewer or admin (review.ratifier_is_proposer otherwise — R2
+    extends to transitions). A used_by: service key is refused with access.verb_ceiling before any
     lookup (ADR-0025 d1). A resubmission under the same Idempotency-Key answers the recorded
     ratification with Idempotency-Replay: true and ratifies nothing again; the same key on another
     request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -226,7 +226,7 @@ async def asyncio(
 
     return (
         await asyncio_detailed(
-            workarea=workarea,
+            workspace=workspace,
             transition_id=transition_id,
             client=client,
             idempotency_key=idempotency_key,

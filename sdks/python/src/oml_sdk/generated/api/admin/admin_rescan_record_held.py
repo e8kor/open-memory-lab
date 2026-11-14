@@ -91,7 +91,7 @@ def sync_detailed(
     server's rule set as its scanned_under, and a finding the rescan made becomes its scan finding
     unless it has one; journalled once per window as scan.findings_recorded {scanned_under, versions:
     [{artifact_id, findings: [{class, rule, action, at}]}]}, an empty findings list when there are none,
-    when the window holds any held version, else nothing. Inside an in-progress workarea another
+    when the window holds any held version, else nothing. Inside an in-progress workspace another
     author's held version is served only when scanned under the server's rule set and without a finding.
     Promotes, rejects and deletes nothing. Takes no Idempotency-Key: a repeat reads the window again and
     journals what it read again, and the stored state it leaves is the same. Since v0.6.3.
@@ -143,7 +143,7 @@ def sync(
     server's rule set as its scanned_under, and a finding the rescan made becomes its scan finding
     unless it has one; journalled once per window as scan.findings_recorded {scanned_under, versions:
     [{artifact_id, findings: [{class, rule, action, at}]}]}, an empty findings list when there are none,
-    when the window holds any held version, else nothing. Inside an in-progress workarea another
+    when the window holds any held version, else nothing. Inside an in-progress workspace another
     author's held version is served only when scanned under the server's rule set and without a finding.
     Promotes, rejects and deletes nothing. Takes no Idempotency-Key: a repeat reads the window again and
     journals what it read again, and the stored state it leaves is the same. Since v0.6.3.
@@ -190,7 +190,7 @@ async def asyncio_detailed(
     server's rule set as its scanned_under, and a finding the rescan made becomes its scan finding
     unless it has one; journalled once per window as scan.findings_recorded {scanned_under, versions:
     [{artifact_id, findings: [{class, rule, action, at}]}]}, an empty findings list when there are none,
-    when the window holds any held version, else nothing. Inside an in-progress workarea another
+    when the window holds any held version, else nothing. Inside an in-progress workspace another
     author's held version is served only when scanned under the server's rule set and without a finding.
     Promotes, rejects and deletes nothing. Takes no Idempotency-Key: a repeat reads the window again and
     journals what it read again, and the stored state it leaves is the same. Since v0.6.3.
@@ -240,7 +240,7 @@ async def asyncio(
     server's rule set as its scanned_under, and a finding the rescan made becomes its scan finding
     unless it has one; journalled once per window as scan.findings_recorded {scanned_under, versions:
     [{artifact_id, findings: [{class, rule, action, at}]}]}, an empty findings list when there are none,
-    when the window holds any held version, else nothing. Inside an in-progress workarea another
+    when the window holds any held version, else nothing. Inside an in-progress workspace another
     author's held version is served only when scanned under the server's rule set and without a finding.
     Promotes, rejects and deletes nothing. Takes no Idempotency-Key: a repeat reads the window again and
     journals what it read again, and the stored state it leaves is the same. Since v0.6.3.

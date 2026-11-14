@@ -14,7 +14,7 @@ T = TypeVar("T", bound="DenialRequest")
 class DenialRequest:
     """
     Attributes:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved server-side before any
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a bare
             name in its own user root's namespace, plus universe and its root's name; every other key in the shared
             namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
@@ -22,12 +22,12 @@ class DenialRequest:
         reason (str | Unset):
     """
 
-    workarea: str
+    workspace: str
     reason: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
-        workarea: str
-        workarea = self.workarea
+        workspace: str
+        workspace = self.workspace
 
         reason = self.reason
 
@@ -35,7 +35,7 @@ class DenialRequest:
 
         field_dict.update(
             {
-                "workarea": workarea,
+                "workspace": workspace,
             }
         )
         if reason is not UNSET:
@@ -47,15 +47,15 @@ class DenialRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
 
-        def _parse_workarea(data: object) -> str:
+        def _parse_workspace(data: object) -> str:
             return cast(str, data)
 
-        workarea = _parse_workarea(d.pop("workarea"))
+        workspace = _parse_workspace(d.pop("workspace"))
 
         reason = d.pop("reason", UNSET)
 
         denial_request = cls(
-            workarea=workarea,
+            workspace=workspace,
             reason=reason,
         )
 

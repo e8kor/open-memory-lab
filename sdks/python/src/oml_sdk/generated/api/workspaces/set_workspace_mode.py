@@ -6,15 +6,15 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
-from ...models.workarea_mode_set import WorkareaModeSet
-from ...models.workarea_view import WorkareaView
+from ...models.workspace_mode_set import WorkspaceModeSet
+from ...models.workspace_view import WorkspaceView
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
-    workarea: str,
+    workspace: str,
     *,
-    body: WorkareaModeSet,
+    body: WorkspaceModeSet,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -34,8 +34,8 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v2/workareas/{workarea}/mode".format(
-            workarea=quote(str(workarea), safe=""),
+        "url": "/v2/workspaces/{workspace}/mode".format(
+            workspace=quote(str(workspace), safe=""),
         ),
     }
 
@@ -49,9 +49,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope | WorkareaView:
+) -> ErrorEnvelope | WorkspaceView:
     if response.status_code == 200:
-        response_200 = WorkareaView.from_dict(response.json())
+        response_200 = WorkspaceView.from_dict(response.json())
 
         return response_200
 
@@ -67,7 +67,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope | WorkareaView]:
+) -> Response[ErrorEnvelope | WorkspaceView]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -77,30 +77,30 @@ def _build_response(
 
 
 def sync_detailed(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
-    body: WorkareaModeSet,
+    body: WorkspaceModeSet,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> Response[ErrorEnvelope | WorkareaView]:
-    """A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
+) -> Response[ErrorEnvelope | WorkspaceView]:
+    """A person's key puts a workspace in progress, or commits it back to standard (ADR-0030).
 
-     Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is
-    refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1).
-    in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not
-    development) or nested (an ancestor or descendant is in progress). standard on an in-progress root
-    is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held,
-    dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
-    otherwise journals workarea.mode_set. The answer is the node as the key reads it. A resubmission
+     Requires: a reviewer key used_by person with reviewer effective access on the node; every other key
+    is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030
+    d1). in_progress is refused with 409 workspace.in_progress_refused, details.reason universe, status
+    (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress
+    root is its commit, refused with 409 workspace.held_remaining while any version in its subtree is
+    held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
+    otherwise journals workspace.mode_set. The answer is the node as the key reads it. A resubmission
     under the same Idempotency-Key and body answers the recorded node with Idempotency-Replay: true and
     sets nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
     layer 4; since v0.6.4). No MCP tool reaches it.
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -110,18 +110,18 @@ def sync_detailed(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WorkareaModeSet):
+        body (WorkspaceModeSet):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | WorkareaView]
+        Response[ErrorEnvelope | WorkspaceView]
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         body=body,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
@@ -137,30 +137,30 @@ def sync_detailed(
 
 
 def sync(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
-    body: WorkareaModeSet,
+    body: WorkspaceModeSet,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> ErrorEnvelope | WorkareaView | None:
-    """A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
+) -> ErrorEnvelope | WorkspaceView | None:
+    """A person's key puts a workspace in progress, or commits it back to standard (ADR-0030).
 
-     Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is
-    refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1).
-    in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not
-    development) or nested (an ancestor or descendant is in progress). standard on an in-progress root
-    is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held,
-    dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
-    otherwise journals workarea.mode_set. The answer is the node as the key reads it. A resubmission
+     Requires: a reviewer key used_by person with reviewer effective access on the node; every other key
+    is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030
+    d1). in_progress is refused with 409 workspace.in_progress_refused, details.reason universe, status
+    (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress
+    root is its commit, refused with 409 workspace.held_remaining while any version in its subtree is
+    held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
+    otherwise journals workspace.mode_set. The answer is the node as the key reads it. A resubmission
     under the same Idempotency-Key and body answers the recorded node with Idempotency-Replay: true and
     sets nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
     layer 4; since v0.6.4). No MCP tool reaches it.
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -170,18 +170,18 @@ def sync(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WorkareaModeSet):
+        body (WorkspaceModeSet):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | WorkareaView
+        ErrorEnvelope | WorkspaceView
     """
 
     return sync_detailed(
-        workarea=workarea,
+        workspace=workspace,
         client=client,
         body=body,
         x_request_id=x_request_id,
@@ -192,30 +192,30 @@ def sync(
 
 
 async def asyncio_detailed(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
-    body: WorkareaModeSet,
+    body: WorkspaceModeSet,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> Response[ErrorEnvelope | WorkareaView]:
-    """A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
+) -> Response[ErrorEnvelope | WorkspaceView]:
+    """A person's key puts a workspace in progress, or commits it back to standard (ADR-0030).
 
-     Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is
-    refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1).
-    in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not
-    development) or nested (an ancestor or descendant is in progress). standard on an in-progress root
-    is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held,
-    dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
-    otherwise journals workarea.mode_set. The answer is the node as the key reads it. A resubmission
+     Requires: a reviewer key used_by person with reviewer effective access on the node; every other key
+    is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030
+    d1). in_progress is refused with 409 workspace.in_progress_refused, details.reason universe, status
+    (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress
+    root is its commit, refused with 409 workspace.held_remaining while any version in its subtree is
+    held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
+    otherwise journals workspace.mode_set. The answer is the node as the key reads it. A resubmission
     under the same Idempotency-Key and body answers the recorded node with Idempotency-Replay: true and
     sets nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
     layer 4; since v0.6.4). No MCP tool reaches it.
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -225,18 +225,18 @@ async def asyncio_detailed(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WorkareaModeSet):
+        body (WorkspaceModeSet):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | WorkareaView]
+        Response[ErrorEnvelope | WorkspaceView]
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         body=body,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
@@ -250,30 +250,30 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
-    body: WorkareaModeSet,
+    body: WorkspaceModeSet,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> ErrorEnvelope | WorkareaView | None:
-    """A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
+) -> ErrorEnvelope | WorkspaceView | None:
+    """A person's key puts a workspace in progress, or commits it back to standard (ADR-0030).
 
-     Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is
-    refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1).
-    in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not
-    development) or nested (an ancestor or descendant is in progress). standard on an in-progress root
-    is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held,
-    dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
-    otherwise journals workarea.mode_set. The answer is the node as the key reads it. A resubmission
+     Requires: a reviewer key used_by person with reviewer effective access on the node; every other key
+    is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030
+    d1). in_progress is refused with 409 workspace.in_progress_refused, details.reason universe, status
+    (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress
+    root is its commit, refused with 409 workspace.held_remaining while any version in its subtree is
+    held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
+    otherwise journals workspace.mode_set. The answer is the node as the key reads it. A resubmission
     under the same Idempotency-Key and body answers the recorded node with Idempotency-Replay: true and
     sets nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
     layer 4; since v0.6.4). No MCP tool reaches it.
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -283,19 +283,19 @@ async def asyncio(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WorkareaModeSet):
+        body (WorkspaceModeSet):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | WorkareaView
+        ErrorEnvelope | WorkspaceView
     """
 
     return (
         await asyncio_detailed(
-            workarea=workarea,
+            workspace=workspace,
             client=client,
             body=body,
             x_request_id=x_request_id,

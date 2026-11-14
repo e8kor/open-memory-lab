@@ -7,23 +7,25 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.workarea_offers_transitions_item_op import WorkareaOffersTransitionsItemOp
+from ..models.workspace_offers_transitions_item_op import (
+    WorkspaceOffersTransitionsItemOp,
+)
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="WorkareaOffersTransitionsItem")
+T = TypeVar("T", bound="WorkspaceOffersTransitionsItem")
 
 
 @_attrs_define
-class WorkareaOffersTransitionsItem:
+class WorkspaceOffersTransitionsItem:
     """
     Attributes:
-        op (WorkareaOffersTransitionsItemOp):
+        op (WorkspaceOffersTransitionsItemOp):
         to (str):
         transition_id (UUID | Unset): The live proposal a ratify names.
         from_ (str | Unset):
     """
 
-    op: WorkareaOffersTransitionsItemOp
+    op: WorkspaceOffersTransitionsItemOp
     to: str
     transition_id: UUID | Unset = UNSET
     from_: str | Unset = UNSET
@@ -58,7 +60,7 @@ class WorkareaOffersTransitionsItem:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        op = WorkareaOffersTransitionsItemOp(d.pop("op"))
+        op = WorkspaceOffersTransitionsItemOp(d.pop("op"))
 
         to = d.pop("to")
 
@@ -71,15 +73,15 @@ class WorkareaOffersTransitionsItem:
 
         from_ = d.pop("from", UNSET)
 
-        workarea_offers_transitions_item = cls(
+        workspace_offers_transitions_item = cls(
             op=op,
             to=to,
             transition_id=transition_id,
             from_=from_,
         )
 
-        workarea_offers_transitions_item.additional_properties = d
-        return workarea_offers_transitions_item
+        workspace_offers_transitions_item.additional_properties = d
+        return workspace_offers_transitions_item
 
     @property
     def additional_keys(self) -> list[str]:

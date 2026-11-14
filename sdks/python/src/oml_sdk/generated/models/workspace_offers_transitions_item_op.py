@@ -1,7 +1,7 @@
 from enum import StrEnum
 
 
-class WorkareaOffersTransitionsItemOp(StrEnum):
+class WorkspaceOffersTransitionsItemOp(StrEnum):
     PROPOSE = "propose"
     RATIFY = "ratify"
 

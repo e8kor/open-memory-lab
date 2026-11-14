@@ -25,7 +25,7 @@ class RecallEvent:
         created_at (str):
         key_id (UUID):
         principal (str):
-        workarea_id (UUID): The workarea the recall read.
+        workspace_id (UUID): The workspace the recall read.
         pipeline (str):
         access (RecallEventAccess):
         query_digest (str): SHA-256 of plaintext unless a field says ciphertext.
@@ -38,7 +38,7 @@ class RecallEvent:
     created_at: str
     key_id: UUID
     principal: str
-    workarea_id: UUID
+    workspace_id: UUID
     pipeline: str
     access: RecallEventAccess
     query_digest: str
@@ -55,7 +55,7 @@ class RecallEvent:
 
         principal = self.principal
 
-        workarea_id = str(self.workarea_id)
+        workspace_id = str(self.workspace_id)
 
         pipeline = self.pipeline
 
@@ -84,7 +84,7 @@ class RecallEvent:
                 "created_at": created_at,
                 "key_id": key_id,
                 "principal": principal,
-                "workarea_id": workarea_id,
+                "workspace_id": workspace_id,
                 "pipeline": pipeline,
                 "access": access,
                 "query_digest": query_digest,
@@ -110,7 +110,7 @@ class RecallEvent:
 
         principal = d.pop("principal")
 
-        workarea_id = UUID(d.pop("workarea_id"))
+        workspace_id = UUID(d.pop("workspace_id"))
 
         pipeline = d.pop("pipeline")
 
@@ -144,7 +144,7 @@ class RecallEvent:
             created_at=created_at,
             key_id=key_id,
             principal=principal,
-            workarea_id=workarea_id,
+            workspace_id=workspace_id,
             pipeline=pipeline,
             access=access,
             query_digest=query_digest,

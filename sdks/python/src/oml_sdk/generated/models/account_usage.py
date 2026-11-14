@@ -17,7 +17,7 @@ class AccountUsage:
     """An account's six meters against its limits in one UTC month (ADR-0071 d2, d5, d6). Counts only.
 
     Attributes:
-        account (str): The id of the root workarea the account is.
+        account (str): The id of the root workspace the account is.
         user (None | str):
         profile (None | str): The quota profile the limits come from; null for an account under no limits.
         profile_declared (bool): false when the configuration no longer declares the profile: every write, key and

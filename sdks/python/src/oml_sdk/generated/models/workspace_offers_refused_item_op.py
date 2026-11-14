@@ -1,7 +1,7 @@
 from enum import StrEnum
 
 
-class WorkareaOffersRefusedItemOp(StrEnum):
+class WorkspaceOffersRefusedItemOp(StrEnum):
     MODE = "mode"
     PROPOSE = "propose"
 

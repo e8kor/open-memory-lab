@@ -5,20 +5,20 @@ from typing import Any, Self, TypeVar
 
 from attrs import define as _attrs_define
 
-from ..models.workarea_mode_set_mode import WorkareaModeSetMode
+from ..models.workspace_mode_set_mode import WorkspaceModeSetMode
 
-T = TypeVar("T", bound="WorkareaModeSet")
+T = TypeVar("T", bound="WorkspaceModeSet")
 
 
 @_attrs_define
-class WorkareaModeSet:
+class WorkspaceModeSet:
     """
     Attributes:
-        mode (WorkareaModeSetMode): in_progress puts the node in progress; standard on an in-progress root is its commit
-            (ADR-0030 d1, d6).
+        mode (WorkspaceModeSetMode): in_progress puts the node in progress; standard on an in-progress root is its
+            commit (ADR-0030 d1, d6).
     """
 
-    mode: WorkareaModeSetMode
+    mode: WorkspaceModeSetMode
 
     def to_dict(self) -> dict[str, Any]:
         mode = self.mode.value
@@ -36,10 +36,10 @@ class WorkareaModeSet:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        mode = WorkareaModeSetMode(d.pop("mode"))
+        mode = WorkspaceModeSetMode(d.pop("mode"))
 
-        workarea_mode_set = cls(
+        workspace_mode_set = cls(
             mode=mode,
         )
 
-        return workarea_mode_set
+        return workspace_mode_set

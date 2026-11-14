@@ -5,23 +5,23 @@ from typing import Any, Self, TypeVar
 
 from attrs import define as _attrs_define
 
-from ..models.workarea_view_children_item_status import WorkareaViewChildrenItemStatus
+from ..models.workspace_view_children_item_status import WorkspaceViewChildrenItemStatus
 
-T = TypeVar("T", bound="WorkareaViewChildrenItem")
+T = TypeVar("T", bound="WorkspaceViewChildrenItem")
 
 
 @_attrs_define
-class WorkareaViewChildrenItem:
+class WorkspaceViewChildrenItem:
     """
     Attributes:
         id (str):
         path_leaf (str):
-        status (WorkareaViewChildrenItemStatus):
+        status (WorkspaceViewChildrenItemStatus):
     """
 
     id: str
     path_leaf: str
-    status: WorkareaViewChildrenItemStatus
+    status: WorkspaceViewChildrenItemStatus
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id
@@ -49,12 +49,12 @@ class WorkareaViewChildrenItem:
 
         path_leaf = d.pop("path_leaf")
 
-        status = WorkareaViewChildrenItemStatus(d.pop("status"))
+        status = WorkspaceViewChildrenItemStatus(d.pop("status"))
 
-        workarea_view_children_item = cls(
+        workspace_view_children_item = cls(
             id=id,
             path_leaf=path_leaf,
             status=status,
         )
 
-        return workarea_view_children_item
+        return workspace_view_children_item

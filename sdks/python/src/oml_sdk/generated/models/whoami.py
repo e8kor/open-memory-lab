@@ -8,17 +8,17 @@ from attrs import define as _attrs_define
 
 from ..models.guardrail_scope import GuardrailScope
 from ..models.role import Role
-from ..models.whoami_held_by import WhoamiHeldBy
 from ..models.whoami_profile_type_1 import WhoamiProfileType1
 from ..models.whoami_profile_type_2_type_1 import WhoamiProfileType2Type1
 from ..models.whoami_profile_type_3_type_1 import WhoamiProfileType3Type1
+from ..models.whoami_used_by import WhoamiUsedBy
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.whoami_grant import WhoamiGrant
     from ..models.whoami_person import WhoamiPerson
     from ..models.whoami_ref import WhoamiRef
-    from ..models.whoami_workarea import WhoamiWorkarea
+    from ..models.whoami_workspace import WhoamiWorkspace
 
 
 T = TypeVar("T", bound="Whoami")
@@ -36,14 +36,14 @@ class Whoami:
                 serves (ADR-0026 d11).
             role (Role):
             principal (str):
-            held_by (WhoamiHeldBy): As the key's row stores it: the issuing admin's attestation, agent when none was sent.
+            used_by (WhoamiUsedBy): As the key's row stores it: the issuing admin's attestation, agent when none was sent.
             tenant (None | WhoamiRef): The key's tenant; null for an operator key, which no tenant holds.
-            default_workarea (None | WhoamiWorkarea): The key's journalled default workarea; null when it has none.
+            default_workspace (None | WhoamiWorkspace): The key's journalled default workspace; null when it has none.
             crew (None | WhoamiRef): The key's crew record, fixed for its life; null when none was named.
             user (None | WhoamiRef): The key's user root, from which a client learns its root; null for a tenant key
                 (ADR-0044 d11).
             grants (list[WhoamiGrant]): The key's stored grants, each with its epoch and without its deny masks.
-            guardrail_scope (GuardrailScope | Unset): Which applicable guardrails the key loads: workarea, the scope node's
+            guardrail_scope (GuardrailScope | Unset): Which applicable guardrails the key loads: workspace, the scope node's
                 alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted,
                 journalled in key.issued; no request changes it, and any other value is request.validation, details.field
                 /guardrail_scope (ADR-0037 d4; since v0.5.1).
@@ -54,9 +54,9 @@ class Whoami:
             requests_per_minute (int | None | Unset): This key's own requests per UTC minute; null for none of its own
                 (ADR-0079 d4; since v0.7.3).
             denied (bool | Unset): On the record of a person's <user>-web session key alone, absent on every other key's,
-                the other session keys' included: whether the key carries a denial in force on any workarea, which refuses it
+                the other session keys' included: whether the key carries a denial in force on any workspace, which refuses it
                 the three key acts (issue a key, mint a connect code, cut off a key) for good, as access.verb_ceiling with
-                details.reason session_key_denied. It names no workarea, count, author or time. The web console draws no form
+                details.reason session_key_denied. It names no workspace, count, author or time. The web console draws no form
                 for those acts when it is true (ADR-0070 d2, d5; ADR-0039 d15; since v0.7.3).
             person (None | Unset | WhoamiPerson): The person the key's user root names; null for a tenant key (ADR-0070 d5).
                 Absent with person=false (#286).
@@ -69,9 +69,9 @@ class Whoami:
     name: None | str
     role: Role
     principal: str
-    held_by: WhoamiHeldBy
+    used_by: WhoamiUsedBy
     tenant: None | WhoamiRef
-    default_workarea: None | WhoamiWorkarea
+    default_workspace: None | WhoamiWorkspace
     crew: None | WhoamiRef
     user: None | WhoamiRef
     grants: list[WhoamiGrant]
@@ -92,7 +92,7 @@ class Whoami:
     def to_dict(self) -> dict[str, Any]:
         from ..models.whoami_person import WhoamiPerson
         from ..models.whoami_ref import WhoamiRef
-        from ..models.whoami_workarea import WhoamiWorkarea
+        from ..models.whoami_workspace import WhoamiWorkspace
 
         key_id = self.key_id
 
@@ -103,7 +103,7 @@ class Whoami:
 
         principal = self.principal
 
-        held_by = self.held_by.value
+        used_by = self.used_by.value
 
         tenant: dict[str, Any] | None
         if isinstance(self.tenant, WhoamiRef):
@@ -111,11 +111,11 @@ class Whoami:
         else:
             tenant = self.tenant
 
-        default_workarea: dict[str, Any] | None
-        if isinstance(self.default_workarea, WhoamiWorkarea):
-            default_workarea = self.default_workarea.to_dict()
+        default_workspace: dict[str, Any] | None
+        if isinstance(self.default_workspace, WhoamiWorkspace):
+            default_workspace = self.default_workspace.to_dict()
         else:
-            default_workarea = self.default_workarea
+            default_workspace = self.default_workspace
 
         crew: dict[str, Any] | None
         if isinstance(self.crew, WhoamiRef):
@@ -184,9 +184,9 @@ class Whoami:
                 "name": name,
                 "role": role,
                 "principal": principal,
-                "held_by": held_by,
+                "used_by": used_by,
                 "tenant": tenant,
-                "default_workarea": default_workarea,
+                "default_workspace": default_workspace,
                 "crew": crew,
                 "user": user,
                 "grants": grants,
@@ -214,7 +214,7 @@ class Whoami:
         from ..models.whoami_grant import WhoamiGrant
         from ..models.whoami_person import WhoamiPerson
         from ..models.whoami_ref import WhoamiRef
-        from ..models.whoami_workarea import WhoamiWorkarea
+        from ..models.whoami_workspace import WhoamiWorkspace
 
         d = dict(src_dict)
         key_id = d.pop("key_id")
@@ -230,7 +230,7 @@ class Whoami:
 
         principal = d.pop("principal")
 
-        held_by = WhoamiHeldBy(d.pop("held_by"))
+        used_by = WhoamiUsedBy(d.pop("used_by"))
 
         def _parse_tenant(data: object) -> None | WhoamiRef:
             if data is None:
@@ -247,20 +247,20 @@ class Whoami:
 
         tenant = _parse_tenant(d.pop("tenant"))
 
-        def _parse_default_workarea(data: object) -> None | WhoamiWorkarea:
+        def _parse_default_workspace(data: object) -> None | WhoamiWorkspace:
             if data is None:
                 return data
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                default_workarea_type_0 = WhoamiWorkarea.from_dict(data)
+                default_workspace_type_0 = WhoamiWorkspace.from_dict(data)
 
-                return default_workarea_type_0
+                return default_workspace_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(None | WhoamiWorkarea, data)
+            return cast(None | WhoamiWorkspace, data)
 
-        default_workarea = _parse_default_workarea(d.pop("default_workarea"))
+        default_workspace = _parse_default_workspace(d.pop("default_workspace"))
 
         def _parse_crew(data: object) -> None | WhoamiRef:
             if data is None:
@@ -408,9 +408,9 @@ class Whoami:
             name=name,
             role=role,
             principal=principal,
-            held_by=held_by,
+            used_by=used_by,
             tenant=tenant,
-            default_workarea=default_workarea,
+            default_workspace=default_workspace,
             crew=crew,
             user=user,
             grants=grants,

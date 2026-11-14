@@ -1,7 +1,7 @@
 from enum import StrEnum
 
 
-class WorkareaViewEdgesItemLabel(StrEnum):
+class WorkspaceViewEdgesItemLabel(StrEnum):
     CONTINUES = "continues"
     DERIVED_FROM = "derived_from"
     MIRRORS = "mirrors"

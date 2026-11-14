@@ -23,10 +23,11 @@ T = TypeVar("T", bound="SubmitRequest")
 
 @_attrs_define
 class SubmitRequest:
-    """The target is workarea, else the key's default_workarea; neither present is refused with request.workarea_unresolved
-    (ADR-0039 d4, d7). This body, and its nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-
-    issuance and grant bodies only. The designed attachment, simulation and vocabulary fields are declared under x-oml-
-    designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9).
+    """The target is workspace, else the key's default_workspace; neither present is refused with
+    request.workspace_unresolved (ADR-0039 d4, d7). This body, and its nested objects, stay open: ADR-0025 d16 closes
+    the recall, supersede, key-issuance and grant bodies only. The designed attachment, simulation and vocabulary fields
+    are declared under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039
+    d9).
 
         Attributes:
             body (str): Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-
@@ -35,7 +36,7 @@ class SubmitRequest:
             verb (SubmitRequestVerb | Unset): Omitted, learn when derives_from is non-empty and remember otherwise (ADR-0039
                 d3); a sent verb is honoured. learn requires non-empty derives_from — refused with submission.lineage_required
                 otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact.
-            claim_key (str | Unset): Groups versions of one claim; one live claim per (tenant, workarea): a new claim
+            claim_key (str | Unset): Groups versions of one claim; one live claim per (tenant, workspace): a new claim
                 collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every
                 version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server
                 derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a
@@ -54,11 +55,11 @@ class SubmitRequest:
                 an effect, deny or ask, never allow; should takes ask only. Refused on every other kind and on a retirement
                 (request.validation, details.field /rule); a rule outside the grammar, or over 160 bytes, is vetoed as
                 submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (ADR-0037 d8, d10; since v0.5.1).
-            workarea (str | Unset): A workarea, by its node id, its name or its qualified name. Resolved server-side before
-                any check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a
-                bare name in its own user root's namespace, plus universe and its root's name; every other key in the shared
-                namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
-                is neither, and is refused (request.validation).
+            workspace (str | Unset): A workspace, by its node id, its name or its qualified name. Resolved server-side
+                before any check that reads state; an unknown name answers exactly what an unknown id answers. A user key
+                resolves a bare name in its own user root's namespace, plus universe and its root's name; every other key in the
+                shared namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is
+                universe, is neither, and is refused (request.validation).
             derives_from (list[str] | Unset): Artifact ids; the declared lineage (omission is undetectable — honesty rule).
             on_similar (SubmitRequestOnSimilar | Unset): Omitted, hold. What the write does when the similar check names a
                 row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the
@@ -91,7 +92,7 @@ class SubmitRequest:
     valid_until: str | Unset = UNSET
     severity: Severity | Unset = UNSET
     rule: GuardrailRule | Unset = UNSET
-    workarea: str | Unset = UNSET
+    workspace: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
     on_similar: SubmitRequestOnSimilar | Unset = UNSET
     anchor: Anchor | Unset = UNSET
@@ -125,11 +126,11 @@ class SubmitRequest:
         if not isinstance(self.rule, Unset):
             rule = self.rule.to_dict()
 
-        workarea: str | Unset
-        if isinstance(self.workarea, Unset):
-            workarea = UNSET
+        workspace: str | Unset
+        if isinstance(self.workspace, Unset):
+            workspace = UNSET
         else:
-            workarea = self.workarea
+            workspace = self.workspace
 
         derives_from: list[str] | Unset = UNSET
         if not isinstance(self.derives_from, Unset):
@@ -172,8 +173,8 @@ class SubmitRequest:
             field_dict["severity"] = severity
         if rule is not UNSET:
             field_dict["rule"] = rule
-        if workarea is not UNSET:
-            field_dict["workarea"] = workarea
+        if workspace is not UNSET:
+            field_dict["workspace"] = workspace
         if derives_from is not UNSET:
             field_dict["derives_from"] = derives_from
         if on_similar is not UNSET:
@@ -232,12 +233,12 @@ class SubmitRequest:
         else:
             rule = GuardrailRule.from_dict(_rule)
 
-        def _parse_workarea(data: object) -> str | Unset:
+        def _parse_workspace(data: object) -> str | Unset:
             if isinstance(data, Unset):
                 return data
             return cast(str | Unset, data)
 
-        workarea = _parse_workarea(d.pop("workarea", UNSET))
+        workspace = _parse_workspace(d.pop("workspace", UNSET))
 
         derives_from = cast(list[str], d.pop("derives_from", UNSET))
 
@@ -275,7 +276,7 @@ class SubmitRequest:
             valid_until=valid_until,
             severity=severity,
             rule=rule,
-            workarea=workarea,
+            workspace=workspace,
             derives_from=derives_from,
             on_similar=on_similar,
             anchor=anchor,

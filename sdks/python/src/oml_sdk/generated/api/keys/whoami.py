@@ -83,18 +83,18 @@ def sync_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | Whoami]:
-    """The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its
+    """The calling key's own record — role, name, tenant, default workspace, crew and grants. Never its
     denials or deny masks; a person's web session key alone is told whether it carries a denial.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
-    workarea carries its derived path. person names the user a key names, with its sign-up usage and
+    workspace carries its derived path. person names the user a key names, with its sign-up usage and
     limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
     d10); with person=false it is absent and unread. The credential is resolved once, so a key value or
     a connection spends one request of its rate (#286). The key's denials and its grants' per-grant deny
     masks, which name subtrees it may not read, are omitted, except that the record of a person's
     <user>-web session key carries denied, a boolean: whether the key holds a denial in force on any
-    workarea, which refuses it issuing a key, minting a connect code and cutting off a key for good. It
-    names no workarea, count, author or time, and no other key's record has the member: not
+    workspace, which refuses it issuing a key, minting a connect code and cutting off a key for good. It
+    names no workspace, count, author or time, and no other key's record has the member: not
     <user>-review, <user>-curate or <user>-admin, and no key with a value or a connection (ADR-0039 d15
     as amended by ADR-0070 d5; since v0.7.3). The read journals nothing, since it reads no claim. A
     revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami;
@@ -139,18 +139,18 @@ def sync(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | Whoami | None:
-    """The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its
+    """The calling key's own record — role, name, tenant, default workspace, crew and grants. Never its
     denials or deny masks; a person's web session key alone is told whether it carries a denial.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
-    workarea carries its derived path. person names the user a key names, with its sign-up usage and
+    workspace carries its derived path. person names the user a key names, with its sign-up usage and
     limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
     d10); with person=false it is absent and unread. The credential is resolved once, so a key value or
     a connection spends one request of its rate (#286). The key's denials and its grants' per-grant deny
     masks, which name subtrees it may not read, are omitted, except that the record of a person's
     <user>-web session key carries denied, a boolean: whether the key holds a denial in force on any
-    workarea, which refuses it issuing a key, minting a connect code and cutting off a key for good. It
-    names no workarea, count, author or time, and no other key's record has the member: not
+    workspace, which refuses it issuing a key, minting a connect code and cutting off a key for good. It
+    names no workspace, count, author or time, and no other key's record has the member: not
     <user>-review, <user>-curate or <user>-admin, and no key with a value or a connection (ADR-0039 d15
     as amended by ADR-0070 d5; since v0.7.3). The read journals nothing, since it reads no claim. A
     revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami;
@@ -190,18 +190,18 @@ async def asyncio_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | Whoami]:
-    """The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its
+    """The calling key's own record — role, name, tenant, default workspace, crew and grants. Never its
     denials or deny masks; a person's web session key alone is told whether it carries a denial.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
-    workarea carries its derived path. person names the user a key names, with its sign-up usage and
+    workspace carries its derived path. person names the user a key names, with its sign-up usage and
     limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
     d10); with person=false it is absent and unread. The credential is resolved once, so a key value or
     a connection spends one request of its rate (#286). The key's denials and its grants' per-grant deny
     masks, which name subtrees it may not read, are omitted, except that the record of a person's
     <user>-web session key carries denied, a boolean: whether the key holds a denial in force on any
-    workarea, which refuses it issuing a key, minting a connect code and cutting off a key for good. It
-    names no workarea, count, author or time, and no other key's record has the member: not
+    workspace, which refuses it issuing a key, minting a connect code and cutting off a key for good. It
+    names no workspace, count, author or time, and no other key's record has the member: not
     <user>-review, <user>-curate or <user>-admin, and no key with a value or a connection (ADR-0039 d15
     as amended by ADR-0070 d5; since v0.7.3). The read journals nothing, since it reads no claim. A
     revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami;
@@ -244,18 +244,18 @@ async def asyncio(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | Whoami | None:
-    """The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its
+    """The calling key's own record — role, name, tenant, default workspace, crew and grants. Never its
     denials or deny masks; a person's web session key alone is told whether it carries a denial.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
-    workarea carries its derived path. person names the user a key names, with its sign-up usage and
+    workspace carries its derived path. person names the user a key names, with its sign-up usage and
     limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
     d10); with person=false it is absent and unread. The credential is resolved once, so a key value or
     a connection spends one request of its rate (#286). The key's denials and its grants' per-grant deny
     masks, which name subtrees it may not read, are omitted, except that the record of a person's
     <user>-web session key carries denied, a boolean: whether the key holds a denial in force on any
-    workarea, which refuses it issuing a key, minting a connect code and cutting off a key for good. It
-    names no workarea, count, author or time, and no other key's record has the member: not
+    workspace, which refuses it issuing a key, minting a connect code and cutting off a key for good. It
+    names no workspace, count, author or time, and no other key's record has the member: not
     <user>-review, <user>-curate or <user>-admin, and no key with a value or a connection (ADR-0039 d15
     as amended by ADR-0070 d5; since v0.7.3). The read journals nothing, since it reads no claim. A
     revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami;

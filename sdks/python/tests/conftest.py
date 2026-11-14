@@ -55,9 +55,9 @@ ALLOWED_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR")
 class OmlServer:
     url: str
     agent_key: str
-    dreamer_key: str
-    workarea: str
-    review_workarea: str
+    reviewer_key: str
+    workspace: str
+    review_workspace: str
 
     def __repr__(self) -> str:  # never the key values
         return f"OmlServer(url={self.url!r})"
@@ -202,21 +202,21 @@ def oml_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[OmlServer]:
             "--tenant-name", "sdk-tests", "--principal", "platform/admin",
             stdin=f"{token}\n",
         )  # fmt: skip
-        root = boot["root_workarea_id"]
-        workarea = oml("workareas", "create", root, "sdk")["id"]
-        review_workarea = oml("workareas", "create", root, "sdk-review")["id"]
+        root = boot["root_workspace_id"]
+        workspace = oml("workspaces", "create", root, "sdk")["id"]
+        review_workspace = oml("workspaces", "create", root, "sdk-review")["id"]
         agent = oml(
-            "keys", "issue", "sdk-agent", "--role", "writer", "--held-by", "agent",
-            "--principal", "sdk/agent", "--default-workarea", workarea,
-            "--grant", f"{workarea}:writer", "--grant", f"{workarea}:reader",
-            "--grant", f"{review_workarea}:writer", "--grant", f"{review_workarea}:reader",
+            "keys", "issue", "sdk-agent", "--role", "writer", "--used-by", "agent",
+            "--principal", "sdk/agent", "--default-workspace", workspace,
+            "--grant", f"{workspace}:writer", "--grant", f"{workspace}:reader",
+            "--grant", f"{review_workspace}:writer", "--grant", f"{review_workspace}:reader",
         )["value"]  # fmt: skip
-        dreamer = oml(
-            "keys", "issue", "sdk-reviewer", "--role", "dreamer", "--held-by", "human",
-            "--principal", "sdk/reviewer", "--default-workarea", review_workarea,
-            "--grant", f"{review_workarea}:dreamer",
+        reviewer = oml(
+            "keys", "issue", "sdk-reviewer", "--role", "reviewer", "--used-by", "person",
+            "--principal", "sdk/reviewer", "--default-workspace", review_workspace,
+            "--grant", f"{review_workspace}:reviewer",
         )["value"]  # fmt: skip
-        yield OmlServer(url, agent, dreamer, workarea, review_workarea)
+        yield OmlServer(url, agent, reviewer, workspace, review_workspace)
     finally:
         if server is not None and server.poll() is None:
             server.terminate()
@@ -250,7 +250,7 @@ def agent(oml_server: OmlServer):
 def reviewer(oml_server: OmlServer):
     from oml_sdk import OmlClient
 
-    with OmlClient(url=oml_server.url, api_key=oml_server.dreamer_key) as client:
+    with OmlClient(url=oml_server.url, api_key=oml_server.reviewer_key) as client:
         yield client
 
 

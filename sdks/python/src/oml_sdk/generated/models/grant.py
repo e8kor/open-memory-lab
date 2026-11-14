@@ -23,7 +23,7 @@ class Grant:
 
     Attributes:
         grant_id (str):
-        workarea_node_id (str): Node id, never a path.
+        workspace_node_id (str): Node id, never a path.
         role (GrantRole):
         epoch (int): The journal seq of this grant's grant.issued event.
         deny (list[GrantDenyItem] | Unset):
@@ -31,7 +31,7 @@ class Grant:
     """
 
     grant_id: str
-    workarea_node_id: str
+    workspace_node_id: str
     role: GrantRole
     epoch: int
     deny: list[GrantDenyItem] | Unset = UNSET
@@ -41,7 +41,7 @@ class Grant:
     def to_dict(self) -> dict[str, Any]:
         grant_id = self.grant_id
 
-        workarea_node_id = self.workarea_node_id
+        workspace_node_id = self.workspace_node_id
 
         role = self.role.value
 
@@ -63,7 +63,7 @@ class Grant:
         field_dict.update(
             {
                 "grant_id": grant_id,
-                "workarea_node_id": workarea_node_id,
+                "workspace_node_id": workspace_node_id,
                 "role": role,
                 "epoch": epoch,
             }
@@ -82,7 +82,7 @@ class Grant:
         d = dict(src_dict)
         grant_id = d.pop("grant_id")
 
-        workarea_node_id = d.pop("workarea_node_id")
+        workspace_node_id = d.pop("workspace_node_id")
 
         role = GrantRole(d.pop("role"))
 
@@ -106,7 +106,7 @@ class Grant:
 
         grant = cls(
             grant_id=grant_id,
-            workarea_node_id=workarea_node_id,
+            workspace_node_id=workspace_node_id,
             role=role,
             epoch=epoch,
             deny=deny,

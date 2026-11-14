@@ -1,11 +1,11 @@
 from enum import StrEnum
 
 
-class WorkareaOffersRefusedItemTo(StrEnum):
-    COMMITTED = "committed"
+class WorkspaceOffersRefusedItemTo(StrEnum):
+    FROZEN = "frozen"
     IN_PROGRESS = "in_progress"
+    PROTECTED = "protected"
     STANDARD = "standard"
-    VALIDATED = "validated"
 
     def __str__(self) -> str:
         return str(self.value)

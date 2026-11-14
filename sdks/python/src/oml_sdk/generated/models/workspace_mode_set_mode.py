@@ -1,7 +1,7 @@
 from enum import StrEnum
 
 
-class WorkareaModeSetMode(StrEnum):
+class WorkspaceModeSetMode(StrEnum):
     IN_PROGRESS = "in_progress"
     STANDARD = "standard"
 

@@ -7,21 +7,21 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
-    from ..models.workarea import Workarea
+    from ..models.workspace import Workspace
 
 
-T = TypeVar("T", bound="WorkareaPage")
+T = TypeVar("T", bound="WorkspacePage")
 
 
 @_attrs_define
-class WorkareaPage:
+class WorkspacePage:
     """
     Attributes:
-        items (list[Workarea]):
+        items (list[Workspace]):
         next_cursor (None | str):
     """
 
-    items: list[Workarea]
+    items: list[Workspace]
     next_cursor: None | str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -47,13 +47,13 @@ class WorkareaPage:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.workarea import Workarea
+        from ..models.workspace import Workspace
 
         d = dict(src_dict)
         items = []
         _items = d.pop("items")
         for items_item_data in _items:
-            items_item = Workarea.from_dict(items_item_data)
+            items_item = Workspace.from_dict(items_item_data)
 
             items.append(items_item)
 
@@ -64,13 +64,13 @@ class WorkareaPage:
 
         next_cursor = _parse_next_cursor(d.pop("next_cursor"))
 
-        workarea_page = cls(
+        workspace_page = cls(
             items=items,
             next_cursor=next_cursor,
         )
 
-        workarea_page.additional_properties = d
-        return workarea_page
+        workspace_page.additional_properties = d
+        return workspace_page
 
     @property
     def additional_keys(self) -> list[str]:

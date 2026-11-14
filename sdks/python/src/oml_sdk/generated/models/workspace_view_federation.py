@@ -5,11 +5,11 @@ from typing import Any, Self, TypeVar
 
 from attrs import define as _attrs_define
 
-T = TypeVar("T", bound="WorkareaViewFederation")
+T = TypeVar("T", bound="WorkspaceViewFederation")
 
 
 @_attrs_define
-class WorkareaViewFederation:
+class WorkspaceViewFederation:
     """The node's federation field (ADR-0072 d5).
 
     Attributes:
@@ -37,8 +37,8 @@ class WorkareaViewFederation:
         d = dict(src_dict)
         accept_federated = d.pop("accept_federated")
 
-        workarea_view_federation = cls(
+        workspace_view_federation = cls(
             accept_federated=accept_federated,
         )
 
-        return workarea_view_federation
+        return workspace_view_federation

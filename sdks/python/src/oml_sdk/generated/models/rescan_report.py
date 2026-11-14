@@ -29,7 +29,7 @@ class RescanReport:
         recorded (int): Held versions whose findings this call recorded under the server's rule set (ADR-0065 d15;
             ADR-0074 d28); 0 for the read.
         held_unrescanned (int): After this call, the tenant's held versions last scanned under another rule set than the
-            server's, which stay their authors' alone in in-progress workareas: doctor's scan_held_unrescanned (ADR-0074
+            server's, which stay their authors' alone in in-progress workspaces: doctor's scan_held_unrescanned (ADR-0074
             d28).
         rescan_due (int): After this call, every stored version, erased ones aside, last scanned under another rule set:
             doctor's scan_rescan_due (ADR-0074 d28).

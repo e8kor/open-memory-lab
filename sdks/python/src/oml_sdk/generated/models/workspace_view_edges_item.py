@@ -5,28 +5,28 @@ from typing import Any, Self, TypeVar
 
 from attrs import define as _attrs_define
 
-from ..models.workarea_view_edges_item_label import WorkareaViewEdgesItemLabel
-from ..models.workarea_view_edges_item_state import WorkareaViewEdgesItemState
+from ..models.workspace_view_edges_item_label import WorkspaceViewEdgesItemLabel
+from ..models.workspace_view_edges_item_state import WorkspaceViewEdgesItemState
 
-T = TypeVar("T", bound="WorkareaViewEdgesItem")
+T = TypeVar("T", bound="WorkspaceViewEdgesItem")
 
 
 @_attrs_define
-class WorkareaViewEdgesItem:
+class WorkspaceViewEdgesItem:
     """
     Attributes:
         edge_id (str):
         from_ (str):
         to (str):
-        label (WorkareaViewEdgesItemLabel):
-        state (WorkareaViewEdgesItemState):
+        label (WorkspaceViewEdgesItemLabel):
+        state (WorkspaceViewEdgesItemState):
     """
 
     edge_id: str
     from_: str
     to: str
-    label: WorkareaViewEdgesItemLabel
-    state: WorkareaViewEdgesItemState
+    label: WorkspaceViewEdgesItemLabel
+    state: WorkspaceViewEdgesItemState
 
     def to_dict(self) -> dict[str, Any]:
         edge_id = self.edge_id
@@ -62,11 +62,11 @@ class WorkareaViewEdgesItem:
 
         to = d.pop("to")
 
-        label = WorkareaViewEdgesItemLabel(d.pop("label"))
+        label = WorkspaceViewEdgesItemLabel(d.pop("label"))
 
-        state = WorkareaViewEdgesItemState(d.pop("state"))
+        state = WorkspaceViewEdgesItemState(d.pop("state"))
 
-        workarea_view_edges_item = cls(
+        workspace_view_edges_item = cls(
             edge_id=edge_id,
             from_=from_,
             to=to,
@@ -74,4 +74,4 @@ class WorkareaViewEdgesItem:
             state=state,
         )
 
-        return workarea_view_edges_item
+        return workspace_view_edges_item

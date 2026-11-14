@@ -117,9 +117,9 @@ def test_a_renamed_field_refusal_is_a_request_error_carrying_details_renamed_to(
         {
             "error": {
                 "code": "request.validation",
-                "message": "scope is renamed workarea: send workarea",
+                "message": "scope is renamed workspace: send workspace",
                 "rule": "r",
-                "details": {"field": "scope", "renamed_to": "workarea"},
+                "details": {"field": "scope", "renamed_to": "workspace"},
                 "retryable": False,
             },
             "request_id": "req_1",
@@ -128,4 +128,4 @@ def test_a_renamed_field_refusal_is_a_request_error_carrying_details_renamed_to(
     error = error_from_response(400, body, {})
     assert type(error) is RequestError
     assert error.code == "request.validation"
-    assert error.details == {"field": "scope", "renamed_to": "workarea"}
+    assert error.details == {"field": "scope", "renamed_to": "workspace"}

@@ -15,23 +15,23 @@ class GrantWebCapacitiesBody:
     """
     Attributes:
         capacity (GrantWebCapacitiesBodyCapacity):
-        workareas (list[str]): Each by id or name.
+        workspaces (list[str]): Each by id or name.
     """
 
     capacity: GrantWebCapacitiesBodyCapacity
-    workareas: list[str]
+    workspaces: list[str]
 
     def to_dict(self) -> dict[str, Any]:
         capacity = self.capacity.value
 
-        workareas = self.workareas
+        workspaces = self.workspaces
 
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
             {
                 "capacity": capacity,
-                "workareas": workareas,
+                "workspaces": workspaces,
             }
         )
 
@@ -42,11 +42,11 @@ class GrantWebCapacitiesBody:
         d = dict(src_dict)
         capacity = GrantWebCapacitiesBodyCapacity(d.pop("capacity"))
 
-        workareas = cast(list[str], d.pop("workareas"))
+        workspaces = cast(list[str], d.pop("workspaces"))
 
         grant_web_capacities_body = cls(
             capacity=capacity,
-            workareas=workareas,
+            workspaces=workspaces,
         )
 
         return grant_web_capacities_body

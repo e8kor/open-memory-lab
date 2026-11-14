@@ -7,17 +7,19 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.workarea_counts_items_item_mode import WorkareaCountsItemsItemMode
+from ..models.workspace_counts_items_item_mode import WorkspaceCountsItemsItemMode
 
 if TYPE_CHECKING:
-    from ..models.workarea_counts_items_item_counts import WorkareaCountsItemsItemCounts
+    from ..models.workspace_counts_items_item_counts import (
+        WorkspaceCountsItemsItemCounts,
+    )
 
 
-T = TypeVar("T", bound="WorkareaCountsItemsItem")
+T = TypeVar("T", bound="WorkspaceCountsItemsItem")
 
 
 @_attrs_define
-class WorkareaCountsItemsItem:
+class WorkspaceCountsItemsItem:
     """
     Attributes:
         id (UUID):
@@ -26,8 +28,8 @@ class WorkareaCountsItemsItem:
         path (str):
         status (str):
         user_root (bool):
-        mode (WorkareaCountsItemsItemMode):
-        counts (WorkareaCountsItemsItemCounts):
+        mode (WorkspaceCountsItemsItemMode):
+        counts (WorkspaceCountsItemsItemCounts):
     """
 
     id: UUID
@@ -36,8 +38,8 @@ class WorkareaCountsItemsItem:
     path: str
     status: str
     user_root: bool
-    mode: WorkareaCountsItemsItemMode
-    counts: WorkareaCountsItemsItemCounts
+    mode: WorkspaceCountsItemsItemMode
+    counts: WorkspaceCountsItemsItemCounts
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -80,8 +82,8 @@ class WorkareaCountsItemsItem:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.workarea_counts_items_item_counts import (
-            WorkareaCountsItemsItemCounts,
+        from ..models.workspace_counts_items_item_counts import (
+            WorkspaceCountsItemsItemCounts,
         )
 
         d = dict(src_dict)
@@ -110,11 +112,11 @@ class WorkareaCountsItemsItem:
 
         user_root = d.pop("user_root")
 
-        mode = WorkareaCountsItemsItemMode(d.pop("mode"))
+        mode = WorkspaceCountsItemsItemMode(d.pop("mode"))
 
-        counts = WorkareaCountsItemsItemCounts.from_dict(d.pop("counts"))
+        counts = WorkspaceCountsItemsItemCounts.from_dict(d.pop("counts"))
 
-        workarea_counts_items_item = cls(
+        workspace_counts_items_item = cls(
             id=id,
             name=name,
             parent_id=parent_id,
@@ -125,8 +127,8 @@ class WorkareaCountsItemsItem:
             counts=counts,
         )
 
-        workarea_counts_items_item.additional_properties = d
-        return workarea_counts_items_item
+        workspace_counts_items_item.additional_properties = d
+        return workspace_counts_items_item
 
     @property
     def additional_keys(self) -> list[str]:

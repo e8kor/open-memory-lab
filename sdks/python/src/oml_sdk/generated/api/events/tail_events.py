@@ -12,7 +12,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     after_seq: int | Unset = 0,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     limit: int | Unset = 50,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
@@ -32,12 +32,12 @@ def _get_kwargs(
 
     params["after_seq"] = after_seq
 
-    json_workarea: str | Unset
-    if isinstance(workarea, Unset):
-        json_workarea = UNSET
+    json_workspace: str | Unset
+    if isinstance(workspace, Unset):
+        json_workspace = UNSET
     else:
-        json_workarea = workarea
-    params["workarea"] = json_workarea
+        json_workspace = workspace
+    params["workspace"] = json_workspace
 
     params["limit"] = limit
 
@@ -86,7 +86,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     after_seq: int | Unset = 0,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     limit: int | Unset = 50,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
@@ -95,9 +95,9 @@ def sync_detailed(
     """The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a
     verification surface).
 
-     Requires: reader effective access on workarea (access.not_found otherwise); omitted, the key's
-    default workarea, and request.workarea_unresolved for a key with none. v0.3.0's workarea_id
-    parameter and X-OML-Workarea header are request.validation naming workarea in details.renamed_to
+     Requires: reader effective access on workspace (access.not_found otherwise); omitted, the key's
+    default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workspace_id
+    parameter and X-OML-Workspace header are request.validation naming workspace in details.renamed_to
     (ADR-0039 d7). Which events a key sees, what a served event names, and how next_after_seq is
     computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key
     outside its actor's own key set carries principal, api_key_id and every key-naming payload field as
@@ -107,7 +107,7 @@ def sync_detailed(
 
     Args:
         after_seq (int | Unset):  Default: 0.
-        workarea (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -128,7 +128,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         after_seq=after_seq,
-        workarea=workarea,
+        workspace=workspace,
         limit=limit,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
@@ -146,7 +146,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     after_seq: int | Unset = 0,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     limit: int | Unset = 50,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
@@ -155,9 +155,9 @@ def sync(
     """The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a
     verification surface).
 
-     Requires: reader effective access on workarea (access.not_found otherwise); omitted, the key's
-    default workarea, and request.workarea_unresolved for a key with none. v0.3.0's workarea_id
-    parameter and X-OML-Workarea header are request.validation naming workarea in details.renamed_to
+     Requires: reader effective access on workspace (access.not_found otherwise); omitted, the key's
+    default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workspace_id
+    parameter and X-OML-Workspace header are request.validation naming workspace in details.renamed_to
     (ADR-0039 d7). Which events a key sees, what a served event names, and how next_after_seq is
     computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key
     outside its actor's own key set carries principal, api_key_id and every key-naming payload field as
@@ -167,7 +167,7 @@ def sync(
 
     Args:
         after_seq (int | Unset):  Default: 0.
-        workarea (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -189,7 +189,7 @@ def sync(
     return sync_detailed(
         client=client,
         after_seq=after_seq,
-        workarea=workarea,
+        workspace=workspace,
         limit=limit,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
@@ -201,7 +201,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     after_seq: int | Unset = 0,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     limit: int | Unset = 50,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
@@ -210,9 +210,9 @@ async def asyncio_detailed(
     """The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a
     verification surface).
 
-     Requires: reader effective access on workarea (access.not_found otherwise); omitted, the key's
-    default workarea, and request.workarea_unresolved for a key with none. v0.3.0's workarea_id
-    parameter and X-OML-Workarea header are request.validation naming workarea in details.renamed_to
+     Requires: reader effective access on workspace (access.not_found otherwise); omitted, the key's
+    default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workspace_id
+    parameter and X-OML-Workspace header are request.validation naming workspace in details.renamed_to
     (ADR-0039 d7). Which events a key sees, what a served event names, and how next_after_seq is
     computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key
     outside its actor's own key set carries principal, api_key_id and every key-naming payload field as
@@ -222,7 +222,7 @@ async def asyncio_detailed(
 
     Args:
         after_seq (int | Unset):  Default: 0.
-        workarea (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -243,7 +243,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         after_seq=after_seq,
-        workarea=workarea,
+        workspace=workspace,
         limit=limit,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
@@ -259,7 +259,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     after_seq: int | Unset = 0,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     limit: int | Unset = 50,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
@@ -268,9 +268,9 @@ async def asyncio(
     """The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a
     verification surface).
 
-     Requires: reader effective access on workarea (access.not_found otherwise); omitted, the key's
-    default workarea, and request.workarea_unresolved for a key with none. v0.3.0's workarea_id
-    parameter and X-OML-Workarea header are request.validation naming workarea in details.renamed_to
+     Requires: reader effective access on workspace (access.not_found otherwise); omitted, the key's
+    default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workspace_id
+    parameter and X-OML-Workspace header are request.validation naming workspace in details.renamed_to
     (ADR-0039 d7). Which events a key sees, what a served event names, and how next_after_seq is
     computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key
     outside its actor's own key set carries principal, api_key_id and every key-naming payload field as
@@ -280,7 +280,7 @@ async def asyncio(
 
     Args:
         after_seq (int | Unset):  Default: 0.
-        workarea (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -303,7 +303,7 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             after_seq=after_seq,
-            workarea=workarea,
+            workspace=workspace,
             limit=limit,
             x_request_id=x_request_id,
             x_correlation_id=x_correlation_id,

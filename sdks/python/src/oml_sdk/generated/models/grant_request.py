@@ -20,7 +20,7 @@ T = TypeVar("T", bound="GrantRequest")
 class GrantRequest:
     """
     Attributes:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved server-side before any
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a bare
             name in its own user root's namespace, plus universe and its root's name; every other key in the shared
             namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
@@ -34,14 +34,14 @@ class GrantRequest:
             (ADR-0044 d4). Default: GrantRequestCovers.SUBTREE.
     """
 
-    workarea: str
+    workspace: str
     role: GrantRequestRole
     deny: list[GrantRequestDenyItem] | Unset = UNSET
     covers: GrantRequestCovers | Unset = GrantRequestCovers.SUBTREE
 
     def to_dict(self) -> dict[str, Any]:
-        workarea: str
-        workarea = self.workarea
+        workspace: str
+        workspace = self.workspace
 
         role = self.role.value
 
@@ -60,7 +60,7 @@ class GrantRequest:
 
         field_dict.update(
             {
-                "workarea": workarea,
+                "workspace": workspace,
                 "role": role,
             }
         )
@@ -77,10 +77,10 @@ class GrantRequest:
 
         d = dict(src_dict)
 
-        def _parse_workarea(data: object) -> str:
+        def _parse_workspace(data: object) -> str:
             return cast(str, data)
 
-        workarea = _parse_workarea(d.pop("workarea"))
+        workspace = _parse_workspace(d.pop("workspace"))
 
         role = GrantRequestRole(d.pop("role"))
 
@@ -101,7 +101,7 @@ class GrantRequest:
             covers = GrantRequestCovers(_covers)
 
         grant_request = cls(
-            workarea=workarea,
+            workspace=workspace,
             role=role,
             deny=deny,
             covers=covers,

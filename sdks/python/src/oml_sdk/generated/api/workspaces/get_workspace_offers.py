@@ -6,12 +6,12 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
-from ...models.workarea_offers import WorkareaOffers
+from ...models.workspace_offers import WorkspaceOffers
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
-    workarea: str,
+    workspace: str,
     *,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
@@ -29,8 +29,8 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v2/workareas/{workarea}/offers".format(
-            workarea=quote(str(workarea), safe=""),
+        "url": "/v2/workspaces/{workspace}/offers".format(
+            workspace=quote(str(workspace), safe=""),
         ),
     }
 
@@ -40,9 +40,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope | WorkareaOffers:
+) -> ErrorEnvelope | WorkspaceOffers:
     if response.status_code == 200:
-        response_200 = WorkareaOffers.from_dict(response.json())
+        response_200 = WorkspaceOffers.from_dict(response.json())
 
         return response_200
 
@@ -58,7 +58,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope | WorkareaOffers]:
+) -> Response[ErrorEnvelope | WorkspaceOffers]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -68,25 +68,25 @@ def _build_response(
 
 
 def sync_detailed(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> Response[ErrorEnvelope | WorkareaOffers]:
-    """The transitions, the mode change and the commit the caller's verbs admit on a workarea now.
+) -> Response[ErrorEnvelope | WorkspaceOffers]:
+    """The transitions, the mode change and the commit the caller's verbs admit on a workspace now.
 
-     Requires: reader effective access on the workarea, or the admin key role; one the caller cannot read
-    is access.not_found (R3). Each act is offered only where the verb's own check admits the caller now:
-    propose the next rung, ratify a live proposal another key made, put the workarea in progress, or
-    commit an in-progress root; a commit the held rows refuse is not offered and names their count.
-    refused names each of proposing committed, proposing validated, mode in_progress and mode standard
-    that is not offered, with the code and message its verb would refuse it with now, so a confirmation
-    names the refusal without acting. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
+     Requires: reader effective access on the workspace, or the admin key role; one the caller cannot
+    read is access.not_found (R3). Each act is offered only where the verb's own check admits the caller
+    now: propose the next rung, ratify a live proposal another key made, put the workspace in progress,
+    or commit an in-progress root; a commit the held rows refuse is not offered and names their count.
+    refused names each of proposing protected, proposing frozen, mode in_progress and mode standard that
+    is not offered, with the code and message its verb would refuse it with now, so a confirmation names
+    the refusal without acting. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -101,11 +101,11 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | WorkareaOffers]
+        Response[ErrorEnvelope | WorkspaceOffers]
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -119,25 +119,25 @@ def sync_detailed(
 
 
 def sync(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> ErrorEnvelope | WorkareaOffers | None:
-    """The transitions, the mode change and the commit the caller's verbs admit on a workarea now.
+) -> ErrorEnvelope | WorkspaceOffers | None:
+    """The transitions, the mode change and the commit the caller's verbs admit on a workspace now.
 
-     Requires: reader effective access on the workarea, or the admin key role; one the caller cannot read
-    is access.not_found (R3). Each act is offered only where the verb's own check admits the caller now:
-    propose the next rung, ratify a live proposal another key made, put the workarea in progress, or
-    commit an in-progress root; a commit the held rows refuse is not offered and names their count.
-    refused names each of proposing committed, proposing validated, mode in_progress and mode standard
-    that is not offered, with the code and message its verb would refuse it with now, so a confirmation
-    names the refusal without acting. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
+     Requires: reader effective access on the workspace, or the admin key role; one the caller cannot
+    read is access.not_found (R3). Each act is offered only where the verb's own check admits the caller
+    now: propose the next rung, ratify a live proposal another key made, put the workspace in progress,
+    or commit an in-progress root; a commit the held rows refuse is not offered and names their count.
+    refused names each of proposing protected, proposing frozen, mode in_progress and mode standard that
+    is not offered, with the code and message its verb would refuse it with now, so a confirmation names
+    the refusal without acting. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -152,11 +152,11 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | WorkareaOffers
+        ErrorEnvelope | WorkspaceOffers
     """
 
     return sync_detailed(
-        workarea=workarea,
+        workspace=workspace,
         client=client,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
@@ -165,25 +165,25 @@ def sync(
 
 
 async def asyncio_detailed(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> Response[ErrorEnvelope | WorkareaOffers]:
-    """The transitions, the mode change and the commit the caller's verbs admit on a workarea now.
+) -> Response[ErrorEnvelope | WorkspaceOffers]:
+    """The transitions, the mode change and the commit the caller's verbs admit on a workspace now.
 
-     Requires: reader effective access on the workarea, or the admin key role; one the caller cannot read
-    is access.not_found (R3). Each act is offered only where the verb's own check admits the caller now:
-    propose the next rung, ratify a live proposal another key made, put the workarea in progress, or
-    commit an in-progress root; a commit the held rows refuse is not offered and names their count.
-    refused names each of proposing committed, proposing validated, mode in_progress and mode standard
-    that is not offered, with the code and message its verb would refuse it with now, so a confirmation
-    names the refusal without acting. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
+     Requires: reader effective access on the workspace, or the admin key role; one the caller cannot
+    read is access.not_found (R3). Each act is offered only where the verb's own check admits the caller
+    now: propose the next rung, ratify a live proposal another key made, put the workspace in progress,
+    or commit an in-progress root; a commit the held rows refuse is not offered and names their count.
+    refused names each of proposing protected, proposing frozen, mode in_progress and mode standard that
+    is not offered, with the code and message its verb would refuse it with now, so a confirmation names
+    the refusal without acting. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -198,11 +198,11 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | WorkareaOffers]
+        Response[ErrorEnvelope | WorkspaceOffers]
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -214,25 +214,25 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> ErrorEnvelope | WorkareaOffers | None:
-    """The transitions, the mode change and the commit the caller's verbs admit on a workarea now.
+) -> ErrorEnvelope | WorkspaceOffers | None:
+    """The transitions, the mode change and the commit the caller's verbs admit on a workspace now.
 
-     Requires: reader effective access on the workarea, or the admin key role; one the caller cannot read
-    is access.not_found (R3). Each act is offered only where the verb's own check admits the caller now:
-    propose the next rung, ratify a live proposal another key made, put the workarea in progress, or
-    commit an in-progress root; a commit the held rows refuse is not offered and names their count.
-    refused names each of proposing committed, proposing validated, mode in_progress and mode standard
-    that is not offered, with the code and message its verb would refuse it with now, so a confirmation
-    names the refusal without acting. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
+     Requires: reader effective access on the workspace, or the admin key role; one the caller cannot
+    read is access.not_found (R3). Each act is offered only where the verb's own check admits the caller
+    now: propose the next rung, ratify a live proposal another key made, put the workspace in progress,
+    or commit an in-progress root; a commit the held rows refuse is not offered and names their count.
+    refused names each of proposing protected, proposing frozen, mode in_progress and mode standard that
+    is not offered, with the code and message its verb would refuse it with now, so a confirmation names
+    the refusal without acting. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -247,12 +247,12 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | WorkareaOffers
+        ErrorEnvelope | WorkspaceOffers
     """
 
     return (
         await asyncio_detailed(
-            workarea=workarea,
+            workspace=workspace,
             client=client,
             x_request_id=x_request_id,
             x_correlation_id=x_correlation_id,

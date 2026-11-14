@@ -67,7 +67,7 @@ const ACCEPTED = {
   state: "held",
   plaintext_digest: `sha256:${"0".repeat(64)}`,
   journal_seq: 1,
-  workarea_id: "wa_1",
+  workspace_id: "wa_1",
   retirement: false,
   replaces: null,
 };
@@ -110,9 +110,9 @@ test("a renamed field refusal is a RequestError carrying details.renamed_to", ()
   const body = {
     error: {
       code: "request.validation",
-      message: "scope is renamed workarea: send workarea",
+      message: "scope is renamed workspace: send workspace",
       rule: "r",
-      details: { field: "scope", renamed_to: "workarea" },
+      details: { field: "scope", renamed_to: "workspace" },
       retryable: false,
     },
     request_id: "req_1",
@@ -120,7 +120,7 @@ test("a renamed field refusal is a RequestError carrying details.renamed_to", ()
   const error = errorFromResponse(400, body, new Headers());
   assert.equal(error.constructor, RequestError);
   assert.equal(error.code, "request.validation");
-  assert.deepEqual(error.details, { field: "scope", renamed_to: "workarea" });
+  assert.deepEqual(error.details, { field: "scope", renamed_to: "workspace" });
 });
 
 test("a response without the envelope is an ApiError without a code", () => {
@@ -224,7 +224,7 @@ test("a read argument outside its mode raises before sending", async () => {
   const { requests, fetcher } = recorder();
   const oml = client(fetcher);
   const cases: [ReadInput, string][] = [
-    [{ artifact_id: "art_1", workarea: "w" }, "/workarea"],
+    [{ artifact_id: "art_1", workspace: "w" }, "/workspace"],
     [{ query: "q", own: true }, "/own"],
     [{ k: 3 }, "/k"],
   ];
@@ -243,16 +243,16 @@ test("read with neither lists the key's own rows", async () => {
   );
 });
 
-test("the listing iterators send own true unless the caller passes own false, workarea in the query", async () => {
+test("the listing iterators send own true unless the caller passes own false, workspace in the query", async () => {
   const { requests, fetcher } = recorder(200, { items: [], next_cursor: null });
   const oml = client(fetcher);
   for await (const _ of oml.memories({ limit: 5 })) assert.fail("no rows were answered");
-  for await (const _ of oml.pages({ own: false, workarea: "w", limit: 5 })) continue;
+  for await (const _ of oml.pages({ own: false, workspace: "w", limit: 5 })) continue;
   assert.deepEqual(
     requests.map((r) => Object.fromEntries(new URL(r.url).searchParams)),
     [
       { own: "true", limit: "5" },
-      { own: "false", workarea: "w", limit: "5" },
+      { own: "false", workspace: "w", limit: "5" },
     ],
   );
 });

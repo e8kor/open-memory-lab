@@ -87,14 +87,14 @@ def sync_detailed(
     body: BriefEdgeProposal | ClaimEdgeProposal,
     idempotency_key: str,
 ) -> Response[BriefEdge | ClaimEdge | ErrorEnvelope]:
-    """Propose a claim-to-claim edge or a claim's place in a workarea's brief; pending until ratified.
+    """Propose a claim-to-claim edge or a claim's place in a workspace's brief; pending until ratified.
 
-     kind claim requires dreamer(propose); its label is open, with supports, contradicts, relates_to and
-    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires dreamer effective access
-    on the workarea and a promoted served tip the key reads; its label is brief and is not sent
-    (ADR-0046 d7, d8). kind workarea, designed and not served, requires dreamer(propose) effective
+     kind claim requires reviewer(propose); its label is open, with supports, contradicts, relates_to and
+    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires reviewer effective access
+    on the workspace and a promoted served tip the key reads; its label is brief and is not sent
+    (ADR-0046 d7, d8). kind workspace, designed and not served, requires reviewer(propose) effective
     access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act
-    here holds a separate dreamer key, since a key never combines admin with dreamer grants
+    here holds a separate reviewer key, since a key never combines admin with reviewer grants
     (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).
 
     Args:
@@ -128,14 +128,14 @@ def sync(
     body: BriefEdgeProposal | ClaimEdgeProposal,
     idempotency_key: str,
 ) -> BriefEdge | ClaimEdge | ErrorEnvelope | None:
-    """Propose a claim-to-claim edge or a claim's place in a workarea's brief; pending until ratified.
+    """Propose a claim-to-claim edge or a claim's place in a workspace's brief; pending until ratified.
 
-     kind claim requires dreamer(propose); its label is open, with supports, contradicts, relates_to and
-    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires dreamer effective access
-    on the workarea and a promoted served tip the key reads; its label is brief and is not sent
-    (ADR-0046 d7, d8). kind workarea, designed and not served, requires dreamer(propose) effective
+     kind claim requires reviewer(propose); its label is open, with supports, contradicts, relates_to and
+    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires reviewer effective access
+    on the workspace and a promoted served tip the key reads; its label is brief and is not sent
+    (ADR-0046 d7, d8). kind workspace, designed and not served, requires reviewer(propose) effective
     access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act
-    here holds a separate dreamer key, since a key never combines admin with dreamer grants
+    here holds a separate reviewer key, since a key never combines admin with reviewer grants
     (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).
 
     Args:
@@ -164,14 +164,14 @@ async def asyncio_detailed(
     body: BriefEdgeProposal | ClaimEdgeProposal,
     idempotency_key: str,
 ) -> Response[BriefEdge | ClaimEdge | ErrorEnvelope]:
-    """Propose a claim-to-claim edge or a claim's place in a workarea's brief; pending until ratified.
+    """Propose a claim-to-claim edge or a claim's place in a workspace's brief; pending until ratified.
 
-     kind claim requires dreamer(propose); its label is open, with supports, contradicts, relates_to and
-    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires dreamer effective access
-    on the workarea and a promoted served tip the key reads; its label is brief and is not sent
-    (ADR-0046 d7, d8). kind workarea, designed and not served, requires dreamer(propose) effective
+     kind claim requires reviewer(propose); its label is open, with supports, contradicts, relates_to and
+    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires reviewer effective access
+    on the workspace and a promoted served tip the key reads; its label is brief and is not sent
+    (ADR-0046 d7, d8). kind workspace, designed and not served, requires reviewer(propose) effective
     access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act
-    here holds a separate dreamer key, since a key never combines admin with dreamer grants
+    here holds a separate reviewer key, since a key never combines admin with reviewer grants
     (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).
 
     Args:
@@ -203,14 +203,14 @@ async def asyncio(
     body: BriefEdgeProposal | ClaimEdgeProposal,
     idempotency_key: str,
 ) -> BriefEdge | ClaimEdge | ErrorEnvelope | None:
-    """Propose a claim-to-claim edge or a claim's place in a workarea's brief; pending until ratified.
+    """Propose a claim-to-claim edge or a claim's place in a workspace's brief; pending until ratified.
 
-     kind claim requires dreamer(propose); its label is open, with supports, contradicts, relates_to and
-    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires dreamer effective access
-    on the workarea and a promoted served tip the key reads; its label is brief and is not sent
-    (ADR-0046 d7, d8). kind workarea, designed and not served, requires dreamer(propose) effective
+     kind claim requires reviewer(propose); its label is open, with supports, contradicts, relates_to and
+    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires reviewer effective access
+    on the workspace and a promoted served tip the key reads; its label is brief and is not sent
+    (ADR-0046 d7, d8). kind workspace, designed and not served, requires reviewer(propose) effective
     access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act
-    here holds a separate dreamer key, since a key never combines admin with dreamer grants
+    here holds a separate reviewer key, since a key never combines admin with reviewer grants
     (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).
 
     Args:

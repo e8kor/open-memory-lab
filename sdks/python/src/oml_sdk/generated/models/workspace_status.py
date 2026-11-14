@@ -1,10 +1,10 @@
 from enum import StrEnum
 
 
-class WorkareaStatus(StrEnum):
-    COMMITTED = "committed"
+class WorkspaceStatus(StrEnum):
     DEVELOPMENT = "development"
-    VALIDATED = "validated"
+    FROZEN = "frozen"
+    PROTECTED = "protected"
 
     def __str__(self) -> str:
         return str(self.value)

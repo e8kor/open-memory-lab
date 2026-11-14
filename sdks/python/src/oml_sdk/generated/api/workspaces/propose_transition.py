@@ -12,7 +12,7 @@ from ...types import Response
 
 
 def _get_kwargs(
-    workarea: str,
+    workspace: str,
     *,
     body: TransitionProposal,
     idempotency_key: str,
@@ -22,8 +22,8 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v2/workareas/{workarea}/transitions".format(
-            workarea=quote(str(workarea), safe=""),
+        "url": "/v2/workspaces/{workspace}/transitions".format(
+            workspace=quote(str(workspace), safe=""),
         ),
     }
 
@@ -70,7 +70,7 @@ def _build_response(
 
 
 def sync_detailed(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
     body: TransitionProposal,
@@ -78,13 +78,13 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | Transition]:
     """Propose a forward status transition; pending until a second party ratifies.
 
-     Requires: dreamer or admin. Forward only; validated refused while any child is not validated
-    (workarea.transition_refused). A resubmission under the same Idempotency-Key and body answers the
+     Requires: reviewer or admin. Forward only; frozen refused while any child is not frozen
+    (workspace.transition_refused). A resubmission under the same Idempotency-Key and body answers the
     recorded proposal with Idempotency-Replay: true and proposes nothing again; the same key on another
     request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -102,7 +102,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         body=body,
         idempotency_key=idempotency_key,
     )
@@ -115,7 +115,7 @@ def sync_detailed(
 
 
 def sync(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
     body: TransitionProposal,
@@ -123,13 +123,13 @@ def sync(
 ) -> ErrorEnvelope | Transition | None:
     """Propose a forward status transition; pending until a second party ratifies.
 
-     Requires: dreamer or admin. Forward only; validated refused while any child is not validated
-    (workarea.transition_refused). A resubmission under the same Idempotency-Key and body answers the
+     Requires: reviewer or admin. Forward only; frozen refused while any child is not frozen
+    (workspace.transition_refused). A resubmission under the same Idempotency-Key and body answers the
     recorded proposal with Idempotency-Replay: true and proposes nothing again; the same key on another
     request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -147,7 +147,7 @@ def sync(
     """
 
     return sync_detailed(
-        workarea=workarea,
+        workspace=workspace,
         client=client,
         body=body,
         idempotency_key=idempotency_key,
@@ -155,7 +155,7 @@ def sync(
 
 
 async def asyncio_detailed(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
     body: TransitionProposal,
@@ -163,13 +163,13 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | Transition]:
     """Propose a forward status transition; pending until a second party ratifies.
 
-     Requires: dreamer or admin. Forward only; validated refused while any child is not validated
-    (workarea.transition_refused). A resubmission under the same Idempotency-Key and body answers the
+     Requires: reviewer or admin. Forward only; frozen refused while any child is not frozen
+    (workspace.transition_refused). A resubmission under the same Idempotency-Key and body answers the
     recorded proposal with Idempotency-Replay: true and proposes nothing again; the same key on another
     request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -187,7 +187,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         body=body,
         idempotency_key=idempotency_key,
     )
@@ -198,7 +198,7 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    workarea: str,
+    workspace: str,
     *,
     client: AuthenticatedClient | Client,
     body: TransitionProposal,
@@ -206,13 +206,13 @@ async def asyncio(
 ) -> ErrorEnvelope | Transition | None:
     """Propose a forward status transition; pending until a second party ratifies.
 
-     Requires: dreamer or admin. Forward only; validated refused while any child is not validated
-    (workarea.transition_refused). A resubmission under the same Idempotency-Key and body answers the
+     Requires: reviewer or admin. Forward only; frozen refused while any child is not frozen
+    (workspace.transition_refused). A resubmission under the same Idempotency-Key and body answers the
     recorded proposal with Idempotency-Replay: true and proposes nothing again; the same key on another
     request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
-        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
             server-side before any check that reads state; an unknown name answers exactly what an
             unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
             universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
@@ -231,7 +231,7 @@ async def asyncio(
 
     return (
         await asyncio_detailed(
-            workarea=workarea,
+            workspace=workspace,
             client=client,
             body=body,
             idempotency_key=idempotency_key,

@@ -99,8 +99,8 @@ def sync_detailed(
     """Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under
     an expiring serve_id.
 
-     Requires: dreamer(review). Serves only rows within the key's dreamer effective access on the row's
-    workarea; 204 when nothing in scope waits. A held_by: service key is refused with
+     Requires: reviewer(review). Serves only rows within the key's reviewer effective access on the row's
+    workspace; 204 when nothing in scope waits. A used_by: service key is refused with
     access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify
     (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set);
     refused per item on lineage collision (review.author_in_lineage).
@@ -110,8 +110,8 @@ def sync_detailed(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workarea is a
-            designed field (openapi-designed.yaml x-oml-designed-fields), refused with
+        body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workspace is
+            a designed field (openapi-designed.yaml x-oml-designed-fields), refused with
             request.validation until it is built (ADR-0039 d9).
 
     Raises:
@@ -149,8 +149,8 @@ def sync(
     """Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under
     an expiring serve_id.
 
-     Requires: dreamer(review). Serves only rows within the key's dreamer effective access on the row's
-    workarea; 204 when nothing in scope waits. A held_by: service key is refused with
+     Requires: reviewer(review). Serves only rows within the key's reviewer effective access on the row's
+    workspace; 204 when nothing in scope waits. A used_by: service key is refused with
     access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify
     (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set);
     refused per item on lineage collision (review.author_in_lineage).
@@ -160,8 +160,8 @@ def sync(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workarea is a
-            designed field (openapi-designed.yaml x-oml-designed-fields), refused with
+        body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workspace is
+            a designed field (openapi-designed.yaml x-oml-designed-fields), refused with
             request.validation until it is built (ADR-0039 d9).
 
     Raises:
@@ -194,8 +194,8 @@ async def asyncio_detailed(
     """Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under
     an expiring serve_id.
 
-     Requires: dreamer(review). Serves only rows within the key's dreamer effective access on the row's
-    workarea; 204 when nothing in scope waits. A held_by: service key is refused with
+     Requires: reviewer(review). Serves only rows within the key's reviewer effective access on the row's
+    workspace; 204 when nothing in scope waits. A used_by: service key is refused with
     access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify
     (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set);
     refused per item on lineage collision (review.author_in_lineage).
@@ -205,8 +205,8 @@ async def asyncio_detailed(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workarea is a
-            designed field (openapi-designed.yaml x-oml-designed-fields), refused with
+        body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workspace is
+            a designed field (openapi-designed.yaml x-oml-designed-fields), refused with
             request.validation until it is built (ADR-0039 d9).
 
     Raises:
@@ -242,8 +242,8 @@ async def asyncio(
     """Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under
     an expiring serve_id.
 
-     Requires: dreamer(review). Serves only rows within the key's dreamer effective access on the row's
-    workarea; 204 when nothing in scope waits. A held_by: service key is refused with
+     Requires: reviewer(review). Serves only rows within the key's reviewer effective access on the row's
+    workspace; 204 when nothing in scope waits. A used_by: service key is refused with
     access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify
     (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set);
     refused per item on lineage collision (review.author_in_lineage).
@@ -253,8 +253,8 @@ async def asyncio(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workarea is a
-            designed field (openapi-designed.yaml x-oml-designed-fields), refused with
+        body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workspace is
+            a designed field (openapi-designed.yaml x-oml-designed-fields), refused with
             request.validation until it is built (ADR-0039 d9).
 
     Raises:

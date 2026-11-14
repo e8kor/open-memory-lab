@@ -2,8 +2,8 @@ from enum import StrEnum
 
 
 class TransitionTo(StrEnum):
-    COMMITTED = "committed"
-    VALIDATED = "validated"
+    FROZEN = "frozen"
+    PROTECTED = "protected"
 
     def __str__(self) -> str:
         return str(self.value)

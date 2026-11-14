@@ -95,7 +95,7 @@ def sync_detailed(
     changes.
 
      Requires: admin key role. A crew record has no status, so the update is admitted whatever the status
-    of the workareas that name it (ADR-0026 d8).
+    of the workspaces that name it (ADR-0026 d8).
 
     Args:
         crew (str): A crew record, by its id or its name, resolved server-side like every
@@ -144,7 +144,7 @@ def sync(
     changes.
 
      Requires: admin key role. A crew record has no status, so the update is admitted whatever the status
-    of the workareas that name it (ADR-0026 d8).
+    of the workspaces that name it (ADR-0026 d8).
 
     Args:
         crew (str): A crew record, by its id or its name, resolved server-side like every
@@ -188,7 +188,7 @@ async def asyncio_detailed(
     changes.
 
      Requires: admin key role. A crew record has no status, so the update is admitted whatever the status
-    of the workareas that name it (ADR-0026 d8).
+    of the workspaces that name it (ADR-0026 d8).
 
     Args:
         crew (str): A crew record, by its id or its name, resolved server-side like every
@@ -235,7 +235,7 @@ async def asyncio(
     changes.
 
      Requires: admin key role. A crew record has no status, so the update is admitted whatever the status
-    of the workareas that name it (ADR-0026 d8).
+    of the workspaces that name it (ADR-0026 d8).
 
     Args:
         crew (str): A crew record, by its id or its name, resolved server-side like every

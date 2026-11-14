@@ -13,7 +13,7 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     author_key: str | Unset = UNSET,
     claim_key_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
@@ -35,12 +35,12 @@ def _get_kwargs(
 
     params: dict[str, Any] = {}
 
-    json_workarea: str | Unset
-    if isinstance(workarea, Unset):
-        json_workarea = UNSET
+    json_workspace: str | Unset
+    if isinstance(workspace, Unset):
+        json_workspace = UNSET
     else:
-        json_workarea = workarea
-    params["workarea"] = json_workarea
+        json_workspace = workspace
+    params["workspace"] = json_workspace
 
     params["author_key"] = author_key
 
@@ -124,7 +124,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     author_key: str | Unset = UNSET,
     claim_key_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
@@ -136,17 +136,17 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | HeldNamed | HeldPage]:
     """The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
 
-     Requires: a dreamer key held_by human; any other key, a dreamer key held by an agent or a service
+     Requires: a reviewer key used_by person; any other key, a reviewer key used by an agent or a service
     included, is refused with access.verb_ceiling, details.reason bulk_review_is_human_only, before any
-    lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its dreamer
+    lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its reviewer
     effective access, not claimed by another key, whose lineage closure holds neither the key nor its
     principal, and no held successor whose rival the key authored, ordered held_since then artifact_id.
-    workarea narrows to that node's subtree, author_key to one authoring key by id or name,
+    workspace narrows to that node's subtree, author_key to one authoring key by id or name,
     claim_key_prefix to claim keys that start with the text, taken literally. Claims nothing and
     journals nothing (ADR-0055 d2).
 
     Args:
-        workarea (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -170,7 +170,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         author_key=author_key,
         claim_key_prefix=claim_key_prefix,
         limit=limit,
@@ -191,7 +191,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     author_key: str | Unset = UNSET,
     claim_key_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
@@ -203,17 +203,17 @@ def sync(
 ) -> ErrorEnvelope | HeldNamed | HeldPage | None:
     """The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
 
-     Requires: a dreamer key held_by human; any other key, a dreamer key held by an agent or a service
+     Requires: a reviewer key used_by person; any other key, a reviewer key used by an agent or a service
     included, is refused with access.verb_ceiling, details.reason bulk_review_is_human_only, before any
-    lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its dreamer
+    lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its reviewer
     effective access, not claimed by another key, whose lineage closure holds neither the key nor its
     principal, and no held successor whose rival the key authored, ordered held_since then artifact_id.
-    workarea narrows to that node's subtree, author_key to one authoring key by id or name,
+    workspace narrows to that node's subtree, author_key to one authoring key by id or name,
     claim_key_prefix to claim keys that start with the text, taken literally. Claims nothing and
     journals nothing (ADR-0055 d2).
 
     Args:
-        workarea (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -238,7 +238,7 @@ def sync(
 
     return sync_detailed(
         client=client,
-        workarea=workarea,
+        workspace=workspace,
         author_key=author_key,
         claim_key_prefix=claim_key_prefix,
         limit=limit,
@@ -253,7 +253,7 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     author_key: str | Unset = UNSET,
     claim_key_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
@@ -265,17 +265,17 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | HeldNamed | HeldPage]:
     """The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
 
-     Requires: a dreamer key held_by human; any other key, a dreamer key held by an agent or a service
+     Requires: a reviewer key used_by person; any other key, a reviewer key used by an agent or a service
     included, is refused with access.verb_ceiling, details.reason bulk_review_is_human_only, before any
-    lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its dreamer
+    lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its reviewer
     effective access, not claimed by another key, whose lineage closure holds neither the key nor its
     principal, and no held successor whose rival the key authored, ordered held_since then artifact_id.
-    workarea narrows to that node's subtree, author_key to one authoring key by id or name,
+    workspace narrows to that node's subtree, author_key to one authoring key by id or name,
     claim_key_prefix to claim keys that start with the text, taken literally. Claims nothing and
     journals nothing (ADR-0055 d2).
 
     Args:
-        workarea (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -299,7 +299,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         author_key=author_key,
         claim_key_prefix=claim_key_prefix,
         limit=limit,
@@ -318,7 +318,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     author_key: str | Unset = UNSET,
     claim_key_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
@@ -330,17 +330,17 @@ async def asyncio(
 ) -> ErrorEnvelope | HeldNamed | HeldPage | None:
     """The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
 
-     Requires: a dreamer key held_by human; any other key, a dreamer key held by an agent or a service
+     Requires: a reviewer key used_by person; any other key, a reviewer key used by an agent or a service
     included, is refused with access.verb_ceiling, details.reason bulk_review_is_human_only, before any
-    lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its dreamer
+    lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its reviewer
     effective access, not claimed by another key, whose lineage closure holds neither the key nor its
     principal, and no held successor whose rival the key authored, ordered held_since then artifact_id.
-    workarea narrows to that node's subtree, author_key to one authoring key by id or name,
+    workspace narrows to that node's subtree, author_key to one authoring key by id or name,
     claim_key_prefix to claim keys that start with the text, taken literally. Claims nothing and
     journals nothing (ADR-0055 d2).
 
     Args:
-        workarea (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -366,7 +366,7 @@ async def asyncio(
     return (
         await asyncio_detailed(
             client=client,
-            workarea=workarea,
+            workspace=workspace,
             author_key=author_key,
             claim_key_prefix=claim_key_prefix,
             limit=limit,

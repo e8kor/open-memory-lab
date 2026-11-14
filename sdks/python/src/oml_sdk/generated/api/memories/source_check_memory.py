@@ -99,8 +99,8 @@ def sync_detailed(
     """Record that a promoted version's anchored span was compared with its source at a commit (ADR-0057
     d5, d18).
 
-     Requires: the version's author key (writer), or a dreamer with dreamer effective access on its
-    workarea; any other writer that can read the version is 403 access.author_only, and a key that
+     Requires: the version's author key (writer), or a reviewer with reviewer effective access on its
+    workspace; any other writer that can read the version is 403 access.author_only, and a key that
     cannot read it is 404 access.not_found. The version must be a promoted, anchored served tip: a held,
     unanchored or superseded one is request.validation, details.field /artifact_id. Journals
     source.checked {artifact_id, rev, result, hash, path, fragment}; changes no text and no anchor and
@@ -108,7 +108,7 @@ def sync_detailed(
     changed or removed from the latest check, else null, and it is computed from checks of served
     versions alone, never from a held one (R3). result moved names the span's new path (required) and
     fragment, and reads not stale; path and fragment are refused with any other result. Idempotency-Key
-    required, scoped to the key with a nil workarea.
+    required, scoped to the key with a nil workspace.
 
     Args:
         artifact_id (str):
@@ -155,8 +155,8 @@ def sync(
     """Record that a promoted version's anchored span was compared with its source at a commit (ADR-0057
     d5, d18).
 
-     Requires: the version's author key (writer), or a dreamer with dreamer effective access on its
-    workarea; any other writer that can read the version is 403 access.author_only, and a key that
+     Requires: the version's author key (writer), or a reviewer with reviewer effective access on its
+    workspace; any other writer that can read the version is 403 access.author_only, and a key that
     cannot read it is 404 access.not_found. The version must be a promoted, anchored served tip: a held,
     unanchored or superseded one is request.validation, details.field /artifact_id. Journals
     source.checked {artifact_id, rev, result, hash, path, fragment}; changes no text and no anchor and
@@ -164,7 +164,7 @@ def sync(
     changed or removed from the latest check, else null, and it is computed from checks of served
     versions alone, never from a held one (R3). result moved names the span's new path (required) and
     fragment, and reads not stale; path and fragment are refused with any other result. Idempotency-Key
-    required, scoped to the key with a nil workarea.
+    required, scoped to the key with a nil workspace.
 
     Args:
         artifact_id (str):
@@ -206,8 +206,8 @@ async def asyncio_detailed(
     """Record that a promoted version's anchored span was compared with its source at a commit (ADR-0057
     d5, d18).
 
-     Requires: the version's author key (writer), or a dreamer with dreamer effective access on its
-    workarea; any other writer that can read the version is 403 access.author_only, and a key that
+     Requires: the version's author key (writer), or a reviewer with reviewer effective access on its
+    workspace; any other writer that can read the version is 403 access.author_only, and a key that
     cannot read it is 404 access.not_found. The version must be a promoted, anchored served tip: a held,
     unanchored or superseded one is request.validation, details.field /artifact_id. Journals
     source.checked {artifact_id, rev, result, hash, path, fragment}; changes no text and no anchor and
@@ -215,7 +215,7 @@ async def asyncio_detailed(
     changed or removed from the latest check, else null, and it is computed from checks of served
     versions alone, never from a held one (R3). result moved names the span's new path (required) and
     fragment, and reads not stale; path and fragment are refused with any other result. Idempotency-Key
-    required, scoped to the key with a nil workarea.
+    required, scoped to the key with a nil workspace.
 
     Args:
         artifact_id (str):
@@ -260,8 +260,8 @@ async def asyncio(
     """Record that a promoted version's anchored span was compared with its source at a commit (ADR-0057
     d5, d18).
 
-     Requires: the version's author key (writer), or a dreamer with dreamer effective access on its
-    workarea; any other writer that can read the version is 403 access.author_only, and a key that
+     Requires: the version's author key (writer), or a reviewer with reviewer effective access on its
+    workspace; any other writer that can read the version is 403 access.author_only, and a key that
     cannot read it is 404 access.not_found. The version must be a promoted, anchored served tip: a held,
     unanchored or superseded one is request.validation, details.field /artifact_id. Journals
     source.checked {artifact_id, rev, result, hash, path, fragment}; changes no text and no anchor and
@@ -269,7 +269,7 @@ async def asyncio(
     changed or removed from the latest check, else null, and it is computed from checks of served
     versions alone, never from a held one (R3). result moved names the span's new path (required) and
     fragment, and reads not stale; path and fragment are refused with any other result. Idempotency-Key
-    required, scoped to the key with a nil workarea.
+    required, scoped to the key with a nil workspace.
 
     Args:
         artifact_id (str):
