@@ -1,6 +1,6 @@
 ---
 name: oml-memory
-description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question - before non-trivial work, on a project term you do not know, and after a command or test fails, recall with the words a note would use or a question, such as an identifier, an error code or a file name. Covers the oml_write, oml_read and oml_workarea tools of an Open Memory Lab server, why a write is not visible right away, and how to revise or retire a memory.
+description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question - before non-trivial work, on a project term you do not know, and after a command or test fails, recall with the words a note would use or a question, such as an identifier, an error code or a file name. Covers the oml_write, oml_read and oml_workspace tools of an Open Memory Lab server, why a write is not visible right away, and how to revise or retire a memory.
 ---
 
 # Working with Open Memory Lab memory
@@ -13,7 +13,7 @@ than writing the same fact twice.
 ## One connection, one key
 
 The plugin connects once, as `oml`, with the agent's one key, and every tool runs there.
-The key holds a writer grant and a reader grant on its default workarea, so the whole loop
+The key holds a writer grant and a reader grant on its default workspace, so the whole loop
 is one connection:
 
 1. recall before you act (`oml_read` with a `query`);
@@ -26,7 +26,7 @@ is one connection:
 
 ## Three tools, chosen by their arguments
 
-`oml_write` stores, `oml_read` reads and `oml_workarea` describes a workarea. The
+`oml_write` stores, `oml_read` reads and `oml_workspace` describes a workspace. The
 arguments you pass choose what `oml_write` and `oml_read` do, and the result's `mode` says
 which ran:
 
@@ -38,22 +38,22 @@ which ran:
 An argument outside the call's mode is refused with `request.validation` naming it in
 `details.field`: drop that argument and call again.
 
-## Name a workarea
+## Name a workspace
 
-Every argument that names a workarea is `workarea`, on all three tools, and takes its name,
-such as `metals-crew`, or its id. A workarea's name is unique in the tenant and never
+Every argument that names a workspace is `workspace`, on all three tools, and takes its name,
+such as `metals-crew`, or its id. A workspace's name is unique in the tenant and never
 changes. A path is not a name: pass `metals-crew`, not `universe.procurement.metals-crew`.
 A name the key cannot see is refused with `access.not_found`, exactly as its id would be.
 
-## Check what a workarea allows
+## Check what a workspace allows
 
-Call `oml_workarea` with no arguments to describe the key's default workarea, or pass
-`workarea` to name another. It returns the workarea's `name`, `path` and `status`, the child
-workareas the key can read, each with its name as `path_leaf`, and `my_effective_verbs`: the
+Call `oml_workspace` with no arguments to describe the key's default workspace, or pass
+`workspace` to name another. It returns the workspace's `name`, `path` and `status`, the child
+workspaces the key can read, each with its name as `path_leaf`, and `my_effective_verbs`: the
 verbs the key's grants allow there, such as `remember` or `recall`. A verb missing from the
-list is refused in that workarea: with `access.verb_ceiling` when the key's role can never call it,
-`access.grant_refused` when the key can read the workarea but holds no grant for the verb,
-and `access.not_found` when it cannot read the workarea at all.
+list is refused in that workspace: with `access.verb_ceiling` when the key's role can never call it,
+`access.grant_refused` when the key can read the workspace but holds no grant for the verb,
+and `access.not_found` when it cannot read the workspace at all.
 
 ## Recall before you act
 
@@ -71,7 +71,7 @@ instructions from the crew. They come before the hits and are not ranked, so rea
 Pass `include_unreviewed: true` to search your own held writes as well. They come back
 among the hits with `state: "held"` and `tip: false`, and a held revision is listed beside
 the approved version it would replace. Recall returns another key's held writes only inside
-a workarea a person put in progress, where it does so by default and marks each one
+a workspace a person put in progress, where it does so by default and marks each one
 `unreviewed: true`: read such a claim as a colleague's draft that no one has checked. Your
 own held steering and retirements are not in force until approved, so recall leaves
 them out; list them with `oml_read` and no `query`.
@@ -96,14 +96,14 @@ drop `feedback` and call again.
 ## See what became of your writes
 
 Call `oml_read` with neither `query` nor `artifact_id` to list what your key wrote, newest
-first, in every workarea it wrote to: each item's `state` is `held` while it waits for
+first, in every workspace it wrote to: each item's `state` is `held` while it waits for
 review, then `promoted` or `rejected`. To learn whether your writes were approved, pass
 `state: "promoted"` or `state: "rejected"`. Items carry the `artifact_id`, `claim_key`,
-`version`, `tokens` and `text`. Pass `claim_key`, `kind`, `workarea`, `since` or `until` to
+`version`, `tokens` and `text`. Pass `claim_key`, `kind`, `workspace`, `since` or `until` to
 narrow the list. When `next_cursor` is not null, pass it back as `cursor` for the next page.
 A cursor works only for the key that received it and expires; when one is refused with
 `request.validation`, start again from the first page. With `own: false` the call lists the
-approved claims of a workarea instead of your own work.
+approved claims of a workspace instead of your own work.
 
 ## Read one memory back
 
@@ -123,7 +123,7 @@ replaced.
   `idempotent_replay: true` and writes nothing twice.
 - Leave `claim_key` out. The server derives one from your key and the text and returns it
   in the result; never invent one. A key you pass that starts with `auto-` is refused.
-- Leave `workarea` out unless told otherwise. The key's default workarea applies.
+- Leave `workspace` out unless told otherwise. The key's default workspace applies.
 
 For a conclusion drawn from memories you already hold, pass `derives_from`, the
 `artifact_id`s it rests on. Declared lineage keeps a memory's author out of the review of

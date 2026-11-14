@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Chat memory end to end: LongMemEval (S) and LoCoMo through ADR-0063's path.
 
-    chat.py workareas <dataset> [--limit N]       the workareas boot.sh must create
+    chat.py workspaces <dataset> [--limit N]       the workspaces boot.sh must create
     chat.py load --state S <dataset> [--limit N]  write every turn as a chat memory
     chat.py run  --state S --out DIR <dataset> [--limit N] [--k 50]
                                                   retrieval proxy: recall@k of evidence turns
@@ -17,14 +17,14 @@ load: each turn is one `POST /v1/memories` by the writer (agent) key with
 `origin: {kind: chat}` and a chat anchor, `chat://bench/<session>#turn=<n>`,
 whose session is the first 32 hex digits of SHA-256 of the dataset's session
 id and whose hash is `oml-turn/1` of the turn's text keyed by a random salt per run (ADR-0063 d4, d5). The
-rows stay held, as a person's chat workarea holds them before review, and
+rows stay held, as a person's chat workspace holds them before review, and
 are recalled by their author with `include_unreviewed` (ADR-0025 d4). Each
-LongMemEval question is its own workarea, `bench-chat-lme-<qid>`; each
+LongMemEval question is its own workspace, `bench-chat-lme-<qid>`; each
 LoCoMo conversation its own, `bench-chat-locomo-<sample>`. Turn-level
 ingestion is the floor an agent's own extraction must beat (d12; #111).
 
 run: each question is asked once through `POST /v1/memories/recall` in its
-workarea with `match: any`, `include_unreviewed: true` and `origin_kinds:
+workspace with `match: any`, `include_unreviewed: true` and `origin_kinds:
 [chat]`, k 50. Measured without a model: turn recall@k (k 5, 10, 50) of the
 evidence turns (LongMemEval's `has_answer` turns, LoCoMo's `evidence`), and,
 for LongMemEval, session recall@k against `answer_session_ids`. A question
@@ -198,7 +198,7 @@ def dataset(name, cache, limit, seed):
     return DATASETS[name](cache, limit, seed)
 
 
-def workarea(group):
+def workspace(group):
     return f"bench-chat-{group}"
 
 
@@ -216,9 +216,9 @@ def writer(state):
     return Client((state / "url").read_text().strip(), (state / "writer.key").read_text().strip())
 
 
-def cmd_workareas(a):
+def cmd_workspaces(a):
     _, qs = dataset(a.dataset, a.cache, a.limit, a.seed)
-    print(" ".join(sorted({workarea(q.group) for q in qs})))
+    print(" ".join(sorted({workspace(q.group) for q in qs})))
 
 
 def cmd_load(a):
@@ -228,7 +228,7 @@ def cmd_load(a):
 
     def write(t):
         body = {"body": t.text[:200_000], "claim_key": claim_key(t), "kind": "memory",
-                "workarea": workarea(t.group), "origin": {"kind": "chat"}, "anchor": anchor(t)}
+                "workspace": workspace(t.group), "origin": {"kind": "chat"}, "anchor": anchor(t)}
         for attempt in range(8):
             status, resp = w.call("POST", "/v1/memories", body, idempotent=True)
             if status in (202, 200):
@@ -254,7 +254,7 @@ def cmd_load(a):
 
 
 def recall(w, q, k):
-    body = {"query": q.text, "k": k, "workarea": workarea(q.group), "match": "any",
+    body = {"query": q.text, "k": k, "workspace": workspace(q.group), "match": "any",
             "include_unreviewed": True, "include_text": True, "origin_kinds": ["chat"]}
     t0 = time.perf_counter()
     status, resp = w.call("POST", "/v1/memories/recall", body)
@@ -458,14 +458,14 @@ def cmd_qa(a):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("workareas", "load", "run", "qa"):
+    for name in ("workspaces", "load", "run", "qa"):
         s = sub.add_parser(name)
         s.add_argument("dataset")
         s.add_argument("--cache", default=DEFAULT_CACHE)
         s.add_argument("--limit", type=int, default=None,
                        help="questions (LongMemEval) or conversations (LoCoMo), drawn with --seed")
         s.add_argument("--seed", type=int, default=SEED)
-        if name != "workareas":
+        if name != "workspaces":
             s.add_argument("--state", required=True)
             s.add_argument("--workers", type=int, default=8)
         if name in ("run", "qa"):
@@ -479,7 +479,7 @@ def main():
             s.add_argument("--answer-model", required=True)
             s.add_argument("--judge-model", required=True)
     a = p.parse_args()
-    {"workareas": cmd_workareas, "load": cmd_load, "run": cmd_run, "qa": cmd_qa}[a.cmd](a)
+    {"workspaces": cmd_workspaces, "load": cmd_load, "run": cmd_run, "qa": cmd_qa}[a.cmd](a)
 
 
 if __name__ == "__main__":

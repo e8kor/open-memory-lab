@@ -57,7 +57,7 @@ three. A copy left unedited fails to resolve `.invalid`, a name reserved never t
 has seen the key, so treat it as exposed.
 
 Issue a key on your own server with `oml keys issue-agent`, which gives it a writer grant and a
-reader grant on the agent's workarea. Check it first with `oml login <url>`, which stores the pair
+reader grant on the agent's workspace. Check it first with `oml login <url>`, which stores the pair
 only when the server accepts the key; the `oml` CLI and the Gemini CLI session-start hook read
 the same `OML_URL`:
 

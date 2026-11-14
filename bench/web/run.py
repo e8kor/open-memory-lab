@@ -260,31 +260,31 @@ def sign_in(lead, issuer):
     return session
 
 
-def seed(lead, admin, workareas, memories):
-    """Workareas under the person's root, memories written by a user agent
-    key and two thirds of them approved by two human reviewers in turn."""
+def seed(lead, admin, workspaces, memories):
+    """Workspaces under the person's root, memories written by a user agent
+    key and two thirds of them approved by two person reviewers in turn."""
     root = USER
     names = [root]
-    for i in range(1, workareas):
-        _, node = lead.json("POST", "/v2/workareas", admin, {"parent": root, "name": f"p{i}"})
+    for i in range(1, workspaces):
+        _, node = lead.json("POST", "/v2/workspaces", admin, {"parent": root, "name": f"p{i}"})
         names.append(node["id"])
     _, writer = lead.json("POST", "/v2/keys", admin, {
-        "role": "writer", "name": f"{USER}-bench-writer", "user": USER, "held_by": "agent",
-        "principal": "bench/writer", "default_workarea": root,
-        "grants": [{"workarea": root, "role": "writer"}]})
+        "role": "writer", "name": f"{USER}-bench-writer", "user": USER, "used_by": "agent",
+        "principal": "bench/writer", "default_workspace": root,
+        "grants": [{"workspace": root, "role": "writer"}]})
     reviewers = []
     for side in ("a", "b"):
         _, key = lead.json("POST", "/v2/keys", admin, {
-            "role": "dreamer", "name": f"bench-reviewer-{side}", "held_by": "human",
-            "principal": f"bench/reviewer-{side}", "default_workarea": root,
-            "grants": [{"workarea": root, "role": "dreamer"}]})
+            "role": "reviewer", "name": f"bench-reviewer-{side}", "used_by": "person",
+            "principal": f"bench/reviewer-{side}", "default_workspace": root,
+            "grants": [{"workspace": root, "role": "reviewer"}]})
         reviewers.append(key["value"])
     ids = []
     for n in range(memories):
         _, receipt = lead.json("POST", "/v1/memories", writer["value"], {
-            "body": f"Bench memory {n}: the service in area {n % workareas} answers "
+            "body": f"Bench memory {n}: the service in area {n % workspaces} answers "
                     f"within its budget and logs one line per request {n}.",
-            "workarea": names[n % workareas]})
+            "workspace": names[n % workspaces]})
         ids.append(receipt["artifact_id"])
     approved = 0
     for n, artifact in enumerate(ids):
@@ -297,7 +297,7 @@ def seed(lead, admin, workareas, memories):
         lead.json("POST", "/v2/review/verdicts", reviewer,
                   {"verdict": "approve", "serve_id": served["serve_id"]})
         approved += 1
-    return {"workareas": len(names), "memories": memories, "approved": approved,
+    return {"workspaces": len(names), "memories": memories, "approved": approved,
             "held": memories - approved}, ids
 
 
@@ -309,8 +309,8 @@ def pages(promoted_id, in_process=False):
     if in_process:
         return [
             ("guardrails", "/web?view=guardrails"),
-            ("workareas", "/web?view=workarea"),
-            ("admin/workareas", "/web/admin?view=workarea"),
+            ("workspaces", "/web?view=workspace"),
+            ("admin/workspaces", "/web/admin?view=workspace"),
             ("memories", "/web?view=memories"),
             ("memories?q", "/web?view=memories&q=budget+service"),
             ("atlas", "/web?view=memories&display=atlas"),
@@ -334,8 +334,8 @@ def pages(promoted_id, in_process=False):
         ]
     return [
         ("guardrails", "/web/guardrails"),
-        ("workareas", "/web/workareas"),
-        ("admin/workareas", "/web/admin/workareas"),
+        ("workspaces", "/web/workspaces"),
+        ("admin/workspaces", "/web/admin/workspaces"),
         ("memories", "/web/memories"),
         ("memories?q", "/web/memories?q=budget+service"),
         ("atlas", "/web/atlas"),
@@ -500,7 +500,7 @@ def main():
     ap.add_argument("--pg-bin", required=True, help="PostgreSQL's bin directory (initdb, pg_ctl)")
     ap.add_argument("--work", required=True, help="a scratch directory, removed at the end")
     ap.add_argument("--out", required=True, help="the result file")
-    ap.add_argument("--workareas", type=int, default=6, help="workareas in the person's root")
+    ap.add_argument("--workspaces", type=int, default=6, help="workspaces in the person's root")
     ap.add_argument("--memories", type=int, default=240)
     ap.add_argument("--iterations", type=int, default=500)
     ap.add_argument("--warmup", type=int, default=50)
@@ -531,7 +531,7 @@ def main():
         admin = claimed["value"]
         lead.json("POST", "/v2/web/emails", admin, {"email": EMAIL, "user": USER, "admin": True})
         session = sign_in(lead, stack.issuer)
-        seeded, ids = seed(lead, admin, a.workareas, a.memories)
+        seeded, ids = seed(lead, admin, a.workspaces, a.memories)
         load_before = loadavg()
         web = Http(stack.lead_port if a.in_process else stack.web_port)
         page_list = pages(ids[0], a.in_process)
@@ -549,7 +549,7 @@ def main():
         "schema": SCHEMA,
         "suite": "web-pages",
         "shape": "in-process" if a.in_process else "oml-web",
-        "workareas": a.workareas,
+        "workspaces": a.workspaces,
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "commit": a.commit or git("rev-parse", "--short=12", "HEAD"),
         "environment": {

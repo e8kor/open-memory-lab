@@ -6,7 +6,7 @@
     python3 eval/recall/fed2.py analyze --out DIR
 
 `collect` runs under federated.sh (EVAL_SCRIPT=fed2.py): it loads the corpus as federated.py
-does, one committed workarea per topic under `eval-fed`, and reads from the served lead, for
+does, one protected workspace per topic under `eval-fed`, and reads from the served lead, for
 every query of the scoped, cross and unanswerable splits and again after the skew padding:
 
 - the union's ranking, `sources: "wide"` at `max_sources` 64, `k` 100, on `bm25-postings`
@@ -14,8 +14,8 @@ every query of the scoped, cross and unanswerable splits and again after the ske
 - the served `wide` answer at the split's cap on `bm25-postings`, and the served `bm25-sparse`
   `scope` answer with its two legs read at `scope`, so `analyze` can check its replay of both;
 - the descriptor score of every candidate: each topic's descriptor (`descriptors.json`) is one
-  memory in its own committed workarea under `eval-desc`, and a `bm25` recall whose `sources`
-  lists the candidates' descriptor workareas alone scores them with BM25 over the candidates'
+  memory in its own protected workspace under `eval-desc`, and a `bm25` recall whose `sources`
+  lists the candidates' descriptor workspaces alone scores them with BM25 over the candidates'
   descriptors, the reference set d4.5 names; once more for each topic in turn with its
   descriptor replaced by the adversarial one, whose text holds every word of every query.
 
@@ -41,7 +41,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import metrics  # noqa: E402
 from federated import (SKEW_FACTOR, SKEW_MAX_SOURCES, SKEW_TOPIC, cross_scope, oml,  # noqa: E402
-                       scifact, workarea, write_all)
+                       scifact, workspace, write_all)
 from run import Client  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -72,19 +72,19 @@ def recall(client, body):
 
 def hits(resp, idmap):
     return [[idmap.get(h["memory"]["artifact_id"], "?"), h["memory"]["artifact_id"], h["score"],
-             h["memory"]["workarea_path"].rsplit(".", 1)[-1]] for h in resp["hits"]]
+             h["memory"]["workspace_path"].rsplit(".", 1)[-1]] for h in resp["hits"]]
 
 
 def sources_of(resp):
     s = resp["search"].get("sources") or {}
-    return [{"wa": x["workarea_path"].rsplit(".", 1)[-1], "via": x["via"],
+    return [{"wa": x["workspace_path"].rsplit(".", 1)[-1], "via": x["via"],
              "estimate": x["estimate"]} for x in s.get("searched", [])]
 
 
-def issue(name, role, held_by, grants, state):
+def issue(name, role, used_by, grants, state):
     """A key whose value goes straight to an owner-only file, never printed."""
-    args = ["keys", "issue", name, "--role", role, "--held-by", held_by,
-            "--principal", f"crew/{name}", "--default-workarea", DESC_PARENT]
+    args = ["keys", "issue", name, "--role", role, "--used-by", used_by,
+            "--principal", f"crew/{name}", "--default-workspace", DESC_PARENT]
     for g in grants:
         args += ["--grant", g]
     out = oml(*args)
@@ -112,24 +112,24 @@ def adversarial_text(queries):
 
 
 def load_descriptors(state, url, queries):
-    """One committed workarea per descriptor under eval-desc, the adversary's beside them."""
-    oml("workareas", "create", "universe", DESC_PARENT)
+    """One protected workspace per descriptor under eval-desc, the adversary's beside them."""
+    oml("workspaces", "create", "universe", DESC_PARENT)
     os.environ["EVAL_URL"] = url
     writer = issue("desc-writer", "writer", "agent",
                    [f"{DESC_PARENT}:writer", f"{DESC_PARENT}:reader"], state)
-    reviewer = issue("desc-reviewer", "dreamer", "human",
-                     [f"{DESC_PARENT}:dreamer", f"{DESC_PARENT}:reader"], state)
+    reviewer = issue("desc-reviewer", "reviewer", "person",
+                     [f"{DESC_PARENT}:reviewer", f"{DESC_PARENT}:reader"], state)
     reader = issue("desc-reader", "reader", "agent", [f"{DESC_PARENT}:reader"], state)
     desc = json.loads((HERE / "descriptors.json").read_text())["descriptors"]
     texts = {t: d["summary"] + " " + " ".join(d["questions"]) for t, d in desc.items()}
     texts["adv"] = adversarial_text(queries)
     for t in texts:
-        oml("workareas", "create", DESC_PARENT, desc_wa(t))
+        oml("workspaces", "create", DESC_PARENT, desc_wa(t))
     idmap = write_all(writer, reviewer, [(f"desc-{t}", x, desc_wa(t)) for t, x in texts.items()])
     rkey = (state / "desc-reviewer.key").read_text().strip()
     for t in texts:
-        tid = oml("workareas", "status", "propose", desc_wa(t), "--to", "committed")["transition_id"]
-        subprocess.run([os.environ["OML"], "--url", url, "--api-key", rkey, "--json", "workareas",
+        tid = oml("workspaces", "status", "propose", desc_wa(t), "--to", "protected")["transition_id"]
+        subprocess.run([os.environ["OML"], "--url", url, "--api-key", rkey, "--json", "workspaces",
                         "status", "ratify", desc_wa(t), tid], check=True, capture_output=True)
     return reader, idmap, {t: len(x) for t, x in texts.items()}
 
@@ -137,10 +137,10 @@ def load_descriptors(state, url, queries):
 def descriptor_scores(reader, didmap, query, candidates, swap=None):
     """{topic: BM25 score} over the candidates' descriptors alone; swap = (topic, 'adv')."""
     names = {t: (desc_wa("adv") if swap and t == swap else desc_wa(t)) for t in candidates}
-    body = {"query": query, "k": len(names), "workarea": DESC_PARENT, "search": "bm25",
+    body = {"query": query, "k": len(names), "workspace": DESC_PARENT, "search": "bm25",
             "include_text": False, "sources": sorted(names.values())}
     resp, _ = recall(reader, body)
-    by_wa = {h["memory"]["workarea_path"].rsplit(".", 1)[-1]: h["score"] for h in resp["hits"]}
+    by_wa = {h["memory"]["workspace_path"].rsplit(".", 1)[-1]: h["score"] for h in resp["hits"]}
     return {t: by_wa.get(w, 0.0) for t, w in names.items()}
 
 
@@ -151,7 +151,7 @@ def collect(a):
     memories, queries = metrics.load()
     topic_of = {m["id"]: m["topic"] for m in memories}
     topics = sorted({m["topic"] for m in memories})
-    idmap = write_all(writer, reviewer, [(m["id"], m["text"], workarea(m["topic"])) for m in memories])
+    idmap = write_all(writer, reviewer, [(m["id"], m["text"], workspace(m["topic"])) for m in memories])
     wait_sparse(a.metrics_url, len(idmap))
     dreader, didmap, dlens = load_descriptors(state, a.url, queries)
 
@@ -165,7 +165,7 @@ def collect(a):
     ])
 
     def base(q, scope, search, k, sources):
-        b = {"query": q["query"], "k": k, "workarea": workarea(scope), "search": search,
+        b = {"query": q["query"], "k": k, "workspace": workspace(scope), "search": search,
              "include_text": False}
         if sources:
             b["sources"] = sources
@@ -206,7 +206,7 @@ def collect(a):
 
     # Descriptor scores per (query, scope): they read eval-desc alone, so the padding cannot move them.
     pairs = {(q["id"], s): q["query"] for items in splits.values() for q, s in items}
-    oml("search", "federation", "--max-sources", "64")  # a list of ten descriptor workareas
+    oml("search", "federation", "--max-sources", "64")  # a list of ten descriptor workspaces
     desc = {}
     for (qid, scope), text in pairs.items():
         cands = [t for t in topics if t != scope]
@@ -222,7 +222,7 @@ def collect(a):
     sizes = Counter(m["topic"] for m in memories)
     pad = SKEW_FACTOR * max(c for t, c in sizes.items() if t != SKEW_TOPIC)
     idmap.update(write_all(writer, reviewer,
-                           [(k, t, workarea(SKEW_TOPIC)) for k, t in scifact(a.scifact_zip, pad)]))
+                           [(k, t, workspace(SKEW_TOPIC)) for k, t in scifact(a.scifact_zip, pad)]))
     wait_sparse(a.metrics_url, len(idmap) + len(didmap))
     raw["skew"] = {"padded_topic": SKEW_TOPIC, "padded_rows": pad, "max_sources": SKEW_MAX_SOURCES}
     raw["splits"]["skew"] = read_split(splits["cross"], SKEW_MAX_SOURCES, True)
@@ -236,7 +236,7 @@ def collect(a):
 
 
 def content_order(cands):
-    """d4.4: E descending, then workarea name ascending."""
+    """d4.4: E descending, then workspace name ascending."""
     return [c["wa"].removeprefix("fed-") for c in sorted(cands, key=lambda c: (-c["estimate"], c["wa"]))]
 
 
@@ -298,7 +298,7 @@ def ranking(row, pipeline):
 
 
 def answer(rank, scope, searched):
-    allowed = {workarea(scope)} | {workarea(t) for t in searched}
+    allowed = {workspace(scope)} | {workspace(t) for t in searched}
     return [h[0] for h in rank if h[3] in allowed][:K]
 
 

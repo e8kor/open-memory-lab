@@ -51,7 +51,7 @@ def describe(method, r):
     if method == "bm25":
         return ("The served bm25 statement (oml-pg bm25_sql, k1 1.2, b 0.75) over migration "
                 "0020's stored lexemes, run in a throwaway Postgres 18 with the scope reduced to "
-                "the query's workarea; it reproduces the served run to the third decimal.")
+                "the query's workspace; it reproduces the served run to the third decimal.")
     if method in MODELS:
         kind = ("Inference-free learned sparse: documents encoded by the model, queries by its "
                 "tokenizer and idf.json, no model at read." if method.startswith("sparse")

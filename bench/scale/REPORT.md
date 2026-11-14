@@ -83,10 +83,10 @@ on a loaded host, where 20,000 sits at its edge.
 ## The access index (ADR-0052 open question 1)
 
 The index d1 first wrote, `(kind, token_id)` over every posting, reads a token's postings across
-the whole tenant and filters workarea and state from the heap. The built one,
+the whole tenant and filters workspace and state from the heap. The built one,
 `search_postings_served`, holds the served postings alone, ordered by `(kind, token_id,
-workarea_id)` and carrying `memory_kind`, `memory_id`, `weight`, `doc_len` and `tenant_id`, so a
-recall is an index-only read of its own workareas' postings:
+workspace_id)` and carrying `memory_kind`, `memory_id`, `weight`, `doc_len` and `tenant_id`, so a
+recall is an index-only read of its own workspaces' postings:
 
 | memories | index | size MiB | leaf p95 | project p95 | universe p95 |
 |---:|---|---:|---:|---:|---:|
@@ -138,7 +138,7 @@ Write cost, p50 / p95 ms, each step its own transaction as the serving role:
 | 165,000, with postings | 2.40 / 8.08 | 4.54 / 8.94 | 6.35 / 12.6 |
 
 A promotion pays about 2–3 ms more p50: its postings enter the served index and its tokens'
-counts are updated. One client; contention between promotions in one workarea is #100.
+counts are updated. One client; contention between promotions in one workspace is #100.
 
 ## Not measured
 

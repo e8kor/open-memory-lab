@@ -14,7 +14,7 @@ The findings are in [REPORT-baseline.md](REPORT-baseline.md). The generated tabl
 
 | file | what it does |
 |---|---|
-| `gen.py` | builds synthetic memories, workarea trees, readable scopes, queries and write texts from the recall eval's seeds |
+| `gen.py` | builds synthetic memories, workspace trees, readable scopes, queries and write texts from the recall eval's seeds |
 | `seed_corpus.json`, `seed_queries.json` | `eval/recall/corpus.json` and `queries.json`, data version 1, copied from `eval/recall/` |
 | `run.py` | runs one scale: creates the database, migrates it, loads the data, builds each approach, measures it, writes the results JSON |
 | `run_all.sh` | the sequence that produced `results/`: 10k, 100k, 10 tenants × 100k, 1M text (resumed once, `s1m_text2.json`), 1M vectors (halfvec and float), the stored-tsvector supplement at 10k and 100k, and the two added cases |
@@ -62,8 +62,8 @@ persistent statements are.
 - Approach c adds two stored generated tsvector columns and a GIN index on
   each, and drops today's expression GIN index, which the stored simple column
   replaces.
-- Approach d adds `bm25_df (tenant, workarea, term, df)` and
-  `bm25_scope (tenant, workarea, n, len)`. Both carry row security and the
+- Approach d adds `bm25_df (tenant, workspace, term, df)` and
+  `bm25_scope (tenant, workspace, n, len)`. Both carry row security and the
   `tenant_isolation` policy, and an `AFTER INSERT OR UPDATE` trigger maintains
   them.
 - Approach f adds `memory_vectors`, list-partitioned per tenant and fenced by
@@ -82,8 +82,8 @@ seed texts with templated variation:
 
 The mean claim is 176 characters (the seeds' mean is 121), and the 90th
 percentile is 277. Each tenant has a tree: `universe`, then projects, then
-leaves, with about one workarea per 2,000 memories and at least 20. That gives
-20 workareas at 10k, 50 at 100k and 500 at 1M. Leaf sizes follow a Pareto
+leaves, with about one workspace per 2,000 memories and at least 20. That gives
+20 workspaces at 10k, 50 at 100k and 500 at 1M. Leaf sizes follow a Pareto
 distribution.
 
 | state | share |
@@ -110,11 +110,11 @@ seed queries as written, plus variants with identifiers and numbers swapped
 from the corpus generator's pool. Each query draws one readable scope as the
 lead computes it, subtree(scope) ∩ readable plus `universe` (ADR-0044 d10):
 
-| scope | share | workareas read |
+| scope | share | workspaces read |
 |---|---:|---|
 | a leaf | 40% | the leaf and `universe` |
 | a project | 40% | the project, its leaves and `universe` |
-| `universe` | 20% | every workarea |
+| `universe` | 20% | every workspace |
 
 The other parameters are kinds `memory` and `derived_fact`, and `k` 10.
 
@@ -126,7 +126,7 @@ The other parameters are kinds `memory` and `derived_fact`, and `k` 10.
 | `b_simple_or_rank`, `b_simple_or_rank_cd` | the same with the query's lexemes joined by OR, ranked by `ts_rank` or `ts_rank_cd` |
 | `c_dual_or` | stored `english` and `simple` tsvectors with a GIN index each; any word on either; the sum of both `ts_rank`s |
 | `d_bm25_querytime` | BM25 (k1 1.2, b 0.75) over the readable served rows; N and avgdl counted over the readable rows and df over the candidates, all at query time under row security |
-| `d_bm25_maintained` | the same score with N, length and df read from the maintained per-workarea tables, summed over the readable workareas |
+| `d_bm25_maintained` | the same score with N, length and df read from the maintained per-workspace tables, summed over the readable workspaces |
 | `e_trgm_text`, `e_trgm_ident` | pg_trgm `word_similarity` (`<%`, threshold 0.6) on the claim and on its identifiers, each with GIN `gin_trgm_ops` |
 | `f_hnsw` | pgvector 0.8.1 HNSW (m 16, ef_construction 64, ef_search 40, `iterative_scan = relaxed_order`), cosine, 384 dimensions, with the same scope filter |
 | ADR-0050 check | per write, the served-tip and own-held any-word recalls with `k` 3 and the new text as the query, at a leaf's scope |

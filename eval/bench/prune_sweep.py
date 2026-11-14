@@ -7,7 +7,7 @@ Reads a lead's benchmark database while boot.sh serves it (the corpus already
 loaded by `bench.py load`), and asks every query of each dataset through the
 PostgreSQL adapter's own `retrieve` (crates/adapters/oml-pg/examples/
 search_scale.rs, as the serving role under row security, scoped to the
-dataset's workarea as the recall's core scopes it) for `bm25` and for
+dataset's workspace as the recall's core scopes it) for `bm25` and for
 `bm25_postings` at each pair of prune constants, then scores each ranked list
 with ir_measures as bench.py does. It bypasses HTTP and the core, so its
 latency is the store call's alone; the served numbers are bench.py's. Its one
@@ -28,7 +28,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from adapters import ADAPTERS, workarea  # noqa: E402
+from adapters import ADAPTERS, workspace  # noqa: E402
 from bench import DEFAULT_CACHE, claim_key, score  # noqa: E402
 
 REPO = HERE.parent.parent
@@ -69,10 +69,10 @@ def main():
         doc_of = {claim_key(ds, d.id): d.id for d in bench.docs}
         nodes = {}
         for q in bench.queries:
-            name = workarea(ds, q.group)
+            name = workspace(ds, q.group)
             if name not in nodes:
-                nodes[name] = psql(db, f"SELECT id FROM workareas WHERE name = '{name}'")
-        items = [{"tenant": tenant, "nodes": [nodes[workarea(ds, q.group)]], "query": q.text,
+                nodes[name] = psql(db, f"SELECT id FROM workspaces WHERE name = '{name}'")
+        items = [{"tenant": tenant, "nodes": [nodes[workspace(ds, q.group)]], "query": q.text,
                   "k": 100} for q in bench.queries]
         work = out / f".workload-{ds}.json"
         work.write_text(json.dumps(items))

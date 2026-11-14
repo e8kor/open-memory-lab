@@ -45,10 +45,10 @@ class RustSdk(unittest.TestCase):
         self.assertIn("whoami.user: the SDK's NamedRef.label is a field openapi.yaml does not declare", problems)
 
     def test_a_nested_field_through_a_oneof_listing_fails(self):
-        problems = C.rust_sdk_problems(SPEC, renamed("WorkareaNode", "path", "route"))
+        problems = C.rust_sdk_problems(SPEC, renamed("WorkspaceNode", "path", "route"))
         self.assertEqual(
             problems,
-            ["getWorkareaTree.items: the SDK's WorkareaNode.route is a field openapi.yaml does not declare"],
+            ["getWorkspaceTree.items: the SDK's WorkspaceNode.route is a field openapi.yaml does not declare"],
         )
 
     def test_a_schema_that_declares_no_fields_is_reported_not_skipped(self):

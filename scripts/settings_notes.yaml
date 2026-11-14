@@ -95,7 +95,7 @@ server:
     note: "The profile an account of the sign-up tenant is on until an admin assigns one. A name `quota.profiles` does not declare stops the start ([ADR-0071](../adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d5)."
   brief.max_tokens:
     default: "`400`"
-    note: The token budget a workarea's brief is cut to when an agent reads the workarea. The first member that does not fit ends the brief.
+    note: The token budget a workspace's brief is cut to when an agent reads the workspace. The first member that does not fit ends the brief.
   search.enabled:
     default: "`keyword-any`, `bm25`, `bm25-postings`"
     note: The search pipelines the server offers, a TOML array in the file and comma-separated in the environment. A request naming a pipeline that is not listed is refused with `request.validation`.
@@ -161,7 +161,7 @@ client:
   OML_CLI_CREDENTIALS:
     note: The path of the credentials file, for tests and for keeping several servers apart.
   OML_SESSION_CONTEXT:
-    note: "`off` stops the session-start hook from loading the workarea's memory into a session. It takes `on` or `off`."
+    note: "`off` stops the session-start hook from loading the workspace's memory into a session. It takes `on` or `off`."
   OML_SESSION_CONTEXT_MAX_TOKENS:
     note: The token budget of the session-start recall, an integer from 1 up.
   OML_FAILURE_RECALL:

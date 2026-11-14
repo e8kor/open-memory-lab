@@ -6,7 +6,7 @@ as the serving role under row security. It measures speed, space and write cost,
 pruning moves the list from `bm25`'s; relevance on real text is `eval/bench/`'s job.
 
 The data and the queries come from the scale lane's generator (`gen.py`, `seed_corpus.json`,
-`seed_queries.json`, from the baseline lane below, measured on 2026-11-04): synthetic memories templated from the recall eval's 200 seeds, one workarea per
+`seed_queries.json`, from the baseline lane below, measured on 2026-11-04): synthetic memories templated from the recall eval's 200 seeds, one workspace per
 about 2,000 memories under `universe` and its projects, 65% promoted served tips, 15% held, the
 rest replaced, rejected or demoted; 330 queries, 30 in each of the eval's 11 categories, each
 with a leaf (40%), project (40%) or `universe` (20%) scope as the lead computes it. The findings
@@ -21,7 +21,7 @@ are in [REPORT.md](REPORT.md); the numbers in `results/postings-*.json`.
 | `postings.py` | one run at one scale: database, migrations through 0020, load, 0021's fill timed, space, the query sweep, the access-index variant, own held rows and write cost |
 | `sparse.py` | the learned sparse lane (ADR-0052 d16): migrations through 0022, every version encoded by the real model through `sparse_encode` (oml-rerank's example) and its kind 2 rows written with its state, then `bm25_postings` and `sparse` at k 10, and the two lists `bm25-sparse` reads at depth 100, with the load average beside each run |
 | `similar.py` | the similar check's lane (ADR-0050 d17): migrations through 0024, the load, 0027's fill of the similar keys timed, their space, 330 writes' key lookup through `oml_pg::SIMILAR_CANDIDATES` and the read of their candidates at leaf, project and universe scopes, the plan, and the trigger's share of a write; results in `results/similar-*.json` |
-| `fanout.py` | research (2026-11-12, [`MAPREDUCE.md`](../../eval/recall/MAPREDUCE.md)): the sparse leg's statement over every workarea against one statement per workarea or per group, on a pool of connections and merged by score, at 1k, 10k and 100k memories and 5, 50 and 500 workareas, and under 1, 2, 4 and 8 concurrent clients over five interleaved rounds; results in `results/fanout*.json` and `results/fanout-reconcile/`; no served path |
+| `fanout.py` | research (2026-11-12, [`MAPREDUCE.md`](../../eval/recall/MAPREDUCE.md)): the sparse leg's statement over every workspace against one statement per workspace or per group, on a pool of connections and merged by score, at 1k, 10k and 100k memories and 5, 50 and 500 workspaces, and under 1, 2, 4 and 8 concurrent clients over five interleaved rounds; results in `results/fanout*.json` and `results/fanout-reconcile/`; no served path |
 | `../../crates/adapters/oml-pg/examples/search_scale.rs` | the driver: each query through `PgStore::retrieve`, the adapter's own statements, warm, one JSON line per call |
 
 ## The baseline lane

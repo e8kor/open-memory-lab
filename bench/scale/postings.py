@@ -19,7 +19,7 @@ search_scale`; SEARCH_SCALE names its path). Each run:
 5. runs the scale lane's 330 queries over leaf, project and universe scopes
    through `search_scale` (PgStore::retrieve, warm) for `bm25`, for
    `bm25_postings` unpruned, and for `bm25_postings` at each candidate pair of
-   prune constants; and with `(kind, token_id, workarea_id)` as the access
+   prune constants; and with `(kind, token_id, workspace_id)` as the access
    index in place of `(kind, token_id)` (ADR-0052 open question 1);
 6. measures a key holding 1,000 and 10,000 own held rows (open question 7);
 7. times the trigger's share of a write: insert, promote and supersede, with
@@ -91,7 +91,7 @@ def apply_0021(db: str, owner: str, serving: str) -> float:
         return time.perf_counter() - t0
 
 
-COLS = ["id", "tenant_id", "workarea_id", "claim", "claim_digest", "status", "created_event_id",
+COLS = ["id", "tenant_id", "workspace_id", "claim", "claim_digest", "status", "created_event_id",
         "claim_key", "author_principal", "author_key_id", "version", "kind", "is_tip",
         "body_bytes", "retirement", "severity"]
 
@@ -103,14 +103,14 @@ def load(db: str, owner: str, rows: int, seed: int):
     keys = [uuid.UUID(int=r.getrandbits(128), version=4) for _ in range(20)]
     with su(db) as c:  # the genesis rows, as the lead's bootstrap writes them
         c.execute("INSERT INTO tenants (id, name) VALUES (%s, 'scale')", (t,))
-        c.execute("INSERT INTO workareas (id, tenant_id, parent_id, status, name) "
-                  "VALUES (%s, %s, NULL, 'committed', 'universe')", (tree.universe, t))
+        c.execute("INSERT INTO workspaces (id, tenant_id, parent_id, status, name) "
+                  "VALUES (%s, %s, NULL, 'protected', 'universe')", (tree.universe, t))
         for i, p in enumerate(tree.projects):
-            c.execute("INSERT INTO workareas (id, tenant_id, parent_id, status, name) "
-                      "VALUES (%s, %s, %s, 'committed', %s)", (p, t, tree.universe, f"p{i}"))
+            c.execute("INSERT INTO workspaces (id, tenant_id, parent_id, status, name) "
+                      "VALUES (%s, %s, %s, 'protected', %s)", (p, t, tree.universe, f"p{i}"))
             for j, leaf in enumerate(tree.leaves[p]):
-                c.execute("INSERT INTO workareas (id, tenant_id, parent_id, status, name) "
-                          "VALUES (%s, %s, %s, 'committed', %s)", (leaf, t, p, f"p{i}-l{j}"))
+                c.execute("INSERT INTO workspaces (id, tenant_id, parent_id, status, name) "
+                          "VALUES (%s, %s, %s, 'protected', %s)", (leaf, t, p, f"p{i}-l{j}"))
     p = "memories_t_" + t.hex
     with psycopg.connect(dsn(owner, db), autocommit=True) as c:
         c.execute("SET maintenance_work_mem = '1GB'")
@@ -131,11 +131,11 @@ def load(db: str, owner: str, rows: int, seed: int):
         load_s = time.perf_counter() - t0
         for ddl in [
             f"ALTER TABLE {p} ADD CONSTRAINT {p}_pkey PRIMARY KEY (tenant_id, id)",
-            f"CREATE INDEX {p}_workarea ON {p} (tenant_id, workarea_id, status)",
+            f"CREATE INDEX {p}_workspace ON {p} (tenant_id, workspace_id, status)",
             f"CREATE INDEX {p}_claim_fts ON {p} USING gin (to_tsvector('simple', claim))",
-            f"CREATE UNIQUE INDEX {p}_claim_version ON {p} (tenant_id, workarea_id, claim_key, "
+            f"CREATE UNIQUE INDEX {p}_claim_version ON {p} (tenant_id, workspace_id, claim_key, "
             "version) WHERE status IN ('held', 'promoted', 'demoted')",
-            f"CREATE UNIQUE INDEX {p}_served_tip ON {p} (tenant_id, workarea_id, claim_key) "
+            f"CREATE UNIQUE INDEX {p}_served_tip ON {p} (tenant_id, workspace_id, claim_key) "
             "WHERE is_tip AND status = 'promoted'",
             f"CREATE INDEX {p}_author ON {p} (tenant_id, author_key_id, created_at DESC)",
             f"ALTER TABLE {p} ENABLE ROW LEVEL SECURITY",
@@ -155,12 +155,12 @@ def sizes(db: str, owner: str, t: uuid.UUID) -> dict:
     with psycopg.connect(dsn(owner, db), autocommit=True) as c:
         c.execute(f"ANALYZE {part}")
         c.execute("ANALYZE search_term_rows")
-        c.execute("ANALYZE search_workarea_rows")
+        c.execute("ANALYZE search_workspace_rows")
         mib = lambda q: round(c.execute(q).fetchone()[0] / 2**20, 1)  # noqa: E731
         out = {
             "postings_heap_mib": mib(f"SELECT pg_relation_size('{part}')"),
             "term_rows_mib": mib("SELECT pg_total_relation_size('search_term_rows')"),
-            "workarea_rows_mib": mib("SELECT pg_total_relation_size('search_workarea_rows')"),
+            "workspace_rows_mib": mib("SELECT pg_total_relation_size('search_workspace_rows')"),
             "memories_heap_mib": mib(f"SELECT pg_relation_size('memories_t_{t.hex}')"),
         }
         for parent, size in c.execute(
@@ -175,7 +175,7 @@ def sizes(db: str, owner: str, t: uuid.UUID) -> dict:
             f"SELECT state, count(*) FROM {part} GROUP BY state ORDER BY state").fetchall())
         out["term_rows"] = c.execute("SELECT count(*) FROM search_term_rows").fetchone()[0]
         out["served"] = c.execute(
-            "SELECT COALESCE(sum(rows), 0) FROM search_workarea_rows").fetchone()[0]
+            "SELECT COALESCE(sum(rows), 0) FROM search_workspace_rows").fetchone()[0]
     return out
 
 
@@ -250,7 +250,7 @@ def write_cost(db: str, serving: str, t, tree, keys, count: int = 200) -> dict:
                 a, b = uuid.uuid4(), uuid.uuid4()
                 ck = f"w-{label}-{i}"
                 for step, stmts in [
-                    ("insert", [("INSERT INTO memories (id, tenant_id, workarea_id, claim, "
+                    ("insert", [("INSERT INTO memories (id, tenant_id, workspace_id, claim, "
                                  "claim_digest, status, created_event_id, claim_key, "
                                  "author_principal, author_key_id, version, kind, body_bytes) "
                                  "VALUES (%s, %s, %s, %s, '\\x00', 'held', %s, %s, 'agent', %s, "
@@ -260,7 +260,7 @@ def write_cost(db: str, serving: str, t, tree, keys, count: int = 200) -> dict:
                                   "WHERE tenant_id = %s AND id = %s", (t, a))]),
                     ("supersede", [("UPDATE memories SET is_tip = false WHERE tenant_id = %s "
                                     "AND id = %s", (t, a)),
-                                   ("INSERT INTO memories (id, tenant_id, workarea_id, claim, "
+                                   ("INSERT INTO memories (id, tenant_id, workspace_id, claim, "
                                     "claim_digest, status, created_event_id, claim_key, "
                                     "author_principal, author_key_id, version, kind, body_bytes, "
                                     "is_tip, replaces_artifact_id) VALUES (%s, %s, %s, %s, '\\x00', "
@@ -301,7 +301,7 @@ def main() -> None:
         migrate(db, owner, serving, 20)
         t, tree, keys, load_s = load(db, owner, a.rows, a.seed)
         result["load_s"] = round(load_s, 1)
-        result["workareas"] = len(tree.all())
+        result["workspaces"] = len(tree.all())
         result["fill_0021_s"] = round(apply_0021(db, owner, serving), 2)
         with psycopg.connect(dsn(owner, db), autocommit=True) as c:
             c.execute(f"VACUUM ANALYZE search_postings_t_{t.hex}")
@@ -317,8 +317,8 @@ def main() -> None:
             c.execute("SELECT set_config('oml.tenant_id', %s, false)", (str(t),))
             result["readable_rows"] = {
                 scope: round(statistics.mean(
-                    c.execute("SELECT COALESCE(sum(rows), 0) FROM search_workarea_rows "
-                              "WHERE workarea_id = ANY(%s::uuid[])", (it["nodes"],)).fetchone()[0]
+                    c.execute("SELECT COALESCE(sum(rows), 0) FROM search_workspace_rows "
+                              "WHERE workspace_id = ANY(%s::uuid[])", (it["nodes"],)).fetchone()[0]
                     for it in items if it["scope"] == scope))
                 for scope in ("leaf", "project", "universe")}
         runs = {}
@@ -336,7 +336,7 @@ def main() -> None:
         # (kind, token_id) over every posting, with the scope and the state
         # filtered from the heap, in place of the served covering index.
         part = "search_postings_t_" + t.hex
-        served_def = "(kind, token_id, workarea_id) INCLUDE (memory_kind, memory_id, weight, " \
+        served_def = "(kind, token_id, workspace_id) INCLUDE (memory_kind, memory_id, weight, " \
                      "doc_len, tenant_id) WHERE state = 1"
         with psycopg.connect(dsn(owner, db), autocommit=True) as c:
             c.execute("SET maintenance_work_mem = '1GB'")

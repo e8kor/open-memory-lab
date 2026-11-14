@@ -330,3 +330,32 @@ class Voice(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Vocabulary(unittest.TestCase):
+    """ADR-0091 d11: a former name survives only where lint_allow/rename.txt says why."""
+
+    def test_a_former_word_literal_or_identifier_is_flagged_and_ordinary_english_is_not(self):
+        root = tree({
+            "a.rs": "let w = workarea_id;\n",
+            "b.py": "role = 'dreamer'\n",
+            "c.rs": "WorkspaceStatus::Committed\n",
+            "d.json": '{"status": "validated"}\n',
+            "e.rs": "key.held_by\n",
+            "f.ts": 'used_by: "human"\n',
+            "ok.md": "the change was committed and validated; the lease is held_by_key\n",
+        })
+        flagged = {p.split(":")[0] for p in L.lint_vocabulary(root, False)}
+        self.assertEqual(flagged, {"a.rs", "b.py", "c.rs", "d.json", "e.rs", "f.ts"})
+
+    def test_an_allow_listed_path_with_a_reason_is_skipped_and_one_without_a_reason_is_refused(self):
+        files = {"migrations/0001_init.sql": "CREATE TABLE workareas ();\n"}
+        root = tree({**files, "scripts/lint_allow/rename.txt": "migrations/00[0-4]*.sql  # applied, sqlx checksums\n"})
+        self.assertEqual([], L.lint_vocabulary(root, True))
+        bare = tree({**files, "scripts/lint_allow/rename.txt": "migrations/*.sql\n"})
+        with self.assertRaises(SystemExit):
+            L.lint_vocabulary(bare, True)
+
+    def test_a_path_holding_a_former_name_is_flagged(self):
+        root = tree({"docs/use/workareas.md": "plain text\n"})
+        self.assertTrue(any("the path" in p for p in L.lint_vocabulary(root, False)))

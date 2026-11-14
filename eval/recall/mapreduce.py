@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Map-reduce recall, offline: can each workarea rank its own rows and a reducer merge the lists
+"""Map-reduce recall, offline: can each workspace rank its own rows and a reducer merge the lists
 into the answer one search over all of them gives? Standard library only. A research prototype,
 not a served path: nothing here runs in the server.
 
@@ -18,12 +18,12 @@ What `run` computes, for three pipelines, the shapes `oml-app` serves (search.rs
 - `bm25-sparse`: the two lists read 100 deep (CC_DEPTH), each min-max normalised over its own
   candidates and summed 0.3 / 0.7 (CC_BM25_SPARSE).
 
-Over four partitions of the rows into workareas (shards):
-- `topics`: the 200-memory recall corpus, one workarea per topic (11), 121 answerable queries;
+Over four partitions of the rows into workspaces (shards):
+- `topics`: the 200-memory recall corpus, one workspace per topic (11), 121 answerable queries;
 - `skew`: the same plus 2,400 SciFact abstracts in `database`, as fed2.py pads it (the shape of
   `universe` beside crews);
 - `scifact-N`: BEIR SciFact, 5,183 abstracts and its 300 test queries, split into N uniform random
-  workareas, N in 5, 50, 500, and `scifact-zipf-50`, 50 workareas whose sizes follow 1/rank.
+  workspaces, N in 5, 50, 500, and `scifact-zipf-50`, 50 workspaces whose sizes follow 1/rank.
 
 And six ways to answer, each compared with `global`, one search over the union:
 - `exact`: each shard is its own index over its own rows. Round 1: every shard counts its rows,
@@ -179,7 +179,7 @@ class Rows:
 
 
 class Shard:
-    """One workarea's (or the union's) own index over its own rows. `stats` answers round 1
+    """One workspace's (or the union's) own index over its own rows. `stats` answers round 1
     from these rows alone; `search` scores these rows alone with whatever statistics and pruned
     words it is handed."""
 
@@ -415,7 +415,7 @@ def partitions(memories, queries, sf_docs, sf_queries):
         shuffled = ids[:]
         rng.shuffle(shuffled)
         yield f"scifact-{n}", {f"s{i:03d}": set(shuffled[i::n]) for i in range(n)}, sf_queries
-    # 50 workareas sized 1/rank
+    # 50 workspaces sized 1/rank
     n = 50
     w = [1 / (r + 1) for r in range(n)]
     total = sum(w)
@@ -441,7 +441,7 @@ def quality(ranked, rel):
 
 def summarise(name, shard_docs, qs, results):
     sizes = sorted(len(v) for v in shard_docs.values())
-    out = {"workareas": len(shard_docs), "rows": sum(sizes), "largest": sizes[-1],
+    out = {"workspaces": len(shard_docs), "rows": sum(sizes), "largest": sizes[-1],
            "smallest": sizes[0], "queries": len(qs), "pipelines": {},
            "round1_stats_equal_global": round(sum(r["_stats_equal"] for r in results) / len(qs), 4),
            "queries_pruned": round(sum(r["_pruned"] for r in results) / len(qs), 4),
@@ -513,7 +513,7 @@ def run(a):
 
 def print_tables(report):
     for name, part in report["partitions"].items():
-        print(f"\n## {name}: {part['workareas']} workareas, {part['rows']} rows "
+        print(f"\n## {name}: {part['workspaces']} workspaces, {part['rows']} rows "
               f"(largest {part['largest']}, smallest {part['smallest']}), {part['queries']} queries\n")
         print(f"round 1 statistics equal to the union's own: {part['round1_stats_equal_global']:.3f}; "
               f"queries pruned: {part['queries_pruned']:.3f}; local pruning differs: {part['queries_local_pruning_differs']:.3f}")

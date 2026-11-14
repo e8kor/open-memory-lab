@@ -11,12 +11,12 @@
 #   3. GET /web/guardrails with that session: 200 and the view's content;
 #   4. GET /web?view=guardrails: 404 with no redirect, the old URL's 303
 #      deleted in v0.7.1 (ADR-0070, "The old URLs deleted");
-#   5. GET /web/workareas: 200 and the Workareas view, from oml-web;
+#   5. GET /web/workspaces: 200 and the Workspaces view, from oml-web;
 #   6. two acts end to end: oml-web creates <user>.proj through the API,
 #      its form sent twice creating it once, then confirms putting it in
 #      progress, and the confirmation's form, sent twice, runs the act once
 #      and lands back on the view;
-#   7. GET /web?view=workarea: 404 with no redirect;
+#   7. GET /web?view=workspace: 404 with no redirect;
 #   8. GET /web/memories and GET /web/atlas: 200, the list and the Atlas,
 #      from oml-web; GET /web?view=memories: 404 with no redirect.
 #   9. GET /web: the lead's 303 to /web/keys; GET /web/keys from oml-web, and
@@ -76,51 +76,51 @@ field() { # <file> <name>: the value of the first input named so
     grep -o "name=\"$2\" value=\"[^\"]*\"" "$1" | head -1 | sed -e 's/.*value="//' -e 's/"$//'
 }
 
-code="$(curl -s -o "$work/workareas.html" -w '%{http_code}' -H "$jar" "$origin/web/workareas")"
-[ "$code" = 200 ] || fail "GET /web/workareas answered $code: $(head -c 400 "$work/workareas.html")"
-grep -q '<h1>Workareas</h1>' "$work/workareas.html" || fail "GET /web/workareas did not draw the Workareas view"
-grep -q '<a href="/web/workareas" class="on"' "$work/workareas.html" || fail "the Workareas tab is not the current one"
+code="$(curl -s -o "$work/workspaces.html" -w '%{http_code}' -H "$jar" "$origin/web/workspaces")"
+[ "$code" = 200 ] || fail "GET /web/workspaces answered $code: $(head -c 400 "$work/workspaces.html")"
+grep -q '<h1>Workspaces</h1>' "$work/workspaces.html" || fail "GET /web/workspaces did not draw the Workspaces view"
+grep -q '<a href="/web/workspaces" class="on"' "$work/workspaces.html" || fail "the Workspaces tab is not the current one"
 # The view names the user's root by its reference, the name every field
 # takes (design notes row 20).
-user="$(sed -n 's/.*Under <code>\([^<]*\)<\/code>.*/\1/p' "$work/workareas.html")"
-[ -n "$user" ] || fail "the Workareas view names no user root"
-csrf="$(field "$work/workareas.html" csrf_token)"
-[ -n "$csrf" ] || fail "the Workareas view carries no csrf_token"
-create_nonce="$(field "$work/workareas.html" nonce)"
+user="$(sed -n 's/.*Under <code>\([^<]*\)<\/code>.*/\1/p' "$work/workspaces.html")"
+[ -n "$user" ] || fail "the Workspaces view names no user root"
+csrf="$(field "$work/workspaces.html" csrf_token)"
+[ -n "$csrf" ] || fail "the Workspaces view carries no csrf_token"
+create_nonce="$(field "$work/workspaces.html" nonce)"
 [ -n "$create_nonce" ] || fail "the create form carries no nonce"
 
 for attempt in first resubmitted; do
     code="$(curl -s -o "$work/create.html" -D "$work/create" -w '%{http_code}' -X POST -H "$jar" \
         -H "Origin: $issuer" -H 'Content-Type: application/x-www-form-urlencoded' \
-        --data "action=create_workarea&name=proj&csrf_token=$csrf&nonce=$create_nonce" "$origin/web/workareas")"
+        --data "action=create_workspace&name=proj&csrf_token=$csrf&nonce=$create_nonce" "$origin/web/workspaces")"
     location="$(header "$work/create" location)"
-    [ "$code $location" = "303 /web/workareas?done=created" ] \
+    [ "$code $location" = "303 /web/workspaces?done=created" ] \
         || fail "the $attempt create answered '$code $location': $(head -c 400 "$work/create.html")"
 done
 
 code="$(curl -s -o "$work/confirm.html" -w '%{http_code}' -H "$jar" \
-    "$origin/web/workareas?workarea=$user.proj&op=mode:in_progress")"
+    "$origin/web/workspaces?workspace=$user.proj&op=mode:in_progress")"
 [ "$code" = 200 ] || fail "the confirmation answered $code: $(head -c 400 "$work/confirm.html")"
-grep -q 'value="workarea_mode"' "$work/confirm.html" || fail "the confirmation carries no workarea_mode form: $(head -c 400 "$work/confirm.html")"
+grep -q 'value="workspace_mode"' "$work/confirm.html" || fail "the confirmation carries no workspace_mode form: $(head -c 400 "$work/confirm.html")"
 nonce="$(field "$work/confirm.html" nonce)"
 [ -n "$nonce" ] || fail "the confirmation's form carries no nonce"
 for attempt in first resubmitted; do
     code="$(curl -s -o "$work/act.html" -D "$work/act" -w '%{http_code}' -X POST -H "$jar" \
         -H "Origin: $issuer" -H 'Content-Type: application/x-www-form-urlencoded' \
-        --data "action=workarea_mode&workarea=$user.proj&mode=in_progress&csrf_token=$csrf&nonce=$nonce" \
-        "$origin/web/workareas")"
+        --data "action=workspace_mode&workspace=$user.proj&mode=in_progress&csrf_token=$csrf&nonce=$nonce" \
+        "$origin/web/workspaces")"
     location="$(header "$work/act" location)"
-    [ "$code $location" = "303 /web/workareas?done=mode+set" ] \
+    [ "$code $location" = "303 /web/workspaces?done=mode+set" ] \
         || fail "the $attempt act answered '$code $location': $(head -c 400 "$work/act.html")"
 done
-code="$(curl -s -o "$work/after.html" -w '%{http_code}' -H "$jar" "$origin/web/workareas?done=mode+set")"
-[ "$code" = 200 ] || fail "GET /web/workareas after the act answered $code"
-grep -q "workarea=$user\.proj\">$user\.proj</a></td><td class=\"mono\">$user</td><td>development</td><td>in progress</td>" "$work/after.html" \
+code="$(curl -s -o "$work/after.html" -w '%{http_code}' -H "$jar" "$origin/web/workspaces?done=mode+set")"
+[ "$code" = 200 ] || fail "GET /web/workspaces after the act answered $code"
+grep -q "workspace=$user\.proj\">$user\.proj</a></td><td class=\"mono\">$user</td><td>development</td><td>in progress</td>" "$work/after.html" \
     || fail "the act did not put $user.proj in progress: $(head -c 600 "$work/after.html")"
 
-code="$(curl -s -o /dev/null -D "$work/old-workareas" -w '%{http_code}' -H "$jar" "$origin/web?view=workarea")"
-location="$(header "$work/old-workareas" location || true)"
-[ "$code $location" = "404 " ] || fail "GET /web?view=workarea answered '$code $location'"
+code="$(curl -s -o /dev/null -D "$work/old-workspaces" -w '%{http_code}' -H "$jar" "$origin/web?view=workspace")"
+location="$(header "$work/old-workspaces" location || true)"
+[ "$code $location" = "404 " ] || fail "GET /web?view=workspace answered '$code $location'"
 
 code="$(curl -s -o "$work/memories.html" -w '%{http_code}' -H "$jar" "$origin/web/memories")"
 [ "$code" = 200 ] || fail "GET /web/memories answered $code: $(head -c 400 "$work/memories.html")"
@@ -176,4 +176,4 @@ esac
 code="$(curl -s -o /dev/null -w '%{http_code}' -H "$jar" "$origin$location")"
 [ "$code" = 200 ] || fail "GET $location answered $code"
 
-echo "signed-in page: $origin served /web/guardrails, /web/workareas, /web/memories, /web/atlas, /web/keys and /web/review to a signed-in session through oml-web, ran acts on the Workareas, Keys and Review views through the API, and the old ?view= URLs are not found"
+echo "signed-in page: $origin served /web/guardrails, /web/workspaces, /web/memories, /web/atlas, /web/keys and /web/review to a signed-in session through oml-web, ran acts on the Workspaces, Keys and Review views through the API, and the old ?view= URLs are not found"

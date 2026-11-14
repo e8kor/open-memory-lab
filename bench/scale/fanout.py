@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Scatter-gather of the learned sparse leg on one PostgreSQL, a research prototype (no served
-path): is one statement over every readable workarea slower than one statement per workarea,
-or per group of workareas, run in parallel on a pool of connections and merged by score?
+path): is one statement over every readable workspace slower than one statement per workspace,
+or per group of workspaces, run in parallel on a pool of connections and merged by score?
 
     python bench/scale/fanout.py --dsn "host=DIR port=PORT user=bench dbname=postgres" \
         --cache DIR --out bench/scale/results/fanout.json
@@ -11,22 +11,22 @@ encodings of the 5,383 texts `eval/recall/mapreduce.py encode` wrote (SciFact an
 corpus), reused by digest as `sparse.py --reuse` does, so 1,000, 10,000 and 100,000 memories
 carry the model's real token distribution; the queries are SciFact's 300 test queries' terms,
 weighted by idf.json. Each size is one unlogged table shaped as `search_postings_served` for
-kind 2 (token, workarea, memory, weight), its rows assigned uniformly at random to 5, 50 and
-500 workareas, one covering index per assignment `(token_id, wa_N) INCLUDE (memory_id,
+kind 2 (token, workspace, memory, weight), its rows assigned uniformly at random to 5, 50 and
+500 workspaces, one covering index per assignment `(token_id, wa_N) INCLUDE (memory_id,
 weight)`, built, measured and dropped in turn. The statement is `oml-pg`'s `sparse_sql` without row security, held rows, anchors
-or expiry: the postings of the query's tokens on the readable workareas, scored
+or expiry: the postings of the query's tokens on the readable workspaces, scored
 `sum(idf * weight)`, best `LIMIT` by score then id.
 
 Modes, each the warm second run of each query, every mode on each query in turn with the order
 rotated per query, p50 / p95 ms of the whole recall:
-- `single`: one statement over every workarea (today's shape);
+- `single`: one statement over every workspace (today's shape);
 - `single-parallel`: the same with PostgreSQL's parallel query allowed (4 workers per gather,
   costs zeroed so the planner may take it);
-- `fanout-each`: one statement per workarea on a pool of `--pool` connections, merged by score;
-- `fanout-groups-P`: the workareas cut into P groups, one statement per group, P in 2, 4, 8.
+- `fanout-each`: one statement per workspace on a pool of `--pool` connections, merged by score;
+- `fanout-groups-P`: the workspaces cut into P groups, one statement per group, P in 2, 4, 8.
 
 `--throughput` instead runs 1, 2, 4 and 8 concurrent clients at 100,000 memories and 50
-workareas, each client every query once per cell, under `single` and `fanout-groups-2`, `-4` and
+workspaces, each client every query once per cell, under `single` and `fanout-groups-2`, `-4` and
 `-8`, for `--rounds` rounds with the mode order rotated per round: each cell's median recalls a
 second, p50 and p95 and their range, so the fan-out's extra backends are paid for under load.
 
@@ -51,7 +51,7 @@ import psycopg
 
 SEED = 20261111
 SIZES = [1_000, 10_000, 100_000]
-WORKAREAS = [5, 50, 500]
+WORKSPACES = [5, 50, 500]
 GROUPS = [2, 4, 8]
 
 PREPARE = [5]   # psycopg's default: a statement run 5 times on a connection is prepared
@@ -85,12 +85,12 @@ def build(conn, size, docs):
     with conn.cursor() as cur:
         cur.execute(f"DROP TABLE IF EXISTS {table}")
         cur.execute(f"CREATE UNLOGGED TABLE {table} (token_id int8, memory_id int8, weight float4, "
-                    + ", ".join(f"wa_{n} int4" for n in WORKAREAS) + ")")
+                    + ", ".join(f"wa_{n} int4" for n in WORKSPACES) + ")")
         t0 = time.perf_counter()
         with cur.copy(f"COPY {table} (token_id, memory_id, weight, "
-                      + ", ".join(f"wa_{n}" for n in WORKAREAS) + ") FROM STDIN") as cp:
+                      + ", ".join(f"wa_{n}" for n in WORKSPACES) + ") FROM STDIN") as cp:
             for m in range(size):
-                was = [rng.randrange(n) for n in WORKAREAS]
+                was = [rng.randrange(n) for n in WORKSPACES]
                 for tok, w, _ in docs[ids[m % len(ids)]]:
                     cp.write_row((tok, m, w, *was))
         load_s = time.perf_counter() - t0
@@ -179,7 +179,7 @@ def throughput(a, docs, qs, size, n, clients_list, modes, rounds):
     table = f"postings_{size}"
     info["index_mib"] = index(conn, table, n)
     col, all_wa = f"wa_{n}", list(range(n))
-    out = {"size": size, "workareas": n, "rounds": rounds, "table": info, "cells": {}, "runs": []}
+    out = {"size": size, "workspaces": n, "rounds": rounds, "table": info, "cells": {}, "runs": []}
     groups_of = {m: 1 if m == "single" else int(m.rsplit("-", 1)[1]) for m in modes}
     pools = {(c, m): [Pool(a.dsn, groups_of[m]) for _ in range(c)] for c in clients_list for m in modes}
 
@@ -246,10 +246,10 @@ def main():
     ap.add_argument("--rounds", type=int, default=5)
     ap.add_argument("--no-prepare", action="store_true",
                     help="never prepare: every statement planned for its own parameters")
-    ap.add_argument("--workareas", type=int, nargs="*", default=WORKAREAS)
+    ap.add_argument("--workspaces", type=int, nargs="*", default=WORKSPACES)
     ap.add_argument("--modes", nargs="*", default=None, help="only these modes in the matrix")
     ap.add_argument("--throughput", action="store_true",
-                    help="instead: concurrent clients at 100,000 memories and 50 workareas")
+                    help="instead: concurrent clients at 100,000 memories and 50 workspaces")
     a = ap.parse_args()
     if a.no_prepare:
         PREPARE[0] = None
@@ -272,9 +272,9 @@ def main():
         info = build(main_conn, size, docs)
         table = f"postings_{size}"
         info["load_avg_before"] = os.getloadavg()
-        info["workareas"] = {}
+        info["workspaces"] = {}
         info["index_mib"] = {}
-        for n in a.workareas:
+        for n in a.workspaces:
             info["index_mib"][str(n)] = index(main_conn, table, n)
             col = f"wa_{n}"
             all_wa = list(range(n))
@@ -333,7 +333,7 @@ def main():
             main_conn.rollback()
             if "single-parallel" in modes:
                 modes["single-parallel"]["plan_has_gather"] = "Gather" in plan
-            info["workareas"][str(n)] = modes
+            info["workspaces"][str(n)] = modes
             drop_index(main_conn, table, n)
             print(size, n, json.dumps(modes), flush=True)
         info["load_avg_after"] = os.getloadavg()

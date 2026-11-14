@@ -68,7 +68,7 @@ def write_kind2(db: str, owner: str, t: uuid.UUID, model_dir: str, threads: int,
     with P.su(db) as c:
         c.execute("SELECT set_config('oml.tenant_id', %s, false)", (str(t),))
         versions = c.execute(
-            "SELECT m.id, m.workarea_id, oml_search_memory_kind(m.kind), "
+            "SELECT m.id, m.workspace_id, oml_search_memory_kind(m.kind), "
             "oml_search_state(m.status, m.is_tip, m.retirement, m.kind), m.claim "
             "FROM search_sparse_queue q JOIN memories m ON m.tenant_id = q.tenant_id "
             "AND m.id = q.memory_id WHERE q.tenant_id = %s", (t,)).fetchall()
@@ -112,7 +112,7 @@ def write_kind2(db: str, owner: str, t: uuid.UUID, model_dir: str, threads: int,
         def flush():
             if batch:
                 cols = list(zip(*batch))
-                c.execute(f"INSERT INTO {part} (tenant_id, memory_id, workarea_id, token_id, "
+                c.execute(f"INSERT INTO {part} (tenant_id, memory_id, workspace_id, token_id, "
                           "weight, doc_len, kind, memory_kind, state) SELECT %s, m, w, t, x, d, 2, "
                           "k, s FROM unnest(%s::uuid[], %s::uuid[], %s::int8[], %s::float4[], "
                           "%s::int4[], %s::int2[], %s::int2[]) AS u(m, w, t, x, d, k, s)",
@@ -188,8 +188,8 @@ def main() -> None:
             c.execute("SELECT set_config('oml.tenant_id', %s, false)", (str(t),))
             result["readable_rows"] = {
                 scope: round(statistics.mean(
-                    c.execute("SELECT COALESCE(sum(rows), 0) FROM search_workarea_rows "
-                              "WHERE workarea_id = ANY(%s::uuid[])", (it["nodes"],)).fetchone()[0]
+                    c.execute("SELECT COALESCE(sum(rows), 0) FROM search_workspace_rows "
+                              "WHERE workspace_id = ANY(%s::uuid[])", (it["nodes"],)).fetchone()[0]
                     for it in items if it["scope"] == scope))
                 for scope in ("leaf", "project", "universe")}
             result["query_tokens"] = {

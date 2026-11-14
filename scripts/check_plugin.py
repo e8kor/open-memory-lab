@@ -52,7 +52,7 @@ class of disagreement found:
   field ignored and its tools inherited, and which names it `librarian`, sets `model: haiku`, sets only fields a
   plugin subagent supports, and allows exactly the one tool
   `mcp__plugin_oml_oml__oml_read`, so it reads and never writes: no
-  `oml_write`, no `oml_workarea`, no built-in tool that edits a file or runs a
+  `oml_write`, no `oml_workspace`, no built-in tool that edits a file or runs a
   command; its prompt names no tool the server does not serve, sets the
   framing line of hook.rs's FRAMING over what it returns, and the plugin
   README names it `oml:librarian` (ADR-0038 d10);
@@ -64,8 +64,8 @@ class of disagreement found:
   (docs/cli/reference.md, "The oml-admin plugin"), and names its key right
   after `issue-agent` with a name the creation grammar admits (ADR-0026 d2,
   d12, d14);
-- every `--workarea` a command on a plugin page passes is a workarea name or
-  the placeholder `<workarea>`, never an id, so the pages show the name an
+- every `--workspace` a command on a plugin page passes is a workspace name or
+  the placeholder `<workspace>`, never an id, so the pages show the name an
   operator types (ADR-0026 d4, d14).
 """
 
@@ -158,10 +158,10 @@ USER_CONFIG = {
         "required": True,
     },
     # ADR-0063 d6, d8: where chat capture writes and per-turn recall reads.
-    "chat_workarea": {
+    "chat_workspace": {
         "type": "string",
-        "title": "Chat workarea",
-        "description": "Your chat workarea's id, as oml chat init prints it. Chat capture needs it; per-turn recall without it reads only the key's default workarea.",
+        "title": "Chat workspace",
+        "description": "Your chat workspace's id, as oml chat init prints it. Chat capture needs it; per-turn recall without it reads only the key's default workspace.",
         "default": "",
     },
 }
@@ -210,7 +210,7 @@ def main() -> int:
 
     for doc in [plugin_dir / "skills/oml-memory/SKILL.md", plugin_dir / "README.md"]:
         text = doc.read_text()
-        check_workarea_flags(doc, text, errors)
+        check_workspace_flags(doc, text, errors)
         named = set(re.findall(r"`(oml_[a-z_]+)`", text))
         for tool in sorted(served - named):
             errors.append(f"{doc.relative_to(ROOT)} does not name the served tool {tool}")
@@ -538,7 +538,7 @@ def check_admin(entries: dict, workspace_version: str, errors: list[str]) -> Non
         errors.append(f"{skill_path} is missing")
         return
     skill = skill_path.read_text()
-    check_workarea_flags(skill_path, skill, errors)
+    check_workspace_flags(skill_path, skill, errors)
     runs = [c for c in commands(skill) if re.search(r"\boml\b", c) and "issue-agent" in c]
     if not runs:
         errors.append(f"{ADMIN_SKILL} runs no `oml keys issue-agent` command")
@@ -557,16 +557,16 @@ def check_admin(entries: dict, workspace_version: str, errors: list[str]) -> Non
             )
 
 
-def check_workarea_flags(page: Path, text: str, errors: list[str]) -> None:
+def check_workspace_flags(page: Path, text: str, errors: list[str]) -> None:
     for command in commands(text):
         words = tokens(command)
-        values = [b for a, b in zip(words, words[1:]) if a == "--workarea"]
-        values += [w.split("=", 1)[1] for w in words if w.startswith("--workarea=")]
+        values = [b for a, b in zip(words, words[1:]) if a == "--workspace"]
+        values += [w.split("=", 1)[1] for w in words if w.startswith("--workspace=")]
         for value in values:
-            if value != "<workarea>" and not is_name(value):
+            if value != "<workspace>" and not is_name(value):
                 errors.append(
-                    f"{page.relative_to(ROOT)} passes --workarea {value}, not a workarea name or "
-                    f"<workarea> (ADR-0026 d4): {command.strip()}"
+                    f"{page.relative_to(ROOT)} passes --workspace {value}, not a workspace name or "
+                    f"<workspace> (ADR-0026 d4): {command.strip()}"
                 )
 
 

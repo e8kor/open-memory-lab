@@ -23,10 +23,10 @@
       "sensitive": true,
       "required": true
     },
-    "chat_workarea": {
+    "chat_workspace": {
       "type": "string",
-      "title": "Chat workarea",
-      "description": "Your chat workarea's id, as oml chat init prints it. Chat capture needs it; per-turn recall without it reads only the key's default workarea.",
+      "title": "Chat workspace",
+      "description": "Your chat workspace's id, as oml chat init prints it. Chat capture needs it; per-turn recall without it reads only the key's default workspace.",
       "default": ""
     }
   }

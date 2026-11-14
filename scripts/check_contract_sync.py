@@ -44,7 +44,7 @@ This script extracts each surface and fails with a diff on any disagreement:
     (ADR-0039 d15)
   * a v0.3.0 spelling from d10's table on a start page: the eight tool names
     (V0_3_0_TOOLS below, removed in v0.5.1),
-    `X-OML-Workarea`, `include_own_held`, `OML_CLI_SERVER`, `OML_CLI_KEY`, the
+    `X-OML-Workspace`, `include_own_held`, `OML_CLI_SERVER`, `OML_CLI_KEY`, the
     `--token`, `--server` and `--key` flags, the verbs `oml submit`, `oml recall`,
     `oml supersede` and `oml review verdict`, or the release 0.3.2 or v0.3.2,
     the pattern first checked against probe lines it must catch and pass, on a
@@ -83,7 +83,7 @@ Parsing rules (kept deliberately dumb and documented):
     (`GET /v2/exports/{export_id}` · `/bundle`), otherwise replacing the final
     segment (`POST /v2/memories/{id}/reassign` · `/demote`).
   * Path placeholders are normalized to {} before comparison, because http-api.md
-    writes {id} where openapi.yaml writes {workarea_id}.
+    writes {id} where openapi.yaml writes {workspace_id}.
   * A surface table is any table with a Contract column; its cell is served or
     designed, and it marks every endpoint span of its row.
   * A $ref is followed within its own document, or into openapi.yaml when it
@@ -127,7 +127,7 @@ RETIRED_VERB_EXEMPT = [ROOT / "docs" / "adr", ROOT / "docs" / "atlas", ROOT / "d
 # no start page teaches.
 V0_3_0_TOOLS = [
     "oml_remember", "oml_learn", "oml_recall", "oml_get",
-    "oml_supersede", "oml_my_work", "oml_workarea_info", "oml_events_tail",
+    "oml_supersede", "oml_my_work", "oml_workspace_info", "oml_events_tail",
 ]
 
 
@@ -136,7 +136,7 @@ V0_3_0_TOOLS = [
 # replaced with v0.4.0, spelled with or without a "v" and at a sentence's end.
 RETIRED_NAME_RE = re.compile(
     "|".join(rf"\b{re.escape(tool)}\b" for tool in V0_3_0_TOOLS)
-    + r"|X-OML-Workarea|\binclude_own_held\b|\bOML_CLI_(?:SERVER|KEY)\b"
+    + r"|X-OML-Workspace|\binclude_own_held\b|\bOML_CLI_(?:SERVER|KEY)\b"
     r"|(?<![-\w])--(?:token|server|key)(?![-\w])"
     r"|\boml (?:submit|recall|supersede|review verdict)\b"
     r"|(?<![\w.])v?0\.3\.2(?!\.?\w)"
@@ -153,7 +153,7 @@ OPENAPI_METHODS = {"get", "put", "post", "delete", "patch", "head", "options", "
 
 
 def normalize_path(path: str) -> str:
-    """{workarea_id} and {id} are the same hole: normalize every placeholder to {}."""
+    """{workspace_id} and {id} are the same hole: normalize every placeholder to {}."""
     return PLACEHOLDER_RE.sub("{}", path)
 
 
@@ -439,15 +439,15 @@ def start_pages() -> list[Path]:
 # pattern is checked against these before it reads a page.
 RETIRED_NAME_CATCHES = [
     "call oml_remember", "call oml_learn", "call oml_recall", "call oml_get",
-    "call oml_supersede", "call oml_my_work", "call oml_workarea_info",
-    "call oml_events_tail", "send X-OML-Workarea", "set include_own_held",
+    "call oml_supersede", "call oml_my_work", "call oml_workspace_info",
+    "call oml_events_tail", "send X-OML-Workspace", "set include_own_held",
     "export OML_CLI_SERVER=x", "export OML_CLI_KEY=x", "oml bootstrap claim ci --token s",
     "oml --server https://x", "oml --key k", "oml submit --claim t", "oml recall --query q",
     "oml supersede a", "oml review verdict --approve", "tag v0.3.2", "ships in 0.3.2.",
     "0.3.2 ships",
 ]
 RETIRED_NAME_PASSES = [
-    "call oml_write", "call oml_read", "call oml_workarea", "oml write t", "oml read --query q",
+    "call oml_write", "call oml_read", "call oml_workspace", "oml write t", "oml read --query q",
     "oml review approve", "oml --url https://x --api-key k", "--token-stdin", "--key-file k",
     "--server-url x", "OML_URL and OML_API_KEY", "include_unreviewed", "tag v0.3.1",
     "0.3.20", "10.3.2", "0.3.2.1", "oml recalls", "oml submitted",

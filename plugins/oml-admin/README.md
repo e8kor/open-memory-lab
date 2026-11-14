@@ -22,10 +22,10 @@ with `OML_CLI_CREDENTIALS=./oml/credentials`, the file where the quick start kee
 ## What it does
 
 Ask Claude to issue a key for an agent. The skill asks for the key's name, the principal and the
-workarea, then runs:
+workspace, then runs:
 
 ```sh
-oml keys issue-agent agent-7-laptop --principal crew/agent-7 --workarea metals-crew --out "$HOME/.config/oml/keys/crew-agent-7"
+oml keys issue-agent agent-7-laptop --principal crew/agent-7 --workspace metals-crew --out "$HOME/.config/oml/keys/crew-agent-7"
 ```
 
 The value goes to a new owner-only file. The CLI prints four lines that carry the file's path and

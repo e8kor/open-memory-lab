@@ -2,7 +2,7 @@
 
 Re-measured 2026-11-05 on a release build of `d3fdb72`, the stored-lexeme search after the
 review's fixes (ADR-0049 d12: an inflected word's stem counted once, one ancestry read per
-workarea, the `bm25` default), against a throwaway PostgreSQL 17.9 on one 8 vCPU / 15 GB host
+workspace, the `bm25` default), against a throwaway PostgreSQL 17.9 on one 8 vCPU / 15 GB host
 shared with other build lanes, through the harness in this directory ([README.md](README.md)).
 Every memory went in through the HTTP API and was promoted by a reviewer key of another
 principal; every query went out through `oml_read` over `/mcp` with `k` 100 and no token budget
@@ -110,7 +110,7 @@ flatten it.
 
 - **Stored lexemes.** Each version's search vector and its length are stored generated columns
   of `memories`, written once; the `bm25` statement reads them and no row's text. On SciFact
-  that took `bm25` from 3.7 s to 176 ms per query, and reading each workarea's ancestry once
+  that took `bm25` from 3.7 s to 176 ms per query, and reading each workspace's ancestry once
   per recall took it to 83 ms.
 - **Each occurrence counts once**, a word scores its best form, and a query's English stop words
   are dropped when it has other words. That moved SciFact from 0.660 to 0.685 nDCG@10, above
@@ -120,7 +120,7 @@ flatten it.
   review's fixes still counted an inflected word's stem twice (`runs` outranked `run`); fixing
   it moved NFCorpus from 0.315 to 0.321 and synthetic success@1 from 0.777 to 0.835.
 - **`did_you_mean` from a maintained vocabulary, only when fewer than three hits came back.** No
-  query reads a row for it; a thin misspelt recall reads the readable workareas' vocabulary.
+  query reads a row for it; a thin misspelt recall reads the readable workspaces' vocabulary.
 - **`bm25` is the default**, and the default set (`keyword-any`, `bm25`) needs no extension. On
   the CI recall eval it passes its gate (success@5 0.926, success@1 0.835, median 16.3 ms at 200
   rows, `k` 10 and a 2,000-token budget); on every external set it ranks above `bm25-trigram`,
@@ -247,7 +247,7 @@ twice per write, wrote SciFact at 62 a second. Two findings, now roadmap rows:
   questions (MIT; per-turn `has_answer` labels) on a fixed subset of question haystacks, with
   updated facts written through `/v1/memories/{artifact_id}/supersede`, so recall is scored
   on serving the tip. It is the next adapter; each question brings about 500 turns and its
-  own workarea, so a 50-question subset is about 25,000 rows.
+  own workspace, so a 50-question subset is about 25,000 rows.
 - **Unanswerable queries.** LongMemEval's 30 abstention questions (`_abs`) and LoCoMo's
   adversarial category, scored on what recall returns when the answer is absent.
 - **Scale and latency.** SciFact ×10 gives one point at 51,830 rows; FiQA (57,638 documents)

@@ -95,13 +95,13 @@ done
 OML="$BIN/oml"
 "$OML" --url "$URL" --json bootstrap claim eval-admin --token-stdin \
     --tenant-name eval --principal eval/admin <<<"$TOKEN" >/dev/null || fail "bootstrap claim"
-"$OML" --json workareas create universe eval-crew >/dev/null || fail "workarea"
+"$OML" --json workspaces create universe eval-crew >/dev/null || fail "workspace"
 (umask 077
- "$OML" --json keys issue eval-writer --role writer --held-by agent --principal crew/writer \
-     --default-workarea eval-crew --grant eval-crew:writer --grant eval-crew:reader \
+ "$OML" --json keys issue eval-writer --role writer --used-by agent --principal crew/writer \
+     --default-workspace eval-crew --grant eval-crew:writer --grant eval-crew:reader \
      | jq -r .value >"$STATE/writer.key"
- "$OML" --json keys issue eval-reviewer --role dreamer --held-by human --principal crew/reviewer \
-     --default-workarea eval-crew --grant eval-crew:dreamer \
+ "$OML" --json keys issue eval-reviewer --role reviewer --used-by person --principal crew/reviewer \
+     --default-workspace eval-crew --grant eval-crew:reviewer \
      | jq -r .value >"$STATE/reviewer.key") || fail "keys"
 
 for pipeline in $PIPELINES; do

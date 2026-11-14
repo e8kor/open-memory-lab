@@ -7,7 +7,7 @@ description: Use when an OML chat capture request asks you, before you stop, to 
 
 The plugin's `Stop` hook sends a capture request when chat capture is switched on
 (`OML_CHAT_CAPTURE=1`) and enough turns have passed. The request names the turns, the
-workarea, your budget of facts, and each turn's anchor. You extract the facts yourself,
+workspace, your budget of facts, and each turn's anchor. You extract the facts yourself,
 from the conversation you already hold: no other model reads it, and the OML server only
 stores what you write (ADR-0063 d6).
 
@@ -39,7 +39,7 @@ nothing qualifies, write nothing and stop.
 One `oml_write` per fact, with:
 
 - `text`: the fact, one or two sentences;
-- `workarea`: the one the request names;
+- `workspace`: the one the request names;
 - `kind`: `memory`;
 - `claim_key`: `chat/<topic>`, a short lower-case slug of what the fact is about, such as
   `chat/merge-style`. Use the same key when a later fact replaces an earlier one, and

@@ -136,16 +136,16 @@ def total_size(c, name: str) -> int:
 BASE_INDEXES = {
     # today's per-partition indexes (0009), built after the load and attached
     "pkey": "ALTER TABLE {p} ADD CONSTRAINT {p}_pkey PRIMARY KEY (tenant_id, id)",
-    "workarea": "CREATE INDEX {p}_workarea ON {p} (tenant_id, workarea_id, status)",
+    "workspace": "CREATE INDEX {p}_workspace ON {p} (tenant_id, workspace_id, status)",
     "claim_fts": "CREATE INDEX {p}_claim_fts ON {p} USING gin (to_tsvector('simple', claim))",
-    "claim_version": "CREATE UNIQUE INDEX {p}_claim_version ON {p} (tenant_id, workarea_id, claim_key, version) "
+    "claim_version": "CREATE UNIQUE INDEX {p}_claim_version ON {p} (tenant_id, workspace_id, claim_key, version) "
                      "WHERE status IN ('held', 'promoted', 'demoted')",
-    "served_tip": "CREATE UNIQUE INDEX {p}_served_tip ON {p} (tenant_id, workarea_id, claim_key) "
+    "served_tip": "CREATE UNIQUE INDEX {p}_served_tip ON {p} (tenant_id, workspace_id, claim_key) "
                   "WHERE is_tip AND status = 'promoted'",
     "author": "CREATE INDEX {p}_author ON {p} (tenant_id, author_key_id, created_at DESC)",
 }
 
-COLS = ["id", "tenant_id", "workarea_id", "claim", "claim_digest", "status", "created_event_id",
+COLS = ["id", "tenant_id", "workspace_id", "claim", "claim_digest", "status", "created_event_id",
         "claim_key", "author_principal", "author_key_id", "version", "kind", "is_tip",
         "body_bytes", "retirement", "severity", "idents"]
 
@@ -156,14 +156,14 @@ def setup_tenant(db: str, r: random.Random, n: int, name: str):
     keys = [uuid.UUID(int=r.getrandbits(128), version=4) for _ in range(20)]
     with su(db) as c:  # superuser: genesis rows, as the lead's bootstrap writes them
         c.execute("INSERT INTO tenants (id, name) VALUES (%s, %s)", (t, name))
-        c.execute("INSERT INTO workareas (id, tenant_id, parent_id, status, name) "
-                  "VALUES (%s, %s, NULL, 'committed', 'universe')", (tree.universe, t))
+        c.execute("INSERT INTO workspaces (id, tenant_id, parent_id, status, name) "
+                  "VALUES (%s, %s, NULL, 'protected', 'universe')", (tree.universe, t))
         for i, p in enumerate(tree.projects):
-            c.execute("INSERT INTO workareas (id, tenant_id, parent_id, status, name) "
-                      "VALUES (%s, %s, %s, 'committed', %s)", (p, t, tree.universe, f"p{i}"))
+            c.execute("INSERT INTO workspaces (id, tenant_id, parent_id, status, name) "
+                      "VALUES (%s, %s, %s, 'protected', %s)", (p, t, tree.universe, f"p{i}"))
             for j, l in enumerate(tree.leaves[p]):
-                c.execute("INSERT INTO workareas (id, tenant_id, parent_id, status, name) "
-                          "VALUES (%s, %s, %s, 'committed', %s)", (l, t, p, f"p{i}-l{j}"))
+                c.execute("INSERT INTO workspaces (id, tenant_id, parent_id, status, name) "
+                          "VALUES (%s, %s, %s, 'protected', %s)", (l, t, p, f"p{i}-l{j}"))
     return t, tree, keys
 
 
@@ -209,12 +209,12 @@ def restore_fk(db: str) -> None:
 
 # ---------------------------------------------------------------------------
 # The approaches. Each is (sql, kind of parameter); every statement binds $1
-# tenant, $2 readable workareas, $3 query, $4 kinds, $5 k, as RECALL_FTS does.
+# tenant, $2 readable workspaces, $3 query, $4 kinds, $5 k, as RECALL_FTS does.
 # ---------------------------------------------------------------------------
 
 SCOPE = ("m.tenant_id = %(t)s AND m.status = 'promoted' AND m.is_tip "
          "AND NOT m.retirement AND m.kind = ANY(%(kinds)s::text[]) "
-         "AND m.workarea_id = ANY(%(ws)s::uuid[])")
+         "AND m.workspace_id = ANY(%(ws)s::uuid[])")
 ORQ = "replace(plainto_tsquery('simple', %(q)s)::text, '&', '|')::tsquery"
 ORQ_EN = "replace(plainto_tsquery('english', %(q)s)::text, '&', '|')::tsquery"
 
@@ -258,18 +258,18 @@ APPROACHES = {
                * (tf.tf * 2.2) / (tf.tf + 1.2 * (0.25 + 0.75 * tf.body_bytes / st.avgdl))) AS score
         FROM tf CROSS JOIN st JOIN df ON df.term = tf.lexeme
         GROUP BY tf.id, tf.body_bytes ORDER BY score DESC, tf.id ASC LIMIT %(k)s""",
-    # Maintained statistics: per (workarea, term) document frequency and per
-    # workarea N and length sum over served rows, summed over the readable
-    # workareas only, so a key's idf counts only rows it may read.
+    # Maintained statistics: per (workspace, term) document frequency and per
+    # workspace N and length sum over served rows, summed over the readable
+    # workspaces only, so a key's idf counts only rows it may read.
     "d_bm25_maintained": f"""WITH qt AS MATERIALIZED (
             SELECT coalesce(array_agg(DISTINCT x), '{{}}') AS terms
             FROM unnest(tsvector_to_array(to_tsvector('simple', %(q)s))) x),
         st AS MATERIALIZED (SELECT coalesce(sum(s.n), 0)::float8 AS n,
                       coalesce(sum(s.len) / nullif(sum(s.n), 0), 1)::float8 AS avgdl
-               FROM bm25_scope s WHERE s.tenant_id = %(t)s AND s.workarea_id = ANY(%(ws)s::uuid[])),
+               FROM bm25_scope s WHERE s.tenant_id = %(t)s AND s.workspace_id = ANY(%(ws)s::uuid[])),
         df AS MATERIALIZED (SELECT d.term, sum(d.df)::float8 AS df FROM bm25_df d, qt
                WHERE d.tenant_id = %(t)s AND d.term = ANY(qt.terms)
-                 AND d.workarea_id = ANY(%(ws)s::uuid[]) GROUP BY d.term),
+                 AND d.workspace_id = ANY(%(ws)s::uuid[]) GROUP BY d.term),
         tf AS MATERIALIZED (SELECT m.id, m.body_bytes, x.lexeme, coalesce(array_length(x.positions, 1), 1) AS tf
                  FROM memories m CROSS JOIN qt CROSS JOIN LATERAL unnest(to_tsvector('simple', m.claim)) x
                  WHERE {SCOPE} AND to_tsvector('simple', m.claim) @@ {ORQ} AND x.lexeme = ANY(qt.terms))
@@ -287,7 +287,7 @@ APPROACHES = {
     # f) pgvector HNSW, cosine, the same scope as a filter
     "f_hnsw": """SELECT v.id FROM memory_vectors v
         WHERE v.tenant_id = %(t)s AND v.served AND v.kind = ANY(%(kinds)s::text[])
-          AND v.workarea_id = ANY(%(ws)s::uuid[])
+          AND v.workspace_id = ANY(%(ws)s::uuid[])
         ORDER BY v.embedding <=> %(vec)s::vector LIMIT %(k)s""",
 }
 
@@ -350,10 +350,10 @@ def stage_trgm(db: str, out: dict) -> None:
 
 
 BM25_DDL = """
-CREATE TABLE bm25_df (tenant_id uuid NOT NULL, workarea_id uuid NOT NULL, term text NOT NULL,
-    df integer NOT NULL, PRIMARY KEY (tenant_id, term, workarea_id));
-CREATE TABLE bm25_scope (tenant_id uuid NOT NULL, workarea_id uuid NOT NULL,
-    n bigint NOT NULL, len bigint NOT NULL, PRIMARY KEY (tenant_id, workarea_id));
+CREATE TABLE bm25_df (tenant_id uuid NOT NULL, workspace_id uuid NOT NULL, term text NOT NULL,
+    df integer NOT NULL, PRIMARY KEY (tenant_id, term, workspace_id));
+CREATE TABLE bm25_scope (tenant_id uuid NOT NULL, workspace_id uuid NOT NULL,
+    n bigint NOT NULL, len bigint NOT NULL, PRIMARY KEY (tenant_id, workspace_id));
 ALTER TABLE bm25_df ENABLE ROW LEVEL SECURITY; ALTER TABLE bm25_df FORCE ROW LEVEL SECURITY;
 ALTER TABLE bm25_scope ENABLE ROW LEVEL SECURITY; ALTER TABLE bm25_scope FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON bm25_df
@@ -376,18 +376,18 @@ BEGIN
                AND OLD.kind IN ('memory', 'derived_fact');
     END IF;
     IF now_ AND NOT was THEN
-        INSERT INTO bm25_df (tenant_id, workarea_id, term, df)
-            SELECT NEW.tenant_id, NEW.workarea_id, x, 1
+        INSERT INTO bm25_df (tenant_id, workspace_id, term, df)
+            SELECT NEW.tenant_id, NEW.workspace_id, x, 1
             FROM unnest(tsvector_to_array(to_tsvector('simple', NEW.claim))) x
-            ON CONFLICT (tenant_id, term, workarea_id) DO UPDATE SET df = bm25_df.df + 1;
-        INSERT INTO bm25_scope VALUES (NEW.tenant_id, NEW.workarea_id, 1, NEW.body_bytes)
-            ON CONFLICT (tenant_id, workarea_id) DO UPDATE
+            ON CONFLICT (tenant_id, term, workspace_id) DO UPDATE SET df = bm25_df.df + 1;
+        INSERT INTO bm25_scope VALUES (NEW.tenant_id, NEW.workspace_id, 1, NEW.body_bytes)
+            ON CONFLICT (tenant_id, workspace_id) DO UPDATE
             SET n = bm25_scope.n + 1, len = bm25_scope.len + EXCLUDED.len;
     ELSIF was AND NOT now_ THEN
-        UPDATE bm25_df SET df = df - 1 WHERE tenant_id = OLD.tenant_id AND workarea_id = OLD.workarea_id
+        UPDATE bm25_df SET df = df - 1 WHERE tenant_id = OLD.tenant_id AND workspace_id = OLD.workspace_id
             AND term = ANY(tsvector_to_array(to_tsvector('simple', OLD.claim)));
         UPDATE bm25_scope SET n = n - 1, len = len - OLD.body_bytes
-            WHERE tenant_id = OLD.tenant_id AND workarea_id = OLD.workarea_id;
+            WHERE tenant_id = OLD.tenant_id AND workspace_id = OLD.workspace_id;
     END IF;
     RETURN NULL;
 END $$;
@@ -403,14 +403,14 @@ def stage_bm25(db: str, tenants: list, out: dict) -> None:
         for t in tenants:
             with c.transaction():
                 c.execute("SELECT set_config('oml.tenant_id', %s, true)", (str(t),))
-                c.execute(f"""INSERT INTO bm25_df (tenant_id, workarea_id, term, df)
-                    SELECT m.tenant_id, m.workarea_id, x, count(*)
+                c.execute(f"""INSERT INTO bm25_df (tenant_id, workspace_id, term, df)
+                    SELECT m.tenant_id, m.workspace_id, x, count(*)
                     FROM memories m, unnest(tsvector_to_array(to_tsvector('simple', m.claim))) x
                     WHERE m.tenant_id = %s AND m.status = 'promoted' AND m.is_tip AND NOT m.retirement
                       AND m.kind IN ('memory', 'derived_fact')
                     GROUP BY 1, 2, 3""", (t,))
                 c.execute(f"""INSERT INTO bm25_scope
-                    SELECT m.tenant_id, m.workarea_id, count(*), sum(m.body_bytes) FROM memories m
+                    SELECT m.tenant_id, m.workspace_id, count(*), sum(m.body_bytes) FROM memories m
                     WHERE m.tenant_id = %s AND m.status = 'promoted' AND m.is_tip AND NOT m.retirement
                       AND m.kind IN ('memory', 'derived_fact') GROUP BY 1, 2""", (t,))
         build = time.perf_counter() - t0
@@ -449,7 +449,7 @@ def stage_vector(db: str, loaded: list, out: dict, halfvec: bool = False) -> Non
     rng = np.random.default_rng(7)
     with owner(db) as c:
         c.execute(f"""CREATE TABLE memory_vectors (tenant_id uuid NOT NULL, id uuid NOT NULL,
-            workarea_id uuid NOT NULL, served boolean NOT NULL, kind text NOT NULL,
+            workspace_id uuid NOT NULL, served boolean NOT NULL, kind text NOT NULL,
             embedding {typ}({DIM}) NOT NULL, PRIMARY KEY (tenant_id, id)) PARTITION BY LIST (tenant_id)""")
         c.execute("ALTER TABLE memory_vectors ENABLE ROW LEVEL SECURITY")
         c.execute("ALTER TABLE memory_vectors FORCE ROW LEVEL SECURITY")
@@ -468,11 +468,11 @@ def stage_vector(db: str, loaded: list, out: dict, halfvec: bool = False) -> Non
             rd.autocommit = False
             rd.execute("SELECT set_config('oml.tenant_id', %s, true)", (str(t),))
             cur = rd.cursor(name="mv")
-            cur.execute("SELECT id, workarea_id, (status = 'promoted' AND is_tip AND NOT retirement), kind "
+            cur.execute("SELECT id, workspace_id, (status = 'promoted' AND is_tip AND NOT retirement), kind "
                         f"FROM {item['partition']} WHERE claim_key NOT LIKE 'w-%%' ORDER BY ctid")
             seeds_of = np.asarray(item["seeds"])
             i = 0
-            with c.cursor().copy(f"COPY {p} (tenant_id, id, workarea_id, served, kind, embedding) "
+            with c.cursor().copy(f"COPY {p} (tenant_id, id, workspace_id, served, kind, embedding) "
                                  "FROM STDIN") as cp:
                 while True:
                     batch = cur.fetchmany(5000)
@@ -655,7 +655,7 @@ def write_cost(db: str, tenant, tree, keys, texts: list[str], seq0: int) -> dict
                           "payload, signed_bytes_hash, sig, signed_bytes) VALUES "
                           "(%s, %s, %s, 'submission.held', %s, 'agent', '{}', %s, %s, %s)",
                           (tenant, seq0 + i, ev, b"\0" * 32, b"\1" * 32, b"\2" * 64, b"x"))
-                c.execute("INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, "
+                c.execute("INSERT INTO memories (id, tenant_id, workspace_id, claim, claim_digest, status, "
                           "created_event_id, claim_key, author_principal, author_key_id, version, kind, "
                           "is_tip, body_bytes, idents) VALUES (%s, %s, %s, %s, %s, 'held', %s, %s, 'agent', "
                           "%s, 1, 'memory', false, %s, %s)",
@@ -692,13 +692,13 @@ def vector_write_cost(db: str, tenant, tree, count: int = 300) -> dict:
 
 
 # ADR-0050 d1: one any-word recall per write over the writer's readable scope
-# (served promoted tips at the target workarea's recall scope, plus the key's
+# (served promoted tips at the target workspace's recall scope, plus the key's
 # own held rows there), k 3, the new text as the query.
 ADR0050 = {
     "simple": (APPROACHES["b_simple_or_rank"],
                f"""SELECT m.id, m.body_bytes, ts_rank(to_tsvector('simple', m.claim), {ORQ}, 0) AS score
         FROM memories m WHERE m.tenant_id = %(t)s AND m.status = 'held' AND m.author_key_id = %(key)s
-          AND NOT m.retirement AND m.kind = ANY(%(kinds)s::text[]) AND m.workarea_id = ANY(%(ws)s::uuid[])
+          AND NOT m.retirement AND m.kind = ANY(%(kinds)s::text[]) AND m.workspace_id = ANY(%(ws)s::uuid[])
           AND to_tsvector('simple', m.claim) @@ {ORQ}
         ORDER BY score DESC, m.id ASC LIMIT %(k)s"""),
 }
@@ -791,7 +791,7 @@ def main() -> None:
     restore_fk(db)
     with su(db) as c:
         c.execute("VACUUM ANALYZE")
-    out["workareas"] = len(loaded[0]["tree"].all())
+    out["workspaces"] = len(loaded[0]["tree"].all())
     # The measured tenant is the first; in a multi-tenant run the others are
     # its neighbours in the same partitioned table.
     m = loaded[0]
@@ -859,8 +859,8 @@ def main() -> None:
             t0 = time.perf_counter()
             c.execute("CREATE INDEX memories_flat_fts ON memories_flat USING gin (to_tsvector('simple', claim))")
             gin_s = time.perf_counter() - t0
-            c.execute("CREATE INDEX memories_flat_workarea ON memories_flat (tenant_id, workarea_id, status)")
-            c.execute("CREATE UNIQUE INDEX memories_flat_served_tip ON memories_flat (tenant_id, workarea_id, claim_key) "
+            c.execute("CREATE INDEX memories_flat_workspace ON memories_flat (tenant_id, workspace_id, status)")
+            c.execute("CREATE UNIQUE INDEX memories_flat_served_tip ON memories_flat (tenant_id, workspace_id, claim_key) "
                       "WHERE is_tip AND status = 'promoted'")
             c.execute("ANALYZE memories_flat")
             out["stages"]["flat"] = {"rows": sum(1 for _ in loaded) * a.scale, "gin_build_s": gin_s,
@@ -918,8 +918,8 @@ def main() -> None:
 def bm25_rls_check(db: str, tenant, tree, work: list[dict]) -> dict:
     """Do the two BM25 statistics agree, and do they count only readable rows?
     For each query: df per term from the maintained counts summed over the
-    readable workareas, from the query-time count under row security, and from
-    a tenant-wide count (every workarea, the form that would leak)."""
+    readable workspaces, from the query-time count under row security, and from
+    a tenant-wide count (every workspace, the form that would leak)."""
     agree = differs_tenant_wide = terms = 0
     with serving(db) as c:
         c.execute("SET statement_timeout = 0")  # a correctness check, not a latency
@@ -933,12 +933,12 @@ def bm25_rls_check(db: str, tenant, tree, work: list[dict]) -> dict:
                     p = {"t": tenant, "ws": w["ws"], "kinds": KINDS, "term": term,
                          "all": [str(x) for x in tree.all()]}
                     mc = c.execute("SELECT coalesce(sum(df), 0) FROM bm25_df WHERE tenant_id = %(t)s "
-                                   "AND term = %(term)s AND workarea_id = ANY(%(ws)s::uuid[])", p).fetchone()[0]
+                                   "AND term = %(term)s AND workspace_id = ANY(%(ws)s::uuid[])", p).fetchone()[0]
                     qt = c.execute(f"SELECT count(*) FROM memories m WHERE {SCOPE} AND "
                                    "to_tsvector('simple', m.claim) @@ format('%%L', %(term)s::text)::tsquery",
                                    {**p, "q": None}).fetchone()[0]
                     tw = c.execute("SELECT coalesce(sum(df), 0) FROM bm25_df WHERE tenant_id = %(t)s "
-                                   "AND term = %(term)s AND workarea_id = ANY(%(all)s::uuid[])", p).fetchone()[0]
+                                   "AND term = %(term)s AND workspace_id = ANY(%(all)s::uuid[])", p).fetchone()[0]
                     terms += 1
                     agree += int(mc == qt)
                     differs_tenant_wide += int(tw != qt)
