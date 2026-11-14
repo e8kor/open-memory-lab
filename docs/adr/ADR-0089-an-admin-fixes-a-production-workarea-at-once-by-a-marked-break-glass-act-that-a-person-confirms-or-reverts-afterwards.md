@@ -248,7 +248,8 @@ Decided, not built.
       the `fixes` member of ADR-0083 d11's counts read, `GET /v2/todo/counts`.
     - Each entry carries the act, the target version, the replaced version, the reason, the time
       and `loosens_guardrail`. It never names the admin key, principal or user.
-    - A fix taken by the reader's own principal is listed without confirm or revert.
+    - A fix taken by the reader's own person is listed with confirm and revert in a development
+      scope (marked `same_user` when confirmed) and without either in a production scope (d8).
     - Confirm and revert are `POST /v2/review/fixes/{id}/confirm|revert`.
   - **CLI:**
     - `oml admin fix demote|edit|retire|release-rollback|import-rollback --reason`;
