@@ -7,7 +7,7 @@ answers: how an append-only chain coexists with the right to erasure; what crypt
 
 # ADR-0005 — Erasure by crypto-shredding, with a named inventory and an honest boundary
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0052](ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0052](ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) · amended by [ADR-0090](ADR-0090-the-lake-is-a-replayable-twin-of-postgresql-that-holds-every-signed-event-with-its-sealed-fold-inputs-and-rebuilds-it-into-an-empty-database.md) (proposed; d4)
 
 **Release:** not built ([releases](../changelog.md))
 

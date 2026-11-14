@@ -7,7 +7,7 @@ answers: how ADR-0003's lake writer is built against the code as it stands; whic
 
 # ADR-0060 — The lake writer drains the outbox it has, seals what it materializes, and answers only the operator
 
-**Status:** accepted design · 2026-11-06 (was accepted) · introduced in v0.6.0 · first recorded 2026-11-05 (d17 and d19 decided by the operator, 2026-11-05) · amends [ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md) (d3, d4, d6), [ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) (d1, d2), [ADR-0006](ADR-0006-pure-rust.md) (d1)
+**Status:** accepted design · 2026-11-06 (was accepted) · introduced in v0.6.0 · first recorded 2026-11-05 (d17 and d19 decided by the operator, 2026-11-05) · amended by [ADR-0090](ADR-0090-the-lake-is-a-replayable-twin-of-postgresql-that-holds-every-signed-event-with-its-sealed-fold-inputs-and-rebuilds-it-into-an-empty-database.md) (proposed; d2, d6, d14, d19) · amends [ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md) (d3, d4, d6), [ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) (d1, d2), [ADR-0006](ADR-0006-pure-rust.md) (d1)
 
 **Release:** introduced in v0.6.0 ([releases](../changelog.md))
 
