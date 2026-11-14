@@ -1,5 +1,5 @@
 <!--
-id: adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents
+id: adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents
 tier: engineering
 status: accepted design · 2026-11-05
 answers: why source mapping's first slice is its own record beside ADR-0047; what a memory's anchor holds, who declares it, what the server checks and what it never computes; how recall and the listing filter by origin and how a hit shows its anchor and whether its source moved; what `oml sync` reads, how its adapters extract, how claim keys and hashes are derived, how it diffs against a workarea and what each outcome writes; how runs are batched for bulk review and kept idempotent; how cross-document edges are proposed and ratified; how staleness is checked and confirmed; how a moved span, a concurrent supersession and a rollback are handled; what a fragment may name; how each retriever's list is capped before fusion; how ADR-0047's eleven questions are answered and which this slice exercises; what v0.5.8 builds and what waits for code; how OML's own ADRs are loaded and re-synced; the tests, doctor lines and costs; the contract the build lane starts from

@@ -1127,7 +1127,7 @@ function Universe(){
           ${w.ladder==='validated/frozen'?'<div class="docsrow">frozen: serves reads · refuses new writes · demote and erase stay journalled</div>'
             :w.child&&w.ladder==='committed'?`<div class="docsrow">validate blocked while child ${w.child} is development (child-status rule)</div>`
             :'<div class="docsrow">bar = promotions since last transition (mock pacing — transitions are propose + ratify acts)</div>'}
-          <div class="docsrow">docs: <a href="../architecture/workareas/">workareas</a> · <a href="../architecture/admission/">admission</a> · <a href="../architecture/roles-and-keys/">roles &amp; keys</a></div>
+          <div class="docsrow">docs: <a href="../architecture/workspaces/">workareas</a> · <a href="../architecture/admission/">admission</a> · <a href="../architecture/roles-and-keys/">roles &amp; keys</a></div>
           ${w.ladder!=='validated/frozen'?'<button class="go cta" id="goReactor">enter the admission pipeline →</button>':''}</div>`;
         panel.hidden=false;
         document.getElementById('pxw').onclick=clearSelection;

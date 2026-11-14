@@ -48,7 +48,7 @@ journalled admin act: `POST /v2/simulations/{id}/audience` ([HTTP API](https://g
 removes entries and lands in the chain as a `simulation.audience_changed` event ([event
 catalog](https://github.com/e8kor/open-memory-lab/blob/main/docs/data/event-catalog.md)). Because every change is a journalled event, the membership at
 any moment is the fold of the opening event and the audience changes since — reconstructible from
-the journal, like every other grant-shaped fact in the system ([workareas](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workareas.md), D7).
+the journal, like every other grant-shaped fact in the system ([workareas](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workspaces.md), D7).
 
 The audience does two jobs at once:
 
@@ -99,7 +99,7 @@ Containment is four independent mechanisms. Any one of them failing still leaves
 ### Never into validated
 
 A simulation row is refused promotion into a `validated` workarea, unconditionally. Validated areas
-are the frozen, consumer-grade tier ([workareas](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workareas.md), D8); counterfactual content has no
+are the frozen, consumer-grade tier ([workareas](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workspaces.md), D8); counterfactual content has no
 path into them — not via direct write, not via promotion, not via reassignment (validated refuses
 reassignment into it regardless of provenance), and not via a tainted derivative (below).
 

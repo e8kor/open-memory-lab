@@ -7,7 +7,7 @@ answers: how the status ladder and claim edges, built on two branches before the
 
 # ADR-0046 — The lifecycle, claim edges and the brief ship in v0.5.2 inside user roots, with no new tool
 
-**Status:** accepted design · 2026-11-04 · proposed and accepted on 2026-11-04 with release v0.5.2, its nine questions answered that day · amended by [ADR-0055](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md) (d2: `same_user` compares the person behind each key and marks a claim's approval too) · amended by [ADR-0085](ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) (d1, d2: user roots capped at development, 2026-11-14)
+**Status:** accepted design · 2026-11-04 · proposed and accepted on 2026-11-04 with release v0.5.2, its nine questions answered that day · amended by [ADR-0055](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md) (d2: `same_user` compares the person behind each key and marks a claim's approval too) · amended by [ADR-0085](ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) (d1, d2: user roots capped at development, 2026-11-14)
 
 **Release:** introduced in v0.5.2 ([releases](../changelog.md))
 
@@ -17,12 +17,12 @@ answers: how the status ladder and claim edges, built on two branches before the
 
 **Two features were built before the API they would ride.** The status ladder of
 [ADR-0009](ADR-0009-status-ladder.md) and the claim edges of
-[ADR-0008](ADR-0008-workarea-algebra.md) d5 and [ADR-0021](ADR-0021-ai-human-ontologies.md) d5
+[ADR-0008](ADR-0008-workspace-algebra.md) d5 and [ADR-0021](ADR-0021-ai-human-ontologies.md) d5
 were built on the branches `feat/transitions` and `feat/claim-edges` as domain functions, use
 cases and Postgres folds, with no route, tool or CLI verb, because the v0.4.0 rewrite
 ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md)) was about to move both surfaces. Both are
 now replayed onto v0.4.1 for v0.5.2. Their own pages state the readings they took:
-[workareas](../architecture/workareas.md#readings-the-build-takes) for the ladder, the
+[workareas](../architecture/workspaces.md#readings-the-build-takes) for the ladder, the
 [schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations) and the [changelog](../changelog.md) for claim edges.
 
 **The plan of 2026-11-04 put three things in v0.5.2.** The workarea lifecycle, labelled links

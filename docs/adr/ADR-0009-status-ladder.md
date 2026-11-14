@@ -7,7 +7,7 @@ answers: why a workarea's status is a forward-only ladder of development, commit
 
 # ADR-0009 — The status ladder: development, committed, validated; forward only; medallion words stay in the lake
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d1, d4, d5, 2026-11-14)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d1, d4, d5, 2026-11-14)
 
 **Release:** introduced in v0.5.2 ([releases](../changelog.md))
 
@@ -21,7 +21,7 @@ a stage where a tenant may deliberately relax review inside a bounded, marked ex
 stage that an auditor can rely on — "what this area held when it froze is what it holds now,
 minus journalled demotions and erasures". This record decides the ladder. Its rules, the
 transition matrix and the per-status refusal matrix are declared on
-[architecture/workareas.md](../architecture/workareas.md); this record states the decisions and
+[architecture/workspaces.md](../architecture/workspaces.md); this record states the decisions and
 what was rejected. Nothing here is built; every refusal named below is a design
 commitment with a typed error in the taxonomy ([api/errors.md](../api/errors.md)), not a property
 of running software.
@@ -37,7 +37,7 @@ of running software.
   re-parenting; serves reads. *(Amended 2026-11-14: the development self-signing exception is retired (ADR-0001 d5); the build never sets `self_signed`, so this text describes nothing that is served.)*
 
 - **d2 — One write-eligibility rule across all statuses.** Who may write into a workarea is
-  decided by effective access ([ADR-0008](ADR-0008-workarea-algebra.md) d4) and by nothing else.
+  decided by effective access ([ADR-0008](ADR-0008-workspace-algebra.md) d4) and by nothing else.
   **Status changes only the review policy applied to what is submitted — never grant
   resolution.** `validated`'s write refusal is the admission policy of that status, received
   identically by every holder of write access as a typed error, not an edit to anyone's grants.
@@ -60,7 +60,7 @@ of running software.
 
 - **d5 — A frozen area admits exactly three mutations, all journalled.** Demote, erasure
   (crypto-shred, [ADR-0005](ADR-0005-erasure-by-crypto-shredding.md)) and crew-metadata update
-  ([ADR-0008](ADR-0008-workarea-algebra.md) d7). The first two exist because governance and legal
+  ([ADR-0008](ADR-0008-workspace-algebra.md) d7). The first two exist because governance and legal
   reality do not freeze — a claim found wrong is demoted, a claim that must go is erased, each
   under its own journal event — and the third because freeze covers claim content and promotions,
   not workarea metadata. Everything else a frozen area is asked to do is refused.
@@ -106,7 +106,7 @@ of running software.
   sources of access truth: every check would reconcile the grant state with the status-local
   state, every audit answer would depend on which table the checker consulted, and a transition
   would become a permission migration with its own failure modes. d2 keeps one truth —
-  [ADR-0008](ADR-0008-workarea-algebra.md) d4 decides access, status decides policy — and the
+  [ADR-0008](ADR-0008-workspace-algebra.md) d4 decides access, status decides policy — and the
   cost is that `validated`'s refusals must be implemented as admission policy rather than falling
   out of grant resolution.
 - **Reversible freezing** — an unfreeze verb, journalled like any other act. Rejected because it

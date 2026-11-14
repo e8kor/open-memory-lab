@@ -7,7 +7,7 @@ answers: how Claude's hosted apps reach the agent plugin through a claude.ai cus
 
 # ADR-0031 — Claude's hosted apps reach the agent plugin over OAuth, through a connection that a one-time connect code binds to one agent key
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) (d8: a longer-lived code for a confined key), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0079](ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) (d11: a connection whose key expired works again if an admin moves the key's date before its refresh token lapses)
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workspace-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) (d8: a longer-lived code for a confined key), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0079](ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) (d11: a connection whose key expired works again if an admin moves the key's date before its refresh token lapses)
 
 **Release:** introduced in v0.4.0 ([releases](../changelog.md))
 
@@ -735,7 +735,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
       the lead's value by replication lag and no longer. The OAuth endpoints write, so a follower
       forwards them to the lead; a follower validates access tokens from its replica for the
       reads it serves, with the revocation lag a revoked key has there
-      ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)). A
+      ([workareas](../architecture/workspaces.md#grants-bind-to-node-ids-paths-are-derived)). A
       follower forwards an `/mcp` request that carries an access token and reaches a write verb as
       the whole `/mcp` `POST` to the lead's `/mcp`, over the enrolled hop, with the token unchanged
       in `Authorization`; the lead re-resolves token → connection → key and authorizes against

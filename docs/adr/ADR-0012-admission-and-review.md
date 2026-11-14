@@ -19,7 +19,7 @@ staged admission pipeline, a serve-before-verdict rule, the reviewer's
 reading-against-what-it-replaces and reopen verbs, and review capacity that comes from crews
 rather than the provider's own model calls — have to work as one pipeline with one capacity
 answer, and the review policy must be a journalled object per workarea rather than deployment
-configuration, because the status ladder ([workareas](../architecture/workareas.md)) works by
+configuration, because the status ladder ([workareas](../architecture/workspaces.md)) works by
 swapping the policy, never the write-eligibility rule. The lifecycle state machine and scan
 contract are owned by [admission](../architecture/admission.md); the review ceremony transcript
 by [CLI sessions](../cli/reference.md). Everything here is decided, not built.
@@ -63,7 +63,7 @@ other defect of the claim.
   counted over distinct eligible keys — no key alias or repeated verdict counts twice, and the
   deterministic scan (which informs and can veto, never approves) never counts toward k. The
   workarea status ladder changes which policy applies, never who may write
-  ([workareas](../architecture/workareas.md)). Policy changes are journalled acts, and every
+  ([workareas](../architecture/workspaces.md)). Policy changes are journalled acts, and every
   ratification snapshot (d1) names the policy version it ran under, so an auditor can replay any
   promotion against the rules that governed it.
 
@@ -111,7 +111,7 @@ other defect of the claim.
 - d3's policy snapshots mean two promotions in the same workarea can legitimately differ in what
   they required; an auditor reads each against its own snapshot, never against today's policy.
 - d4's crew-independence option is only as strong as the recorded crew metadata — crews are
-  recorded, not operated ([workareas](../architecture/workareas.md)); a tenant that misdeclares
+  recorded, not operated ([workareas](../architecture/workspaces.md)); a tenant that misdeclares
   its crews defeats its own axis, and the reciprocal-approval statistics are the designed
   detector, not a preventer.
 

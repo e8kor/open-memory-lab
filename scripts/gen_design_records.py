@@ -4,6 +4,8 @@
 The records themselves stay in docs/adr/ and are not published on the site. This page lists each
 one with its status and the decision in a line, grouped by subject, and links to the file on GitHub.
 It fails when a record has no category, so a new record cannot be missing from the register.
+It ends with the register's "Renamed records" list, so a reader holding a link to a former file
+name finds the current one; nothing redirects (ADR-0091 d10).
 
     python scripts/gen_design_records.py [--check]
 """
@@ -50,6 +52,15 @@ BLURB = {
 HELD_BACK = {64, 66, 80, 81, 82, 83, 84, 85, 86, 87, 89, 90, 91}
 
 
+RENAMED_ROW = re.compile(r"^\|\s*`(ADR-\d{4}[^`]*\.md)`\s*\|\s*\[`(ADR-\d{4}[^`]*\.md)`\]", re.M)
+
+
+def renamed() -> list[tuple[str, str]]:
+    """(former file name, current file name) rows of the register's "Renamed records" list."""
+    text = (ADR_DIR / "index.md").read_text()
+    return RENAMED_ROW.findall(text.partition("## Renamed records")[2].partition("\n## ")[0])
+
+
 def record(path: pathlib.Path) -> tuple[int, str, str, str]:
     text = path.read_text()
     num = int(re.search(r"ADR-(\d+)", path.name).group(1))
@@ -79,6 +90,16 @@ def render() -> tuple[str, list[str]]:
         for n in sorted(x for x in nums if x in recs):
             _, title, status, fname = recs[n]
             out.append(f"| [{docgen.strip_handles(title).replace('|', '\\|')}]({BLOB}{fname}) |")
+        out.append("")
+    moved = renamed()
+    problems += [f"renamed record {cur} does not exist" for _, cur in moved if cur not in {r[3] for r in every.values()}]
+    if moved:
+        out.append("## Renamed records\n")
+        out.append("A record keeps its number when its file is renamed, and GitHub does not redirect the former "
+                   "file name. Each row gives a former file name and the record it now is.\n")
+        out.append("| Former file name | Record |\n|---|---|")
+        for former, current in moved:
+            out.append(f"| `{former}` | [{current[:8]}]({BLOB}{current}) |")
         out.append("")
     return "\n".join(out), problems
 

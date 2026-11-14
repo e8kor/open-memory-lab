@@ -25,7 +25,7 @@ d8 and d12–d14 unparked for lake vocabularies), and ADR-0046 (d6: a standalone
 proposal is admitted from a key carrying ADR-0027's `classifier` profile, and refused for every
 other key as before)
 
-**Depends on:** [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+**Depends on:** [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md)
 (anchors, `oml sync`, its diff, batches and source checks, accepted for v0.5.8);
 [ADR-0061](https://github.com/e8kor/open-memory-lab/pull/70) (the set extraction and
 namespace-scoped retirement, proposed for v0.5.9);

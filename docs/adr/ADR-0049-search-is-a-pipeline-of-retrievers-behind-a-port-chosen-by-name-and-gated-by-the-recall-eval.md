@@ -371,7 +371,7 @@ reorders results, and steering rows, which precede hits, are never ranked"
        lexical leg until then.
 
 - **d13 — Each retriever's list is capped in the core before fusion.** *Added 2026-11-05 with
-  [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+  [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md)
   for v0.5.8, after Hindsight's per-arm cap (`hindsight_api/engine/search/fusion.py:8-26`).* The
   depth d3 reads a list to (`k` for `Single`, at least 50 for `Rrf`, at least 100 for `Cc`, at
   least the rerank depth for a reranking pipeline) is a cap the core enforces, not a request the

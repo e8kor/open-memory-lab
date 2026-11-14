@@ -7,7 +7,7 @@ answers: why exactly five roles exist; how API keys are issued, scoped and banne
 
 # ADR-0010 — Roles and keys: reader, writer, dreamer, admin, operator
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d6, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d1, d5, 2026-11-14)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d6, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d1, d5, 2026-11-14)
 
 **Release:** partly in v0.1.0 and v0.3.0; the rest not built ([releases](../changelog.md))
 
@@ -18,7 +18,7 @@ multi-tenant, has no web UI, and its callers are agents and crews first; the adm
 speaking the same HTTP API. The role set, the issuance rules, the provider-level bootstrap and
 the ban mechanism all need one record. The role-by-verb matrix, grant resolution and deny
 semantics are owned by [roles and keys](../architecture/roles-and-keys.md) and
-[workareas](../architecture/workareas.md); this record makes the decisions those pages document.
+[workareas](../architecture/workspaces.md); this record makes the decisions those pages document.
 Everything here is decided, not built.
 
 ## Decision

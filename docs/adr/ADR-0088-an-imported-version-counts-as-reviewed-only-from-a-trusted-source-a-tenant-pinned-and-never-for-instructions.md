@@ -15,7 +15,7 @@ server), ADR-0084 (d6: an import from a trusted source may land promoted members
 
 ## Context
 
-[ADR-0084](ADR-0084-a-workarea-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md)
+[ADR-0084](ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md)
 lands every imported version held and has it reviewed again on the target. A team that publishes
 on a staging server and imports each release into production reviews every item twice. This record
 says when the first review may count on the second server. It changes what R2 means on the target,

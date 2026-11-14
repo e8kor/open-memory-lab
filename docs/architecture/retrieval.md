@@ -10,7 +10,7 @@ A recall returns promoted memories that the key can read, ranked by the chosen s
 
 ## Who sees a hit
 
-A recall returns promoted memories inside the key's effective access ([workareas](workareas.md)). It hides two kinds of row:
+A recall returns promoted memories inside the key's effective access ([workareas](workspaces.md)). It hides two kinds of row:
 
 - **Held memories** are visible to their author (`oml read`, and recall with `--include-unreviewed`), to the reviewer a memory is served to, to an admin through the journaled admin read, and, inside an in-progress workarea, to its readers when the scan raised no finding.
 - **Demoted and erased memories** are not served.
@@ -128,13 +128,13 @@ A recall returns two segments in a fixed order.
 
 Steering comes first because a standing instruction that relevance could bury fails when an agent needs it most. Nothing a client sends changes that order.
 
-A recall inside the user root also searches `universe`. Its memories rank with the user's own, and its steering applies as an ancestor's. See [workareas](workareas.md#the-workarea-of-each-user).
+A recall inside the user root also searches `universe`. Its memories rank with the user's own, and its steering applies as an ancestor's. See [workareas](workspaces.md#the-workarea-of-each-user).
 
 ### The key's own held memories
 
 With `--include-unreviewed`, the key's own held memories join the hits. Each is marked `state: held`. They rank by the same order and count against `k` and the token budget. Held steering and held retirements never appear, because neither is in force yet.
 
-Inside an in-progress workarea, every author's held memories and derived facts join, labeled unreviewed, except those the scan held, which stay visible to their author only. See [workareas](workareas.md#in-progress-workareas).
+Inside an in-progress workarea, every author's held memories and derived facts join, labeled unreviewed, except those the scan held, which stay visible to their author only. See [workareas](workspaces.md#in-progress-workareas).
 
 ## Token budgets
 
@@ -166,7 +166,7 @@ The benchmarks run every pipeline through the same served path as an agent. The 
 
 ## Searching beyond the scope
 
-`sources` says where a recall searches ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). It is off until a tenant admin enables federation with `oml search federation --enabled on`. Until then `wide` and a list are refused, never answered as `scope`.
+`sources` says where a recall searches ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). It is off until a tenant admin enables federation with `oml search federation --enabled on`. Until then `wide` and a list are refused, never answered as `scope`.
 
 | `sources` | Searches | Scores with the statistics of |
 |---|---|---|
@@ -180,7 +180,7 @@ The statistics are fixed before any workarea is chosen, so no hit's score depend
 
 The answer says what it searched. Under `wide` or a list, `search.sources` lists each workarea searched with `via`, `scope` or `federated`. It adds the workarea's estimate and the query words its rows hold. Each hit carries `via` beside its `workarea_path`. A `scope` answer carries `search.widen` when another workarea the key reads is richer in the query's words. It must hold them at least twice as often per memory as the scope, on at least two memories. The hint names no workarea; a retry with `sources: "wide"` searches them. Every name and number in an answer is of a workarea the key reads.
 
-A `wide` recall reads the word counts of every such workarea, exact and never sampled, and a list reads the listed ones. A `scope` recall reads none of them. On a federated tenant it reads its widen signal instead. The signal holds those counts as the server last built them, in the background, per key and scope. A signal serves for at most 300 seconds, and only under the grants it was built with. A `scope` answer without one carries no hint, and the server builds it for the next recall. [Workareas](workareas.md#federated-recall) covers the settings and how to make a workarea findable without granting it.
+A `wide` recall reads the word counts of every such workarea, exact and never sampled, and a list reads the listed ones. A `scope` recall reads none of them. On a federated tenant it reads its widen signal instead. The signal holds those counts as the server last built them, in the background, per key and scope. A signal serves for at most 300 seconds, and only under the grants it was built with. A `scope` answer without one carries no hint, and the server builds it for the next recall. [Workareas](workspaces.md#federated-recall) covers the settings and how to make a workarea findable without granting it.
 
 ## What search does not do
 

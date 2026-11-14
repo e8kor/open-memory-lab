@@ -1,5 +1,5 @@
 <!--
-id: adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one
+id: adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one
 tier: engineering
 status: accepted design · 2026-11-14
 answers: what a workarea release is, when its manifest is fixed and what it may contain; how it is named, cut, published and withdrawn, and by whom; which kinds a release governs and what that costs; what a key binds to, how a binding resolves per workarea, and how it meets an in-progress workarea, a key's own writes and an admin's fix; who may widen or narrow a binding; which keys persons and agents use in a shared development workarea and how the console acts with them; who sees which keys a release reaches; what the release notes say and against which baseline; how a released in-progress workarea is read by federation; how this answers ADR-0047 d10; what it measures; and the questions left for the operator
@@ -11,7 +11,7 @@ answers: what a workarea release is, when its manifest is fixed and what it may 
 recommendations and every other default as drafted · proposed the same day
 
 **Release:** not scheduled; the first record of the workarea lifecycle
-([review](https://github.com/e8kor/open-memory-lab/blob/main/design/workarea-lifecycle.md)), before
+([review](https://github.com/e8kor/open-memory-lab/blob/main/design/workspace-lifecycle.md)), before
 ADR-0086, ADR-0087 and ADR-0084, with ADR-0089
 
 **Twin parts** (ADR-0090 d18, PR #388): release manifests, their members, withdrawals and
@@ -45,7 +45,7 @@ twin note and ADR-0090 d18 class it. The build names each column's class under A
 
 Today a promotion is a publication. Once a version is promoted, every key with reader access on its
 scope recalls it on the next request
-([ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
+([ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
 d6 makes the commit the only boundary, and only for an in-progress workarea). There is no staging
 step, no name for "what production agents receive", and no rollback faster than a superseding
 version that another person must review.
@@ -66,7 +66,7 @@ The operator decided on 2026-11-14:
 3. **A release may be cut while in progress.** It is cut from approved versions while the
    workarea stays in progress.
 4. **The admin fixes production.**
-   [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)
+   [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)
    decides how; this record says how a fix reaches release-bound keys.
 5. **Releases govern every kind, memories included.**
 6. **An admin's fix reaches release-bound keys as a marked overlay.**

@@ -24,7 +24,7 @@ step 1), ADR-0057 (d6's public-server clause, d17's public-server doctor line)
 `https://memory.doublegate.io`, the server the maintainer runs, the default of every integration a
 release ships: the Claude Code plugin's `url` option, the hooks reading a plugin configured with
 its key alone, `oml setup claude-code` given a key and no URL, every agent kit configuration, and
-the web pages' setup text. [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+the web pages' setup text. [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md)
 d6 then keyed `oml sync`'s consent to the same host.
 
 On 2026-11-11 the operator decided that the open-source repository ships **no default server URL**,

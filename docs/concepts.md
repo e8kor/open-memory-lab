@@ -18,7 +18,7 @@ See [write and read memories](use/remember-and-recall.md) and [audit and lineage
 
 ## Held
 
-Every write is scanned, held, reviewed by someone who did not write it, signed, and only then readable. While a memory is held, recall serves it to its author, and to readers inside an [in-progress workarea](use/workareas.md#in-progress-workareas) marked unreviewed; a tenant admin reads it through the journaled [admin read](architecture/roles-and-keys.md#the-admin-read). A reviewer's approval moves it to state `promoted`.
+Every write is scanned, held, reviewed by someone who did not write it, signed, and only then readable. While a memory is held, recall serves it to its author, and to readers inside an [in-progress workarea](use/workspaces.md#in-progress-workareas) marked unreviewed; a tenant admin reads it through the journaled [admin read](architecture/roles-and-keys.md#the-admin-read). A reviewer's approval moves it to state `promoted`.
 
 --8<-- "states.md"
 
@@ -29,7 +29,7 @@ The reviewer is never the author, and approval decides who can read a memory, no
 
 A workarea is a node in a tree where memory lives and grants apply. One tree exists per tenant, rooted at `universe`. Each person also gets a root of their own, `universe.<user>`, when their first key is issued.
 
-A workarea moves forward through three statuses: development, committed and validated. Each step is proposed by one identity and confirmed by another. A crew is a named record of the agents that work together. OML records crews and does not run them. See [workareas](use/workareas.md) and [architecture: workareas](architecture/workareas.md).
+A workarea moves forward through three statuses: development, committed and validated. Each step is proposed by one identity and confirmed by another. A crew is a named record of the agents that work together. OML records crews and does not run them. See [workareas](use/workspaces.md) and [architecture: workareas](architecture/workspaces.md).
 
 ## Key
 

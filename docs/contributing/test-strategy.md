@@ -54,8 +54,8 @@ may cite it by id instead of re-asserting the invariant.
 | `P-CHAIN-SIG` | every signature verifies as pure Ed25519 (RFC 8032) over `signed_bytes` — not over the hash — under the signing key of the event's era | [chain format](../data/chain-format.md) |
 | `P-ERASE-COMPLETE` | after an erase event's fold, every copy class in the erasure inventory is purged or key-destroyed, and the attribution fields the design commits to keeping survive | [ADR-0005](../adr/ADR-0005-erasure-by-crypto-shredding.md), [audit and lineage](../architecture/audit-and-lineage.md) |
 | `P-TAINT-MONOTONE` | a claim whose lineage closure touches any simulation row is tainted; taint never disappears by adding edges, and an untainted result never cites a tainted row outside its audience | [ADR-0011](../adr/ADR-0011-simulations.md) |
-| `P-ALGEBRA-DENY-WINS` | effective access equals the union of a key's grants, each attenuated by its own deny entries, masked by global key denials — and no generated grant/deny combination widens access | [workareas](../architecture/workareas.md) |
-| `P-LADDER` | workarea status transitions are exactly the ladder's declared transitions; a universe root never leaves `committed` and never accepts a direct claim write | [workareas](../architecture/workareas.md) |
+| `P-ALGEBRA-DENY-WINS` | effective access equals the union of a key's grants, each attenuated by its own deny entries, masked by global key denials — and no generated grant/deny combination widens access | [workareas](../architecture/workspaces.md) |
+| `P-LADDER` | workarea status transitions are exactly the ladder's declared transitions; a universe root never leaves `committed` and never accepts a direct claim write | [workareas](../architecture/workspaces.md) |
 
 Two notes bind the suite's honesty:
 

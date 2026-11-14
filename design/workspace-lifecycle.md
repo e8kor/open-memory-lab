@@ -29,11 +29,11 @@ The decisions themselves are in six records, five accepted on 2026-11-14 and one
 
 | Record | Decides | Order |
 |---|---|---|
-| [ADR-0085](../docs/adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) | releases, publishing, key binding, withdrawal, the end of admin content acts | first |
-| [ADR-0086](../docs/adr/ADR-0086-a-workareas-tests-are-reviewed-claims-the-server-runs-under-the-callers-key-and-a-release-is-published-only-through-ordered-gates.md) | test suites as claims, server runs, the ordered gates | second |
-| [ADR-0087](../docs/adr/ADR-0087-an-impact-report-shows-under-the-callers-own-reads-what-a-candidate-release-changes-for-the-workareas-that-receive-it.md) | the impact report on other workareas | beside ADR-0086 |
-| [ADR-0084](../docs/adr/ADR-0084-a-workarea-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) | the bundle, export, and an import that lands held | third |
-| [ADR-0089](../docs/adr/ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) | the admin fixes production at once, marked, confirmed by a person afterwards | with ADR-0085 |
+| [ADR-0085](../docs/adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) | releases, publishing, key binding, withdrawal, the end of admin content acts | first |
+| [ADR-0086](../docs/adr/ADR-0086-a-workspaces-tests-are-reviewed-claims-the-server-runs-under-the-callers-key-and-a-release-is-published-only-through-ordered-gates.md) | test suites as claims, server runs, the ordered gates | second |
+| [ADR-0087](../docs/adr/ADR-0087-an-impact-report-shows-under-the-callers-own-reads-what-a-candidate-release-changes-for-the-workspaces-that-receive-it.md) | the impact report on other workareas | beside ADR-0086 |
+| [ADR-0084](../docs/adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) | the bundle, export, and an import that lands held | third |
+| [ADR-0089](../docs/adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) | the admin fixes production at once, marked, confirmed by a person afterwards | with ADR-0085 |
 | [ADR-0088](../docs/adr/ADR-0088-an-imported-version-counts-as-reviewed-only-from-a-trusted-source-a-tenant-pinned-and-never-for-instructions.md) | verdicts from a trusted source server | deferred |
 
 Citations are `ADR-nnnn dN :line` for a decision record in `docs/adr/` and `path:line` for code, at

@@ -1,5 +1,5 @@
 <!--
-id: adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command
+id: adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workspace-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command
 tier: engineering
 status: accepted design · 2026-11-06
 answers: what OML changes to be listed in Anthropic's Connectors Directory; the title each tool carries and why oml_write stays non-destructive; how the server instructions and tool descriptions are reworded from commands to descriptions; how a directory reviewer connects without a Google or GitHub sign-in or a ten-minute race; the lifetime and confinement rule of a reviewer's connect code; how it is named, ended and bounded; how the demonstration workarea is seeded; the rejected roads

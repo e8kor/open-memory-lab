@@ -7,9 +7,9 @@ answers: what OML stores about a client project's code (a small structural skele
 
 # ADR-0047 — Project knowledge and a code skeleton follow the development lifecycle
 
-**Status:** proposed · 2026-11-04 · its eleven questions answered on 2026-11-05 at their recommendations ([the answers](#the-maintainers-answers-of-2026-11-05)) · amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) (d3, d12, d15 a, d17)
+**Status:** proposed · 2026-11-04 · its eleven questions answered on 2026-11-05 at their recommendations ([the answers](#the-maintainers-answers-of-2026-11-05)) · amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md) (d3, d12, d15 a, d17)
 
-**Release:** not built; gated on the evaluation harness (d17) and ADR-0030 ([releases](../changelog.md)). Its first slice, an anchor on every memory and `oml sync` for markdown documents, is [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), accepted and introduced in v0.5.8; the parts it took over (d3, d12, d15 a, d17 and the eleven answers, as it records) are decided there, and the rest of this record stays proposed
+**Release:** not built; gated on the evaluation harness (d17) and ADR-0030 ([releases](../changelog.md)). Its first slice, an anchor on every memory and `oml sync` for markdown documents, is [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md), accepted and introduced in v0.5.8; the parts it took over (d3, d12, d15 a, d17 and the eleven answers, as it records) are decided there, and the rest of this record stays proposed
 
 **Amends:** ADR-0025 (d10, d12), ADR-0029 (d2, d7), ADR-0039 (d3); and, on their branches,
 ADR-0030 (d1), ADR-0044 (d6), ADR-0045 (d9)
@@ -99,7 +99,7 @@ have that shape. Decided, not built.
   remember, which the skill and the hooks carry.
 
 - **d3 — Every `code` entry carries an anchor `{repo, branch, path?, symbol?, commit, hash?,
-  hasher?}`, completed on the client.** *Amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d1: the anchor is on every kind, optional except on `code`, its fields `{repo | uri, rev, path, fragment?, hash?, hasher?}`, with `commit` read as `rev`, `symbol` as `fragment` and `branch` added here when d5 is built; its grammar is ADR-0057 d3.* `repo` is the name `oml code init` gives the repository;
+  hasher?}`, completed on the client.** *Amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md) d1: the anchor is on every kind, optional except on `code`, its fields `{repo | uri, rev, path, fragment?, hash?, hasher?}`, with `commit` read as `rev`, `symbol` as `fragment` and `branch` added here when d5 is built; its grammar is ADR-0057 d3.* `repo` is the name `oml code init` gives the repository;
   `branch` is the branch it was written on; `path` and `symbol` name what it describes, or are
   absent for a fact about the whole repository; `commit` is `HEAD` at the write; `hash` is d4's
   hash of the symbol, or of the file when no symbol is named. The agent names `path` and `symbol`;
@@ -195,7 +195,7 @@ have that shape. Decided, not built.
   plugin's own key pair and never the CLI's credentials file (ADR-0029 d4), fails open, and
   writes nothing, so ADR-0029 d1's "performs no act" still holds.
 
-- **d12 — Repository files are an input and an output.** *Amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d6–d9: the input half is `oml sync` with the `headings` adapter, which writes kind `memory` in v0.5.8 and kind `code` here once it is built; the output half, export, stays this record's.* `oml code import CLAUDE.md` (and
+- **d12 — Repository files are an input and an output.** *Amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md) d6–d9: the input half is `oml sync` with the `headings` adapter, which writes kind `memory` in v0.5.8 and kind `code` here once it is built; the output half, export, stays this record's.* `oml code import CLAUDE.md` (and
   `AGENTS.md`, `.cursor/rules/*`, `docs/adr/*`) splits a file by heading and list item into held
   `code` entries in the branch workarea, anchored to the file, so the first pull request reviews
   them like any batch. `oml code export --to AGENTS.md` writes the promoted entries of *R*
@@ -225,7 +225,7 @@ have that shape. Decided, not built.
 - **d15 — The backend adds four things, and no tool.**
     - **a. Kind `code` with its anchor** (d2, d3): accepted by `POST /v1/memories`, its
       supersession and `oml_write`; the anchor required on kind `code` and refused on every other
-      kind (`request.validation`) (*amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d1: optional on every other kind*), as ADR-0037 d10 does for `severity` and `rule`; served in the
+      kind (`request.validation`) (*amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md) d1: optional on every other kind*), as ADR-0037 d10 does for `severity` and `rule`; served in the
       claim item (amends ADR-0025 d12).
     - **b. A writer creates branch workareas under a branch parent.** An admin marks a workarea
       a branch parent; a writer key with effective `writer` on it may create a child that is
@@ -258,7 +258,7 @@ have that shape. Decided, not built.
   (ADR-0005). The committed `.oml/code.toml` names no server, key or workarea, and only a local
   enablement under `.git/oml/` turns the hooks on, so cloning a repository maps nothing.
 
-- **d17 — An evaluation harness gates everything beyond the skill change.** *Amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d13: the gate covers what stores code knowledge or changes a session (d1, d2, d4–d11, d13, d15 b–c, and export), not the anchor, the origin filters or markdown sync, which store no code knowledge and change no default read.* `testing/eval/` runs a
+- **d17 — An evaluation harness gates everything beyond the skill change.** *Amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md) d13: the gate covers what stores code knowledge or changes a session (d1, d2, d4–d11, d13, d15 b–c, and export), not the anchor, the origin filters or markdown sync, which store no code knowledge and change no default read.* `testing/eval/` runs a
   fixed task set in three arms: no memory; OML (the brief, the anchored reads and recall as built);
   and the same promoted entries exported to `AGENTS.md` (d12), the real competitor. Tasks are
   closed issues with a merged fix and a test, from this repository and two the maintainer names,
@@ -339,7 +339,7 @@ meaning because it is capped, human for prose, and done where the code is read (
 
 ## The maintainer's answers of 2026-11-05
 
-The operator answered all eleven on 2026-11-05 by taking each recommendation, with question 10 narrowed for documents ([ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d12). The last column says which the first slice, v0.5.8, exercises; the rest wait for the code parts this record gates.
+The operator answered all eleven on 2026-11-05 by taking each recommendation, with question 10 narrowed for documents ([ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md) d12). The last column says which the first slice, v0.5.8, exercises; the rest wait for the code parts this record gates.
 
 | # | Question | Options | Answer | Exercised by v0.5.8 |
 |---|---|---|---|---|
@@ -363,7 +363,7 @@ The operator answered all eleven on 2026-11-05 by taking each recommendation, wi
 | **Immediate review of every write** | It puts a person in front of every capture, which is overhead at volume and noise at low attention; the pull request is when someone already reads the code. |
 | **Own tree-sitter grammars** | A grammar per language to build and update, and a larger binary; ctags and language servers already answer "where is this symbol". |
 | **An automated reviewer for knowledge** | Its errors correlate with the writer's; R2's value is an independent judgement. |
-| **Code entries as kind `memory`** | Code entries would crowd ordinary recall, and every reader would pay for them. An anchor on a `memory` is [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)'s, and does not make it a code entry. |
+| **Code entries as kind `memory`** | Code entries would crowd ordinary recall, and every reader would pay for them. An anchor on a `memory` is [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md)'s, and does not make it a code entry. |
 | **Validate the merged branch workareas at release** | A frozen area admits no supersession; a fact found wrong after a release could never be corrected. |
 | **A service key in CI** | A service key is refused every review verb; it could not ratify or reject. |
 | **A fourth MCP tool** | ADR-0039 d8: a kind, an anchor field, read filters and hooks carry all of it. |

@@ -27,7 +27,7 @@ oml keys issue-agent pay-agent-1 --principal crew/payments/agent-1 --workarea de
 
 bob gets the same pair. Each agent gets its own key and principal, so review can tell them apart. Team keys are tenant keys, separate from each person's own root ([individual users](individual.md#7-keep-personal-knowledge-apart-from-team-work)).
 
-Designed: in the console, the admin links `alice-dev` and `alice-dev-review` to alice's sign-in, and the console offers them for acts in `payments.dev` ([ADR-0085](../adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d16). Today the console acts in a person's own root only, and team review runs from the CLI.
+Designed: in the console, the admin links `alice-dev` and `alice-dev-review` to alice's sign-in, and the console offers them for acts in `payments.dev` ([ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d16). Today the console acts in a person's own root only, and team review runs from the CLI.
 
 ## 2. Develop in progress
 
@@ -60,7 +60,7 @@ The plugin loads promoted guardrails at session start and checks each rule befor
 
 **Who approves.** Built: one verdict by any `dreamer` key outside the version's lineage, a reviewer crew's agent key included; the recorded policy requires no person for any kind. Designed (ADR-0080 d16): every instruction kind, steering, guardrail and skill, counts only a person's verdict, since an agent follows it rather than weighing it.
 
-**Builder. Designed** ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workareas-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md)). The workarea page in the console edits skills, guardrails and documents in forms; each save is a held version under the person's own key, and Preview writes nothing.
+**Builder. Designed** ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md)). The workarea page in the console edits skills, guardrails and documents in forms; each save is a held version under the person's own key, and Preview writes nothing.
 
 ## 4. Review
 
@@ -78,7 +78,7 @@ Designed ([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-appro
 
 ## 5. Test and verify
 
-**Designed** ([ADR-0086](../adr/ADR-0086-a-workareas-tests-are-reviewed-claims-the-server-runs-under-the-callers-key-and-a-release-is-published-only-through-ordered-gates.md), [ADR-0087](../adr/ADR-0087-an-impact-report-shows-under-the-callers-own-reads-what-a-candidate-release-changes-for-the-workareas-that-receive-it.md)).
+**Designed** ([ADR-0086](../adr/ADR-0086-a-workspaces-tests-are-reviewed-claims-the-server-runs-under-the-callers-key-and-a-release-is-published-only-through-ordered-gates.md), [ADR-0087](../adr/ADR-0087-an-impact-report-shows-under-the-callers-own-reads-what-a-candidate-release-changes-for-the-workspaces-that-receive-it.md)).
 
 - A test case is a claim of kind `test`, claim key `test/<name>`, reviewed like any claim. Four shapes: a recall expectation, a guardrail decision on a tool call, a skill check, a document check.
 - `oml workareas test` runs the suite on the server under the caller's key. A run on in-progress content is advisory. A run against a release candidate counts as a gate.
@@ -127,7 +127,7 @@ A production agent bound to `latest` reads 1.4.0 from its next request and loads
 
 **Fix forward. Designed** (ADR-0085 d11). `oml workareas revert --to 1.3.0` drafts held supersessions back to 1.3.0's text, reviewed and cut as 1.4.1.
 
-**Admin fix at once. Designed** ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)). At 03:00, with nobody on the team answering, the tenant's admin demotes the bad skill version:
+**Admin fix at once. Designed** ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)). At 03:00, with nobody on the team answering, the tenant's admin demotes the bad skill version:
 
 ```sh
 oml admin fix demote <artifact_id> --reason "refund-flow step 3 refunds twice"

@@ -1,5 +1,5 @@
 <!--
-id: adr/ADR-0082-a-person-builds-and-edits-a-workareas-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys
+id: adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys
 tier: engineering
 status: accepted design · 2026-11-14
 answers: which console routes build and edit a workarea's skills, guardrails and documents, on the workarea page; which of the person's keys writes each act and why the admin side writes none; why an edit is a held supersession and a removal a retirement proposal; how a guardrail is edited within ADR-0037; what preview shows and which call serves it; who may review what a person wrote in the console; what the API must add
@@ -133,7 +133,7 @@ Decided, not built.
       (capacity `review`), a dreamer proposal (ADR-0045 d12), offered only where that key holds
       dreamer; that key is then excluded from reviewing its own proposal (lineage closure).
     - Every write sends `expected_version`, the version the form rendered
-      ([ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+      ([ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md)
       d19), and an `Idempotency-Key` from the form, so a double submit captures one version. While
       a held successor of the person's own exists the builder offers no second edit of that claim
       (a second would be a rival, ADR-0025 d10); it links the pending version.

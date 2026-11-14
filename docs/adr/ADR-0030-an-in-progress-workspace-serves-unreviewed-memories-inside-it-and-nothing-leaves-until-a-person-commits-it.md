@@ -1,5 +1,5 @@
 <!--
-id: adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it
+id: adr/ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it
 tier: engineering
 status: accepted design · 2026-11-06
 answers: what an in-progress workarea is and who may mark it (a person's key, never an agent); the one boundary rule every scoped read applies; which keys read other authors' unreviewed memories inside, labelled how; how R3 is relaxed there and only there, journalled; why ranking still reads no verdict and what telemetry records; what the commit is and why it needs zero unreviewed; how a curator agent narrows the unreviewed work inside and never widens it; how anchors, `oml sync` and draft workareas interact; how an in-progress workarea is abandoned or retired with nothing deleted; the surfaces, codes, migration, doctor lines and laws
@@ -40,7 +40,7 @@ and [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-i
 put each person's work under a user root, where the person's own keys propose and ratify and a
 same-person step is marked `same_user`;
 [ADR-0055](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)
-made review of a listed set one act of a person's key; [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+made review of a listed set one act of a person's key; [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md)
 added anchors, `expected_version` and `oml sync` with a draft workarea per pull request; and
 [ADR-0054](ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md)
 measures every recall. This revision rebuilds the decision on that surface.

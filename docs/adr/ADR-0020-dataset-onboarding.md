@@ -87,7 +87,7 @@ partial loads and refusals are journalled, never silent.
   `review_scope` mark.** Import creates the workarea if absent, under any non-frozen parent:
   `claim_key` namespacing prevents collisions, dataset-level demote/erase/validate become
   workarea-scoped acts, and recall scoping falls out of the existing subtree filter. The ladder
-  ([workareas](../architecture/workareas.md)) is untouched. Imported data *can* reach
+  ([workareas](../architecture/workspaces.md)) is untouched. Imported data *can* reach
   `validated` by ordinary propose-and-ratify, but every imported row carries `review_scope` —
   `sampled(manifest_id)` versus `individual` — in Postgres, silver and curated gold, analogous
   to `self_signed` but weaker: it narrows what the trail attests, not where the row may go.

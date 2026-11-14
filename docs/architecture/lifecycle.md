@@ -8,7 +8,7 @@ answers: "how a workarea moves from development to production, where loose rules
 
 Two views extend the [four architecture views](views.md) from one memory to one workarea's life. They follow one principle: **frictionless in development, controlled toward production.** Development scopes are loose, so a team sees its own work at once. Production scopes are strict, so the author's own person never decides what agents receive.
 
-Much of this is designed and not built. Each figure draws a built element solid and an unbuilt one dashed, tagged `designed`. The records are accepted: [ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) to [ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) for skills, documents, the builder and the cockpit, [ADR-0084](../adr/ADR-0084-a-workarea-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) to [ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) for releases, tests, impact, export and import and admin fixes; the [design records](../reference/design-records.md) list them.
+Much of this is designed and not built. Each figure draws a built element solid and an unbuilt one dashed, tagged `designed`. The records are accepted: [ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) to [ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) for skills, documents, the builder and the cockpit, [ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) to [ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) for releases, tests, impact, export and import and admin fixes; the [design records](../reference/design-records.md) list them.
 
 ## Lifecycle: development to release
 
@@ -42,7 +42,7 @@ Much of this is designed and not built. Each figure draws a built element solid 
 - **Horizontal.** Siblings, other branches, federation and wide sources read promoted rows of committed or validated workareas, or a published release. Held work never crosses.
 - **Binding wins.** A key bound to `latest` or a pin reads the release wherever it sits, and never a held item.
 
-The built mechanics are on [workareas](workareas.md#in-progress-workareas) and in the [serving view](views.md#logical-one-agent-key-and-everything-it-is-served).
+The built mechanics are on [workareas](workspaces.md#in-progress-workareas) and in the [serving view](views.md#logical-one-agent-key-and-everything-it-is-served).
 
 ## Between servers
 

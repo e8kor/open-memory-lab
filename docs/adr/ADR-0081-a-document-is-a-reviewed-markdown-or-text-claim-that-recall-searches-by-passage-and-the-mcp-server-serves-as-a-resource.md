@@ -46,7 +46,7 @@ What exists today:
 - **Sync already loads documents, cut by heading.** `oml sync` reads committed markdown through
   the `headings` adapter, one claim per level-2 to level-4 heading keyed `doc/<path>/<slug>`, or the
   `lines` adapter, blocks of at most 40 lines split at blank lines keyed `doc/<path>/L<n>-L<m>`
-  ([ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+  ([ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md)
   d7, d21), and writes kind `memory` (d6).
 - **No resources.** `initialize` declares `tools` and `prompts` only (`mcp.rs:383-388`). Proposed
   ADR-0036 d5 designed `resources/list`, `resources/templates/list` and `resources/read` over claims
@@ -100,7 +100,7 @@ Decided, not built.
 - **d4 — Recall ranks a document by its passages and serves the best one as the hit.** Each
   passage is indexed as its own search unit, under the same pipelines and filters as rows
   (ADR-0049), the boundary rule of
-  [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
+  [ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
   d2 applied before any limit. A document contributes at most one hit per recall, its best passage,
   so `k` keeps counting claims (ADR-0025 d8). The hit is the claim item with `text` the passage's
   text, `body_bytes` and the budget the passage's, and two new members: `passage: {fragment,

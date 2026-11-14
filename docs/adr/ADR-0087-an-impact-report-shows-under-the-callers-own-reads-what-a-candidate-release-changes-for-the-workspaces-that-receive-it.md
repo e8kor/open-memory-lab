@@ -1,5 +1,5 @@
 <!--
-id: adr/ADR-0087-an-impact-report-shows-under-the-callers-own-reads-what-a-candidate-release-changes-for-the-workareas-that-receive-it
+id: adr/ADR-0087-an-impact-report-shows-under-the-callers-own-reads-what-a-candidate-release-changes-for-the-workspaces-that-receive-it
 tier: engineering
 status: accepted design · 2026-11-14
 answers: what a person sees before publishing a release about its effect on other workareas; whose reads the report runs under and what it says about that; how near-copies, skill and document name collisions and guardrail overlaps are found and in which scopes; what the per-scope diff of skills, guardrails and steering holds; which findings block; what it costs; and what it never reports
@@ -33,7 +33,7 @@ d4), or repeat a memory another workarea already holds. Today nothing reports an
   different keys is not detectable.
 
 Held against R3: a report run by one person may show only what that person's key reads
-([ADR-0001](ADR-0001-the-constitution.md) d3; [ADR-0072](ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md) d6).
+([ADR-0001](ADR-0001-the-constitution.md) d3; [ADR-0072](ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md) d6).
 Decided, not built.
 
 ## Decision

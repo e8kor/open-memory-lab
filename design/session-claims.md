@@ -159,7 +159,7 @@ decisions, its conventions and where things are (#136).
   are. A purpose no claim states yet is written as an ordinary memory and then joined. The costs:
   an edge takes a dreamer to propose it and another identity to ratify it, where a kind would take
   one writer, and an entry reads in its source claim's words, not in words written for the brief.
-- **Who proposes and ratifies.** The [edge-authority rule](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workareas.md#edge-authority)
+- **Who proposes and ratifies.** The [edge-authority rule](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workspaces.md#edge-authority)
   with one claim endpoint, *this page's reading*: proposed under dreamer(propose) on the workarea,
   the endpoint whose sessions it changes, and reader on the claim's workarea; ratified under
   dreamer(review) on the workarea and reader on the claim's, never by the proposer's key or
@@ -236,7 +236,7 @@ workarea has no brief and read by any agent that asks (#136).
   promotions in the workarea, counted from the `lifecycle.promote` events the
   [events tail](https://github.com/e8kor/open-memory-lab/blob/main/docs/api/http-api.md#events-tail) serves since the digest's own, or on a schedule of
   its own. N and the schedule are the crew's, since OML schedules no crew
-  ([crews](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workareas.md#crews-recorded-not-operated)). Until a refresh is
+  ([crews](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workspaces.md#crews-recorded-not-operated)). Until a refresh is
   promoted the previous digest stays the served tip, so a session reads a reviewed summary that
   may lag by the crew's cadence plus the review's latency, both unmeasured; its line names its
   version and its promotion date.

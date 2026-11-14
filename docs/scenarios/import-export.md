@@ -6,7 +6,7 @@ answers: "how a workarea moves between servers or into a copy on one server: wha
 
 # Import and export
 
-A workarea leaves a server as a published release in a signed, encrypted bundle. It lands on the target held, in an in-progress development workarea, and is reviewed again there before any agent outside that workarea reads it. Nothing in this flow is built. It is decided in [ADR-0084](../adr/ADR-0084-a-workarea-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md), and builds after releases ([ADR-0085](../adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md)).
+A workarea leaves a server as a published release in a signed, encrypted bundle. It lands on the target held, in an in-progress development workarea, and is reviewed again there before any agent outside that workarea reads it. Nothing in this flow is built. It is decided in [ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md), and builds after releases ([ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md)).
 
 <figure markdown="span">
   [![Export and import view: on the source server, payments.dev in progress, a published release payments.dev@1.4.0 and an export by a person's key; the oml-bundle/1 file carries claim versions of every kind, verdicts as provenance under pseudonyms, signed source events and a signed manifest, encrypted to named recipients, and never keys, grants, crews, bindings or settings. On the target, an import lands held in an in-progress workarea, a person reviews it again, two persons publish a release there, and an import rollback rejects or, as an admin fix, demotes. On one server, a copy streams from a release. All designed.](../architecture/img/exchange-light.svg#only-light)](../architecture/img/exchange.svg)
@@ -60,7 +60,7 @@ Until step 6, only `tip` keys inside the target's in-progress subtree, and, desi
 
 - **Before review.** Reject the import's held versions. The bytes are kept.
 - **After review, through the team.** Supersede or retire what was promoted, through review, and cut a new release.
-- **At once, through an admin.** An admin rolls the import back as a fix: each promoted version it brought is demoted, restoring the tip it replaced, and each claim key it created is retired. Release-bound keys see the result as a marked overlay. A person confirms or reverts the fix afterwards ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d2, d5, d8).
+- **At once, through an admin.** An admin rolls the import back as a fix: each promoted version it brought is demoted, restoring the tip it replaced, and each claim key it created is retired. Release-bound keys see the result as a marked overlay. A person confirms or reverts the fix afterwards ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d2, d5, d8).
 
 Nothing is deleted on either server. A later bundle that carries an erasure marker raises an `import.erasure_notice` on the target, which the target's own erasure clears (ADR-0084 d13).
 

@@ -53,6 +53,6 @@ Without a query, `oml_read` lists the key's own work by state or the promoted ti
 
 ## Scope
 
-A key reads and writes only where it holds a grant. A denial always wins. [Workareas](workareas.md)
+A key reads and writes only where it holds a grant. A denial always wins. [Workareas](workspaces.md)
 sets that scope; [guardrails](guardrails.md) adds reviewed rules every session loads at its
 start.

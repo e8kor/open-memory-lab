@@ -124,7 +124,7 @@ Issuing an access token and refreshing are not events. They change no authority.
 | `web.deletion_closed` | `user`, `by_key_id` | An admin closed the request after disabling the person. The memories stay until they are erased (d6). |
 | `memory.admin_read` | `artifact_ids`, `query_digest` | An admin key read memory text and attribution. The payload holds ids and a query digest, never text. |
 | `search.default_set` | `pipeline`, `by_key_id` | An admin set the tenant's default search pipeline. A null `pipeline` follows the deployment's default. |
-| `federation.policy_set` | `policy`, `from`, `by_key_id` | An admin set the tenant's federation policy: `enabled`, `default_sources` and `max_sources`, with the previous policy ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md) d5). |
+| `federation.policy_set` | `policy`, `from`, `by_key_id` | An admin set the tenant's federation policy: `enabled`, `default_sources` and `max_sources`, with the previous policy ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md) d5). |
 | `telemetry.settings_set` | `query_text`, `by_key_id` | An admin turned recall query text on or off. Off also clears stored query text in the same commit. |
 | `telemetry.events_read` | `events`, `with_text`, `newest`, `oldest` | An admin read the tenant's recall events. Counts and bounds only. |
 | `telemetry.replayed` | `pipelines`, `labeled`, `ran`, `capped` | An admin replayed labeled recalls through named pipelines. Counts only. |

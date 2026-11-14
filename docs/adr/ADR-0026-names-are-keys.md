@@ -7,7 +7,7 @@ answers: which records carry a unique name, what a name may spell, how a name is
 
 # ADR-0026 — Workareas, crews, keys and tenants are named by unique, immutable keys that every surface accepts in place of their ids
 
-**Status:** accepted design · 2026-10-31 · amended by [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d15, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d1, d5, 2026-11-14)
+**Status:** accepted design · 2026-10-31 · amended by [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d15, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d1, d5, 2026-11-14)
 
 **Release:** partly in v0.3.0; the rest not built ([releases](../changelog.md))
 
@@ -18,7 +18,7 @@ answers: which records carry a unique name, what a name may spell, how a name is
 **Ids are the only reference.** Every surface addresses a workarea, a key or a tenant by its id. A
 workarea's name exists only as a path segment, unique nowhere: two workareas anywhere in a tenant
 may share one, so the derived path, not the name, is what tells them apart
-([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)). A key has a
+([workareas](../architecture/workspaces.md#grants-bind-to-node-ids-paths-are-derived)). A key has a
 principal and a label and nothing that addresses it but its id
 ([roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)). An
 operator issuing a plugin key has to copy a UUID out of one command's output into the next, and
@@ -318,7 +318,7 @@ Everything this record decides is design; nothing below is built.
 
 - **d8 — Crews are named records of their own, created and updated by admins, referenced by
   workareas and by keys.** A crew record is `{crew_id, name, charter_uri, external_manager}`:
-  recorded, not operated, as before ([workareas](../architecture/workareas.md#crews-recorded-not-operated)
+  recorded, not operated, as before ([workareas](../architecture/workspaces.md#crews-recorded-not-operated)
   owns the record).
 
     - **Verbs.** `POST /v2/crews` creates one (journalled `crew.created`); `POST

@@ -26,7 +26,7 @@ The other two do not exist (#323):
   [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md) d8 and d11 already say what an
   expired key's connect code, authorization code, refresh token and access token answer;
   [ADR-0026](ADR-0026-names-are-keys.md) d10 already says its name is never released. A connect
-  code's `--ttl` ([ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md)
+  code's `--ttl` ([ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workspace-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md)
   d3) bounds when a connection may open, not how long it lasts.
 - **No key has a rate of its own.** [ADR-0068](ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md)
   d5 counts `requests_per_minute` for the keys of a person of the sign-up tenant, from that
@@ -181,7 +181,7 @@ questions at the recommendation it carried.
    connection's, and one date is one thing to list and to move.
 2. **A rate every server process shares.** Not built. Decided, at the recommendation: it is
    decided with
-   [ADR-0073](ADR-0073-a-leader-signs-every-write-and-nodes-serve-the-workareas-placed-on-them-each-read-routed-to-the-closest-less-busy-replica-fresh-enough-for-it.md)'s
+   [ADR-0073](ADR-0073-a-leader-signs-every-write-and-nodes-serve-the-workspaces-placed-on-them-each-read-routed-to-the-closest-less-busy-replica-fresh-enough-for-it.md)'s
    nodes, when a second process serves requests; until then the bound is n times the rate.
 3. **A person setting a date or a rate on their own keys from the web console.** Not built
    when this record was accepted: the route takes the admin key role. Decided, at the

@@ -34,7 +34,7 @@ claim on this page names the issue that will measure it.
 
 ## A vocabulary is a workarea with a prefix
 
-A vocabulary is a dedicated workarea subtree ([workareas](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workareas.md)) created with one extra,
+A vocabulary is a dedicated workarea subtree ([workareas](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workspaces.md)) created with one extra,
 optional field: a **prefix**, registered in a journalled, tenant-scoped registry
 (`vocab_prefixes`, UNIQUE per tenant — never globally, because a global unique would leak
 namespace existence across tenants). Workarea creation is admin-only, and that is the whole brake
@@ -130,7 +130,7 @@ object CURIE, predicate (`exactMatch`, `closeMatch`, `broadMatch`, `narrowMatch`
 justification (human-curated, lexical, logical), note. A mapping is never a merge — both terms
 persist, and the mapping is revocable by supersession. Because a ratified mapping becomes shared
 structure of **two** vocabularies, its ratification requires dreamer(review) on both endpoints'
-vocabularies with ratifier ≠ proposer — the same argument [workareas](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workareas.md) makes for
+vocabularies with ratifier ≠ proposer — the same argument [workareas](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workspaces.md) makes for
 workarea edges, stated as an extension of that rule. Cross-tenant mappings are
 #151, future.
 

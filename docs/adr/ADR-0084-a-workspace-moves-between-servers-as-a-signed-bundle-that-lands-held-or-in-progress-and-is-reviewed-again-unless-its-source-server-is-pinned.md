@@ -1,5 +1,5 @@
 <!--
-id: adr/ADR-0084-a-workarea-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned
+id: adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned
 tier: engineering
 status: accepted design · 2026-11-14
 answers: what a workarea export carries and what it never carries; the bundle's fixed layout, signature, encryption and hard limits, each with its refusal code; how authors and reviewers who do not exist on the target are represented; where an import lands and why every imported version is held; how a repeated import adds only what is new and refuses an older bundle; what happens when a name or claim key exists on the target; who may export under which tenant policy and who may import; how plaintext is staged; how import and export keep R4, and why an erasure marker reveals nothing; the flow for a new shared target; the same-server copy; which verbs, commands, events, doctor lines and meters it adds; and how it relates to oml-backup and to a tenant move
@@ -31,7 +31,7 @@ On 2026-11-14 the operator asked for a development lifecycle in which a workarea
 tested, verified and then promoted to production. "Promoted to production" means two things: the
 same-server path, and a move between servers (staging to production, and sharing between
 tenants). The
-[workarea lifecycle review](https://github.com/e8kor/open-memory-lab/blob/main/design/workarea-lifecycle.md)
+[workarea lifecycle review](https://github.com/e8kor/open-memory-lab/blob/main/design/workspace-lifecycle.md)
 walks the whole cycle. ADR-0085 decides releases and binding, which carry the same-server path,
 including team delivery through a shared development workarea and its releases. This record decides
 the move.
@@ -46,7 +46,7 @@ The forces, from [ADR-0001](ADR-0001-the-constitution.md):
 
 - **R1:** an import that served content would be a promotion, so an import promotes nothing. An
   admin key reads claim text one journalled read at a time, with a reason
-  ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)
+  ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)
   d10); a bundle is bulk egress, not a read.
 - **R2:** the source's reviewers are keys the target cannot see.
 - **R3:** a held row leaves no in-progress workarea, and a bundle is a way out.

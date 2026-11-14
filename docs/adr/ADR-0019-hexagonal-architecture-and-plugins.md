@@ -38,7 +38,7 @@ infrastructure — including the plugin points — behind an adapter boundary.
 - **d1 — The domain core is a pure crate, and every constitution invariant lives in it, only.**
   `oml-domain` has no I/O: no database driver, no HTTP, no clock read, no KMS call. It holds the
   admission state machine ([admission](../architecture/admission.md)), the workarea algebra and
-  status ladder ([workareas](../architecture/workareas.md)), the role and verb ceilings
+  status ladder ([workareas](../architecture/workspaces.md)), the role and verb ceilings
   ([roles and keys](../architecture/roles-and-keys.md)), and the simulation taint predicate
   ([simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)). R1–R4 and the one bounded development
   exception are encoded here as types and transition functions, nowhere else — so no adapter,

@@ -64,7 +64,7 @@ The ranking reads one snapshot of the database, and each ranked row is checked a
 Two cases serve unapproved memories, so a write changes the answer at once:
 
 - With `include_unreviewed`, the key's own held memories join the hits.
-- Inside an [in-progress workarea](workareas.md#in-progress-workareas), every author's held memories and derived facts that the scan did not hold join, labeled `unreviewed`.
+- Inside an [in-progress workarea](workspaces.md#in-progress-workareas), every author's held memories and derived facts that the scan did not hold join, labeled `unreviewed`.
 
 ## What is outside the guarantee
 
@@ -85,7 +85,7 @@ Other pipelines read more than the inputs above:
 
 A recall with `as_of` reads the scope at that instant. The swap is made per list: the `bm25` scan reads each `bm25-postings` list and each `sparse` list, because their counts and weights are today's. So `bm25-postings` and `sparse` are swapped, and so are the pipelines that fuse those lists: `bm25-sparse`, `bm25-sparse-rrf` and `bm25-postings-time`. `keyword-all` is answered by `keyword-any` with every word required. `bm25`, `bm25-rerank`, `bm25-trigram` and `keyword-any` read their own lists as they are. The test below does not cover a recall with `as_of`.
 
-A recall that names `sources: "wide"` or a list reads more workareas, chosen without a clock, a random number or a model. The same inputs choose the same workareas ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md) d9).
+A recall that names `sources: "wide"` or a list reads more workareas, chosen without a clock, a random number or a model. The same inputs choose the same workareas ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md) d9).
 
 ## How it is tested
 
@@ -99,4 +99,4 @@ A recall that names `sources: "wide"` or a list reads more workareas, chosen wit
 
 The test runs on 14 approved memories and two steering rows at two depths. The author ran it on PostgreSQL 18.6; CI runs PostgreSQL 17. The PostgreSQL version and the platform's maths library are inputs this page does not hold fixed. It was not run on a large tenant, where PostgreSQL can choose another query plan for the same statement. A score is a sum of one number per matched query word. With three or more matched words, the plan chooses the order of that sum, and a parallel plan's worker order can vary between runs of the same plan. So the last digit of a score, and the order of two hits whose scores differ by one `float4` step, is not proven identical across plans or PostgreSQL versions. It is not observed and not excluded; [issue #310](https://github.com/e8kor/open-memory-lab/issues/310) tracks proving it.
 
-The decisions behind this page are [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d3 and d12, [ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) d6 and [ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md) d9.
+The decisions behind this page are [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d3 and d12, [ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) d6 and [ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md) d9.

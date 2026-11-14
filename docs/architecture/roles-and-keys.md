@@ -52,7 +52,7 @@ The `<user>-web` [session key](#session-keys), a writer key, also issues reader 
 
 Approve, sign and delete appear in no column: approval is an effect of review, `oml-server` signs, and deletion does not exist.
 
-- **A memory written by a key is that key's own.** A bearer key reads its own memories in any state. The signed-in user page also reads every key belonging to that user (ADR-0045 d16). Other keys read `promoted` memories. A reviewer key is served the held memory it judges, and a person's reviewer key lists the held memories it may judge, with their text (`GET /v2/review/held`). A reader inside an [in-progress workarea](workareas.md#in-progress-workareas) recalls held memories and derived facts there, marked unreviewed, except those the scan held or last scanned under an older rule set. Also, an admin of the tenant reads any memory through the journaled [admin read](#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
+- **A memory written by a key is that key's own.** A bearer key reads its own memories in any state. The signed-in user page also reads every key belonging to that user (ADR-0045 d16). Other keys read `promoted` memories. A reviewer key is served the held memory it judges, and a person's reviewer key lists the held memories it may judge, with their text (`GET /v2/review/held`). A reader inside an [in-progress workarea](workspaces.md#in-progress-workareas) recalls held memories and derived facts there, marked unreviewed, except those the scan held or last scanned under an older rule set. Also, an admin of the tenant reads any memory through the journaled [admin read](#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
 - **An admin key reads workarea structure without grants**: names, ids, parents, statuses, crews, children and edges in its tenant. It reads a memory's content only through the [admin read](#the-admin-read).
 - **A global denial on an admin key is refused, `request.validation` with `details.field: key`.**
 - **Recall, search and the read by id need a reader grant, and no admin key can carry one.** An admin key that calls recall gets `access.verb_ceiling`.
@@ -70,7 +70,7 @@ A key is issued with a role no higher than its issuer's. Admin keys issue, and t
 |---|---|
 | `reader` | `reader` |
 | `writer` | `reader`, `writer` |
-| `dreamer` | `reader`, `dreamer`; an agent-held `curator` profile may also carry `writer` inside an in-progress scope ([ADR-0030](../adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d8) |
+| `dreamer` | `reader`, `dreamer`; an agent-held `curator` profile may also carry `writer` inside an in-progress scope ([ADR-0030](../adr/ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d8) |
 | `admin`, `operator` | none |
 
 A grant outside that set is refused with `access.issuer_ceiling`. An admin key with a dreamer grant is refused with `access.role_exclusive`: the two-key rule. A person who administers and reviews holds two keys, so the journal shows which capacity acted.
@@ -94,7 +94,7 @@ An admin key carries neither limit: issuing one with an expiry or a rate is refu
 
 ### Names, principals and labels
 
-A key has a `name` (unique in its namespace; admin verbs address it wherever an id works), a `principal` (who acts; in every journal envelope; the independence check compares it; two keys of one person share it) and a free-text `label`. None changes after issuance. A key can name a [crew](workareas.md) at issuance, fixed for its life and read by the independence check.
+A key has a `name` (unique in its namespace; admin verbs address it wherever an id works), a `principal` (who acts; in every journal envelope; the independence check compares it; two keys of one person share it) and a free-text `label`. None changes after issuance. A key can name a [crew](workspaces.md) at issuance, fixed for its life and read by the independence check.
 
 ### Key format
 
@@ -178,7 +178,7 @@ A session key that carries a denial, on any workarea, runs none of its key acts:
 A **connection** is one OAuth client's standing authority to act as one connector key at `/mcp`, so Claude's hosted apps use the [agent plugin](../api/mcp-plugin.md) without a pasted key. Connections need `oauth.issuer` set on the server.
 
 - **Connector keys.** `oml keys issue-agent … --connect-code` issues one. It has no value and authenticates only through a connection, which reaches only `/mcp`. It has at most one open connection; opening a new one revokes the earlier.
-- **Connect codes.** Twelve Crockford base32 symbols (60 bits), shown once as `7KQ2-M9XD-4TPA`, never in a log, URL or journal payload. Lives 10 minutes, or the `--ttl` an admin asks for, up to 30 days, for a connector key confined to one workarea ([ADR-0067](../adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) d3); the first correct entry spends it. A newer code, a revoked connection or a revoked key voids it.
+- **Connect codes.** Twelve Crockford base32 symbols (60 bits), shown once as `7KQ2-M9XD-4TPA`, never in a log, URL or journal payload. Lives 10 minutes, or the `--ttl` an admin asks for, up to 30 days, for a connector key confined to one workarea ([ADR-0067](../adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workspace-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) d3); the first correct entry spends it. A newer code, a revoked connection or a revoked key voids it.
 - **Tokens.** Access token `oml_at_` plus 43 characters, 1 hour. Refresh token `oml_rt_` plus 43 characters, 30 days unused. Only digests are stored. Each refresh rotates the pair; a rotated refresh token presented again revokes the connection and all its tokens. Tokens travel only in the `Authorization` header and work only at `/mcp`.
 - **A token is no more than its key.** Verb ceiling, grants, denials, own-memory rules and the permission epoch apply on every request.
 

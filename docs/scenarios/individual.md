@@ -10,7 +10,7 @@ One person, Dana, keeps the memory of a few agents in OML: Claude Code on a lapt
 
 The control in this flow is one review per fact, by Dana, marked `same_user` so every reader can tell. Nothing waits on a second person while the work stays in the root. The pair, an agent writes and the same person approves, is one row of [producers and reviewers](../concepts/producers-and-reviewers.md), whose reach view draws a user root apart from team workareas.
 
-A personal root is a development scope for good. It is capped at `development` and never becomes `committed` or `validated`; work meant for production moves to a shared workarea, where releases are cut; a personal root never publishes a release ([ADR-0085](../adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d17, amending [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1). Today the code still lets a user root climb to `committed`; lowering the ceiling is designed, not built.
+A personal root is a development scope for good. It is capped at `development` and never becomes `committed` or `validated`; work meant for production moves to a shared workarea, where releases are cut; a personal root never publishes a release ([ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d17, amending [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1). Today the code still lets a user root climb to `committed`; lowering the ceiling is designed, not built.
 
 ## 1. Sign in and connect
 
@@ -32,7 +32,7 @@ Every write is scanned in the same call. A leaked key is refused and nothing is 
 ## 3. Recall held work before review
 
 - The agent that wrote a fact recalls it at once: `oml_read` with `include_unreviewed` serves the key's own held rows, marked `unreviewed`.
-- Dana's other agents see each other's held work only inside an in-progress workarea. `chat` is one already. For a project, Dana chooses "put it in progress" on the **Workareas** page ([workareas](../use/workareas.md#in-progress-workareas)).
+- Dana's other agents see each other's held work only inside an in-progress workarea. `chat` is one already. For a project, Dana chooses "put it in progress" on the **Workareas** page ([workareas](../use/workspaces.md#in-progress-workareas)).
 - A recall from claude.ai on the phone that names the workarea `chat` reads the same held facts, marked. A recall scoped at the root reads only approved ones: today an in-progress subtree serves its held work only to reads scoped inside it, and its ancestors join that audience once [ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16 is built.
 
 ## 4. Approve the agents' work
@@ -56,10 +56,10 @@ Today, a held version leaves the queue only by a verdict: Dana's review key reje
 
 ## 7. Keep personal knowledge apart from team work
 
-- A key with `--user dana` reaches `universe.dana` and the `universe` node, nothing else. It never reads another person's root or a shared workarea ([workareas](../architecture/workareas.md)).
+- A key with `--user dana` reaches `universe.dana` and the `universe` node, nothing else. It never reads another person's root or a shared workarea ([workareas](../architecture/workspaces.md)).
 - Team work happens in a shared workarea, such as `payments.dev`, under tenant keys an admin issues to Dana ([engineering teams](engineering-teams.md)). Those keys never write into the root: a new memory there from a key that is not the person's is refused `submission.user_root_refused`.
 - Moving a personal fact into a team workarea is a new write there, reviewed by the team. The console's export, `GET /v2/web/export`, downloads everything in the root as one JSON file.
-- Designed ([ADR-0084](../adr/ADR-0084-a-workarea-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d2, d14): a personal workarea moves as a whole. On the same server, `oml workareas import --from dana.project --into payments.dev` streams its approved versions from its history into an in-progress team workarea, where they land held and are reviewed again by the team. To another server, `oml workareas export dana.project --recipient age1… --out dana-project.oml` writes a bundle in `history` mode, the default in a user root; release mode and `--since` are refused there, since a personal root never has a release ([import and export](import-export.md)).
+- Designed ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d2, d14): a personal workarea moves as a whole. On the same server, `oml workareas import --from dana.project --into payments.dev` streams its approved versions from its history into an in-progress team workarea, where they land held and are reviewed again by the team. To another server, `oml workareas export dana.project --recipient age1… --out dana-project.oml` writes a bundle in `history` mode, the default in a user root; release mode and `--since` are refused there, since a personal root never has a release ([import and export](import-export.md)).
 - Designed: in a shared workarea the console acts with a tenant key an admin links to Dana's sign-in, named on the page for each act (ADR-0085 d16).
 
 ## What it costs

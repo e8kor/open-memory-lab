@@ -1,5 +1,5 @@
 <!--
-id: adr/ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards
+id: adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards
 tier: engineering
 status: accepted design · 2026-11-14
 answers: which acts an admin key may take on a workarea's content, on which targets, and with which key; why each takes effect at once and what makes it break-glass; how an admin edit is scanned; how a fix reaches keys bound to a release; how a fix that loosens a guardrail is alerted; what readers see; who confirms or reverts a fix, who authors a revert and what it may not revert; what an admin may read and on which surfaces; what happens in a frozen workarea and in universe; exactly which constitutional sentences this changes and which earlier record already changed one; the person-side read, doctor lines and metrics; and the questions left for the operator
@@ -48,7 +48,7 @@ example". The operator then decided:
 - an admin may loosen or remove a guardrail alone, with an alert.
 
 The developer path to fixing a bad publish is to withdraw the release and fix forward
-([ADR-0085](ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md)
+([ADR-0085](ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md)
 d9, d11). That path is too slow in two cases:
 
 - the fix needs another person's review (R2), and nobody is there;
@@ -84,7 +84,7 @@ Decided, not built.
   | **edit** | A supersession written by the admin key becomes the tip at once, under d4. |
   | **retire** | A retirement by the admin key takes effect at once. |
   | **roll back a release** | Withdraw the release, or re-point a workarea's `latest` to an earlier published release until a person publishes again (ADR-0085 d13). |
-  | **roll back an import** | For one `workarea.imported` event ([ADR-0084](ADR-0084-a-workarea-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d11), each promoted version it brought in is demoted, restoring the tip it replaced, and each claim key it created is retired. Its held versions are marked `import_rolled_back`. |
+  | **roll back an import** | For one `workarea.imported` event ([ADR-0084](ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d11), each promoted version it brought in is demoted, restoring the tip it replaced, and each claim key it created is retired. Its held versions are marked `import_rolled_back`. |
   | **erase** | A crypto-shred, as a legal act ([ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) d2). |
 
 - **d3 — Every fix is break-glass.**

@@ -7,7 +7,7 @@ answers: what a served memory says about its approval over HTTP, MCP and the SDK
 
 # ADR-0077 — A served memory says when it was approved and by what kind of reviewer, and never names the reviewer
 
-**Status:** accepted design · 2026-11-12, by the operator, with its three open questions closed as the Decision records them (1: the reviewer is not named to readers, and an admin reads who through the journalled admin read; 2: `approver` is the verdict whose arrival met the policy, and a build with k > 1 adds a list of approving verdicts beside it without changing its meaning; 3: `held_by` is served to every reader of the memory, with the residuals d2 states) · proposed the same day with #175 · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d2, d5, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d2, 2026-11-14)
+**Status:** accepted design · 2026-11-12, by the operator, with its three open questions closed as the Decision records them (1: the reviewer is not named to readers, and an admin reads who through the journalled admin read; 2: `approver` is the verdict whose arrival met the policy, and a build with k > 1 adds a list of approving verdicts beside it without changing its meaning; 3: `held_by` is served to every reader of the memory, with the residuals d2 states) · proposed the same day with #175 · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d2, d5, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d2, 2026-11-14)
 
 **Release:** v0.7.2, the release `openapi.yaml` names for the two new members
 
@@ -101,13 +101,13 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   `promoted_at` and `plaintext_digest`. The list names no approval, so `approved_at` and
   `approver` are null wherever `principal` is, as `author_key_id` and `scan_finding` are. Its
   author is served its own row as every author is. A hit from a federated source
-  ([ADR-0072](ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)
+  ([ADR-0072](ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)
   d8) is a row the key already reads, served as any hit of its workarea is. The cost: a reader
   of `universe` learns when a curated claim was promoted and nothing of how it was reviewed.
 
 - **d5 — A hit served unreviewed carries neither, and every other hit's reviewer is not its
   author.** The caller's own held rows, and other authors' held rows inside an in-progress
-  workarea ([ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
+  workarea ([ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
   d3, d4), are served with `unreviewed: true` and `approver` null. A law holds R2 on the read
   path: for every hit not served unreviewed, the journal's approving verdict is by another key
   and another principal than the author's, and the served `approved_at` is that verdict's. The

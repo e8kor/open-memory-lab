@@ -1,5 +1,5 @@
 <!--
-id: adr/ADR-0073-a-leader-signs-every-write-and-nodes-serve-the-workareas-placed-on-them-each-read-routed-to-the-closest-less-busy-replica-fresh-enough-for-it
+id: adr/ADR-0073-a-leader-signs-every-write-and-nodes-serve-the-workspaces-placed-on-them-each-read-routed-to-the-closest-less-busy-replica-fresh-enough-for-it
 tier: engineering
 status: proposed
 answers: roles and forwarding (d1); the unit and the spine (d2); placement (d3); moves (d4); replication to the synchronous standby's flush (d5); routing (d6); read-your-writes (d7); narrowing on every node before its answer, lead succession and restarts (d8); federated recall (d9); failure (d10); node identity, unit keys and a compromised node (d11); observability (d12); phases (d13); upgrades (d14). The decision table under In short indexes them
@@ -71,10 +71,10 @@ data. **The operator asked on 2026-11-08** for a provider where the "leader will
 closest less busy node, and workareas will be replicated across nodes".
 
 **Five forces bound the answer.** The chain has one writer per tenant. "A revoked grant or a new
-denial applies to the key's next request" ([workareas](../architecture/workareas.md#grants-bind-to-node-ids)),
+denial applies to the key's next request" ([workareas](../architecture/workspaces.md#grants-bind-to-node-ids)),
 and R3 makes review change visibility, through a failover too. A node is a new copy of content, so
 erasure must reach it. An upgrade must not stop the API. And
-[ADR-0072](ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)
+[ADR-0072](ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)
 (proposed, PR #208) lets one recall search several workareas, which may sit on different nodes.
 
 Decided, not built.
@@ -127,7 +127,7 @@ flowchart LR
   forwards it to a replica the map names, chosen by d6, which decides access itself (d11); a stale
   map costs a second hop, never a wrong answer. Every write verb, every read of the caller's own
   held rows, every read inside an in-progress workarea
-  ([ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)),
+  ([ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)),
   and every read no replica qualifies for (d6) is forwarded to the lead over ADR-0024 d9's pooled
   HTTP/2 channel, never a redirect, so held content never leaves the authority. The cost: write
   throughput stays one lead's per tenant; a far agent pays a cross-region round trip per write

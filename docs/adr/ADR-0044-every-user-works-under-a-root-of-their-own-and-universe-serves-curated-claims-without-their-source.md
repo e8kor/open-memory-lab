@@ -7,7 +7,7 @@ answers: what a user is and where their root workarea sits; how a key is tied to
 
 # ADR-0044 — Every user works under a root of their own beneath `universe`, and `universe` serves only curated claims, without their source
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-12 by [the amendment](#the-amendment-of-2026-11-12-a-memory-is-started-in-a-user-root-by-its-own-users-keys-only) (d16: a memory is started in a user root by that user's keys only; #329), which the operator accepted the same day · amended by [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workareas-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d8, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d7, 2026-11-14)
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-12 by [the amendment](#the-amendment-of-2026-11-12-a-memory-is-started-in-a-user-root-by-its-own-users-keys-only) (d16: a memory is started in a user root by that user's keys only; #329), which the operator accepted the same day · amended by [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d8, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d7, 2026-11-14)
 
 **Release:** introduced in v0.5.0 ([releases](../changelog.md))
 
@@ -17,7 +17,7 @@ answers: what a user is and where their root workarea sits; how a key is tied to
 
 **Today a tenant has one tree and one flat namespace, and nothing in it belongs to a person.**
 Every workarea of a tenant is a node under `universe`, created by an admin
-([ADR-0008](ADR-0008-workarea-algebra.md) d1; `create_workarea` in `crates/oml-app/src/app.rs`
+([ADR-0008](ADR-0008-workspace-algebra.md) d1; `create_workarea` in `crates/oml-app/src/app.rs`
 requires the admin role). Its name is unique across the whole tree
 ([ADR-0026](ADR-0026-names-are-keys.md) d1; the `workareas_tenant_id_name` constraint in
 `migrations/0006_names.sql`), so two people who both want a workarea called `project` cannot
@@ -27,7 +27,7 @@ person it acts for: `oml keys issue-agent` takes `--principal crew/claude-mobile
 `--workarea` the admin names ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)).
 
 **A grant always covers a whole subtree.** `effective_roles` admits a grant on N or on any
-ancestor of N (`crates/oml-domain/src/access.rs`; [workareas](../architecture/workareas.md#effective-access-union-of-attenuated-grants-then-deny-wins)).
+ancestor of N (`crates/oml-domain/src/access.rs`; [workareas](../architecture/workspaces.md#effective-access-union-of-attenuated-grants-then-deny-wins)).
 A reader grant on `universe` therefore reads every workarea of the tenant. A key that should read
 what the tenant shares, and nothing of anyone else's, has no grant shape that says so: denying
 each other person's subtree inside the grant would have to be amended every time a person is
@@ -75,7 +75,7 @@ Decided; introduced in v0.5.0.
   it is created, and the tree stays one tree.** A user root is an ordinary workarea with one
   extra fact, `user_root: true`, fixed at creation and journalled in its `workarea.create`
   payload. It is always a direct child of `universe`, starts in `development` like every new
-  workarea, and climbs the [status ladder](../architecture/workareas.md#the-status-ladder-d8)
+  workarea, and climbs the [status ladder](../architecture/workspaces.md#the-status-ladder-d8)
   like any other. It is never re-parented and nothing is re-parented into or out of it across
   its boundary (d5 needs that). The server creates it, and nothing else does: no verb creates a
   user root directly (d2). Everything beneath a user root belongs to that user's subtree; every
@@ -350,7 +350,7 @@ Decided; introduced in v0.5.0.
 
 - **d13 — Crews stay shared: a crew's workareas live outside every user root, and its keys are
   tenant keys.** A workarea that mirrors an externally managed crew
-  ([crews](../architecture/workareas.md#crews-recorded-not-operated)) is shared, created by an
+  ([crews](../architecture/workspaces.md#crews-recorded-not-operated)) is shared, created by an
   admin as today, never inside a user root, since a crew is not a person and its work outlives
   any member. Keys working in it are tenant keys. A user key may still name a crew record at
   issuance (`crew`), which feeds the independence axis as for any key, but d3 gives it no grant
@@ -396,7 +396,7 @@ Decided; introduced in v0.5.0.
 
 ## Consequences
 
-- [Concepts](../concepts.md), [workareas](../architecture/workareas.md),
+- [Concepts](../concepts.md), [workareas](../architecture/workspaces.md),
   [roles and keys](../architecture/roles-and-keys.md), [retrieval](../architecture/retrieval.md),
   the [HTTP API](../api/http-api.md), the [CLI reference](../cli/reference.md),
   [errors](../api/errors.md), [releases](../changelog.md) and [llms.txt](../llms.txt) mark
@@ -546,7 +546,7 @@ edits by proposal there. Asked "Which rule do you want?" the same day, the opera
     - **Costs.** `my_effective_verbs` lists what a key's grants confer, so for a tenant key on a
       node inside a user root it still lists `remember` and `learn`, and the new memory answers
       the refusal. An in-progress workarea inside a user's root
-      ([ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md))
+      ([ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md))
       collects new memories from that user's keys only; another author's row there is a
       successor it proposed. The user's own keys can still end one over their `memories` limit by
       retiring a claim, writing another and putting the first back, since a ratification's commit

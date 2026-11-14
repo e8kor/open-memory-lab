@@ -7,7 +7,7 @@ answers: what the four constitutional rules R1–R4 commit, and what each of the
 
 # ADR-0001 — The constitution: four rules, three bounded exceptions
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (d5, same-person approval named, 2026-11-14), [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d5, the in-progress exception widened, 2026-11-14), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (d5, same-person approval named, 2026-11-14), [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d5, the in-progress exception widened, 2026-11-14), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14)
 
 **Release:** partly in v0.1.0 and v0.6.0; the rest not built ([releases](../changelog.md))
 
@@ -33,7 +33,7 @@ rest is not built; [releases](../changelog.md) says which part each release buil
   author **and** the derivation lineage closure of the row — pending and ratified edges alike —
   not merely at key issuance. A dreamer whose key or principal appears anywhere in that closure
   is refused the verdict. The rule extends to workarea edges: the ratifier of an edge is never
-  its proposer ([workareas](../architecture/workareas.md)). Enforcement mechanics live in
+  its proposer ([workareas](../architecture/workspaces.md)). Enforcement mechanics live in
   [admission](../architecture/admission.md).
 
 - **d3 — R3, the gate changes visibility, not ranking.** Nothing is readable by others until
@@ -66,7 +66,7 @@ rest is not built; [releases](../changelog.md) says which part each release buil
   *(Amended 2026-11-14 by the operator: the development self-signing exception of 2026-10-29,
   never built, is retired, and this list replaces the earlier amendments.)*
 
-  1. **In-progress sharing** ([ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d2, d3, widened by
+  1. **In-progress sharing** ([ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d2, d3, widened by
      [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16). Of R3's first sentence only, in development scopes only.
      Inside a workarea a person put in progress, a held version of any kind is served, and an
      instruction offered, marked unreviewed, to keys with reader access scoped in that subtree or
@@ -82,7 +82,7 @@ rest is not built; [releases](../changelog.md) says which part each release buil
      (ADR-0077 d2). A user root never leaves development (ADR-0085 d17), so the whole root is a
      development scope. Outside the root, a version any key of a person wrote
      counts no verdict and no hold clearance from any key of the same person (ADR-0082 d7).
-  3. **Admin fixes, with the admin read** ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d14;
+  3. **Admin fixes, with the admin read** ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d14;
      [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21). Of R2's order and R3's first sentence, for admin keys
      only. A fix holds only while every one of these is true: the admin key is `held_by: human`;
      a reason is given; the act is one of ADR-0089 d2's fix acts (demote, edit, retire, release
@@ -113,7 +113,7 @@ rest is not built; [releases](../changelog.md) says which part each release buil
   binds [roles and keys](../architecture/roles-and-keys.md), the
   [HTTP API](../api/http-api.md) and the [MCP plugin](../api/mcp-plugin.md); closure
   enforcement binds [admission](../architecture/admission.md); the in-progress exception's
-  workarea mechanics bind [workareas](../architecture/workareas.md).
+  workarea mechanics bind [workareas](../architecture/workspaces.md).
 - Each exception's mark is a schema commitment: `unreviewed` on every served held item,
   `same_user` on every own-root approval and every development-scope confirmation of a fix, and
   the fix's mark (ADR-0089 d7) on every fix. The `self_signed` mark is never set; every record

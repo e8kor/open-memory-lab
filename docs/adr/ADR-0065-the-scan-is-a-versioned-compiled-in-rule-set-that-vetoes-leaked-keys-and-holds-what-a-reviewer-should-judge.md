@@ -331,7 +331,7 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
 
 - **d15 — Inside an in-progress scope, another author's held version is served only when the
   server's rule set scanned it and found nothing** (added 2026-11-10, amending
-  [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
+  [ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
   d3). ADR-0030 serves every author's held memory to readers inside an in-progress root. A held
   version is among them only when its `scan_finding` is empty and its `scanned_under` is the
   server's own (`None` matching `None` for a scanner that pins no version). Any other held version

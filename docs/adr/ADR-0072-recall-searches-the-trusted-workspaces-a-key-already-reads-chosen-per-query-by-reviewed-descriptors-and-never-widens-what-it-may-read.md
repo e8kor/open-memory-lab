@@ -1,5 +1,5 @@
 <!--
-id: adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read
+id: adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read
 tier: engineering
 status: accepted · phase 1 built for v0.7.0 (#205), 2026-11-10 · the widen hint on a precomputed signal proposed (#244), 2026-11-11
 answers: what recall searches today and what federated recall adds; who gains from it and how the gain is measured; which workareas are trusted sources and why no new flag; what a workarea's descriptor holds, who writes and reviews it, how it is scanned and how far it can move a selection; why advertising grants nothing and whether a key can discover a workarea it cannot read; how a recall chooses its sources (candidates, the reference set, the selection estimate, the cap, the descriptor slots, the tail) and why a hit's score never depends on which sources were selected; the `sources` argument, its two modes and its fixed list, answered whole or refused; the hint that tells an agent to widen; the per-workarea and tenant policies; what each answer and each refusal may name; what makes the answer repeatable; the cost, limits and latency budget; the eval; the three phases and their leakage tests; what the operator still has to answer
@@ -89,7 +89,7 @@ precision and recall where a cap selects.
 **The forces.**
 
 - **Access is the boundary, and nothing here may move it.** Effective access is computed per
-  request from grants and denials and cached nowhere ([workareas](../architecture/workareas.md#effective-access));
+  request from grants and denials and cached nowhere ([workareas](../architecture/workspaces.md#effective-access));
   every retriever receives the node list the core computed and filters before its own `LIMIT`
   (ADR-0049 d2). Federation may only search *more of what the key could already read*.
 - **R3.** The gate changes visibility, not ranking, and review never reorders results
@@ -107,7 +107,7 @@ precision and recall where a cap selects.
   that do not share statistics, does not arise here (d7). In one database the union of every
   readable trusted source *is* the single virtual collection, so selection is an efficiency trade
   against the union, never a quality gain over it. It pays for itself when the union is too
-  large to search inside the budget, and under [ADR-0073](ADR-0073-a-leader-signs-every-write-and-nodes-serve-the-workareas-placed-on-them-each-read-routed-to-the-closest-less-busy-replica-fresh-enough-for-it.md)
+  large to search inside the budget, and under [ADR-0073](ADR-0073-a-leader-signs-every-write-and-nodes-serve-the-workspaces-placed-on-them-each-read-routed-to-the-closest-less-busy-replica-fresh-enough-for-it.md)
   (proposed, PR #212), where every searched source is a fan-out.
 - **Ontology is proposed, not on main.** Terms and `oml:about` edges are
   [ADR-0051](https://github.com/e8kor/open-memory-lab/pull/58) (proposed, PR #58), which unparks
@@ -868,7 +868,7 @@ evidence that descriptors do not help.
 | d8 | **No hint; tell agents always to pass `wide`** | The default would then mean nothing, and every agent would pay `wide`'s search, not only its statistics read. |
 | d8 | **A hint on raw counts of the rarest word** | A raw count carries the size bias E(s) removes, so `universe` or any large candidate fires it on almost every recall and agents learn to ignore it; rates per readable row compare like with like. |
 | d8 | **The hint only on fewer than `k` hits** | Under OR-semantics BM25 a populated scope returns `k` weak hits for almost any query, so the hint would stay silent exactly when the scope answered poorly. The phase 1 eval reversed the premise on small scopes (fewer than `k` hits on 108 of 121 queries); the rule was dropped (Phase 1 as built). |
-| d12 | **Cache each key's candidate set** | Effective access is cached nowhere ([workareas](../architecture/workareas.md#grants-bind-to-node-ids)); a revoked grant must apply to the next recall. |
+| d12 | **Cache each key's candidate set** | Effective access is cached nowhere ([workareas](../architecture/workspaces.md#grants-bind-to-node-ids)); a revoked grant must apply to the next recall. |
 | d12 | **Refuse a recall above a candidate count** | A second, hidden reach limit beside access; the doctor line and the measured budget come first. |
 
 ## Open questions for the operator
@@ -879,7 +879,7 @@ evidence that descriptors do not help.
    product reviews': a descriptor steers other crews' selection, there is one per workarea, and
    it changes rarely, so the cost is a few reviews per tenant.
 2. **Cross-tenant federation.** Decided by the operator, 2026-11-10: it stays out. Every source is
-   in the key's tenant ([workareas](../architecture/workareas.md#the-tree)), the tenant is the
+   in the key's tenant ([workareas](../architecture/workspaces.md#the-tree)), the tenant is the
    isolation unit (ADR-0007), and `universe` already carries curated shared knowledge.
 
 Answered in this revision, on the product review's recommendations: no reserved floor for scope

@@ -1,5 +1,5 @@
 <!--
-id: adr/ADR-0086-a-workareas-tests-are-reviewed-claims-the-server-runs-under-the-callers-key-and-a-release-is-published-only-through-ordered-gates
+id: adr/ADR-0086-a-workspaces-tests-are-reviewed-claims-the-server-runs-under-the-callers-key-and-a-release-is-published-only-through-ordered-gates
 tier: engineering
 status: accepted design · 2026-11-14
 answers: what a workarea test case is and how it is reviewed; who runs a suite, under which key and against which content; what a run records and what it must never record or count; how a guardrail case reads a rule served inside an in-progress workarea; which runs count as a gate and which are advisory; the order of the gates before a release is published, who passes each and who may override it; what CI may do; and the questions left for the operator

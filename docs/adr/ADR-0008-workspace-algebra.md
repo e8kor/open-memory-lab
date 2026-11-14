@@ -1,5 +1,5 @@
 <!--
-id: adr/ADR-0008-workarea-algebra
+id: adr/ADR-0008-workspace-algebra
 tier: engineering
 status: accepted design · amended by ADR-0025
 answers: why workareas are one algebra — per-tenant universe tree, node-id grants, deny semantics, edges — rather than several separate objects
@@ -25,7 +25,7 @@ This record decides one object: the **workarea**, a governed node in one tree pe
 workarea exists before it is written to — created by a journalled admin act, never conjured by a
 typo, so a write naming an unknown workarea is refused — and a claim lives in exactly one
 workarea. The rules this record decides are declared in full, with worked examples, on
-[architecture/workareas.md](../architecture/workareas.md); this record states the decisions and
+[architecture/workspaces.md](../architecture/workspaces.md); this record states the decisions and
 what was rejected. Nothing here is built.
 
 ## Decision
@@ -56,7 +56,7 @@ what was rejected. Nothing here is built.
   object with deny-wins semantics over any union. Every effective-access computation is
   reproducible from journalled grants, and a permission epoch invalidates caches on any change.
   The formula, its evaluation order and a worked example are declared on
-  [architecture/workareas.md](../architecture/workareas.md).
+  [architecture/workspaces.md](../architecture/workspaces.md).
 
 - **d5 — Relations are labelled edges that confer zero access, governed under R2.** `related` is a
   separate edge kind between two workarea nodes with a closed label set (`relates_to`,

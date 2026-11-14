@@ -1358,7 +1358,7 @@ flowchart TD
 - The review queue gains a person-only lane. A team with only agent reviewers sees held
   findings wait for a person; doctor names the queue and its age (d17, d19). Phase 1's dry run
   says how many before any load moves.
-- [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
+- [ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
   d3's served set narrows by one condition (d20).
 - A memory that names `localhost`, the metadata service, a remote diagram or a destructive
   command is served with an annotation it did not have before. The annotation changes nothing

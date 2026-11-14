@@ -14,7 +14,7 @@ Every write crosses one pipeline before recall serves it to keys other than its 
 
 > capture, scan, journal entry and hold, non-author review, approval (journaled), readable.
 
-Recall serves a memory to other keys from its approval on, and approval does not change its rank. Before that, readers inside an [in-progress workarea](workareas.md#in-progress-workareas) recall it, marked unreviewed, unless the scan held it. Also, an admin of the tenant reads it through the journaled [admin read](roles-and-keys.md#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
+Recall serves a memory to other keys from its approval on, and approval does not change its rank. Before that, readers inside an [in-progress workarea](workspaces.md#in-progress-workareas) recall it, marked unreviewed, unless the scan held it. Also, an admin of the tenant reads it through the journaled [admin read](roles-and-keys.md#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
 
 ## The states of a memory
 

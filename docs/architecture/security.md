@@ -6,7 +6,7 @@ answers: "what the tenancy model isolates; who holds which key in the custody ma
 
 # Security and tenancy
 
-The attacker is a **hostile co-tenant**: a party with valid API keys on the same Postgres cluster and the same lead, `oml-server-lead`. See also [storage](storage.md) (signing chain), [roles and keys](roles-and-keys.md), [workareas](workareas.md), [admission](admission.md).
+The attacker is a **hostile co-tenant**: a party with valid API keys on the same Postgres cluster and the same lead, `oml-server-lead`. See also [storage](storage.md) (signing chain), [roles and keys](roles-and-keys.md), [workareas](workspaces.md), [admission](admission.md).
 
 Nobody has penetration-tested, load-tested or measured these controls; they are stated by the code and its tests, not audited.
 
@@ -104,6 +104,6 @@ Every client path crosses the reverse proxy and then the lead's API. A browser's
 5. Counts leak: a key sees tenant-wide journal positions for events it cannot read, a `claim_key` collision tells a writer a name is taken, and the lineage read names unreadable ancestors as redacted ids. Never content.
 6. A connect code is a bearer secret for its minutes, and the lead fetches client-chosen URLs.
 7. A key's rate, its own or its account's, is counted by each server process alone, so n processes admit up to n times the rate; a key with no rate of its own and no account quota is unlimited, and skewed load is untested ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) d4, d6).
-8. The widen hint reads word counts the lead holds in memory, per key and scope, for up to 300 seconds. An erasure or a demotion (both designed, not built), or a change to a workarea's status, mode or federation setting drops them at once. A promotion, a supersession or a retirement reaches them within those 300 seconds. They hold counts of hashed words of rows the key could read, never text ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md#the-widen-hint-as-built-2026-11-11)).
+8. The widen hint reads word counts the lead holds in memory, per key and scope, for up to 300 seconds. An erasure or a demotion (both designed, not built), or a change to a workarea's status, mode or federation setting drops them at once. A promotion, a supersession or a retirement reaches them within those 300 seconds. They hold counts of hashed words of rows the key could read, never text ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md#the-widen-hint-as-built-2026-11-11)).
 
 Design record: [ADR-0007](../adr/ADR-0007-tenancy-first-class.md), [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md), [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md).

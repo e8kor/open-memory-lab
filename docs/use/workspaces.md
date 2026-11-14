@@ -34,7 +34,7 @@ oml workareas status ratify project <transition-id>
 A validated workarea stays readable and takes no new writes. The changes still allowed (removing a
 memory, updating the crew's recorded details) each leave a record. Today a person's own root climbs to
 `committed` at most; the design caps it at `development`, so production work happens in shared workareas
-([ADR-0085](../adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d17). There are no backward transitions.
+([ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d17). There are no backward transitions.
 
 ## In-progress workareas
 
@@ -65,4 +65,4 @@ and where things are. A memory joins the brief when one identity marks it and a 
 ratifies it. The second identity is neither the first nor the author. The session-start hook loads
 the brief within `brief.max_tokens` (400 budget tokens unless set).
 
-How the tree grants access is explained in [Workareas, roles and keys](../architecture/workareas.md).
+How the tree grants access is explained in [Workareas, roles and keys](../architecture/workspaces.md).

@@ -133,7 +133,7 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
   default workarea, under the key's own read access and its guardrail scope.** The rule is
   ADR-0037 d4's, word for word, for kind `skill`: a skill on N or an ancestor of N applies only
   where the key's reader effective access covers that node
-  ([ADR-0008](ADR-0008-workarea-algebra.md) d4), and `guardrail_scope: workarea` keeps N's own,
+  ([ADR-0008](ADR-0008-workspace-algebra.md) d4), and `guardrail_scope: workarea` keeps N's own,
   `ancestors` adds every readable ancestor's; under user roots `ancestors` walks the user's root
   to `universe` and reaches nothing else (ADR-0037 d16). Nothing in a request widens it: the
   `workarea` argument picks N within the key's grants, never the scope. Only promoted tips are
@@ -338,7 +338,7 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
       except a reviewer judging it and d16's in-progress audience (d10). A person whose several
       agents should share a draft puts the workarea in progress, as for any claim.
     - **Versioned updates.** `oml_write` with `replaces` naming a skill and the `expected_version`
-      it last read ([ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+      it last read ([ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md)
       d19) supersedes it (d2, d3); the held successor is served to its author key by d10's naming:
       `<name>-unreviewed` beside the approved `<name>` where one exists, `<name>` itself, marked,
       where none does. A held retirement is not served, so a retired-pending skill stays offered

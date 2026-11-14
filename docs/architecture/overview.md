@@ -124,7 +124,7 @@ sequenceDiagram
     S->>S: journal the transition
 ```
 
-The workarea then refuses new writes and approvals. There is no unfreeze. See [workareas](workareas.md).
+The workarea then refuses new writes and approvals. There is no unfreeze. See [workareas](workspaces.md).
 
 ## The four rules and where they are enforced
 
@@ -134,7 +134,7 @@ The four rules, R1 to R4, are declared once, in [the constitution](https://githu
 |---|---|
 | [R1](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md), the verb ceiling | The API itself: no MCP tool reaches a verb above an agent key's role, and every HTTP route checks the key's role. See [roles and keys](roles-and-keys.md). |
 | [R2](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md), the reviewer is never the author | Approval time, in the server. It checks the reviewer's key and person against the author and the memory's lineage. A workarea status change and a link need a second identity. See [admission](admission.md). |
-| [R3](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md), the gate changes visibility, not ranking | The read path. Other keys recall promoted memories only, and steering comes first and unranked. One exception is built: an [in-progress workarea](workareas.md#in-progress-workareas)'s held memories, marked unreviewed. Also, an admin of the tenant reads held text through the journaled [admin read](roles-and-keys.md#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21). See [retrieval](retrieval.md). |
+| [R3](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md), the gate changes visibility, not ranking | The read path. Other keys recall promoted memories only, and steering comes first and unranked. One exception is built: an [in-progress workarea](workspaces.md#in-progress-workareas)'s held memories, marked unreviewed. Also, an admin of the tenant reads held text through the journaled [admin read](roles-and-keys.md#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21). See [retrieval](retrieval.md). |
 | [R4](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md), no silent deletion | The journal is append-only, and a retirement keeps every version. Demotion and erasure by crypto-shredding are designed and not built. See [audit and lineage](audit-and-lineage.md). |
 
 ## What OML does not do

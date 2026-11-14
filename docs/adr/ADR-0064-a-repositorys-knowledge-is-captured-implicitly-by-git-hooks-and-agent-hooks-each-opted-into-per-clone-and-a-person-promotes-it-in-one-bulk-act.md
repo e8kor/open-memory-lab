@@ -26,7 +26,7 @@ at creation, under the person's mark of the parent), ADR-0063 (d2: `chat` admits
 when `origin.turn` names the turn; d6: one `stop` verb answers for chat capture and for stale
 anchors)
 
-**Depends on:** [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+**Depends on:** [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md)
 (anchors, `oml sync`, `oml anchor`, `expected_version`, introduced in v0.5.8); ADR-0030 revision 2
 (in-progress workareas and the curator, [#79](https://github.com/e8kor/open-memory-lab/pull/79),
 planned for v0.6.0); ADR-0061 (the `rust` adapter,

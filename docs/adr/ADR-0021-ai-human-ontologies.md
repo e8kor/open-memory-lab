@@ -41,7 +41,7 @@ Two stances bind every decision below:
 - **d1 — Terms are claims; vocabularies are workareas.** Three new artifact kinds — `term`,
   `term_mapping`, `vocab_release` — join memory, derived_fact, steering and the reserved
   `dataset_manifest`. A vocabulary is a dedicated workarea subtree
-  ([workareas](../architecture/workareas.md)); the term lifecycle rides the one admission
+  ([workareas](../architecture/workspaces.md)); the term lifecycle rides the one admission
   pipeline: pending is `held`, active is a promoted tip with `term_status: active`, deprecated is
   a promoted tip with `term_status: deprecated`. `term_status` is a **structural** clear
   payload/metadata field on term submissions, never body text, so the deprecation marker survives
@@ -116,7 +116,7 @@ Two stances bind every decision below:
 - **d6 — Mappings are SSSOM-shaped claims, never merges.** Kind `term_mapping`: subject CURIE,
   object CURIE, predicate ∈ {`exactMatch`, `closeMatch`, `broadMatch`, `narrowMatch`,
   `relatedMatch`}, justification ∈ {human-curated, lexical, logical}, note. Authority: this
-  **extends** the workarea-edge rule ([workareas](../architecture/workareas.md)) to term_mapping
+  **extends** the workarea-edge rule ([workareas](../architecture/workspaces.md)) to term_mapping
   claim edges — an extension, not a reuse — because a ratified mapping becomes shared structure of
   two vocabularies: ratification requires dreamer(review) on **both** endpoints' vocabularies and
   ratifier ≠ proposer. Both terms persist; a mapping is revocable by supersession. Cross-tenant

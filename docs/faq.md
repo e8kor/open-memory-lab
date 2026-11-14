@@ -28,7 +28,7 @@ Until a reviewer approves it. How long that takes depends on the reviewers, and 
 
 ### Can review be turned off?
 
-No. In an [in-progress workarea](use/workareas.md#in-progress-workareas), readers there recall held memories marked unreviewed before review, and nothing leaves it until a person commits it with nothing held; approval still takes a reviewer who did not write the memory. A development workarea where one person's approval of their own memory counts once, marked `self_signed`, is designed ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5) and not built. See [why a write is held](concepts/why-a-write-is-held.md).
+No. In an [in-progress workarea](use/workspaces.md#in-progress-workareas), readers there recall held memories marked unreviewed before review, and nothing leaves it until a person commits it with nothing held; approval still takes a reviewer who did not write the memory. A development workarea where one person's approval of their own memory counts once, marked `self_signed`, is designed ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5) and not built. See [why a write is held](concepts/why-a-write-is-held.md).
 
 ### Which agents does it work with?
 
@@ -72,7 +72,7 @@ Recall returns memories that hold any of the words, best first. Check that the k
 
 ### Can unreviewed work be read during development?
 
-Yes, in an in-progress workarea. Readers see unreviewed memories, labeled as such, until a person commits the workarea. See [workareas](use/workareas.md).
+Yes, in an in-progress workarea. Readers see unreviewed memories, labeled as such, until a person commits the workarea. See [workareas](use/workspaces.md).
 
 ### Why was a write refused with `submission.scan_veto`?
 
