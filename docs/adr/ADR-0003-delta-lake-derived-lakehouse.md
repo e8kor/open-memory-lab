@@ -52,7 +52,7 @@ materialization for a tenant forever.
   conflict handling out of the design; the cost is a materialization throughput ceiling of one
   process, revisited only if a measured lag demands it.
 
-- **d3 — No held body ever reaches the lake.** Bronze mirrors journal events with digest-only
+- **d3 — No held body ever reaches the lake.** *(Amended 2026-11-14 by [ADR-0090](ADR-0090-the-lake-is-a-replayable-twin-of-postgresql-that-holds-every-signed-event-with-its-sealed-fold-inputs-and-rebuilds-it-into-an-empty-database.md) d6, proposed: no held body reaches a consumer zone; the twin's sealed `twin/` prefix, which no query reads, holds held bodies for a rebuild only. The rule that unreviewed content never enters a consumer-readable zone stands.)* Bronze mirrors journal events with digest-only
   payloads (which is all the journal carries, ADR-0002 d5), so an event about a held claim
   contributes a signed envelope and digests, never content. Silver materialization is enqueued by
   promotion only: a body enters the lake the first time an identity that did not write it has
