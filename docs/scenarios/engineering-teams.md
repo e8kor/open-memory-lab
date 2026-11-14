@@ -40,7 +40,7 @@ OML_API_KEY=$(cat keys/alice-dev-review) oml workareas mode dev in_progress
 
 - Every key with reader access inside `payments.dev` now recalls the others' held memories, marked `unreviewed`. A version the scan held stays with its author.
 - A key with `--profile curator` rejects, proposes retirements and flags contradictions there, and never approves.
-- Designed (ADR-0080 d10, d16, [#375](https://github.com/e8kor/open-memory-lab/pull/375)): held skills, guardrails and steering are served there too, marked, and keys at an ancestor such as `payments` join the audience. A held guardrail only asks before a tool call and never denies, so an unreviewed rule cannot stop an agent.
+- Designed (ADR-0080 d10, d16, [#375](https://github.com/e8kor/open-memory-lab/pull/375)): held skills, guardrails and steering are served there too, marked, and keys at an ancestor such as `payments` join the audience; such a key is also offered the subtree's skills and guardrails below it, the nearer one winning a name clash. A held guardrail only asks before a tool call and never denies, so an unreviewed rule cannot stop an agent.
 
 ## 3. Author skills and guardrails as claims
 
