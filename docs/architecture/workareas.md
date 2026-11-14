@@ -1,23 +1,23 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "how workareas grant access: the tree and its universe root, user roots, node-id grants, how effective access is computed, claim links and the brief, crew records, the status ladder, and in-progress workareas"
 ---
 
 # How workareas grant access
 
-A workarea is a node in one tree per tenant, rooted at `universe`. Keys read and write through grants on nodes. A grant covers its node and everything below it. A denial always wins. The status of a workarea changes how a write is reviewed, never who may write.
+A workarea is a node in one tree per tenant, rooted at `universe`. Keys read and write through grants on nodes. A grant covers its node and everything below it. A denial always wins. A status never changes a grant: `validated` refuses new writes, approvals and child workareas for every key alike, and review runs the same way at every status.
 
 OML mirrors an externally managed crew with a workarea. It records which governed space a crew's memories live in. It never runs the crew.
 
 ## The tree
 
-Every workarea except `universe` has exactly one parent, so the tree has no cycles and each node has one path from the root. A workarea's name is unique in its tenant and never changes. A node can be referred to by name or by id.
+Every workarea except `universe` has exactly one parent, so the tree has no cycles and each node has one path from the root. A workarea's name is one label, unique in the tenant's shared namespace or within one user root, and never changes. A node can be referred to by name or by id.
 
 The root, `universe`, has three fixed properties:
 
 - It stays `committed`. It never moves to `development` or `validated`.
-- It cannot be deleted.
+- It cannot be deleted; no workarea can.
 - It takes writes only from curators. See [user roots](#the-workarea-of-each-user).
 
 The diagram shows one tenant. Solid arrows are the tree.
@@ -97,7 +97,7 @@ Effective access decides. A key with writer access on a node may submit there. A
 
 ## Links and the brief
 
-A claim link connects two memories with a label: `supports`, `contradicts` or `amends`. A **brief** is the few reviewed memories an agent most needs on entering a workarea. A link or a brief entry follows the propose-and-ratify rule: one key proposes, and a second key confirms. The ratifier is never the proposer.
+A claim link connects two memories with a label: any non-empty label outside the `oml:` prefix, or `oml:is_a` or `oml:part_of` between two terms. A **brief** is the few reviewed memories an agent most needs on entering a workarea. A link or a brief entry follows the propose-and-ratify rule: one key proposes, and a second key confirms. The ratifier is never the proposer.
 
 ```sh
 oml edges propose --help
@@ -105,7 +105,7 @@ oml edges ratify --help
 oml edges list --help
 ```
 
-A pending edge grants nothing and shows as pending. Links between two workareas are not available.
+A pending edge grants nothing and shows as pending. A link may join memories in two workareas the proposer reads, with dreamer on at least one of them; one that crosses an in-progress subtree's boundary is refused with `workarea.in_progress_refused`, reason `edge_crosses`.
 
 ## Crews
 
@@ -155,18 +155,18 @@ A frozen workarea keeps serving reads. Freezing is not archiving. A held memory 
 
 ## In-progress workareas
 
-A person can put a development workarea in progress with `oml workareas mode <workarea> in_progress`, using their own reviewer key (role `dreamer`). Inside an in-progress workarea, readers recall unreviewed memories, labeled as such. Nothing leaves the workarea until its mode returns to standard. The `standard` mode that returns it is refused while any memory is held. See [Organize memory in workareas](../use/workareas.md) for the commands.
+A person can put a development workarea in progress, when every workarea below it is `development` too, with `oml workareas mode <workarea> in_progress`, using their own reviewer key (role `dreamer`, held by a human). Inside an in-progress workarea, readers recall held memories and derived facts the scan did not hold, labeled unreviewed. Nothing leaves the workarea until its mode returns to standard: a reader scoped outside it sees nothing from inside, approved rows included. The `standard` mode that returns it is refused while any memory is held. See [Organize memory in workareas](../use/workareas.md) for the commands.
 
 ## Federated recall
 
-A recall searches its workarea's subtree. An admin can turn federation on for the tenant. Then a recall with `sources: "wide"` also searches the `committed` and `validated` workareas the key reads elsewhere. A list such as `["acme.legal", "acme.product"]` searches exactly those ([retrieval](retrieval.md#searching-beyond-the-scope); [ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). Nothing becomes readable that was not: a source is a workarea the key reads, and a key never learns of one it cannot read.
+A recall searches its workarea's subtree. An admin can turn federation on for the tenant. Then a recall with `sources: "wide"` also searches the `committed` and `validated` workareas the key reads elsewhere. A list such as `["legal", "product"]` searches exactly those ([retrieval](retrieval.md#searching-beyond-the-scope); [ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). Nothing becomes readable that was not: a source is a workarea the key reads, and a key never learns of one it cannot read.
 
 | Setting | Who sets it | Default | Command |
 |---|---|---|---|
 | Federation on the tenant: `enabled`, `default_sources`, `max_sources` | an admin key | off, `scope`, 8 | `oml search federation --enabled on` |
 | Whether recalls scoped elsewhere may search a workarea: `accept_federated` | a person's reviewer key on the workarea, or an admin key | on | `oml workareas federation <workarea> off` |
 
-`accept_federated` grants nothing. Turned off, a key that reads the workarea still recalls there by naming it as the scope. A `development` workarea, and every workarea inside an in-progress subtree, is never searched by another scope's recall, whatever its setting. Each change is journalled, `federation.policy_set` and `workarea.federation_set`, and an agent's key is refused both.
+`accept_federated` grants nothing. Turned off, a key that reads the workarea still recalls there by naming it as the scope. A `development` workarea, and every workarea inside an in-progress subtree, is never searched by another scope's recall, whatever its setting. Each change is journalled, `federation.policy_set` and `workarea.federation_set`. The policy takes an admin key; `accept_federated` takes an admin key or a person-held dreamer key with dreamer on the workarea, and any other agent-held key is refused.
 
 ### A directory workarea
 

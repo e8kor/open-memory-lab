@@ -14,6 +14,9 @@ Outputs:
   docs/stylesheets/oml.css                                   Material's palette on the tokens
   docs/assets/brand/*, docs/assets/fonts/*                   the docs site's copies
   design/assets/review-gate-{dark,light}.svg                 the README's diagram, per theme
+  docs/architecture/img/<view>.svg, <view>-dark.svg          the architecture views (views.md): paper
+                                                             with a prefers-color-scheme: dark block,
+                                                             and night alone for the theme's toggle
   site/design/{tokens,fonts}.css, site/design/brand.json    the landing's inputs; site/build.py
                                                              writes the pages (site/README.md)
 
@@ -280,6 +283,28 @@ def diagram(src: Path, t: dict, theme: str) -> str:
     return svg
 
 
+# The architecture views (docs/architecture/views.md), from design/diagrams/arch-<view>.svg.
+ARCH_VIEWS = ("context", "deployment", "gate", "serving")
+
+
+def arch_view(src: Path, t: dict, dark_only: bool) -> str:
+    """An architecture view as a standalone image. Every colour sits in the source's one <style>,
+    so a theme is that style resolved: the paper file carries paper rules and then night rules under
+    prefers-color-scheme: dark; the -dark file carries night rules alone, for the docs theme's toggle,
+    which can differ from the reader's system setting."""
+    text = src.read_text()
+    head, style, tail = re.split(r"<style>|</style>", text)
+    if "var(--" in head + tail:
+        raise SystemExit(f"{src.relative_to(ROOT)}: a colour outside the style element would not follow the theme")
+    def resolve(theme: str) -> str:
+        vals = dict(theme_vars(t, theme)) | dict(static_vars(t))
+        return re.sub(r"var\(--([\w\\.-]+)\)", lambda m: vals[m.group(1).replace("\\.", ".")], style)
+    css = resolve("dark") if dark_only else resolve("light") + "@media (prefers-color-scheme: dark) {" + resolve("dark") + "}\n"
+    theme = "night" if dark_only else "paper, night under prefers-color-scheme: dark"
+    head = re.sub(r"^<!--.*?-->\n", f"<!-- {HEAD} Theme: {theme}. -->\n", head, flags=re.S)
+    return f"{head}<style>{css}</style>{tail}"
+
+
 def inline_diagram(src: Path, cls: str) -> str:
     """A diagram for a page that styles it: no <style>, no plate, hidden from assistive tech
     (the page carries its "As text" list)."""
@@ -325,6 +350,10 @@ def outputs() -> dict[Path, bytes]:
     }
     for theme in THEMES:
         out[DESIGN / "assets" / f"review-gate-{theme}.svg"] = diagram(DESIGN / "diagrams/review-gate.svg", t, theme).encode()
+    for view in ARCH_VIEWS:
+        src = DESIGN / "diagrams" / f"arch-{view}.svg"
+        out[DOCS / "architecture/img" / f"{view}.svg"] = arch_view(src, t, dark_only=False).encode()
+        out[DOCS / "architecture/img" / f"{view}-dark.svg"] = arch_view(src, t, dark_only=True).encode()
     out |= site_inputs(t)
     for name in DOCS_BRAND:
         out[DOCS / "assets/brand" / name] = (DESIGN / "assets" / name).read_bytes()

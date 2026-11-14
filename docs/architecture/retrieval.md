@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "how recall finds and orders memories: who can see a hit, what can be asked, which search pipelines exist and how one is chosen, how steering and the key's own held memories join the answer, how a token budget cuts it, and what was measured"
 ---
 
@@ -12,7 +12,7 @@ A recall returns promoted memories that the key can read, ranked by the chosen s
 
 A recall returns promoted memories inside the key's effective access ([workareas](workareas.md)). It hides two kinds of row:
 
-- **Held memories** are visible to their author only, through `oml read` and recall with `--include-unreviewed`.
+- **Held memories** are visible to their author (`oml read`, and recall with `--include-unreviewed`), to the reviewer a memory is served to, to an admin through the journaled admin read, and, inside an in-progress workarea, to its readers when the scan raised no finding.
 - **Demoted and erased memories** are not served.
 
 Superseded versions stay readable by id as history. They are never hits.
@@ -29,7 +29,7 @@ Each flag below belongs to `oml read`. The same fields exist on the `oml_read` M
 | A different subtree | `--workarea <id or name>` | the key's default workarea |
 | A different search pipeline | `--search <name>` | the tenant's default |
 | Every word to match | `--match all` | `any` |
-| The key's own held memories too | `--include-unreviewed` | off |
+| The key's own held memories too | `--include-unreviewed` | off; on inside an in-progress workarea |
 | Memories anchored in one repository | `--anchor-repo`, `--anchor-path-prefix` | no filter |
 | Memories from one origin | `--origin-kind`, repeatable | no filter |
 | Workareas beyond the scope | `--sources wide` or `--sources legal,product` | `scope`; needs federation on |
@@ -43,7 +43,7 @@ flowchart LR
     Q["Query + key + workarea"] --> S["Scope: readable nodes"]
     S --> ST["Steering in force<br/>first, unranked, never cut"]
     S --> P["Search pipeline<br/>ranked hits"]
-    P --> C["k cut, then token budget cut"]
+    P --> C["k cut, relevance floor (reranking pipelines),<br/>then token budget cut"]
     ST --> A["Answer"]
     C --> A
 ```
@@ -62,6 +62,8 @@ The server decides what the key may read before any ranking runs. A pipeline ran
 | `sparse` | Weights from a local learned model | no |
 | `bm25-sparse` | `bm25-postings` and `sparse`, combined | no |
 | `bm25-rerank` | `bm25`, with the top hits reordered by a local cross-encoder | no |
+| `bm25-sparse-rrf` | `bm25-postings` and `sparse`, fused by reciprocal rank (k 60) | no |
+| `bm25-postings-time` | `bm25-postings`, fused with the memories whose valid time overlaps the date the query names | no |
 
 The server lists the offered pipelines in `search.enabled` ([configuration](../operations/configuration.md)). A name the server does not offer is refused with `request.validation`, naming `/search` and the pipelines it offers.
 
@@ -132,7 +134,7 @@ A recall inside the user root also searches `universe`. Its memories rank with t
 
 With `--include-unreviewed`, the key's own held memories join the hits. Each is marked `state: held`. They rank by the same order and count against `k` and the token budget. Held steering and held retirements never appear, because neither is in force yet.
 
-Inside an in-progress workarea, every author's held memories join, labeled unreviewed. See [workareas](workareas.md#in-progress-workareas).
+Inside an in-progress workarea, every author's held memories and derived facts join, labeled unreviewed, except those the scan held, which stay visible to their author only. See [workareas](workareas.md#in-progress-workareas).
 
 ## Token budgets
 
@@ -184,4 +186,4 @@ A `wide` recall reads the word counts of every such workarea, exact and never sa
 
 - **It does not answer questions.** OML returns memories. The agent that recalls them reasons over them.
 - **It does not match word forms in the keyword pipelines.** With `keyword-any`, a query for "deploy" does not find "deployments". `bm25` pipelines add English stems and identifier parts.
-- **Latency is measured only in the scale benchmarks.** Without a text index under row security, every pipeline but `bm25-postings` costs more as the readable rows grow.
+- **Latency is measured only in the scale benchmarks.** `keyword-any`, `keyword-all`, `bm25`, `bm25-trigram` and `bm25-rerank` scan every readable row, so they cost more as the readable rows grow. The postings pipelines (`bm25-postings`, `sparse` and the pipelines that fuse them) read an index under row security.

@@ -1,0 +1,112 @@
+<!-- The architecture deployment view (docs/architecture/views.md). Every colour is a design token, referenced in the style element alone; scripts/gen_design_tokens.py resolves them per theme. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="710" viewBox="0 0 1100 710" role="img" aria-labelledby="title desc">
+<title id="title">Deployment: a request from the client to the disk</title>
+<desc id="desc">Clients reach Caddy over HTTPS. Caddy serves the landing paths as static files, sends each console page to oml-web and every other path to oml-server-lead. oml-web holds no database access and no signing key and calls the lead's public API as the signed-in person. The lead alone holds the Ed25519 signing key and commits each write to PostgreSQL 17 in one transaction. oml-lakewriter, under a lease and a role of its own, reads the outbox and appends to the Delta lake, sealing bodies with its own key. Operations, on the production host: the deployer, metrics and logs, and a backup that is built and not installed.</desc>
+<style>
+.plate{fill:var(--ground);stroke:var(--rule)}
+text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+.box{fill:var(--ground-alt);stroke:var(--edge);stroke-width:1.3}
+.box.soft{fill:var(--panel)}
+.box.acc{fill:var(--held-soft);stroke:var(--star)}
+.box.plan{fill:none;stroke-dasharray:5 4}
+.box.plan.acs{stroke:var(--star)}
+.zone{fill:none;stroke:var(--star);stroke-width:1.3;stroke-dasharray:6 5}
+.lane{fill:none;stroke:var(--rule);stroke-width:1}
+.t{fill:var(--ink);font-size:13px;font-weight:700}
+.t.big{font-size:15px}
+.s{fill:var(--ink-dim);font-size:11.5px}
+.s.hi{fill:var(--star);font-weight:700}
+.lanet{fill:var(--ink-faint);font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;letter-spacing:.06em}
+.e{fill:none;stroke:var(--edge);stroke-width:1.3}
+.e.acc{stroke:var(--star)}
+.e.dash{stroke-dasharray:5 4}
+.ah{fill:var(--edge)}
+.aha{fill:var(--star)}
+.el{fill:var(--ink);font-size:11.5px;paint-order:stroke;stroke:var(--ground);stroke-width:5px;stroke-linejoin:round}
+.step{fill:var(--star-fill)}
+.stept{fill:var(--on-star);font-size:11px;font-weight:700;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+.acct{fill:var(--star);font-size:11.5px;font-weight:700;paint-order:stroke;stroke:var(--ground);stroke-width:5px;stroke-linejoin:round}
+</style>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0 L10 5 L0 10 z"/></marker><marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="aha" d="M0 0 L10 5 L0 10 z"/></marker></defs>
+<rect class="plate" x="0.5" y="0.5" width="1099" height="709" rx="6"/>
+<line class="lane" x1="20" y1="112" x2="1080" y2="112"/>
+<line class="lane" x1="20" y1="228" x2="1080" y2="228"/>
+<line class="lane" x1="20" y1="462" x2="1080" y2="462"/>
+<line class="lane" x1="20" y1="604" x2="1080" y2="604"/>
+<text class="lanet" x="20" y="24">CLIENTS</text>
+<text class="lanet" x="20" y="132">EDGE</text>
+<text class="lanet" x="20" y="248">PROCESSES</text>
+<text class="lanet" x="20" y="482">STORAGE</text>
+<text class="lanet" x="20" y="624">OPERATIONS</text>
+<rect class="box" x="150" y="38" width="160" height="56" rx="5"/><text class="t" x="164" y="62">Browser</text><text class="s" x="164" y="80">console, landing</text>
+<rect class="box" x="330" y="38" width="160" height="56" rx="5"/><text class="t" x="344" y="62">oml CLI, SDKs</text><text class="s" x="344" y="80">REST /v1 /v2</text>
+<rect class="box" x="510" y="38" width="160" height="56" rx="5"/><text class="t" x="524" y="62">Agent tools</text><text class="s" x="524" y="80">MCP, local hooks</text>
+<rect class="box" x="690" y="38" width="160" height="56" rx="5"/><text class="t" x="704" y="62">claude.ai, apps</text><text class="s" x="704" y="80">MCP over OAuth</text>
+<rect class="box" x="150" y="142" width="680" height="62" rx="5"/>
+<text class="t" x="168" y="168">Caddy  :443</text><text class="s" x="168" y="187">TLS termination, routing by path; the lead trusts its X-Forwarded-For</text>
+<rect class="box soft" x="890" y="142" width="180" height="62" rx="5"/>
+<text class="t" x="904" y="168">Landing pages</text><text class="s" x="904" y="187">static files</text>
+<path class="e" d="M230 94 V140" marker-end="url(#a)"/>
+<path class="e" d="M410 94 V140" marker-end="url(#a)"/>
+<path class="e" d="M590 94 V140" marker-end="url(#a)"/>
+<path class="e" d="M770 94 V140" marker-end="url(#a)"/>
+<text class="el" x="796" y="122">HTTPS</text>
+<path class="e" d="M830 173 H888" marker-end="url(#a)"/>
+<text class="el" x="859" y="194" text-anchor="middle">landing</text><text class="el" x="859" y="208" text-anchor="middle">paths</text>
+<rect class="box" x="150" y="262" width="200" height="120" rx="5"/>
+<text class="t" x="166" y="288">oml-web  :8091</text>
+<text class="s" x="166" y="310">console pages</text>
+<text class="s" x="166" y="327">session, CSRF, CSP</text>
+<text class="s" x="166" y="344">no database access</text>
+<text class="s" x="166" y="361">no signing key</text>
+<rect class="zone" x="420" y="246" width="440" height="190" rx="8"/>
+<text class="acct" x="432" y="242">trust boundary: holds the signing key</text>
+<rect class="box acc" x="436" y="262" width="408" height="160" rx="6"/>
+<text class="t" x="452" y="288">oml-server-lead  :8090</text>
+<rect class="box" x="452" y="300" width="182" height="34" rx="4"/><text class="s" x="462" y="321">HTTP, MCP, OAuth, sign-in</text>
+<rect class="box" x="646" y="300" width="182" height="34" rx="4"/><text class="s" x="656" y="321">use cases, pure domain rules</text>
+<rect class="box" x="452" y="342" width="182" height="34" rx="4"/><text class="s" x="462" y="363">secret scan, guardrails</text>
+<rect class="box" x="646" y="342" width="182" height="34" rx="4"/><text class="s" x="656" y="363">search: BM25, sparse, rerank</text>
+<rect class="box" x="452" y="384" width="376" height="30" rx="4"/><text class="s" x="462" y="403">tenant read from the key, never from the request</text>
+<rect class="box" x="890" y="262" width="180" height="120" rx="5"/>
+<text class="t" x="904" y="288">oml-lakewriter</text>
+<text class="s" x="904" y="310">one at a time, by lease</text>
+<text class="s" x="904" y="327">own role, row security</text>
+<text class="s" x="904" y="344">no signing key</text>
+<text class="s" x="904" y="361">seals bodies: lake KEK</text>
+<path class="e" d="M260 204 V260" marker-end="url(#a)"/>
+<text class="el" x="268" y="236">console pages</text>
+<path class="e" d="M640 204 V260" marker-end="url(#a)"/>
+<text class="el" x="632" y="222" text-anchor="end">API, MCP, OAuth, sign-in, the rest</text>
+<path class="e" d="M350 322 H434" marker-end="url(#a)"/>
+<text class="el" x="356" y="314">public API,</text>
+<text class="el" x="356" y="342">as the person</text>
+<rect class="box" x="150" y="496" width="200" height="86" rx="5"/>
+<text class="t" x="166" y="522">Signing key file</text>
+<text class="s" x="166" y="543">Ed25519, kms.keyring_path</text>
+<text class="s" x="166" y="560">mode 0600, the lead's alone</text>
+<path class="box acc" d="M436 506 a204 12 0 0 1 408 0 v78 a204 12 0 0 1 -408 0 z"/>
+<path class="e acc" d="M436 506 a204 12 0 0 0 408 0"/>
+<text class="t" x="452" y="540">PostgreSQL 17, the system of record</text>
+<text class="s" x="452" y="559">journal: signed per-tenant hash chain, digests only</text>
+<text class="s" x="452" y="576">claims and bodies, verdicts, keys, quotas, indexes, outbox</text>
+<path class="box" d="M890 506 a90 12 0 0 1 180 0 v78 a90 12 0 0 1 -180 0 z"/>
+<path class="e" d="M890 506 a90 12 0 0 0 180 0"/>
+<text class="t" x="904" y="540">Delta lake</text>
+<text class="s" x="904" y="559">bronze, silver, gold</text>
+<text class="s" x="904" y="576">a file path; serves no read</text>
+<path class="e acc" d="M640 422 V490" marker-end="url(#aa)"/>
+<text class="el" x="648" y="456">one transaction per write</text>
+<path class="e" d="M436 400 H250 V494" marker-end="url(#a)"/>
+<text class="el" x="258" y="440">signs with</text>
+<path class="e" d="M1010 382 V492" marker-end="url(#a)"/>
+<text class="el" x="1018" y="440">append</text>
+<path class="e" d="M890 372 H870 V545 H848" marker-end="url(#a)"/>
+<text class="el" x="864" y="480" text-anchor="end">read outbox</text>
+<rect class="box" x="150" y="634" width="290" height="50" rx="5"/>
+<text class="t" x="166" y="656">oml-deployer</text><text class="s" x="166" y="673">pulls releases, verifies cosign, migrates at boot</text>
+<rect class="box" x="460" y="634" width="290" height="50" rx="5"/>
+<text class="t" x="476" y="656">Metrics and logs</text><text class="s" x="476" y="673">/metrics, OTLP, request log to Grafana</text>
+<rect class="box plan" x="770" y="634" width="300" height="50" rx="5"/>
+<text class="t" x="786" y="656">oml-backup</text><text class="s" x="786" y="673">encrypted, off-host; built, not installed (#182)</text>
+</svg>
