@@ -6,7 +6,7 @@ answers: "how recall finds and orders memories: who can see a hit, what can be a
 
 # How recall finds and orders memories
 
-A recall returns promoted memories that the key can read, ranked by the chosen search pipeline. Standing instructions (steering) come first and are never ranked. PostgreSQL serves every read. The Delta lake serves none, because a derived copy must not become an authority.
+A recall returns promoted memories that the key can read, ranked by the chosen search pipeline; the [serving view](views.md#logical-one-agent-key-and-everything-it-is-served) draws which workareas it reads. Standing instructions (steering) come first and are never ranked. PostgreSQL serves every read. The Delta lake serves none, because a derived copy must not become an authority.
 
 ## Who sees a hit
 

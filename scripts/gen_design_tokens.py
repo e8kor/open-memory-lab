@@ -14,7 +14,7 @@ Outputs:
   docs/stylesheets/oml.css                                   Material's palette on the tokens
   docs/assets/brand/*, docs/assets/fonts/*                   the docs site's copies
   design/assets/review-gate-{dark,light}.svg                 the README's diagram, per theme
-  docs/architecture/img/<view>-{light,dark}.svg              the architecture views (views.md), one per
+  docs/architecture/img/<view>-{light,dark}.svg              the architecture views (views.md, lifecycle.md), one per
                                                              docs theme, which the theme's toggle picks
   docs/architecture/img/<view>.svg                           the same view standalone: paper, and night
                                                              under prefers-color-scheme: dark
@@ -283,8 +283,13 @@ def diagram(src: Path, t: dict, theme: str) -> str:
     return svg
 
 
-# The architecture views (docs/architecture/views.md), from design/diagrams/arch-<view>.svg.
-ARCH_VIEWS = ("context", "deployment", "gate", "serving")
+# The architecture views, from design/diagrams/arch-<view>.svg: the four views of what is built
+# (docs/architecture/views.md), then the lifecycle, sharing and exchange views of the workarea
+# lifecycle (docs/architecture/lifecycle.md, docs/scenarios/import-export.md), and the reach and
+# handoff Euler views (docs/concepts/producers-and-reviewers.md); each marks every unbuilt element designed.
+ARCH_VIEWS = (
+    "context", "deployment", "gate", "serving", "lifecycle", "sharing", "exchange", "reach", "handoff",
+)
 
 
 # What each architecture view file carries: one theme, or paper with night under the media query.

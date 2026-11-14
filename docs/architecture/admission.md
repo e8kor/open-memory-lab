@@ -8,6 +8,8 @@ answers: "how a write moves from capture through the scan, the hold and the revi
 
 The four rules, R1 to R4, are declared once, in [the constitution](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md). This page shows how admission enforces R2 and R3.
 
+The [gate view](views.md#logical-one-memory-through-the-review-gate) draws this pipeline.
+
 Every write crosses one pipeline before recall serves it to keys other than its author's:
 
 > capture, scan, journal entry and hold, non-author review, approval (journaled), readable.

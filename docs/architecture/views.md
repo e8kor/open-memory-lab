@@ -6,7 +6,7 @@ answers: "the four architecture views of OML as built: who uses it and what it d
 
 # Architecture views
 
-Four views of one system, each answering one question. The context view says who and what OML talks to. The deployment view follows a request from the client to the disk. The two logical views follow a single memory through the review gate, and a single agent key to everything it is served. Every element is built; one drawn dashed is built and not installed. Proposed designs appear only in the table at the end.
+Four views of one system, each answering one question. The context view says who and what OML talks to. The deployment view follows a request from the client to the disk. The two logical views follow a single memory through the review gate, and a single agent key to everything it is served. Every element is built; one drawn dashed is built and not installed. Designed records appear only in the table at the end, and the [workarea lifecycle](lifecycle.md) draws them, each tagged designed.
 
 In the figures, a solid box is a process or component, and a dashed box is built and not installed. A dashed arrow is a path taken only in one mode. A tinted box with an amber edge is the element the view turns on, and an amber dashed outline is a trust boundary. The pages linked under each view hold the contracts; the views hold no rule of their own.
 
@@ -62,17 +62,18 @@ The key decides everything; the request decides nothing. Its default workarea pl
 
 Guardrails are in [ADR-0037](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), recall and steering in [retrieval](retrieval.md), and federation in [ADR-0072](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md).
 
-## Where the proposed design attaches
+## Where the designed records attach
 
-None of this is built. Each row names the view it changes, so the views above stay the reference for what runs today. The records are proposed in open pull requests and are not accepted.
+None of this is built. Each row names the view it changes, so the views above stay the reference for what runs today. The records are accepted.
 
 | Proposal | Records | Changes view | What changes |
 |---|---|---|---|
-| Skills and documents | ADR-0080, ADR-0081 ([#375](https://github.com/e8kor/open-memory-lab/pull/375)) | gate, serving | Two new claim kinds through the same gate, served as MCP prompts and resources beside guardrails. |
-| Cockpit and workarea builder | ADR-0082, ADR-0083 ([#375](https://github.com/e8kor/open-memory-lab/pull/375)) | deployment | New console pages in `oml-web`; writes go through the public API as the person, as today. |
-| Releases and key binding | ADR-0085 ([#377](https://github.com/e8kor/open-memory-lab/pull/377)) | serving | A key follows the live tip, the latest release or a pinned release; a bound key keeps its release while the workarea is in progress. |
-| Tests and promotion gates | ADR-0086, ADR-0087 ([#377](https://github.com/e8kor/open-memory-lab/pull/377)) | gate | Gates before a release: scan, test suites, impact report, review, ratification by a second person. |
-| Admin production fix | ADR-0089 ([#377](https://github.com/e8kor/open-memory-lab/pull/377)) | gate | An admin's demote, edit or rollback is served at once, marked and journaled, then confirmed or reverted by a person. |
-| Export and import | ADR-0084, ADR-0088 ([#377](https://github.com/e8kor/open-memory-lab/pull/377)) | context, deployment | A signed workarea bundle between servers; an import lands held and is reviewed again on the target unless its source server is pinned. |
+| Skills and documents | [ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md), [ADR-0081](../adr/ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource.md) | gate, serving | Two new claim kinds through the same gate, served as MCP prompts and resources beside guardrails. |
+| Cockpit and workarea builder | [ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workareas-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md), [ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) | deployment | New console pages in `oml-web`; writes go through the public API as the person, as today. |
+| Releases and key binding | [ADR-0085](../adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) | serving | A key follows the live tip, the latest release or a pinned release; a bound key keeps its release while the workarea is in progress. |
+| Tests and promotion gates | [ADR-0086](../adr/ADR-0086-a-workareas-tests-are-reviewed-claims-the-server-runs-under-the-callers-key-and-a-release-is-published-only-through-ordered-gates.md), [ADR-0087](../adr/ADR-0087-an-impact-report-shows-under-the-callers-own-reads-what-a-candidate-release-changes-for-the-workareas-that-receive-it.md) | gate | Gates before a release, in order: scan, review, tests, impact, publish by a second person (ADR-0086 d6). |
+| Admin production fix | [ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) | gate | An admin's demote, edit or rollback is served at once, marked and journaled, then confirmed or reverted by a person. |
+| Export and import | [ADR-0084](../adr/ADR-0084-a-workarea-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md), [ADR-0088](../adr/ADR-0088-an-imported-version-counts-as-reviewed-only-from-a-trusted-source-a-tenant-pinned-and-never-for-instructions.md) | context, deployment | A signed workarea bundle between servers; an import lands held and is reviewed again on the target. A pinned source server, ADR-0088, is deferred. See [import and export](../scenarios/import-export.md). |
+| Vertical sharing | ADR-0080 d16 | gate, serving | Held items of every kind reach `tip` keys on an in-progress subtree's ancestor chain, marked. See [workarea lifecycle](lifecycle.md#sharing-vertical-and-horizontal). |
 
 The figures' sources are `design/diagrams/arch-*.svg`; `python scripts/gen_design_tokens.py` writes the files this page shows, in the paper and night themes.

@@ -1,12 +1,12 @@
 ---
 status: Stable
 verified: 2026-11-14
-answers: "the five ideas OML is built on, in two or three sentences each, and the page that owns each one"
+answers: "the five ideas OML is built on, in two or three sentences each, the page that owns each one, and where the architecture views and the lifecycle are drawn"
 ---
 
 # Concepts
 
-Five ideas carry OML: memory, held, workarea, key and journal. Each section gives the short version and links the page that owns it. Where this page and the owning page disagree, the owning page wins.
+Five ideas carry OML: memory, held, workarea, key and journal. Each section gives the short version and links the page that owns it. Where this page and the owning page disagree, the owning page wins. The [architecture views](architecture/views.md) draw how they fit together, and the [workarea lifecycle](architecture/lifecycle.md) how work moves from development to production.
 
 ## Memory
 
@@ -35,7 +35,7 @@ A workarea moves forward through three statuses: development, committed and vali
 
 A key is an API key with one role. The server reads the tenant and role from the key, never from the request. The roles are reader, writer, dreamer, admin and operator.
 
-A reviewer key has the role `dreamer`. An admin cannot approve content, and a writer cannot approve its own. A grant gives a key a role on a workarea and its subtree. A deny always wins over a grant. An agent can write and recall, and it can never approve, sign, demote or delete. See [roles and keys](architecture/roles-and-keys.md).
+A reviewer key has the role `dreamer`. An admin cannot approve content, and a writer cannot approve its own. [Producers and reviewers](concepts/producers-and-reviewers.md) lists which pairs count in which scope. A grant gives a key a role on a workarea and its subtree. A deny always wins over a grant. An agent can write and recall, and it can never approve, sign, demote or delete. See [roles and keys](architecture/roles-and-keys.md).
 
 ## Journal
 

@@ -8,6 +8,8 @@ answers: "how workareas grant access: the tree and its universe root, user roots
 
 A workarea is a node in one tree per tenant, rooted at `universe`. Keys read and write through grants on nodes. A grant covers its node and everything below it. A denial always wins. A status never changes a grant: `validated` refuses new writes, approvals and child workareas for every key alike, and review runs the same way at every status.
 
+The [serving view](views.md#logical-one-agent-key-and-everything-it-is-served) draws what one key reads in the tree, and the [workarea lifecycle](lifecycle.md) draws development, release and sharing.
+
 OML mirrors an externally managed crew with a workarea. It records which governed space a crew's memories live in. It never runs the crew.
 
 ## The tree
