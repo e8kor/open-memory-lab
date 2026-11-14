@@ -207,10 +207,14 @@ Decided, not built.
       gives here. A person
       alone can therefore publish their own skills, guardrails and documents in their root, and every
       reader can see that the approver was the author's own person.
-    - **Inside the root, production scopes stay strict.** A `committed` or `validated` workarea
-      inside the person's root, and what a release serves, counts no `same_user` verdict: a person
-      of another principal approves there (ADR-0001 d5, whose relaxations hold in development
-      scopes only).
+    - **A user root never leaves development** (the operator, 2026-11-14: "Cap at development";
+      ADR-0085 d17). Every workarea in it is a development scope, so the `same_user` approval above
+      holds throughout the root, and production work happens in shared workareas, where another
+      person approves.
+    - **Linked tenant keys.** A tenant key acts for a person only once it is linked to that
+      person (ADR-0085 d16, `key.linked_person`). Until then the same-person rule below reaches
+      the person's user keys and session keys only, and its check for tenant keys ships with
+      `key.linked_person`.
     - **Outside it.** A version any key of a person wrote, an agent's key, a session key or a
       tenant key acting for that person, in a workarea outside that person's root counts no
       verdict from a key acting for the same person, read the one way `same_user`

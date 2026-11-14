@@ -246,6 +246,8 @@ Decided, not built.
       named. Its administration counterpart, `GET /v2/admin/todo/counts` under capacity `admin`,
       answers `{fixes, alerts, investigations, truncated}` for the admin key, counted the same way.
       The badge is the sum.
+    - **Shared workareas.** Items in shared workareas appear only for tenant keys linked to the
+      person under ADR-0085 d16; until then To do lists the person's own root alone.
     - **The lists.** Each list is under the person's `<user>-review` key (capacity `review`)
       across the workareas where it holds dreamer, or the one `workarea` names, oldest first, paged
       by cursor, and never names an admin or another person's key beyond what the act's own record
