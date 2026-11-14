@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0001-the-constitution
 tier: engineering
-status: accepted design · amended by ADR-0025, ADR-0037, ADR-0030, ADR-0089
-answers: what the four constitutional rules R1–R4 commit, and what each bounded exception permits, marks and requires: development self-signing, an in-progress workarea's held rows, and an admin's fixes; and how an admin reads claim text
+status: accepted design · amended by ADR-0025, ADR-0037, ADR-0030, ADR-0080, ADR-0089
+answers: what the four constitutional rules R1–R4 commit, and what each bounded exception permits, marks and requires: development self-signing, an in-progress subtree's held rows to the keys in it and on its ancestor chain, and an admin's fixes; and how an admin reads claim text
 -->
 
 # ADR-0001 — The constitution: four rules and their bounded exceptions
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md), [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d5, the in-progress exception widened, 2026-11-14), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14)
 
 **Release:** partly in v0.1.0 and v0.6.0; the rest not built ([releases](../changelog.md))
 
@@ -53,7 +53,11 @@ rest is not built; [releases](../changelog.md) says which part each release buil
   but never called a review. No other page may widen this scope; a change to it is a new
   decision on this record. *(Amended 2026-11-05 — a second bounded exception, of R3's first
   sentence only, inside a workarea a person put in progress: [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d3. R2 holds there
-  without exception.)* *(Amended 2026-11-14 — a third bounded exception, of R2's order
+  without exception. Widened 2026-11-14 by ADR-0080 d16: a held version of any kind in the
+  in-progress subtree is served, marked unreviewed, to keys with reader access scoped in that
+  subtree or on its ancestor chain and bound to `tip` (ADR-0085 d6); never to a sibling, another
+  branch, federation or a wide source, never a version the scan held or has not scanned, and
+  never a held retirement.)* *(Amended 2026-11-14 — a third bounded exception, of R2's order
   and R3's first sentence, for admin keys only, in every workarea status:
   [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d14. It overrides "R2 and R3 hold
   unconditionally in `committed` and `validated` workareas" for exactly this, and holds only while

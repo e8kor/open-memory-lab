@@ -143,7 +143,10 @@ Decided, not built.
 - **d6 — Every key has a binding, `tip`, `latest` or a pin, resolved per workarea; a release-bound
   read is served the manifest whatever the marks.**
   - **`tip`** is today's behaviour, including ADR-0030 d3's and ADR-0080 d10's serving of held
-    items inside an in-progress workarea.
+    items inside an in-progress workarea, and ADR-0080 d16's vertical audience: a `tip` key scoped
+    in an in-progress subtree or on its ancestor chain reads its held items, marked. Only a `tip`
+    key gets that view; a `latest` or pinned key at an ancestor reads the release and never a held
+    item.
   - **`latest`** reads, for each workarea in the read, the newest published, not withdrawn release
     whose subtree holds it.
   - **A pin** is `{<workarea>: <label>}`. A workarea without an entry resolves as `latest`.
