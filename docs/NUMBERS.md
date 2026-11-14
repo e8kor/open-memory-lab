@@ -112,6 +112,7 @@ branch that reserved later renumbers.
 | adr | 0088 | `design/workarea-lifecycle` |  | an imported version counts as reviewed only from a trusted source a tenant pinned and never for instructions | reserved |
 | adr | 0089 | `design/workarea-lifecycle` |  | an admin fixes a production workarea at once by a marked break glass act that a person confirms or reverts afterwards | reserved |
 | adr | 0090 | `design/lake-twin` |  | the lake is a replayable twin of postgresql | reserved |
+| adr | 0091 | `design/workspace-rename` |  | workareas become workspaces and the dreamer role becomes reviewer on every surface in one cut and the journals former names are read through one map | reserved |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |
