@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-14
-answers: "who OML is for, what it gives and costs, when not to use it, and five scenarios that use only built verbs"
+answers: "who OML is for, the three audiences and the experience it aims for, what it gives and costs, when not to use it, and five short scenarios that use only built verbs"
 ---
 
 # Is OML a fit?
@@ -9,6 +9,14 @@ answers: "who OML is for, what it gives and costs, when not to use it, and five 
 OML is for teams that run AI agents on any framework and must show who wrote a memory and who checked it. If nobody in the organization is asked that question, a plain memory store is cheaper and faster.
 
 For a decision, start with [Evaluate OML](evaluate.md): why writes are held, what it costs, [limits](../reference/limits.md), [benchmarks](../benchmarks/index.md) and [security](../architecture/security.md), one line each.
+
+## Who it serves
+
+- **Individual users**: one person whose agents remember across sessions, Claude Code, claude.ai and a phone, with personal knowledge kept apart ([scenario](../scenarios/individual.md)).
+- **Engineering teams**: a crew building skills, guardrails and runbooks in a shared development workarea, toward production agents ([scenario](../scenarios/engineering-teams.md)).
+- **Business-analyst teams**: documents and vocabulary prepared on staging and handed to production ([scenario](../scenarios/analyst-teams.md)).
+
+All three get the same experience: frictionless in development, controlled toward production.
 
 ## The problem OML answers
 
@@ -27,7 +35,7 @@ OML works as a memory provider on its own. Agents write, recall, fetch and repla
 ## What it costs
 
 - **Review effort.** A memory stays held until a reviewer acts. The organization supplies that capacity, usually a reviewing crew with a person as the fallback.
-- **A write that waits.** Other agents do not see a new memory right away. Its author reads it at once, marked unreviewed. Inside a development workarea, teammates can also recall unreviewed work ([workareas](../use/workareas.md)).
+- **A write that waits.** Other agents do not see a new memory right away. Its author reads it at once, marked unreviewed. Inside a workarea a person put in progress, teammates also recall unreviewed work, marked ([workareas](../use/workareas.md#in-progress-workareas)).
 - **Running a server.** Self-hosting needs PostgreSQL and backups; the optional lake takes a directory or an object store. A server someone else runs removes that work, at the price of trusting its operator ([install](../start/install.md)).
 
 ## When not to use OML
@@ -37,7 +45,9 @@ OML works as a memory provider on its own. Agents write, recall, fetch and repla
 - OML must extract memories from conversations on its own. It does not. Agents write what they choose to remember.
 - A profile builder, an answering service or a crew manager is needed. OML returns memories with their provenance and governs what crews remember, not what they do.
 
-## Five scenarios
+## Five short scenarios
+
+Each uses built verbs only. The full flows, with what is designed, are under [Scenarios](../scenarios/index.md).
 
 **Remember a decision and find it next session.**
 

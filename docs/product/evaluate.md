@@ -1,12 +1,22 @@
 ---
 status: Stable
 verified: 2026-11-14
-answers: "what a team lead needs to decide whether to adopt OML: why writes are held, what it costs, its limits, benchmarks and security, each with the page that owns the detail"
+answers: "what a team lead needs to decide whether to adopt OML: the experience it aims for and the audiences it serves, why writes are held, what it costs, its limits, benchmarks and security, each with the page that owns the detail"
 ---
 
 # Evaluate OML
 
 OML is a memory server for AI agents in which no write is readable by others until a different identity approves it. This page is the short path through the facts a team lead weighs. Each section links to the page that owns the detail.
+
+## The experience
+
+Frictionless in development, controlled toward production. Inside a development workarea a person puts in progress, the team and its agents read each other's held work at once, marked unreviewed, and a person approves their own agents' work in their own root, marked `same_user`. In committed and validated workareas a different person always approves. Releases that a second person publishes, keys bound to them, and admin fixes confirmed afterwards are designed and not built ([workarea lifecycle](../architecture/lifecycle.md)).
+
+| Audience | Scenario |
+|---|---|
+| One person with their own agents | [Individual users](../scenarios/individual.md) |
+| An engineering team and its agent crew | [Engineering teams](../scenarios/engineering-teams.md) |
+| A business-analyst team preparing knowledge for production agents | [Business-analyst teams](../scenarios/analyst-teams.md) |
 
 ## Why writes are held
 

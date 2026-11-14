@@ -15,6 +15,14 @@
 - [Connect other agent tools](https://e8kor.github.io/open-memory-lab/guides/other-harnesses/): how OpenAI Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop reach an OML server from the agent kit with OML_URL and OML_API_KEY; the one URL edit where a tool reads no variable; Claude Code without the plugin; what each tool gets and what it does not; and why there is no Cursor install link
 - [Run a server](https://e8kor.github.io/open-memory-lab/start/run-your-own/): how to run an OML server: oml quickstart on a laptop, one host with TLS for a team, and Kubernetes; what each gives and what it needs
 
+## Scenarios
+
+- [Scenarios](https://e8kor.github.io/open-memory-lab/scenarios/): the experience OML aims for, frictionless in development and controlled toward production, and one flow per audience
+- [Individual users](https://e8kor.github.io/open-memory-lab/scenarios/individual/): one person with a root of their own: connect, capture, recall, approve their own agents' work, withdraw, keep personal knowledge apart
+- [Engineering teams](https://e8kor.github.io/open-memory-lab/scenarios/engineering-teams/): a shared development workarea, skills and guardrails as claims, tests, a release, production agents, admin fixes and rollback
+- [Business-analyst teams](https://e8kor.github.io/open-memory-lab/scenarios/analyst-teams/): documents and vocabulary prepared on staging, reviewed, released, exported and imported to production
+- [Import and export](https://e8kor.github.io/open-memory-lab/scenarios/import-export/): what a bundle carries and never carries, how trust is re-established on the target, rollback, and what is built
+
 ## Guides
 
 - [Guides](https://e8kor.github.io/open-memory-lab/guides/): which task guide to open
@@ -63,6 +71,9 @@
 - [Why a write is held](https://e8kor.github.io/open-memory-lab/concepts/why-a-write-is-held/): why a write is held until a different identity approves it, how it becomes readable, what the rule costs and what was rejected
 - [Evaluate OML](https://e8kor.github.io/open-memory-lab/product/evaluate/): why writes are held, what it costs, limits, benchmarks and security for a team lead, each linked to the page that owns it
 - [Is OML a fit](https://e8kor.github.io/open-memory-lab/product/is-oml-for-you/): who OML is for, what it gives and costs, when not to use it, and five scenarios that use only built verbs
+- [Producers and reviewers](https://e8kor.github.io/open-memory-lab/concepts/producers-and-reviewers/): which producer and reviewer pairs count, by class and scope, how R2 is checked, and Euler views of one key's reach
+- [Architecture views](https://e8kor.github.io/open-memory-lab/architecture/views/): the four views of what is built: context, deployment, the review gate and one key's serving
+- [Workarea lifecycle](https://e8kor.github.io/open-memory-lab/architecture/lifecycle/): development to release, where loose turns strict, key bindings, admin fixes, vertical and horizontal sharing, built and designed
 - [What OML guarantees](https://e8kor.github.io/open-memory-lab/product/commitments/): every guarantee OML makes, what enforces it, the bounds on it, and what OML does not claim
 - [How a write is admitted](https://e8kor.github.io/open-memory-lab/architecture/admission/): how a write moves from capture through the scan, the hold and the review to a readable memory; what the scan vetoes and holds; who reviews; and what happens when no reviewer is available
 - [Architecture overview](https://e8kor.github.io/open-memory-lab/architecture/overview/): how OML fits together: the clients and what each starts from, the actors, the processes and stores, the code layout, how a write, a review, a read and a freeze move through them, and where each of the four rules is enforced
