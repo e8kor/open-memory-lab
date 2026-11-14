@@ -115,8 +115,10 @@ Decided, not built.
   - **`twin/keys`, MERGE by `key_ref`.** The lake's copy of the wrapped data keys: `wrapped_dek`,
     `kek_id`, `created_at`, `destroyed_at`, `applied_seq`.
   - **`twin/state`, operator to confirm.** Images of the two counters no event reproduces:
-    `account_activity.recalls` and `usage_daily`, both written by `meter_recalls` outside any
-    commit (d4); the replay reproduces every other meter through `apply_meters`. Each image is
+    `account_activity.recalls`, written by `meter_recalls` outside any commit, and `usage_daily`,
+    appended by the lead's `roll_up_usage` (`crates/adapters/oml-pg/src/lib.rs:5172`) from the
+    stocks as read at the time (d4); the replay reproduces every other meter through
+    `apply_meters`. Each image is
     stamped with the outbox sequence value it was taken at, and is replaced only when it changed,
     or daily. A rebuild loads the newest image; a cut (d10) loads the newest image at or before the
     cut. The lake's `telemetry.recall_daily` refresh stops replacing an existing table with an
@@ -138,10 +140,11 @@ Decided, not built.
     because erased, and the tenant keeps draining. The law
     `an_erase_before_the_drain_leaves_the_tenant_draining_and_the_part_absent` holds it.
   - **One order.** Each staged row records the outbox sequence value current at its insert, and
-    the writer reads `lake_staging` under the same insert-lock horizon it reads the outbox under
-    (ADR-0060 d4), so a staged row is never seen before the commit that staged it, nor after a
-    batch that passed it. A row staged outside a commit (`idempotency_settle`) takes the same
-    rule.
+    the writer's horizon waits on every transaction holding the insert lock of the outbox or of
+    `lake_staging` (ADR-0060 d4, widened), so a staged row is never seen before the commit that
+    staged it, nor after a batch that passed it. A row staged outside a commit
+    (`idempotency_settle`) takes no outbox lock, which is why the `lake_staging` lock is waited on
+    too.
   - **Cost.** Staging inserts run inside the chain lock, before the outbox insert, so they add
     their bytes to the commit's WAL (a body is written twice, once to `memories` and once to
     staging) and lengthen the time the tenant's chain lock is held; both are unmeasured (#390).
@@ -159,14 +162,15 @@ Decided, not built.
 
   | Writer | Writes | Class | How a rebuild reproduces it |
   |---|---|---|---|
-  | `insert_memory`, from any fold that inserts a `memories` row | `memories` body, `rule`, `search_text`, `search_text_by` | part `body`, `rule`, `search_text` | unsealed under the version's key; `search_text` is staged, not recomputed, so an adapter change cannot drift it (d13) |
+  | `insert_memory`, from any fold that inserts a `memories` row | `memories` body, `rule`, `search_text`, `search_text_by`; `lineage_principals`, `lineage_key_ids` | part `body`, `rule`, `search_text`; the two lineage columns derived | the parts unsealed under the version's key, `search_text` staged rather than recomputed so an adapter change cannot drift it (d13); the lineage columns computed by `fold_of` from the rebuilt database, as the live fold computes them from the live one |
   | `insert_findings` | `scan_findings`, with `line`, `span_*`, `via`, `field` beyond the payload's one finding | part `findings` | loaded as staged |
   | the `KeyIssued` fold | `api_keys.hash` | part `key_hash`; new `key.issued` payloads gain `key_hash_digest` (operator to confirm) | loaded and checked against the digest; a key issued before the digest is named by `lake.keys_unverifiable` |
   | the `WebEmailAllowed` fold, `web.signed_up` | `web_emails.email` | part `email` | checked against `email_digest` |
   | `web_pin` | `web_emails.google_subject`, `github_subject` | journal `web.subject_pinned` with a subject digest, plus part `subject` (operator to confirm) | replayed; without it, the first sign-in after a rebuild would pin whoever presents that address (ADR-0045) |
   | `append_event`, `idempotency_claim`, `idempotency_settle`, `idempotency_release` | `idempotency` | part `idempotency` at the commit or the settle that records an outcome; an unsettled claim and a release are excluded | a recorded outcome is loaded; an unsettled claim is dropped, so a console act whose first commit landed and whose claim never settled can be submitted again, which duplicates that commit (operator to confirm) |
   | `apply_meters`, inside commits | `account_meters`, `account_activity` | derived | the replay runs the same meters with no ceiling refused |
-  | `meter_recalls`, outside commits | `account_activity.recalls`, `usage_daily` | state image (d2, operator to confirm) | the newest image at or before the cut |
+  | `meter_recalls`, outside commits | `account_activity.recalls`, and an empty `account_meters` row for an account that has only read (`lib.rs:6720`–`6728`) | `recalls`: state image (d2, operator to confirm); the empty row: derived from the image, which names every account it counts | the newest image at or before the cut; an imaged account with no `account_meters` row gets the empty one |
+  | `roll_up_usage`, outside commits | `usage_daily`, appended and pruned past its retention | state image (d2, operator to confirm) | the newest image at or before the cut |
   | `enqueue_review`, `set_memory_status`, `promote_memory` | `review_queue` | derived | rebuilt by the replayed folds |
   | `review_claim_next` | `review_queue.held_by_key` | excluded | every claim is released; a reviewer claims again |
   | the `ClaimEdgeProposed` fold | `lineage_principals`, `lineage_key_ids` | derived | `fold_of` reads the closures from the rebuilt database as the live fold reads them, so replay order widens the same closures |
@@ -284,13 +288,6 @@ Decided, not built.
      the event's original seq. Parts staged outside a commit apply in `stage_seq` order between
      the events they fall between. Each part is checked against its payload digest where one
      exists.
-  **Cross-tenant conflicts (operator to confirm).** Tenants drain on separate frontiers, so a
-  rebuild can replay one tenant behind another, and a deployment-wide unique value can collide:
-  tenant A stalled before it removed an allowlist address, tenant B allowed the same address after.
-  The rebuild then refuses by name, `rebuild.cross_tenant_conflict`, naming both tenants and both
-  seqs, and writes nothing more; it offers a `--cut` at the stalled tenant's frontier, or a rebuild
-  without that tenant (`--tenant` for the rest). The law
-  `a_rebuild_refuses_when_a_stalled_tenant_still_holds_an_address_another_tenant_reused` holds it.
   4. **Keys and state.** It loads `artifact_keys` from `twin/keys` as it stands, destroys every
      key whose erase it replayed, and loads the `twin/state` images. The law
      `a_replayed_erase_destroys_its_key_whatever_the_twin_keys_hold` holds the erase.
@@ -300,6 +297,14 @@ Decided, not built.
      law `a_rebuilt_database_takes_new_outbox_rows_past_every_frontier` holds it.
   6. **Finish.** It writes `rebuild.json` beside the target's marker, sets the marker
      `complete`, and releases the lock.
+
+  **Cross-tenant conflicts (operator to confirm).** Tenants drain on separate frontiers, so a
+  rebuild can replay one tenant behind another, and a deployment-wide unique value can collide:
+  tenant A stalled before it removed an allowlist address, tenant B allowed the same address after.
+  The rebuild then refuses by name, `rebuild.cross_tenant_conflict`, naming both tenants and both
+  seqs, and writes nothing more; it offers a `--cut` at the stalled tenant's frontier, or a rebuild
+  without that tenant (`--tenant` for the rest). The law
+  `a_rebuild_refuses_when_a_stalled_tenant_still_holds_an_address_another_tenant_reused` holds it.
 
   **Idempotency.** The rebuild resumes from the target's chain heads: an event at or below a head
   must equal the stored row byte for byte. On `rebuild.diverged` the target did not come from
