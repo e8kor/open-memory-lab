@@ -41,7 +41,7 @@ Every write is scanned in the same call. A leaked key is refused and nothing is 
 - From a terminal, with a reviewer key an admin issued in the root (`oml keys issue dana-cli-review --role dreamer --held-by human --user dana --grant project:dreamer --grant project:reader`): `oml review list --workarea project --ids-only | oml review approve --ids -`.
 - An approved fact carries `approver.same_user: true` wherever it is served, so a reader never mistakes it for another person's review ([audit and lineage](../architecture/audit-and-lineage.md)).
 
-The rule is the constitution's second bounded exception: same-person approval counts only in the development parts of the person's own root, which with the cap is the whole root. Production scopes, where another person approves, are shared workareas ([ADR-0001](../adr/ADR-0001-the-constitution.md) d5 as amended in ).
+The rule is the constitution's second bounded exception: same-person approval counts only in the development parts of the person's own root, which with the cap is the whole root. Production scopes, where another person approves, are shared workareas ([ADR-0001](../adr/ADR-0001-the-constitution.md) d5).
 
 ## 5. Correct and retire
 
