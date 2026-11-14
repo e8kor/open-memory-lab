@@ -1,0 +1,1 @@
+**TypeScript and Python SDKs.** The local refusal of a write with `replaces` and no `expected_version` says the version is the claim's latest "as last read", where it addressed the caller in the second person. No behaviour changes.

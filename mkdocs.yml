@@ -14,9 +14,7 @@ exclude_docs: |
   legal/
 hooks:
   - hooks/status_line.py
-
-extra:
-  oml_series: "0.6"
+  - hooks/adr_links.py
 
 extra_css:
   - stylesheets/oml.css

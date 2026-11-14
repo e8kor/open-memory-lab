@@ -44,9 +44,9 @@ BLURB = {
 }
 
 
-# Records the page leaves out although they are accepted: ADR-0061 ships in a release after v0.6.0,
-# ADR-0064, ADR-0070 and ADR-0076 are accepted designs that are decided and not built, and ADR-0066 is about how this repository tracks work, which readers of the site do not need.
-HELD_BACK = {61, 64, 66, 70, 76}
+# Records the page leaves out although they are accepted: ADR-0064 is decided and not built, and
+# ADR-0066 is about how this repository tracks work, which readers of the site do not need.
+HELD_BACK = {64, 66}
 
 
 def record(path: pathlib.Path) -> tuple[int, str, str, str]:

@@ -1,0 +1,1 @@
+**Design record links on the site.** The records in `docs/adr/` are not published, so the 72 relative links to them on 20 published pages led to missing pages. An mkdocs hook, `hooks/adr_links.py`, now points each one at the record on GitHub, with its fragment, using the design records page's URL; a test holds every published page to it.

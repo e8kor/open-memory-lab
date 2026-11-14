@@ -364,8 +364,8 @@ class OmlClient:
         if expected_version is None:
             raise _invalid(
                 "expected_version",
-                "expected_version is required with replaces: the claim's latest version as you "
-                "last read it, so a supersession never replaces a version it did not see",
+                "expected_version is required with replaces: the claim's latest version as last "
+                "read, so a supersession never replaces a version it did not see",
             )
         successor = SupersedeRequest(
             body=text,
