@@ -7,7 +7,7 @@ answers: what a skill is in OML and which fields it carries; how its name is uni
 
 # ADR-0080 — A skill is a reviewed claim the MCP server lists as a prompt and serves as a resource, loaded live and never copied
 
-**Status:** proposed · 2026-11-14 · tracking #374 · revised the same day with the operator's
+**Status:** proposed · 2026-11-14 · tracking #374 · aligned with proposed ADR-0089 (PR #377) · revised the same day with the operator's
 answers (d13)
 
 **Release:** planned for v0.7.4
@@ -68,7 +68,7 @@ What exists today:
   2026-11-14).
 
 The decision has to say what a skill is, who sees which, how it is served without a local copy,
-and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
+and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-constitution.md)'s R1 to R4, which this record cites and restates none of. Decided, not built.
 
 ## Decision
 
@@ -96,7 +96,7 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
   renamed skill is a retirement of the old and a new claim, so a slash command never changes
   meaning under a person's hands). Retiring is the same act with `retirement: true`
   ([ADR-0025](ADR-0025-the-agent-only-memory-surface.md) d11). The old version stays the served
-  tip until the successor promotes (ADR-0025 d10); nothing is deleted (R4).
+  tip until the successor promotes (ADR-0025 d10); nothing is deleted (ADR-0001 R4).
 
 - **d3 — Any writer proposes a skill, agents through `oml_write` included; every skill version
   stays held until a person approves it, and no agent's or service's verdict counts.** `oml_write`
@@ -108,7 +108,7 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
   service key holding dreamer is refused `review.person_required` (the refusal ADR-0074 d2 names) with `details.reason:
   skill_needs_person` and the version stays held. This is ADR-0074 d24's steering rule made
   unconditional for skills: a skill runs with the weight of the person who invokes it, so an agent
-  may draft one and a person decides. R2 holds unchanged on top (the author's key and lineage never
+  may draft one and a person decides. ADR-0001 R2 holds unchanged on top (the author's key and lineage never
   count), and a skill is never self-signed in a `development` workarea (as ADR-0037 d10 for
   guardrails). Inside the person's own root their own review key may approve a version their
   agent or their web key wrote, marked `same_user` (ADR-0046 d2; ADR-0082 d7). The scan treats
@@ -157,7 +157,10 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
   "OML skill `<name>` from `<workarea path>`, version `<n>`, approved `<approved_at>` by a
   `<held_by>` reviewer" with ", the author's own person" when `approver.same_user` is true
   ([ADR-0077](ADR-0077-a-served-memory-says-when-it-was-approved-and-by-what-kind-of-reviewer-and-never-names-the-reviewer.md)
-  d1, d2); no reviewer is named. Then the body as stored, then, when `input` is sent, a line
+  d1, d2); no reviewer is named. A version an admin fix serves (proposed ADR-0089 d4, PR #377:
+  `approver.act: "admin_fix"`) reads instead "changed by an admin fix on `<at>`", followed by ", not
+  yet confirmed by a person" while `confirmed` is false, so an agent can tell a hand fix from a
+  review. Then the body as stored, then, when `input` is sent, a line
   "Input:" and the text. An unknown name, a name not offered at the scope, or a rejected or
   retired skill, or a held one outside an in-progress root (d10), all answer the same `-32602`, "no skill <name> is offered here", so a prompt read
   never discloses a row the key cannot read. The read is logged as recall is
@@ -210,6 +213,10 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
       stays author-only. A version the scan held for a finding, or one not yet scanned, stays
       author-only as ADR-0030 d3 and ADR-0074 d20 have it; a skill held only because every skill
       needs a person (d3) is not held by a finding and is served.
+    - **Who puts a workarea in progress.** A person's key, never an agent's (ADR-0030 d1), and
+      never an admin act: the mode is not among proposed ADR-0089's fix acts (its d1), so an admin
+      cannot open a workarea's held skills and guardrails to its agents. This states the alignment
+      audit's recommendation of 2026-11-14, pending the operator (d13, question 8).
     - **Where.** Held skills join `GET /v1/skills` with `unreviewed: true`, `prompts/list`,
       `prompts/get`, `resources/list`, `resources/read` and the session-start index (d8). Held
       guardrails join `GET /v1/guardrails` (ADR-0037 d5) with `unreviewed: true`, the
@@ -287,7 +294,12 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
   only a person's review approves it, never an agent's key (d3). (4) Held skills and guardrails
   follow ADR-0030's in-progress rule (d10). (5) A held guardrail's rule asks, never denies, before
   review (d10). (6) A held version only adds: the approved version stays binding until review
-  (d10). (7) A skill with a held edit gets two commands, `<name>` and `<name>-unreviewed` (d10).
+  (d10). (7) A skill with a held edit gets two commands, `<name>` and `<name>-unreviewed` (d10). Open:
+    8. *Does putting a workarea in progress stay a person's act and never an admin fix act?*
+       (a) yes: ADR-0030 d1 unchanged, and proposed ADR-0089's fix acts never include the mode;
+       (b) an admin may also set or clear in-progress mode as a fix, confirmed afterwards.
+       Recommended: (a), the audit's recommendation, since the mode decides whether unreviewed
+       instructions reach agents, and an admin who wants to fix content has ADR-0089's acts.
 
 ## Consequences
 

@@ -62,7 +62,7 @@ Decided, not built.
   `document: {title}`, 1 to 200 characters of one line; absent, the title is the first level-1
   heading of a markdown body, else the claim key's last segment. It is data, not instructions: the
   scan runs as on `memory` (no ADR-0074 d24 instruction rules), recall frames it as data, and its
-  review is the workarea's policy with R2 unchanged. A kind, not a format on `memory`, because three
+  review is the workarea's policy with [ADR-0001](ADR-0001-the-constitution.md) R2 unchanged. A kind, not a format on `memory`, because three
   readers need to tell a document from a fact: recall cuts it into passages (d3), `resources/list`
   enumerates documents and not every memory (d6), and the builder lists them (ADR-0082). The cost
   is one kind value, one optional object and one migration.
@@ -143,7 +143,9 @@ Decided, not built.
       page, never by the set.
     - **`resources/read`.** A document URI answers `{contents: [{uri, mimeType, text, _meta:
       {oml: {artifact_id, version, approved_at, approver, unreviewed, workarea_path, anchor,
-      findings}}}]}`, `text` the body byte for byte, or with `?passage=` that passage alone. The
+      findings}}}]}`, `text` the body byte for byte, or with `?passage=` that passage alone; `approver` carries
+      proposed ADR-0089 d4's `act` and `confirmed` once that record is built, so a document an
+      admin fix serves reads as one. The
       provenance and data framing travel in `_meta` and the list's `description`, never inside the
       text, so the bytes stay the signed source (ADR-0074 d12 keeps the JSON text byte for byte for
       the same reason); hidden characters are escaped in the text content as ADR-0074 d12 escapes
@@ -175,7 +177,7 @@ Decided, not built.
   `text_bytes` and `writes` (ADR-0071 d2); a recall that serves a passage counts in `recalls` as
   any recall does, and `resources/list` and `resources/read` count in none, each an `mcp_call`
   line and metric (ADR-0042 d10) under the key's request rate (ADR-0079). The cost, plainly: every
-  edit of a 1 MiB document adds 1 MiB to `text_bytes`, since R4 keeps every version.
+  edit of a 1 MiB document adds 1 MiB to `text_bytes`, since ADR-0001 R4 keeps every version.
 
 - **d9 — Files, PDFs and binary resources wait for attachments.** A document is text in the
   claim's body. A PDF, an image or any other file is an ADR-0004 attachment and an ADR-0057 d21

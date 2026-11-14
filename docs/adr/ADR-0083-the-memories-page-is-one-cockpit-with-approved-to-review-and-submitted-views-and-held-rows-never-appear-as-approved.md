@@ -8,16 +8,21 @@ answers: what the three views of the Memories cockpit show and which API call se
 # ADR-0083 — The Memories page is one cockpit with Approved, To review and Submitted views, and held rows never appear as approved
 
 **Status:** proposed · 2026-11-14 · tracking #374 · revised the same day with the operator's
-answers (d7) · what a screen shows (d6's routes, tabs and
+answers (d10) · what a screen shows (d6's routes, tabs and
 count placement, d5's admin views) is offered as options until the operator approves the cockpit
 mockups, published as artifacts first (the operator, 2026-11-14); which call serves each view, and
-what each view may never show, are decided here
+what each view may never show, are decided here · aligned the same day with proposed ADR-0089
+(admins fix production at once, a person confirms or reverts)
 
 **Release:** planned for v0.7.4
 
 **Amends:** ADR-0045 (d9 and d11: the user page's Memories and Review views become one page; d10:
 the admin page's Memories and Review views become one page with no Judge), ADR-0070 (d5: the
-cockpit's calls)
+cockpit's calls), ADR-0055 (d10: the admin page's bulk review moves off the admin side; a
+"Fixes to confirm" list joins the person's review)
+
+**Depends on:** proposed ADR-0089 (PR #377, branch `design/workarea-lifecycle`): its fix acts, its
+confirm and revert routes and its "Fixes to confirm" list (its d1, d3, d8)
 
 ## Context
 
@@ -25,7 +30,12 @@ On 2026-11-14 the operator asked to "make memories cockpit out of memories tab" 
 replacing the separate Review and Memories pages, with one card, one workarea picker and one
 search over three views, Approved (the default), To review (others' held memories the person may
 judge, with Judge and a count), and Submitted (the person's own held and rejected writes); held
-rows never in Approved; the admin side the same with no Judge, since an admin key never judges (R1).
+rows never in Approved; the admin side the same with no Judge, since an admin key gives no verdict
+([ADR-0001](ADR-0001-the-constitution.md) R1; ADR-0045 d6). The rules R1 to R4 are ADR-0001's;
+this record cites them and restates none. The same day the operator decided that admins fix
+production at once, each fix marked, journalled with a reason and then confirmed or reverted by a
+person (proposed ADR-0089), and admins already read memory text, each read journalled (ADR-0045
+d21).
 
 What serves each part today:
 
@@ -84,9 +94,9 @@ Decided, not built.
   takes a comma list, here `held,rejected`. `author` keeps meaning one key and narrows `mine`. Each
   card shows its state, its kind (a skill, a guardrail or a document from the builder,
   ADR-0082), the version it replaces if any, and the held reason the API already serves, scan
-  findings and `needs_person` among them (ADR-0074 d17). A rejected row stays listed forever (R4);
+  findings and `needs_person` among them (ADR-0074 d17). A rejected row stays listed forever (ADR-0001 R4);
   why it was rejected is not served to its author today, and this record adds nothing for it
-  (d7). R3 holds: every row in Submitted is the caller's person's own.
+  (d10). Every row in Submitted is the caller's person's own, as ADR-0001 R3 requires.
 
 - **d4 — One picker, one search, one card across the three views.** The picker's workarea and
   the search query carry across the views. Search runs recall in Approved; in To review and
@@ -97,7 +107,8 @@ Decided, not built.
 
 - **d5 — The admin side has the same frame and no Judge; which views it shows waits for the
   mockups.** Every admin view reads through `<user>-admin` and the journalled admin read
-  (ADR-0045 d21, d24), and no admin view has Judge, a verdict or a write (R1). The options:
+  (ADR-0045 d21, d24). No admin view has Judge or a verdict; the only writes on the admin side are
+proposed ADR-0089's fix acts (d9). The options:
     - **(a) Approved, Held, Rejected.** `POST /v2/admin/memories/search` with `state` `promoted`,
       `held` or `rejected`; Held carries the queue's depth from `GET /v2/review/queue` as its
       count, and each held card names the workarea's reviewers' gap, not a Judge.
@@ -126,11 +137,54 @@ Decided, not built.
     `web_console_reads.rs` records with the reason. Every choice keeps the views server-rendered,
     paged by cursor, with no script (ADR-0045 d22, d26), and the neutral voice.
 
-- **d7 — The operator's answers of 2026-11-14, and what stays open.** To review's count has its
+- **d7 — Bulk review leaves the admin side; where it lands waits for the mockups.** ADR-0055 d10
+  put bulk selection on the admin page, run through the person's `<user>-review` key, and its
+  amendment of 2026-11-13 kept the user page to one item per act. With Judge gone from the admin
+  side (d5), the admin page has no review view to hold it. The options:
+    - **(a) The person's To review view.** To review gains ADR-0055 d10's checkboxes, "select all
+      on this page", the confirmation and the per-item outcome table, under the same
+      `<user>-review` key and capacity it already used on the admin page; ADR-0055 d10's 2026-11-13
+      amendment is withdrawn.
+    - **(b) The CLI only.** `oml review list` and `oml review approve|reject --ids` (ADR-0055 d11)
+      stay; no page selects in bulk.
+
+    Recommended: (a), since the key and the act are unchanged and only the page moves; the CLI
+  keeps bulk review in either case. ADR-0055 d10 is amended to name the chosen page.
+
+- **d8 — A "Fixes to confirm" list on the Personal side, where a person confirms or reverts an
+  admin's fix.** Proposed ADR-0089 d2 opens a confirmation item for every admin fix in the review
+  queue of the persons who hold dreamer on its workarea, and its d8 places a "Fixes to confirm"
+  list on the personal side. In the cockpit it lists, for the picked workarea, each unconfirmed fix
+  on a workarea where the person's `<user>-review` holds dreamer: the act, its target's card as it
+  is served now (marked `act: admin_fix`, `confirmed: false`, ADR-0089 d4), the version it
+  replaced where there is one, the reason, and when; never which admin (ADR-0089 d4). Confirm and
+  Revert each ask for confirmation and call ADR-0089 d3's routes as `<user>-review` (capacity
+  `review`); a fix the person's own principal took is listed without either act (ADR-0089 d3). An
+  erasure offers Confirm and a dispute comment only (ADR-0089 d3). Its placement waits for the
+  mockups: (a) a fourth view, "Fixes to confirm", with its count; (b) a section above To review's
+  list; (c) a filter of To review. Recommended: (a), since confirming a fix that is already served
+  is a different act from judging a held write. One API point depends on ADR-0089: its d8 lists
+  fixes on `GET /v2/admin/fixes`, an admin route, while the list here reads as a person's dreamer
+  key, so that route (or a review route beside it) must serve a person's dreamer key the
+  unconfirmed fixes on the workareas where it holds dreamer, with a count. ADR-0055 is amended:
+  the review a person runs covers held items and admin fixes, each its own act.
+
+- **d9 — The admin side's cards carry ADR-0089's fix acts.** On the admin side an admin may demote,
+  edit, retire or erase a version from the one-memory page or the card, each with the required
+  reason and a confirmation page that says the fix is served at once and then waits for a person
+  to confirm or revert it; the act calls `POST /v2/admin/fixes` under capacity `admin`. An admin's
+  edit of a skill, a guardrail or a document is this act, served at once and marked, never a held
+  version of the builder (ADR-0082 d1). Rolling back a release or an import and moving a status
+  are workarea acts and stay on the admin Workareas page (ADR-0045 d28). Where the acts are drawn
+  waits for the mockups: (a) the admin one-memory page only; (b) every admin card's act menu.
+  Recommended: (a), since a break-glass act with a required reason belongs on the page that shows
+  the one version it changes.
+
+- **d10 — The operator's answers of 2026-11-14, and what stays open.** To review's count has its
   own read (d2), not a first page counted to "200+". A rejection's reason is not served in
   Submitted in v0.7.4 (d3); an issue tracks serving the verdict's reason with no reviewer named
-  (ADR-0077 d2). Open until the mockups are approved: d5's admin views and d6's routes, tabs and
-  count placement.
+  (ADR-0077 d2). Open until the mockups are approved: d5's admin views, d6's routes, tabs and
+  count placement, d7's bulk review page, d8's placement and d9's act placement.
 
 ## Consequences
 
@@ -155,5 +209,7 @@ Decided, not built.
 | **Submitted from `with_own=true&state=held` and a second call for `rejected`** | The merged listing adds the scoped part, which inside an in-progress workarea holds other authors' held rows (ADR-0030 d3), so it is not "the person's own"; two calls also break one cursor. |
 | **Submitted from `author=<key>` per key** | One call per key the person holds, merged in `oml-web`, with no shared cursor. |
 | **Count from `GET /v2/workareas/{w}/tree?counts=true`** | Its `held` counts the person's own held rows, "as the caller's with_own listing would show them" (http-api.md, tree), not the rows they may judge. |
-| **An admin Judge** | An admin key never reviews (R1; ADR-0045 d6). |
+| **An admin Judge** | An admin key gives no verdict ([ADR-0001](ADR-0001-the-constitution.md) R1; ADR-0045 d6); its changes are proposed ADR-0089's fix acts, which a person confirms. |
+| **Bulk review stays on the admin page with Judge removed around it** | A review view on the admin side would hold the one act there that is not an admin's, and the admin side no longer reviews. |
+| **Admin fixes confirmed on the admin side** | A fix is confirmed by a person's dreamer key whose principal differs from the admin's (ADR-0089 d3); the admin side acts as the admin key. |
 | **Search over held rows in To review and Submitted by recall** | Recall's shared index never serves another author's held text (ADR-0025 d5); a held row is matched only through a read fenced to its author. |

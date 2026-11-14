@@ -24,13 +24,13 @@ key may start a held claim)
 
 **Depends on:** [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md)
 (kind `skill`), [ADR-0081](ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource.md)
-(kind `document`)
+(kind `document`); proposed ADR-0089 (PR #377: admin fixes, d1 of this record)
 
 ## Context
 
 On 2026-11-14 the operator asked to "add builder and editor to workarea, it should allow
 introducing or editing skills, guardrails, rag documents" (#374): every edit a new held version,
-reviewed by a different identity (R2), kept forever (R4).
+reviewed by a different identity, kept forever ([ADR-0001](ADR-0001-the-constitution.md) R2, R4, cited, not restated).
 
 What the console does today:
 
@@ -49,7 +49,7 @@ What the console does today:
   d2). A writer supersedes only its own memory; another key's answers `access.author_only`
   ([roles and keys](../architecture/roles-and-keys.md), "Refusal order"). A person's memory may
   be started in their root by their keys only (ADR-0044 d16).
-- **Independence is per key.** R2 excludes the keys and principals of a row's lineage closure,
+- **Independence is per key.** ADR-0001 R2 excludes the keys and principals of a row's lineage closure,
   not the person, so a person approves their own agents' writes through `<user>-review`, marked
   `same_user` ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
   d8; ADR-0046 d2; ADR-0077 d2). That was decided for an agent's write reviewed by its person.
@@ -73,8 +73,10 @@ Decided, not built.
   (Post/Redirect/Get, ADR-0070 d3); the picker's `workarea` chooses the workarea, the person's root
   by default; a list shows the claims of a kind on that workarea alone (not its subtree), one card
   per tip with its state, a "pending" line when a held successor of the person's own exists, and
-  only the acts d2 admits. The admin side has no builder, since an admin key writes no claim (R1);
-  a curator's `universe` items stay on `/web/admin/curate`. The layout is one of:
+  only the acts d2 admits. The admin side has no builder: the builder writes held versions under a person's keys, while an
+  admin's change to a skill, a guardrail or a document is one of proposed ADR-0089's fix acts (PR
+  #377), served at once, marked and then confirmed or reverted by a person, taken from the admin
+  cockpit (ADR-0083 d9); a curator's `universe` items stay on `/web/admin/curate`. The layout is one of:
     - **(a) One Build page.** `GET /web/build` with three sections, Skills, Guardrails and
       Documents; `GET /web/build/edit?kind=…|memory=…` the form; `POST /web/build/edit` with
       `action` `preview`, `submit` or `retire`. A nav item, Build.
@@ -97,8 +99,8 @@ Decided, not built.
       person session serves may submit a new claim's first version, held as every write is, where
       today a dreamer proposes and supersedes and only a writer starts a claim
       ([roles and keys](../architecture/roles-and-keys.md), verbs table). It widens no read and no
-      approval: the version is held, author-only (R3), and `<user>-review`, its author, is excluded
-      from judging it by its lineage (R2). Agent keys gain nothing, since the change is for session
+      approval: the version is held, author-only (ADR-0001 R3), and `<user>-review`, its author, is excluded
+      from judging it by its lineage (ADR-0001 R2). Agent keys gain nothing, since the change is for session
       keys alone. The builder never writes as `<user>-curate`: curation keeps its own page
       (ADR-0045 d12). Where no key of the person holds writer or dreamer, the builder offers no new
       item.
@@ -107,7 +109,7 @@ Decided, not built.
       `<user>-review` outside it (a dreamer supersedes). This needs one API change: a
       session web key supersedes a row authored by any key that acts for its person, read the one
       way `same_user` reads it (ADR-0044 d16), where today a writer supersedes only its own key's
-      rows. The successor is still held and still reviewed by another key, so R2 is untouched; the
+      rows. The successor is still held and still reviewed by another key, so ADR-0001 R2 is untouched; the
       change only lets a person revise what their agents wrote without a dreamer proposal.
     - **An edit or a retirement of another author's row** is the same call as `<user>-review`
       (capacity `review`), a dreamer proposal (ADR-0045 d12), offered only where that key holds
@@ -168,7 +170,7 @@ Decided, not built.
   key may approve, marked `same_user`; in any other workarea another person approves** (the
   operator, 2026-11-14).
     - **Inside the root.** A version `<user>-web` wrote is approved by `<user>-review` as an agent's
-      write is: R2 holds per key and principal
+      write is: ADR-0001 R2 holds per key and principal
       ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
       d8), and the verdict carries `same_user: true` (ADR-0046 d2), served as `approver.same_user`
       to every reader (ADR-0077 d2) and in ADR-0080 d6's prompt header. Guardrails keep their own
@@ -233,8 +235,8 @@ Decided, not built.
 | Alternative | Why not |
 |---|---|
 | **The builder writes as `<user>-review` always** | A dreamer proposal is the right act for another author's row, but for the person's own new items it would make every write a proposal its own reviewer key may not judge, and `<user>-review` holds no writer to start one. |
-| **An admin-side builder** | Admin keys never write claims (R1); curation has its own key and page (ADR-0045 d12). |
-| **Edit in place, or delete a draft** | R4: nothing is deleted and the journal is never edited; a held version is the draft. |
+| **An admin-side builder** | A builder writes held versions for review; an admin's change is a fix served at once and confirmed afterwards (proposed ADR-0089 d1, d2), a different act on a different page (ADR-0083 d9). Curation has its own key and page (ADR-0045 d12). |
+| **Edit in place, or delete a draft** | ADR-0001 R4 keeps every version, and the only deletion proposed anywhere is ADR-0089's legal erasure, an admin act; a held version is the draft. |
 | **Preview computed in `oml-web`** | `oml-web` cannot reach the scan, the rule parser or the passage cutter (ADR-0070 d1), and a second copy of them would drift from capture. |
 | **Preview as submit with a `dry_run` flag** | One route whose answer is sometimes a write is easy to call wrongly; a separate route that never writes is checkable by its name. |
 | **Another person always approves a console write, in the person's root too** | A person alone could never publish their own skill, guardrail or document; the operator chose "same as memories today" on 2026-11-14, with the `same_user` mark telling readers what the approval is worth. |
