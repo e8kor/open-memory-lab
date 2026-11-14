@@ -51,7 +51,7 @@ OML is an open-source memory server for AI agents. Agents reach it over MCP from
 With the `oml` CLI and Docker, these lines run as pasted. The [quickstart](start/quickstart.md) shows each command's output and has a variant without Docker.
 
 ```sh
-oml quickstart                       # a local server, a workarea, an agent key and a reviewer key
+oml quickstart                       # a local server, a workspace, an agent key and a reviewer key
 export OML_URL=http://127.0.0.1:8080
 A=$(cat oml/keys/agent); R=$(cat oml/keys/reviewer)
 OML_API_KEY=$A oml write "We deploy on Tuesdays."
@@ -72,7 +72,7 @@ OML_API_KEY=$A oml read --query "deploy"                       # found
 | [Operate](operations/index.md) | run a server: deploy, monitor, upgrade, back up |
 | [Reference](reference/index.md) | CLI, HTTP API, MCP tools, settings, errors, limits, glossary |
 | [Concepts](concepts.md) | why a write is held, who approves what, the guarantees |
-| [Architecture](architecture/views.md) | four views of what runs, the workarea lifecycle, then each part in depth |
+| [Architecture](architecture/views.md) | four views of what runs, the workspace lifecycle, then each part in depth |
 | [Benchmarks](benchmarks/index.md) | recall quality and latency, with method |
 | [Help](faq.md) | FAQ, troubleshooting, release notes |
 

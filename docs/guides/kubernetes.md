@@ -151,7 +151,7 @@ helm upgrade oml ./oml-X.Y.Z.tgz --namespace oml --values values.yaml
 - With the NetworkPolicy on, add the controller's namespace to `networkPolicy.ingressFrom` first. The default admits the release's namespace alone.
 - Path `/` also routes `/readyz`, whose body names the build. Narrow `ingress.hosts[].paths` to keep it off the public route; `oml doctor` then cannot read the issuer there.
 - Set `web.publicUrl` to the public origin, such as `https://oml.example.com`; unset, `oml-web` takes `https://` and the first Ingress host. A form whose `Origin` differs is refused.
-- The Ingress routes each page `oml-web` serves by its own path, `web.ingressPaths` (the thirteen paths of the Guardrails, Workareas, Memories, Atlas, Review and Keys pages and the Memories JSON, each `Exact`, today), to `service/oml-web`, and every other path to the server. A page that moves in a later release adds its path to the default.
+- The Ingress routes each page `oml-web` serves by its own path, `web.ingressPaths` (the thirteen paths of the Guardrails, Workspaces, Memories, Atlas, Review and Keys pages and the Memories JSON, each `Exact`, today), to `service/oml-web`, and every other path to the server. A page that moves in a later release adds its path to the default.
 
 ## 6. Connect claude.ai and mobile
 

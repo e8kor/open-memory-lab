@@ -15,7 +15,7 @@ server), ADR-0084 (d6: an import from a trusted source may land promoted members
 
 ## Context
 
-[ADR-0084](ADR-0084-a-workarea-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md)
+[ADR-0084](ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md)
 lands every imported version held and has it reviewed again on the target. A team that publishes
 on a staging server and imports each release into production reviews every item twice. This record
 says when the first review may count on the second server. It changes what R2 means on the target,
@@ -24,13 +24,13 @@ checks the lineage closure against keys the server knows), so it amends the cons
 apart from ADR-0084 so that the bundle can be built without it.
 
 "Trusted source server" here is a pinned server. It is a different thing from ADR-0072's trusted
-workarea (`crates/oml-domain/src/federation.rs:29`, `is_trusted_source`). Every surface says
+workspace (`crates/oml-domain/src/federation.rs:29`, `is_trusted_source`). Every surface says
 "trusted source server" in full.
 
 ## Decision
 
 - **d1 — A tenant pins a trusted source server: server id, source tenant id, its journal public key
-  and the source workarea path.** A person's dreamer key proposes the pin and another person's
+  and the source workspace path.** A person's reviewer key proposes the pin and another person's
   ratifies it, journalled as `import.source_pinned`. Admin keys never pin (R1). The signing key is
   deployment-wide (ADR-0073 d1), so the pin names the source tenant as well: a verdict from another
   tenant of the same server never counts.
@@ -39,7 +39,7 @@ workarea (`crates/oml-domain/src/federation.rs:29`, `is_trusted_source`). Every 
   - the bundle verifies under ADR-0084;
   - the verdict's source event signature checks against the pinned key;
   - the event names the pinned tenant;
-  - the verdict's key was `held_by: human`, not `same_user`, and not `self_signed`; *(Self-signing retired 2026-11-14 (ADR-0001 d5); no row carries the mark.)*
+  - the verdict's key was `used_by: person`, not `same_user`, and not `self_signed`; *(Self-signing retired 2026-11-14 (ADR-0001 d5); no row carries the mark.)*
   - the reviewed digest equals the imported version's digest.
 
   A version failing any check lands held, as ADR-0084 d6 says.
@@ -50,7 +50,7 @@ workarea (`crates/oml-domain/src/federation.rs:29`, `is_trusted_source`). Every 
   reviewer on another server cannot be asked, revoked or audited by the target, and a mistake in
   them acts on every agent at once rather than on one recall.
 
-- **d4 — A counted version lands promoted, marked, inside an in-progress workarea, and is published
+- **d4 — A counted version lands promoted, marked, inside an in-progress workspace, and is published
   only by a release on the target.** It carries `approver: "imported"` with the pin's id. The
   target's own release (ADR-0085 d4) is the act that serves it, by two persons on the target.
 

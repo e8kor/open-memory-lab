@@ -87,9 +87,9 @@ The CLI prints the code, a message and a `rule:` line, then exits `1`. Branch on
 | Code | Cause | Fix |
 |---|---|---|
 | `auth.missing` | The client has no key. | Set `api_key`, `OML_API_KEY` or run `oml login`. |
-| `access.not_found` | The thing does not exist or the key may not read it. | Ask for a reader grant on the workarea. |
+| `access.not_found` | The thing does not exist or the key may not read it. | Ask for a reader grant on the workspace. |
 | `access.verb_ceiling` | The key's role never calls this verb. | Use a key of the right role. |
-| `request.workarea_unresolved` | The call names no workarea and the key has no default. | Pass `workarea`. |
+| `request.workspace_unresolved` | The call names no workspace and the key has no default. | Pass `workspace`. |
 | `submission.scan_veto` | The scan refused the write. `details.finding` names the rule class. | Remove what it names. Nothing was stored. |
 | `review.author_in_lineage` | The reviewer wrote the memory or one it derives from. | Review with a different identity. |
 | `review.serve_invalid` | The served item expired, was used, or changed. | Run `oml review next` again. |
@@ -101,7 +101,7 @@ A new memory is held. Nobody but its author can recall it until a different revi
 
 - **If the key wrote it**, find it with `include_unreviewed: true` on `oml_read`. Or list the writes with their `state`.
 - **If someone else wrote it**, a reviewer key approves it. See [review held memories](../guides/reviewing.md).
-- **If it is approved but missing**, check that the key has a reader grant on the workarea. Without one the answer is `access.not_found`.
+- **If it is approved but missing**, check that the key has a reader grant on the workspace. Without one the answer is `access.not_found`.
 
 Recall matches any of the words by default. Try other words. `--match all` requires every word, so remove it if it was used.
 
@@ -114,9 +114,9 @@ oml keys show <key>
 
 Capture runs from three hooks: `oml hook user-prompt`, `oml hook stop` and `oml hook pre-compact`. Each exits `0` and never blocks.
 
-1. Set `OML_CHAT_CAPTURE=1` and `OML_CHAT_WORKAREA` in the environment Claude Code runs from.
+1. Set `OML_CHAT_CAPTURE=1` and `OML_CHAT_WORKSPACE` in the environment Claude Code runs from.
 2. Confirm the plugin is loaded and `oml` is on the `PATH` Claude Code uses for hooks.
-3. Check the key has a writer grant on the workarea named by `OML_CHAT_WORKAREA`.
+3. Check the key has a writer grant on the workspace named by `OML_CHAT_WORKSPACE`.
 
 Capture fires every `OML_CHAT_CAPTURE_EVERY` turns (default 5) and after a compaction. See [chat memory](../use/chat-memory.md).
 

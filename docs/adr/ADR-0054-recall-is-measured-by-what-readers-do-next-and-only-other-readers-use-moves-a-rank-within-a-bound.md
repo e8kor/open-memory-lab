@@ -71,7 +71,7 @@ this section governs.
   `oml_memories_unrecalled{promoted_for}`, `oml_remember_duplicates_total{relation}` (`same_text`,
   `none`), `oml_review_wait_seconds{verdict}` and `oml_web_exchanges_failed_total{provider,
   reason}`; and `oml_reranks_total` as before. The remember side counts what main can see: an
-  exact duplicate of a served memory's text in the same workarea, and, by verdict, the time from
+  exact duplicate of a served memory's text in the same workspace, and, by verdict, the time from
   submit to verdict, whose count by `verdict` is the rejection rate; ADR-0050's
   `oml_remember_similar_total` and `oml_remember_warnings_total` arrive with its similar check.
   The rejection rate is global: a per-tenant label would put `tenant_id` on a series, which
@@ -146,7 +146,7 @@ this section governs.
   `crates/oml-app/tests/recall_telemetry.rs`):
   `feedback_for_another_keys_recall_or_an_unserved_id_is_refused_and_the_read_not_run`,
   `a_recall_answers_the_same_when_the_event_queue_is_full`,
-  `no_agent_writer_reader_or_dreamer_key_reads_a_recall_event_on_any_transport`,
+  `no_agent_writer_reader_or_reviewer_key_reads_a_recall_event_on_any_transport`,
   `no_tenant_reads_another_tenants_recall_events_and_the_probe_finds_a_leak_without_the_fence`,
   `query_text_is_null_unless_the_tenant_opted_in`,
   `no_row_older_than_30_days_is_read_and_the_purge_deletes_it_and_reports_the_lag`,
@@ -159,7 +159,7 @@ this section governs.
   `a_get_a_citation_and_a_second_recall_in_other_words_label_the_keys_recall`. The fence law
   carries its control in the test, the same probe run against a broken clause; the opt-in law
   writes text as the serving role, by INSERT and UPDATE, and finds none stored; the MCP probes
-  call `oml_read` in every mode and `oml_workarea` with real arguments;
+  call `oml_read` in every mode and `oml_workspace` with real arguments;
   the admin check, the insert's opt-in rule and the feedback's key check were each shown red
   by hand against a broken clause before the change was kept. The event write's cost on a
   recall was measured as negligible on a debug build (#110 stays open for the scale lane). Doctor
@@ -194,7 +194,7 @@ no ranking input reads a verdict, a reviewer or `promoted_at` (d3; ADR-0049 d2).
 the author's alone ([ADR-0025](ADR-0025-the-agent-only-memory-surface.md) d4). R4, no silent
 deletion (d4). ADR-0049 d2: the core computes the candidate scope, and a row outside it never
 changes a candidate's score; ADR-0052 d5 keeps every statistic to the readable rows by counting
-per workarea and summing over the readable ones. ADR-0042 d12: metric labels never carry a name,
+per workspace and summing over the readable ones. ADR-0042 d12: metric labels never carry a name,
 a principal or an address, and no `tenant_id` until #99. ADR-0039 d8: a new agent capability is
 a parameter, a resource or a hook before it is a tool, and every call traces to a documented use
 case. The constitution's limit holds here too: what the service cannot see (two principals one
@@ -208,7 +208,7 @@ Decided, not built.
   memory, per query or per key is served from PostgreSQL to the tenant's admin.** Each metric
   below is counted by the lead or by the labeller (d5) and exported on the metrics listener
   (ADR-0042 d11), under ADR-0042 d12's rule: every label from a closed set, no `tenant_id`, no
-  key, principal, workarea, memory id, query word or digest.
+  key, principal, workspace, memory id, query word or digest.
 
     | Metric | Type | Labels (values) | Series |
     |---|---|---|---:|
@@ -264,8 +264,8 @@ Decided, not built.
     | `created_at` | `timestamptz` | the recall's start; the day sub-partition key |
     | `key_id` | `uuid` | the calling key |
     | `principal` | `text` | the key's principal, copied, for d7's exclusion and de-duplication |
-    | `scope_workarea_id` | `uuid` | the resolved `workarea` node the recall read |
-    | `source_workarea_id` | `uuid` | the key's own workarea (ADR-0028 d1), or its user root (ADR-0044), where d7 attributes its usage |
+    | `scope_workspace_id` | `uuid` | the resolved `workspace` node the recall read |
+    | `source_workspace_id` | `uuid` | the key's own workspace (ADR-0028 d1), or its user root (ADR-0044), where d7 attributes its usage |
     | `pipeline` | `smallint` | the pipeline that ran, by its closed name's code |
     | `access` | `smallint` | `postings`, `scan` or `none` |
     | `query_digest` | `bytea` | the read log's `query_digest` ([retrieval](../architecture/retrieval.md#the-read-log)), always |
@@ -280,9 +280,9 @@ Decided, not built.
     created_at, artifact_id, label, source, at)` holds d5's labels, partitioned the same way.
     `usage_credits (tenant_id, version_id, principal, window_day)`, unique, holds which principal
     has been credited for which version on which UTC day (d8), partitioned by tenant and day.
-    `usage_state (tenant_id, version_id, source_workarea_id, positives real, examinations real,
+    `usage_state (tenant_id, version_id, source_workspace_id, positives real, examinations real,
     as_of timestamptz, first_returned_at, last_returned_at)`, partitioned by tenant only, holds
-    d7's decayed accumulators, one row per version and source workarea that has any.
+    d7's decayed accumulators, one row per version and source workspace that has any.
 
     **The fence.** Each table is list-partitioned by `tenant_id` with `ENABLE` and `FORCE ROW LEVEL
     SECURITY` and the `tenant_isolation` policy, created by the owner in ADR-0034 d11's partition
@@ -296,7 +296,7 @@ Decided, not built.
     per-memory lists of d1), `GET /v2/usage/events` (events with their labels; `query_text` only
     where opted in), `oml usage report` and the admin page
     ([ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)).
-    No agent, writer, reader or dreamer key reads an event, a label or a count, on any transport:
+    No agent, writer, reader or reviewer key reads an event, a label or a count, on any transport:
     the routes refuse them `auth.forbidden`, and `oml_read` has no mode that reaches them. Usage
     reaches an agent only as the `matched.usage` explanation of a hit it may already read (d9).
 
@@ -410,11 +410,11 @@ Decided, not built.
       (ADR-0001 d2); an author cannot rank its own work up, by fetching, citing or feedback. Own
       held hits never credit. Admin reads (`memory.admin_read`) and the review queue's serves are
       not recalls and produce no event.
-    - **Where it counts, and who may see it.** A credit is kept under its **source workarea**, the
-      crediting key's own workarea (`source_workarea_id`), in `usage_state`. A recall sums
-      `usage_state` over the source workareas that `r` may read, the promoted nodes of its
+    - **Where it counts, and who may see it.** A credit is kept under its **source workspace**, the
+      crediting key's own workspace (`source_workspace_id`), in `usage_state`. A recall sums
+      `usage_state` over the source workspaces that `r` may read, the promoted nodes of its
       candidate scope's computation (ADR-0049 d2), exactly as ADR-0052 d5 sums word counts over
-      readable nodes. So the fact "readers in workarea X used `v`" moves a rank only for a reader
+      readable nodes. So the fact "readers in workspace X used `v`" moves a rank only for a reader
       who may read X; a private team's usage of a `universe` claim never reorders another team's
       recall. A derivation credits only when the citing version is served, since a held citing
       row is its author's alone; a rejected or withdrawn citer never credits. That reads which
@@ -476,7 +476,7 @@ Decided, not built.
   the query's readable candidates keeps a row outside the scope from setting any minimum or
   maximum. Usage is not a `Retriever`: it retrieves nothing. The store port gains
   `usage(tenant, readable_sources, candidate_ids) -> Vec<UsageEvidence>`, one index read by
-  `(version_id, source_workarea_id)`, uuid equalities only, so row security keeps it an index
+  `(version_id, source_workspace_id)`, uuid equalities only, so row security keeps it an index
   condition (ADR-0052's reason).
 
     | Pipeline | Legs | Fusion | Enters |
@@ -488,7 +488,7 @@ Decided, not built.
     `w × (u − 0.5)`, the amount usage moved its fused score, `credits` and `examinations` are the
     decayed figures rounded to one decimal, and `prior` is `true` when the hit had no evidence;
     `matched.via` gains `usage` when `contribution` is not zero. The figures come only from
-    readable sources, so they tell a reader nothing about workareas it cannot read. Combining
+    readable sources, so they tell a reader nothing about workspaces it cannot read. Combining
     usage with the reranker of ADR-0053 is not offered: a reranker after fusion would discard the
     leg, and one before it is a second decision (open question 4).
 
@@ -541,10 +541,10 @@ Decided, not built.
   Tracked: the similar check's outcomes and whether a refused write was resent or superseded
   instead (ADR-0050 d1); `quality.*` warnings by class (d6 there); time from submit to verdict;
   rejections, with `duplicate_of` (ADR-0050 d11), per key; supersessions within 30 days of
-  promotion, per workarea (churn); memories never returned by a recall since promotion, and not
+  promotion, per workspace (churn); memories never returned by a recall since promotion, and not
   returned in 30 and 90 days; and stale tips (ADR-0050 d7). It is for a tenant's admins and
   reviewers: a key whose writes are rejected often needs its skill or its scope looked at; a
-  workarea of unused memories is a curation list. A person may act on it through the verbs
+  workspace of unused memories is a curation list. A person may act on it through the verbs
   their role holds; no agent may, by R1, and no list proposes a demotion by itself. Verdicts are
   read here, which is why none of this reaches the ranking: a law (d13) holds the ranking
   input to `usage_state`, which no verdict writes.
@@ -554,7 +554,7 @@ Decided, not built.
   `with_no_usage_bm25_postings_usage_ranks_as_bm25_postings`;
   `an_authors_own_gets_citations_and_feedback_never_move_its_memory`;
   `a_principal_in_the_lineage_closure_never_credits_the_version`;
-  `usage_from_a_workarea_the_reader_cannot_read_never_changes_its_ranks`;
+  `usage_from_a_workspace_the_reader_cannot_read_never_changes_its_ranks`;
   `usage_never_adds_a_candidate_the_text_legs_did_not_return`;
   `two_candidates_swap_only_when_their_text_scores_differ_by_less_than_w`;
   `changing_a_verdict_reviewer_or_promoted_at_with_the_served_set_unchanged_changes_no_usage`;
@@ -565,7 +565,7 @@ Decided, not built.
   `usage_decays_to_the_prior_with_its_half_life`;
   `feedback_for_another_keys_recall_or_an_unserved_id_is_refused_and_the_read_not_run`;
   `a_recall_answers_the_same_when_the_event_queue_is_full`;
-  `no_agent_writer_reader_or_dreamer_key_reads_a_recall_event_on_any_transport`;
+  `no_agent_writer_reader_or_reviewer_key_reads_a_recall_event_on_any_transport`;
   `query_text_is_null_unless_the_tenant_opted_in`;
   `no_row_older_than_30_days_is_read_and_an_overdue_partition_is_emptied`;
   `an_erased_version_leaves_no_usage_and_no_event_names_it_after_the_job`;
@@ -617,7 +617,7 @@ Estimated, not measured; #110 measures each line.
 | Query text, where opted in | plus the query's length, about 60 bytes for the eval's queries | the recall eval's query lengths |
 | Event writes | 100 rows a second in one batched insert a second; about 40 KB/s of heap and a similar order of WAL | arithmetic |
 | Labels | at most a few per recall; one index probe per get or write by the acting key | d5 |
-| `usage_state` | at most one row per served version and source workarea: with 1,000,000 versions read from 5 workareas each, 5 million rows, about 80 bytes each, 0.4 GB with its index | arithmetic |
+| `usage_state` | at most one row per served version and source workspace: with 1,000,000 versions read from 5 workspaces each, 5 million rows, about 80 bytes each, 0.4 GB with its index | arithmetic |
 | Usage on a recall | one index read for at most 50 candidates over the readable sources; budget 5 ms p95 | d10 (3) |
 | Prometheus | about 300 new series per lead | d1 |
 | Partitions | per tenant, 3 event tables × 31 days + `usage_state`, each with its indexes | d2 |
@@ -627,7 +627,7 @@ Estimated, not measured; #110 measures each line.
 | Alternative | Why not |
 |---|---|
 | **Per-memory or per-query Prometheus labels** | One series per memory is 1,000,000 series at the stated scale, and a query or memory label puts a tenant's words and ids in a store outside row security, with its own retention (ADR-0042 d12). The per-memory answers are PostgreSQL's, to an admin (d1). |
-| **Global popularity, counted across workareas or tenants** | A tenant-wide count lets rows a reader cannot read move its ranks, which `a_row_outside_the_scope_never_changes_a_candidates_score` forbids for text (ADR-0049 d7) and d7 forbids for usage; across tenants it would leak one tenant's activity into another's answers. |
+| **Global popularity, counted across workspaces or tenants** | A tenant-wide count lets rows a reader cannot read move its ranks, which `a_row_outside_the_scope_never_changes_a_candidates_score` forbids for text (ADR-0049 d7) and d7 forbids for usage; across tenants it would leak one tenant's activity into another's answers. |
 | **Counting the author's signals** | An author's gets, citations and feedback would rank its own work up, the act R2 refuses for a verdict; nothing distinguishes an author's honest use from promotion of its own row. |
 | **An LLM judge of relevance in the read path** | A model call per recall adds latency and cost the reranker's budget already strains (ADR-0053 d5), sends the query and the memories to wherever the model runs, and grades with no knowledge of what the reader needed. Offline, over opted-in sets, it is not ruled out as an annotator (open question 3). |
 | **A new MCP tool for feedback** | ADR-0039 d8: the feedback is a parameter of the read the agent makes next; a tool would cost every client's catalog for a call with no result of its own (d6). |
@@ -660,7 +660,7 @@ remains open and holds the ranking half.
    d5, the caps of d8): set by d10's replay, confirmed by its interleaving.
 6. **A one-person tenant.** With its author excluded, a tenant of one principal produces no
    credit at all, so the usage pipeline ranks there as `bm25-postings`. Whether a development
-   workarea's self-signed exception (ADR-0001 d5) should extend to usage is not decided here; this
+   workspace's self-signed exception (ADR-0001 d5) should extend to usage is not decided here; this
    record says no.
 
 ## Test plan

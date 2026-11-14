@@ -13,22 +13,22 @@ This page is the reviewer's routine. Agent crews review over HTTP instead: see
 
 ## Before starting
 
-A reviewer key (role `dreamer`) is required. A tenant admin issues it; a reviewer cannot issue its own. The
-key needs two grants on the workarea under review: `dreamer`, to take and judge held memories, and
+A reviewer key (role `reviewer`) is required. A tenant admin issues it; a reviewer cannot issue its own. The
+key needs two grants on the workspace under review: `reviewer`, to take and judge held memories, and
 `reader`, to read their sources. Without the reader grant, a held memory is served with an empty
 `derives_from` and no replaced version.
 
 ```sh
 # the admin, with the admin pair stored
-oml keys issue alice-review --role dreamer --held-by human --principal people/alice \
-  --grant crew:dreamer --grant crew:reader --default-workarea crew
+oml keys issue alice-review --role reviewer --used-by person --principal people/alice \
+  --grant crew:reviewer --grant crew:reader --default-workspace crew
 ```
 
 The command prints `key issued — SHOWN ONCE` and the value once. The server keeps only its hash.
 Give each reviewer their own key and principal, because a shared key makes two people one. An admin
-key is never a reviewer key, and a `held_by: service` key is refused every review verb with
+key is never a reviewer key, and a `used_by: service` key is refused every review verb with
 `access.verb_ceiling`. `oml quickstart` issues one reviewer key, `quickstart-reviewer`, into
-`<dir>/keys/reviewer` ([run a server](../start/run-your-own.md)); it holds the `dreamer` grant only, so a held memory it serves has no sources. The admin's side is in
+`<dir>/keys/reviewer` ([run a server](../start/run-your-own.md)); it holds the `reviewer` grant only, so a held memory it serves has no sources. The admin's side is in
 [Administer an OML server](administering.md).
 
 Store the key once. `oml login` reads it without echo, checks it, and writes the URL and key to the
@@ -48,8 +48,8 @@ and select it with `OML_CLI_CREDENTIALS`.
 oml review next
 ```
 
-The command serves one held memory and claims it for the key, oldest first. It serves only
-workareas where the key holds `dreamer`. It skips any memory whose lineage names the key or
+The command serves one held memory, oldest first, and the key takes it. It serves only
+workspaces where the key holds `reviewer`. It skips any memory whose lineage names the key or
 principal. An empty queue prints `nothing in scope waits — the queue is empty (204).`
 
 The output shows the artifact id and version, kind, writer, claim key and text, then the
@@ -57,17 +57,18 @@ The output shows the artifact id and version, kind, writer, claim key and text, 
 the full version it replaces. Read each source with `oml read <artifact_id>`. A source that cannot be
 read is a reason to reject, not to guess.
 
-To read the queue without claiming anything, run `oml review list` (a reviewer key held by a person).
+To read the queue without taking anything, run `oml review list` (a reviewer key used by a person).
 
 ## Reviewing on the user page
 
 Signed in at `/web`, the **Review** tab serves the next held memory to the user's own reviewer key,
 `<user>-review`, as `oml review next` does. **Memories** lists what the agents wrote, every
-state, newest first, 50 a page: filter by state, workarea, origin, author key or text. A held
-card says it is held until someone else reviews it. **Atlas** shows the workareas as a map
-sized by readable count, with the same numbers in a table below it. **Workareas** gives each workarea one dropdown
+state, newest first, 50 a page: filter by state, workspace, origin, author key or text. A held
+card says it is held until someone else reviews it. **Atlas** shows the workspaces as a map
+sized by readable count, with the same numbers in a table below it. **Workspaces** gives each workspace one dropdown
 of what the reviewer key may do there now: propose the next status, ratify another key's
-proposal, put it in progress, or commit it, which waits while any memory in it is held. Apply
+proposal, or set who sees its drafts: everyone working here, or the writing key only, which waits while
+any memory in it is held. Apply
 shows what will happen before anything is recorded
 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
 
@@ -94,7 +95,7 @@ oml review approve --note "matches quote ref AM-7741"
 oml review reject --reason "no source and no date; resubmit with the quote reference"
 ```
 
-Without a `serve_id`, the verdict applies to the one memory the key has claimed. After
+Without a `serve_id`, the verdict applies to the one memory the key has taken. After
 `oml review next` runs more than once, name it: `oml review approve <serve_id>`. Otherwise the verdict
 is refused with `request.validation` naming `serve_id`. `--reason` is required to reject. `--note`
 is optional and is journaled as the verdict's reason. Both answer
@@ -104,7 +105,7 @@ A rejection is journaled, never silent. The author sees `rejected` in its own li
 (`oml read --state rejected`). The reason is in the journal, and `oml read` does not show it.
 Reopening a rejection is not available.
 
-After approval the memory is `promoted`. Any key with `reader` on its workarea or an ancestor finds
+After approval the memory is `promoted`. Any key with `reader` on its workspace or an ancestor finds
 it with `oml read --query` or `oml_read`. Its rank does not change.
 
 ## Review a supersession or steering
@@ -116,7 +117,7 @@ Approving it stops recall serving the memory, and every version stays readable a
 another version won the tip first, the approval is refused with `submission.tip_conflict` and
 nothing is journaled. The serve can still carry a reject.
 
-A **steering** memory has kind `steering`. Once approved, every recall in that workarea and below
+A **steering** memory has kind `steering`. Once approved, every recall in that workspace and below
 returns it first, unranked, and no budget cuts it. Read
 steering more strictly than a fact, because it shapes every later session in the subtree.
 
@@ -133,7 +134,7 @@ serving 1 held item
   serve_id: srv_4f9c2a7e0b314d8e9a551c6f3e2d8b10  (expires 2026-11-04T10:15:00Z)
   verdict with: oml review approve [--note …] | oml review reject --reason …
 
-$ oml review next --json          # derives_from and replaces of the same claimed item
+$ oml review next --json          # derives_from and replaces of the same taken item
 $ oml read 7a1d0c3b-5e62-4f19-8b07-2d4e6f8a9c31   # each source it names
 $ oml review approve --note "dated, sourced, one claim"
 verdict recorded — 4f9c2a7e-0b31-4d8e-9a55-1c6f3e2d8b10 is promoted (journal seq 212)
@@ -142,5 +143,5 @@ $ oml review next
 nothing in scope waits — the queue is empty (204).
 ```
 
-The identifiers are illustrative. Every workarea has the same policy: one approving verdict
+The identifiers are illustrative. Every workspace has the same policy: one approving verdict
 promotes. If a step fails, see [client troubleshooting](../help/troubleshooting-client.md).

@@ -22,7 +22,7 @@ its first run, on PostgreSQL 17.11 on 2026-10-31, is recorded in the last column
 settles two points. The role split closes the `pg_stats` channel, because the service role sees
 no row of it. It does not close EXPLAIN's row estimate, which the per-tenant FTS index of the
 decision below is for. That run also observed that cross-tenant foreign keys are accepted:
-`workareas.parent_id`, `memories.created_event_id` and `review_queue.memory_id` reference a bare
+`workspaces.parent_id`, `memories.created_event_id` and `review_queue.memory_id` reference a bare
 id, so a tenant can store, and test for, another tenant's ids. That is an implementation fix for
 the same work: foreign keys that carry `tenant_id`.
 
@@ -226,7 +226,7 @@ $ psql -h 127.0.0.1 -U oml -d <throwaway> -c "SELECT c.relname, pg_get_userbyid(
  outbox             | oml   | t              | t                   |        1
  review_queue       | oml   | t              | t                   |        1
  tenants            | oml   | t              | t                   |        2
- workareas          | oml   | t              | t                   |        1
+ workspaces          | oml   | t              | t                   |        1
 (12 rows)
 ```
 
@@ -400,7 +400,7 @@ have found what it hunted.
   journal range, tail-scan subjects, get, hydrate, recall FTS, own-held recall FTS, steering, the
   own and tips listings with every filter and keyset, the claim-key state aggregate, served tip,
   held successors, review claim-next (join, `NOT EXISTS`, `FOR NO KEY UPDATE … SKIP LOCKED`) and
-  its update, key by hash, issued seq, a key's grants and denials, workarea get, ancestry and
+  its update, key by hash, issued seq, a key's grants and denials, workspace get, ancestry and
   subtree (recursive), children, idempotency get.
 - **14 more shapes that name B's rows:** a join on B's ids, an `IN` subquery, `EXISTS`, `count`,
   jsonb `->>` and `@>`, array `@>`, FTS on a word only B uses, `FOR UPDATE`, `FOR SHARE`,
@@ -485,13 +485,13 @@ role.
   rows, while tenant A sees 4, and EXPLAIN's estimate for a full scan under tenant A is 4.
   security.md lists timing and contention as the side channels v1 does not address, and it lists
   neither these counts nor the estimate above. Unlike the estimate, this one is not a check.
-- **Foreign keys check without RLS.** A tenant A workarea naming tenant B's universe as its parent
+- **Foreign keys check without RLS.** A tenant A workspace naming tenant B's universe as its parent
   is accepted, and naming a random id is refused with `23503`. So tenant A can test whether an id
   exists in another tenant, and can store a reference across tenants. The same holds for
   `memories.created_event_id` → `journal(event_id)` and `review_queue.memory_id` → `memories(id)`.
   The adapter's ancestry walk already refuses a parent outside the tenant. 0004 gave `grants` and
   `key_denials` foreign keys that name the tenant, and these three references could take the same
-  form, which is a migration item. Since 0008 they do, with `api_keys.default_workarea_id` and
+  form, which is a migration item. Since 0008 they do, with `api_keys.default_workspace_id` and
   `rotated_from` (ADR-0034 d12), and S3.4 checks each as `S3.4/<role>/<table>.<column>`: under
   tenant A, a reference to tenant B's row must be refused as one to no row is, and tenant A's own
   target accepted. The checks are not on `RECORDED_FAILURES`; the pinned pg17 has not run them.

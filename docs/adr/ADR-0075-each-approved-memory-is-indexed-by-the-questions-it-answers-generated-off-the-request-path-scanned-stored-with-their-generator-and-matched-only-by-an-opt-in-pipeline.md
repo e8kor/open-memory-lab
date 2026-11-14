@@ -32,7 +32,7 @@ parked and v0.7.1 recommends `bm25-sparse` (d13).
 | d4 | `bm25-questions` scores text and questions as two fields of one BM25F document; the text keeps `bm25-postings`' statistics and pruning exactly; opt-in; a row without questions scores what `bm25-postings` gives it; a hit names its question | 1 and 2, one release |
 | d5 | A `QuestionGenerator` port with one adapter in phase 1, the local one unless phase 0 says otherwise; off by default; no egress | 1 |
 | d6 | A question must be grounded in its memory, specific, distinct from its set and clean: grounding, genericity, near-duplicates, caps and the scan; any finding drops it; a version with a finding whose class holds by default gets none, whatever a tenant ceiling says | 1 |
-| d7 | ADR-0072 d10 reads per-workarea kind 3 counts, through both of its reads, and a coverage share net of expired versions, nothing else | 3 |
+| d7 | ADR-0072 d10 reads per-workspace kind 3 counts, through both of its reads, and a coverage share net of expired versions, nothing else | 3 |
 | d8 | One superiority gate with 90% power shown, two arms in a fixed sequence, non-inferiority arms sized to 99% each, a displacement bound at partial coverage, the joint power stated; an adversarial suite per adapter, recall and write latency under load, size, and the bill | 0 to 2 |
 | d9 | Dense embeddings of questions are deferred until a named trigger fires | — |
 | d10 | Phase 0 (with 0a, the grown labelled set) decides; phases 1 and 2 ship in one release; phase 3 when #207 is scheduled | 0 to 3 |
@@ -242,7 +242,7 @@ Decided, not built.
     is bounded (ADR-0053). d8's latency gate is measured with the drain saturated.
   - **The write path is shared.** A set write appends a journal event, so it takes the tenant's
     chain head, which every commit in the tenant serialises on (ADR-0002, #100), and it updates the
-    kind 3 rows of `search_term_rows` and `search_workarea_rows`. Those rows are keyed by `kind`
+    kind 3 rows of `search_term_rows` and `search_workspace_rows`. Those rows are keyed by `kind`
     (ADR-0052 d5), so a set write never contends with a promotion's kind 1 count rows, but a
     backfill at 60 sets a minute adds 60 short transactions a minute to the chain head for as long
     as it runs (about 28 hours at 100,000). The write transaction does the deletes, inserts and
@@ -277,11 +277,11 @@ Decided, not built.
     | Table | Holds |
     |---|---|
     | `search_question_generators` | one row per generator: `id`, `adapter`, `model`, `model_digest`, `weights_licence`, `data_licence` (d5's register), `prompt_version` (`oml-questions/1`), `prompt_sha256`, `max_questions`, the decoding parameters, `created_at`. No tenant data, so it is the one table here that is not partitioned. |
-    | `search_question_sets` | `(tenant_id, memory_id, set_seq)` key: `workarea_id`, `generator_id`, `generated_at`, `replaced_at` (null for the current set; one current set per version by a partial unique index), `kept` (0 to 5), `dropped` (a list of `{reason, class, rule}`, never the dropped text), `outcome` (`written`, `empty`, `failed`), `tokens_in`, `tokens_out` |
+    | `search_question_sets` | `(tenant_id, memory_id, set_seq)` key: `workspace_id`, `generator_id`, `generated_at`, `replaced_at` (null for the current set; one current set per version by a partial unique index), `kept` (0 to 5), `dropped` (a list of `{reason, class, rule}`, never the dropped text), `outcome` (`written`, `empty`, `failed`), `tokens_in`, `tokens_out` |
     | `search_questions` | `(tenant_id, memory_id, set_seq, ordinal)` key: `text`, at most 200 characters, and `dropped_at` for a question a rescan or an admin dropped |
     | `search_questions_queue` | as `search_sparse_queue`: `enqueued_at`, `priority` (0 new, 1 backfill), `attempts`, `next_at`, `last_error`, `parked_at`, `park_count`, `leased_by`, `leased_until`, and `tokens_in` and `tokens_out` summed over the entry's failed attempts |
     | `search_questions_state` | per tenant: `enabled`, `current_generator_id`, `questions_seq` (a monotonic counter), `backfill_after`, `backfill_total`, `backfill_limit`, `backfill_taken`, `backfill_stopped_at`, `backfilled_at`, and `tokens_in_total` and `tokens_out_total`, every token the tenant's generation spent, kept or not (d11) |
-    | `search_question_coverage` | `(tenant_id, workarea_id, generator_id)` key: `rows`, the served versions in the workarea whose current set came from that generator, kept by the trigger (d7). It is not net of expired versions; d7.2 says how it is read |
+    | `search_question_coverage` | `(tenant_id, workspace_id, generator_id)` key: `rows`, the served versions in the workspace whose current set came from that generator, kept by the trigger (d7). It is not net of expired versions; d7.2 says how it is read |
 
   - **A set belongs to one version**, not to a claim. A supersession serves a new version, which
     gets its own set; the replaced version's kind 3 postings go to state 2 with its kind 1
@@ -325,7 +325,7 @@ Decided, not built.
     of the same version has that token. A word therefore counts once per set: a generator that
     repeats a word across five questions gives it no more weight than one question does (d4's law
     3). Question words such as "how" and "what" are English stop words and are dropped first.
-  - **Counts.** The trigger keeps `search_term_rows` and `search_workarea_rows` for kind 3 as it
+  - **Counts.** The trigger keeps `search_term_rows` and `search_workspace_rows` for kind 3 as it
     keeps them for kind 1 (ADR-0052 d5), so kind 3 has its own document frequencies `df_3` and its
     own mean field length, summed over the readable nodes at query time, less expired versions as
     kind 1's are; d7 reads these. `search_term_rows` also gains `novel_rows` for kind 3: the served
@@ -576,7 +576,7 @@ Decided, not built.
     questions to a tenant admin, who already reads the memory, and `oml admin questions drop
     <memory> [--ordinal n]` drops one question or the set, journalled (d2). Nobody else sees a
     question before it ranks, which is why the filters run at write.
-  - **Visibility.** Kind 3 postings carry the version's `state` and `workarea_id` and are read under
+  - **Visibility.** Kind 3 postings carry the version's `state` and `workspace_id` and are read under
     the core's `CandidateScope` (ADR-0049 d2), so a question ranks only rows the key already reads,
     and only served ones. A question cannot make a row visible, and its counts are the readable rows'
     (ADR-0052 d5). Since the generator's input is one version's own text (d5), a question cannot
@@ -593,9 +593,9 @@ Decided, not built.
     genericity and near-duplicate filters. d8's
     adversarial suite measures what is left, per adapter.
 
-- **d7 — ADR-0072's phase 3 reads per-workarea kind 3 counts and a coverage share net of expired
+- **d7 — ADR-0072's phase 3 reads per-workspace kind 3 counts and a coverage share net of expired
   versions, through the two reads it already makes, and nothing else.** ADR-0072 d10 scores a
-  candidate workarea "by BM25 over its memories' questions". This record supplies the inputs, and
+  candidate workspace "by BM25 over its memories' questions". This record supplies the inputs, and
   ADR-0072 keeps the scoring.
   1. **Counts.** ADR-0072 d12 makes two reads over R: the statistics read, and the expired
      subtraction of its d4.2 (`POSTINGS_EXPIRED` over R's nodes). Both take the posting kind as a
@@ -603,24 +603,24 @@ Decided, not built.
      gain `kind = 3` beside `kind = 1`: for each candidate s and kept query word w, `df_s(w)`
      (served versions in s whose question field holds w), `rows_s` (served versions in s with a
      set) and `total_len_s`, each less the versions expired at `now`, from the same
-     `search_term_rows` and `search_workarea_rows` by their primary key. It reads no question text
+     `search_term_rows` and `search_workspace_rows` by their primary key. It reads no question text
      and no posting.
   2. **Coverage.** `coverage_s` = (kind 3 `rows_s` less expired) over (kind 1 `rows_s` less
      expired), for the hit kinds. Both terms come from the counts the trigger keeps on every state
      change and from the expired subtraction, so a supersession, retirement, rejection, erase or
      rescan drop is in the next read; nothing the drain keeps enters it. The generator ids in force
      in s come from `search_question_coverage`, which the trigger keeps beside
-     `search_workarea_rows` under the same policy; that split is reported, not scored. It is gross
+     `search_workspace_rows` under the same policy; that split is reported, not scored. It is gross
      of expired versions, since the table keeps no expiry, so its per-generator rows can sum to more
      than `coverage_s`'s numerator; `status` labels the split "gross of expired versions" rather
      than subtract per generator. ADR-0072
-     needs coverage because a workarea whose backfill has not run would otherwise rank low for want
+     needs coverage because a workspace whose backfill has not run would otherwise rank low for want
      of questions, not for want of answers. How #207 uses it (a floor, or scoring only fully covered
      candidates) is ADR-0072's to decide on its eval.
   3. **Invariants** this record guarantees and #238 tests: kind 3 counts are the served,
      unexpired versions' alone; a held, superseded, retired, rejected, erased or expired version
      contributes nothing; a question held only by unreadable rows changes no count; and the counts
-     summed over a workarea equal a count of its served, unexpired versions' kind 3 postings under
+     summed over a workspace equal a count of its served, unexpired versions' kind 3 postings under
      the policy (ADR-0072 tests 14 and 15).
   4. **Repeatability.** The `questions_seq` and generator ids read are recorded in
      `recall_events` when a selection used them, beside ADR-0072 d9's fields, so ADR-0054 d11's
@@ -1068,7 +1068,7 @@ Decided, not built.
 | d8 | **Gate both arms against the baseline and take the better** | Either test's error passes, so the false-go rate doubles to 0.10; a fixed sequence keeps 0.05 at the same n. |
 | d4 | **Complete the best 4k by the combined score only** | Covered rows can crowd an uncovered row out of completion, so a row `bm25-postings` returns first is not returned, against law 1. |
 | d6 | **Generate for versions whose hold finding a person approved** | The approval judges the memory for its readers, not as a model's input; a generator is the reader ADR-0074 d2 says can be talked round. |
-| d7 | **Hand ADR-0072 the question text** | A selection needs counts, not text; text across workareas would be a second channel for d6's "never served as memory text". |
+| d7 | **Hand ADR-0072 the question text** | A selection needs counts, not text; text across workspaces would be a second channel for d6's "never served as memory text". |
 | d7 | **A coverage count kept by the drain** | Supersession, retirement, erase and rescan drops change state in the trigger, not the drain, so the count would go stale and break d7's invariants. |
 | d9 | **Dense question embeddings first (QuOTE)** | A vector index under row security is unmeasured, a model would run at recall to embed the query, and ADR-0048 puts meaning last, after the lexical attempt. |
 | d11 | **Park on five failures of any kind (the sparse queue's rule)** | Five failures take about 62 s (2 + 4 + 8 + 16 + 32), so a routine endpoint restart would park every approval made during it, for good. |
@@ -1091,7 +1091,7 @@ Each question below was decided by the operator on 2026-11-10, with the recommen
    are few, the generator is the reader ADR-0074 warns about, and `status` and doctor count them
    (d11).
 3. **Run phase 0 now, ahead of #201's "When to try it"?** #201 waits for a labelled real-usage miss
-   set and for workareas of hundreds to thousands of memories. Decided by the operator, 2026-11-10: yes, phase 0a first, to
+   set and for workspaces of hundreds to thousands of memories. Decided by the operator, 2026-11-10: yes, phase 0a first, to
    grow the labelled set to at least 550 queries, then phase 0, offline, changing no server code,
    at one generation run over about 15,000 memories (200 + 5,183 + 3,633 + 5,882) per adapter, time
    boxed by #235. Phases 1 and 2 stay behind phase 0's verdict and ship together.
@@ -1125,7 +1125,7 @@ here) and shortening the title, which is the record's handle in links already ma
   cross-validation, committed per-query results, and partial-coverage arms (d8).
 - **Records and schema (IR M4, IR M5, product m3).** Every set change is journalled and bumps
   `questions_seq`, recorded in `recall_events`; a replaced set's text stays until erase; the tenant
-  stores `current_generator_id` and a lead with another refuses; sets carry `workarea_id`;
+  stores `current_generator_id` and a lead with another refuses; sets carry `workspace_id`;
   coverage comes from trigger-kept counts less expired versions, with a trigger-kept per-generator
   table (d2, d7).
 - **The drain (IR M6, IR M9, product M4).** No lock or transaction spans the model call; a

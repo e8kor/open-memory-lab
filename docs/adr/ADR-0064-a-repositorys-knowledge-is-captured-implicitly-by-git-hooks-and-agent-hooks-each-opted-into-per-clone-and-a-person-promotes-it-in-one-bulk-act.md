@@ -2,7 +2,7 @@
 id: adr/ADR-0064-a-repositorys-knowledge-is-captured-implicitly-by-git-hooks-and-agent-hooks-each-opted-into-per-clone-and-a-person-promotes-it-in-one-bulk-act
 tier: engineering
 status: accepted design · 2026-11-05 · amended 2026-11-12, accepted by the operator the same day with its thirteen questions decided
-answers: how source-code knowledge is captured with no new step for the agent or the person; the two capture modes (git hooks and agent-session hooks), what each does alone and what changes when both are on; the one-time setup and who marks the parent that agents may create children under; per-repository or per-branch workareas in v0.6.1; what the session-start hook resolves and recalls; how the pre-tool hook fills an anchor and an origin on oml_write and which file it chooses; how touched paths are checked at Stop and confirmed only by reviewed supersession; when and how a background sync runs, its queue, its lock and its guards; how the git-hook layer and the agent layer de-duplicate, through the sync identity and idempotency keys; how a chat fact about code carries both its turn and its code anchor; how a person promotes; how other harnesses map onto the shared dispatcher; the latency and friction budgets; what is never read or stored; the evaluation that gates any default; the rejected alternatives, open questions, tests, doctor lines and the phased build
+answers: how source-code knowledge is captured with no new step for the agent or the person; the two capture modes (git hooks and agent-session hooks), what each does alone and what changes when both are on; the one-time setup and who marks the parent that agents may create children under; per-repository or per-branch workspaces in v0.6.1; what the session-start hook resolves and recalls; how the pre-tool hook fills an anchor and an origin on oml_write and which file it chooses; how touched paths are checked at Stop and confirmed only by reviewed supersession; when and how a background sync runs, its queue, its lock and its guards; how the git-hook layer and the agent layer de-duplicate, through the sync identity and idempotency keys; how a chat fact about code carries both its turn and its code anchor; how a person promotes; how other harnesses map onto the shared dispatcher; the latency and friction budgets; what is never read or stored; the evaluation that gates any default; the rejected alternatives, open questions, tests, doctor lines and the phased build
 -->
 
 # ADR-0064 — A repository's knowledge is captured implicitly by git hooks and agent hooks, each opted into per clone, and a person promotes it in one bulk act
@@ -11,7 +11,7 @@ answers: how source-code knowledge is captured with no new step for the agent or
 
 **Release:** planned for v0.8.0 (the minimal phase, d19; the amendment of 2026-11-12, point a and question 1; #344); the record planned it for v0.6.1, which shipped without it; later phases not assigned
 
-**Amends:** ADR-0047 (d2: no claim kind `code` in v0.6.1; d5: one workarea per repository first,
+**Amends:** ADR-0047 (d2: no claim kind `code` in v0.6.1; d5: one workspace per repository first,
 branches later; d11: the staleness workflow's hooks become verbs of the shared dispatcher, and
 the Stop check reads the working tree; d13: the duplicate check reads the session cache; d15 b:
 the branch parent becomes the code parent, marked by a person's reviewer key; d17: v0.6.1 builds
@@ -26,9 +26,9 @@ at creation, under the person's mark of the parent), ADR-0063 (d2: `chat` admits
 when `origin.turn` names the turn; d6: one `stop` verb answers for chat capture and for stale
 anchors)
 
-**Depends on:** [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+**Depends on:** [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md)
 (anchors, `oml sync`, `oml anchor`, `expected_version`, introduced in v0.5.8); ADR-0030 revision 2
-(in-progress workareas and the curator, [#79](https://github.com/e8kor/open-memory-lab/pull/79),
+(in-progress workspaces and the curator, [#79](https://github.com/e8kor/open-memory-lab/pull/79),
 planned for v0.6.0); ADR-0061 (the `rust` adapter,
 [#70](https://github.com/e8kor/open-memory-lab/pull/70), planned for v0.5.9); ADR-0063 (chat memory
 and `origin.kind`, [#78](https://github.com/e8kor/open-memory-lab/pull/78), planned for v0.6.0);
@@ -62,9 +62,9 @@ from an older checkout (d6–d11, d18–d20, built in `45658ba`); `oml anchor <p
 **What is decided on branches.** ADR-0047 (proposed) stores a small skeleton and the knowledge
 the code cannot tell, marks facts stale at edit, asks at Stop, and gates everything past its skill
 text on an evaluation harness (d17); its eleven questions are answered (Q1 a: a confirmation is a
-reviewed supersession; Q2 a: a workarea per branch; Q5 a: writers create children only under a
+reviewed supersession; Q2 a: a workspace per branch; Q5 a: writers create children only under a
 parent a person marked; Q11 a: the public server only with `--allow-public-server`). ADR-0030
-revision 2 (accepted design, v0.6.0) serves held memories inside an in-progress workarea to every
+revision 2 (accepted design, v0.6.0) serves held memories inside an in-progress workspace to every
 reader inside, lets a curator agent only narrow, and lets nothing leave before a person commits
 with nothing held. ADR-0061 (proposed, v0.5.9) reads a Rust workspace as one claim per crate and
 one per module doc. ADR-0063 (proposed, v0.6.0) adds `origin.kind`, a chat anchor
@@ -72,7 +72,7 @@ one per module doc. ADR-0063 (proposed, v0.6.0) adds `origin.kind`, a chat ancho
 its hooks as one dispatcher, `oml hook <event>`.
 
 **What implicit means here.** Today an agent that wants a code fact anchored must run `oml
-anchor`, paste the JSON into `oml_write`, choose a workarea and remember to recheck the fact when
+anchor`, paste the JSON into `oml_write`, choose a workspace and remember to recheck the fact when
 it edits the file. Each of those is a step an agent skips. Implicit capture moves every step that
 does not need judgement into hooks: the agent writes one sentence, and the hooks say where it is
 from, where it goes, and when it may no longer hold. The judgement steps stay where R1 and R2 put
@@ -81,7 +81,7 @@ them: the agent decides what is worth writing, and a person decides what is true
 **What it is held against.** The constitution ([ADR-0001](ADR-0001-the-constitution.md)): R1, no
 agent key promotes, proposes or ratifies; R2, the reviewer is never the author, per key and
 principal; R3, a held row is read by its author and its reviewer, relaxed only inside an
-in-progress workarea (ADR-0030 d3); R4, nothing is deleted. The Occam rule
+in-progress workspace (ADR-0030 d3); R4, nothing is deleted. The Occam rule
 ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md) d8): a capability is a parameter, a resource
 or a hook before it is a tool. ADR-0047's "no stored code map": paths, fragments, hashes and prose,
 never a code body.
@@ -95,9 +95,9 @@ Decided, not built: this lane writes no code and ran no build.
 - **d1 — Implicit capture has two modes, `git` and `agent`, chosen per clone, either or both, and
   recorded in the clone's git config.** `oml setup repo [--mode agent|git|both|off]`, run inside a
   clone, writes `oml.mode` to the clone's local git config (`.git/config`, never a committed file),
-  with `oml.workarea` (d4) and `oml.syncKeyFile` (d10). Cloning a repository maps nothing: a clone
+  with `oml.workspace` (d4) and `oml.syncKeyFile` (d10). Cloning a repository maps nothing: a clone
   without `oml.mode` is off, whatever the person's other clones say, as ADR-0047 d16 requires.
-  `off` removes the git hooks (d7) and the `oml.*` keys, and leaves every memory and the workarea
+  `off` removes the git hooks (d7) and the `oml.*` keys, and leaves every memory and the workspace
   where they are (R4).
 
     | | `git` alone | `agent` alone | `both` |
@@ -121,62 +121,62 @@ Decided, not built: this lane writes no code and ran no build.
 - **d2 — A person sets up once per person and once per clone; the first `oml setup repo` does
   both.** The per-person part, done the first time and skipped after:
     1. creates `<user>.code` in the person's root if absent ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d6);
-    2. marks it a **code parent** (d3) under the person's reviewer key, a dreamer key `held_by:
-       human`, which the command names and asks for when the CLI's stored key is not one;
+    2. marks it a **code parent** (d3) under the person's reviewer key, a reviewer key `used_by:
+       person`, which the command names and asks for when the CLI's stored key is not one;
     3. issues the person's **sync key**, `<user>-code-sync`, writer and reader on `<user>.code`
-       and its subtree, `held_by: agent`, to an owner-only file (`--out`, as
+       and its subtree, `used_by: agent`, to an owner-only file (`--out`, as
        [ADR-0028](ADR-0028-agent-key-issuance.md) issues agent keys) under
        `$XDG_CONFIG_HOME/oml/keys/` (d10).
 
     The per-clone part derives the repository (d4), refuses the maintainer's public server unless
-    `--allow-public-server` (d17), resolves or creates the clone's workarea, records the mode, and
+    `--allow-public-server` (d17), resolves or creates the clone's workspace, records the mode, and
     installs the git hooks when the mode includes `git` (d7). The agent's harness needs nothing
     more than the plugin it already has: the hooks are verbs of the CLI it already runs.
 
 - **d3 — A person marks a parent as a code parent; agent writer keys then create in-progress
   children under it, and nowhere else.** *Amends ADR-0047 d15 b and, on its branch, ADR-0030 d1.*
-  `POST /v2/workareas/{workarea}/mode` gains a second mark, `{children: "agent"}`, journalled
-  `workarea.mode_set` like the first and admitted under exactly ADR-0030 d1's predicate: a dreamer
-  key `held_by: human` with dreamer effective access on the node; every other key is refused
+  `POST /v2/workspaces/{workspace}/mode` gains a second mark, `{children: "agent"}`, journalled
+  `workspace.mode_set` like the first and admitted under exactly ADR-0030 d1's predicate: a reviewer
+  key `used_by: person` with reviewer effective access on the node; every other key is refused
   `access.verb_ceiling`, `details.reason: mode_is_human_only`. A code parent is itself `standard`,
   so its children may each be in progress (ADR-0030 d1 refuses nesting). Under a code parent, and
-  only there, `POST /v2/workareas` admits `mode: in_progress` in the create body from a writer key
+  only there, `POST /v2/workspaces` admits `mode: in_progress` in the create body from a writer key
   with effective `writer` on the parent: the child is `development` and in progress from its
-  first instant, journalled as one `workarea.create` carrying the mode and the parent's mark event.
+  first instant, journalled as one `workspace.create` carrying the mode and the parent's mark event.
   Anywhere else `mode` in a create body is refused `request.validation` naming `/mode`, and
   creation stays ADR-0044 d6's. This is ADR-0047 question 5, answer a, with the marker moved from
   an admin to the person's reviewer key, since in a user root the person is the one who reviews.
   The person's attestation is the mark of the parent; each child created under it is in progress
   by that attestation, and the person's own commit (d16) is still the only way out. A code parent
   may be unmarked by the same predicate; children already created keep their mode. No MCP tool,
-  argument or resource creates a workarea or sets a mark (ADR-0039 d8).
+  argument or resource creates a workspace or sets a mark (ADR-0039 d8).
 
-- **d4 — v0.6.1 keeps one workarea per repository, named from the repository, resolved by name
+- **d4 — v0.6.1 keeps one workspace per repository, named from the repository, resolved by name
   and cached in the clone.** *Amends ADR-0047 d5, and applies its question 2 per repository
   first.* The repository is ADR-0057 d3's `repo`, derived from the `origin` remote with the scheme,
-  user, password and trailing `.git` dropped, as `oml sync` does. Its workarea is
+  user, password and trailing `.git` dropped, as `oml sync` does. Its workspace is
   `<user>.code.<last segment>-<the first 6 hex digits of SHA-256(repo)>`, for example
   `e8kor.code.open-memory-lab-3fa2c1` (digits illustrative): a pure function of the repository, so
-  two clones of one repository on two machines find one workarea with no lookup table, and two
+  two clones of one repository on two machines find one workspace with no lookup table, and two
   repositories with one last segment never collide ([ADR-0026](ADR-0026-names-are-keys.md)). The
-  workarea's description is the full `repo`. The name is cached in `oml.workarea`; the hooks
+  workspace's description is the full `repo`. The name is cached in `oml.workspace`; the hooks
   resolve it from the cache, and only `oml setup repo` and a cache miss reach the server, one
-  `GET /v2/workareas/{name}` and, when absent, one create (d3). A clone without an `origin`
+  `GET /v2/workspaces/{name}` and, when absent, one create (d3). A clone without an `origin`
   remote takes `--repo`, else stays off with a doctor line.
 
-- **d5 — Per-branch workareas are not built in v0.6.1; only the sync branch is synced, and
-  post-checkout records the branch.** The git hooks make a branch workarea cheap to create (one
+- **d5 — Per-branch workspaces are not built in v0.6.1; only the sync branch is synced, and
+  post-checkout records the branch.** The git hooks make a branch workspace cheap to create (one
   request at post-checkout) but not cheap to own: each is a name kept for good (FR-80), each
   merge needs a person's commit (ADR-0030 d6), every mechanical fact a branch changes is reviewed
   twice (on the branch and again on the sync branch, as ADR-0057 d14 item 3 counts for drafts),
-  and a branch switch makes the repository workarea's next sync an older checkout, which the
+  and a branch switch makes the repository workspace's next sync an older checkout, which the
   stale-revision guard refuses (ADR-0057 d20). The **sync branch** is `origin/HEAD`'s target, or
   `oml.syncBranch` when set. Post-checkout writes the branch name and whether it is the sync
   branch to `.git/oml/state.json` and nothing else. A commit on another branch is not synced; its
   changed paths are checked (d9) so the pre-push warning has an answer. Agent knowledge written on
-  any branch goes to the repository workarea, anchored at the `HEAD` it read; a fact about code
+  any branch goes to the repository workspace, anchored at the `HEAD` it read; a fact about code
   that never merges then reads `removed` or `stale` at the next check on the sync branch, and the
-  person rejects it at promotion (d16). ADR-0047 d5's branch workareas are phase 3 (d19), with
+  person rejects it at promotion (d16). ADR-0047 d5's branch workspaces are phase 3 (d19), with
   post-checkout as their trigger.
 
 ### Layer 1: the git hooks
@@ -224,7 +224,7 @@ Decided, not built: this lane writes no code and ran no build.
       `<path>:<adapter>`. The defaults: `rust` (ADR-0061) on the directory holding the workspace
       `Cargo.toml` when there is one; `adr` on `docs/adr` when it holds `ADR-NNNN-*.md`;
       `headings` on `docs` with `--exclude 'docs/adr/**'`, and on the root's `*.md`. Each source
-      is its own namespace in the one workarea (ADR-0057 d14's rule, one adapter per source,
+      is its own namespace in the one workspace (ADR-0057 d14's rule, one adapter per source,
       kept). The default excludes, on every source: `target/**`, `vendor/**`, `third_party/**`,
       `node_modules/**`, `dist/**`, `build/**`, `**/*.generated.*`, `**/*.pb.*`, and every path
       the client's secret patterns match (ADR-0057 d6); the adapters' own skips stand (ADR-0061
@@ -237,7 +237,7 @@ Decided, not built: this lane writes no code and ran no build.
     - **Lock.** One `flock` on `.git/oml/sync.lock`; a job that cannot take it at once exits and
       leaves the queue to the holder, which re-reads the queue before releasing.
     - **Guard.** `oml sync --ff-only` (amends ADR-0057 d6) refuses, writing nothing, unless every
-      `rev` the workarea's claims of the source were read at, and every `rev` their latest source
+      `rev` the workspace's claims of the source were read at, and every `rev` their latest source
       checks name, is an ancestor of the commit to sync. This extends the older-checkout refusal
       (ADR-0057 d20, built in `45658ba`), which catches a commit older than the synced one, to a
       commit beside it, which a rebase of the sync branch or a forced pull produces. The refusal
@@ -251,13 +251,13 @@ Decided, not built: this lane writes no code and ran no build.
 
 - **d9 — The pre-push warning reads a check the background already ran.** After each synced or
   checked commit the job runs `oml sync --check --paths <changed paths>` for each source and
-  lists, for the same paths, every anchored claim in the workarea, of any author, whose anchor
+  lists, for the same paths, every anchored claim in the workspace, of any author, whose anchor
   hash differs from the span at the commit (the agent's own knowledge included), writing the
   result to `.git/oml/check/<commit>.json`. `pre-push` prints, for the pushed range, the counts
   and the first five claims (`stale`, `removed`, `untracked`), or `not checked yet` for a commit
   with no file; it never blocks. Source checks are recorded on the server (`--record`) only for
   the sync identity's own claims, since the source-check route admits only the author or a
-  dreamer (ADR-0057 d5), and the git hooks hold neither for an agent's claims.
+  reviewer (ADR-0057 d5), and the git hooks hold neither for an agent's claims.
 
 ### The sync identity and de-duplication
 
@@ -271,7 +271,7 @@ Decided, not built: this lane writes no code and ran no build.
     1. one writer: the same key, and so the same claim-key namespace and the same `foreign` rule;
     2. one diff: a second run at the same commit finds every item `unchanged` and writes nothing
        (ADR-0057 d8);
-    3. one idempotency key: `sync:<workarea>:<claim_key>:<outcome>:<hash16>` names no commit and
+    3. one idempotency key: `sync:<workspace>:<claim_key>:<outcome>:<hash16>` names no commit and
        no mode (ADR-0057 d9), so two runs racing past the lock (two clones of one person) replay
        each other's writes inside the server's window, and a supersession that loses the race is
        refused `submission.version_conflict` (ADR-0057 d19) and re-planned by the next run.
@@ -292,7 +292,7 @@ Decided, not built: this lane writes no code and ran no build.
     | source checks of those claims | the sync | the person's sync key |
     | knowledge an agent writes, its confirmations, updates and retirements | the agent | the agent's own key |
     | chat facts (ADR-0063) | the agent | the agent's own key |
-    | workarea creation under the code parent | whichever first needs it | the sync key or the agent's key |
+    | workspace creation under the code parent | whichever first needs it | the sync key or the agent's key |
     | the code-parent mark, verdicts, the commit | the person | the person's reviewer key |
 
 ### Layer 2: the agent-session hooks
@@ -316,17 +316,17 @@ Decided, not built: this lane writes no code and ran no build.
     chat capture's reason (ADR-0063 d6) and the stale list (d13) into one block. Each verb fails
     open (ADR-0029 d5), reads the plugin's key pair only (ADR-0029 d4), and sends no file content.
 
-- **d12 — Session start resolves the repository and its workarea from the clone's cache and
+- **d12 — Session start resolves the repository and its workspace from the clone's cache and
   recalls the repository's knowledge within a budget.** *Amends ADR-0029 d2, d3.* In a clone
-  whose mode includes `agent`: `git rev-parse --show-toplevel`, the cached `oml.workarea`, and, in
-  parallel with ADR-0029's two requests, two more: a recall scoped to that workarea with
+  whose mode includes `agent`: `git rev-parse --show-toplevel`, the cached `oml.workspace`, and, in
+  parallel with ADR-0029's two requests, two more: a recall scoped to that workspace with
   `anchor_repo`, the session's directory words as ADR-0029 d3 has them, `k` 6 and `max_tokens`
   600 (chosen, unmeasured, FR-173), injected under the data frame after the own-work lines; and
-  the listing of the workarea's anchored claims (ids, versions, paths, fragments, hashes, kinds;
+  the listing of the workspace's anchored claims (ids, versions, paths, fragments, hashes, kinds;
   no text) into the session cache, which d13 and d15 read. A listing over 2,000 claims is cut at
   2,000 and the cut is named (FR-173). The same flush of the queue as any hook (d8) starts in the
   background. Nothing is created at session start: a clone set up for `agent` already has its
-  workarea (d2), and a clone without `oml.mode` prints what it printed before.
+  workspace (d2), and a clone without `oml.mode` prints what it printed before.
 
 - **d13 — Touched paths are recorded locally, checked at Stop against the working tree, and a
   stale claim is confirmed, updated or retired only by a reviewed supersession.** *Amends ADR-0047
@@ -360,7 +360,7 @@ Decided, not built: this lane writes no code and ran no build.
   facts read `stale` to every reader without a prompt. *Amends ADR-0029 d1:* a source check is an
   act a hook-started job performs; it changes no text, no anchor and no state of review.
 
-- **d15 — The pre-tool hook fills the anchor, the origin and the workarea of an `oml_write`; the
+- **d15 — The pre-tool hook fills the anchor, the origin and the workspace of an `oml_write`; the
   agent writes only the sentence.** In a clone whose mode includes `agent`, for a call that sends
   no `anchor`, `pre-tool-use` chooses one file and, when it finds one, answers with the call's
   input completed (`updatedInput` in Claude Code). The choice, in order, first match wins:
@@ -389,7 +389,7 @@ Decided, not built: this lane writes no code and ran no build.
     `rev` plus the session's uncommitted edit, and it reads `fresh` at the commit that lands the
     edit; a file the agent created and never committed is anchored the same way. **The rest.**
     `origin.kind` is `code` for a source file and `doc` for markdown (ADR-0063 d1), unless the
-    agent sent `origin`; `workarea` is the clone's workarea when the call names none and an
+    agent sent `origin`; `workspace` is the clone's workspace when the call names none and an
     anchor was filled; an anchor the agent sent with `path` only is completed (`repo`, `rev`,
     `hash`, `hasher`) and never replaced. **Refusals,** each once per call, as a deny with the
     reason, which the agent answers by resending: a text that holds three or more consecutive
@@ -429,32 +429,32 @@ Decided, not built: this lane writes no code and ran no build.
   and a remote that carries them is a doctor line.
 
 - **d18 — A person promotes in one bulk act per merge or release; curators narrow; no agent and
-  no hook promotes.** *Amends ADR-0047 d7 for per-repository workareas.* The repository workarea
+  no hook promotes.** *Amends ADR-0047 d7 for per-repository workspaces.* The repository workspace
   is in progress from creation (d3), so every reader inside (each of the person's agent keys, in
   any harness, and the sync key) reads held writes at once, marked `unreviewed` (ADR-0030 d3,
   d4), and nothing leaves it. A curator key (ADR-0030 d8, d9) may reject duplicates and propose
   retirements inside; it never approves. When the person merges to the sync branch or releases,
-  `oml review commit <workarea>` does, under the person's reviewer key and in one sitting: list
+  `oml review commit <workspace>` does, under the person's reviewer key and in one sitting: list
   the held set (ADR-0055 d2), write it to a file the person edits to `approve`, `reject <reason>`
   or leave, submit the bulk verdicts (ADR-0055 d3), each signed as one verdict with R2 per item
-  and `same_user` marked; then, when nothing is held, commit the workarea (ADR-0030 d6) and mark
+  and `same_user` marked; then, when nothing is held, commit the workspace (ADR-0030 d6) and mark
   it in progress again, so the next iteration's writes stay inside. A held item left is left: the
   commit is refused while anything is held, and the command says so and stops before the commit.
   The git hooks never prompt; session start shows the held count (ADR-0029's own-work line). The
-  cost: approved facts reach reads outside the repository workarea (the user root, a phone) only
+  cost: approved facts reach reads outside the repository workspace (the user root, a phone) only
   at the commit, not at approval (ADR-0030 d2); the re-mark is one more journalled act per
   iteration.
 
 - **d19 — The build is phased, and v0.6.1 is the minimal phase.**
     1. **v0.6.1, minimal:** d1–d4 (the modes, the setup, the code parent, the repository
-       workarea), d5 (per repository only), d6–d10 (the git hooks, the background sync, its
+       workspace), d5 (per repository only), d6–d10 (the git hooks, the background sync, its
        queue, lock and guards, the pre-push warning, the sync identity), d11–d15 (the dispatcher,
        session start, touched paths at Stop, the Stop-time sync, the anchor fill), d17, d18's
        `oml review commit`, the evaluation harness of d20 in its first form, and the Claude Code
        mapping of d21. Waits for ADR-0030 (v0.6.0) and ADR-0061 (v0.5.9); d16 waits for ADR-0063.
     2. **Next:** the other harnesses of d21 that have hooks (Codex CLI, Gemini CLI, Cursor), and
        the MCP-instructions path for the rest.
-    3. **Later:** branch workareas through post-checkout (ADR-0047 d5–d7); a CI layer as an
+    3. **Later:** branch workspaces through post-checkout (ADR-0047 d5–d7); a CI layer as an
        optional promotion helper (ADR-0047 d8, d9: the CI key re-derives mechanical claims and
        approves only those, the merge job proposes nothing a person did not); `oml-span/1`
        symbol hashes from ctags (ADR-0047 d4); export to `AGENTS.md` (ADR-0047 d12); claim kind
@@ -529,8 +529,8 @@ Decided, not built: this lane writes no code and ran no build.
   with the log's last line; a `--ff-only` refusal, with the commits and the command that resolves
   it; a source whose claims another key owns (d10); a clone on the public server without its
   recorded confirmation; an `origin` remote carrying credentials; a sync key file missing or not
-  owner-only; a repository workarea that is not in progress, or whose parent lost its code-parent
-  mark; held items older than 14 days in the repository workarea (a commit not done); hooks over
+  owner-only; a repository workspace that is not in progress, or whose parent lost its code-parent
+  mark; held items older than 14 days in the repository workspace (a commit not done); hooks over
   budget, by event, from the local log; and the harness's hook support missing (for example a
   Claude Code version without `updatedInput`), so the anchor fill is off.
 
@@ -542,13 +542,13 @@ Each new call traces to a use case (ADR-0039 d8), declared on the
 
 | Call | Use case |
 |---|---|
-| `{children: "agent"}` on `POST /v2/workareas/{workarea}/mode`; `mode` on `POST /v2/workareas` under a code parent | UC-CC-01, a person's agents keep each repository's knowledge in a workarea of its own |
+| `{children: "agent"}` on `POST /v2/workspaces/{workspace}/mode`; `mode` on `POST /v2/workspaces` under a code parent | UC-CC-01, a person's agents keep each repository's knowledge in a workspace of its own |
 | `oml setup repo [--mode]`, `oml hook git <event>`, `oml sync --ff-only --paths --background --flush` | UC-CC-02, keep a repository's documents and crates in step on every commit, whoever commits |
-| `oml hook pre-tool-use` filling `anchor`, `origin` and `workarea`; `origin.turn` | UC-CC-03, say where an agent's fact about code came from without the agent writing it |
+| `oml hook pre-tool-use` filling `anchor`, `origin` and `workspace`; `origin.turn` | UC-CC-03, say where an agent's fact about code came from without the agent writing it |
 | `oml hook post-tool-use`, `oml hook stop`'s stale list | UC-CC-04, find out that a fact a person wrote no longer matches the code they just changed |
 | `oml review commit` | UC-CC-05, approve a repository's held knowledge in one sitting at a merge or release |
 
-No MCP tool is added, and no argument the agent must learn: `anchor`, `origin` and `workarea`
+No MCP tool is added, and no argument the agent must learn: `anchor`, `origin` and `workspace`
 already exist on `oml_write` (ADR-0057, ADR-0063).
 
 ## Test plan
@@ -586,9 +586,9 @@ Each step is closed by the tests named, each written red first.
 5. **Setup and privacy:** `a_clone_without_oml_mode_maps_nothing`,
    `setup_refuses_the_public_server_without_allow_public_server`,
    `setup_records_the_remote_without_credentials`,
-   `the_workarea_name_is_a_function_of_the_repository`.
+   `the_workspace_name_is_a_function_of_the_repository`.
 6. **Promotion:** `review_commit_stops_before_the_commit_while_anything_is_held`,
-   `review_commit_re_marks_the_workarea_in_progress`, `no_hook_sends_a_verdict`.
+   `review_commit_re_marks_the_workspace_in_progress`, `no_hook_sends_a_verdict`.
 7. **Harness:** ADR-0047 d18 step 1's three tests, and
    `each_arm_records_tokens_including_hook_context_and_stop_continuations`.
 
@@ -605,13 +605,13 @@ Each step is closed by the tests named, each written red first.
   of writes it leaves unanchored), FR-171 (the definition-line table and the indentation block
   as a span, per language, against ctags), FR-172 (every latency budget of d22), FR-173 (session
   start's `k`, token budget and listing cap), FR-174 (filtering by `origin.turn`), FR-175 (the
-  repository-workarea count per person and its cost to tree reads, beside FR-80), FR-176 (hook
+  repository-workspace count per person and its cost to tree reads, beside FR-80), FR-176 (hook
   managers that reset `core.hooksPath` and the share of clones whose git hooks stop firing).
   FR-78 and FR-79 continue.
 - **Pages to change at acceptance.** The HTTP API and openapi-designed.yaml (the mark, the create
   field, `origin.turn`); the CLI reference (`oml setup repo`, `oml hook git`, `oml hook
   post-tool-use`, `oml review commit`, the new `oml sync` flags); the plugin's `hooks.json` and
-  README, the `oml-memory` skill, the server instructions; workareas (the code parent); the use
+  README, the `oml-memory` skill, the server instructions; workspaces (the code parent); the use
   cases and the call map; releases (v0.6.1); and the Status lines of ADR-0029, ADR-0030, ADR-0038,
   ADR-0044, ADR-0047, ADR-0057 and ADR-0063.
 
@@ -626,7 +626,7 @@ The operator accepted this record on 2026-11-05 and decided each question at its
 | 3 | What does an anchor say when the file differs from `HEAD`? | a. `rev` is `HEAD`, the hash the working tree's span (d15); b. no hash until the edit is committed; c. defer the write | a: the claim reads `fresh` at the commit that lands the edit; b checks nothing; c loses the fact; decided by the operator, 2026-11-05 |
 | 4 | What anchors a fact that names no unique definition? | a. the file with no hash, never stale (d15); b. the file's whole-text hash, stale on every edit (ADR-0047 d4's fallback) | a: b prompts at every edit of a touched file; decided by the operator, 2026-11-05 |
 | 5 | Who marks the code parent? | a. the person's reviewer key (d3); b. an admin (ADR-0047 d15 b as written) | a: in a user root the person is the reviewer; decided by the operator, 2026-11-05 |
-| 6 | When does the person promote? | a. `oml review commit` at a merge or release, committing and re-marking (d18); b. approve only, never commit, so nothing leaves the repository workarea | a; decided by the operator, 2026-11-05 |
+| 6 | When does the person promote? | a. `oml review commit` at a merge or release, committing and re-marking (d18); b. approve only, never commit, so nothing leaves the repository workspace | a; decided by the operator, 2026-11-05 |
 | 7 | What is `oml setup repo`'s default mode? | a. `both`, with the reasons printed (d1); b. `agent`; c. no default, ask | a; decided by the operator, 2026-11-05 |
 | 8 | Who holds the sync identity? | a. one sync key per person for every repository (d10); b. one per repository | a: one key file to keep; b when CI takes a repository over; decided by the operator, 2026-11-05 |
 | 9 | How does a chat fact about code carry both origins? | a. one claim, the code anchor primary, the turn in `origin.turn` (d16); b. two anchors; c. `derives_from` a chat claim | a: one anchor stays the one origin that filters and staleness read; decided by the operator, 2026-11-05 |
@@ -635,14 +635,14 @@ The operator accepted this record on 2026-11-05 and decided each question at its
 
 | Alternative | Why not |
 |---|---|
-| **Per-branch workareas in v0.6.1**, created at post-checkout | Cheap to create, costly to own: a name kept for good per branch, a person's commit per merge, every mechanical fact reviewed twice, and a branch switch that the stale-revision guard refuses on the repository's sync. Phase 3, triggered by the same hook (d5, d19). |
-| **CI as a third mode in v0.6.1** | The operator moved it to later as an optional promotion helper; a person's bulk approval is the path, and CI needs a dreamer key held by an agent in the forge (ADR-0047 d8) that a solo user does not have. |
-| **Mechanical sync from every branch into the repository workarea** | Each branch switch would sync an older or a sibling commit: the guard refuses it, or, without the guard, the sync retires what the other branch added and reverts what it changed. |
+| **Per-branch workspaces in v0.6.1**, created at post-checkout | Cheap to create, costly to own: a name kept for good per branch, a person's commit per merge, every mechanical fact reviewed twice, and a branch switch that the stale-revision guard refuses on the repository's sync. Phase 3, triggered by the same hook (d5, d19). |
+| **CI as a third mode in v0.6.1** | The operator moved it to later as an optional promotion helper; a person's bulk approval is the path, and CI needs a reviewer key used by an agent in the forge (ADR-0047 d8) that a solo user does not have. |
+| **Mechanical sync from every branch into the repository workspace** | Each branch switch would sync an older or a sibling commit: the guard refuses it, or, without the guard, the sync retires what the other branch added and reverts what it changed. |
 | **The agent passes the anchor itself**, after `oml anchor` | Three steps an agent skips, and a path an agent may misspell; the hook knows which files the agent touched. It stays the path for harnesses without hooks (d21). |
 | **Anchor the most recently touched file when several qualify** | A wrong anchor is a signed false statement of origin kept for good (ADR-0057 d2); an unanchored fact is merely less findable. Ambiguity anchors nothing. |
 | **A whole-file hash when no definition is unique** | Every edit of the file marks the fact stale and costs the agent a Stop prompt and the person a review, for a fact that likely still holds (question 4). |
 | **Two anchors per claim**, a chat anchor and a code anchor | The anchor is one structured origin that filters, staleness and the moved rule read (ADR-0057 d1); an array doubles each and makes "is it stale" ambiguous. The turn rides in `origin` (d16). |
-| **The chat provenance as `derives_from` a chat claim** | Two writes and two reviews per fact; `derives_from` widens the reviewer-exclusion closure (R2); and a target in the chat workarea, inside another in-progress subtree, answers `access.not_found` from the repository workarea (ADR-0030 d7). |
+| **The chat provenance as `derives_from` a chat claim** | Two writes and two reviews per fact; `derives_from` widens the reviewer-exclusion closure (R2); and a target in the chat workspace, inside another in-progress subtree, answers `access.not_found` from the repository workspace (ADR-0030 d7). |
 | **A capture prompt at every Stop** | ADR-0047 d13: noise is what empties review of meaning. Stop asks only about the agent's own claims whose source it just changed. |
 | **A hook that writes knowledge**, extracting facts from the diff or the transcript | It would author memories no agent decided to write, under the agent's key; the agent writes, the hooks only complete. |
 | **Silent re-anchoring at Stop** when the text still holds | ADR-0047 question 1 and ADR-0057 d11: an unreviewed change of a promoted memory's origin. |
@@ -726,7 +726,7 @@ detached job would send the key there.
 stands.
 
 - **d2, step 3:** "issues the person's **sync key** for this server, `<user>-code-sync`, writer and
-  reader on `<user>.code` and its subtree, `held_by: agent`, to the owner-only file
+  reader on `<user>.code` and its subtree, `used_by: agent`, to the owner-only file
   `$XDG_CONFIG_HOME/oml/keys/<origin>/<user>-code-sync.key` (d10), where `<origin>` is the
   server's origin as consent records it (ADR-0076 d9: scheme, lowercased host, port) with every
   byte outside `[a-z0-9.-]` percent-encoded, for example
@@ -737,7 +737,7 @@ stands.
   sends nothing under such a file."
 - **d2, the per-clone part:** "derives the repository (d4), records the server (d17), asks consent
   of a server that declares itself shared unless the clone already holds it for that origin (d17),
-  resolves or creates the clone's workarea, records the mode, and installs the git hooks when the
+  resolves or creates the clone's workspace, records the mode, and installs the git hooks when the
   mode includes `git` (d7)."
 - **d17:** "`oml setup repo` records the server it was run against as `oml.server` in the clone's
   git config: the URL of the pair the person named (ADR-0039 d15, ADR-0076 d1), which is the URL
@@ -784,9 +784,9 @@ receiving hook-filled anchors until the next `whoami` is recorded. The session-s
 leaves one window, a session already running when the server changed, until its next sync run or
 its end; and a session start whose `whoami` goes unanswered refreshes nothing.
 
-### c — d4's workarea is referenced as `<user>.<name>`
+### c — d4's workspace is referenced as `<user>.<name>`
 
-d4 names the repository workarea `<user>.code.<last segment>-<6 hex>`, for example
+d4 names the repository workspace `<user>.code.<last segment>-<6 hex>`, for example
 `e8kor.code.open-memory-lab-3fa2c1`. That has three labels.
 [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
 d5 accepts a qualified name of "exactly two labels joined by one `.`" and refuses a value with
@@ -794,14 +794,14 @@ more as a path, `request.validation`
 ([ADR-0026](ADR-0026-names-are-keys.md) d7). The build on #97 met the refusal
 (`crates/bins/oml-cli/src/capture/mod.rs` on `feat/implicit-capture`). d4 as amended:
 
-- The workarea is created with `parent: <user>.code` and `name: <label>-<6 hex>`. Its reference,
-  cached in `oml.workarea` and read with `GET /v2/workareas/{name}`, is the qualified name
+- The workspace is created with `parent: <user>.code` and `name: <label>-<6 hex>`. Its reference,
+  cached in `oml.workspace` and read with `GET /v2/workspaces/{name}`, is the qualified name
   `<user>.<label>-<6 hex>`, for example `e8kor.open-memory-lab-3fa2c1` (digits illustrative). Its
   path, `universe.<user>.code.<label>-<6 hex>`, is displayed and never accepted.
 - `<label>` is the repository's last segment made a name under ADR-0026 d2
   (`crates/oml-domain/src/name.rs`: a lowercase label of at most 63 characters, a letter first,
   that does not read as an id). Every clone must compute the same name, so the rule is exactly
-  the one the build on #97 has (`workarea_name`, `crates/bins/oml-cli/src/capture/mod.rs` on
+  the one the build on #97 has (`workspace_name`, `crates/bins/oml-cli/src/capture/mod.rs` on
   `feat/implicit-capture`), in this order: (1) the text after the last `/` of `repo`, lowercased;
   (2) every character outside `[a-z0-9]` becomes `-`; (3) leading and trailing `-` are cut; (4)
   `repo-` goes first when the result does not start with a letter, an empty result included; (5)
@@ -811,16 +811,16 @@ more as a path, `request.validation`
   SHA-256(`repo`), so it stays a pure function of the repository.
 - A user namespace holds every name beneath that user's root (ADR-0044 d5), so the name is unique
   in the person's whole root, not under `<user>.code` alone. `name.taken` at creation means
-  another workarea of the person holds it: setup names that workarea and stops.
+  another workspace of the person holds it: setup names that workspace and stops.
 
 ### d — What the record waited for is on `main`
 
 | The record depends on | The record says | On `main` | What changes here |
 |---|---|---|---|
-| ADR-0030 revision 2: in-progress workareas, the curator, the commit | accepted design, planned for v0.6.0, #79 | introduced in v0.6.0 with migration 0028: `workareas.mode`, `POST /v2/workareas/{workarea}/mode`, the boundary rule (d2), the curator profile (d8), the commit (d6) | d19's wait is over. d3 adds its mark to the route as served. A held version the scan held, or one not yet scanned under the server's rule set, stays author-only inside (ADR-0030 d3, amended 2026-11-10), so d18's "reads held writes at once" has that exception. d18's re-mark meets ADR-0030 d2: point h, first item. |
+| ADR-0030 revision 2: in-progress workspaces, the curator, the commit | accepted design, planned for v0.6.0, #79 | introduced in v0.6.0 with migration 0028: `workspaces.mode`, `POST /v2/workspaces/{workspace}/mode`, the boundary rule (d2), the curator profile (d8), the commit (d6) | d19's wait is over. d3 adds its mark to the route as served. A held version the scan held, or one not yet scanned under the server's rule set, stays author-only inside (ADR-0030 d3, amended 2026-11-10), so d18's "reads held writes at once" has that exception. d18's re-mark meets ADR-0030 d2: point h, first item. |
 | ADR-0061: the `rust` adapter | proposed, planned for v0.5.9, #70 | accepted 2026-11-06, introduced in v0.6.1: `oml sync --adapter rust`, never inferred, one claim per crate and per module doc; its writes carry `origin.kind` `doc`, as every adapter's do (`write_body`, `crates/bins/oml-cli/src/sync/plan.rs`) | d19's wait is over and d8's default `rust` source can be recorded. ADR-0063 d2 gives the `rust` adapter `code` and `plan.rs` sends `doc`: the two disagree, and a follow-up issue asks which stands. The adapter is a function of every file under the source (ADR-0061 d4), and a crate claim states its dependents (d6), so an edit of one crate's manifest can change another crate's claim. d8's `--paths` therefore cannot narrow a `rust` source to "the changed paths' claims": it decides only whether the source is queued (question 4). |
 | ADR-0063: chat memory, `origin.kind`, the chat anchor, capture at `Stop` | proposed, planned for v0.6.0, #78 | accepted, introduced in v0.6.0 with migrations 0029 and 0030; `user-prompt`, `stop` and `pre-compact` run through one dispatcher (`crates/bins/oml-cli/src/events.rs`) | d16 no longer waits. `origin` is a closed object (ADR-0063 d1), so `origin.turn` is a new member in the contract and a change to d2's composition check, both unbuilt. The dispatcher differs from d11's reading in two places: point e. |
-| ADR-0055: bulk review | a dependency, by link | introduced in v0.5.7: `oml review list --workarea`, `oml review approve` and `reject --ids -`, at most 200 items in one bulk verdict | d18's `oml review commit` submits one bulk verdict per 200 held items. |
+| ADR-0055: bulk review | a dependency, by link | introduced in v0.5.7: `oml review list --workspace`, `oml review approve` and `reject --ids -`, at most 200 items in one bulk verdict | d18's `oml review commit` submits one bulk verdict per 200 held items. |
 | ADR-0057: anchors and `oml sync` | introduced in v0.5.8 | as the record has it; d6's consent is ADR-0076 d9's (point b) | none beyond b. |
 | ADR-0047: project knowledge | proposed | still proposed and not built | none. |
 
@@ -831,7 +831,7 @@ more as a path, `request.validation`
 
 | Event | Verb | What it does on `main` |
 |---|---|---|
-| `SessionStart` | `session-start` | under the plugin's pair, the own-work listing and one budgeted recall, then `GET /v2/whoami` and the default workarea's read for the brief; one after another, 3 s a request, 8 s in all |
+| `SessionStart` | `session-start` | under the plugin's pair, the own-work listing and one budgeted recall, then `GET /v2/whoami` and the default workspace's read for the brief; one after another, 3 s a request, 8 s in all |
 | `SessionStart`, `SubagentStart` | `guardrails` | loads the key's reviewed rules as context and, at session start, writes the session's rule cache |
 | `PreToolUse` on `^(Bash\|PowerShell\|Write\|.*Edit\|Read\|Grep\|Glob\|WebFetch\|mcp__.*)$` | `pre-tool-use` | checks the call against the rule cache with no request; answers deny, ask or nothing, never allow; a failure blocks the call (`onFailure: block`) |
 | `PostToolUseFailure` on `Bash` | `tool-failure` | with `OML_FAILURE_RECALL=1`, one recall from the error's words |
@@ -891,11 +891,11 @@ Four sentences of d11, d13 and d22 change to fit:
 since [#339](https://github.com/e8kor/open-memory-lab/pull/339) merged (`548dc46e`), for v0.7.3;
 read there, in `docs/adr/ADR-0044-*.md`.*
 
-d16: "A memory is started in a user root, or in a workarea beneath one, by that user's keys only;
+d16: "A memory is started in a user root, or in a workspace beneath one, by that user's keys only;
 any other key is refused `submission.user_root_refused`. A successor or a retirement of a served
 memory there stays under the grants." Its test reads the key's person: a session key's
 `session_user`, else the name of the root a user key's `user` names; a key with neither acts for
-no one. Every repository workarea lies beneath `universe.<user>`, so:
+no one. Every repository workspace lies beneath `universe.<user>`, so:
 
 - **d2, step 3.** The sync key is issued naming its person, `user: <user>` (ADR-0044 d2, d11), as
   the build on #97 issued it. A sync key that names no user is refused its first claim.
@@ -903,8 +903,8 @@ no one. Every repository workarea lies beneath `universe.<user>`, so:
   of that person's keys: one an admin issued naming them, or one the person issued on their
   account page. A tenant key, which names no user, or another person's key starts no memory in a
   clone set up under `<user>.code`: it is answered `submission.user_root_refused` where it reads
-  the workarea and `access.not_found` where it does not. d13's three answers are successors and
-  stay under the grants, but such a key wrote nothing there to answer for. A workarea there is
+  the workspace and `access.not_found` where it does not. d13's three answers are successors and
+  stay under the grants, but such a key wrote nothing there to answer for. A workspace there is
   already created by a user's key or an admin's, never by a tenant writer key (ADR-0044 d6).
 - **The put-back.** d16's guard gives a successor of a ratified retirement to the person's keys
   alone. One capture path proposes one: the sync answers a claim that was retired and that the
@@ -913,9 +913,9 @@ no one. Every repository workarea lies beneath `universe.<user>`, so:
   replace a version still in service, and d18 proposes nothing.
 - **d12 and d15.** Session start learns the key's `user` from the `GET /v2/whoami` it already
   sends for the brief (`default_brief`, `crates/bins/oml-cli/src/hook.rs`). When it is not the
-  first label of `oml.workarea`, the fill, the Stop check and the Stop sync stay off for the
+  first label of `oml.workspace`, the fill, the Stop check and the Stop sync stay off for the
   session, so no write is sent to be refused, and session start says once: `oml capture: this key
-  is not one of <user>'s keys, so nothing is captured into <workarea>; give the agent one of
+  is not one of <user>'s keys, so nothing is captured into <workspace>; give the agent one of
   <user>'s keys`. The recall of d12 runs wherever the key reads. The client's test on `whoami`'s
   `user` is enough, though d16 also reads `session_user`: capture's keys are bearer keys, and an
   `omls_` session credential is refused on `/mcp` always and on `/v1` and `/v2` outside `oml-web`
@@ -928,7 +928,7 @@ no one. Every repository workarea lies beneath `universe.<user>`, so:
 - **`oml setup repo`** issues the sync key with `user`, and ends with the line that the agents
   working in this clone need keys of `<user>`'s.
 - **d23 gains** `warn capture_key: this agent key names no user (or names <other>), and
-  <workarea> lies in <user>'s root, where only <user>'s keys start memories
+  <workspace> lies in <user>'s root, where only <user>'s keys start memories
   (submission.user_root_refused); give the agent one of <user>'s keys`, beside d16's own
   `user root` line.
 
@@ -940,7 +940,7 @@ A repository a crew captures under one shared tenant key has no place beneath on
 [ADR-0071](ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md)
 (accepted 2026-11-12, on `main` since #324) charges a write to the account of the key that wrote
 it, the account being the user root the key names; a tenant key belongs to no account (d1). The
-sync key names its person with or without point f: it creates the repository workarea when
+sync key names its person with or without point f: it creates the repository workspace when
 it is the first to need it (d10's table), and in a user root only a user key or an admin creates
 one (ADR-0044 d6), which is why the build on #97 issued it with `user`. The sync identity is that key (d10), so every mechanical claim
 is one live chain on that person's `memories`, its text on their `text_bytes`, and each version a
@@ -978,16 +978,16 @@ minute it takes about sixteen minutes of the sync key's rate. They are counted l
 
 ### h — Other sentences that no longer build as written
 
-- **d18's re-mark closes the workarea again, which is the effect the operator declined.** d18
-  commits and then marks the workarea in progress again, and states the cost as "approved facts reach reads outside the repository workarea (the
+- **d18's re-mark closes the workspace again, which is the effect the operator declined.** d18
+  commits and then marks the workspace in progress again, and states the cost as "approved facts reach reads outside the repository workspace (the
   user root, a phone) only at the commit". ADR-0030 d2 as built serves a row on a node inside an
   in-progress subtree to no read scoped outside it, "promoted rows included", and a re-mark
   "writes no row" (`crates/oml-domain/src/in_progress.rs`, `crosses_into`). `oml review commit`
   re-marks in the same sitting, so once it returns a read scoped outside finds none of the
   repository's facts, approved ones included, and the next commit changes that only until its
-  own re-mark: the facts are read inside the workarea, or by id. That is what option b of
+  own re-mark: the facts are read inside the workspace, or by id. That is what option b of
   question 6 of 2026-11-05 offered, "approve only, never commit, so nothing leaves the repository
-  workarea", and the operator chose a over it. Decided on 2026-11-12 (question 9, c): the re-mark
+  workspace", and the operator chose a over it. Decided on 2026-11-12 (question 9, c): the re-mark
   stays, and a read scoped outside is to be served the promoted rows a commit released, by an
   amendment of ADR-0030 d2 that is not made here
   ([#350](https://github.com/e8kor/open-memory-lab/issues/350)) and that the re-mark does not ship
@@ -1031,13 +1031,13 @@ recommendation gave.
 |---|---|---|---|
 | 1 | Which release builds the minimal phase (a)? | a. v0.8.0, where #344 sits; b. ahead of it, in a v0.7.x after v0.7.3; c. v0.8.3, with the other agent integrations | a: v0.7.3 is the public opening and its bulk is already in review; the re-port still owes its PostgreSQL suites, an independent review and d20's harness. It ships opt-in either way (question 1 of 2026-11-05). The cost: the capture waits for v0.7.3 and competes with v0.8.0's access hardening; decided by the operator, 2026-11-12, at the recommendation |
 | 2 | Does d17 become the shared-server consent of point b? | a. yes: the server's own `shared`, consent per origin in `oml.allowPublicServer`, hooks silent without it; b. ask consent of every server at setup, shared or not; c. decline, leaving d17 unbuildable under ADR-0076 d1 | a: one rule for sync and capture, and no release names a server. b makes every self-hoster confirm their own server per clone, which ADR-0076 rejected for sync. The cost of a is in point b: a shared server that does not say so is asked nothing, and a server that becomes shared after setup keeps receiving hook-filled anchors from a session already running, until that session's next sync run or its end. The session-start `whoami` of point f refreshes `shared` for every later session at no extra request; decided by the operator, 2026-11-12, at the recommendation |
-| 3 | Is the repository workarea referenced as `<user>.<label>-<6 hex>`, with the label rule of point c? | a. yes; b. keep three labels and amend ADR-0044 d5 to accept a path | a: ADR-0026 d7 refuses every path as a reference, and a qualified name survives a re-parenting. The cost: the name must be unique in the person's whole root; decided by the operator, 2026-11-12, at the recommendation |
+| 3 | Is the repository workspace referenced as `<user>.<label>-<6 hex>`, with the label rule of point c? | a. yes; b. keep three labels and amend ADR-0044 d5 to accept a path | a: ADR-0026 d7 refuses every path as a reference, and a qualified name survives a re-parenting. The cost: the name must be unique in the person's whole root; decided by the operator, 2026-11-12, at the recommendation |
 | 4 | How does `--paths` treat a `rust` source (d)? | a. it decides only whether the source is queued, and the run reads and diffs the whole source; b. the adapter reports which claims a changed path feeds, and the run narrows to those | a: a crate claim reads several files and other crates' manifests, and the whole source of this repository is 192 claims, one listing page. b when a workspace's listing exceeds a few pages; decided by the operator, 2026-11-12, at the recommendation |
 | 5 | Which `oml_write` does the pre-tool hook fill (e)? | a. the plugin's tool only; b. any `mcp__…__oml_write`, a connector's included | a: the hook knows the plugin's server and can hold it to `oml.server` (b); it cannot tell which server a connector's tool reaches, and a filled anchor names the repository, the commit and a path. The cost: a fact written through a connector in Claude Code is not anchored; decided by the operator, 2026-11-12, at the recommendation |
 | 6 | What gives the Stop check its 2 s (e)? | a. the `stop` verb's deadline becomes 3 s and the plugin's `Stop` timeout 5 s; b. the deadlines stay and d13's budget becomes under 1 s | a: the budget was accepted and is still unmeasured (FR-172); chat capture's handler does no file work and is not slowed. The cost: a hung `stop` holds every plugin user's turn for 5 s, where it held it for 2; decided by the operator, 2026-11-12, at the recommendation |
-| 7 | With ADR-0044 d16 accepted, does capture run only under the person's own keys, with the lines of point f? | a. yes; b. only the sync key names the user, and agents' facts go to a workarea outside the person's root | a: it is what d16 enforces, and one workarea per repository keeps d10's single owner. The cost: a crew's shared tenant key captures nothing until shared capture is designed; decided by the operator, 2026-11-12, at the recommendation |
+| 7 | With ADR-0044 d16 accepted, does capture run only under the person's own keys, with the lines of point f? | a. yes; b. only the sync key names the user, and agents' facts go to a workspace outside the person's root | a: it is what d16 enforces, and one workspace per repository keeps d10's single owner. The cost: a crew's shared tenant key captures nothing until shared capture is designed; decided by the operator, 2026-11-12, at the recommendation |
 | 8 | How are the sync's claims counted (g)? | a. like any memory: the profile's limits must fit the repositories a person syncs; b. not counted when the sync key wrote them; c. a second limit for chains under a code parent | a for the minimal phase: a mechanical claim is stored, reviewed and recalled like any other, and an unmetered key is a way round every quota. `oml setup repo` prints each source's claim count beside the account's free `memories` before the first sync, and a refused sync keeps its queue entry and gets a doctor line. The cost: on a `memories` limit of 1,000 this repository does not fit, so #180's free limit decides who can use capture, and the 205 generated-page claims count too. c after d20's evaluation shows which sources recall uses; it adds a seventh meter and a tree read in the commit. b would rest on the key, and a key says nothing of what it writes: the sync key is a writer key on `<user>.code` kept in a file on the person's machine, so any text sent under it, by `oml sync` or by hand, would be stored uncounted, and this repository's 2.4 MB of text costs the server the same whichever key wrote it; decided by the operator, 2026-11-12, at the recommendation |
-| 9 | What does `oml review commit` do after the commit (h)? On 2026-11-05 the operator chose "committing and re-marking" over "approve only, never commit, so nothing leaves the repository workarea" (question 6 of 2026-11-05), and d18 states the cost as facts reaching reads outside "only at the commit". ADR-0030 d2 as built leaves a re-marked subtree out of every read scoped outside it, so the re-mark as accepted has the effect of the option declined | a. mark in progress again, as accepted: once the command returns no read scoped outside finds the repository's facts, approved ones included; they are read inside the workarea or by id. This is the effect of question 6's option b, which the operator declined. Nothing to build beyond d18; b. leave the workarea `standard` after the commit: approved facts are served wherever the key reads, from each approval on, and after the first commit `oml review commit` is the bulk verdicts alone. A new write is held and author-only until reviewed (R3), so the person's agents and the sync key stop reading each other's unreviewed facts, which d18's first sentence rests on, and d3's in-progress creation serves the first iteration only. Nothing to build, and d23's line for a repository workarea that is not in progress goes; c. keep the re-mark, and serve to reads scoped outside the promoted rows of an in-progress subtree that a commit released: a change to ADR-0030 d2, proposed as its own amendment. It would have to guarantee at least that a read outside is served only versions promoted before the subtree's latest commit, never a held one and never one approved since the re-mark, and that a demotion or an erasure inside takes effect outside at once. Its cost: a recorded commit point per root, where d2 stamps nothing on a row; a second predicate in every retriever's statement, before its `LIMIT` and its statistics (ADR-0049 d2); `P-R3-BOUNDARY` restated; and a rule for what a read outside is served of a chain superseded since the commit | c: it keeps both things the operator accepted on 2026-11-05, the reading of unreviewed facts between the person's agents inside (d18, ADR-0030 d3) and approved facts leaving at the commit (question 6, a). The cost: an amendment of ADR-0030 d2 accepted and built on the server before the minimal phase ships, the largest build of the three. That amendment is not made by this answer or in this record: it is tracked as [#350](https://github.com/e8kor/open-memory-lab/issues/350), to be proposed for the operator's acceptance before it is built. d18's re-mark does not ship before it: until ADR-0030 d2 is amended and the amendment is built, a re-marked workarea lets no fact leave (point h, first item), so the re-port ([#344](https://github.com/e8kor/open-memory-lab/issues/344)) takes #350 first, and the minimal phase waits for it. b, the fallback offered for the minimal phase, was not chosen; decided by the operator, 2026-11-12, at the recommendation, on a question that said the re-mark as accepted has the effect the operator declined on 2026-11-05 |
+| 9 | What does `oml review commit` do after the commit (h)? On 2026-11-05 the operator chose "committing and re-marking" over "approve only, never commit, so nothing leaves the repository workarea" (question 6 of 2026-11-05), and d18 states the cost as facts reaching reads outside "only at the commit". ADR-0030 d2 as built leaves a re-marked subtree out of every read scoped outside it, so the re-mark as accepted has the effect of the option declined | a. mark in progress again, as accepted: once the command returns no read scoped outside finds the repository's facts, approved ones included; they are read inside the workspace or by id. This is the effect of question 6's option b, which the operator declined. Nothing to build beyond d18; b. leave the workspace `standard` after the commit: approved facts are served wherever the key reads, from each approval on, and after the first commit `oml review commit` is the bulk verdicts alone. A new write is held and author-only until reviewed (R3), so the person's agents and the sync key stop reading each other's unreviewed facts, which d18's first sentence rests on, and d3's in-progress creation serves the first iteration only. Nothing to build, and d23's line for a repository workspace that is not in progress goes; c. keep the re-mark, and serve to reads scoped outside the promoted rows of an in-progress subtree that a commit released: a change to ADR-0030 d2, proposed as its own amendment. It would have to guarantee at least that a read outside is served only versions promoted before the subtree's latest commit, never a held one and never one approved since the re-mark, and that a demotion or an erasure inside takes effect outside at once. Its cost: a recorded commit point per root, where d2 stamps nothing on a row; a second predicate in every retriever's statement, before its `LIMIT` and its statistics (ADR-0049 d2); `P-R3-BOUNDARY` restated; and a rule for what a read outside is served of a chain superseded since the commit | c: it keeps both things the operator accepted on 2026-11-05, the reading of unreviewed facts between the person's agents inside (d18, ADR-0030 d3) and approved facts leaving at the commit (question 6, a). The cost: an amendment of ADR-0030 d2 accepted and built on the server before the minimal phase ships, the largest build of the three. That amendment is not made by this answer or in this record: it is tracked as [#350](https://github.com/e8kor/open-memory-lab/issues/350), to be proposed for the operator's acceptance before it is built. d18's re-mark does not ship before it: until ADR-0030 d2 is amended and the amendment is built, a re-marked workspace lets no fact leave (point h, first item), so the re-port ([#344](https://github.com/e8kor/open-memory-lab/issues/344)) takes #350 first, and the minimal phase waits for it. b, the fallback offered for the minimal phase, was not chosen; decided by the operator, 2026-11-12, at the recommendation, on a question that said the re-mark as accepted has the effect the operator declined on 2026-11-05 |
 | 10 | Does the pre-tool hook refuse the code format on a write it anchors (h)? | a. yes, once per call, as for a fenced block; b. no | a: d17's "no code body is stored or sent" stays whole. The cost: an agent in a capturing clone cannot store a snippet about a file there; decided by the operator, 2026-11-12, at the recommendation |
 | 11 | Who does the per-person part where the person holds no admin and no bearer reviewer key (h)? | a. the minimal phase serves a person who holds a bearer reviewer key and a sync key an admin issued, on a server they administer or on a team's server whose admin issues both; elsewhere `oml setup repo` and `oml review commit` name the missing key and stop; b. the web console gains the code-parent mark and the commit, and setup takes a sync key file issued there | a: capture is opt-in and d17 already asks consent before a shared server takes code knowledge. The cost: a person on a hosted server with open sign-up cannot set up capture until b is built; decided by the operator, 2026-11-12, at the recommendation |
 | 12 | How does the fill reach `oml_write` in Claude Code, where a rewrite with no `permissionDecision` can be denied in auto mode (e)? | a. rewrite with no `permissionDecision`, as point e has it: the verb never prints `allow`, a guardrail's deny or ask drops the fill, and d11's "fails open" holds for the fill's handler only; b. rewrite with `allow` only when the person's configuration already allows `oml_write` without asking, as d21 does for Codex CLI, and otherwise as c; c. never rewrite: deny once with the filled anchor in the reason, for the agent to resend | a: ADR-0037 d8 and d9 stay whole, and outside auto mode the agent sees nothing. The cost: in auto mode a filled write can be denied once, and the agent resends the changed call, which is what c costs every filled write in every mode; how often is unmeasured, and d20's arms record it. b amends ADR-0037 d9 (`no_input_ever_answers_allow`) for this one tool, has the hook read and interpret the harness's permission settings inside its 50 ms, and approves a call whose input the hook changed (the hooks page: "Combine with `"allow"` to auto-approve"). c gives up d22's "nothing new for the agent": every anchored write is two calls. b or c if d20 shows the denial is common; decided by the operator, 2026-11-12, at the recommendation |

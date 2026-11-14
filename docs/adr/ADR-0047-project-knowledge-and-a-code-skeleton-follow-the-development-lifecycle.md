@@ -2,14 +2,14 @@
 id: adr/ADR-0047-project-knowledge-and-a-code-skeleton-follow-the-development-lifecycle
 tier: engineering
 status: proposed
-answers: what OML stores about a client project's code (a small structural skeleton and the knowledge the code cannot tell) and what it does not; how each entry is anchored to code and found stale; how branches, pull requests, merges and releases map onto workareas, review and the status ladder, and who drives each step with R1 and R2 intact; how churn stays inside a branch; how repository files are imported and generated; when an automated reviewer may approve; which parsers it reuses; the preconditions and the evaluation that gate the build; which downsides are arguments and which are opportunities; what core function must not degrade; and the questions left for the maintainer
+answers: what OML stores about a client project's code (a small structural skeleton and the knowledge the code cannot tell) and what it does not; how each entry is anchored to code and found stale; how branches, pull requests, merges and releases map onto workspaces, review and the status ladder, and who drives each step with R1 and R2 intact; how churn stays inside a branch; how repository files are imported and generated; when an automated reviewer may approve; which parsers it reuses; the preconditions and the evaluation that gate the build; which downsides are arguments and which are opportunities; what core function must not degrade; and the questions left for the maintainer
 -->
 
 # ADR-0047 — Project knowledge and a code skeleton follow the development lifecycle
 
-**Status:** proposed · 2026-11-04 · its eleven questions answered on 2026-11-05 at their recommendations ([the answers](#the-maintainers-answers-of-2026-11-05)) · amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) (d3, d12, d15 a, d17)
+**Status:** proposed · 2026-11-04 · its eleven questions answered on 2026-11-05 at their recommendations ([the answers](#the-maintainers-answers-of-2026-11-05)) · amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md) (d3, d12, d15 a, d17)
 
-**Release:** not built; gated on the evaluation harness (d17) and ADR-0030 ([releases](../changelog.md)). Its first slice, an anchor on every memory and `oml sync` for markdown documents, is [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), accepted and introduced in v0.5.8; the parts it took over (d3, d12, d15 a, d17 and the eleven answers, as it records) are decided there, and the rest of this record stays proposed
+**Release:** not built; gated on the evaluation harness (d17) and ADR-0030 ([releases](../changelog.md)). Its first slice, an anchor on every memory and `oml sync` for markdown documents, is [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md), accepted and introduced in v0.5.8; the parts it took over (d3, d12, d15 a, d17 and the eleven answers, as it records) are decided there, and the rest of this record stays proposed
 
 **Amends:** ADR-0025 (d10, d12), ADR-0029 (d2, d7), ADR-0039 (d3); and, on their branches,
 ADR-0030 (d1), ADR-0044 (d6), ADR-0045 (d9)
@@ -72,9 +72,9 @@ Augment, "improved agent performance by 70%+"
 ([Augment, 2026-02-06](https://www.augmentcode.com/blog/context-engine-mcp-now-live)). Nothing is
 measured on OML; d17 makes that the gate.
 
-**What OML brings to the lifecycle.** The status ladder moves a workarea `development` →
-`committed` → `validated`, each step proposed and ratified by different identities
-([ADR-0009](ADR-0009-status-ladder.md) d3); an in-progress workarea lets every reader inside see
+**What OML brings to the lifecycle.** The status ladder moves a workspace `development` →
+`protected` → `frozen`, each step proposed and ratified by different identities
+([ADR-0009](ADR-0009-status-ladder.md) d3); an in-progress workspace lets every reader inside see
 held writes at once and lets nothing out until its commit, which is refused while anything is held
 (ADR-0030 d1, d4, d12, on `feat/in-progress-workareas`). A branch, its pull request and its merge
 have that shape. Decided, not built.
@@ -99,7 +99,7 @@ have that shape. Decided, not built.
   remember, which the skill and the hooks carry.
 
 - **d3 — Every `code` entry carries an anchor `{repo, branch, path?, symbol?, commit, hash?,
-  hasher?}`, completed on the client.** *Amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d1: the anchor is on every kind, optional except on `code`, its fields `{repo | uri, rev, path, fragment?, hash?, hasher?}`, with `commit` read as `rev`, `symbol` as `fragment` and `branch` added here when d5 is built; its grammar is ADR-0057 d3.* `repo` is the name `oml code init` gives the repository;
+  hasher?}`, completed on the client.** *Amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md) d1: the anchor is on every kind, optional except on `code`, its fields `{repo | uri, rev, path, fragment?, hash?, hasher?}`, with `commit` read as `rev`, `symbol` as `fragment` and `branch` added here when d5 is built; its grammar is ADR-0057 d3.* `repo` is the name `oml code init` gives the repository;
   `branch` is the branch it was written on; `path` and `symbol` name what it describes, or are
   absent for a fact about the whole repository; `commit` is `HEAD` at the write; `hash` is d4's
   hash of the symbol, or of the file when no symbol is named. The agent names `path` and `symbol`;
@@ -119,44 +119,44 @@ have that shape. Decided, not built.
   marks its facts stale. Nothing structural is stored to compute it: the hash is recomputed from
   the working tree whenever it is compared.
 
-- **d5 — A branch is an in-progress development workarea under the repository's workarea.** The
-  repository's workarea, *R*, is `<user>.<repo>` for a person working alone (ADR-0044) or a shared
-  workarea an admin creates once for a team, granting the team's agent keys `writer`, each
-  reviewer's key `dreamer` and the CI key `dreamer` (d8). *R* is marked a **branch parent**.
-  The first `code` write on a branch creates its workarea, a child of *R* named
+- **d5 — A branch is an in-progress development workspace under the repository's workspace.** The
+  repository's workspace, *R*, is `<user>.<repo>` for a person working alone (ADR-0044) or a shared
+  workspace an admin creates once for a team, granting the team's agent keys `writer`, each
+  reviewer's key `reviewer` and the CI key `reviewer` (d8). *R* is marked a **branch parent**.
+  The first `code` write on a branch creates its workspace, a child of *R* named
   `<repo>-b-<slug>-<first 7 hex of the branch's first commit>` so that a reused branch name never
-  reuses a workarea name ([ADR-0026](ADR-0026-names-are-keys.md)), in `development` and marked in
+  reuses a workspace name ([ADR-0026](ADR-0026-names-are-keys.md)), in `development` and marked in
   progress (ADR-0030 d1): the team's agents on that branch read each other's held entries at once,
-  marked unreviewed, and nothing leaves until the commit. A new entry goes to the branch workarea;
+  marked unreviewed, and nothing leaves until the commit. A new entry goes to the branch workspace;
   an update or retirement of an entry that already lives elsewhere is written where the entry
-  lives (a supersession stays in its target's workarea), held, and carries the branch in its
+  lives (a supersession stays in its target's workspace), held, and carries the branch in its
   anchor so d6 collects it.
 
 - **d6 — A pull request is a review batch, reviewed by the pull request's reviewer in the same
-  sitting as the code, and capped.** The batch is every held version in the branch workarea and
+  sitting as the code, and capped.** The batch is every held version in the branch workspace and
   every held version elsewhere whose anchor names the branch. A CI step on the pull request
   (`oml code pr`) posts a check with the batch's counts by added, updated, retired and stale, and
   a link to the user page's Review view filtered to the batch (amends ADR-0045 d9); fact text is
   posted to the forge only with `--post-text`, since a pull request may be more widely read than
-  the workarea. The reviewer approves or rejects each entry under their own `<user>-review` key
+  the workspace. The reviewer approves or rejects each entry under their own `<user>-review` key
   (R2 per key and principal, ADR-0044 d8). A batch over `pr.max_entries`, 20 unless set, chosen
   and unmeasured (#142), fails the check: past that, review stops meaning anything.
 
-- **d7 — A merge is the branch workarea's commit; an abandoned branch leaves nothing promoted.**
-  The commit is ADR-0030 d12's `development` → `committed` transition, refused while any version
+- **d7 — A merge is the branch workspace's commit; an abandoned branch leaves nothing promoted.**
+  The commit is ADR-0030 d12's `development` → `protected` transition, refused while any version
   inside is held, so every entry of the merged branch has been approved or rejected. Two
   identities: the reviewer proposes it from the batch view once the batch is empty, and the CI
   key ratifies it in the merge job (ADR-0009 d3, R2 for transitions). From the commit, the branch
-  workarea has no in-progress root, and its promoted entries reach every read at *R*, since a read
+  workspace has no in-progress root, and its promoted entries reach every read at *R*, since a read
   at *R* covers its subtree. A pull request closed unmerged makes the CI key reject the branch's
   held entries with the reason `branch_abandoned`: a rejection promotes nothing, so no automated
   identity ever decides that something is true. No agent key proposes, ratifies or approves
   anything (R1).
 
-- **d8 — The CI key is a dreamer held by an agent, never a service key, and it approves only what
+- **d8 — The CI key is a reviewer used by an agent, never a service key, and it approves only what
   it can re-derive.** It ratifies merge commits, rejects abandoned batches, and approves the
-  mechanical parts of skeleton entries (d9). A `held_by: service` key is refused every review
-  verb ([roles and keys](../architecture/roles-and-keys.md)), so it is issued `held_by: agent`. It
+  mechanical parts of skeleton entries (d9). A `used_by: service` key is refused every review
+  verb ([roles and keys](../architecture/roles-and-keys.md)), so it is issued `used_by: agent`. It
   lives in the forge's secret store, out of every agent's reach, and is never configured in the
   plugin.
 
@@ -170,18 +170,18 @@ have that shape. Decided, not built.
   purpose line, a decision or a gotcha goes to a person: a reviewer from the writer's model
   family shares the writer's errors, so its approval adds little that R2 is meant to add.
 
-- **d10 — A release is `validated` for a release record, not for living knowledge.** A frozen
+- **d10 — A release is `frozen` for a release record, not for living knowledge.** A frozen
   area admits no supersession ([ADR-0009](ADR-0009-status-ladder.md) d5), so freezing the merged
-  branch workareas would make their facts uncorrectable for good. At a release tag, CI creates a
+  branch workspaces would make their facts uncorrectable for good. At a release tag, CI creates a
   child of *R*, `<repo>-r-<version>`, holding the release's own record (its known issues and
-  operational facts, written and reviewed like any batch), which climbs to `validated` and freezes
-  as evidence of what shipped. Living knowledge stays correctable in its committed workareas.
+  operational facts, written and reviewed like any batch), which climbs to `frozen` and freezes
+  as evidence of what shipped. Living knowledge stays correctable in its protected workspaces.
   Question 3 holds the alternative the operator named.
 
 - **d11 — Staleness is a workflow: an edit marks facts stale locally, the agent answers at Stop,
   and the merge gate checks the rest.** At session start in an enabled clone the session-start
   hook lists the `code` entries anchored in this repository at *R* and the current branch
-  workarea (ADR-0048 d5's filters) into a per-session cache that SessionEnd deletes (amends
+  workspace (ADR-0048 d5's filters) into a per-session cache that SessionEnd deletes (amends
   ADR-0029 d2). `oml hook code-mark`, on `PostToolUse` for `Write|Edit|MultiEdit`, recomputes the
   hashes of anchors in the edited file and records the entries whose symbol changed or vanished,
   sending nothing. At `Stop`, `oml hook code-stop` blocks once, honouring `stop_hook_active`,
@@ -195,9 +195,9 @@ have that shape. Decided, not built.
   plugin's own key pair and never the CLI's credentials file (ADR-0029 d4), fails open, and
   writes nothing, so ADR-0029 d1's "performs no act" still holds.
 
-- **d12 — Repository files are an input and an output.** *Amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d6–d9: the input half is `oml sync` with the `headings` adapter, which writes kind `memory` in v0.5.8 and kind `code` here once it is built; the output half, export, stays this record's.* `oml code import CLAUDE.md` (and
+- **d12 — Repository files are an input and an output.** *Amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md) d6–d9: the input half is `oml sync` with the `headings` adapter, which writes kind `memory` in v0.5.8 and kind `code` here once it is built; the output half, export, stays this record's.* `oml code import CLAUDE.md` (and
   `AGENTS.md`, `.cursor/rules/*`, `docs/adr/*`) splits a file by heading and list item into held
-  `code` entries in the branch workarea, anchored to the file, so the first pull request reviews
+  `code` entries in the branch workspace, anchored to the file, so the first pull request reviews
   them like any batch. `oml code export --to AGENTS.md` writes the promoted entries of *R*
   between generated markers, in a fixed order, so a team that wants its knowledge under code
   review keeps it there and every harness reads it natively; OML is then the managed source
@@ -216,7 +216,7 @@ have that shape. Decided, not built.
   own held entry supersedes it (d15 c), so a branch may hold many superseded drafts and a merge
   promotes the last. Every draft stays, since nothing deletes ([ADR-0001](ADR-0001-the-constitution.md)
   R4). A **recorded compaction** would erase the bodies of never-promoted, superseded versions of
-  a committed or abandoned branch workarea as one journalled erasure per workarea, keeping every
+  a protected or abandoned branch workspace as one journalled erasure per workspace, keeping every
   version's metadata and digest. R4 names erasure by crypto-shredding as the journalled form of
   removal, which is not built ([ADR-0005](ADR-0005-erasure-by-crypto-shredding.md), not
   scheduled); whether a policy-driven erasure with no person's act is "silent" is a reading of the
@@ -225,13 +225,13 @@ have that shape. Decided, not built.
 - **d15 — The backend adds four things, and no tool.**
     - **a. Kind `code` with its anchor** (d2, d3): accepted by `POST /v1/memories`, its
       supersession and `oml_write`; the anchor required on kind `code` and refused on every other
-      kind (`request.validation`) (*amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d1: optional on every other kind*), as ADR-0037 d10 does for `severity` and `rule`; served in the
+      kind (`request.validation`) (*amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md) d1: optional on every other kind*), as ADR-0037 d10 does for `severity` and `rule`; served in the
       claim item (amends ADR-0025 d12).
-    - **b. A writer creates branch workareas under a branch parent.** An admin marks a workarea
+    - **b. A writer creates branch workspaces under a branch parent.** An admin marks a workspace
       a branch parent; a writer key with effective `writer` on it may create a child that is
       `development` and in progress at creation, and nothing else. Amends ADR-0044 d6, which
       admits creation by a user key in its own root only, and ADR-0030 d1, under which only an
-      admin marks a workarea in progress.
+      admin marks a workspace in progress.
     - **c. The author may supersede or withdraw its own held version (closes
       #156).** The held predecessor moves to `superseded`, leaves the
       review queue and never promotes; an open serve of it answers `review.serve_invalid`; the
@@ -255,10 +255,10 @@ have that shape. Decided, not built.
   [ADR-0038](ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md)
   d5) runs before the server's scan ([admission](../architecture/admission.md)). Storing more
   than paths, symbol names and prose about them, such as code excerpts, waits on erasure
-  (ADR-0005). The committed `.oml/code.toml` names no server, key or workarea, and only a local
+  (ADR-0005). The committed `.oml/code.toml` names no server, key or workspace, and only a local
   enablement under `.git/oml/` turns the hooks on, so cloning a repository maps nothing.
 
-- **d17 — An evaluation harness gates everything beyond the skill change.** *Amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d13: the gate covers what stores code knowledge or changes a session (d1, d2, d4–d11, d13, d15 b–c, and export), not the anchor, the origin filters or markdown sync, which store no code knowledge and change no default read.* `testing/eval/` runs a
+- **d17 — An evaluation harness gates everything beyond the skill change.** *Amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md) d13: the gate covers what stores code knowledge or changes a session (d1, d2, d4–d11, d13, d15 b–c, and export), not the anchor, the origin filters or markdown sync, which store no code knowledge and change no default read.* `testing/eval/` runs a
   fixed task set in three arms: no memory; OML (the brief, the anchored reads and recall as built);
   and the same promoted entries exported to `AGENTS.md` (d12), the real competitor. Tasks are
   closed issues with a merged fix and a test, from this repository and two the maintainer names,
@@ -296,9 +296,9 @@ have that shape. Decided, not built.
 - **d19 — Every new failure has a doctor line.** `oml doctor` in a clone names: a committed
   `.oml/code.toml` with no local enablement; the public default server without its recorded
   confirmation; no ctags and no language server (whole-file hashes in use); stale entries by
-  count; a branch workarea with held entries and no open pull request older than a week; a pull
-  request batch over its cap; a CI key that is `held_by: service`; and a branch parent with no
-  dreamer able to ratify.
+  count; a branch workspace with held entries and no open pull request older than a week; a pull
+  request batch over its cap; a CI key that is `used_by: service`; and a branch parent with no
+  reviewer able to ratify.
 
 ## Downsides: argument or opportunity
 
@@ -314,12 +314,12 @@ have that shape. Decided, not built.
 | Benefit is unproven | argument | Implies the gate (d17). |
 | Parser maintenance | argument, reduced | No grammar of OML's own (d4); ctags or a language server is a dependency the user installs, and its absence degrades to whole-file hashes. Implies a doctor line, not a crate. |
 | Keyword-only recall misses paraphrase | opportunity | ADR-0048; anchors already find entries by location, not words. |
-| Workareas accumulate, one per merged branch | argument | Nothing deletes a workarea; the count is unmeasured (#142). Implies question 2's alternative of one workarea per repository if the count proves costly. |
+| Workspaces accumulate, one per merged branch | argument | Nothing deletes a workspace; the count is unmeasured (#142). Implies question 2's alternative of one workspace per repository if the count proves costly. |
 
 **What must not degrade, and how it is protected.** R1: no agent key proposes, ratifies,
 approves or rejects; the CI key is not in the plugin (d7, d8). R2: every verdict and every
 ratification is a second key and principal; automation approves only re-derivable text (d9). R3:
-held entries are read beyond their author only inside an in-progress branch workarea, and
+held entries are read beyond their author only inside an in-progress branch workspace, and
 nothing leaves it before its commit (d5, d7). R4: nothing is deleted; compaction is an open
 question, not a decision (d14). The three MCP tools stay three (d15). Ordinary recall's quality
 and latency are untouched, since kind `code` is outside it unless asked (d2). Review keeps its
@@ -329,26 +329,26 @@ meaning because it is capped, human for prose, and done where the code is read (
 
 - **Issues.** #156 is answered by d15 c. #142 opens (the evaluation's sample size and the
   benefit), #142 (the capture cap and the batch cap, chosen not measured), #142 (the count of
-  branch workareas a repository accumulates and its cost to tree reads).
+  branch workspaces a repository accumulates and its cost to tree reads).
 - **Dependencies.** ADR-0030 (in-progress), ADR-0044 and ADR-0045 (user roots and the Review
   view), ADR-0046 (the brief, for the skeleton at session start), ADR-0048 (the filters).
 - **Pages to change at acceptance.** The HTTP API and openapi.yaml (kind `code`, `anchor`, the
   branch-parent create, `while_held`); the agent plugin and mcp-tools.json; the CLI reference
-  (`oml code init|skeleton|pr|check|import|export`, `oml anchor`, the hooks); workareas (the
+  (`oml code init|skeleton|pr|check|import|export`, `oml anchor`, the hooks); workspaces (the
   branch parent); admission (#156); and each amended record's Status line.
 
 ## The maintainer's answers of 2026-11-05
 
-The operator answered all eleven on 2026-11-05 by taking each recommendation, with question 10 narrowed for documents ([ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d12). The last column says which the first slice, v0.5.8, exercises; the rest wait for the code parts this record gates.
+The operator answered all eleven on 2026-11-05 by taking each recommendation, with question 10 narrowed for documents ([ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md) d12). The last column says which the first slice, v0.5.8, exercises; the rest wait for the code parts this record gates.
 
 | # | Question | Options | Answer | Exercised by v0.5.8 |
 |---|---|---|---|---|
 | 1 | How is a correct fact on a changed symbol confirmed? | a. a supersession with the same text and a fresh anchor, reviewed; b. a re-anchor act without review; c. left stale until wrong | a: no unreviewed change reaches a promoted entry | yes: ADR-0057 d11 |
-| 2 | One workarea per branch, or per repository? | a. per branch, merge = commit; b. one in-progress workarea per repository, merge = approving the batch, no commit | a (d5, d7), revisited if #142 shows the count costly | no |
-| 3 | What does a release validate? | a. a release-record child per release; b. the merged branch workareas themselves; c. nothing | a (d10): b freezes living knowledge for good | no |
+| 2 | One workspace per branch, or per repository? | a. per branch, merge = commit; b. one in-progress workspace per repository, merge = approving the batch, no commit | a (d5, d7), revisited if #142 shows the count costly | no |
+| 3 | What does a release validate? | a. a release-record child per release; b. the merged branch workspaces themselves; c. nothing | a (d10): b freezes living knowledge for good | no |
 | 4 | Who proposes and who ratifies the merge commit? | a. the reviewer proposes, the CI key ratifies at merge; b. the CI key proposes, the reviewer ratifies; c. two reviewers | a (d7): one act by the person, in the sitting | no |
-| 5 | May a writer create branch workareas? | a. under an admin-marked branch parent only; b. the CI key creates them on first push; c. an admin creates each | a (d15 b): the agent writes before any push | no |
-| 6 | Is compaction allowed, and how? | a. a journalled erasure per workarea of never-promoted superseded versions, by a person's act, after ADR-0005; b. the same, by policy, with no person's act; c. never | a (d14): b needs a reading of R4 the constitution does not give | no |
+| 5 | May a writer create branch workspaces? | a. under an admin-marked branch parent only; b. the CI key creates them on first push; c. an admin creates each | a (d15 b): the agent writes before any push | no |
+| 6 | Is compaction allowed, and how? | a. a journalled erasure per workspace of never-promoted superseded versions, by a person's act, after ADR-0005; b. the same, by policy, with no person's act; c. never | a (d14): b needs a reading of R4 the constitution does not give | no |
 | 7 | Is fact text posted to the forge? | a. counts and a link only, text on `--post-text`; b. text always; c. nothing | a (d6) | no |
 | 8 | What does the gate require? | a. OML beats no memory and is no worse than the `AGENTS.md` export, at no more tokens; b. beats no memory; c. the maintainer's judgement | a (d17) | no; the gate's scope is narrowed by ADR-0057 d13 |
 | 9 | Where does the skeleton's purpose line come from? | a. the agent writes it, a person approves; b. a person writes it; c. none | a (d9) | no |
@@ -363,7 +363,7 @@ The operator answered all eleven on 2026-11-05 by taking each recommendation, wi
 | **Immediate review of every write** | It puts a person in front of every capture, which is overhead at volume and noise at low attention; the pull request is when someone already reads the code. |
 | **Own tree-sitter grammars** | A grammar per language to build and update, and a larger binary; ctags and language servers already answer "where is this symbol". |
 | **An automated reviewer for knowledge** | Its errors correlate with the writer's; R2's value is an independent judgement. |
-| **Code entries as kind `memory`** | Code entries would crowd ordinary recall, and every reader would pay for them. An anchor on a `memory` is [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)'s, and does not make it a code entry. |
-| **Validate the merged branch workareas at release** | A frozen area admits no supersession; a fact found wrong after a release could never be corrected. |
+| **Code entries as kind `memory`** | Code entries would crowd ordinary recall, and every reader would pay for them. An anchor on a `memory` is [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md)'s, and does not make it a code entry. |
+| **Validate the merged branch workspaces at release** | A frozen area admits no supersession; a fact found wrong after a release could never be corrected. |
 | **A service key in CI** | A service key is refused every review verb; it could not ratify or reject. |
 | **A fourth MCP tool** | ADR-0039 d8: a kind, an anchor field, read filters and hooks carry all of it. |

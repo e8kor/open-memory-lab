@@ -37,7 +37,7 @@ oml doctor
 
 `oml login` reads the key without echo and stores `url` and `api_key` in the owner-only
 credentials file only when the server accepts the key. `oml doctor` prints where each value came
-from, never the key, and the key's role, tenant and default workarea.
+from, never the key, and the key's role, tenant and default workspace.
 
 ## 3. Set up the plugin
 
@@ -79,7 +79,7 @@ To approve it on a server the user runs, use a reviewer key:
 ### Start every session from memory
 
 With `oml` on `PATH`, the plugin's SessionStart hook runs `oml hook session-start` at each start,
-resume, clear, compaction and fork. It adds the workarea's steering, the key's ten newest writes
+resume, clear, compaction and fork. It adds the workspace's steering, the key's ten newest writes
 and the memories matching the project directory's name, within 800 budget tokens
 ([CLI reference](../cli/reference.md)).
 It sends and prints nothing when the server cannot be reached. `OML_SESSION_CONTEXT=off` turns it
@@ -93,7 +93,7 @@ on writes, add to `permissions.allow` in the settings:
   "permissions": {
     "allow": [
       "mcp__plugin_oml_oml__oml_read",
-      "mcp__plugin_oml_oml__oml_workarea"
+      "mcp__plugin_oml_oml__oml_workspace"
     ]
   }
 }
@@ -138,6 +138,6 @@ rm ~/.local/bin/oml ~/.config/oml/credentials
 
 The memories stay on the server. Removing the plugin deletes only this machine's settings. OML has
 no revoke verb, so ask the administrator to run `oml deny set <key> universe`, which keeps the key
-out of every workarea ([CLI reference](../cli/reference.md)).
+out of every workspace ([CLI reference](../cli/reference.md)).
 
 If something fails, see [client troubleshooting](../help/troubleshooting-client.md).

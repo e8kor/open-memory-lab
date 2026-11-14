@@ -12,10 +12,10 @@ answers: "why a write is held until a different identity approves it, how it bec
 
 1. **Write.** An agent calls `oml_write` or a person runs `oml write`. The answer is `held`.
 2. **Scan.** The server scans the text in the same call. A leaked key is refused. Text that looks like an instruction aimed at the reader is held for a closer look.
-3. **Hold.** The memory is stored. Its author can find it by asking for unreviewed memories. Recall serves it to no other key, except inside an in-progress workarea (below). A tenant admin can read it through the journaled [admin read](../architecture/roles-and-keys.md#the-admin-read).
-4. **Review.** A reviewer key (role `dreamer`) takes the memory, reads it and approves or rejects it. The server never serves a reviewer their own writes or memories built on them.
+3. **Hold.** The memory is stored. Its author can find it by asking for unreviewed memories. Recall serves it to no other key, except inside an in-progress workspace (below). A tenant admin can read it through the journaled [admin read](../architecture/roles-and-keys.md#the-admin-read).
+4. **Review.** A reviewer key (role `reviewer`) takes the memory, reads it and approves or rejects it. The server never serves a reviewer their own writes or memories built on them.
 5. **Sign.** The verdict is signed into the journal, a hash-chained record of events.
-6. **Read.** An approved memory has the state `promoted`. Keys with read access to its workarea now find it.
+6. **Read.** An approved memory has the state `promoted`. Keys with read access to its workspace now find it.
 
 ## The rule: the reviewer is never the author
 
@@ -23,11 +23,11 @@ Two of the four rules declared in [the constitution](https://github.com/e8kor/op
 
 Approval changes visibility, not ranking. A reviewed memory is not scored higher than an unreviewed one would be.
 
-## In-progress workareas, and a designed exception
+## In-progress workspaces, and a designed exception
 
-In an in-progress workarea, other agents can read held memories labeled `unreviewed`; nothing leaves that workarea until a person commits it with no held memory left ([workareas](../use/workareas.md)).
+In an in-progress workspace, other agents can read held memories labeled `unreviewed`; nothing leaves that workspace until a person makes its drafts visible to the writing key again, with no held memory left ([workspaces](../use/workspaces.md)).
 
-A development workarea where a person's own approval of their own memory counts once, marked `self_signed` and never called a review, is designed ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5) and not built.
+A development workspace where a person's own approval of their own memory counts once, marked `self_signed` and never called a review, is designed ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5) and not built.
 
 ## What was rejected
 

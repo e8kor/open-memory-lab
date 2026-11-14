@@ -116,7 +116,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
   already read, by integer keys and no model, and the answer names them; it holds by default and
   refuses only when the writer asks.** Before capture, a submit, a supersession and each batch
   item (d8) are checked against the rows the writing key may read: the served promoted tips of
-  the target workarea's recall scope, as `oml_read` recall at that `workarea` would read them
+  the target workspace's recall scope, as `oml_read` recall at that `workspace` would read them
   (ADR-0044 d10 includes `universe`'s claims), and the key's own held rows in that scope, the
   rows `include_unreviewed: true` adds. Another key's held row is never checked or named. Kinds
   `memory`, `derived_fact` and `steering`; a supersession leaves out its own claim's versions.
@@ -164,10 +164,10 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
 
 - **d2 — A write that names a live claim's `claim_key` replaces its tip: an upsert, by the same
   rule as a supersession.** `claim_key` sent without `replaces` names a subject. When no held,
-  promoted or demoted version of it lives in the target workarea, the write is version 1, as
+  promoted or demoted version of it lives in the target workspace, the write is version 1, as
   today. When one does and the key may supersede its tip, by the supersede rule of
   [roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) (the
-  tip's author, or a dreamer's proposal), the write is a supersession of the served tip, or a
+  tip's author, or a reviewer's proposal), the write is a supersession of the served tip, or a
   revision of the key's own held head (d3), answered `mode: "supersede"`, `upserted: true` and
   `replaces`. When the key may not, it answers `submission.claim_key_conflict` as today, with the
   residual #129 already names. A self-signed upsert of a reviewed tip waits for a non-author
@@ -194,7 +194,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
   version. So a chain of drafts reaches review as one held row against one tip, and only the
   last can promote. A retirement (`retirement: true`) of one's own never-promoted held version
   withdraws it at once, with no review, since no other key has read it outside an ADR-0030
-  in-progress workarea, where its readers have and the retirement is reviewed like any other.
+  in-progress workspace, where its readers have and the retirement is reviewed like any other.
   A withdrawn first version with no other live version releases its `claim_key`, as a
   never-promoted rejection does (ADR-0025 d18). Withdrawn rows keep their bytes, stay readable
   by their author with `oml_read`, and are erased only by the journalled erasure of R4. This is
@@ -252,7 +252,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
   (d5) and `quality.no_source` (no `sources`, no `derives_from`, and no URL, path, commit or
   date in the text). They are answered in `warnings: [{finding, field, message}]`, recorded with
   the scan verdict under its `scanner_version`, and served to the reviewer beside the row (d11).
-  A workarea's review policy may name a class in `human_required_classes` as it may any scan
+  A workspace's review policy may name a class in `human_required_classes` as it may any scan
   class ([admission](../architecture/admission.md#review-policy-objects)). No warning changes
   visibility or rank. The thresholds are chosen, not measured beyond version 1, where the rules
   were written by the model that wrote the data (#141). One checkable claim per memory is the
@@ -260,8 +260,8 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
 
 - **d7 — A memory may say when it should be checked again; past that date it is served marked
   stale, never hidden and never deleted.** `review_by`, a date at most two years after the write,
-  is stated by the author or, when omitted, set from the workarea's `freshness.review_days`
-  setting, which an admin sets per workarea and which is unset by default. After it, the tip is
+  is stated by the author or, when omitted, set from the workspace's `freshness.review_days`
+  setting, which an admin sets per workspace and which is unset by default. After it, the tip is
   served with `stale: true` and its `review_by` in recall, get and the listing; recall neither
   drops nor demotes it (R3), and nothing deletes it (R4). ADR-0048 S4's filters gain `fresh:
   true`, which leaves stale rows out. The fact is re-confirmed by `oml_write` with `replaces`
@@ -320,7 +320,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
     | `review_by` | date | submit, supersede, confirm | d7 |
     | `on_similar` | `hold` default, `refuse` | submit, supersede | d1 |
     | `links` | ≤ 4 `{to, label}` | submit, supersede | d9, designed |
-    | `workarea` | id or name | all | |
+    | `workspace` | id or name | all | |
     | `items` | ≤ 20 argument sets | batch | d8 |
 
     `items` excludes every other field at its level. An argument outside the chosen mode is
@@ -336,7 +336,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       "upserted": true,
       "replaces": {"artifact_id": "7d1e…", "version": 2},
       "revises": null,
-      "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286",
+      "workspace": "fbbb41c5-9630-4274-ae53-166f562f5286",
       "similar": [{"artifact_id": "7d1e…", "claim_key": "deploy-window", "version": 2, "state": "promoted", "relation": "near_copy", "jaccard": 0.92, "own": true}],
       "warnings": [],
       "indexed": {"title": ["production", "deploy", "window"], "text": ["2026-06-01", "production", "deploy", "monday", "wednesday", "thursday", "09:00", "11:00", "cet", "window", "on-call", "lead", "approval"], "keywords": ["release", "schedule", "change", "window"], "identifiers": {}},
@@ -346,7 +346,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
     }
     ```
 
-    `review` is read from the workarea's policy object (its `k` and `human_required_classes`
+    `review` is read from the workspace's policy object (its `k` and `human_required_classes`
     against this row), never a queue position, which would count other keys' rows. The new
     refusal is `409 submission.similar_exists` (not retryable; `details.similar`); the others are
     today's, a same-key `submission.claim_key_conflict` included. On HTTP
@@ -357,7 +357,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
   beside the held row, and may reject as a duplicate.** `POST /v2/review/next` serves, beside
   the item and the version it replaces (ADR-0012 d5): `similar`, recomputed at serve time by d1's
   rule over what the reviewer may read, which is the promoted tips its reader access reaches and
-  the held rows its dreamer access could be served, never a row it could not otherwise see;
+  the held rows its reviewer access could be served, never a row it could not otherwise see;
   `author_saw`, the ids of the author's write-time `similar` that the reviewer may read; the
   write's `warnings`; and for a confirmation, that the text is unchanged. None of it enters the
   serve's bound digest, so a new similar row does not invalidate a serve. The reject verdict
@@ -445,7 +445,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
        `a_write_lists_a_near_copy_at_jaccard_0_9_and_not_below`,
        `a_short_text_is_never_listed_as_a_near_copy`,
        `a_write_never_lists_a_row_the_writer_may_not_read` (another key's held row, an
-       unreadable workarea), `a_supersession_never_lists_its_own_claim`,
+       unreadable workspace), `a_supersession_never_lists_its_own_claim`,
        `on_similar_refuse_journals_nothing_and_claims_no_idempotency_record`,
        `a_replayed_write_answers_the_similar_list_first_answered`,
        `similar_keys_computed_in_sql_equal_the_cores`,
@@ -472,7 +472,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
   random id on each call so the cost is the sample's and repeated calls cover every version; a share
   of the last day's writes refused `submission.similar_exists` and never resent, which is either
   duplicates avoided or a threshold too loose; held rows older than a day with a withdrawn
-  sibling still served for review (a stale-promotion fault d3 forbids); workareas whose stale
+  sibling still served for review (a stale-promotion fault d3 forbids); workspaces whose stale
   tips exceed `freshness.stale_warn_share`; a rule set missing the `quality.*` classes; and a
   batch route answering any item `system.*`. `oml doctor` in a clone with the plugin names a
   skill older than the server's `oml_write` schema, by comparing the fields the skill teaches
@@ -503,7 +503,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
     writes, the reviewers' `duplicate_of` verdicts and the session that wrote each give labelled
     duplicate and update pairs no model chose; its paraphrases are written by someone who did
     not write the memories or their keywords, at least 30 per category; and it adds held rows,
-    several workareas and steering rows. The real-traffic duplicate rate is counted from
+    several workspaces and steering rows. The real-traffic duplicate rate is counted from
     verdicts, never from query text, which the request log does not keep (ADR-0042 d8).
 
 - **d17 — The near-copy check: normalised words, MinHash over 60 permutations in 10 bands of 6,
@@ -525,9 +525,9 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       at 0.5 with 0.15. The verification reads at most 32 candidates, those sharing the most
       bands first, then by artifact id.
     - **Storage.** Migration 0027's `similar_keys`: one row per version and key, carrying the
-      tenant, workarea, authoring key, memory id, band (0 for `same_text`, 1–10) and state (0 held,
+      tenant, workspace, authoring key, memory id, band (0 for `same_text`, 1–10) and state (0 held,
       1 a served tip), list-partitioned by tenant as `search_postings` is, fenced, with no
-      statistics on the parent; one index, `(key, workarea_id) INCLUDE (state, author_key_id,
+      statistics on the parent; one index, `(key, workspace_id) INCLUDE (state, author_key_id,
       memory_id)`, reached only by `bigint` and `uuid` equalities, which are leakproof, so row
       security lets it serve (ADR-0052's Context). A trigger on `memories` writes a version's
       keys from `oml_similar_keys(claim)`, an immutable SQL function the core computes equally
@@ -535,7 +535,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       promotion, deleted when the version is replaced, demoted, rejected or erased, so the table
       holds only what d1 may name. 0027 fills every existing version; `oml_similar_keys_refill`
       rebuilds one tenant's keys when the doctor names a fault (d15).
-    - **The read.** One statement: the new text's keys, the scope's workareas, state 1, or state 0
+    - **The read.** One statement: the new text's keys, the scope's workspaces, state 1, or state 0
       with the writing key as author; the core then reads the candidates' rows, admits each by
       recall's rule (a readable served tip, or its own held row) and computes the exact ratio.
       A key computed from another tenant's text can only meet its own tenant's partition.
@@ -560,12 +560,12 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       `EXPLAIN ANALYZE` as the serving role under row security on 200,000 synthetic keys). The
       plan is an index-only scan with no heap fetch, and row security's tenant test is a one-time
       filter, so the index serves. Under a generic plan, which a prepared statement reaches, the
-      index condition is `key = ANY($2)` alone and the workarea, state and author tests are
-      filters: every entry carrying a key is visited, including entries in workareas the writer
+      index condition is `key = ANY($2)` alone and the workspace, state and author tests are
+      filters: every entry carrying a key is visited, including entries in workspaces the writer
       cannot read and other keys' held rows. 5,000 unreadable copies of one key took 1.1 ms
       against 0.06 ms with none, about 0.2 µs an entry, more before VACUUM sets the visibility
       map. A single hidden row is below an HTTP request's jitter; thousands of copies are not, so
-      a writer who can plant copies in a workarea it can write, which another key cannot read,
+      a writer who can plant copies in a workspace it can write, which another key cannot read,
       could learn from the time that a key is common. The same shape makes boilerplate repeated
       through a tenant cost the number of its copies on every write containing it, with nothing
       bounding it but the tenant's size: the limit of 32 applies after the visit. Each probe leaves a held row and a
@@ -586,7 +586,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
 | Subject keys disclose that a name is taken | argument, existing | The residual #129 already names, unchanged. |
 | A withdrawn state is one more state | argument, small | The alternative is #156's second held claim per correction. |
 | Warnings can nag | argument | Advisory, never a veto, thresholds measured (#141). |
-| A stale flag adds review load | argument | Off unless an author or a workarea sets a date; #113 measures confirmations per stale row. |
+| A stale flag adds review load | argument | Off unless an author or a workspace sets a date; #113 measures confirmations per stale row. |
 | Duplicates in the review queue | opportunity | `duplicate_of` gives the first real duplicate rate (#113). |
 | Agents do not know how they will be found | opportunity | `indexed` tells them, from their own text. |
 | "Latest" fails under every search method | solved by structure | One claim per subject, its tip served (d2–d4). |
@@ -628,11 +628,11 @@ first slice, W3's write side, exercises.
 | 2 | The similar check's default? | a. warn (`hold`), the skill sends `refuse`; b. refuse by default; c. warn only | a: `hold` by default, the skill sends `refuse` once d16's gate passes | yes: `hold` and `refuse` |
 | 3 | Does an explicit live `claim_key` upsert? | a. yes, under the supersede rule; b. keep the conflict, require `replaces` | a: an explicit live `claim_key` upserts under the supersede rule | no: W1 |
 | 4 | Is `title` required? | a. optional with a warning; b. required on new claims | a: optional with a warning | no: W2 |
-| 5 | A default `review_by` on the public server? | a. none; b. 90 days, as Copilot; c. per kind | a: none; workareas opt in | no: W5 |
+| 5 | A default `review_by` on the public server? | a. none; b. 90 days, as Copilot; c. per kind | a: none; workspaces opt in | no: W5 |
 | 6 | Does reading reset freshness? | a. never; b. on use | a: never | no: W5 |
 | 7 | Batch semantics? | a. independent items; b. all or nothing | a: independent items | no: W6 |
 | 8 | Release? | a. W1–W3 in v0.5.3 with ADR-0048 S1–S3; b. W1 alone first | a's grouping, W1 to W3 together; v0.5.3 shipped without them, and since r2 W3 no longer waits on S1, so its write side is built first, proposed for v0.5.9 and assigned by the maintainer | yes |
-| 9 | Should `on_similar` look beyond the target workarea's recall scope, at the key's other workareas? | a. no; b. yes | a: the target workarea's recall scope only | yes |
+| 9 | Should `on_similar` look beyond the target workspace's recall scope, at the key's other workspaces? | a. no; b. yes | a: the target workspace's recall scope only | yes |
 
 ## Rejected alternatives
 

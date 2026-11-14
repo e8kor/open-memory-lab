@@ -11,9 +11,9 @@ conversation. A turn becomes a memory only when the agent in it writes the fact,
 names its source kind (`origin.kind`). A person's key and the
 [Claude Code plugin](../guides/claude-code.md) are required.
 
-1. **Create the workarea.** `oml chat init` creates `chat` under the user root, puts it in
-   progress and prints the `OML_CHAT_WORKAREA` value. An agent key is refused.
-2. **Switch capture on.** Set `OML_CHAT_CAPTURE=1` and `OML_CHAT_WORKAREA`. Three hooks run, each
+1. **Create the workspace.** `oml chat init` creates `chat` under the user root, puts it in
+   progress and prints the `OML_CHAT_WORKSPACE` value. An agent key is refused.
+2. **Switch capture on.** Set `OML_CHAT_CAPTURE=1` and `OML_CHAT_WORKSPACE`. Three hooks run, each
    exiting 0 without blocking:
     - `oml hook user-prompt` counts the turn and records its hash.
     - `oml hook stop` counts turns. Every `OML_CHAT_CAPTURE_EVERY` turns (default 5) it asks the
@@ -22,7 +22,7 @@ names its source kind (`origin.kind`). A person's key and the
 3. **Recall in the next prompt (optional).** `OML_TURN_RECALL=1` makes `user-prompt` send up to eight
    distinctive words of the prompt as a recall, with secret shapes, URLs and the key removed. Hits
    are marked `[unreviewed]`. It is off by default and falls silent after three misses.
-4. **Review.** Captured facts are held, in the `chat` workarea. Review them on the user page or
+4. **Review.** Captured facts are held, in the `chat` workspace. Review them on the user page or
    with `oml review`.
 5. **Switch off.** Unset `OML_CHAT_CAPTURE`. Retire stored facts with a retirement write.
 

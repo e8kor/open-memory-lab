@@ -151,7 +151,7 @@ through them. Where each item stands is under [Consequences](#consequences).
        `oml-bootstrap` one-shot service ([deployment](../operations/deployment.md#the-docker-profile))
        exists, and then from its file;
     4. claims it with `bootstrap claim --token-stdin`;
-    5. creates workarea `crew`, and issues an agent key and a `dreamer` reviewer key with
+    5. creates workspace `crew`, and issues an agent key and a `reviewer` key with
        `--out` into `<dir>/keys/`;
     6. runs `scripts/quickstart.sh`'s self-check (remember, held, approve as the reviewer,
        recall);

@@ -2,12 +2,12 @@
 id: adr/ADR-0026-names-are-keys
 tier: engineering
 status: accepted design
-answers: which records carry a unique name, what a name may spell, how a name is accepted wherever an id is and resolved on the server without leaking existence, what the universe root is called, how paths relate to names, what a crew is, how a key's name differs from its principal and label, whether a name is ever released, how rows that predate names are named, how the CLI's agent-key verb takes a key's name and crew, and what workarea structure an admin key reads
+answers: which records carry a unique name, what a name may spell, how a name is accepted wherever an id is and resolved on the server without leaking existence, what the universe root is called, how paths relate to names, what a crew is, how a key's name differs from its principal and label, whether a name is ever released, how rows that predate names are named, how the CLI's agent-key verb takes a key's name and crew, and what workspace structure an admin key reads
 -->
 
-# ADR-0026 — Workareas, crews, keys and tenants are named by unique, immutable keys that every surface accepts in place of their ids
+# ADR-0026 — Workspaces, crews, keys and tenants are named by unique, immutable keys that every surface accepts in place of their ids
 
-**Status:** accepted design · 2026-10-31 · amended by [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d15, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d1, d5, 2026-11-14)
+**Status:** accepted design · 2026-10-31 · amended by [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d15, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d1, d5, 2026-11-14)
 
 **Release:** partly in v0.3.0; the rest not built ([releases](../changelog.md))
 
@@ -15,38 +15,38 @@ answers: which records carry a unique name, what a name may spell, how a name is
 
 ## Context
 
-**Ids are the only reference.** Every surface addresses a workarea, a key or a tenant by its id. A
-workarea's name exists only as a path segment, unique nowhere: two workareas anywhere in a tenant
+**Ids are the only reference.** Every surface addresses a workspace, a key or a tenant by its id. A
+workspace's name exists only as a path segment, unique nowhere: two workspaces anywhere in a tenant
 may share one, so the derived path, not the name, is what tells them apart
-([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)). A key has a
+([workspaces](../architecture/workspaces.md#grants-bind-to-node-ids-paths-are-derived)). A key has a
 principal and a label and nothing that addresses it but its id
 ([roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)). An
 operator issuing a plugin key has to copy a UUID out of one command's output into the next, and
-an agent configured with `X-OML-Workarea` has to carry one.
+an agent configured with `X-OML-Workspace` has to carry one.
 
 **The convenience the pages already promise is undecided.** The [CLI](../cli/reference.md#conventions)
-says "workareas may be named by path for convenience"; the `oml_remember` argument says "a path
+says "workspaces may be named by path for convenience"; the `oml_remember` argument says "a path
 given here is resolved to its node first" ([mcp-tools.json](../api/mcp-tools.json)). Neither says
 what happens when two paths collide, when a path goes stale after a re-parent, or what a key is
 told about a path it cannot read.
 
-**A crew is a string copied into each workarea.** The crew record is metadata on a workarea
+**A crew is a string copied into each workspace.** The crew record is metadata on a workspace
 (ADR-0008 d7). The independence axis compares crews and external managers at promotion time
 ([ADR-0012](ADR-0012-admission-and-review.md) d4) through "journalled key→crew→manager metadata"
 ([ADR-0010](ADR-0010-roles-and-keys.md) d7), but no key carries a crew: `key.issued` has no such
 field ([event catalog](../data/event-catalog.md)), and the issuance body has none
-([ADR-0025](ADR-0025-the-agent-only-memory-surface.md) d2). Two workareas cannot say they belong
+([ADR-0025](ADR-0025-the-agent-only-memory-surface.md) d2). Two workspaces cannot say they belong
 to one crew, so the axis has nothing to compare.
 
 **The maintainer's decisions.** The maintainer fixed these, and this record designs around them and
-does not reopen them: workareas, crews, keys and tenants each get a name that is a unique key like
+does not reopen them: workspaces, crews, keys and tenants each get a name that is a unique key like
 the id, unique within the tenant in one flat namespace per kind, tenant names unique per deployment,
 immutable once created; names are accepted everywhere an id is and resolved on the server, while
 grants, denials and journal events keep binding to ids and creation events record the name; crews
 become named records; the CLI gains `oml keys issue-agent`, with `--out` writing the key value to a
 file so that an `oml-admin` skill can run it without the value entering a transcript; the CLI's
 issuing verbs add a reader grant beside every writer grant unless `--write-only` is passed; and
-admin keys read workarea structure in their tenant without grants, never content. The maintainer
+admin keys read workspace structure in their tenant without grants, never content. The maintainer
 later moved the key tool ahead of names: `issue-agent`, its `--out` key file, the reader grant
 default and the `oml-admin` plugin are decided in [ADR-0028](ADR-0028-agent-key-issuance.md), and
 d12–d14 below say what names add.
@@ -60,7 +60,7 @@ accepted ADR-0025 and reverses
 none of its rules: the refusal order (d1), the issuance order (d2), own (d3) and the events-tail
 visibility (d15) apply to a named request exactly as to the same request by id. It adds fields to
 d2's issuance body and changes what d14's `crew` holds, which is why the Amends line names them. The existing PoC
-data, and a live v0.1.0 deployment (one tenant named `oml`, a root workarea
+data, and a live v0.1.0 deployment (one tenant named `oml`, a root workspace
 the PoC created with the name `root` at crates/oml-app/src/app.rs:573-579, and keys with
 principals), must survive with its journal untouched.
 
@@ -78,14 +78,14 @@ Everything this record decides is design; nothing below is built.
 
 ## Decision
 
-- **d1 — Workareas, crews, keys and tenants each carry a name: a unique, immutable key beside the
+- **d1 — Workspaces, crews, keys and tenants each carry a name: a unique, immutable key beside the
   id.** Every row of the four kinds has exactly one name, given at creation and never changed;
   no rename verb exists on any surface. This amends ADR-0008 d3: a node is re-parented, never
   renamed. The namespaces are flat, one per kind:
 
     | Kind | Unique within | Created by | The creation event records it in |
     |---|---|---|---|
-    | workarea | its tenant, the whole tree | admin (`POST /v2/workareas`); the root by tenant creation (d6) | `workarea.create.name` |
+    | workspace | its tenant, the whole tree | admin (`POST /v2/workspaces`); the root by tenant creation (d6) | `workspace.create.name` |
     | crew | its tenant | admin (`POST /v2/crews`, d8) | `crew.created.name` |
     | key | its tenant; operator keys share the provider's namespace | admin, or operator for operator keys and a tenant's first admin key (`POST /v2/keys`); rotation (d9); the bootstrap claim | `key.issued.name`, `key.rotated.new_name` |
     | tenant | the deployment | operator (`POST /v2/tenants`) | `tenant.created.name`, `tenant.genesis.name` |
@@ -104,7 +104,7 @@ Everything this record decides is design; nothing below is built.
 
     | Term | Means | Never |
     |---|---|---|
-    | name | the unique, immutable key of a workarea, crew, key or tenant, accepted wherever its id is | "slug", "handle" or "alias" for a name (a decision's dN or FR-n handle keeps its word); "label" for a name (a key's `label` is free text, d9; RFC 1035 and `ltree` labels and a workarea edge's label keep theirs) |
+    | name | the unique, immutable key of a workspace, crew, key or tenant, accepted wherever its id is | "slug", "handle" or "alias" for a name (a decision's dN or FR-n handle keeps its word); "label" for a name (a key's `label` is free text, d9; RFC 1035 and `ltree` labels and a workspace edge's label keep theirs) |
 
     One name per row, unique in its kind, lets a human or an agent say `metals-crew` where it said
     a UUID, and immutability is what makes that safe to cache: a name means the same row for as
@@ -174,14 +174,14 @@ Everything this record decides is design; nothing below is built.
 
 - **d4 — Names are accepted everywhere an id is, and the server resolves a name by substituting
   its id before any check that consults state.** Every request field, path parameter, query
-  parameter, header and MCP tool argument that names a workarea, crew, key or tenant accepts that
-  row's id or its name: `X-OML-Workarea`, the `{workarea_id}`, `{key_id}` and `{crew_id}` path
-  parameters, `workarea_id` filters, `parent_id`, `new_parent_id`, `to_workarea_id`, a grant's
-  `workarea_node_id`, a deny's `subtree_node_id`, `default_workarea_id`, `crew`, `tenant_id`, a
-  simulation audience's `key_id`, the `workarea`, `scope`, `from`, `to` and `workarea_id`
+  parameter, header and MCP tool argument that names a workspace, crew, key or tenant accepts that
+  row's id or its name: `X-OML-Workspace`, the `{workspace_id}`, `{key_id}` and `{crew_id}` path
+  parameters, `workspace_id` filters, `parent_id`, `new_parent_id`, `to_workspace_id`, a grant's
+  `workspace_node_id`, a deny's `subtree_node_id`, `default_workspace_id`, `crew`, `tenant_id`, a
+  simulation audience's `key_id`, the `workspace`, `scope`, `from`, `to` and `workspace_id`
   arguments of [mcp-tools.json](../api/mcp-tools.json), and every CLI argument that names one of
-  the four kinds. Field names do not change: a request field called `workarea_id` accepts the id
-  or the name, and a response field called `workarea_id` always carries the id. The
+  the four kinds. Field names do not change: a request field called `workspace_id` accepts the id
+  or the name, and a response field called `workspace_id` always carries the id. The
   [Names section](../api/http-api.md#names-and-ids) lists every field.
 
     Resolution happens on the server, never in the MCP facade or the CLI, in a namespace fixed by
@@ -213,28 +213,28 @@ Everything this record decides is design; nothing below is built.
     the same step, with the same code, rule and details, the echoed value aside, as the id would.
     A refusal echoes a reference only as the request spelled it. It names the id a name resolved
     to only where the naming rule of ADR-0025 d3 already discloses that id to the key, which means
-    `access.grant_refused`'s `details.workarea_id` on a node where reader is effective.
+    `access.grant_refused`'s `details.workspace_id` on a node where reader is effective.
     `access.not_found` never carries, in its message or its details, an id or an unresolved value
     that a name was replaced by. On the provider ring an unresolved
-    `X-OML-Workarea` puts its unresolved value in the idempotency record's workarea component, so
+    `X-OML-Workspace` puts its unresolved value in the idempotency record's workspace component, so
     every unknown name has a scope of its own, as every unknown id does, and no replay,
     `idempotency.in_progress` or digest mismatch tells a writer whether a name it guessed exists.
 
     Responses carry ids in id fields and paths where they carry paths today, and each object of
-    the four kinds — a workarea, a crew, a key, a tenant — gains a `name` field. Claim items,
-    hits and events tail entries gain no name field: a claim's workarea is named by its id and its
+    the four kinds — a workspace, a crew, a key, a tenant — gains a `name` field. Claim items,
+    hits and events tail entries gain no name field: a claim's workspace is named by its id and its
     derived path, whose last segment is the name (d7).
 
     The idempotency request digest covers the method, the route template, the path parameters
     and the body, each as sent ([HTTP API](../api/http-api.md#idempotency)), so a request that
     names a row in a path or a body and the same request by its id are two requests: reusing one
-    `Idempotency-Key` for the other spelling is `idempotency.digest_mismatch`. `X-OML-Workarea` is
-    not in the digest, and on the provider ring the record's workarea component is the resolved
+    `Idempotency-Key` for the other spelling is `idempotency.digest_mismatch`. `X-OML-Workspace` is
+    not in the digest, and on the provider ring the record's workspace component is the resolved
     node id (ADR-0022 d4), so a `/v1` request whose header names the node and the same request
     whose header carries its id are one request, and a retry that switches the header's spelling
     replays. On `/v1` the header is therefore resolved after step 1 of the refusal order and
     before the record is looked up. This amends ADR-0022 d4: the override is "a node id or name",
-    and `/v2` keeps explicit workarea references — ids or names — in paths and bodies.
+    and `/v2` keeps explicit workspace references — ids or names — in paths and bodies.
 
     Substitution is the smallest rule that keeps names inside every guarantee the ids already
     have: there is one access computation (ADR-0008), and a name cannot reach a branch the id
@@ -248,9 +248,9 @@ Everything this record decides is design; nothing below is built.
 - **d5 — A malformed name is `request.validation`, an unknown one `access.not_found`, and a taken
   one `name.taken`, a new code only an admin or operator key, or the holder of a valid enrollment
   token at the bootstrap claim, can receive.** `name.taken` (409) is the one code this record
-  adds, in a family of its own, `name` ([errors](../api/errors.md)); `details` is `{kind, name}`. It answers a creation — workarea create, crew create, key
+  adds, in a family of its own, `name` ([errors](../api/errors.md)); `details` is `{kind, name}`. It answers a creation — workspace create, crew create, key
   issuance, key rotation, tenant create, the bootstrap claim — whose name its kind already holds
-  in the namespace, a revoked or expired key's included (d10), and `universe` for any workarea
+  in the namespace, a revoked or expired key's included (d10), and `universe` for any workspace
   but the root (d6). It is checked after every other check of the creating request, for key
   issuance after step 6 of the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order),
   and the unique index is its authority: a creation that loses the race to a concurrent one
@@ -289,12 +289,12 @@ Everything this record decides is design; nothing below is built.
     succeed, which is what a 409 says and what `vocab.prefix_conflict` and
     `submission.claim_key_conflict` already say for their permanent identifiers. It is not a
     `request.*` code, because that family holds what is wrong with a request whatever the state,
-    and not a `workarea.*` code, because it also answers keys, crews and tenants.
+    and not a `workspace.*` code, because it also answers keys, crews and tenants.
 
-- **d6 — Every tenant's root workarea is named `universe`.** Tenant creation creates the root with
-  the name `universe` and journals it in the root's `workarea.create`; the root's name is the
-  only workarea name fixed by the design. Since every tenant has its root from creation onwards,
-  a workarea create naming `universe` answers `name.taken`, with no special case. Every derived
+- **d6 — Every tenant's root workspace is named `universe`.** Tenant creation creates the root with
+  the name `universe` and journals it in the root's `workspace.create`; the root's name is the
+  only workspace name fixed by the design. Since every tenant has its root from creation onwards,
+  a workspace create naming `universe` answers `name.taken`, with no special case. Every derived
   path therefore starts with `universe`, as every path in the doc set already does, and
   `universe` stays the word ADR-0018 d4 gives the root. The PoC's root named `root` is named
   `universe` under d11.
@@ -302,23 +302,23 @@ Everything this record decides is design; nothing below is built.
 - **d7 — Paths stay derived; they are displayed and looked up, never accepted as a reference.**
   A path is the names from `universe` to the node joined with `.` — the derivation ADR-0025 d14
   fixes — and with unique names the last segment alone identifies the node, which is why the
-  workarea read's `path_leaf` is the child's name. Every segment is a name, so every path is an
+  workspace read's `path_leaf` is the child's name. Every segment is a name, so every path is an
   `ltree` value. Names never change and re-parenting moves no name, so a re-parent changes a
   node's path and nothing else; grants, which bind ids, are untouched, as before. A path
-  discloses what it disclosed before names: the workarea read's `path`, every `workarea_path`
+  discloses what it disclosed before names: the workspace read's `path`, every `workspace_path`
   and the events tail's `parent_id` and `old_parent_id` give a reader the ids and names of the
   ancestors of a node it can read, and a re-parented node's former parent, as ADR-0025 d3's
   naming rule states. With unique names those segments name rows the reader may not otherwise
   see, and resolution confirms no other name (d4). A path is
   never accepted in a field that takes an id or a name: it contains `.`, so d3 refuses it with
-  `request.validation`. `GET /v2/workareas?path=` stays the one lookup by path. The CLI
-  convention that workareas "may be named by path" and the `oml_remember` sentence that "a path
+  `request.validation`. `GET /v2/workspaces?path=` stays the one lookup by path. The CLI
+  convention that workspaces "may be named by path" and the `oml_remember` sentence that "a path
   given here is resolved to its node first" go: the name says the same thing in one segment, and
   never goes stale.
 
 - **d8 — Crews are named records of their own, created and updated by admins, referenced by
-  workareas and by keys.** A crew record is `{crew_id, name, charter_uri, external_manager}`:
-  recorded, not operated, as before ([workareas](../architecture/workareas.md#crews-recorded-not-operated)
+  workspaces and by keys.** A crew record is `{crew_id, name, charter_uri, external_manager}`:
+  recorded, not operated, as before ([workspaces](../architecture/workspaces.md#crews-recorded-not-operated)
   owns the record).
 
     - **Verbs.** `POST /v2/crews` creates one (journalled `crew.created`); `POST
@@ -328,14 +328,14 @@ Everything this record decides is design; nothing below is built.
       reaches an admin verb (R1). No MCP tool creates, updates or lists crews, and the
       [agent-safe tool list](ADR-0014-http-api-and-mcp-facade.md) is unchanged. The CLI verbs are
       `oml crews create`, `update`, `list` and `show` ([CLI](../cli/reference.md#oml-crews-crew-records)).
-    - **Workareas.** A workarea names at most one crew, the one whose memory space it is; a crew
-      may serve many workareas. `crew` on workarea create is a crew's id or name, and `POST
-      /v2/workareas/{workarea_id}/crew {crew}` points the workarea at another crew record. That
-      act stays the journalled crew-metadata update `workarea.crew_updated`, now carrying
-      `crew_id`, and stays admitted on `validated` workareas. On both verbs a `crew` that names
+    - **Workspaces.** A workspace names at most one crew, the one whose memory space it is; a crew
+      may serve many workspaces. `crew` on workspace create is a crew's id or name, and `POST
+      /v2/workspaces/{workspace_id}/crew {crew}` points the workspace at another crew record. That
+      act stays the journalled crew-metadata update `workspace.crew_updated`, now carrying
+      `crew_id`, and stays admitted on `frozen` workspaces. On both verbs a `crew` that names
       no crew record of the tenant answers `access.not_found`: on create after the parent and
-      before `name.taken`, on the update after the workarea. A vocabulary workarea still requires
-      a crew ([ADR-0021](ADR-0021-ai-human-ontologies.md)). The workarea read serves the crew
+      before `name.taken`, on the update after the workspace. A vocabulary workspace still requires
+      a crew ([ADR-0021](ADR-0021-ai-human-ontologies.md)). The workspace read serves the crew
       record, or null, and is the only crew read an agent key has.
     - **Keys.** Key issuance takes an optional `crew`, a crew's id or name, journalled in
       `key.issued` as `crew_id`. A `crew` that names no crew record of the tenant answers
@@ -352,18 +352,18 @@ Everything this record decides is design; nothing below is built.
       satisfies no manager-inequality requirement: such a verdict does not count toward the
       requirement it cannot establish, and the row waits for one that does — failing closed by
       holding, as D11 does everywhere.
-    - **What the existing crew metadata becomes.** The `crew` object on a workarea, at
-      `workarea.create` and `workarea.crew_updated`, is replaced by a `crew_id`. Existing values
+    - **What the existing crew metadata becomes.** The `crew` object on a workspace, at
+      `workspace.create` and `workspace.crew_updated`, is replaced by a `crew_id`. Existing values
       become crew records under d11, and nothing in the journal is rewritten.
 
-    This amends ADR-0008 d7 (a workarea names a crew record instead of carrying one), ADR-0010 d7
+    This amends ADR-0008 d7 (a workspace names a crew record instead of carrying one), ADR-0010 d7
     (a key's crew is a journalled reference set at issuance) and ADR-0012 d4 (an unestablished
     crew or manager satisfies no inequality requirement), and ADR-0025 d2 and d14 (issuance takes
-    `crew`; `crew` at `workarea.create` is a reference, and the workarea read serves the record
+    `crew`; `crew` at `workspace.create` is a reference, and the workspace read serves the record
     with its `crew_id`).
 
-    The independence axis compares crews, and a string copied into each workarea's record can say
-    neither that two workareas share a crew nor which crew a key belongs to. A record of its own
+    The independence axis compares crews, and a string copied into each workspace's record can say
+    neither that two workspaces share a crew nor which crew a key belongs to. A record of its own
     gives both relations one row to point at, gives a renamed charter one place to change, and
     keeps crew administration where every other governance act lives: admin key role, journalled,
     off the agent surface.
@@ -388,7 +388,7 @@ Everything this record decides is design; nothing below is built.
     [roles and keys](../architecture/roles-and-keys.md#key-names-principals-and-labels).
 
 - **d10 — A name is never released.** A revoked or expired key keeps its name, and the name still
-  resolves for an admin, so `oml keys show` answers for it as history. Workareas, crews and
+  resolves for an admin, so `oml keys show` answers for it as history. Workspaces, crews and
   tenants have no removal verb, so their names are never freed either, and erasure shreds claim
   content and touches no name ([audit and lineage](../architecture/audit-and-lineage.md)). A
   reissued agent key therefore takes a new name (`claude-laptop-2`). A name that once named one
@@ -401,19 +401,19 @@ Everything this record decides is design; nothing below is built.
   and before it serves a request, the lead names every unnamed row, lifts every denial rule 5
   names, and journals both:
 
-    1. **The root.** Each tenant's root workarea is named `universe` (d6), whatever its
-       `workarea.create` says.
+    1. **The root.** Each tenant's root workspace is named `universe` (d6), whatever its
+       `workspace.create` says.
     2. **Rows with a usable name.** For each kind and namespace, in journal order of creation,
        a row whose creation event carries a name d2's creation grammar admits, that is not
-       `universe` for a non-root workarea, and that no earlier row of its kind holds, keeps it.
+       `universe` for a non-root workspace, and that no earlier row of its kind holds, keeps it.
     3. **Every other row** — no name (every key before this record), a name the creation
        grammar refuses, or a name an earlier row holds — is named `<prefix>-<32 lowercase hex
        digits of its id>`, the prefix `tenant`, `wa`, `crew` or `key`. Ids are unique, and d2
        refuses the form to every creation, so a derived name collides with nothing.
-    4. **Crew metadata.** For each workarea, in journal order, its current crew object (the
-       latest of its `workarea.create` and `workarea.crew_updated`) is taken; each distinct
+    4. **Crew metadata.** For each workspace, in journal order, its current crew object (the
+       latest of its `workspace.create` and `workspace.crew_updated`) is taken; each distinct
        `{name, charter_uri, external_manager}` becomes one crew record with a fresh id, named by
-       rules 2 and 3 in order of first appearance, and every workarea with that object points at
+       rules 2 and 3 in order of first appearance, and every workspace with that object points at
        it. Keys that predate names have no crew.
     5. **Denials on admin keys.** Every global denial on an admin key that is not yet lifted is
        lifted by the lead in the same start, journalled as `key.denial_lifted` with
@@ -434,7 +434,7 @@ Everything this record decides is design; nothing below is built.
     ([folds](https://github.com/e8kor/open-memory-lab/tree/main/migrations)). `prior_name`
     is read from the journal, the name the row's creation event carried; the migration that adds
     names carries no creation-time name into `name`, and keeps the PoC's `tenants.name` and
-    `workareas.name` columns as `prior_name`, history no reference reads
+    `workspaces.name` columns as `prior_name`, history no reference reads
     ([schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)). Every earlier event stays as it was
     signed, its original name or crew object included, so the journal shows both what a row was
     called and what it is named now.
@@ -465,7 +465,7 @@ Everything this record decides is design; nothing below is built.
   moved so that they ship before names. d12 adds two arguments: `<key-name>`, sent as the
   issuance's `name` (d9), and `--crew <crew>`, sent as its `crew` (d8) when given. Every CLI verb
   that creates a named row takes the name as a positional argument — `oml tenants create
-  <name>`, `oml tenants issue-admin <tenant> <key-name>`, `oml workareas create <parent> <name>`,
+  <name>`, `oml tenants issue-admin <tenant> <key-name>`, `oml workspaces create <parent> <name>`,
   `oml crews create <name>`, `oml keys issue <key-name>`, `oml keys rotate <key>
   <new-key-name>` — and `oml bootstrap claim <key-name>` follows them
   ([CLI](../cli/reference.md)). This amends ADR-0028 d1 by the two arguments and changes nothing
@@ -487,17 +487,17 @@ Everything this record decides is design; nothing below is built.
   crew, and keeps every other rule of [ADR-0028](ADR-0028-agent-key-issuance.md) d3, the key
   file's path among them. This amends ADR-0028 d3 by those two arguments.
 
-- **d15 — Admin keys read workarea structure in their tenant, by key role and without grants,
-  and never claim content.** An admin key reads, across its whole tenant, the workarea read
-  (`GET /v2/workareas/{workarea_id}`), the lookup by path (`GET /v2/workareas?path=`), the tree,
-  a node's workarea edges and its status read — names, ids, parents, paths, statuses, crew
-  records, children, workarea edges, review policy objects and pending transitions — beside the
+- **d15 — Admin keys read workspace structure in their tenant, by key role and without grants,
+  and never claim content.** An admin key reads, across its whole tenant, the workspace read
+  (`GET /v2/workspaces/{workspace_id}`), the lookup by path (`GET /v2/workspaces?path=`), the tree,
+  a node's workspace edges and its status read — names, ids, parents, paths, statuses, crew
+  records, children, workspace edges, review policy objects and pending transitions — beside the
   crew records, keys, grants and denials it already reads as structure. It reads them by its key
   role, like every admin verb, so no grant and no denial enters: denials attenuate grants, and an
   admin key can hold neither. A global denial on an admin key is refused, `request.validation`
   with `details.field: key_id`, so no denial is accepted, journalled and then ignored by every
   structure read, and one journalled before this record is lifted under d11's rule 5. On the
-  workarea read an admin key sees every child and every workarea
+  workspace read an admin key sees every child and every workspace
   edge of the node, `my_effective_verbs` empty (the field lists grant-role verbs) and its own
   permission epoch. It never reads claim content: recall, get, the scoped listing, the events
   tail, the lineage read, claim-edge reads, vocabulary reads and attachment fetch all need reader,
@@ -505,58 +505,58 @@ Everything this record decides is design; nothing below is built.
   `access.verb_ceiling` at step 1 of the refusal order. The rule is declared once, in the
   [permission matrix](../architecture/roles-and-keys.md#permission-matrix).
 
-    The verbs an admin already holds name workareas — issuance
+    The verbs an admin already holds name workspaces — issuance
     ([ADR-0028](ADR-0028-agent-key-issuance.md) d1), grants, denials, reassign, re-parent, a
-    workarea's crew — and the CLI that administers the tree runs under an admin context, yet every
-    read that finds a workarea's name or id needed reader effective access, so an admin could create
+    workspace's crew — and the CLI that administers the tree runs under an admin context, yet every
+    read that finds a workspace's name or id needed reader effective access, so an admin could create
     a node and never read it back. Structure is what an admin already decides, so reading it confers
     nothing over claims. The content ceiling of the two-key rule is unchanged: an admin key still
     carries no grant role, receives no serve, records no verdict and reads no claim's content, held
     or promoted, so "admin is never a reviewer" holds exactly as before, and R3 is untouched, since
     no structure read carries claim content or a claim count. This amends ADR-0010 d6 (admin's own
     verbs gain the structure reads, and an admin key takes no global denial) and ADR-0025 d1 and
-    d14 (workarea info needs reader effective access or the admin key role, and the workarea read
+    d14 (workspace info needs reader effective access or the admin key role, and the workspace read
     answers an admin key).
 
 ## Consequences
 
 **What callers see**
 
-- An agent configures `X-OML-Workarea: metals-crew`, an operator runs `oml keys revoke
+- An agent configures `X-OML-Workspace: metals-crew`, an operator runs `oml keys revoke
   claude-laptop`, and a plugin key is one command away: `eval "$(oml keys issue-agent
-  claude-laptop --principal claude/laptop --workarea metals-crew)"`.
+  claude-laptop --principal claude/laptop --workspace metals-crew)"`.
 - An unknown or unreadable name answers what its id would; a malformed one answers
   `request.validation`; only admins and operators, and the holder of a valid enrollment token at
   the bootstrap claim, ever see `name.taken`.
 - A row d11 named in the derived form is addressed by that name like any other; only creation
   refuses the form.
-- Paths are no longer accepted where an id or a name is; `GET /v2/workareas?path=` is the one
+- Paths are no longer accepted where an id or a name is; `GET /v2/workspaces?path=` is the one
   path lookup left.
 - An operator in Claude Code asks the `oml-admin` skill ([ADR-0028](ADR-0028-agent-key-issuance.md)
   d3) for a plugin key by name and gets two lines to run, neither carrying the value, which sits in
   a 0600 file.
-- `oml workareas tree` and `show` run under an admin context; recall under it still answers
+- `oml workspaces tree` and `show` run under an admin context; recall under it still answers
   `access.verb_ceiling`.
 
 **Surface and versioning**
 
 - New: the `name` error family with `name.taken`; the four crew operations; the `crew.created`,
-  `crew.updated` and `system.names_assigned` event types; `name` on workarea, crew, key and tenant
+  `crew.updated` and `system.names_assigned` event types; `name` on workspace, crew, key and tenant
   objects; `crew_id` on keys; `name` on the issuance, rotation and bootstrap-claim bodies; the
-  `crews` table and the `name` columns with their unique indexes. `workarea.create` and
-  `workarea.crew_updated` carry `crew_id` in place of the crew object, `key.rotated` gains
+  `crews` table and the `name` columns with their unique indexes. `workspace.create` and
+  `workspace.crew_updated` carry `crew_id` in place of the crew object, `key.rotated` gains
   `new_name`, and `key.denial_lifted` gains `reason_digest` (d11's rule 5). The OpenAPI document
   gives references `NameRef`, the reference grammar, and keeps `Name`, the creation grammar, for
   the creating fields (d2), and its `Id` refuses version 8 (d3).
 - The lake's `gold.areas` snapshot carries each node's `name` and `crew_id` in place of the three
-  crew columns it copied from workarea events; crew records stay in Postgres, and `crew.created`
+  crew columns it copied from workspace events; crew records stay in Postgres, and `crew.created`
   and `crew.updated` reach the lake only as `bronze.events` rows
   ([Delta tables](../data/delta-tables.md#goldareas)).
 - The crew record, its creation body, `crew.created` and the `crews` table are open shapes whose
   every field is optional but `name`, so a later record can add a crew kind and member profiles
   as new optional fields, columns and payload members — additive on `/v2` — without reshaping or
   renaming anything this record defines; this record decides neither.
-- `/v1` changes on the request side only: `X-OML-Workarea` and the listing's `workarea_id` accept
+- `/v1` changes on the request side only: `X-OML-Workspace` and the listing's `workspace_id` accept
   names, and a value that is neither an id (d3) nor a name, which 0.2.0-design answered
   `access.not_found`, now answers `request.validation`. That narrowing is permitted only because
   `/v1` is not frozen (#150). Example ids of the four kinds in the OpenAPI
@@ -565,24 +565,24 @@ Everything this record decides is design; nothing below is built.
   other example ids are untouched. `info.version` moves from `0.2.0-design` to `0.3.0-design`:
   ADR-0025's revision was published and tagged `spec-v0.2` at its acceptance, so a `/v1` change
   opens the next revision, tagged `spec-v0.3` when this record is accepted.
-- `mcp-tools.json` changes the descriptions of the unserved tools that take a workarea; the served
-  `oml_remember`, `oml_learn`, `oml_recall`, `oml_my_work`, `oml_workarea_info` and
+- `mcp-tools.json` changes the descriptions of the unserved tools that take a workspace; the served
+  `oml_remember`, `oml_learn`, `oml_recall`, `oml_my_work`, `oml_workspace_info` and
   `oml_events_tail` keep their entries until the code that serves names lands, and
   `_meta.pending_design` names what this record decides for them. The tool count is unchanged.
 
 **PoC behaviour that changes**
 
-- The PoC names its root `root` and accepts duplicate and ungrammatical workarea and tenant names
+- The PoC names its root `root` and accepts duplicate and ungrammatical workspace and tenant names
   (migrations/0001_init.sql:22-44); every one of them is named under d11, and new ones are refused.
-  Its `tenants.name` and `workareas.name` columns become `prior_name`, and a new `name` column
+  Its `tenants.name` and `workspaces.name` columns become `prior_name`, and a new `name` column
   takes their place, filled by `system.names_assigned`.
 - The PoC accepts a global denial on an admin key; d11's rule 5 lifts every such denial, and new
   ones are refused (d15).
-- The PoC's transport parses every workarea and key reference as a UUID — the
-  `X-OML-Workarea` header, the `{key_id}` path parameter and the body fields
+- The PoC's transport parses every workspace and key reference as a UUID — the
+  `X-OML-Workspace` header, the `{key_id}` path parameter and the body fields
   (crates/transports/oml-transport-http/src/lib.rs:585, 831-867, 962-971) — and its CLI accepts
   only UUIDs (crates/bins/oml-cli/src/main.rs:253-259); both classify under d3 instead.
-- The crew object stored on workareas (migrations/0004_grants.sql:54) becomes crew records.
+- The crew object stored on workspaces (migrations/0004_grants.sql:54) becomes crew records.
 
 **Costs that are not measured**
 
@@ -611,7 +611,7 @@ the PoC's single tenant; the independence axis's crew and manager comparisons.
 
 | Alternative | Why not |
 |---|---|
-| **d1 — Names unique among siblings only, paths as the key** | Two workareas in one tenant could share a name, so a bare name would need a path to mean anything, and a path changes on every re-parent. The maintainer fixed one flat namespace per kind. |
+| **d1 — Names unique among siblings only, paths as the key** | Two workspaces in one tenant could share a name, so a bare name would need a path to mean anything, and a path changes on every re-parent. The maintainer fixed one flat namespace per kind. |
 | **d1 — A rename verb, journalled** | A name that can change means a cached or quoted name can silently name another row after a later rename and re-creation. The maintainer fixed names as immutable. |
 | **d1 — Names on every kind, artifacts and serves included** | An artifact is addressed by the claim it belongs to (`claim_key` plus `version`) and a serve is single-use; neither is typed by a person, and naming them would add namespaces nobody asked for. |
 | **d1 — A reserved name for the provider tenant** | Every creation would have to refuse one more name, for a tenant that no verb addresses and no reference needs. |
@@ -626,25 +626,25 @@ the PoC's single tenant; the independence axis's crew and manager comparisons.
 | **d3 — Classify by trying the name first, then the id** | A value's meaning would depend on whether a row with that name exists, which is an existence oracle; d2 makes the classes disjoint so no lookup decides the class. |
 | **d3 — Admit every UUID version as an id** | A version-8 value would be an id that names no row, with an idempotency scope of its own, and a caller that computed a guessed name's unresolved value could send it as that id: a replay or an `idempotency.in_progress` would then say whether the name exists. No id is version 8, so refusing the version costs nothing. |
 | **d4 — Resolve names in the MCP facade or the CLI** | A second resolver that can drift from the server's, and a facade that says more than the ring (ADR-0014 d1). |
-| **d4 — Rename every `*_id` input to the kind's word (`workarea`, `key`)** | Every `/v1` client and every page changes for no behavioural gain, and a request field would stop matching the response field that carries its id. |
+| **d4 — Rename every `*_id` input to the kind's word (`workspace`, `key`)** | Every `/v1` client and every page changes for no behavioural gain, and a request field would stop matching the response field that carries its id. |
 | **d4 — Digest the request with names replaced by ids** | The digest would depend on what a lookup finds at each attempt instead of on the bytes sent, and every digest would carry a lookup; a client never needs to switch spelling inside one retry. |
-| **d4 — One fixed value, the nil id, for every unknown name** | Every unknown `X-OML-Workarea` would share one idempotency scope, and the nil scope of supersede and the lab records, while an existing name had its own; a replay or a digest mismatch would then tell a writer which guessed names exist. |
+| **d4 — One fixed value, the nil id, for every unknown name** | Every unknown `X-OML-Workspace` would share one idempotency scope, and the nil scope of supersede and the lab records, while an existing name had its own; a replay or a digest mismatch would then tell a writer which guessed names exist. |
 | **d4 — An unresolved value drawn at random per request** | Retries of one unknown name would land in different scopes, so a retry would replay for an existing name and never for an unknown one: the existence oracle the nil value has. |
 | **d4 — Add a name field to claim items and events** | The derived path's last segment already is the name, and a `/v1` response field would grow to carry what is served. |
 | **d5 — `request.validation` for a taken name** | It hides a state conflict that can never succeed on retry behind the code for a malformed request, and it would be a 400 where every other permanent-identifier collision is a 409. |
 | **d5 — `access.not_found` for a taken name, so no one learns it exists** | Only admins and operators create, and they see the whole namespace anyway; telling them "not found" when they create would be false. |
-| **d5 — A per-kind code (`workarea.name_taken`, `key.name_taken`, …)** | Four codes for one rule; `details.kind` names the kind. |
+| **d5 — A per-kind code (`workspace.name_taken`, `key.name_taken`, …)** | Four codes for one rule; `details.kind` names the kind. |
 | **d5 — Check the bootstrap claim's name before its token** | A caller with no valid token would learn which operator-key names are taken. |
 | **d5 — Let an operator issue an admin key to a tenant with no live admin key** | Once a tenant's admins were revoked, the operator's issuance would resolve the new key's name and crew in a namespace that is not empty, a probe of names the provider may not see (D6). |
-| **d6 — Name the root after its tenant** | Tenant names live in the deployment's namespace and workarea names in the tenant's, so a workarea named like the tenant would collide with the root; every path would start differently in every tenant. |
+| **d6 — Name the root after its tenant** | Tenant names live in the deployment's namespace and workspace names in the tenant's, so a workspace named like the tenant would collide with the root; every path would start differently in every tenant. |
 | **d6 — Keep the PoC's `root`** | `universe` is the design's word for the root (ADR-0018 d4) and the first segment of every path in the doc set. |
 | **d7 — Accept a path as a third form** | Redundant once the leaf is unique, stale after every re-parent, and a path is never an authority (ADR-0008 d3); keeping paths out of every reference keeps that literal. |
-| **d7 — Retire `GET /v2/workareas?path=`** | A client holding a derived path, from a log line or an export, still needs to find its node; the lookup costs nothing and confers nothing. |
-| **d8 — Keep the crew as workarea metadata** | The independence axis has nothing to compare: no relation says two workareas share a crew or that a key belongs to one. |
-| **d8 — A crew as a kind of workarea** | A crew is not a governed memory space; grants on it would be a second access mechanism (ADR-0008). |
-| **d8 — A key's crew derived from its grants** | A reviewer crew's keys hold grants on other crews' workareas, and a key with grants in two crews would have no single crew. |
-| **d8 — Create the crew inline on workarea create** | Two creation paths for one record, and two workareas creating "the same" crew would make two. |
-| **d8 — A crew tool on MCP, or crew reads for agents** | Crew records are governance, an admin verb (R1, ADR-0014 d2); an agent reads its workarea's crew in the workarea read and probes nothing else. |
+| **d7 — Retire `GET /v2/workspaces?path=`** | A client holding a derived path, from a log line or an export, still needs to find its node; the lookup costs nothing and confers nothing. |
+| **d8 — Keep the crew as workspace metadata** | The independence axis has nothing to compare: no relation says two workspaces share a crew or that a key belongs to one. |
+| **d8 — A crew as a kind of workspace** | A crew is not a governed memory space; grants on it would be a second access mechanism (ADR-0008). |
+| **d8 — A key's crew derived from its grants** | A reviewer crew's keys hold grants on other crews' workspaces, and a key with grants in two crews would have no single crew. |
+| **d8 — Create the crew inline on workspace create** | Two creation paths for one record, and two workspaces creating "the same" crew would make two. |
+| **d8 — A crew tool on MCP, or crew reads for agents** | Crew records are governance, an admin verb (R1, ADR-0014 d2); an agent reads its workspace's crew in the workspace read and probes nothing else. |
 | **d8 — A verb to move a key between crews** | A key's crew fixed for its life is the smaller contract; the axis compares crews as journalled at promotion either way, and a member who changes crews holds a new key. |
 | **d8 — Count a verdict from a key with no crew as independent** | An unestablished crew would pass a crew-inequality requirement by omission, which fails open. |
 | **d9 — The principal as the name** | A principal holds several keys by design (the two-key rule), so names would collide, and principals carry `/`. |
@@ -655,13 +655,13 @@ the PoC's single tenant; the independence axis's crew and manager comparisons.
 | **d11 — A set-once naming verb for rows without names** | A second creation path for names, and unnamed rows in the meantime, so "accepted everywhere an id is" would not hold. |
 | **d11 — Refuse to start until an operator supplies every name** | The upgrade would block on a manual step; a chosen name for a live key is one reissue away. |
 | **d11 — Derive legacy key names from principals or labels** | They collide (one principal, several keys) or fail d2 (`crew-procure/agent-7`). |
-| **d11 — One crew record per workarea with crew metadata** | Two workareas that recorded the same crew would get two records, which is the failure d8 exists to remove. |
+| **d11 — One crew record per workspace with crew metadata** | Two workspaces that recorded the same crew would get two records, which is the failure d8 exists to remove. |
 | **d11 — Constrain the PoC's name columns in place** | Their duplicate and ungrammatical values fail the domain and the unique index, and a column that is already filled cannot show which rows d11 has not named yet. |
 | **d11 — Fold a pre-names row with a NULL name, and keep the columns nullable** | The database would never again refuse an unnamed row; a re-fold that reads the chain's `system.names_assigned` first keeps `name` and `path` `NOT NULL`. |
 | **d11 — Honour a denial on an admin key journalled before names** | Structure reads take no grant and no denial (d15); an admin key's reach would depend on when its denial was journalled. |
 | **d12 — Leave `--crew` off `issue-agent`, issuing a key with a crew through `oml keys issue`** | `oml keys issue` prints the value, so an operator who needs a crew on a plugin key would give up the `--out` key file, or issue a key with no crew whose rows a crew-independence policy never promotes. |
 | **d12 — `oml bootstrap claim --name <key-name>`** | The one creating verb whose name is a flag, for no reason the ceremony gives. |
 | **d15 — A reader grant on the root for admin keys** | A reader grant confers recall, get and the events tail over the whole tenant: content, which the two-key rule keeps from admin keys, and the admissibility table admits no grant on an admin key at all. |
-| **d15 — Keep admin keys blind to structure** | Admins name workareas in every verb they hold, and could not look up the name or id of the workarea they grant, re-parent or reassign, nor run `oml workareas tree` under the context that administers the tree. |
+| **d15 — Keep admin keys blind to structure** | Admins name workspaces in every verb they hold, and could not look up the name or id of the workspace they grant, re-parent or reassign, nor run `oml workspaces tree` under the context that administers the tree. |
 | **d15 — A sixth, structure-reader role** | The role set is fixed at five (ADR-0018 d4), and the admin already decides the structure it would read. |
 | **d15 — Accept a global denial on an admin key and ignore it** | A journalled denial that masks nothing fails open: an admin who denies a subtree to another admin key would read the act as done. |

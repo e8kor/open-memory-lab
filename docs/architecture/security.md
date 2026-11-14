@@ -6,7 +6,7 @@ answers: "what the tenancy model isolates; who holds which key in the custody ma
 
 # Security and tenancy
 
-The attacker is a **hostile co-tenant**: a party with valid API keys on the same Postgres cluster and the same lead, `oml-server-lead`. See also [storage](storage.md) (signing chain), [roles and keys](roles-and-keys.md), [workareas](workareas.md), [admission](admission.md).
+The attacker is a **hostile co-tenant**: a party with valid API keys on the same Postgres cluster and the same lead, `oml-server-lead`. See also [storage](storage.md) (signing chain), [roles and keys](roles-and-keys.md), [workspaces](workspaces.md), [admission](admission.md).
 
 Nobody has penetration-tested, load-tested or measured these controls; they are stated by the code and its tests, not audited.
 
@@ -48,8 +48,8 @@ The lead and `oml-web` listen on plain HTTP; TLS terminates at the reverse proxy
 
 Approval changes visibility, not truth or safety: an approved memory can still carry a prompt injection or a malicious URL.
 
-- **Treat recalled content as data.** Delimit recalled bodies as untrusted in the agent's prompt, keep the served provenance (artifact id, author, workarea) beside them, and never auto-execute instructions found in a body.
-- **Steering rows get no stricter default review.** A steering row precedes every hit in its workarea's recalls, so it is the highest-leverage injection surface. It is held and reviewed under the workarea's policy; set a stricter policy where steering matters.
+- **Treat recalled content as data.** Delimit recalled bodies as untrusted in the agent's prompt, keep the served provenance (artifact id, author, workspace) beside them, and never auto-execute instructions found in a body.
+- **Steering rows get no stricter default review.** A steering row precedes every hit in its workspace's recalls, so it is the highest-leverage injection surface. It is held and reviewed under the workspace's policy; set a stricter policy where steering matters.
 
 ## Connections: the OAuth surface
 
@@ -57,7 +57,7 @@ A connection lets Claude's hosted apps reach `/mcp` through an OAuth client boun
 
 | Threat | Control | What remains |
 |---|---|---|
-| A connect code is entered first by someone else | Single use; 10 minutes, or up to 30 days when an admin mints one for a key confined to one workarea; one live code per key; `oml keys show` lists connections so an admin can end an unexpected one. | For its minutes the code is a bearer secret: its first enterer connects as the key, at `/mcp` only. The admin sees that a connection opened, not whose account. |
+| A connect code is entered first by someone else | Single use; 10 minutes, or up to 30 days when an admin mints one for a key confined to one workspace; one live code per key; `oml keys show` lists connections so an admin can end an unexpected one. | For its minutes the code is a bearer secret: its first enterer connects as the key, at `/mcp` only. The admin sees that a connection opened, not whose account. |
 | Consent phishing | The page names the client and redirect host and says to enter a code only on a page opened by the user. Authorization codes go only to `https://claude.ai/api/mcp/auth_callback`. | The page cannot tell which claude.ai account started the request; the warning works only if read. |
 | A co-tenant hands over a code for its own key | The confirmation names the tenant, using the name the operator set. | A person who does not read the tenant name connects into the other tenant. |
 | CSRF, clickjacking, injected content, open redirect | No cookie; same-origin check (`Origin: null` is `oauth.origin_refused`); `frame-ancestors 'none'`; exact-match redirect allowlist. | None known. |
@@ -104,6 +104,6 @@ Every client path crosses the reverse proxy and then the lead's API. A browser's
 5. Counts leak: a key sees tenant-wide journal positions for events it cannot read, a `claim_key` collision tells a writer a name is taken, and the lineage read names unreadable ancestors as redacted ids. Never content.
 6. A connect code is a bearer secret for its minutes, and the lead fetches client-chosen URLs.
 7. A key's rate, its own or its account's, is counted by each server process alone, so n processes admit up to n times the rate; a key with no rate of its own and no account quota is unlimited, and skewed load is untested ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) d4, d6).
-8. The widen hint reads word counts the lead holds in memory, per key and scope, for up to 300 seconds. An erasure or a demotion (both designed, not built), or a change to a workarea's status, mode or federation setting drops them at once. A promotion, a supersession or a retirement reaches them within those 300 seconds. They hold counts of hashed words of rows the key could read, never text ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md#the-widen-hint-as-built-2026-11-11)).
+8. The widen hint reads word counts the lead holds in memory, per key and scope, for up to 300 seconds. An erasure or a demotion (both designed, not built), or a change to a workspace's status, mode or federation setting drops them at once. A promotion, a supersession or a retirement reaches them within those 300 seconds. They hold counts of hashed words of rows the key could read, never text ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md#the-widen-hint-as-built-2026-11-11)).
 
 Design record: [ADR-0007](../adr/ADR-0007-tenancy-first-class.md), [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md), [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md).

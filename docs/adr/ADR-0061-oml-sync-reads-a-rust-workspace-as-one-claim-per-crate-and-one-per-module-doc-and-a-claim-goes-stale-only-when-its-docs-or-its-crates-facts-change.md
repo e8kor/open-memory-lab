@@ -2,7 +2,7 @@
 id: adr/ADR-0061-oml-sync-reads-a-rust-workspace-as-one-claim-per-crate-and-one-per-module-doc-and-a-claim-goes-stale-only-when-its-docs-or-its-crates-facts-change
 tier: engineering
 status: accepted · 2026-11-06
-answers: what the `rust` source adapter of `oml sync` extracts from a Cargo workspace and what it never reads; why manifests are parsed from committed bytes and not by `cargo metadata`; why a prefix lexer reads module docs and syn is a test oracle only; how the adapter port reads a set of files and stays pure; each claim's key, anchor, fragment, hasher and text; why a code edit, a new pub item or an external dependency leaves a claim fresh; why dependencies are claim text and not edges; how the adapter avoids retiring what it did not write; which workareas the operator's targets load into; who reviews crate and module claims; volume, cost and the dry run; which of the operator's targets ship in v0.5.8 and which in v0.6.1; the tests, doctor lines and rejected alternatives
+answers: what the `rust` source adapter of `oml sync` extracts from a Cargo workspace and what it never reads; why manifests are parsed from committed bytes and not by `cargo metadata`; why a prefix lexer reads module docs and syn is a test oracle only; how the adapter port reads a set of files and stays pure; each claim's key, anchor, fragment, hasher and text; why a code edit, a new pub item or an external dependency leaves a claim fresh; why dependencies are claim text and not edges; how the adapter avoids retiring what it did not write; which workspaces the operator's targets load into; who reviews crate and module claims; volume, cost and the dry run; which of the operator's targets ship in v0.5.8 and which in v0.6.1; the tests, doctor lines and rejected alternatives
 -->
 
 # ADR-0061 — `oml sync` reads a Rust workspace as one claim per crate and one per module doc, and a claim goes stale only when its docs or its crate's facts change
@@ -18,7 +18,7 @@ has a hasher of its own; d9: one crate claim holds the mechanical part and the p
 automated reviewer re-derives the whole claim or approves none of it); and, on its branch,
 ADR-0056 (d11: a `.rs` file's module doc is `text/markdown`, never a code snippet)
 
-**Depends on:** [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+**Depends on:** [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md)
 (anchors, `oml sync`, its diff and batches, planned for v0.5.8);
 [ADR-0055](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)
 (bulk review).
@@ -75,7 +75,7 @@ build took a narrower reading than the proposal.
 ## Decision
 
 - **d1 — The `rust` adapter reads a Cargo workspace's manifests and its source files' leading
-  `//!` docs at one commit, and nothing else.** `oml sync <source> --workarea <w> --adapter rust`
+  `//!` docs at one commit, and nothing else.** `oml sync <source> --workspace <w> --adapter rust`
   takes a directory whose tree at `--rev` holds one or more `Cargo.toml` files with a `[package]`
   table; it refuses a source with none, naming the rule. For each package under the source it reads
   the manifest and, for each file under that package's `src/` that is a crate root or a declared
@@ -235,7 +235,7 @@ build took a narrower reading than the proposal.
   each module-level `pub` item (`fn`, `struct`, `enum`, `trait`, `type`, `const`, `static`, `mod`,
   `macro`). It is a hasher and not a second anchor field because the anchor's grammar is closed and
   holds one hash (ADR-0057 d3), and a second field would ask every surface to carry, show and
-  compare it for one adapter. A workarea keeps one hasher: switching makes every claim `changed`,
+  compare it for one adapter. A workspace keeps one hasher: switching makes every claim `changed`,
   one review each, so it is chosen at the first load. It needs a lexer that walks item headers
   with brace matching, or syn (d3); both wait for the operator to ask, tracked as #160.
 
@@ -251,26 +251,26 @@ build took a narrower reading than the proposal.
   file it could not read.** *Amends ADR-0057 d8, and closes the PR #68 review's H3 and M1 for this
   adapter.* An adapter declares its key namespace (`adr-`, `doc/`, `rust/`). In the diff, a listed
   claim whose key is outside the running adapter's namespace is never `removed`, whatever its
-  anchor's path, so a `rust` run over `.` in a workarea that also holds `docs/adr` claims leaves
+  anchor's path, so a `rust` run over `.` in a workspace that also holds `docs/adr` claims leaves
   them alone, and so does a run whose adapter changed. A claim whose anchored file, or whose
   crate's manifest, was reported `unreadable`, `unsupported` or `undeclared` at this `rev` is
   reported with that state and not retired. A deleted file or a deleted crate is `removed` as
   before.
 
-- **d11 — The operator's four targets load into three workareas under one parent; the layout is
+- **d11 — The operator's four targets load into three workspaces under one parent; the layout is
   the operator's decision.** Two layouts, each a child of the user root `e8kor` (ADR-0044):
 
-    | Layout | Workareas | For | Against |
+    | Layout | Workspaces | For | Against |
     |---|---|---|---|
-    | **A. Three siblings** | `oml-design`, `oml-docs`, `oml-code` | ADR-0057 d14 already names `oml-design` there; no new name. | An agent that wants the project's decisions, docs and code knowledge reads three scopes, and ADR-0048 S4's multi-workarea scope, capped at four, is not built. |
-    | **B. One parent, three children** (recommended) | `<parent>` with `oml-design`, `oml-docs`, `oml-code` beneath it | A read at the parent covers its subtree, so one scope reaches all three. Each sync still diffs its own workarea and not its children (ADR-0057 d8), so the three never see each other's claims, and ADR-0057 d14's `oml-design-pr-<n>` children stay under `oml-design`. | One more workarea name, kept for good (ADR-0026 d10). |
+    | **A. Three siblings** | `oml-design`, `oml-docs`, `oml-code` | ADR-0057 d14 already names `oml-design` there; no new name. | An agent that wants the project's decisions, docs and code knowledge reads three scopes, and ADR-0048 S4's multi-workspace scope, capped at four, is not built. |
+    | **B. One parent, three children** (recommended) | `<parent>` with `oml-design`, `oml-docs`, `oml-code` beneath it | A read at the parent covers its subtree, so one scope reaches all three. Each sync still diffs its own workspace and not its children (ADR-0057 d8), so the three never see each other's claims, and ADR-0057 d14's `oml-design-pr-<n>` children stay under `oml-design`. | One more workspace name, kept for good (ADR-0026 d10). |
 
     **Recommended: B,** with the parent created before v0.5.8's first ADR load, since
-    `POST /v2/workareas/{workarea}/reparent` is designed and not built
+    `POST /v2/workspaces/{workspace}/reparent` is designed and not built
     ([HTTP API](../api/http-api.md)), so an `oml-design` created under `e8kor` cannot later be
     moved. The parent's name is the operator's: `oml` is tenant-unique and may already name the
-    crew workarea `root.crew.oml` on the live installation, so `oml-lab` or `oml-project` would
-    serve. Each target's sync key is a writer key on its own workarea, as ADR-0057 d14 issues
+    crew workspace `root.crew.oml` on the live installation, so `oml-lab` or `oml-project` would
+    serve. Each target's sync key is a writer key on its own workspace, as ADR-0057 d14 issues
     `e8kor-design-sync` for `oml-design`: `e8kor-docs-sync` and `e8kor-code-sync`, since a writer
     supersedes only its own tips.
 
@@ -296,7 +296,7 @@ build took a narrower reading than the proposal.
 
 - **d13 — Volume and cost: one run of 92 claims at the load, and about one review for every four
   commits that touch `crates/` afterwards.**
-    - **The load.** `oml sync crates --workarea oml-code --adapter rust` at `ad2daa3` plans 92
+    - **The load.** `oml sync crates --workspace oml-code --adapter rust` at `ad2daa3` plans 92
       `new` (9 crates, 83 modules) and states no edges, one run under ADR-0057 d9's cap of 200 and
       one bulk verdict request. The text is about 51,000 characters: 40,969 of module docs, 9,894
       of root docs, and the nine descriptions. 92 `POST /v1/memories` requests, each honouring
@@ -311,9 +311,9 @@ build took a narrower reading than the proposal.
     The dry run at `ad2daa3`, as it would print (lines elided):
 
     ```text
-    $ oml sync crates --workarea oml-code --adapter rust --dry-run
+    $ oml sync crates --workspace oml-code --adapter rust --dry-run
     source    github.com/e8kor/open-memory-lab @ ad2daa3e8dac  crates  adapter rust  hashers oml-crate/1, oml-rustdoc/1
-    workarea  oml-code  key e8kor-code-sync
+    workspace  oml-code  key e8kor-code-sync
     new       rust/crate/oml-app                   crates/oml-app/Cargo.toml
     new       rust/mod/oml_app::ports              crates/oml-app/src/ports.rs#L1-L6
     …
@@ -359,15 +359,15 @@ build took a narrower reading than the proposal.
   A file the adapter could not read or does not support (`unreadable`, `unsupported`) is printed
   by the run, listed in its `--json` document and fails it with exit 1; an `undeclared` or
   `generated` file is printed as `skipped` and does not. In each case the file's claims are kept,
-  never retired (d10). *Narrower than proposed:* a count of such claims in the default workarea,
-  and a line for a workarea holding claims of more than one adapter's namespace, are not built:
-  the server holds no record of a run's report, and d10 makes the mixed workarea safe. A pull
+  never retired (d10). *Narrower than proposed:* a count of such claims in the default workspace,
+  and a line for a workspace holding claims of more than one adapter's namespace, are not built:
+  the server holds no record of a run's report, and d10 makes the mixed workspace safe. A pull
   request's drafts mode (`--pr`) is refused with `--adapter rust`, since a crate claim names
   dependents that live in manifests the pull request did not change (d4).
 
 ## The operator's sync targets by release
 
-| Target | Adapter | Workarea (d11, B) | Ships in | Notes |
+| Target | Adapter | Workspace (d11, B) | Ships in | Notes |
 |---|---|---|---|---|
 | Decision records, `docs/adr` | `adr` | `oml-design` | v0.5.8 | ADR-0057 d14's load. |
 | Documents under `docs/` | `headings` | `oml-docs` | v0.5.8 | 121 files under `docs/` at `ad2daa3`, 49 of them in `docs/adr`. A `headings` run over `docs` would load the decision records a second time as sections, so the target is the 72 files outside `docs/adr`, about 1,005 sections with body text by a script's count, six runs of 200. v0.5.8 has no way to leave a subdirectory out of a source: the operator either runs one sync per subdirectory and per top-level file (17 sources), or v0.5.8 gains `--exclude <path>` (question 2). |
@@ -377,7 +377,7 @@ build took a narrower reading than the proposal.
 
 ## Questions for the operator
 
-1. **The workarea layout (d11).** B with a parent, or A with three siblings; and the parent's
+1. **The workspace layout (d11).** B with a parent, or A with three siblings; and the parent's
    name. Needed before v0.5.8's first ADR load creates `oml-design`.
 2. **The `docs` target's overlap with `docs/adr`.** `--exclude <path>` added to v0.5.8's
    `oml sync` (one repeatable flag, its use case UC-SM-04), or seventeen per-directory sources
@@ -417,9 +417,9 @@ build took a narrower reading than the proposal.
 | **syn in the shipped binary** | Compiled for every release target, refuses a file with syntax it does not know although its doc is fine, and reads every line of code to find a prefix the grammar fixes (d3). Kept as the test oracle. |
 | **`cargo metadata`** | Reads the working tree, may reach the network, needs `cargo` on the client (d2). |
 | **A `mod=<path>` fragment** | A fourth fragment form for the server to name, and it does not say which bytes the hash covers; the line span does (d5). |
-| **A second anchor field for the `pub` surface** | The anchor holds one hash by a closed grammar; a field every surface carries, for one adapter, against a hasher that a workarea opts into (d8). |
+| **A second anchor field for the `pub` surface** | The anchor holds one hash by a closed grammar; a field every surface carries, for one adapter, against a hasher that a workspace opts into (d8). |
 | **Stale on `pub` surface by default** | 208 reviews against 65 over the measured history, 143 of them showing an unchanged doc (d8). |
 | **External dependency names in the crate claim** | 17 crate-claim changes in 29 manifest edits against 6; they are derivable from the manifest, and ADR-0047 d1's skeleton names dependencies between components. |
 | **`depends_on` claim edges at the load** | A proposal and a ratification per edge, again on every supersession of either end, for a fact the text states and no use case traverses (d9). |
 | **A module claim for each crate root** | States the root doc twice, once in the crate claim; a change would cost two reviews. |
-| **Code into the same workarea as the documents** | Works only with d10's namespace guard, and every sync's listing then reads the others' claims; three workareas under one parent cost one name (d11). |
+| **Code into the same workspace as the documents** | Works only with d10's namespace guard, and every sync's listing then reads the others' claims; three workspaces under one parent cost one name (d11). |

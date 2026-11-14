@@ -16,7 +16,7 @@ answers: how the oml agent plugin starts every Claude Code session from what OML
 **A session starts knowing nothing.** The `oml` plugin gives an agent its tools
 ([agent plugin](../api/mcp-plugin.md)), and every one of them runs only when the model decides to
 call it. A new session, a resumed one, one after `/clear` and one after a compaction each begin
-without the workarea's steering, without the agent's own held submissions and without the
+without the workspace's steering, without the agent's own held submissions and without the
 memories the work needs, unless the model thinks to recall first. After a compaction the facts
 the summary carries are also not yet in OML, and nothing asks the model to record them.
 
@@ -64,9 +64,9 @@ accepts it.
   of d4.
 
     1. `GET /v1/memories?own=true&limit=10`: the key's ten newest submissions in every state,
-       across every workarea it wrote to, with no grant needed
+       across every workspace it wrote to, with no grant needed
        ([own](../architecture/roles-and-keys.md#own), [ADR-0025](ADR-0025-the-agent-only-memory-surface.md) d13).
-    2. `POST /v1/memories/recall` on the key's default workarea, which the request does not name,
+    2. `POST /v1/memories/recall` on the key's default workspace, which the request does not name,
        with `{"query": <d3>, "k": 10, "include_bodies": true, "include_own_held": true,
        "max_tokens": <budget>}`. The answer carries the applicable steering whatever the query,
        and the hits the query matches, own held rows among them (ADR-0025 d4, d8).
@@ -89,7 +89,7 @@ accepts it.
     and recall with `include_own_held` is the one that shows its held rows beside the promoted
     memory they would join; together they are the prototype's two reads, on the ring the CLI
     speaks. The cost is that steering past the budget is still injected whole, as the server
-    serves it: a workarea whose steering alone exceeds Claude Code's cap reaches Claude as a
+    serves it: a workspace whose steering alone exceeds Claude Code's cap reaches Claude as a
     preview.
 
 - **d3 — The recall's query is the words of the session's working directory name.** The hook
@@ -160,13 +160,13 @@ accepts it.
     dependency to change that.
 
 - **d6 — The output is one SessionStart hook document whose context names the server and
-  workarea, says how to record, then frames the entries below it as stored data: steering, the
+  workspace, says how to record, then frames the entries below it as stored data: steering, the
   agent's recent submissions and the matching memories.** On success the hook prints one line of JSON,
   `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"…"}}`, and nothing
   else. The context, in order:
 
     1. a header naming the server, by the scheme, host and port of `OML_URL` alone so that no
-       userinfo, path or query in it enters the context, and the workarea path;
+       userinfo, path or query in it enters the context, and the workspace path;
     2. one line on recording a durable fact or decision with `oml_remember`: one checkable claim,
        its source and date, a stable `claim_key`, an `idempotency_key`, never a secret;
     3. when the stdin `source` is `compact`, one more line: the conversation was just compacted,
@@ -184,13 +184,13 @@ accepts it.
     instructions. All four lead lines come first because neither claim keys nor steering count
     toward the budget (d2): a context past Claude Code's cap reaches Claude as its first 2,000
     characters, and those still carry the header, the request to record and the framing line. For the same
-    reason each claim key and the workarea path are printed in at most 120 characters, the last
+    reason each claim key and the workspace path are printed in at most 120 characters, the last
     one `…` when cut, after the key value in them is redacted (d4); the cost is that two keys that
     share their first 119 characters read alike, and `oml_my_work` lists them whole.
 
-    Neither request names the key's default workarea, so the header names the path of the newest
-    own submission that carries one, which is that workarea unless the submission named another;
-    with none, it says "this key's default workarea" and that `oml_workarea_info` names it. Every
+    Neither request names the key's default workspace, so the header names the path of the newest
+    own submission that carries one, which is that workspace unless the submission named another;
+    with none, it says "this key's default workspace" and that `oml_workspace_info` names it. Every
     entry is one line, its whitespace collapsed, so a stored body cannot forge a section header or
     the framing line; the cost is that a multi-line body, a list or a code block, reaches Claude
     flattened, its structure lost, and `oml_get` serves it whole. The verb takes `--json` like every
@@ -223,7 +223,7 @@ accepts it.
   settings a plugin ships, Claude Code applies only `agent` and `subagentStatusLine`
   ([plugins reference](https://code.claude.com/docs/en/plugins-reference), fetched 2026-10-31).
   The narrower rule names `mcp__plugin_oml_oml__oml_recall`, `__oml_get`, `__oml_my_work`,
-  `__oml_workarea_info` and `__oml_events_tail`: reads run without a question, and every write
+  `__oml_workspace_info` and `__oml_events_tail`: reads run without a question, and every write
   still asks. The broader rule allows every tool of the plugin's one server, the writes too.
 
     The context of d6 asks Claude to call `oml_remember`, so without a rule every call asks the
@@ -252,7 +252,7 @@ accepts it.
   reads, logged as reads of the agent's key once the read log is built
   ([retrieval](../architecture/retrieval.md#the-read-log)); a write-only key gets no session
   context; a directory name that names nothing the memories name recalls nothing but steering;
-  steering is injected whole whatever the budget; the header's workarea path is read off the
+  steering is injected whole whatever the budget; the header's workspace path is read off the
   newest own submission, not the key's default.
 - Unverified: the tests run the verb against the real lead in process, not inside Claude Code.
   `claude plugin validate` checks the hook file's shape; that Claude Code runs the command and
@@ -274,7 +274,7 @@ accepts it.
 | **d1 — A separate `oml-hook` binary** | A second artifact to build, ship and version beside the `oml` CLI, which the release already ships. |
 | **d1 — Read any value other than `off` as on** | A mistyped value would run the hook the user tried to turn off. |
 | **d2 — The listing without `own`** | It serves promoted tips in scope and never the key's held rows, which are what the agent most needs to see again. |
-| **d2 — A third request, `GET /v2/workareas/{workarea_id}`, for the default workarea's path** | Neither the listing nor the recall names the default workarea's id, so the hook has no id to send; an id-less self-view is an HTTP surface change for its own record. |
+| **d2 — A third request, `GET /v2/workspaces/{workspace_id}`, for the default workspace's path** | Neither the listing nor the recall names the default workspace's id, so the hook has no id to send; an id-less self-view is an HTTP surface change for its own record. |
 | **d2 — Clamp an out-of-range budget** | A mistyped budget would silently widen or narrow the context; a refusal names the variable. |
 | **d2 — Cut each body at 400 characters, as the prototype did** | It serves partial bodies, which the budget cut never does; the server's budget already bounds the hits. |
 | **d2 — Cut steering in the client to fit the budget** | Steering is never cut ([token budgets](../architecture/retrieval.md#token-budgets)): a standing instruction a budget can drop fails exactly when it is needed. |

@@ -1,6 +1,6 @@
 # Open Memory Lab
 
-> Open Memory Lab (OML) is shared memory for AI agents. What an agent writes is held where only its author can read it, scanned, and made readable only when an identity that did not write it approves it. Every write, verdict and key issuance is signed into a hash chain. The surface is one JSON HTTP API, an MCP server with three tools (oml_write, oml_read, oml_workarea) and the `oml` CLI. The current release is v0.7.3. Each page opens with YAML front matter (status, verified, answers).
+> Open Memory Lab (OML) is shared memory for AI agents. What an agent writes is held where only its author can read it, scanned, and made readable only when an identity that did not write it approves it. Every write, verdict and key issuance is signed into a hash chain. The surface is one JSON HTTP API, an MCP server with three tools (oml_write, oml_read, oml_workspace) and the `oml` CLI. The current release is v0.7.3. Each page opens with YAML front matter (status, verified, answers).
 
 - [Home](https://e8kor.github.io/open-memory-lab/): what Open Memory Lab is, which door to take, and the commands that reach a first recall
 
@@ -19,7 +19,7 @@
 
 - [Scenarios](https://e8kor.github.io/open-memory-lab/scenarios/): the experience OML aims for, frictionless in development and controlled toward production, and one flow per audience
 - [Individual users](https://e8kor.github.io/open-memory-lab/scenarios/individual/): one person with a root of their own: connect, capture, recall, approve their own agents' work, withdraw, keep personal knowledge apart
-- [Engineering teams](https://e8kor.github.io/open-memory-lab/scenarios/engineering-teams/): a shared development workarea, skills and guardrails as claims, tests, a release, production agents, admin fixes and rollback
+- [Engineering teams](https://e8kor.github.io/open-memory-lab/scenarios/engineering-teams/): a shared development workspace, skills and guardrails as claims, tests, a release, production agents, admin fixes and rollback
 - [Business-analyst teams](https://e8kor.github.io/open-memory-lab/scenarios/analyst-teams/): documents and vocabulary prepared on staging, reviewed, released, exported and imported to production
 - [Import and export](https://e8kor.github.io/open-memory-lab/scenarios/import-export/): what a bundle carries and never carries, how trust is re-established on the target, rollback, and what is built
 
@@ -28,9 +28,9 @@
 - [Guides](https://e8kor.github.io/open-memory-lab/guides/): which task guide to open
 - [Remember and recall](https://e8kor.github.io/open-memory-lab/use/remember-and-recall/): what an agent saves and finds with the three tools, how recall is scoped and budgeted, and how a memory is corrected, retired, linked or checked against what is already held
 - [Review held memories](https://e8kor.github.io/open-memory-lab/guides/reviewing/): how a person reviews held memories: getting and storing a reviewer key, taking the next held memory, reading it and its sources, what to check, approving and rejecting, supersessions and steering, and a worked session
-- [Organize memory in workareas](https://e8kor.github.io/open-memory-lab/use/workareas/): how memory is organized in workareas, what a person's own workarea and the shared universe are, how a workarea matures from development to validated, how an in-progress workarea serves unreviewed memories inside it, and what links and briefs do
+- [Organize memory in workspaces](https://e8kor.github.io/open-memory-lab/use/workspaces/): how memory is organized in workspaces, what a person's own workspace and the shared universe are, how a workspace matures from development to frozen, how an in-progress workspace serves unreviewed memories inside it, and what links and briefs do
 - [Capture chat memory](https://e8kor.github.io/open-memory-lab/use/chat-memory/): what chat memory captures, what it does not, how to switch it on and off, the three hooks it uses, and where captured facts go
-- [Sync docs and code](https://e8kor.github.io/open-memory-lab/use/sync/): how oml sync keeps a workarea in step with a repository's documents and code, reviewed in bulk
+- [Sync docs and code](https://e8kor.github.io/open-memory-lab/use/sync/): how oml sync keeps a workspace in step with a repository's documents and code, reviewed in bulk
 - [Give agents rules](https://e8kor.github.io/open-memory-lab/use/guardrails/): what a guardrail is, how a team gives its agents reviewed standing rules, how they load and are checked, and the limits of a rule an agent only reads
 - [Integrate a reviewer crew over HTTP](https://e8kor.github.io/open-memory-lab/api/reviewer-crews/): how a reviewer crew integrates over plain HTTP: the next, verdict loop for approve and reject, the refusals on a verdict, polling cadence, and the errors the loop meets
 - [Use the client SDKs](https://e8kor.github.io/open-memory-lab/engineering/sdks/): how to install and use the Python and TypeScript clients: package names, what the hand-written wrapper does (URL and key, idempotency, retries, pagination, errors), the seven verbs, and an example
@@ -38,7 +38,7 @@
 ## Operate
 
 - [Operate](https://e8kor.github.io/open-memory-lab/operations/): where an operator starts: administer, deploy, monitor, upgrade, back up, respond to alerts
-- [Administer a server](https://e8kor.github.io/open-memory-lab/guides/administering/): how an administrator runs an OML server with the oml CLI: the first hour (claim the server, create a workarea, issue an agent key and a reviewer key), where admin credentials live, workareas, crews, keys by role, denials, ending a connection, reading the journal, and the rules no admin key bypasses
+- [Administer a server](https://e8kor.github.io/open-memory-lab/guides/administering/): how an administrator runs an OML server with the oml CLI: the first hour (claim the server, create a workspace, issue an agent key and a reviewer key), where admin credentials live, workspaces, crews, keys by role, denials, ending a connection, reading the journal, and the rules no admin key bypasses
 - [Deploy](https://e8kor.github.io/open-memory-lab/operations/deployment/): how to deploy an OML server: the three ways to run it, what runs, how to claim the first admin key, how to put it behind a reverse proxy, and what to back up
 - [Install on Kubernetes](https://e8kor.github.io/open-memory-lab/guides/kubernetes/): how to install OML on Kubernetes with the release's Helm chart: prerequisites, the PostgreSQL role pair and its Secret, verifying the chart, a minimal values file, claiming the first admin key before any Ingress, oauth.issuer, upgrades, uninstall, and what the chart does not deploy
 - [Monitor](https://e8kor.github.io/open-memory-lab/operations/observability/): how to turn on, scrape and read an OML server's metrics, request log and traces, what oml doctor checks, and which alerts to set
@@ -73,11 +73,11 @@
 - [Is OML a fit](https://e8kor.github.io/open-memory-lab/product/is-oml-for-you/): who OML is for, what it gives and costs, when not to use it, and five scenarios that use only built verbs
 - [Producers and reviewers](https://e8kor.github.io/open-memory-lab/concepts/producers-and-reviewers/): which producer and reviewer pairs count, by class and scope, how R2 is checked, and Euler views of one key's reach
 - [Architecture views](https://e8kor.github.io/open-memory-lab/architecture/views/): the four views of what is built: context, deployment, the review gate and one key's serving
-- [Workarea lifecycle](https://e8kor.github.io/open-memory-lab/architecture/lifecycle/): development to release, where loose turns strict, key bindings, admin fixes, vertical and horizontal sharing, built and designed
+- [Workspace lifecycle](https://e8kor.github.io/open-memory-lab/architecture/lifecycle/): development to release, where loose turns strict, key bindings, admin fixes, vertical and horizontal sharing, built and designed
 - [What OML guarantees](https://e8kor.github.io/open-memory-lab/product/commitments/): every guarantee OML makes, what enforces it, the bounds on it, and what OML does not claim
 - [How a write is admitted](https://e8kor.github.io/open-memory-lab/architecture/admission/): how a write moves from capture through the scan, the hold and the review to a readable memory; what the scan vetoes and holds; who reviews; and what happens when no reviewer is available
 - [Architecture overview](https://e8kor.github.io/open-memory-lab/architecture/overview/): how OML fits together: the clients and what each starts from, the actors, the processes and stores, the code layout, how a write, a review, a read and a freeze move through them, and where each of the four rules is enforced
-- [How workareas grant access](https://e8kor.github.io/open-memory-lab/architecture/workareas/): how workareas grant access: the tree and its universe root, user roots, node-id grants, how effective access is computed, claim links and the brief, crew records, the status ladder, and in-progress workareas
+- [How workspaces grant access](https://e8kor.github.io/open-memory-lab/architecture/workspaces/): how workspaces grant access: the tree and its universe root, user roots, node-id grants, how effective access is computed, claim links and the brief, crew records, the status ladder, and in-progress workspaces
 - [Roles and keys](https://e8kor.github.io/open-memory-lab/architecture/roles-and-keys/): which verbs each of the five roles may perform; how a key is issued, scoped and denied; how the reviewer is kept from being the author; what a connector key, a connect code and a connection are, and why a connection is never more than its key
 - [Security](https://e8kor.github.io/open-memory-lab/architecture/security/): what the tenancy model isolates; who holds which key in the custody map; what the threat model defends against, hostile co-tenants included; what the connection and web surfaces add to the threat model and what they leave
 - [Storage](https://e8kor.github.io/open-memory-lab/architecture/storage/): where the transactional commit point is; how the per-tenant signed hash chain, the outbox and the derived lake fit together; why journal payloads carry digests and no body text; where held bodies live
