@@ -35,7 +35,7 @@ holds, how it is fed and what may read it back.
   (`crates/adapters/oml-lake/src/query.rs:33`, `:75`–`79`, `:108`).
 - `silver.claims` takes a version only when a `lifecycle.*` event names it, read from `memories`
   as it stands at drain time (`lib.rs:543`, `source.rs:300`); a version with no `promoted_at` is
-  dead-lettered (`lib.rs:572`), and a `self_signed` event is skipped (`lib.rs:548`).
+  dead-lettered (`lib.rs:572`), and a `self_signed` event is skipped (`lib.rs:548`) (a mark the build never sets; retired by ADR-0001 d5).
 - `gold.lineage` takes ratified edges and each materialized version's links;
   `telemetry.recall_daily` is counts only, replaced each refresh from the 30 days PostgreSQL keeps
   (`lib.rs:704`).
@@ -46,7 +46,7 @@ the lake KEK from an owner-only file (`crates/adapters/oml-lake/src/crypto.rs:1`
 `:281`). The wrapped keys live in PostgreSQL alone, in `artifact_keys` (migration 0031), keyed by
 `artifact_id`; erase nulls them there (`source.rs:521`).
 
-**What never reaches the lake.** Held bodies (ADR-0003 d3); self-signed promotions; and every
+**What never reaches the lake.** Held bodies (ADR-0003 d3); self-signed promotions (a mark the build never sets; retired by ADR-0001 d5); and every
 value a journal payload does not carry: memory bodies (`memories.claim`, stored plaintext,
 `crates/oml-app/src/app.rs:5438`), guardrail rules (the payload carries `rule_digest`,
 `app.rs:837`), API key hashes (absent from the `key.issued` payload, `app.rs:2552`, written by the
@@ -68,7 +68,7 @@ outbox sequence is behind the lake's frontier would have its next rows skipped.
 
 ### Why PostgreSQL cannot be rebuilt from today's lake
 
-1. No body of a held, rejected or self-signed version is in the lake.
+1. No body of a held, rejected or self-signed version (a mark the build never sets; retired by ADR-0001 d5) is in the lake.
 2. The wrapped data keys are in PostgreSQL alone, so no sealed body opens without it.
 3. The store's `MetadataFold` (`crates/oml-app/src/ports.rs:185`) is built by each use case from
    the request, and needs values the journal does not carry (above).
