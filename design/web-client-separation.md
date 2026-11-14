@@ -40,7 +40,7 @@ crates/
           keys.rs
           keys_inventory.rs
           memories.rs
-          workareas.rs
+          workspaces.rs
           review.rs
           guardrails.rs
           start.rs
@@ -215,7 +215,7 @@ All journal writes are API-side. `oml-web` does not write to the journal.
 
 /review
 +-------------------------------------------------------------+
-| Hold : 12 · oldest 3d · workarea tree with counts             |
+| Hold : 12 · oldest 3d · workspace tree with counts             |
 | Candidate row [approve] [reject] [replace reasoning]          |
 | nothing of held code is promoted unless policy admits          |
 +-------------------------------------------------------------+
@@ -232,7 +232,7 @@ still required for pages:
 1. list keys for a user,
 2. review held queue summary,
 3. grant a person's session key review or curation capacity (the `omls_` credentials themselves are derived from the session token, not issued by an operation),
-4. workarea offers,
+4. workspace offers,
 5. session end under the session credential,
 6. account export,
 7. deletion request,
@@ -281,7 +281,7 @@ API returns the same JSON as today, but with no page syntax
 
 5. **Pages move one at a time**
    - Start route with no state: the Guardrails view, now `/web/guardrails`.
-   - Then workareas, now `/web/workareas` and `/web/admin/workareas`, with the
+   - Then workspaces, now `/web/workspaces` and `/web/admin/workspaces`, with the
      first acts: the confirmed dropdown's transitions, ratifications and mode
      changes, each through its documented operation under the confirmation's
      idempotency key; the lead answers the old acts with a `303` to the view

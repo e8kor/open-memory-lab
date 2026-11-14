@@ -66,9 +66,9 @@ bind every writer, and it is the page a reviewer holds any other page against.
     | promoted | ratified and visible to readers in scope; enqueued for silver materialization | "approved", "published" |
     | demoted | taken off every read surface by a journalled act; bytes kept | "deleted", "hidden" |
     | erased | crypto-shredded: a journalled erase event plus DEK destruction, scoped by the erasure inventory | "deleted" |
-    | workarea | a governed node in a tenant's tree; grants bind to its node id | "workspace", "namespace", "folder" |
-    | universe | a tenant's root workarea: permanently committed, refuses direct claim writes | — |
-    | grant | a key's access to a workarea node, attenuated by its own deny entries | "permission", "scope" |
+    | workspace | a governed node in a tenant's tree; grants bind to its node id | "workarea" (former name, ADR-0091), "namespace", "folder" |
+    | universe | a tenant's root workspace: permanently protected, refuses direct claim writes | — |
+    | grant | a key's access to a workspace node, attenuated by its own deny entries | "permission", "scope" |
     | deny | a subtree mask inside one grant, or a global per-key deny object with deny-wins semantics | — |
     | serve | the server's act of putting one held item, with all its attachments, in front of one reviewer under a bound, expiring `serve_id` | — |
     | verdict | a reviewer's recorded decision on a served item | "review" for the decision itself |
@@ -81,7 +81,7 @@ bind every writer, and it is the page a reviewer holds any other page against.
     | frontier | the last outbox seq the lake has fully applied | — |
     | dead-letter | where an item leaves a queue by a journalled act, never a silent drop: a poison outbox row after its retry budget (lake side), or a held item at review expiry (admission side) | — |
     | evidence export | the signed bundle `oml audit export` produces | "regulator export" |
-    | roles | `reader`, `writer`, `dreamer`, `admin`, `operator` — exactly these words | synonyms, extra roles |
+    | roles | `reader`, `writer`, `reviewer`, `admin`, `operator` — exactly these words | synonyms, extra roles; "dreamer" (former name, ADR-0091) |
     | steering | a claim of kind `steering`: a promoted standing instruction returned ahead of hits, unranked, in every recall of its scope | "pinned", "priority memory" |
     | overlay tip | the audience-scoped served tip a promoted tainted supersession becomes; the default tip never moves | — |
     | fold | the derivation of state from the journal by replaying events in sequence — the metadata tables and the reconciler's expected state are folds | "projection", "materialized view" as the concept's name |

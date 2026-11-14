@@ -34,14 +34,14 @@ Two stances bind every decision below:
 - **On top of the provider floor.** Every vocabulary feature defaults off; with all of them off,
   OML is a full memory provider (own-held recall, get and supersede on MCP, token-budget recall). The
   features only ever extend that base: ordinary writes gain zero latency and zero new obligations
-  unless a workarea's policy opts in. A memory provider on steroids — the steroids are additive.
+  unless a workspace's policy opts in. A memory provider on steroids — the steroids are additive.
 
 ## Decision
 
-- **d1 — Terms are claims; vocabularies are workareas.** Three new artifact kinds — `term`,
+- **d1 — Terms are claims; vocabularies are workspaces.** Three new artifact kinds — `term`,
   `term_mapping`, `vocab_release` — join memory, derived_fact, steering and the reserved
-  `dataset_manifest`. A vocabulary is a dedicated workarea subtree
-  ([workareas](../architecture/workareas.md)); the term lifecycle rides the one admission
+  `dataset_manifest`. A vocabulary is a dedicated workspace subtree
+  ([workspaces](../architecture/workspaces.md)); the term lifecycle rides the one admission
   pipeline: pending is `held`, active is a promoted tip with `term_status: active`, deprecated is
   a promoted tip with `term_status: deprecated`. `term_status` is a **structural** clear
   payload/metadata field on term submissions, never body text, so the deprecation marker survives
@@ -49,11 +49,11 @@ Two stances bind every decision below:
   pipeline.
 
 - **d2 — Identifier discipline: CURIEs over a journalled, tenant-scoped prefix registry.**
-  `vocab_prefixes` (`tenant_id`, `prefix`, `workarea_id`, `registered_event_id`) with
+  `vocab_prefixes` (`tenant_id`, `prefix`, `workspace_id`, `registered_event_id`) with
   UNIQUE (`tenant_id`, `prefix`) and the standard RLS block — tenant-scoped, because a global
   unique would leak existence across tenants. The table is classified as a fold of the journal;
-  registration happens in the vocabulary-workarea creation act (`workarea.create`'s payload gains
-  an optional `prefix` field). Workarea creation is already admin-only, and that is the whole
+  registration happens in the vocabulary-workspace creation act (`workspace.create`'s payload gains
+  an optional `prefix` field). Workspace creation is already admin-only, and that is the whole
   prefix brake — no new issuer-ceiling-like mechanism. Because registering a prefix is
   irreversible in meaning, the CLI confirms permanence before the act — the preview-every-mass-act
   rule of [cli/reference.md](../cli/reference.md), extended there to irreversible single acts. A term's
@@ -84,12 +84,12 @@ Two stances bind every decision below:
   `replaced_by` is safe for automated rewiring; `consider` requires judgment.
 
 - **d4 — Releases are journalled pins, served as diffs — never copies.** Kind `vocab_release`:
-  the body carries the vocabulary workarea id, the pinned `seq` (≤ the release submission's own
+  the body carries the vocabulary workspace id, the pinned `seq` (≤ the release submission's own
   seq), and a Merkle root over the then-active term set — leaf = (`claim_key`, version,
   `term_status`, plaintext_digest), so the pin covers definition bytes, not just identity. The
   Merkle construction is #148's one specification, shared with
-  [ADR-0020](ADR-0020-dataset-onboarding.md). Trunk vocabulary lives at `committed`; releases
-  accumulate as claims; `validated` (frozen) is vocabulary retirement — a freeze, not a
+  [ADR-0020](ADR-0020-dataset-onboarding.md). Trunk vocabulary lives at `protected`; releases
+  accumulate as claims; `frozen` is vocabulary retirement — a freeze, not a
   revocation: terms stay resolvable forever, and nothing retro-invalidates past verdicts, because
   every scan verdict recorded the release id and `scanner_version` it was taken against (d8). At
   release ratification the `is_a` closure over ratified edges is **materialized** into a
@@ -116,14 +116,14 @@ Two stances bind every decision below:
 - **d6 — Mappings are SSSOM-shaped claims, never merges.** Kind `term_mapping`: subject CURIE,
   object CURIE, predicate ∈ {`exactMatch`, `closeMatch`, `broadMatch`, `narrowMatch`,
   `relatedMatch`}, justification ∈ {human-curated, lexical, logical}, note. Authority: this
-  **extends** the workarea-edge rule ([workareas](../architecture/workareas.md)) to term_mapping
+  **extends** the workspace-edge rule ([workspaces](../architecture/workspaces.md)) to term_mapping
   claim edges — an extension, not a reuse — because a ratified mapping becomes shared structure of
-  two vocabularies: ratification requires dreamer(review) on **both** endpoints' vocabularies and
+  two vocabularies: ratification requires reviewer(review) on **both** endpoints' vocabularies and
   ratifier ≠ proposer. Both terms persist; a mapping is revocable by supersession. Cross-tenant
   mappings are #151, future.
 
 - **d7 — AI-first, human-in-the-loop, placed by policy — and "human" is an attestation.** Any
-  writer key proposes (agent or human; provenance distinguishes); dreamer crews review at AI
+  writer key proposes (agent or human; provenance distinguishes); reviewer crews review at AI
   speed; the human loop is placed by `human_required_classes`. The mechanism: `vocab_release`
   routes natively (classification by kind); the two body-field classes route through the vocab
   scanner's deterministic finding classes — `vocab.deprecation_replaced_by`,
@@ -132,7 +132,7 @@ Two stances bind every decision below:
   strong as the scanner being configured; scanner selection is journalled
   ([ADR-0019](ADR-0019-hexagonal-architecture-and-plugins.md) d4), so an auditor can always answer
   "was the human gate active" — auditable, not unmissable. A **human verdict rests on a
-  journalled, issuance-time attestation**: a key/principal attribute `held_by: human`, attested by
+  journalled, issuance-time attestation**: a key/principal attribute `used_by: person`, attested by
   the issuing admin and shown in evidence exports; `human_required_classes` is satisfied only by
   verdicts from keys carrying it. The honesty boundary rides in the same breath: the server
   verifies the attestation, never the humanness
@@ -159,10 +159,10 @@ Two stances bind every decision below:
 - **d8 — Validation is a scanner plugin; typing is annotation; determinism is pinned.** Claims
   gain an optional `terms: [CURIE, …]` field — clear, non-erasable annotation metadata: it enters
   `signed_bytes`, semantically labels even erased claims, and is listed in the erasure inventory's
-  attribution row. Workarea policy gains `vocabulary_policy {vocabulary, release, enforcement:
+  attribution row. Workspace policy gains `vocabulary_policy {vocabulary, release, enforcement:
   require | annotate | off}` — **default off** ([admission](../architecture/admission.md)). Grant
-  shape is ordinary: a vocabulary workarea grants writer to the crews it serves, through the same
-  grant mechanics as any workarea — no vocabulary-specific grant kind. The vocab scanner checks
+  shape is ordinary: a vocabulary workspace grants writer to the crews it serves, through the same
+  grant mechanics as any workspace — no vocabulary-specific grant kind. The vocab scanner checks
   that cited CURIEs exist and are active against the **pinned release**, whose id the scan verdict
   records alongside `scanner_version`; `enforcement: require` is refused without a pinned release
   — trunk-current checking is annotate-only, recorded as the fold at submission seq. The two modes
@@ -177,8 +177,8 @@ Two stances bind every decision below:
   `terms` field under no `vocabulary_policy`).
 
 - **d9 — A thin read surface, on top of the provider floor.** Four read-only endpoint groups —
-  `GET /v2/vocab/suggest?q&workarea_id` (deterministic prefix+label typeahead over granted
-  vocabulary workareas); `GET /v2/vocab/terms/{curie}`, returning `term_status` and successor
+  `GET /v2/vocab/suggest?q&workspace_id` (deterministic prefix+label typeahead over granted
+  vocabulary workspaces); `GET /v2/vocab/terms/{curie}`, returning `term_status` and successor
   pointers so a client holding a deprecated CURIE self-heals without a second lookup;
   `GET /v2/vocab/terms/{curie}/hierarchy?direction=parents|children|ancestors|descendants`
   (lookups over d4's per-release closure table); `GET /v2/vocab/mappings?term=` — all
@@ -191,7 +191,7 @@ Two stances bind every decision below:
   release pinned by the vocabulary that owns the expanded prefix; steering order, `k` and
   `max_tokens` (#106) are untouched — expansion widens a filter before retrieval, never reorders
   results. Term, term_mapping and vocab_release rows are **excluded** from the shared FTS and
-  vector indexes by default (a vocabulary workarea's policy may opt in, mirroring ADR-0020 d11);
+  vector indexes by default (a vocabulary workspace's policy may opt in, mirroring ADR-0020 d11);
   `RecallRequest.kinds` already excludes them — kept deliberate and stated.
 
 - **d10 — What this is not.** No annotation or NER service: `suggest` is deterministic matching,
@@ -203,15 +203,15 @@ Two stances bind every decision below:
   import profile is #148. Cross-tenant vocabularies:
   #151.
 
-- **d11 — Curation economics are structural.** A vocabulary workarea requires a named curator
-  crew at creation. `oml doctor` flags a vocabulary with no active dreamer grant — the orphaned
+- **d11 — Curation economics are structural.** A vocabulary workspace requires a named curator
+  crew at creation. `oml doctor` flags a vocabulary with no active reviewer grant — the orphaned
   vocabulary is the junk-drawer failure mode, surfaced, and the flag names "propose freeze" as the
-  next action. Doctor also warns on review availability: a workarea whose policy names
-  `human_required_classes` with no attested-human dreamer key in scope is flagged before the queue
+  next action. Doctor also warns on review availability: a workspace whose policy names
+  `human_required_classes` with no attested-human reviewer key in scope is flagged before the queue
   silently fills. Vocabulary review load lands on #98's measured
   throughput. Proposal floods are bounded by what already exists, not by a new mechanism:
   journalled rate and quota grant attributes, `held_item_expiry`, and queue depth in `oml status`
-  and `oml doctor`. And simulations cannot mint vocabulary: vocabulary workareas refuse
+  and `oml doctor`. And simulations cannot mint vocabulary: vocabulary workspaces refuse
   `provenance=simulation` submissions of kind term/term_mapping/vocab_release (a deterministic
   scan-class veto) — otherwise a demoted simulation row would squat a permanent CURIE forever.
 
@@ -230,7 +230,7 @@ Two stances bind every decision below:
   `memories.terms text[]`; the structural `term_status` payload field; the per-release closure
   table; kinds enums gain `term`, `term_mapping`, `vocab_release` at every enumeration site
   (OpenAPI enums ×4 with `RecallRequest.kinds` deliberately unextended, MCP `oml_remember` kinds, schema comment, silver comment —
-  [postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)). Events: `workarea.create` payload gains
+  [postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)). Events: `workspace.create` payload gains
   `prefix`; submission kinds extend; **no new event families**
   ([event catalog](../data/event-catalog.md)). Errors: a new `vocab` family —
   `vocab.cycle_refused` (409), `vocab.prefix_conflict` (409), `vocab.unknown_curie` (422),

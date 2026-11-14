@@ -31,7 +31,7 @@ tool integrations, and they never show the repository address. Those belong in t
   agents learn, with the capabilities your work needs built on top.
 - **The foundation (the star):**
   - A complete memory store your agents can depend on, with a promise not to break it.
-  - Workareas organised the way your teams are, with an artifact store for their files.
+  - Workspaces organised the way your teams are, with an artifact store for their files.
   - Recall within a budget, with standing instructions always served first.
 - **The capabilities (in orbit):**
   - Shared vocabularies, so crews mean the same thing by the same word.

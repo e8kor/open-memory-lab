@@ -24,7 +24,7 @@ step 1), ADR-0057 (d6's public-server clause, d17's public-server doctor line)
 `https://memory.doublegate.io`, the server the maintainer runs, the default of every integration a
 release ships: the Claude Code plugin's `url` option, the hooks reading a plugin configured with
 its key alone, `oml setup claude-code` given a key and no URL, every agent kit configuration, and
-the web pages' setup text. [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+the web pages' setup text. [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md)
 d6 then keyed `oml sync`'s consent to the same host.
 
 On 2026-11-11 the operator decided that the open-source repository ships **no default server URL**,
@@ -75,7 +75,7 @@ an option with no default and no saved value reaches neither. Decided, not built
     Claude Code's configuration dialog does not accept an empty value for a required option
     ([plugin manifest reference](https://code.claude.com/docs/en/plugins-reference), "User
     configuration", as ADR-0043 quotes it, fetched 2026-11-04), so the dialog is where the plugin
-    asks. `api_key` and `chat_workarea` are unchanged; `.mcp.json` is unchanged.
+    asks. `api_key` and `chat_workspace` are unchanged; `.mcp.json` is unchanged.
 
 - **d3 — A plugin configured with its key alone is a plugin not configured, in every hook
   (replaces ADR-0043 d3, restores ADR-0040 d3 step 1).** When `CLAUDE_PLUGIN_OPTION_API_KEY` is

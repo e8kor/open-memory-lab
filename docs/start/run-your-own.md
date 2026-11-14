@@ -29,7 +29,7 @@ In order, it:
    the browser and the CLI see one address;
 3. reads the enrollment token from the server's log and claims the server, storing the admin
    pair in `oml/credentials`, not in the user's own credentials file;
-4. creates the workarea `crew` and issues an agent key into `oml/keys/agent` and a reviewer key
+4. creates the workspace `crew` and issues an agent key into `oml/keys/agent` and a reviewer key
    into `oml/keys/reviewer`, both owner-only;
 5. saves a memory as the agent, approves it as the reviewer and finds it as the agent, and names
    the step that failed if one does;

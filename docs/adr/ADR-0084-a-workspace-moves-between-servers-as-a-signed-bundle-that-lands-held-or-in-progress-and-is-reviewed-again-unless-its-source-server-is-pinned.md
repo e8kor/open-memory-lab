@@ -1,11 +1,11 @@
 <!--
-id: adr/ADR-0084-a-workarea-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned
+id: adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned
 tier: engineering
 status: accepted design · 2026-11-14
-answers: what a workarea export carries and what it never carries; the bundle's fixed layout, signature, encryption and hard limits, each with its refusal code; how authors and reviewers who do not exist on the target are represented; where an import lands and why every imported version is held; how a repeated import adds only what is new and refuses an older bundle; what happens when a name or claim key exists on the target; who may export under which tenant policy and who may import; how plaintext is staged; how import and export keep R4, and why an erasure marker reveals nothing; the flow for a new shared target; the same-server copy; which verbs, commands, events, doctor lines and meters it adds; and how it relates to oml-backup and to a tenant move
+answers: what a workspace export carries and what it never carries; the bundle's fixed layout, signature, encryption and hard limits, each with its refusal code; how authors and reviewers who do not exist on the target are represented; where an import lands and why every imported version is held; how a repeated import adds only what is new and refuses an older bundle; what happens when a name or claim key exists on the target; who may export under which tenant policy and who may import; how plaintext is staged; how import and export keep R4, and why an erasure marker reveals nothing; the flow for a new shared target; the same-server copy; which verbs, commands, events, doctor lines and meters it adds; and how it relates to oml-backup and to a tenant move
 -->
 
-# ADR-0084 — A workarea moves between servers as a signed bundle that lands held or in progress and is reviewed again
+# ADR-0084 — A workspace moves between servers as a signed bundle that lands held or in progress and is reviewed again
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its four questions decided at their
 recommendations and every other default as drafted · proposed the same day · the "unless its source server is
@@ -22,21 +22,21 @@ column's class under ADR-0090 d4.
 **Amends:** ADR-0071 (d2: an `exports` meter), ADR-0005 (the erasure inventory gains the class
 "import staging", d11), ADR-0063 (d1: `origin` is kept verbatim and an imported version gains a separate
 `import_provenance`), ADR-0055 (d2: the review list shows a held imported version's source verdict
-as evidence), ADR-0030 (d1: an import is a write into an in-progress workarea and adds no reader
+as evidence), ADR-0030 (d1: an import is a write into an in-progress workspace and adds no reader
 of held rows)
 
 ## Context
 
-On 2026-11-14 the operator asked for a development lifecycle in which a workarea is developed,
+On 2026-11-14 the operator asked for a development lifecycle in which a workspace is developed,
 tested, verified and then promoted to production. "Promoted to production" means two things: the
 same-server path, and a move between servers (staging to production, and sharing between
 tenants). The
-[workarea lifecycle review](https://github.com/e8kor/open-memory-lab/blob/main/design/workarea-lifecycle.md)
+[workspace lifecycle review](https://github.com/e8kor/open-memory-lab/blob/main/design/workspace-lifecycle.md)
 walks the whole cycle. ADR-0085 decides releases and binding, which carry the same-server path,
-including team delivery through a shared development workarea and its releases. This record decides
+including team delivery through a shared development workspace and its releases. This record decides
 the move.
 
-Nothing moves a workarea today. The person export `GET /v2/web/export`
+Nothing moves a workspace today. The person export `GET /v2/web/export`
 (`crates/oml-app/src/app/signup.rs:678`) is an unsigned JSON dump of a person's root, and nothing
 imports it. `oml-backup`, in the operator's private repository, is a whole-database dump that
 restores only into an empty cluster. A restore rewinds the chain and can bring back erased content
@@ -46,10 +46,10 @@ The forces, from [ADR-0001](ADR-0001-the-constitution.md):
 
 - **R1:** an import that served content would be a promotion, so an import promotes nothing. An
   admin key reads claim text one journalled read at a time, with a reason
-  ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)
+  ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)
   d10); a bundle is bulk egress, not a read.
 - **R2:** the source's reviewers are keys the target cannot see.
-- **R3:** a held row leaves no in-progress workarea, and a bundle is a way out.
+- **R3:** a held row leaves no in-progress workspace, and a bundle is a way out.
 - **R4:** import and export delete nothing, and a copy is beyond the reach of a source erasure
   ([ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) d2).
 
@@ -67,10 +67,10 @@ Decided, not built.
   allowed:
 
   ```text
-  manifest.json            format, source server id, source tenant id and name, workarea paths,
+  manifest.json            format, source server id, source tenant id and name, workspace paths,
                            mode, release or since cursor, export instant, count and SHA-256 per
                            file, signature
-  workareas.jsonl          one line per exported workarea: name, path, status, parent
+  workspaces.jsonl          one line per exported workspace: name, path, status, parent
   versions.jsonl           one line per claim version (d2, d3)
   verdicts.jsonl           one line per verdict on an exported version (d4)
   events.jsonl             each exported version's and verdict's source journal event, as signed
@@ -82,7 +82,7 @@ Decided, not built.
   an unknown format version as `bundle.format_unknown`.
 
 - **d2 — `release` mode, the default outside a user root, carries one published release; `history`
-  mode, the default in a user root, carries one workarea's record.**
+  mode, the default in a user root, carries one workspace's record.**
   - **`release` mode** exports exactly the manifest of a release (ADR-0085 d1): the promoted
     versions with their lineage ids, without the superseded versions themselves.
   - **`history` mode**, for other people's claims, carries every version that was ever promoted,
@@ -91,13 +91,13 @@ Decided, not built.
     rejected and demoted versions never leave the server.
   - Simulation rows keep their mark (ADR-0011 d8).
   - An erased version is carried as a marker, under d13.
-  - `history` is for moving or archiving one workarea's record. It is not a backup (d16).
+  - `history` is for moving or archiving one workspace's record. It is not a backup (d16).
   - **In a user root, `history` is the default** (the operator, 2026-11-14: "History by
     default"). A user root never leaves development and has no release (ADR-0085 d4, d17), so an
     export whose subtree lies in a user root takes `history` mode without a flag. Asking for
     `release` mode there is refused `request.validation`, `details.field: mode`,
     `details.reason: user_root`, and so is `--since` (d8), which compares two releases:
-    `details.field: since`, `details.reason: user_root`. A shared workarea keeps `release` as its
+    `details.field: since`, `details.reason: user_root`. A shared workspace keeps `release` as its
     default.
 
 - **d3 — Claims of every kind ride as versions; grants, keys, crews and settings never do.**
@@ -110,18 +110,18 @@ Decided, not built.
 
 - **d4 — Authors and reviewers travel as provenance under per-bundle pseudonyms; the importer is
   the author on the target.**
-  - Each version and verdict carries the source key's `held_by`, `same_user` and
+  - Each version and verdict carries the source key's `used_by`, `same_user` and
     `approved_at`, plus a pseudonym: HMAC-SHA-256 of the source key id under a salt drawn fresh for
     each bundle and never exported. Inside one bundle an author is recognisable as one author;
     across bundles, never. A reader never learns who the reviewer was
     ([ADR-0077](ADR-0077-a-served-memory-says-when-it-was-approved-and-by-what-kind-of-reviewer-and-never-names-the-reviewer.md) d2).
   - On the target, every imported version is a new write by the importing key. Its `origin` is the
     source's, verbatim. A separate `import_provenance` object holds the source server id, tenant
-    id, workarea, artifact id, version, digest and pseudonyms. This amends ADR-0063 d1, which had
+    id, workspace, artifact id, version, digest and pseudonyms. This amends ADR-0063 d1, which had
     no place for it.
   - R2 on the target is checked against the importer.
   - The honest limit, in the manner of ADR-0001 d6: a person who wrote a version on the source and
-    holds a dreamer key on the target is not recognisable there, and could approve their own work.
+    holds a reviewer key on the target is not recognisable there, and could approve their own work.
     So a reviewer approving an imported version attests "I did not author this on the source",
     journalled with the verdict (`attests_not_source_author: true`); an opt-in link of a person
     across servers is later work (the operator, 2026-11-14).
@@ -136,14 +136,14 @@ Decided, not built.
   - **Authenticity.** An import may name `--expect-key <fingerprint>`, the source key's
     fingerprint obtained out of band; a manifest signed by another key is refused
     `bundle.signature_unexpected`. Without it, the signature proves integrity only and
-    authenticates nothing until ADR-0088; the plan and the `workarea.imported` event say which.
+    authenticates nothing until ADR-0088; the plan and the `workspace.imported` event say which.
   - Export requires at least one age recipient and writes the tar encrypted to it; without one the
     export is refused as `bundle.unencrypted`. The server never holds a recipient's identity; the
     CLI decrypts on the importer's machine.
 
-- **d6 — An import lands in an in-progress workarea, and every imported version is held.**
-  - The target is a `development` workarea in progress, or a new name the import creates in
-    progress where the importer may create workareas (ADR-0044 d6). Any other target is refused as
+- **d6 — An import lands in an in-progress workspace, and every imported version is held.**
+  - The target is a `development` workspace in progress, or a new name the import creates in
+    progress where the importer may create workspaces (ADR-0044 d6). Any other target is refused as
     `import.target_not_in_progress`.
   - Each version is written held by the importing key. The `tip` keys connected there read it
     marked unreviewed (ADR-0030 d3), and the target's tests and impact report run against it
@@ -182,15 +182,15 @@ Decided, not built.
   - The size and file-count limits are set at the build from measurement. Until then they follow
     the target's quota.
 
-- **d8 — A re-import adds only what is new, ledgered per target workarea; an older bundle is
+- **d8 — A re-import adds only what is new, ledgered per target workspace; an older bundle is
   refused.**
   - The idempotency key of an imported version is
-    `import:<target workarea id>:<source server id>:<source tenant id>:<artifact id>:<version>`.
-    Importing one bundle into two target workareas makes two copies, by intent; importing it twice
+    `import:<target workspace id>:<source server id>:<source tenant id>:<artifact id>:<version>`.
+    Importing one bundle into two target workspaces makes two copies, by intent; importing it twice
     into one target makes none.
-  - A ledger per target workarea and source keeps the newest export instant and release imported.
+  - A ledger per target workspace and source keeps the newest export instant and release imported.
     A bundle older than the ledger is refused as `import.bundle_older` unless `--allow-older` is
-    given; an import that used it carries `allow_older: true` on `workarea.imported`, and the
+    given; an import that used it carries `allow_older: true` on `workspace.imported`, and the
     doctor lists such imports.
   - **`since <label>`** exports the signed difference between that release's manifest and the
     exported release's: the versions added or changed and the claim keys dropped, with both
@@ -208,33 +208,33 @@ Decided, not built.
 
 - **d9 — A name that exists is never reused or overwritten.**
   - A new target name that is taken answers `name.taken` (ADR-0026 d5).
-  - Importing into an existing in-progress workarea is a merge under d8.
+  - Importing into an existing in-progress workspace is a merge under d8.
   - The source's names are provenance and need not match.
   - A skill name or document key that would shadow, or be shadowed, in the target's chains is
     reported in the plan (ADR-0080 d5).
 
 - **d10 — A person's key exports, under a tenant export policy; no agent, admin or service key
   exports.**
-  - The exporter is a key held by a human with reader on every node of the subtree. A node it
+  - The exporter is a key used by a person with reader on every node of the subtree. A node it
     cannot read refuses the whole export as `export.not_readable`.
   - The tenant policy `export` takes one of three values:
     - `off`;
     - `own_root`, the default: a person exports only inside their own root, in `history` mode
       (d2);
-    - `allowed`: shared workarea subtrees too.
-  - Under `own_root`, an admin may allow one shared workarea's export as a policy act,
-    `export.allowance_set {workarea, until?}`, journalled. It is a policy change, not a fix
+    - `allowed`: shared workspace subtrees too.
+  - Under `own_root`, an admin may allow one shared workspace's export as a policy act,
+    `export.allowance_set {workspace, until?}`, journalled. It is a policy change, not a fix
     (ADR-0089), and it reads no content.
   - An admin key sets the policy; that changes what may leave and reads no content. An admin key
     never exports: its reads of claim text are single, reasoned and journalled (ADR-0089 d10), and a
     bundle is the whole subtree's text leaving the server, which no fix needs.
-  - An export changes nothing on the source. It is journalled as `workarea.exported` with the
+  - An export changes nothing on the source. It is journalled as `workspace.exported` with the
     manifest digest, mode, counts and recipients' fingerprints, and counted in bytes on a new
     `exports` meter.
 
 - **d11 — A person's writer key imports; the target's scan runs on every version; plaintext is
   staged encrypted.**
-  - The importer is a key held by a human with writer on the target.
+  - The importer is a key used by a person with writer on the target.
   - Each version passes the target's scan rule set (ADR-0074), which may be newer than the
     source's. A refusal skips that version and names it in the outcome; a hold keeps it
     author-only (ADR-0074 d20).
@@ -243,7 +243,7 @@ Decided, not built.
     when the import ends or is abandoned, and the doctor names staging older than a day.
   - Writes go in batches, each its own transaction under the chain lock with its meters. An
     interrupted import resumes from its ledger, because d8 makes every write idempotent.
-  - The import is journalled as `workarea.imported` with the source manifest digest and the
+  - The import is journalled as `workspace.imported` with the source manifest digest and the
     outcome counts, and the server records every version the import wrote, so that the import can
     be rolled back.
   - **Rollback.** Developers roll an import back by rejecting its held versions and, for what has
@@ -256,7 +256,7 @@ Decided, not built.
 
 - **d12 — A new shared target is three actors' work.**
   1. An admin creates `payments.dev` and grants the team.
-  2. A person marks it in progress with their dreamer key (ADR-0030 d1), then imports with their
+  2. A person marks it in progress with their reviewer key (ADR-0030 d1), then imports with their
      writer key and so becomes the author of every imported version.
   3. A second person reviews the imported versions (R2). With the first person as proposer, the
      second publishes a release (ADR-0085 d4).
@@ -279,33 +279,33 @@ Decided, not built.
 
 - **d14 — The same-server copy is an import streamed from a release, or from history out of a
   personal root.**
-  `oml workareas import --from <workarea>@<label> --into <path>` reads the release manifest as a
-  stream into an in-progress workarea, with no encryption and no staging. From a personal root, or
+  `oml workspaces import --from <workspace>@<label> --into <path>` reads the release manifest as a
+  stream into an in-progress workspace, with no encryption and no staging. From a personal root, or
   part of it, which has no release (ADR-0085 d4, d17), the copy is one step too (the operator,
-  2026-11-14: "Yes, from history"): `oml workareas import --from <workarea> --into <path>` streams
+  2026-11-14: "Yes, from history"): `oml workspaces import --from <workspace> --into <path>` streams
   the subtree's approved versions from its history and lands them held in the target, where they
-  are reviewed again under the same rules as any import. Shared workareas keep streaming from a
+  are reviewed again under the same rules as any import. Shared workspaces keep streaming from a
   release. It keeps `derives_from`
   to each source version, since both are on one journal, so R2's lineage closure excludes the
-  source's authors from reviewing the copy. There is no return path into a committed workarea: team
-  work is delivered through a shared development workarea's releases (ADR-0085).
+  source's authors from reviewing the copy. There is no return path into a protected workspace: team
+  work is delivered through a shared development workspace's releases (ADR-0085).
 
 - **d15 — Surfaces, events, doctor lines and meters.**
   - HTTP:
-    - `POST /v2/workareas/{workarea}/exports {mode, release | since, recipients}` streams the
+    - `POST /v2/workspaces/{workspace}/exports {mode, release | since, recipients}` streams the
       encrypted tar.
     - `POST /v2/imports {target, dry_run}` takes the decrypted bundle as a resumable upload
       (ADR-0004 d3) and answers with the plan or the outcome.
     - `GET /v2/imports/{id}` reports progress.
   - CLI:
-    - `oml workareas export <workarea> [--release <label> | --since <label> | --history]
+    - `oml workspaces export <workspace> [--release <label> | --since <label> | --history]
       --recipient <age key>... --out <file>`;
-    - `oml workareas import <file> --into <path> --identity <age identity> [--dry-run]
+    - `oml workspaces import <file> --into <path> --identity <age identity> [--dry-run]
       [--allow-older]`;
-    - `oml workareas import --from <workarea>@<label> --into <path>`.
+    - `oml workspaces import --from <workspace>@<label> --into <path>`.
   - Console: Export and Import, on the personal side.
   - No MCP tool (R1, as in ADR-0046 d3).
-  - Events: `workarea.exported`, `workarea.imported`, `import.erasure_notice`.
+  - Events: `workspace.exported`, `workspace.imported`, `import.erasure_notice`.
   - Doctor lines:
     - verification failures, by code;
     - imports stopped, with their ledger position;
@@ -349,11 +349,11 @@ Decided, not built.
 | **A `pg_dump` of the tenant's rows** | Moves keys, grants and the chain, cannot merge into an existing tenant, rewinds erasure, and needs `BYPASSRLS`. That is the backup's job. |
 | **An admin key exports** | An admin reads claim text one reasoned, journalled read at a time to fix something (ADR-0089 d10); a whole subtree leaving the server is not a fix. |
 | **An agent exports or imports through MCP** | A bulk egress or a bulk write started by the agent is the gate being called by the thing it gates (R1). |
-| **Import into a standard workarea, held** | Held rows there are author-only (R3), so the target's agents and tests could not see the import before it is served. |
+| **Import into a standard workspace, held** | Held rows there are author-only (R3), so the target's agents and tests could not see the import before it is served. |
 | **Server-to-server pull (live sync) instead of a file** | Needs a standing credential on the target into the source, and makes every move an online dependency. A file lets people check what moves. |
 | **A git repository as the bundle** | Git history, branches and merges would carry meaning the journal does not have, and a git object store does not stream line by line under limits. |
 | **Merge by overwriting the target tip** | Would replace reviewed content on the target without review, and drop it from the tip (R4). |
-| **A global idempotency key across target workareas** | A second import into a different target, a deliberate copy, would be silently skipped. |
+| **A global idempotency key across target workspaces** | A second import into a different target, a deliberate copy, would be silently skipped. |
 | **An erasure marker carrying the erased text's digest** | Lets a bundle holder confirm a guessed plaintext by hashing it. |
 | **A pseudonym stable across bundles** | Links one author across every bundle ever exported, building a profile no reader is entitled to. |
 | **Signing with a separate export key** | A second key per server to rotate, back up and pin, with no gain over domain separation. |

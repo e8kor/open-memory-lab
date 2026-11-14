@@ -77,15 +77,15 @@ roadmap was retired, so they were never among those rows: the tracking issue of 
 | FR-69 | [#132](https://github.com/e8kor/open-memory-lab/issues/132) | Install: verify the release signature without installing cosign first |
 | FR-70 | [#109](https://github.com/e8kor/open-memory-lab/issues/109) | Measure request-log, metrics and trace overhead |
 | FR-71 | [#109](https://github.com/e8kor/open-memory-lab/issues/109) | Measure request-log, metrics and trace overhead |
-| FR-72 | [#143](https://github.com/e8kor/open-memory-lab/issues/143) | Move existing shared workareas into a person's own workarea |
+| FR-72 | [#143](https://github.com/e8kor/open-memory-lab/issues/143) | Move existing shared workspaces into a person's own workspace |
 | FR-73 | [#144](https://github.com/e8kor/open-memory-lab/issues/144) | Flag a curated memory that still points at its source |
 | FR-74 | [#145](https://github.com/e8kor/open-memory-lab/issues/145) | Measure shared-area search displacement and brief size |
 | FR-75 | [#131](https://github.com/e8kor/open-memory-lab/issues/131) | Record when a key was last used |
 | FR-76 | [#119](https://github.com/e8kor/open-memory-lab/issues/119) | Verify sign-in with Google and GitHub on a live server |
 | FR-77 | [#145](https://github.com/e8kor/open-memory-lab/issues/145) | Measure shared-area search displacement and brief size |
-| FR-78 | [#142](https://github.com/e8kor/open-memory-lab/issues/142) | Project knowledge and code skeleton: evaluation, caps and branch workareas |
-| FR-79 | [#142](https://github.com/e8kor/open-memory-lab/issues/142) | Project knowledge and code skeleton: evaluation, caps and branch workareas |
-| FR-80 | [#142](https://github.com/e8kor/open-memory-lab/issues/142) | Project knowledge and code skeleton: evaluation, caps and branch workareas |
+| FR-78 | [#142](https://github.com/e8kor/open-memory-lab/issues/142) | Project knowledge and code skeleton: evaluation, caps and branch workspaces |
+| FR-79 | [#142](https://github.com/e8kor/open-memory-lab/issues/142) | Project knowledge and code skeleton: evaluation, caps and branch workspaces |
+| FR-80 | [#142](https://github.com/e8kor/open-memory-lab/issues/142) | Project knowledge and code skeleton: evaluation, caps and branch workspaces |
 | FR-81 | [#102](https://github.com/e8kor/open-memory-lab/issues/102) | Publish search quality and latency at stated corpus sizes |
 | FR-82 | [#102](https://github.com/e8kor/open-memory-lab/issues/102) | Publish search quality and latency at stated corpus sizes |
 | FR-83 | [#105](https://github.com/e8kor/open-memory-lab/issues/105) | Let recall answer "nothing relevant" |

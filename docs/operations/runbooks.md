@@ -34,12 +34,12 @@ Do not force readiness, re-point at another Postgres or delete the chain-head ro
 
 ## No reviewer can approve
 
-Use this when writes to a workarea stay held and nobody can approve them. A memory needs a reviewer key (role `dreamer`) that did not write it.
+Use this when writes to a workspace stay held and nobody can approve them. A memory needs a reviewer key (role `reviewer`) that did not write it.
 
-1. Check the workarea and its crew.
+1. Check the workspace and its crew.
 
    ```bash
-   oml workareas show <workarea>
+   oml workspaces show <workspace>
    ```
 
 2. Check the keys that review there.
@@ -48,10 +48,10 @@ Use this when writes to a workarea stay held and nobody can approve them. A memo
    oml keys show <reviewer-key>
    ```
 
-3. If there is no reviewer key with a grant on the workarea, issue one.
+3. If there is no reviewer key with a grant on the workspace, issue one.
 
    ```bash
-   oml keys issue <key-name> --role dreamer --grant <workarea>:dreamer
+   oml keys issue <key-name> --role reviewer --grant <workspace>:reviewer
    ```
 
 4. Confirm the reviewer sees the queue.
@@ -146,7 +146,7 @@ Use this when a person's resubmitted web console form answers `409 idempotency.i
    FROM idempotency WHERE committed_at IS NULL ORDER BY response->>'claimed_at';
    ```
 
-   The `key` column is `<key id>:<nil workarea>:<act>:<Idempotency-Key>`. A claim older than a minute belongs to an attempt that stopped.
+   The `key` column is `<key id>:<nil workspace>:<act>:<Idempotency-Key>`. A claim older than a minute belongs to an attempt that stopped.
 
 3. To let that form act again, first check the journal for the act's event under the key id, at the claim's time. Delete the row only if the act did not commit, because a deleted claim lets the resubmission act again.
 
@@ -218,7 +218,7 @@ OML has no `revoke` or `rotate` command. To stop a key, deny it, then issue a ne
 2. Issue the replacement.
 
    ```bash
-   oml keys issue <key-name> --role <role> --grant <workarea>:<role>
+   oml keys issue <key-name> --role <role> --grant <workspace>:<role>
    ```
 
 3. Check the old key's denial.

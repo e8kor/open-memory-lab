@@ -19,7 +19,7 @@ surface.
 ## Context
 
 OML must be usable as a plain external memory provider by an agent that knows nothing about
-review ceremonies, workarea trees or evidence exports — and it must keep that foundation
+review ceremonies, workspace trees or evidence exports — and it must keep that foundation
 compatible while the memory-lab capabilities evolve on top. Those are two different change
 velocities living on one API: the provider verbs an agent's loop depends on must never break;
 the governance surface grows with every capability this register adds (simulations, datasets,
@@ -29,8 +29,8 @@ and breaking the loop.
 The same pressure applies to request ergonomics. A traditional memory provider scopes a client
 by its credential — the client says *remember this*, not *remember this in area X*. OML derives
 tenant from the key already ([security](../architecture/security.md)); the foundation should
-derive the **target workarea** the same way, so the provider ring has the ergonomics of the
-category while the workarea machinery keeps working underneath, by default, for every write.
+derive the **target workspace** the same way, so the provider ring has the ergonomics of the
+category while the workspace machinery keeps working underneath, by default, for every write.
 
 ## Decision
 
@@ -51,36 +51,36 @@ category while the workarea machinery keeps working underneath, by default, for 
   what v1 hides is the machinery, not the constitution.
 
 - **d3 — `/v2` is the memory lab, and it evolves.** Review and ratification ceremonies, claim
-  edges, workarea and key administration (grants, denials, bans), claims administration
+  edges, workspace and key administration (grants, denials, bans), claims administration
   (reassign, demote, erase, tip-override), simulations, exports, settings, tenants, bootstrap,
   the events tail, effective-access, vocabularies ([ADR-0021](ADR-0021-ai-human-ontologies.md))
   and dataset onboarding ([ADR-0020](ADR-0020-dataset-onboarding.md)) live on `/v2`. v2 prefers
   additive change but may re-version to `/v3` without ever touching `/v1` — the natural
   evolution the product stance demands: the provider is the trunk, the lab rings around it.
 
-- **d4 — The target workarea comes from the key.** A key may carry a journalled
-  `default_workarea` (an issuance attribute, like `held_by`). A `/v1` request names no workarea:
-  the target is the key's default; recall's default scope is that workarea's subtree. The
-  explicit override is the **`X-OML-Workarea` header** (a node id), honored only within the
+- **d4 — The target workspace comes from the key.** A key may carry a journalled
+  `default_workspace` (an issuance attribute, like `used_by`). A `/v1` request names no workspace:
+  the target is the key's default; recall's default scope is that workspace's subtree. The
+  explicit override is the **`X-OML-Workspace` header** (a node id), honored only within the
   key's grants — plain-passable because it is authorization-checked data, never a secret. A v1
   request from a key with neither a default nor an override is refused with the typed
-  `request.workarea_unresolved`. `/v2` keeps explicit workarea ids in paths and bodies — an
+  `request.workspace_unresolved`. `/v2` keeps explicit workspace ids in paths and bodies — an
   administration surface names what it administers.
 
 - **d5 — The attribute placement rule.** Three carriers, by sensitivity:
   **the key, by reference** — every identity- and authorization-bearing attribute (tenant,
-  role, grants, `default_workarea`, `held_by`, simulation audience) is resolved server-side from
+  role, grants, `default_workspace`, `used_by`, simulation audience) is resolved server-side from
   the key's journalled issuance and grant records; nothing sensitive ever crosses the wire in
   cleartext, and the bearer-hash key model of
   [roles-and-keys](../architecture/roles-and-keys.md) is unchanged — "in the key" means
   *derivable from the key*, not *embedded in it*;
   **plain headers** — non-secret per-request modifiers that the server authorization-checks:
-  `Idempotency-Key`, `X-OML-Workarea`;
+  `Idempotency-Key`, `X-OML-Workspace`;
   **bodies** — domain content. An attribute that requires secure transfer is, by this rule, a
   key-resolved issuance attribute — never a header.
 
 - **d6 — The MCP facade fronts both rings; the ring split is invisible to tools.** The ten
-  agent-safe tools keep their shapes; `workarea_id` arguments become optional (key default,
+  agent-safe tools keep their shapes; `workspace_id` arguments become optional (key default,
   explicit value as override). Which ring a tool rides is an implementation mapping noted per
   tool, not a tool property: the facade's contract remains ADR-0014's — the verb ceiling, not
   the version path, is what bounds an agent.
@@ -88,10 +88,10 @@ category while the workarea machinery keeps working underneath, by default, for 
 ## Consequences
 
 - The OpenAPI document gains `/v2` servers/paths; provider-ring schemas drop required
-  `workarea_id`; `X-OML-Workarea` becomes a shared header parameter;
-  `request.workarea_unresolved` (422) joins the taxonomy.
-- `api_keys` gains `default_workarea_id`; `key.issued` journals it; the CLI issuance ceremony
-  takes `--default-workarea`.
+  `workspace_id`; `X-OML-Workspace` becomes a shared header parameter;
+  `request.workspace_unresolved` (422) joins the taxonomy.
+- `api_keys` gains `default_workspace_id`; `key.issued` journals it; the CLI issuance ceremony
+  takes `--default-workspace`.
 - The CLI is a `/v2` client for every ceremony and a `/v1` client for nothing — administration
   is the lab ([ADR-0015](ADR-0015-cli-administration.md) wording unchanged in substance: one
   API family, no verb the API lacks).
@@ -105,11 +105,11 @@ category while the workarea machinery keeps working underneath, by default, for 
 - **Two listeners or a separate lab service.** A second keyed surface doubles the auth path,
   the audit story and the drift risk ADR-0014 exists to prevent — and the commit point must
   stay one transaction (ADR-0002).
-- **Workarea in every request body (status quo).** Correct for administration, hostile for the
+- **Workspace in every request body (status quo).** Correct for administration, hostile for the
   provider loop: every competing provider scopes by credential; carrying the scope in each call
   invites cross-area mistakes the key can simply make impossible.
 - **Structured self-describing keys (JWT-style embedded claims).** Embedding tenant, role or
-  workarea in key cleartext moves authorization data onto the wire and into client custody;
+  workspace in key cleartext moves authorization data onto the wire and into client custody;
   the bearer-hash + server-side-resolution model keeps the key a pure capability reference.
   Revisit trigger: a federation design (#151) that needs cross-deployment key verification.
 - **Versioning the whole API as one ring.** Freezing the lab to protect the loop, or breaking

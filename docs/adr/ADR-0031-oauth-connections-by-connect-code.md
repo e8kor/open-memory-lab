@@ -7,7 +7,7 @@ answers: how Claude's hosted apps reach the agent plugin through a claude.ai cus
 
 # ADR-0031 — Claude's hosted apps reach the agent plugin over OAuth, through a connection that a one-time connect code binds to one agent key
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) (d8: a longer-lived code for a confined key), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0079](ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) (d11: a connection whose key expired works again if an admin moves the key's date before its refresh token lapses)
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workspace-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) (d8: a longer-lived code for a confined key), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0079](ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) (d11: a connection whose key expired works again if an admin moves the key's date before its refresh token lapses)
 
 **Release:** introduced in v0.4.0 ([releases](../changelog.md))
 
@@ -94,7 +94,7 @@ sign-in page is rejected, because the value would pass through the person's clip
 and released in v0.3.0 after this record was proposed); the implementation plan marks the pure
 modules that can land earlier.
 
-**One word to keep apart.** The fixed vocabulary gives "grant" to a key's access to a workarea
+**One word to keep apart.** The fixed vocabulary gives "grant" to a key's access to a workspace
 node (ADR-0018 d4). OAuth's "authorization grant" is therefore never called a grant here: the
 standing authority of one OAuth client to act as one key is a **connection**, and the short secret
 that opens it is a **connect code** (d7 adds their vocabulary rows).
@@ -323,10 +323,10 @@ constant, a policy choice; nothing about OML is measured, and what would need me
 - **d7 — A connector key is an agent key issued with a connect code instead of a value; it has no
   bearer value and holds at most one open connection.** `POST /v2/keys` with `connect_code: true`
   runs the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)
-  with one step more, after the default workarea and before the name, since
+  with one step more, after the default workspace and before the name, since
   [ADR-0026](ADR-0026-names-are-keys.md) d5 checks `name.taken` after every other check: it
   refuses, with `oauth.connect_refused`, a key role of `admin` or `operator`
-  (`details.reason: role`), `held_by: service` (`held_by_service`) and a deployment without
+  (`details.reason: role`), `used_by: service` (`used_by_service`) and a deployment without
   `oauth.issuer` (`not_configured`). The server mints no value for the key: `api_keys.credential`
   is `connection`, folded from `key.issued`, `api_keys.hash` is null, and the `201` carries
   `connect_code` — `{code_id, code, expires_at, connector_url}` — in place of `value`, returned
@@ -336,7 +336,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
   makes ADR-0026's name check the eighth, `key.issued` gains `credential`, and "the value only
   after the last grant commits" gains its connect-code form.
 
-    `oml keys issue-agent claude-mobile --principal crew/claude-mobile --workarea <workarea>
+    `oml keys issue-agent claude-mobile --principal crew/claude-mobile --workspace <workspace>
     --connect-code` sends that issuance, under the key name and the optional `--crew` that
     ADR-0026 d12 gives the verb, and prints exactly two lines on stdout, the connector URL and the
     code; the key's name and id, the expiry and the next step go to stderr. `--out` with
@@ -374,7 +374,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
 
     | Term | Means | Never |
     |---|---|---|
-    | connection | one OAuth client's standing authority to act as one connector key at `/mcp`, opened at the token exchange after a connect code is redeemed, and ended by revocation | "grant", "OAuth grant", "session" or "authorization" as this object's name (a grant is a workarea grant); bare "connection" for a claim↔claim or workarea↔workarea link, which is always "connection edge" or "connection proposal" — the wire value `kind: "connection"` is code |
+    | connection | one OAuth client's standing authority to act as one connector key at `/mcp`, opened at the token exchange after a connect code is redeemed, and ended by revocation | "grant", "OAuth grant", "session" or "authorization" as this object's name (a grant is a workspace grant); bare "connection" for a claim↔claim or workspace↔workspace link, which is always "connection edge" or "connection proposal" — the wire value `kind: "connection"` is code |
     | connect code | the short, single-use secret, alive for minutes, that binds one connection to one connector key | "pairing code", "PIN", "OTP" |
     | access token, refresh token | a connection's two OAuth credentials, `oml_at_…` and `oml_rt_…`, stored as digests | "key" for either; "token" alone for an API key or a budget token |
 
@@ -462,14 +462,14 @@ constant, a policy choice; nothing about OML is measured, and what would need me
        under a fresh 256-bit handle the confirmation's form carries, and shows what the
        connection will act as: the tenant the key belongs to, by the name the operator gave it
        at `POST /v2/tenants`, which no tenant admin can set; the key's name, principal and role;
-       every workarea it holds a grant on, by its name, with the grant's
+       every workspace it holds a grant on, by its name, with the grant's
        role; and sentences built from the key's role and effective access, one per kind of verb
-       it holds — "Claude can remember and learn as this agent in `<workareas>`." where it holds
-       writer, "Claude can recall and read as this agent in `<workareas>`." where it holds reader,
-       and "Claude can propose edits and edges as this agent in `<workareas>`." where it holds
-       dreamer(propose). Where it holds writer or dreamer(propose), the page adds: "Everything it
-       writes is held until someone other than its author reviews it." Where a granted workarea's
-       tenant policy permits `self_signed` rows, it adds, for each such workarea: "In `<workarea>`,
+       it holds — "Claude can remember and learn as this agent in `<workspaces>`." where it holds
+       writer, "Claude can recall and read as this agent in `<workspaces>`." where it holds reader,
+       and "Claude can propose edits and edges as this agent in `<workspaces>`." where it holds
+       reviewer(propose). Where it holds writer or reviewer(propose), the page adds: "Everything it
+       writes is held until someone other than its author reviews it." Where a granted workspace's
+       tenant policy permits `self_signed` rows, it adds, for each such workspace: "In `<workspace>`,
        its writes may be self-signed and readable there without review." Last, always: "It cannot
        approve, demote, delete or administer anything." The buttons are Connect and Cancel. A wrong
        code answers the same form with one sentence for an unknown, expired, voided, spent, or revoked
@@ -735,7 +735,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
       the lead's value by replication lag and no longer. The OAuth endpoints write, so a follower
       forwards them to the lead; a follower validates access tokens from its replica for the
       reads it serves, with the revocation lag a revoked key has there
-      ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)). A
+      ([workspaces](../architecture/workspaces.md#grants-bind-to-node-ids-paths-are-derived)). A
       follower forwards an `/mcp` request that carries an access token and reaches a write verb as
       the whole `/mcp` `POST` to the lead's `/mcp`, over the enrolled hop, with the token unchanged
       in `Authorization`; the lead re-resolves token → connection → key and authorizes against
@@ -798,9 +798,9 @@ constant, a policy choice; nothing about OML is measured, and what would need me
   verbs do with a replayed answer that carries no code).
 - Open follow-ups: #115, #126 and #127.
 - `README.md`: how to add OML on claude.ai and use it from a phone, marked decided, not built.
-- The claim↔claim and workarea↔workarea sense written "connection edge" or "connection proposal"
-  (d7's vocabulary row) on [roles and keys](../architecture/roles-and-keys.md) (the dreamer row,
-  the matrix and the dreamer split), [security](../architecture/security.md) (residual risk 8),
+- The claim↔claim and workspace↔workspace sense written "connection edge" or "connection proposal"
+  (d7's vocabulary row) on [roles and keys](../architecture/roles-and-keys.md) (the reviewer row,
+  the matrix and the reviewer split), [security](../architecture/security.md) (residual risk 8),
   [audit and lineage](../architecture/audit-and-lineage.md), [concepts](../concepts.md), the
   [HTTP API](../api/http-api.md) (the `POST /v1/memories` ceiling), `openapi.yaml` and the
   [agent plugin](../api/mcp-plugin.md).
@@ -839,7 +839,7 @@ answers for all three. None is measured.
 `accepted design` with the date, and its register row follows; the Status lines of ADR-0010,
 ADR-0014, ADR-0015, ADR-0018, ADR-0025 and ADR-0028 gain "· amended by ADR-0031"; the accepted
 records' spellings that d7's rows put in the "never" column are reworded as page edits: the bare
-"connection" for a claim↔claim or workarea↔workarea link in ADR-0010 d5 ("connection
+"connection" for a claim↔claim or workspace↔workspace link in ADR-0010 d5 ("connection
 ratification"), ADR-0012's context ("connection-establishment") and ADR-0025's d1 rejected
 alternative ("ratify connections") becomes "connection edge" or "connection proposal", ADR-0025's
 "needs one connection" in its agent-facing results becomes "needs one key", and the "token" that
@@ -884,7 +884,7 @@ D9, D13 and D14 cells of the D-register name it, `llms.txt` names it, and one
 | **d8 — A link that carries the code** | A secret in a URL lands in history, logs and referrers. |
 | **d8 — A longer code, or words** | Twelve symbols already put guessing at L·G / 2⁶⁰; every added symbol is one more for a person to type. |
 | **d8 — Different messages for an expired, spent or unknown code** | It would confirm to a guesser that a code existed. |
-| **d9 — Open the connection as soon as the code is right, with no confirmation** | The person would never see which agent and which workarea the connection acts as. |
+| **d9 — Open the connection as soon as the code is right, with no confirmation** | The person would never see which agent and which workspace the connection acts as. |
 | **d9 — Ask for the code with no prior authorization request** | The code would arrive with no client, redirect or PKCE challenge bound to it. |
 | **d9 — A connect flow with no browser page** | The MCP authorization flow sends the person's browser to an authorization endpoint; there is no flow without one. |
 | **d9 — One fixed sentence for what the connection may do** | A reader key cannot remember and a write-only key cannot recall; a fixed sentence would misstate the connection's authority on the page that exists to state it. |

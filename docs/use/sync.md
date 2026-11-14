@@ -1,13 +1,13 @@
 ---
 status: Stable
 verified: 2026-11-12
-answers: "how oml sync keeps a workarea in step with a repository's documents and code, reviewed in bulk"
+answers: "how oml sync keeps a workspace in step with a repository's documents and code, reviewed in bulk"
 ---
 
-# Sync documents to a workarea
+# Sync documents to a workspace
 
-`oml sync` keeps a workarea in step with committed markdown. It reads git's object store at one
-commit and extracts memories through an adapter. It diffs them against what the workarea holds and
+`oml sync` keeps a workspace in step with committed markdown. It reads git's object store at one
+commit and extracts memories through an adapter. It diffs them against what the workspace holds and
 writes the difference. Each memory is anchored to the repository, commit, path, fragment and
 fingerprint of the span it came from.
 
@@ -18,9 +18,9 @@ against a stand-in that refuses the options git 2.30 added; it has not been run 
 1. **Pick the source and the adapter.** `adr` yields one memory per decision bullet, plus a summary
    and a rejected-alternatives memory. `headings` yields one per heading of level 2 to 4. `lines`
    yields blocks of at most 40 lines.
-2. **Create the workarea and a writer key.** Keep using the same sync key. A writer supersedes only
+2. **Create the workspace and a writer key.** Keep using the same sync key. A writer supersedes only
    its own tips.
-3. **Preview.** `oml sync docs/adr --workarea design --adapter adr --dry-run` lists each item as
+3. **Preview.** `oml sync docs/adr --workspace design --adapter adr --dry-run` lists each item as
    `new`, `changed`, `removed`, `moved` or `unchanged` and writes nothing.
 4. **Run.** Drop `--dry-run`. A run writes up to 200 items (`--max-writes`), so repeat for larger
    sources. A server whose `whoami` says it is `shared` (its operator set `server.shared`, or
@@ -46,9 +46,9 @@ against a stand-in that refuses the options git 2.30 added; it has not been run 
 | `--rev <REV>` | The commit read; default `HEAD`. Never the working tree. |
 | `--repo <REPO>` | The anchor's repository name; omitted, derived from `origin`. |
 | `--exclude <GLOB>` | Paths left out of the source, repeatable (`docs/adr/**`). The set is recorded for the source on this clone. |
-| `--pr <N>` | Load the records pull request `<n>` adds or changes between `--base` and `--rev` into the draft workarea `<workarea>-pr-<n>`. |
+| `--pr <N>` | Load the records pull request `<n>` adds or changes between `--base` and `--rev` into the draft workspace `<workspace>-pr-<n>`. |
 | `--base <BASE>` | With `--pr`, the branch the pull request targets; default `origin/main`. |
-| `--retire-all` | Propose retiring every memory this key wrote in the workarea under the source, as when a draft's pull request closes. |
+| `--retire-all` | Propose retiring every memory this key wrote in the workspace under the source, as when a draft's pull request closes. |
 
 ## Refusals
 

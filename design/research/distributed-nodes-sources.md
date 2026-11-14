@@ -7,7 +7,7 @@ answers: the primary-source passages ADR-0073 rests on, quoted, with the date ea
 
 # Distributed nodes: sources
 
-The passages [ADR-0073](../../docs/adr/ADR-0073-a-leader-signs-every-write-and-nodes-serve-the-workareas-placed-on-them-each-read-routed-to-the-closest-less-busy-replica-fresh-enough-for-it.md)
+The passages [ADR-0073](../../docs/adr/ADR-0073-a-leader-signs-every-write-and-nodes-serve-the-workspaces-placed-on-them-each-read-routed-to-the-closest-less-busy-replica-fresh-enough-for-it.md)
 rests on, quoted from the primary source. The record keeps one line per source and links here.
 Fetched 2026-11-08 unless marked 2026-11-10. A source marked "not fetched" is cited from memory and
 carries no quotation.

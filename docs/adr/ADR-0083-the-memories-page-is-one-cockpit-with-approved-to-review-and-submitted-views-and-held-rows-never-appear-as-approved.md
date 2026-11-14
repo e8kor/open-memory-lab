@@ -19,7 +19,7 @@ view becomes the To do page with Judge at `/web/todo/judge`; d10: the admin page
 Review views become one page with no Judge; the navs, d12), ADR-0070 (d5 and d7: the cockpit's and
 To do's calls and pages), ADR-0055 (d10: no console page selects in bulk; admin fixes join the
 person's review as a To do group), ADR-0037 (d17: the Personal Guardrails view becomes the
-workarea page's In force here panel, d12)
+workspace page's In force here panel, d12)
 
 **Depends on:** ADR-0089 (PR #377, branch `design/workarea-lifecycle`): its fix acts, its
 confirm and revert routes and its person-side fix read (its d2, d3, d8, d15); ADR-0084, ADR-0085
@@ -32,7 +32,7 @@ state, so it is journal.
 ## Context
 
 On 2026-11-14 the operator asked to "make memories cockpit out of memories tab" (#374): one tab
-replacing the separate Review and Memories pages, with one card, one workarea picker and one
+replacing the separate Review and Memories pages, with one card, one workspace picker and one
 search over three views, Approved (the default), To review (others' held memories the person may
 judge, with Judge and a count), and Submitted (the person's own held and rejected writes); held
 rows never in Approved; the admin side the same with no Judge, since an admin key gives no verdict
@@ -49,7 +49,7 @@ What serves each part today:
   router `crates/clients/oml-web/src/lib.rs:291-302`), each with the one picker (`picker.rs`) and
   the one card (`card.rs`).
 - **The user list** is `GET /v1/memories?with_own=true`: the scoped listing at `universe` or the
-  picked workarea merged with the rows of every key naming the person, newest first, one cursor
+  picked workspace merged with the rows of every key naming the person, newest first, one cursor
   (`crates/oml-app/src/app/pages.rs:865-942`). It takes `state` as one value of `held`,
   `promoted`, `superseded`, `rejected` or `demoted`, where `promoted` means the promoted tip
   (`pages.rs:881-889`), `author` (one of the person's keys, which drops the scoped part),
@@ -59,10 +59,10 @@ What serves each part today:
   ([http-api.md](../api/http-api.md), recall).
 - **Review** is the served ceremony under `<user>-review`: `POST /v2/review/next`,
   `POST /v2/review/verdicts`, the bulk act and `GET /v2/review/held`, which lists "the held items
-  this person's reviewer key may judge" and requires "a dreamer key held_by human" (http-api.md,
+  this person's reviewer key may judge" and requires "a reviewer key used_by person" (http-api.md,
   `GET /v2/review/held`; ADR-0055). No call counts them: `GET /v2/review/queue` counts held rows
-  per workarea for the admin role only, without content (http-api.md, `GET /v2/review/queue`).
-- **The admin read** is `POST /v2/admin/memories/search` with `state` and `workarea` filters,
+  per workspace for the admin role only, without content (http-api.md, `GET /v2/review/queue`).
+- **The admin read** is `POST /v2/admin/memories/search` with `state` and `workspace` filters,
   every memory of the tenant with text and attribution, journalled per read (ADR-0045 d21, d24).
 
 Two gaps follow: the person's own rows cannot be listed alone across all their keys (the merged
@@ -73,20 +73,20 @@ Decided, not built.
 ## Decision
 
 - **d1 — Approved is promoted tips only, and no held row can reach it.** It is
-  `GET /v1/memories?with_own=true&state=promoted&include_text=true` at the picked workarea, as
+  `GET /v1/memories?with_own=true&state=promoted&include_text=true` at the picked workspace, as
   `<user>-web`, and the search box's recall with `include_unreviewed: false` sent explicitly, so an
   in-progress scope's default of `true` (ADR-0030 d4) does not apply. `state=promoted` reads the
   promoted tip (`pages.rs:884`), so neither the person's own held rows nor, inside an in-progress
-  workarea, other authors' unreviewed rows appear; a page test proves both with a held row present.
+  workspace, other authors' unreviewed rows appear; a page test proves both with a held row present.
   The view's facts on each card are the card's, `approved_at` and `approver` among them (ADR-0077
   d1). Approved is the default view.
 
 - **d2 — What the person may judge is the To do page's To review group, judged at
   `/web/todo/judge`, and counted by the To do counts read** (the operator, 2026-11-14, approving
   the design system v18 mockups). The group lists `GET /v2/review/held` under capacity `review`,
-  oldest first, every workarea or the one the To do filter picks; each row names the decision
-  (New memory, New skill, Edit of v2, Retirement of v1), the kind, the workarea, the author with
-  the person or agent glyph and word, `same user` where it applies, the approvals the workarea's
+  oldest first, every workspace or the one the To do filter picks; each row names the decision
+  (New memory, New skill, Edit of v2, Retirement of v1), the kind, the workspace, the author with
+  the person or agent glyph and word, `same user` where it applies, the approvals the workspace's
   policy asks for, and the wait. Its act is **Judge**, which opens `/web/todo/judge?memory=<id>`:
   the item at page density, the change against the served version (ADR-0082 d6), Verdict, Reason
   and **Record verdict**, the served ceremony for that item (ADR-0045 d11; the "Open to judge" of
@@ -119,9 +119,9 @@ Decided, not built.
   version was rejected is not served to its author today (d10). Every row in Submitted is the
   caller's person's own, as ADR-0001 R3 requires.
 
-- **d4 — One picker, one search, one card across the views.** The picker's workarea and
+- **d4 — One picker, one search, one card across the views.** The picker's workspace and
   the search query carry across the views. Search runs recall in Approved; in Submitted, which
-  recall does not serve, it is not offered, and To do filters by workarea only, since a text search over held
+  recall does not serve, it is not offered, and To do filters by workspace only, since a text search over held
   rows is a read fenced to their author that recall's shared index must never serve (ADR-0025 d5).
   Each view draws the same card (`card.rs`) in its row density.
 
@@ -129,8 +129,8 @@ Decided, not built.
   Rejected** (the operator, 2026-11-14, as drawn). Every admin view reads through `<user>-admin`
   and the journalled admin read (ADR-0045 d21, d24): Approved, the default, is
   `POST /v2/admin/memories/search` with `state` `promoted` (or `superseded` from the filter);
-  Held is the same search with `state=held`, under a "Held per workarea" table from
-  `GET /v2/review/queue` (workarea, held, oldest since, oldest first), each workarea a link that
+  Held is the same search with `state=held`, under a "Held per workspace" table from
+  `GET /v2/review/queue` (workspace, held, oldest since, oldest first), each workspace a link that
   filters the rows; Rejected is the search with `state=rejected`. The current view's tab carries
   its count as a word and a number ("Held 21"), the others none, and the Memories nav item none.
   The capacity line on Held says the admin key never judges and that verdicts are given on the
@@ -145,14 +145,14 @@ Decided, not built.
   any nav count** (the operator, 2026-11-14).
     - **Personal Memories** is `GET /web/memories` (Approved) and `GET /web/memories?view=submitted`,
       two links in `nav.oml-views` labelled "Memories views", the current one
-      `aria-current="page"`; the views keep the workarea and every active filter.
+      `aria-current="page"`; the views keep the workspace and every active filter.
     - **Administration Memories** is `GET /web/admin/memories` and `?view=held|rejected` (d5).
     - **To do** is `GET /web/todo` and `GET /web/admin/todo`, with `POST /web/todo`
       (`action=next`), `GET|POST /web/todo/judge?memory=` (d2) and `GET|POST /web/todo/fix?id=`
       (d8) (d11).
     - **The old paths redirect for one release, then go** (as the mockups draw it).
       `/web/review`, `/web/memories?view=review` and `/web/memories?view=fixes` answer `308` to
-      `/web/todo`, keeping the workarea; `/web/admin/review` answers `308` to
+      `/web/todo`, keeping the workspace; `/web/admin/review` answers `308` to
       `/web/admin/memories?view=held`; `/web/guardrails` answers d12's `308`. The redirects ship in
       the release that builds this record and are removed in the next one, after which those paths
       answer the console's not-found page.
@@ -161,7 +161,7 @@ Decided, not built.
       `/web/admin/todo` (Administration): a word and a number in a pill outline, no colour
       carrying the count, no popup, no script, "To do · 0" at zero, `aria-current="page"` on the
       To do page itself. At 390px it stays in the header's first row beside the name. No nav item
-      carries a count on either side; the Memories tab is plain. The badge covers every workarea
+      carries a count on either side; the Memories tab is plain. The badge covers every workspace
       whatever the page's filter. It is drawn from the To do counts read (d11), one store call per
       page view, which `web_console_reads.rs` records with the reason.
     - Every view stays server-rendered, paged by cursor, with no script (ADR-0045 d22, d26), in
@@ -175,24 +175,24 @@ Decided, not built.
 
 - **d8 — Admin fixes to confirm is a To do group, with one page per fix** (the operator,
   2026-11-14). ADR-0089 d3 opens a confirmation item for every admin fix in the review queue of
-  the persons who hold dreamer on its workarea. The To do group "Admin fixes to confirm" lists,
-  for the filtered workarea or every workarea, each unconfirmed fix on a workarea where the
-  person's `<user>-review` holds dreamer: the act, its target, `unconfirmed`, `alert` when it
+  the persons who hold reviewer on its workspace. The To do group "Admin fixes to confirm" lists,
+  for the filtered workspace or every workspace, each unconfirmed fix on a workspace where the
+  person's `<user>-review` holds reviewer: the act, its target, `unconfirmed`, `alert` when it
   loosens a guardrail (ADR-0089 d6), the reason and the wait; never which admin (ADR-0089 d7).
   Its act, **Confirm or revert**, opens `/web/todo/fix?id=<fx>`: the target's card as it is served
   now (marked `act: admin_fix`, `confirmed: false`, ADR-0089 d7), the version it replaced where
   there is one, the reason and when, with **Confirm** and **Revert**, each asking for confirmation
   and posting to ADR-0089 d15's `POST /v2/review/fixes/{id}/confirm|revert` as `<user>-review`
   (capacity `review`). The list is `GET /v2/review/fixes` (ADR-0089 d15), which serves a person's
-  dreamer key. A fix the person's own admin key took is listed with both acts in a development scope, the
+  reviewer key. A fix the person's own admin key took is listed with both acts in a development scope, the
   confirmation marked `same_user`, and without either in a production scope (ADR-0089 d8, d15);
   an erasure offers Confirm and a dispute comment only. A revert refused because a promoted
   version has since superseded the target answers `admin.fix_superseded` (ADR-0089 d8). The
   Memories cockpit has no fixes view. ADR-0055 is amended: the review a person runs covers held
   items and admin fixes, each its own act.
 
-- **d9 — The fix acts sit on the admin workarea page's Releases view** (the operator,
-  2026-11-14). `/web/admin/workarea?workarea=<w>&view=releases` carries a **Fix** form with
+- **d9 — The fix acts sit on the admin workspace page's Releases view** (the operator,
+  2026-11-14). `/web/admin/workspace?workspace=<w>&view=releases` carries a **Fix** form with
   ADR-0089's acts (demote, edit, retire, release rollback, import rollback, erase), each with its
   target and the required reason, and a confirmation step
   (`…&view=releases&act=<act>&target=<target>`) that shows what each release binding gets and
@@ -201,26 +201,26 @@ Decided, not built.
   the admin one-memory page nor any admin card carries a fix act. An admin's edit of a skill, a
   guardrail or a document is this act, served at once and marked, never a held version of the
   builder (ADR-0082 d1). Rolling back a release or an import is among the acts here; moving a
-  status stays a workarea act on the admin Workareas page (ADR-0045 d28). A ladder move is not a
+  status stays a workspace act on the admin Workspaces page (ADR-0045 d28). A ladder move is not a
   fix (ADR-0009 d3).
 
 - **d10 — The operator's answers of 2026-11-14, and what stays open.** To do's counts have their
   own read (d11), not a first page counted to "200+". The screen choices are settled by the
   approved design system v18 mockups (TodoScreen, MemoriesCockpit, AdminMemoriesCockpit,
-  AdminFixReview, AdminReleases, WorkareaScreen, BrandHeader): d3's Submitted, d5's views, d6's
+  AdminFixReview, AdminReleases, WorkspaceScreen, BrandHeader): d3's Submitted, d5's views, d6's
   routes and badge, d7's bulk review in the CLI only, d8's To do group and fix page, d9's Releases
   view, d11's To do page and d12's navs. A held version's author may withdraw it (d13), decided
   and to be built later. Open: serving a rejection's reason to its author with no reviewer named
   (ADR-0077 d2), which an issue tracks and Submitted does not show until then; a read of a shared
-  workarea's reviewer count, which the mockups mark as needing an API and this record does not
-  add; and `POST /v2/review/next` taking the To do filter's workarea, which the mockups ask for and
+  workspace's reviewer count, which the mockups mark as needing an API and this record does not
+  add; and `POST /v2/review/next` taking the To do filter's workspace, which the mockups ask for and
   this record does not decide.
 
 - **d11 — One To do page per side lists what waits on its key, and one counts read serves the
   badge.**
     - **Personal, `/web/todo`.** `<h1>` To do, title `To do · OML`, one capacity line, the
-      workarea filter (`WorkareaField`, GET; empty means every workarea), and **Next**, the page's
-      one primary: a `POST` (`action=next`) that keeps the workarea and answers `303` to the oldest
+      workspace filter (`WorkspaceField`, GET; empty means every workspace), and **Next**, the page's
+      one primary: a `POST` (`action=next`) that keeps the workspace and answers `303` to the oldest
       item's page across the groups. The groups, in order, each an `<h2>` "Name · N" with one line
       naming whose items they are and under which key, rows oldest first, an item in one group
       only: **To review** (d2; Judge), **Admin fixes to confirm** (d8; Confirm or revert),
@@ -236,35 +236,35 @@ Decided, not built.
       listed with that fix) and **Open investigations** (ADR-0089 d10; the row opens the
       investigation). No row offers a verdict, a ratification, a confirmation or an
       acknowledgement: those are a person's acts (ADR-0001 R1).
-    - **The counts read, an API change decided here.** `GET /v2/todo/counts?workarea=` under a
+    - **The counts read, an API change decided here.** `GET /v2/todo/counts?workspace=` under a
       person's session web key (capacity `web`) answers `{review, fixes, ratify, withdrawals,
       overrides, imports, truncated}`: for each group, the length the group's own list read below
-      would serve to the person's review keys at that workarea and below it, or across every
-      workarea without `workarea`, each counted up to 1,000 with `truncated` set past it, with no
+      would serve to the person's review keys at that workspace and below it, or across every
+      workspace without `workspace`, each counted up to 1,000 with `truncated` set past it, with no
       content, no claim key and no name. It widens nothing: every count is computed under the same
       grants, lineage exclusions and author fences as the list it counts, so it reports only items
-      those keys could already list, and a workarea they cannot read contributes zero and is not
+      those keys could already list, and a workspace they cannot read contributes zero and is not
       named. Its administration counterpart, `GET /v2/admin/todo/counts` under capacity `admin`,
       answers `{fixes, alerts, investigations, truncated}` for the admin key, counted the same way.
       The badge is the sum.
-    - **Shared workareas.** Items in shared workareas appear only for tenant keys linked to the
+    - **Shared workspaces.** Items in shared workspaces appear only for tenant keys linked to the
       person under ADR-0085 d16; until then To do lists the person's own root alone.
     - **The lists.** Each list is under the person's `<user>-review` key (capacity `review`)
-      across the workareas where it holds dreamer, or the one `workarea` names, oldest first, paged
+      across the workspaces where it holds reviewer, or the one `workspace` names, oldest first, paged
       by cursor, and never names an admin or another person's key beyond what the act's own record
       serves.
         - To review: `GET /v2/review/held`, as today. Imported versions to review are the same
           read's rows that carry ADR-0084's `import_provenance` (its d4), which the held listing
           serves with each item (an API change decided here), grouped apart by the console.
         - Admin fixes to confirm: `GET /v2/review/fixes` (ADR-0089 d15).
-        - Releases to ratify, an API change decided here: `GET /v2/review/releases?workarea=&cursor=`,
+        - Releases to ratify, an API change decided here: `GET /v2/review/releases?workspace=&cursor=`,
           the proposed releases (ADR-0085 d4) the key may publish, that is, whose proposer is a
-          person other than the key's own, with workarea, label, proposal id, the proposer's key
+          person other than the key's own, with workspace, label, proposal id, the proposer's key
           name and a gate summary.
         - Withdrawal alerts to acknowledge, an API change decided here:
-          `GET /v2/review/withdrawals?workarea=&cursor=`, the withdrawals that loosened a guardrail
+          `GET /v2/review/withdrawals?workspace=&cursor=`, the withdrawals that loosened a guardrail
           and wait for acknowledgement by another person (ADR-0085 d9).
-        - Gate overrides, an API change decided here: `GET /v2/review/gates?workarea=&cursor=`, the
+        - Gate overrides, an API change decided here: `GET /v2/review/gates?workspace=&cursor=`, the
           blocking tests and impact gates (ADR-0086 d6) of proposals the key may ratify, each with
           its case or finding.
         - Administration: `GET /v2/admin/fixes?state=unconfirmed` (ADR-0089 d15), the doctor's
@@ -272,19 +272,19 @@ Decided, not built.
       **Next** picks the oldest first row among the groups the page drew; a held row opens Judge,
       any other row the page of its act.
 
-- **d12 — The Personal Guardrails tab folds into the workarea page, and the navs are fixed**
+- **d12 — The Personal Guardrails tab folds into the workspace page, and the navs are fixed**
   (the operator, 2026-11-14).
-    - The Personal Guardrails view (ADR-0037 d17) is removed. Its set is the workarea page's
+    - The Personal Guardrails view (ADR-0037 d17) is removed. Its set is the workspace page's
       **In force here** panel (ADR-0082 d1), which lists every guardrail an agent connected to the
-      workarea loads at session start: first the inherited ones, each marked "inherited from
-      `<workarea>`" and linking there, then this workarea's own, marked "here"; one with a held
+      workspace loads at session start: first the inherited ones, each marked "inherited from
+      `<workspace>`" and linking there, then this workspace's own, marked "here"; one with a held
       retirement is marked "binding while its retirement waits". One line gives the counts under
-      the key's `guardrail_scope` (`ancestors` or `workarea`). It reads `GET /v1/guardrails?workarea=`
+      the key's `guardrail_scope` (`ancestors` or `workspace`). It reads `GET /v1/guardrails?workspace=`
       as `<user>-web`, the read the Guardrails page makes today, so no API change.
-      `/web/guardrails?workarea=<w>` answers `308` to `/web/workarea?workarea=<w>&kind=guardrail`;
-      with no workarea, to the person's root's.
-    - **The nav rule.** The Personal nav is Start, Memories, Atlas, Keys, Workareas; the
-      Administration nav is People, Quotas, Memories, Atlas, Keys, Workareas, Curate. Review leaves
+      `/web/guardrails?workspace=<w>` answers `308` to `/web/workspace?workspace=<w>&kind=guardrail`;
+      with no workspace, to the person's root's.
+    - **The nav rule.** The Personal nav is Start, Memories, Atlas, Keys, Workspaces; the
+      Administration nav is People, Quotas, Memories, Atlas, Keys, Workspaces, Curate. Review leaves
       both, Guardrails leaves the Personal one, and neither carries To do, which is the header
       badge (d6). The switch to the other side stays outside the nav.
 
@@ -297,17 +297,17 @@ Decided, not built.
   version any key of that person wrote (read the one way `same_user` reads it, as ADR-0082 d2 reads
   it for supersession) (the operator, 2026-11-14). R1 is untouched: a withdrawal is the author
   retracting its own unreviewed work, never a verdict on anyone's; it promotes nothing, signs
-  nothing, demotes no served version and deletes nothing, since the version and its text are kept. It works in any workarea and only on a
+  nothing, demotes no served version and deletes nothing, since the version and its text are kept. It works in any workspace and only on a
   held version; any other state answers `memory.not_held`, and another author's version
   `access.author_only`. The version's state becomes `withdrawn`: it is kept as history with its
   text (ADR-0001 R4), leaves every review queue, the To do page and its counts, is never served
-  (not inside an in-progress workarea, not as a skill, guardrail or document, never in a release
+  (not inside an in-progress workspace, not as a skill, guardrail or document, never in a release
   cut), and is listed to its author under Submitted. It is journalled as `memory.withdrawn
   {artifact_id, reason}` under the withdrawing key; no verdict is recorded and no reviewer is
   involved. `state` on the listings admits `withdrawn`. Metrics: `oml_memories_withdrawn_total`.
   Doctor: `memory.withdrawn_in_queue` fails if a withdrawn version is still in a review queue,
   which the act's own transaction rules out. The console offers Withdraw on Submitted's held rows
-  and on the workarea page's held rows of the person's own, each with a confirmation, in place of
+  and on the workspace page's held rows of the person's own, each with a confirmation, in place of
   the mockups' "Cannot be withdrawn yet". A withdrawn version can be followed by a new one only
   through a fresh write or supersession of the served tip.
 
@@ -323,8 +323,8 @@ Decided, not built.
   page with Judge and the fix page; `shell` draws the To do badge on both sides; `PAGES`,
   `PERSONAL_TABS`, `ADMIN_TABS` and the route test follow d6 and d12; the `308`s keep every
   existing link working.
-- Page tests: a held row present at the workarea never appears under Approved, inside and
-  outside an in-progress workarea; Submitted shows the person's held and rejected rows across two
+- Page tests: a held row present at the workspace never appears under Approved, inside and
+  outside an in-progress workspace; Submitted shows the person's held and rejected rows across two
   of their keys and nothing scoped; the badge equals the sum of the counts read and To review's
   group length below the cap; the admin views and the admin To do draw no Judge, no verdict form
   and no confirm; neither nav carries a count.
@@ -337,14 +337,14 @@ Decided, not built.
 | Alternative | Why not |
 |---|---|
 | **Approved as the merged listing with no state filter, held rows badged** | The operator asked that held rows never appear in Approved; a badge still shows them. |
-| **Submitted from `with_own=true&state=held` and a second call for `rejected`** | The merged listing adds the scoped part, which inside an in-progress workarea holds other authors' held rows (ADR-0030 d3), so it is not "the person's own"; two calls also break one cursor. |
+| **Submitted from `with_own=true&state=held` and a second call for `rejected`** | The merged listing adds the scoped part, which inside an in-progress workspace holds other authors' held rows (ADR-0030 d3), so it is not "the person's own"; two calls also break one cursor. |
 | **Submitted from `author=<key>` per key** | One call per key the person holds, merged in `oml-web`, with no shared cursor. |
-| **Count from `GET /v2/workareas/{w}/tree?counts=true`** | Its `held` counts the person's own held rows, "as the caller's with_own listing would show them" (http-api.md, tree), not the rows they may judge. |
+| **Count from `GET /v2/workspaces/{w}/tree?counts=true`** | Its `held` counts the person's own held rows, "as the caller's with_own listing would show them" (http-api.md, tree), not the rows they may judge. |
 | **An admin Judge** | An admin key gives no verdict ([ADR-0001](ADR-0001-the-constitution.md) R1; ADR-0045 d6); its changes are ADR-0089's fix acts, which a person confirms. |
 | **To review and Fixes to confirm as views of Memories, the count on the nav's Memories item** | The drafted options; the mockups showed the waiting work invisible from every other tab, and what waits is wider than memories (releases, gates, imports). The operator chose one To do page and a header badge on 2026-11-14. |
 | **To do as a nav item** | It would lengthen both navs and read as one more page among peers; the operator chose a badge beside the account name. |
 | **`count=true` on each listing, read per group** | Six count reads on every page view; one counts read serves the badge. |
 | **Fix acts on the admin one-memory page or every admin card** | A fix reaches release-bound keys and bindings (ADR-0089 d5), which the Releases view shows beside the form; one place for a break-glass act. |
 | **Bulk review stays on the admin page with Judge removed around it** | A review view on the admin side would hold the one act there that is not an admin's, and the admin side no longer reviews. |
-| **Admin fixes confirmed on the admin side** | In a production scope a fix is confirmed by a person other than the admin's own, and in a development scope by any person holding dreamer there, through that person's dreamer key (ADR-0089 d8); the admin side acts as the admin key. |
+| **Admin fixes confirmed on the admin side** | In a production scope a fix is confirmed by a person other than the admin's own, and in a development scope by any person holding reviewer there, through that person's reviewer key (ADR-0089 d8); the admin side acts as the admin key. |
 | **Search over held rows in To review and Submitted by recall** | Recall's shared index never serves another author's held text (ADR-0025 d5); a held row is matched only through a read fenced to its author. |

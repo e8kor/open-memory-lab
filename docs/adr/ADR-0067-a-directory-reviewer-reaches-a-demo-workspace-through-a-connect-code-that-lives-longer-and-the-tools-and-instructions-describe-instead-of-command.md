@@ -1,15 +1,15 @@
 <!--
-id: adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command
+id: adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workspace-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command
 tier: engineering
 status: accepted design · 2026-11-06
-answers: what OML changes to be listed in Anthropic's Connectors Directory; the title each tool carries and why oml_write stays non-destructive; how the server instructions and tool descriptions are reworded from commands to descriptions; how a directory reviewer connects without a Google or GitHub sign-in or a ten-minute race; the lifetime and confinement rule of a reviewer's connect code; how it is named, ended and bounded; how the demonstration workarea is seeded; the rejected roads
+answers: what OML changes to be listed in Anthropic's Connectors Directory; the title each tool carries and why oml_write stays non-destructive; how the server instructions and tool descriptions are reworded from commands to descriptions; how a directory reviewer connects without a Google or GitHub sign-in or a ten-minute race; the lifetime and confinement rule of a reviewer's connect code; how it is named, ended and bounded; how the demonstration workspace is seeded; the rejected roads
 -->
 
-# ADR-0067 — A directory reviewer reaches a demo workarea through a connect code that lives longer, and the tools and instructions describe instead of command
+# ADR-0067 — A directory reviewer reaches a demo workspace through a connect code that lives longer, and the tools and instructions describe instead of command
 
 **Status:** accepted design · 2026-11-06
 
-**Amends:** ADR-0031 (d8: a connect code lives the default ten minutes unless an admin asks for longer, on a key confined to one workarea); ADR-0038 (d1, d2: the server instructions describe recall and no longer tell the model to call it); ADR-0039 (d5: every tool also carries a `title`, and `oml_write` keeps `destructiveHint: false` for a stated reason)
+**Amends:** ADR-0031 (d8: a connect code lives the default ten minutes unless an admin asks for longer, on a key confined to one workspace); ADR-0038 (d1, d2: the server instructions describe recall and no longer tell the model to call it); ADR-0039 (d5: every tool also carries a `title`, and `oml_write` keeps `destructiveHint: false` for a stated reason)
 
 ## Context
 
@@ -31,8 +31,8 @@ built beyond what the change that carries this record builds.
 ## Decision
 
 - **d1 — Each tool carries a human `title`: `oml_write` is "Remember", `oml_read` is "Recall" and
-  `oml_workarea` is "Workarea".** The words are the ones the documentation already uses for the
-  acts (remember, recall) and the place (workarea). `oml_write` keeps `destructiveHint: false`,
+  `oml_workspace` is "Workspace".** The words are the ones the documentation already uses for the
+  acts (remember, recall) and the place (workspace). `oml_write` keeps `destructiveHint: false`,
   which the directory reads as "does not modify or delete data": a call only adds a held row, a new
   version or a retirement is a proposal a reviewer decides, and no call changes or deletes an
   existing row. The cost: a client that decides permissions from `destructiveHint` treats a write as
@@ -53,7 +53,7 @@ built beyond what the change that carries this record builds.
   directory reads.
 
 - **d3 — An admin may mint a connect code that lives up to 30 days, only for a connector key
-  confined to one workarea.** `POST /v2/keys/{key}/connect-codes` takes an optional
+  confined to one workspace.** `POST /v2/keys/{key}/connect-codes` takes an optional
   `ttl_seconds` (1 to 2,592,000); `oml keys connect-code <key> --ttl 14d` sends it. A lifetime past
   the ten-minute default is minted only when the key names no user root and every grant sits on one
   node that is not the universe; otherwise the request is refused `422 oauth.connect_refused` with
@@ -64,13 +64,13 @@ built beyond what the change that carries this record builds.
   `oml keys show` prints it, and a code that outlives the default says so. Ending it is the
   existing acts: `oml keys disconnect` ends the connection, `oml deny set <key> universe` fences
   the key, and minting a new code voids the old. What a stolen code is worth is bounded by the key:
-  reads of one demonstration workarea and writes that are held, which no one else can read until a
+  reads of one demonstration workspace and writes that are held, which no one else can read until a
   different identity approves them (R2, R3). The cost: for up to 30 days a 60-bit secret can open a
   connection; it is guessable only by online attempts, five per authorization request
   ([ADR-0031](ADR-0031-oauth-connections-by-connect-code.md) d9).
 
-- **d4 — `oml demo seed <workarea>` fills a demonstration workarea through the public API alone.**
-  It creates the workarea, issues an author and two reviewer identities, writes thirty memories of a
+- **d4 — `oml demo seed <workspace>` fills a demonstration workspace through the public API alone.**
+  It creates the workspace, issues an author and two reviewer identities, writes thirty memories of a
   fictional freight team, has the reviewers approve twenty-four of them (four of those replace an
   earlier approved version, which becomes history) and leaves six held, and then fences all three
   identities from the universe. No key value is printed or stored. It is a subcommand of the `oml`
@@ -100,4 +100,4 @@ built beyond what the change that carries this record builds.
 | **A static bearer key for the reviewer** | A key value passes through the reviewer's clipboard and Anthropic's tooling and never expires; a connection ends at disconnect and its tokens expire. Claude's custom connectors do not take a key header outside a beta ([ADR-0031](ADR-0031-oauth-connections-by-connect-code.md) context). |
 | **Lengthening the default ten minutes for every code** | Every code a person reads from a terminal would live a month. The long life is the exception an admin asks for by name, on a key that cannot reach much. |
 | **`readOnlyHint: false, destructiveHint: true` on `oml_write` because it writes** | The directory uses `destructiveHint` to force a prompt on every call. A write here adds a held row and deletes nothing; marking it destructive would be untrue and would prompt a person for each memory an agent records. |
-| **A `scripts/seed_demo_workarea.sh`** | OML's tools are Rust subcommands of `oml`, which has a client, a retry policy and tests; a script would reimplement them. |
+| **A `scripts/seed_demo_workspace.sh`** | OML's tools are Rust subcommands of `oml`, which has a client, a retry policy and tests; a script would reimplement them. |

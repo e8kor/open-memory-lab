@@ -1,11 +1,11 @@
 <!--
-id: adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it
+id: adr/ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it
 tier: engineering
 status: accepted design · 2026-11-06
-answers: what an in-progress workarea is and who may mark it (a person's key, never an agent); the one boundary rule every scoped read applies; which keys read other authors' unreviewed memories inside, labelled how; how R3 is relaxed there and only there, journalled; why ranking still reads no verdict and what telemetry records; what the commit is and why it needs zero unreviewed; how a curator agent narrows the unreviewed work inside and never widens it; how anchors, `oml sync` and draft workareas interact; how an in-progress workarea is abandoned or retired with nothing deleted; the surfaces, codes, migration, doctor lines and laws
+answers: what an in-progress workspace is and who may mark it (a person's key, never an agent); the one boundary rule every scoped read applies; which keys read other authors' unreviewed memories inside, labelled how; how R3 is relaxed there and only there, journalled; why ranking still reads no verdict and what telemetry records; what the commit is and why it needs zero unreviewed; how a curator agent narrows the unreviewed work inside and never widens it; how anchors, `oml sync` and draft workspaces interact; how an in-progress workspace is abandoned or retired with nothing deleted; the surfaces, codes, migration, doctor lines and laws
 -->
 
-# ADR-0030 — An in-progress workarea serves its held work to its subtree and its ancestors, a curator agent may only narrow it, and nothing leaves until a person commits it or a release is published
+# ADR-0030 — An in-progress workspace serves its held work to its subtree and its ancestors, a curator agent may only narrow it, and nothing leaves until a person commits it or a release is published
 
 **Status:** accepted design · 2026-11-06 (was accepted design) · introduced in v0.6.0 · first recorded 2026-11-05 · revision 2, rebuilt on the v0.5.8 API; revision 1
 ([#12](https://github.com/e8kor/open-memory-lab/pull/12), 2026-10-31, proposed) is preserved at tag
@@ -18,8 +18,8 @@ ADR-0009 (d3: a transition on a node inside an in-progress subtree waits for its
 ADR-0025 (d3, d4: the readability test and `include_unreviewed`'s reach inside),
 ADR-0039 (d4: `include_unreviewed`'s default inside; the claim item gains `unreviewed`),
 ADR-0044 (d10: the served node set beside `universe`'s claims), ADR-0045 (d1, d9: the user
-page's action `workarea_mode`), ADR-0055 (d1: the commit is the
-act bulk review prepares), ADR-0057 (d14: a draft workarea may be in progress)
+page's action `workspace_mode`), ADR-0055 (d1: the commit is the
+act bulk review prepares), ADR-0057 (d14: a draft workspace may be in progress)
 
 ## Context
 
@@ -31,7 +31,7 @@ on 2026-11-05 to take that immediacy for agent writes where a person opts in, an
 gate: nothing written inside reaches anyone outside until a person has reviewed all of it.
 
 Revision 1 of this record (#12, with its domain core in #13) was written against the v0.3.0
-surface: an admin mark, a commit that was the `development` → `committed` transition, a grant
+surface: an admin mark, a commit that was the `development` → `protected` transition, a grant
 attribute `unreviewed: allow | block`, and its own recall flag. Since then
 [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md) rewrote the API and recorded that this
 record owes a rebase onto `include_unreviewed` (its d4 and Consequences);
@@ -40,14 +40,14 @@ and [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-i
 put each person's work under a user root, where the person's own keys propose and ratify and a
 same-person step is marked `same_user`;
 [ADR-0055](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)
-made review of a listed set one act of a person's key; [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
-added anchors, `expected_version` and `oml sync` with a draft workarea per pull request; and
+made review of a listed set one act of a person's key; [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md)
+added anchors, `expected_version` and `oml sync` with a draft workspace per pull request; and
 [ADR-0054](ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md)
 measures every recall. This revision rebuilds the decision on that surface.
 
-**The operator's decisions** (2026-11-05), not reopened here: a person's key marks a workarea in
+**The operator's decisions** (2026-11-05), not reopened here: a person's key marks a workspace in
 progress, never an agent's (R1); unreviewed memories of other authors are visible only inside
-that workarea and its children, labelled `unreviewed`, never in a read from outside or from a
+that workspace and its children, labelled `unreviewed`, never in a read from outside or from a
 parent; nothing leaves until a person's commit, which needs zero unreviewed and is prepared by
 bulk review; R3 is relaxed only inside the opted-in scope, explicitly and journalled; ranking
 never reads verdicts. And, the same day: a **curator** agent cleans up inside an in-progress
@@ -59,24 +59,24 @@ Questions revision 1 left open are settled below at their recommended answers, e
 
 ## Decision
 
-- **d1 — A workarea's `mode` is `standard` or `in_progress`; only a person's key sets it, and
-  setting it is journalled.** `workareas.mode` defaults to `standard`. `POST
-  /v2/workareas/{workarea}/mode` with `{mode}` sets it and journals `workarea.mode_set`
-  `{workarea_id, mode, from}` under the calling key; `oml workareas mode <workarea>
+- **d1 — A workspace's `mode` is `standard` or `in_progress`; only a person's key sets it, and
+  setting it is journalled.** `workspaces.mode` defaults to `standard`. `POST
+  /v2/workspaces/{workspace}/mode` with `{mode}` sets it and journals `workspace.mode_set`
+  `{workspace_id, mode, from}` under the calling key; `oml workspaces mode <workspace>
   in_progress|standard` and the admin and user pages' toggle ride it. The caller must hold a
-  **dreamer key `held_by: human`** with dreamer effective access on the node — the predicate
+  **reviewer key `used_by: person`** with reviewer effective access on the node — the predicate
   ADR-0055 d1 gives bulk review, for the same reason: the mark changes who reads what other keys
   wrote, so it is a review-class act and a person's attestation. Every other key is refused
   before any lookup with `access.verb_ceiling`, `details.reason: mode_is_human_only`: a writer or
-  reader key (R1), an admin key (an admin is never a reviewer, D9), a service key and any dreamer
-  key held by an agent, a curator's included. No MCP tool, argument or resource sets it.
+  reader key (R1), an admin key (an admin is never a reviewer, D9), a service key and any reviewer
+  key used by an agent, a curator's included. No MCP tool, argument or resource sets it.
   Inside a user root the user's own reviewer key sets it (ADR-0046 d2). *Recommended answer:* the
-  mark may be set at any time on an existing workarea, as revision 1's d1 also chose, since the
-  workareas people would mark already hold rows.
+  mark may be set at any time on an existing workspace, as revision 1's d1 also chose, since the
+  workspaces people would mark already hold rows.
 
-    Setting `in_progress` is refused with `workarea.in_progress_refused` and a `details.reason`
+    Setting `in_progress` is refused with `workspace.in_progress_refused` and a `details.reason`
     when the node or any node of its subtree is not `development` (`status`), so no
-    `committed` or `validated` workarea is ever inside one, is `universe` (`universe`), or has an
+    `protected` or `frozen` workspace is ever inside one, is `universe` (`universe`), or has an
     ancestor or a descendant already in progress (`nested`). A node's root is read only through
     `development` nodes: one that is not, and every node beneath it, is outside every subtree
     whatever the marks say (defence in depth, review of #79): subtrees never nest, so every node has at
@@ -88,7 +88,7 @@ Questions revision 1 left open are settled below at their recommended answers, e
   at N only if D has no in-progress root, or N has the same one.** A **scoped read** — recall,
   the scoped listing, the claim-edge and brief reads, the events tail — serves the *served node
   set*: the nodes of subtree(N) where the key reads, less every node whose root differs from N's.
-  A read scoped at a parent of an in-progress workarea, or anywhere else outside it, therefore
+  A read scoped at a parent of an in-progress workspace, or anywhere else outside it, therefore
   leaves the whole subtree out, promoted rows included, until the commit (d6): nothing leaves.
   A **read by id** (get, the lineage of one row, an attachment) is at the row's own node and
   passes the boundary, so a key with reader access on an ancestor can get an inside claim by id;
@@ -120,11 +120,11 @@ Questions revision 1 left open are settled below at their recommended answers, e
   [ADR-0065](ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md)
   d15). Rejected, demoted and erased versions are served as everywhere else
   (not at all), so what review or a curator turned down never returns to an agent's context.
-  Everywhere outside an in-progress subtree, and in every `committed` and `validated` workarea,
+  Everywhere outside an in-progress subtree, and in every `protected` and `frozen` workspace,
   R3 holds without exception: a held row is its author's and its reviewer's alone. R2 holds
   inside without exception: every held version is still reviewed by a non-author, never
   `self_signed`. The relaxation is explicit — it exists only while a journalled
-  `workarea.mode_set` puts the node in progress — and every read that serves an unreviewed row
+  `workspace.mode_set` puts the node in progress — and every read that serves an unreviewed row
   records it in the read log as any served id is. ADR-0001 d5 gains this as its second bounded
   exception, by reference to this decision; no other page widens it.
   *(Amended 2026-11-14 by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16, the operator: "lets make sure decisions
@@ -152,53 +152,53 @@ Questions revision 1 left open are settled below at their recommended answers, e
   served.** A held row inside is scored by the same functions as a promoted one (ADR-0049 d2;
   ADR-0052), so approval never moves it, and the usage term reads `usage_state` alone (ADR-0054
   d12). The metrics gain three families, each with closed labels: `oml_recall_unreviewed_hits_total`
-  (hits served with `unreviewed: true`), `oml_workarea_mode_changes_total{mode}` and
+  (hits served with `unreviewed: true`), `oml_workspace_mode_changes_total{mode}` and
   `oml_curation_acts_total{act}`, where `act` is `reject`, `retire`, `flag` or `write`
   (d9). `recall_events` keeps its columns; its `hit_ids` already name held versions served. No
-  metric carries a workarea, key or claim label (ADR-0054 d1's series budget).
+  metric carries a workspace, key or claim label (ADR-0054 d1's series budget).
 
 - **d6 — The commit is a person's act that sets `standard`, and it is refused while anything in
   the subtree is unreviewed.** Setting `standard` on an in-progress root is its **commit**:
-  refused with `workarea.held_remaining`, `details.workarea` naming the root as the request
+  refused with `workspace.held_remaining`, `details.workspace` naming the root as the request
   spelled it and carrying no count, while any version anywhere in its subtree is `held`,
   dead-lettered ones included; rejected, demoted, retired and erased versions do not block. The
   test runs in the committing transaction under the chain lock, as every capture takes it, so no
   held version lands between the test and the commit; one `EXISTS` over the subtree's nodes
-  through `memories_workarea (tenant_id, workarea_id, state)`, unmeasured beyond the build's test
+  through `memories_workspace (tenant_id, workspace_id, state)`, unmeasured beyond the build's test
   (#150). The person empties the subtree with bulk review (ADR-0055): `oml review list
-  --workarea <root>` then `oml review approve --ids -` or `reject --ids - --reason …`, each item
+  --workspace <root>` then `oml review approve --ids -` or `reject --ids - --reason …`, each item
   judged and signed as one verdict, R2 per item, `same_user` marked where it applies. From the
   commit no node of the former subtree has a root, so its promoted rows reach every scope.
   *Recommended answer:* the commit is one act of one person, not ADR-0009's two-identity
   transition, because it attests nothing new — every row it releases was already approved by a
-  non-author under R2 — and because a workarea stays `development` and may be marked again for
+  non-author under R2 — and because a workspace stays `development` and may be marked again for
   the next iteration. A status transition proposed or ratified on any node inside is refused
-  `workarea.in_progress_refused` with reason `commit_first`, so the ladder never moves under an
+  `workspace.in_progress_refused` with reason `commit_first`, so the ladder never moves under an
   open subtree.
 
 - **d7 — Nothing crosses the boundary before the commit or a published release; held work reaches only the subtree and its ancestors.** A claim edge (any kind, including
   `brief`) whose two endpoints have different in-progress roots, or one root and none, is refused
   when proposed and, for one proposed before a mark, when ratified; a brief read leaves out a
   claim the boundary hides at its node, whenever its edge was made. It is refused
-  `workarea.in_progress_refused` with reason `edge_crosses`, answered after both endpoints pass
+  `workspace.in_progress_refused` with reason `edge_crosses`, answered after both endpoints pass
   readability, so a key that cannot read an endpoint gets `access.not_found` and learns nothing.
   A `derives_from` target inside, named by a write outside, is unreadable at the write's node
   and answers `access.not_found` as any unreadable target does; a write inside may derive from
-  one outside. A supersession lands in its target's workarea, so it never crosses. Reassignment
+  one outside. A supersession lands in its target's workspace, so it never crosses. Reassignment
   and re-parent are not built; their records take this rule when they are.
 
-- **d8 — A key may carry the `curator` profile: a dreamer key held by an agent, which inside an
+- **d8 — A key may carry the `curator` profile: a reviewer key used by an agent, which inside an
   in-progress scope may narrow and never widen.** `POST /v2/keys` and `oml keys issue` take
   `profile: "curator"`, journalled in `key.issued`, fixed for the key's life; the key must be
-  `role: dreamer` and `held_by: agent`, with its own key and principal, and anything else is
+  `role: reviewer` and `used_by: agent`, with its own key and principal, and anything else is
   `request.validation` naming `/profile`. A curator key's grants may be reader, writer and
-  dreamer, the one widening of ADR-0025 d2's admissible set, so that one agent can read, write
+  reviewer, the one widening of ADR-0025 d2's admissible set, so that one agent can read, write
   and reject. *Recommended answer:* a profile on the key, revived from ADR-0027's member profiles
   (#10, archived at `archive/feat/ontology-crews`), rather than a sixth role, because R1's verb
-  ceiling is per role and a curator's ceiling is a dreamer's narrowed by scope, not a new rung.
+  ceiling is per role and a curator's ceiling is a reviewer's narrowed by scope, not a new rung.
 
 - **d9 — A curator's acts, each only inside an in-progress scope, each journalled, attributed
-  and reversible.** Every act names rows whose workarea is inside an in-progress subtree; a
+  and reversible.** Every act names rows whose workspace is inside an in-progress subtree; a
   row or a target outside every one is refused `access.verb_ceiling` with reason
   `curator_outside_in_progress`, before anything is written. A curator never acts on a row its
   own key or principal authored or appears in the lineage of (R2 per key and principal):
@@ -232,11 +232,11 @@ Questions revision 1 left open are settled below at their recommended answers, e
   reason naming the older, and a `contradicts` flag only where a model the operator chose says
   so. It never sees a row outside its scope, since its key's acts are refused there.
 
-- **d11 — Anchors, `oml sync` and draft workareas work unchanged inside, and a draft workarea is
+- **d11 — Anchors, `oml sync` and draft workspaces work unchanged inside, and a draft workspace is
   the first case to mark.** An anchor is part of each version (ADR-0057 d2) and is served on an
   unreviewed item as on any other; `stale` and the origin filters apply inside as outside. `oml
   sync`'s diff reads the key's own rows and the promoted tips (ADR-0057 d8), so marking its
-  workarea changes no plan. *Recommended answer:* `oml-design-pr-<n>` (ADR-0057 d14) may be
+  workspace changes no plan. *Recommended answer:* `oml-design-pr-<n>` (ADR-0057 d14) may be
   marked in progress by the operator's reviewer key, so agents working on the pull request read
   its draft decisions at once; at merge or close the operator rejects or approves what is held,
   `--retire-all` proposes the retirements, those are approved in bulk, and the commit then
@@ -245,32 +245,32 @@ Questions revision 1 left open are settled below at their recommended answers, e
 - **d12 — Abandonment and retirement delete nothing.** *Recommended answer:* no verb clears the
   mark without the commit's precondition. Work abandoned inside is rejected in bulk by a person
   (ADR-0055 d8) with a reason; its bytes stay (R4), served to no one but their authors. A
-  workarea left in progress with nothing held may simply be committed; one left with held rows
+  workspace left in progress with nothing held may simply be protected; one left with held rows
   stays in progress, read only inside, for as long as nobody commits it. An abandoned scope stays
   visible: its root is named on every node read inside it (`in_progress_root`), and `oml doctor`
-  reports it for a key whose default workarea lies inside.
+  reports it for a key whose default workspace lies inside.
 
-- **d13 — The surfaces.** `GET /v2/workareas/{workarea}` and the tree read gain `mode` and
-  `in_progress_root` (`{id, name}` or null); `POST /v2/workareas/{workarea}/mode` (d1, d6); the
+- **d13 — The surfaces.** `GET /v2/workspaces/{workspace}` and the tree read gain `mode` and
+  `in_progress_root` (`{id, name}` or null); `POST /v2/workspaces/{workspace}/mode` (d1, d6); the
   claim item gains `unreviewed` (d4); `RecallRequest.include_unreviewed` becomes optional (d4);
-  `KeyIssue.profile` and the key read's `profile` (d8). `oml_workarea` (ADR-0039 d9) serves the
-  two workarea fields, so an agent learns that it works in progress; no MCP tool is added. CLI:
-  `oml workareas mode`, `oml keys issue --profile curator`. Pages: the user page's workarea view shows each node's mode,
-  and its closed action set gains `workarea_mode`, acting as the person's `<user>-review` session
+  `KeyIssue.profile` and the key read's `profile` (d8). `oml_workspace` (ADR-0039 d9) serves the
+  two workspace fields, so an agent learns that it works in progress; no MCP tool is added. CLI:
+  `oml workspaces mode`, `oml keys issue --profile curator`. Pages: the user page's workspace view shows each node's mode,
+  and its closed action set gains `workspace_mode`, acting as the person's `<user>-review` session
   key (amending ADR-0045 d1, d9). Codes, each in the errors tables and the `ErrorCode` enum:
-  `workarea.in_progress_refused` (409, reasons `status`, `universe`, `nested`, `commit_first`,
-  `edge_crosses`), `workarea.held_remaining` (409); `access.verb_ceiling` gains reasons
+  `workspace.in_progress_refused` (409, reasons `status`, `universe`, `nested`, `commit_first`,
+  `edge_crosses`), `workspace.held_remaining` (409); `access.verb_ceiling` gains reasons
   `mode_is_human_only`, `curator_narrow_only` and `curator_outside_in_progress`. The SDKs are
   regenerated from the contract.
 
-- **d14 — Migration and doctor.** One forward-only migration adds `workareas.mode` (`text NOT
+- **d14 — Migration and doctor.** One forward-only migration adds `workspaces.mode` (`text NOT
   NULL DEFAULT 'standard'`, checked) and `api_keys.profile` (nullable, checked); both default to
   today's behaviour, so the migration rewrites no row's meaning and is safe on live. It is
   numbered after main's highest and the open lanes' (`0028_in_progress.sql`, after valid
-  time's 0026 and the similar keys' 0027). `oml doctor` gains: whether the key's default workarea lies inside an
-  in-progress workarea, and its root; for a person's reviewer key, that it may set the mode and
+  time's 0026 and the similar keys' 0027). `oml doctor` gains: whether the key's default workspace lies inside an
+  in-progress workspace, and its root; for a person's reviewer key, that it may set the mode and
   how many held items it can review block the commit (one page of `GET /v2/review/held`); and a
-  curator key whose default workarea is not in progress, which can do nothing there. Naming
+  curator key whose default workspace is not in progress, which can do nothing there. Naming
   in-progress roots idle 30 days (d12) waits for a tenant-wide read of the marks and is opened
   as a follow-up.
 
@@ -297,8 +297,8 @@ Questions revision 1 left open are settled below at their recommended answers, e
   stays read, as the read log records; `unreviewed: true` is the mitigation, and the `oml-memory`
   skill tells agents to weigh such claims accordingly. Undeclared derivation stays undetectable
   (ADR-0001 d6).
-- **Marking an existing workarea takes its promoted claims from every read scoped outside it**
-  until the commit; that is the "nothing leaves" rule, and the cost of marking a workarea that
+- **Marking an existing workspace takes its promoted claims from every read scoped outside it**
+  until the commit; that is the "nothing leaves" rule, and the cost of marking a workspace that
   others already read.
 - **The commit waits on review**: one held claim no eligible reviewer can judge holds the whole
   subtree. A person may reject it.
@@ -312,14 +312,14 @@ Questions revision 1 left open are settled below at their recommended answers, e
 
 | Alternative | Why not |
 |---|---|
-| **An admin key, or any dreamer, sets the mode** | The mark changes what other keys read; an admin never reviews (D9), and an agent dreamer would let an agent widen R3, which R1 keeps off agent hands. |
-| **The commit is ADR-0009's `development` → `committed` transition** (revision 1, d12) | It needs a second identity for an act that attests nothing new, and it ends iteration: a committed node cannot be marked again. |
+| **An admin key, or any reviewer, sets the mode** | The mark changes what other keys read; an admin never reviews (D9), and an agent reviewer would let an agent widen R3, which R1 keeps off agent hands. |
+| **The commit is ADR-0009's `development` → `protected` transition** (revision 1, d12) | It needs a second identity for an act that attests nothing new, and it ends iteration: a protected node cannot be marked again. |
 | **Promoted rows inside stay visible outside before the commit** | One subtree would release by two rules, and a reader above would see part of a scope's work without the rest. |
 | **The boundary stamped on rows** (a root column on memory rows behind row security) | Every mark, commit and re-mark would rewrite rows, and the release would depend on each rewrite having run. |
 | **A grant attribute `unreviewed: allow \| block`** (revision 1, d6) | A second access mechanism beside grants; a key that must not read inside is given no grant there. |
 | **Held steering or guardrails served inside** | Steering and guardrails are served first and never cut; the least checked text would sit in the most privileged place. |
 | **A curator that approves inside, or promotes mechanical facts now** | The operator chose narrow only; a curator promoting would let an agent release work, which R1 forbids. ADR-0047 d9's exception waits for that build. |
 | **A curator's retirement takes effect at once** | A retirement version is a write; signing it under its own author breaks R2. A held duplicate is narrowed at once by rejection instead. |
-| **A sixth role, `curator`** | R1's ceiling is per role and is a ladder; a curator is a dreamer narrowed by scope, which a profile states without a new rung. |
+| **A sixth role, `curator`** | R1's ceiling is per role and is a ladder; a curator is a reviewer narrowed by scope, which a profile states without a new rung. |
 | **A verb that clears the mark without the commit's test** | It would release whatever was promoted inside while held work remained, skipping the one precondition that makes "nothing leaves" true. |
 | **Default `include_unreviewed: false` inside** | Immediacy is the point of opting in; an agent configured once would miss its crew's work silently. |

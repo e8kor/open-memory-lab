@@ -7,7 +7,7 @@ answers: how an agent gets the memory a turn needs beyond what the session-start
 
 # ADR-0038 — The agent recalls for itself, and a failed command recalls only when the user opted in
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) (d1, d2: the instructions describe recall and no longer tell the model to call it)
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workspace-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) (d1, d2: the instructions describe recall and no longer tell the model to call it)
 
 **Release:** introduced in v0.4.0 ([releases](../changelog.md))
 
@@ -122,7 +122,7 @@ change merges.
 
 - **d7 — One recall of `k` 3 under a 200-token budget, a 1-second request timeout, a 2-second
   deadline, and a breaker.** The request is `POST /v1/memories/recall` with `{"query", "k": 3,
-  "include_text": true, "max_tokens": 200}` on the key's default workarea: promoted memories
+  "include_text": true, "max_tokens": 200}` on the key's default workspace: promoted memories
   only, never the key's held rows, since a pitfall injected unasked should be one a different
   identity reviewed. The breaker is set in the session cache before the request is sent and
   cleared only by an answer, so a failed or timed-out request, or a hook ended by its deadline,
@@ -133,7 +133,7 @@ change merges.
   The `PostToolUseFailure` document's context is the framing line of ADR-0029 d6, then `Recalled
   from OML because a tool failed; it may be irrelevant — ignore it if so.` — the kind of
   instruction Shi et al. measured as a mitigation — then one line per hit naming its artifact id,
-  claim key, workarea and recorded time, so staleness shows, and its body flattened. Each line is
+  claim key, workspace and recorded time, so staleness shows, and its body flattened. Each line is
   at most 400 bytes and the whole at most 1,600. Steering is not repeated: session start injected
   it. Hits the session already holds are dropped, and when none is left nothing is printed.
 
@@ -162,7 +162,7 @@ change merges.
   exact words and then one variant at a time (plural, verb forms, an identifier's other
   spellings, the most distinctive word alone), because `plainto_tsquery('simple')` stems
   nothing and ANDs every word (Context), and stops when two queries in a row add no new
-  `artifact_id`. It returns each finding with its `artifact_id`, `claim_key`, `workarea_path`
+  `artifact_id`. It returns each finding with its `artifact_id`, `claim_key`, `workspace_path`
   and `created_at`, under ADR-0029 d6's framing line, then the queries it ran, so a miss names
   the words it was a miss for. It sets `model: haiku`, one of the aliases the field accepts
   (same page, "Choose a model"): the searching is several cheap calls whose raw results stay
@@ -207,8 +207,8 @@ change merges.
 | **C — The raw prompt as the recall query on every turn** | Under AND matching a whole prompt matches almost nothing, and what it matches is unranked; every prompt would leave the machine, the hook would block every turn, and injected text stays in the transcript, where irrelevant context costs accuracy (Shi et al.). | Vector or fused scores exist and a labelled per-prompt set shows acceptable precision at k=3. |
 | **D — Per-prompt recall gated by a score or keyword filter** | No fair normalization of `ts_rank` exists (PostgreSQL), so a threshold lets through the high-scoring near-misses that do the most harm; it keeps C's per-turn cost and transcript residue. | The same as C, and its labelled precision at k=3 beats E's. |
 | **A now — Session-start recall with git words (#135)** | Under AND semantics more words shrink recall; it needs `match: "any"` and an own-area-only search on the server first, and then an uncalibrated `ts_rank` lets one-word matches fill the hits. | `match: "any"` lands together with an #102 with-and-without measurement. |
-| **B now — The workarea brief and digest (#136, #136)** | They need edges, ratification and a reviewing crew, and start empty; worth more than A while recall is full-text only, but not buildable as the next small change. | Someone will curate a brief; B comes next after this record. |
-| **H — A start-of-session index of keys and titles** | Needs a workarea listing this record has not verified exists. | Alongside B. |
+| **B now — The workspace brief and digest (#136, #136)** | They need edges, ratification and a reviewing crew, and start empty; worth more than A while recall is full-text only, but not buildable as the next small change. | Someone will curate a brief; B comes next after this record. |
+| **H — A start-of-session index of keys and titles** | Needs a workspace listing this record has not verified exists. | Alongside B. |
 | **I — Exact glossary match on the prompt** | No glossary claim kind exists. | A glossary kind is decided. |
 | **d4 — E on by default** | The error's words leave the machine unasked, and #135 requires opt-in. | The widening rule above is met. |
 | **d5 — The whole first error line as the query** | Its stop words and numbers must all match, so it recalls nothing, and it carries whatever secret the line printed. | — |
@@ -216,5 +216,5 @@ change merges.
 | **d8 — Repeat the steering with every hit** | Session start already injected it; repeating it spends the budget on text the session holds. | — |
 | **d9 — Keep the cache in memory or in the transcript** | Each hook is a new process, and the transcript is Claude's context, not the hook's. | — |
 | **d10 — Stemming on the server instead of variants in a subagent** | It changes the text-search configuration every recall uses and every existing match, which is ADR-0039's surface, not this record's; the librarian works on the server as served. | Recall gains a stemmed or vector mode. |
-| **d10 — A librarian with `oml_workarea` or the built-in read tools** | Neither answers what the server holds; each added tool widens what a prompt injected through a stored memory could reach. | A question the librarian is asked needs one. |
+| **d10 — A librarian with `oml_workspace` or the built-in read tools** | Neither answers what the server holds; each added tool widens what a prompt injected through a stored memory could reach. | A question the librarian is asked needs one. |
 | **d10 — `model: inherit`** | Every variant query would run on the main conversation's model, at its price, for work a list of exact-word searches does. | Haiku's variant choices miss what a labelled set shows a larger model finds. |

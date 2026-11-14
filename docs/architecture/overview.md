@@ -6,7 +6,7 @@ answers: "how OML fits together: the clients and what each starts from, the acto
 
 # How OML is put together
 
-Open Memory Lab (OML) is an external memory provider for AI agents and crews. Every memory is held on arrival, scanned, reviewed by an identity that did not write it, and only then visible to others. This page maps the pieces. The [architecture views](views.md) draw them first, and the [workarea lifecycle](lifecycle.md) draws how a workarea moves toward production. Contracts live on the pages that own them, and this page links to them.
+Open Memory Lab (OML) is an external memory provider for AI agents and crews. Every memory is held on arrival, scanned, reviewed by an identity that did not write it, and only then visible to others. This page maps the pieces. The [architecture views](views.md) draw them first, and the [workspace lifecycle](lifecycle.md) draws how a workspace moves toward production. Contracts live on the pages that own them, and this page links to them.
 
 ## Clients and how they start
 
@@ -32,13 +32,13 @@ flowchart LR
         AD["Admins and the operator"]
     end
     OML["Open Memory Lab"]
-    AG -- "MCP: oml_write, oml_read, oml_workarea" --> OML
+    AG -- "MCP: oml_write, oml_read, oml_workspace" --> OML
     RC -- "HTTP: review next, verdict, ratify" --> OML
-    AD -- "oml CLI or web pages:<br/>keys, workareas, search settings" --> OML
+    AD -- "oml CLI or web pages:<br/>keys, workspaces, search settings" --> OML
 ```
 
 - **Agent crews** call three MCP tools. None of them can promote, sign, demote or delete. See [MCP plugin](../api/mcp-plugin.md).
-- **Reviewer crews** hold reviewer keys (role `dreamer`) and work the review over HTTP. See [roles and keys](roles-and-keys.md) and [admission](admission.md).
+- **Reviewer crews** hold reviewer keys (role `reviewer`) and work the review over HTTP. See [roles and keys](roles-and-keys.md) and [admission](admission.md).
 - **Admins and the operator.** Admins use the `oml` CLI with admin keys; the operator runs the deployment. People sign in with Google or GitHub: the lead serves the sign-in, and a separate process, `oml-web`, serves the user and admin pages on the same origin.
 
 The server derives the tenant from the API key, never from the request.
@@ -60,7 +60,7 @@ A compromised lead is a compromised key. The signature attests the deployment, n
 
 ## How the code is laid out
 
-Each binary has one shape. A pure core (`oml-domain`) holds the rules: the review states, the workarea tree, the role limits and the lineage checks. It does no I/O. An application layer (`oml-app`) declares what the core needs from the world. Adapters implement those needs for PostgreSQL, the lake and the clock. The HTTP transport and the MCP facade call the application layer. The `oml` CLI reaches it only over HTTP.
+Each binary has one shape. A pure core (`oml-domain`) holds the rules: the review states, the workspace tree, the role limits and the lineage checks. It does no I/O. An application layer (`oml-app`) declares what the core needs from the world. Adapters implement those needs for PostgreSQL, the lake and the clock. The HTTP transport and the MCP facade call the application layer. The `oml` CLI reaches it only over HTTP.
 
 ## Four scenarios
 
@@ -104,7 +104,7 @@ sequenceDiagram
     participant A as Agent (reader key)
     participant S as oml-server-lead
     participant P as PostgreSQL
-    A->>S: oml_read (query, workarea)
+    A->>S: oml_read (query, workspace)
     S->>P: search promoted rows within access
     S-->>A: steering first, then ranked hits
 ```
@@ -118,13 +118,13 @@ sequenceDiagram
     participant P1 as Proposer
     participant P2 as Ratifier (not the proposer)
     participant S as oml-server-lead
-    P1->>S: propose committed to validated
-    S->>S: refuse unless every child is validated
+    P1->>S: propose protected to frozen
+    S->>S: refuse unless every child is frozen
     P2->>S: ratify
     S->>S: journal the transition
 ```
 
-The workarea then refuses new writes and approvals. There is no unfreeze. See [workareas](workareas.md).
+The workspace then refuses new writes and approvals. There is no unfreeze. See [workspaces](workspaces.md).
 
 ## The four rules and where they are enforced
 
@@ -133,8 +133,8 @@ The four rules, R1 to R4, are declared once, in [the constitution](https://githu
 | Rule | Enforced at |
 |---|---|
 | [R1](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md), the verb ceiling | The API itself: no MCP tool reaches a verb above an agent key's role, and every HTTP route checks the key's role. See [roles and keys](roles-and-keys.md). |
-| [R2](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md), the reviewer is never the author | Approval time, in the server. It checks the reviewer's key and person against the author and the memory's lineage. A workarea status change and a link need a second identity. See [admission](admission.md). |
-| [R3](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md), the gate changes visibility, not ranking | The read path. Other keys recall promoted memories only, and steering comes first and unranked. One exception is built: an [in-progress workarea](workareas.md#in-progress-workareas)'s held memories, marked unreviewed. Also, an admin of the tenant reads held text through the journaled [admin read](roles-and-keys.md#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21). See [retrieval](retrieval.md). |
+| [R2](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md), the reviewer is never the author | Approval time, in the server. It checks the reviewer's key and person against the author and the memory's lineage. A workspace status change and a link need a second identity. See [admission](admission.md). |
+| [R3](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md), the gate changes visibility, not ranking | The read path. Other keys recall promoted memories only, and steering comes first and unranked. One exception is built: an [in-progress workspace](workspaces.md#in-progress-workspaces)'s held memories, marked unreviewed. Also, an admin of the tenant reads held text through the journaled [admin read](roles-and-keys.md#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21). See [retrieval](retrieval.md). |
 | [R4](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md), no silent deletion | The journal is append-only, and a retirement keeps every version. Demotion and erasure by crypto-shredding are designed and not built. See [audit and lineage](audit-and-lineage.md). |
 
 ## What OML does not do

@@ -6,7 +6,7 @@ answers: "how a reviewer crew integrates over plain HTTP: the next, verdict loop
 
 # Integrate a reviewer crew over HTTP
 
-OML runs no review model. Review capacity is external crews holding reviewer keys (role `dreamer`),
+OML runs no review model. Review capacity is external crews holding reviewer keys (role `reviewer`),
 who record verdicts over the same HTTP API every other caller uses. If no crew integrates, nothing
 promotes. This page walks one crew member through the loop from serve to verdict.
 
@@ -18,8 +18,8 @@ measured yet. For the human routine, see [Review held memories](../guides/review
 
 - A reviewer key per crew member. Attribution and the check that the reviewer is never the author
   use the (key, principal) pair, and a shared key makes crew members one identity.
-- `dreamer` and `reader` grants on the workareas the member reviews, and no admin role. A
-  `dreamer` key is never an admin key (`access.role_exclusive`).
+- `reviewer` and `reader` grants on the workspaces the member reviews, and no admin role. A
+  `reviewer` key is never an admin key (`access.role_exclusive`).
 - Plain HTTP, not MCP. The verdict routes live under `/v2`. The [MCP tools](mcp-plugin.md) carry no
   verdict, so giving an agent the plugin config gives it no path to one. See
   [why a write is held](../concepts/why-a-write-is-held.md).
@@ -68,7 +68,7 @@ this key or principal. The request takes no filter; the queue is served whole.
     "version": 1,
     "kind": "memory",
     "state": "held",
-    "workarea_path": "universe.procurement.metals-crew",
+    "workspace_path": "universe.procurement.metals-crew",
     "principal": "crew-procure/agent-4",
     "derives_from": ["art_01JB2WYT5H8K3N6Q9S2VX4ZC7B"],
     "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741."
@@ -161,8 +161,8 @@ measured basis, so poll at the rate the review deadline implies.
 
 | Code | Where it fires | Handling |
 |---|---|---|
-| `access.verb_ceiling` (403) | A non-`dreamer` key, including an admin key, calls a `review/*` route. | Fix the key, not the request. |
-| `access.grant_refused` (403) or `access.not_found` (404) | A verdict targets a workarea outside the key's `dreamer` access. | Check the crew's grants. |
+| `access.verb_ceiling` (403) | A non-`reviewer` key, including an admin key, calls a `review/*` route. | Fix the key, not the request. |
+| `access.grant_refused` (403) or `access.not_found` (404) | A verdict targets a workspace outside the key's `reviewer` access. | Check the crew's grants. |
 | `idempotency.in_progress` (409) | A verdict is retried while the first attempt is still committing. | Honor `Retry-After` and resend the identical request. |
 | `idempotency.digest_mismatch` (409) | An `Idempotency-Key` is reused for a different request. | Mint one key per act, such as `crew-review/run-N/verdict-N`. |
 | `system.unavailable` (503) | The server cannot serve safely. | Retry; the loop resumes where the client-held state says. |

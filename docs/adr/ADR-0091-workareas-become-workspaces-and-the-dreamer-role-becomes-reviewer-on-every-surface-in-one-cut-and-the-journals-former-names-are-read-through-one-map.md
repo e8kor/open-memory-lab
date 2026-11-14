@@ -43,9 +43,9 @@ equality survives the cut.
 
 ## Context
 
-**The word.** Since [ADR-0008](ADR-0008-workarea-algebra.md) the governed node of a tenant's tree
+**The word.** Since [ADR-0008](ADR-0008-workspace-algebra.md) the governed node of a tenant's tree
 is a *workarea*: grants bind to its node id, it moves up the status ladder, and memory is written
-into it ([workareas](../architecture/workareas.md)). ADR-0018 d4 fixed the word and listed
+into it ([workareas](../architecture/workspaces.md)). ADR-0018 d4 fixed the word and listed
 "workspace" among the words never used for it. The operator reversed that on 2026-11-14 and asked
 for the rename on every surface: source, documents, the console, the landing site and operations.
 
@@ -77,7 +77,7 @@ migrations 0001, 0004 and 0028, grants such as `dev:dreamer`, the CLI's `--role`
 error details, the OpenAPI descriptions, the SDKs and the docs. Signed `key.issued` and
 `grant.issued` payloads carry `role: "dreamer"`, and a status transition's `policy_snapshot`
 carries `required_roles`. "Curator" already has three meanings, none of them a role: the
-in-progress curator key profile ([ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)),
+in-progress curator key profile ([ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)),
 the ontology crew's curator grant profile, and a universe curator with its `<user>-curate` key
 ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)).
 
@@ -264,8 +264,8 @@ Decided, not built.
   decides it, and the register gains a list, "Renamed records", of former file name beside current
   file name, one row per rename, never pruned. It is a list for readers, not a redirect.
   The twelve records whose file names say `workarea` (ADR-0008, 0030, 0057, 0067, 0072, 0073,
-  0082, 0084, 0085, 0086, 0087 and 0089) are renamed by this record, and so are the pages `architecture/workareas.md`
-  and `use/workareas.md`, the design note `design/workarea-lifecycle.md` and every other tracked
+  0082, 0084, 0085, 0086, 0087 and 0089) are renamed by this record, and so are the pages `architecture/workspaces.md`
+  and `use/workspaces.md`, the design note `design/workspace-lifecycle.md` and every other tracked
   file whose path holds the word. How each link resolves:
   - Relative links inside the docs are rewritten in the same change. `hooks/adr_links.py` turns a
     relative link to a record into its GitHub blob URL; it gains a check that the target file
@@ -276,8 +276,8 @@ Decided, not built.
     every `ADR-*.md` as a record. The register's list is where a reader holding an old link finds
     the new one, and `gen_design_records.py` prints it on the design records page.
   - The site gains no redirect plugin (`requirements.txt` pins only `mkdocs-material`, and stays
-    so): a bookmarked URL of a renamed page, such as `use/workareas/`, answers 404 from the
-    release. The landing site, which links `use/workareas/`, moves to the new paths in the same
+    so): a bookmarked URL of a renamed page, such as `use/workspaces/`, answers 404 from the
+    release. The landing site, which links `use/workspaces/`, moves to the new paths in the same
     release window.
   - `oml sync` anchors a record's claims to its path and keeps each claim's key once written
     (ADR-0057 d18): a span whose text is unchanged while its file moved is `moved` and needs no

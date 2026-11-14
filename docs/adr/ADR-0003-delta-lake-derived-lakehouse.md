@@ -56,7 +56,7 @@ materialization for a tenant forever.
   payloads (which is all the journal carries, ADR-0002 d5), so an event about a held claim
   contributes a signed envelope and digests, never content. Silver materialization is enqueued by
   promotion only: a body enters the lake the first time an identity that did not write it has
-  ratified it, and not before. Gold holds curated tables and lineage for validated workareas.
+  ratified it, and not before. Gold holds curated tables and lineage for frozen workspaces.
   Unreviewed content never enters a consumer-readable zone.
 
 - **d4 — Exactly-once by per-table Delta application transaction ids; the Delta log is the sole
@@ -94,7 +94,7 @@ materialization for a tenant forever.
   skip plus a named finding, never a silent gap.
 
 - **d7 — The lake row carries everything reconciliation needs, with bodies encrypted and
-  attribution in the clear.** Per-tenant table prefixes; rows carry artifact_id, workarea_id (the
+  attribution in the clear.** Per-tenant table prefixes; rows carry artifact_id, workspace_id (the
   stable key, with path-at-write kept as history), writer identity, principal, timestamps,
   provenance class, plaintext digest and ciphertext digest (both journalled in the submission
   event, ADR-0002 d5, so the fold — not the store — owns the reconciler's comparand), and state.

@@ -6,13 +6,13 @@ answers: "how recall finds and orders memories: who can see a hit, what can be a
 
 # How recall finds and orders memories
 
-A recall returns promoted memories that the key can read, ranked by the chosen search pipeline; the [serving view](views.md#logical-one-agent-key-and-everything-it-is-served) draws which workareas it reads. Standing instructions (steering) come first and are never ranked. PostgreSQL serves every read. The Delta lake serves none, because a derived copy must not become an authority.
+A recall returns promoted memories that the key can read, ranked by the chosen search pipeline; the [serving view](views.md#logical-one-agent-key-and-everything-it-is-served) draws which workspaces it reads. Standing instructions (steering) come first and are never ranked. PostgreSQL serves every read. The Delta lake serves none, because a derived copy must not become an authority.
 
 ## Who sees a hit
 
-A recall returns promoted memories inside the key's effective access ([workareas](workareas.md)). It hides two kinds of row:
+A recall returns promoted memories inside the key's effective access ([workspaces](workspaces.md)). It hides two kinds of row:
 
-- **Held memories** are visible to their author (`oml read`, and recall with `--include-unreviewed`), to the reviewer a memory is served to, to an admin through the journaled admin read, and, inside an in-progress workarea, to its readers when the scan raised no finding.
+- **Held memories** are visible to their author (`oml read`, and recall with `--include-unreviewed`), to the reviewer a memory is served to, to an admin through the journaled admin read, and, inside an in-progress workspace, to its readers when the scan raised no finding.
 - **Demoted and erased memories** are not served.
 
 Superseded versions stay readable by id as history. They are never hits.
@@ -26,13 +26,13 @@ Each flag below belongs to `oml read`. The same fields exist on the `oml_read` M
 | Ranked hits for a query | `--query "<words>"` | none |
 | More or fewer hits | `--k` | 8; range 1 to 100 |
 | Only some kinds | `--kinds memory` or `--kinds derived_fact`, repeatable | all hits |
-| A different subtree | `--workarea <id or name>` | the key's default workarea |
+| A different subtree | `--workspace <id or name>` | the key's default workspace |
 | A different search pipeline | `--search <name>` | the tenant's default |
 | Every word to match | `--match all` | `any` |
-| The key's own held memories too | `--include-unreviewed` | off; on inside an in-progress workarea |
+| The key's own held memories too | `--include-unreviewed` | off; on inside an in-progress workspace |
 | Memories anchored in one repository | `--anchor-repo`, `--anchor-path-prefix` | no filter |
 | Memories from one origin | `--origin-kind`, repeatable | no filter |
-| Workareas beyond the scope | `--sources wide` or `--sources legal,product` | `scope`; needs federation on |
+| Workspaces beyond the scope | `--sources wide` or `--sources legal,product` | `scope`; needs federation on |
 
 The API also takes `max_tokens` and `include_text` ([token budgets](#token-budgets)). Without `--query`, `oml read` lists instead of searching. Run `oml read --help` for the listing flags.
 
@@ -40,7 +40,7 @@ The API also takes `max_tokens` and `include_text` ([token budgets](#token-budge
 
 ```mermaid
 flowchart LR
-    Q["Query + key + workarea"] --> S["Scope: readable nodes"]
+    Q["Query + key + workspace"] --> S["Scope: readable nodes"]
     S --> ST["Steering in force<br/>first, unranked, never cut"]
     S --> P["Search pipeline<br/>ranked hits"]
     P --> C["k cut, relevance floor (reranking pipelines),<br/>then token budget cut"]
@@ -123,18 +123,18 @@ Under `bm25-postings`, a very common word can be left out of the index read. `se
 
 A recall returns two segments in a fixed order.
 
-1. **Steering.** Every promoted steering memory of the workarea and its ancestors, in order of depth from `universe`, then promotion time. The query does not rank steering, and the `k` cut and the token budget never remove it. A descendant's steering does not apply at an ancestor.
+1. **Steering.** Every promoted steering memory of the workspace and its ancestors, in order of depth from `universe`, then promotion time. The query does not rank steering, and the `k` cut and the token budget never remove it. A descendant's steering does not apply at an ancestor.
 2. **Hits.** Promoted memories of kind `memory` or `derived_fact`, by score, highest first. Ties break by artifact id.
 
 Steering comes first because a standing instruction that relevance could bury fails when an agent needs it most. Nothing a client sends changes that order.
 
-A recall inside the user root also searches `universe`. Its memories rank with the user's own, and its steering applies as an ancestor's. See [workareas](workareas.md#the-workarea-of-each-user).
+A recall inside the user root also searches `universe`. Its memories rank with the user's own, and its steering applies as an ancestor's. See [workspaces](workspaces.md#the-workspace-of-each-user).
 
 ### The key's own held memories
 
 With `--include-unreviewed`, the key's own held memories join the hits. Each is marked `state: held`. They rank by the same order and count against `k` and the token budget. Held steering and held retirements never appear, because neither is in force yet.
 
-Inside an in-progress workarea, every author's held memories and derived facts join, labeled unreviewed, except those the scan held, which stay visible to their author only. See [workareas](workareas.md#in-progress-workareas).
+Inside an in-progress workspace, every author's held memories and derived facts join, labeled unreviewed, except those the scan held, which stay visible to their author only. See [workspaces](workspaces.md#in-progress-workspaces).
 
 ## Token budgets
 
@@ -166,21 +166,21 @@ The benchmarks run every pipeline through the same served path as an agent. The 
 
 ## Searching beyond the scope
 
-`sources` says where a recall searches ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). It is off until a tenant admin enables federation with `oml search federation --enabled on`. Until then `wide` and a list are refused, never answered as `scope`.
+`sources` says where a recall searches ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). It is off until a tenant admin enables federation with `oml search federation --enabled on`. Until then `wide` and a list are refused, never answered as `scope`.
 
 | `sources` | Searches | Scores with the statistics of |
 |---|---|---|
-| `scope` (default) | the workarea's subtree, as before | the subtree |
-| `wide` | the subtree, plus the `committed` and `validated` workareas the key reads elsewhere that accept federated reads | the subtree and every such workarea, searched or not |
-| a list of names | exactly the listed workareas, answered whole or refused | the listed workareas |
+| `scope` (default) | the workspace's subtree, as before | the subtree |
+| `wide` | the subtree, plus the `protected` and `frozen` workspaces the key reads elsewhere that accept federated reads | the subtree and every such workspace, searched or not |
+| a list of names | exactly the listed workspaces, answered whole or refused | the listed workspaces |
 
-Below the tenant's `max_sources` (8 by default), `wide` searches every such workarea. Above it, `wide` searches the workareas holding the largest share of the query's matching rows. Each word is weighted by its rarity, and ties break by name. `search.sources.cut` counts the rest. A large workarea ranks high only by holding most of the matches. So `universe` is chosen beside a small crew on its share, not its size.
+Below the tenant's `max_sources` (8 by default), `wide` searches every such workspace. Above it, `wide` searches the workspaces holding the largest share of the query's matching rows. Each word is weighted by its rarity, and ties break by name. `search.sources.cut` counts the rest. A large workspace ranks high only by holding most of the matches. So `universe` is chosen beside a small crew on its share, not its size.
 
-The statistics are fixed before any workarea is chosen, so no hit's score depends on which workareas were searched. With `bm25`, the answer for any searched set is the full search's answer restricted to that set. The same query, key, memories and settings give the same answer. Selection reads no clock, no randomness and no model.
+The statistics are fixed before any workspace is chosen, so no hit's score depends on which workspaces were searched. With `bm25`, the answer for any searched set is the full search's answer restricted to that set. The same query, key, memories and settings give the same answer. Selection reads no clock, no randomness and no model.
 
-The answer says what it searched. Under `wide` or a list, `search.sources` lists each workarea searched with `via`, `scope` or `federated`. It adds the workarea's estimate and the query words its rows hold. Each hit carries `via` beside its `workarea_path`. A `scope` answer carries `search.widen` when another workarea the key reads is richer in the query's words. It must hold them at least twice as often per memory as the scope, on at least two memories. The hint names no workarea; a retry with `sources: "wide"` searches them. Every name and number in an answer is of a workarea the key reads.
+The answer says what it searched. Under `wide` or a list, `search.sources` lists each workspace searched with `via`, `scope` or `federated`. It adds the workspace's estimate and the query words its rows hold. Each hit carries `via` beside its `workspace_path`. A `scope` answer carries `search.widen` when another workspace the key reads is richer in the query's words. It must hold them at least twice as often per memory as the scope, on at least two memories. The hint names no workspace; a retry with `sources: "wide"` searches them. Every name and number in an answer is of a workspace the key reads.
 
-A `wide` recall reads the word counts of every such workarea, exact and never sampled, and a list reads the listed ones. A `scope` recall reads none of them. On a federated tenant it reads its widen signal instead. The signal holds those counts as the server last built them, in the background, per key and scope. A signal serves for at most 300 seconds, and only under the grants it was built with. A `scope` answer without one carries no hint, and the server builds it for the next recall. [Workareas](workareas.md#federated-recall) covers the settings and how to make a workarea findable without granting it.
+A `wide` recall reads the word counts of every such workspace, exact and never sampled, and a list reads the listed ones. A `scope` recall reads none of them. On a federated tenant it reads its widen signal instead. The signal holds those counts as the server last built them, in the background, per key and scope. A signal serves for at most 300 seconds, and only under the grants it was built with. A `scope` answer without one carries no hint, and the server builds it for the next recall. [Workspaces](workspaces.md#federated-recall) covers the settings and how to make a workspace findable without granting it.
 
 ## What search does not do
 

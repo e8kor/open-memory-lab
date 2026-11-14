@@ -103,7 +103,7 @@ use. Decided here and built on the same branch; the measurements below are this 
     - **Statistics.** An expired version counts in no statistic, in either `bm25` pipeline, as
       it counts in no list: `bm25`'s scan computes its row count, mean length and document
       frequencies over the scope, which leaves it out, and `bm25-postings` takes the ended
-      versions on the readable nodes out of its per-workarea counts by id. So the two pipelines
+      versions on the readable nodes out of its per-workspace counts by id. So the two pipelines
       rank alike whatever has expired, and with `include_expired` both count them again. A
       ranking that an invisible row moved would make visibility a weight.
 
@@ -278,7 +278,7 @@ LongMemEval turn its session's instant. No `valid_until` is declared, so nothing
 `bm25-postings` ranks exactly as on main. Each question is asked at a `now`: LoCoMo the day after
 the conversation's last session, LongMemEval the question's own date. LongMemEval is
 `longmemeval_s_cleaned` (MIT, 277 MB, not committed), its 133 temporal-reasoning questions, a
-seeded 30 (seed 20261104), 14,826 turns, one workarea per question, the `has_answer` turns as
+seeded 30 (seed 20261104), 14,826 turns, one workspace per question, the `has_answer` turns as
 qrels; no answer is generated.
 
 | Set (queries) | Pipeline | nDCG@10 | S@1 | S@5 | p50 ms | p95 ms |
@@ -368,10 +368,10 @@ the reading is recorded here before the code.
 
 - **d15 — Rule `oml-asof/1`: two facts are taken at the instant, everything else is today's.**
   (1) *Existence:* a version whose submission was recorded after the instant does not exist
-  (`created_at` > `as_of`). (2) *The tip:* among a claim's versions (one `workarea_id` and
+  (`created_at` > `as_of`). (2) *The tip:* among a claim's versions (one `workspace_id` and
   `claim_key`) whose `promoted_at` is at or before the instant, the one with the greatest
   `version` was its tip then. Everything else is read today: the key's role, grants and denials
-  (ADR-0025 d1), each version's state, workarea, scan and in-progress boundary (ADR-0030 d3),
+  (ADR-0025 d1), each version's state, workspace, scan and in-progress boundary (ADR-0030 d3),
   retirement, kinds, the expiry cut at the request's `now` (d3), the origin filters, and the
   scores. So:
     - A tip at the instant that is not promoted today (demoted or erased, once those acts are
@@ -415,7 +415,7 @@ the reading is recorded here before the code.
   and the held rows of d15, in every statement that reads it: `keyword-any`, `bm25`,
   `bm25-trigram`, the `time` leg and `bm25-rerank`'s first stage, so `bm25`'s row count, mean
   length and document frequencies are the scope's at the instant, and a version served today but
-  not then moves no score. The postings lists, `bm25_postings` and `sparse`, keep per-workarea
+  not then moves no score. The postings lists, `bm25_postings` and `sparse`, keep per-workspace
   counts and postings states of today's served versions alone (ADR-0052 d5), so under `as_of` each
   is read by `bm25`'s scan over the scope at the instant, `search.access` answering `scan`; and
   `keyword-all`'s two v0.5.0 statements, kept byte for byte (d3), are read under `as_of` by
@@ -443,7 +443,7 @@ the reading is recorded here before the code.
   statements and the in-memory store both take that short cut, and an act that makes a
   replaced version the tip again removes it with the interval fold. Otherwise the probe "the
   greatest version of this claim promoted at or before the instant", correlated so it runs once
-  per replaced candidate, reads `memories_tip_moves` on (`tenant_id`, `workarea_id`,
+  per replaced candidate, reads `memories_tip_moves` on (`tenant_id`, `workspace_id`,
   `claim_key`, `version`) `INCLUDE` (`promoted_at`) where `promoted_at` is set, backwards by an
   index-only scan whose index condition is the claim, under row security: equality on `uuid`
   and `text`, `int4gt` and `timestamptz_le` are leakproof (`pg_proc.proleakproof`, PostgreSQL 18,

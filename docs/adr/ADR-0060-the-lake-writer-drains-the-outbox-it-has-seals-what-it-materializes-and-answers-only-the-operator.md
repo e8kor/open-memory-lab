@@ -106,8 +106,8 @@ Read against `origin/main` at v0.5.7, these parts of it and its pages are stale:
 
 - **d9 — Lineage is ratified edges and materialized links.** `gold.lineage` holds ratified claim
   and brief edges and each materialized version's `derives_from` and `supersedes` links.
-  `gold.areas` and `gold.curated_<id>` are deferred: the bronze `workarea.create` rows name each
-  workarea for the queries.
+  `gold.areas` and `gold.curated_<id>` are deferred: the bronze `workspace.create` rows name each
+  workspace for the queries.
 
 - **d10 — Tables, per tenant prefix.** `<lake>/<tenant>/bronze/events` (partitioned by
   `event_date`), `silver/claims`, `gold/lineage`, `telemetry/recall_daily` (partitioned by
@@ -117,7 +117,7 @@ Read against `origin/main` at v0.5.7, these parts of it and its pages are stale:
 - **d11 — The operator's queries run in the writer's binary.** `oml-lakewriter query <name>` runs
   named DataFusion SQL over the lake files under the lake's own file permissions: writes per
   kind per day, review latency, recall volume per pipeline, recall outcomes, stale share, top
-  workareas, latest benchmarks. No server route and no CLI verb reaches them (ADR-0013 d1); the
+  workspaces, latest benchmarks. No server route and no CLI verb reaches them (ADR-0013 d1); the
   same SQL runs in DuckDB against the same paths ([lake operations](../operations/lake.md)).
 
 - **d12 — Maintenance in the writer.** Daily, per table: bin-pack OPTIMIZE, a checkpoint, expired

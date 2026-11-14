@@ -77,7 +77,7 @@ and [http-api.md](docs/api/http-api.md) in step. `python scripts/check_contract_
 3. Run the checks above, and update the docs when behaviour changes.
 4. Fill in the [pull request template](.github/PULL_REQUEST_TEMPLATE.md) and link the issue it closes.
 
-Commit messages use the imperative mood ("Add workarea export", not "Added"). The maintainer
+Commit messages use the imperative mood ("Add workspace export", not "Added"). The maintainer
 reviews every pull request; [CODEOWNERS](.github/CODEOWNERS) lists who owns which area.
 
 ### Before you open the pull request
@@ -109,10 +109,10 @@ reviews every pull request; [CODEOWNERS](.github/CODEOWNERS) lists who owns whic
 
 ### Recalling the design from OML (dogfooding)
 
-Before reading a whole ADR, recall its decisions from OML: `oml_read` in the workarea
+Before reading a whole ADR, recall its decisions from OML: `oml_read` in the workspace
 `oml-knowledge.oml-design` with an anchor filter naming the ADR, and read the file only for what
 the recall does not answer. Write a new durable finding with `oml_write`. This takes effect once
-the operator has loaded the ADRs into that workarea; until then, read the ADR.
+the operator has loaded the ADRs into that workspace; until then, read the ADR.
 
 ### Lane hygiene
 

@@ -48,18 +48,18 @@ journalled admin act: `POST /v2/simulations/{id}/audience` ([HTTP API](https://g
 removes entries and lands in the chain as a `simulation.audience_changed` event ([event
 catalog](https://github.com/e8kor/open-memory-lab/blob/main/docs/data/event-catalog.md)). Because every change is a journalled event, the membership at
 any moment is the fold of the opening event and the audience changes since — reconstructible from
-the journal, like every other grant-shaped fact in the system ([workareas](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workareas.md), D7).
+the journal, like every other grant-shaped fact in the system ([workspaces](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workspaces.md), D7).
 
 The audience does two jobs at once:
 
 - **Visibility.** Simulation rows are served only to keys in the audience. Everyone else's reads
   behave as if the rows do not exist.
-- **Review capacity.** Only dreamer-class keys *in the audience* may review a simulation's writes.
+- **Review capacity.** Only reviewer-class keys *in the audience* may review a simulation's writes.
   A reviewer outside the audience cannot be served the item, so it can never ratify it.
 
 An audience is a fence, not a privilege escalation: a key in the audience still carries only its
 own role and grants. A reader key in the audience can read simulation rows in its granted
-workareas; it still cannot write or review them.
+workspaces; it still cannot write or review them.
 
 ## Admission inside the fence
 
@@ -73,12 +73,12 @@ manifest's record, not the provenance column's.)
 Simulation writes pass the **full admission pipeline** ([admission](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/admission.md), D11): capture,
 quarantine, deterministic scan, non-author review, ratification with a journalled policy snapshot,
 journal, release to the outbox. Nothing is waived. The one narrowing is who may review: only a
-dreamer key in the simulation's audience. All the usual review rules still apply on top — the
+reviewer key in the simulation's audience. All the usual review rules still apply on top — the
 reviewer is never the author or anyone in the row's lineage closure (R2), the verdict requires a
 valid serve, the policy snapshot is journalled.
 
-**Fail closed:** a simulation whose audience contains no dreamer key can promote nothing. Its
-writes are accepted, journalled and held — and stay held, subject to the workarea's held-item
+**Fail closed:** a simulation whose audience contains no reviewer key can promote nothing. Its
+writes are accepted, journalled and held — and stay held, subject to the workspace's held-item
 expiry policy ([admission](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/admission.md)) — until the audience is corrected or the simulation
 ends. This is deliberate. A simulation with no reviewer is a channel where an admin could inject
 unreviewed content; rather than carve an exception, the design lets such a simulation exist and be
@@ -90,17 +90,17 @@ The deeper reason to run the full pipeline is evidence parity: a simulated memor
 crew's behaviour has the same decision trail as a real one — who wrote it, who scanned it, who
 reviewed it, under which policy. When a test's outcome is disputed, the [evidence
 export](https://github.com/e8kor/open-memory-lab/blob/main/docs/cli/reference.md) answers for simulated inputs exactly as it answers for real ones. The
-cost is that simulation traffic consumes real review capacity from the audience's dreamers.
+cost is that simulation traffic consumes real review capacity from the audience's reviewers.
 
 ## Containment
 
 Containment is four independent mechanisms. Any one of them failing still leaves the other three.
 
-### Never into validated
+### Never into frozen
 
-A simulation row is refused promotion into a `validated` workarea, unconditionally. Validated areas
-are the frozen, consumer-grade tier ([workareas](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workareas.md), D8); counterfactual content has no
-path into them — not via direct write, not via promotion, not via reassignment (validated refuses
+A simulation row is refused promotion into a `frozen` workspace, unconditionally. Frozen areas
+are the frozen, consumer-grade tier ([workspaces](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workspaces.md), D8); counterfactual content has no
+path into them — not via direct write, not via promotion, not via reassignment (frozen refuses
 reassignment into it regardless of provenance), and not via a tainted derivative (below).
 
 ### The read-path predicate
@@ -156,7 +156,7 @@ claim↔claim connection edges, pending and ratified alike
 ([audit-and-lineage](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/audit-and-lineage.md) owns the definition) — touches a
 simulation row is **tainted**: it carries that `simulation_id` as sim-derived. A tainted claim
 
-- is refused promotion into any `validated` workarea, exactly as a direct simulation row is;
+- is refused promotion into any `frozen` workspace, exactly as a direct simulation row is;
 - never becomes the default served tip of a claim lineage: a promoted tainted supersession is
   served as an audience-scoped overlay tip only ([never the default tip](#never-the-default-tip));
 - is demoted or re-reviewed when its simulation ends (see below);
@@ -195,7 +195,7 @@ scenario that wants layered counterfactuals ("world A, and within it, hypothesis
 layers inside one simulation's content rather than as nested channels.
 
 One refusal the fence makes outside its own walls: **simulations cannot mint vocabulary.**
-Vocabulary workareas refuse `provenance: simulation` submissions of the kinds `term`,
+Vocabulary workspaces refuse `provenance: simulation` submissions of the kinds `term`,
 `term_mapping` and `vocab_release` — a deterministic scan-class veto — because a simulation's
 rows demote rather than erase at its end, and a demoted row must never squat a permanent CURIE
 ([ADR-0021](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0021-ai-human-ontologies.md)).
@@ -221,7 +221,7 @@ Ending a simulation is a journalled act. Its effects:
    `provenance: simulation` is demoted — state change, bytes kept, journalled (R4). Held
    simulation writes are closed out; nothing new is admitted under the ended id.
 2. **Tainted rows demote or re-enter review.** Sim-derived claims are demoted, or re-reviewed
-   where the workarea's policy and the ending act direct it: a tainted claim judged to have
+   where the workspace's policy and the ending act direct it: a tainted claim judged to have
    standalone value (a real lesson learned from a fake world) can survive, but only through a fresh
    non-author verdict taken in full knowledge that its inputs are now demoted fiction. It keeps its
    sim-derived marker either way; survival un-demotes, it never un-taints. Audience-scoped overlay
@@ -250,10 +250,10 @@ flowchart TB
     subgraph A["simulation active"]
         W["write by audience key<br/>provenance: simulation + simulation_id<br/>real chain timestamp + simulated_time"]
         W --> P["full admission pipeline<br/>quarantine → scan → review"]
-        P -- "dreamer ∈ audience ratifies<br/>(reviewer ∉ lineage closure, R2)" --> S["promoted inside the fence:<br/>served only to audience keys,<br/>per-simulation index,<br/>never into validated"]
-        P -- "no dreamer in audience" --> H["held — fail closed,<br/>promotes nothing"]
+        P -- "reviewer ∈ audience ratifies<br/>(reviewer ∉ lineage closure, R2)" --> S["promoted inside the fence:<br/>served only to audience keys,<br/>per-simulation index,<br/>never into frozen"]
+        P -- "no reviewer in audience" --> H["held — fail closed,<br/>promotes nothing"]
         H -- "audience corrected<br/>(journalled simulation.audience_changed)" --> P
-        S --> T["audience crew derives a claim:<br/>declared derives_from touches sim row<br/>⇒ inherits simulation_id (server-enforced),<br/>tainted: refused into validated,<br/>listed in every export"]
+        S --> T["audience crew derives a claim:<br/>declared derives_from touches sim row<br/>⇒ inherits simulation_id (server-enforced),<br/>tainted: refused into frozen,<br/>listed in every export"]
     end
 
     A --> E["end simulation — journalled act"]
@@ -270,7 +270,7 @@ place most worth checking against the constitution.
 
 **R2 — the reviewer is never the author.** Unchanged inside the fence. A simulation write is
 attributed to the key that made it; promotion checks the reviewer against the author *and* the
-row's lineage closure at promotion time, exactly as outside. The audience narrows *which* dreamers
+row's lineage closure at promotion time, exactly as outside. The audience narrows *which* reviewers
 may review; it never relaxes *whether* independent review happens. An admin running a simulation
 still cannot ratify content — admin verdicts are refused everywhere (D9) — and a one-key audience
 is simply a simulation that fails closed. Combined with no-backdating, this means a simulated world

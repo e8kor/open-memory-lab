@@ -33,9 +33,9 @@ so its output does not depend on any ruff configuration found around the output 
 - **The generator's warnings, recorded.** The Python generator's report is committed as
   `sdks/python/generator-warnings.txt`, and `--check` fails when the report changes, so a new
   gap cannot land unnoticed and a closed one shows as a diff. The report is empty. Its one gap,
-  openapi-python-client 0.29.1 naming the inline `status` enum of `Workarea` `WorkareaStatus`,
-  the name of the status read's schema, and so dropping `Workarea`, `WorkareaPage` and
-  `WorkareaView`, closed when removed that read and its schema.
+  openapi-python-client 0.29.1 naming the inline `status` enum of `Workspace` `WorkspaceStatus`,
+  the name of the status read's schema, and so dropping `Workspace`, `WorkspacePage` and
+  `WorkspaceView`, closed when removed that read and its schema.
 
 ## Tests
 
@@ -49,18 +49,18 @@ double. Each suite:
    `did not run: <role> cannot create roles`, or fail under `OML_TEST_REQUIRE_SPLIT=1`, as CI
    sets;
 2. claims the bootstrap and issues keys with the `oml` CLI: an agent key (writer, with writer
-   and reader grants on two workareas) and a dreamer key on the second workarea only, so the
+   and reader grants on two workspaces) and a reviewer key on the second workspace only, so the
    review test's queue holds only that test's rows;
 3. runs its tests, then stops the server and drops the database and the role pair.
 
 | Test | Proves |
 |---|---|
-| The agent loop | A `write` is `held`; its author's recall with `include_unreviewed` returns it `held` and a plain recall does not return it; the dreamer key's `review_next` serves it and an `approve` without `serve_id` promotes it; a plain recall then returns it `promoted`. |
+| The agent loop | A `write` is `held`; its author's recall with `include_unreviewed` returns it `held` and a plain recall does not return it; the reviewer key's `review_next` serves it and an `approve` without `serve_id` promotes it; a plain recall then returns it `promoted`. |
 | Idempotent replay | A write whose response is lost in transit is retried under the same `Idempotency-Key`, answered with `Idempotency-Replay: true`, and leaves one version; a key reused with a different body is an `IdempotencyError` and is not retried; two calls send two keys. |
 | Pagination | Iterating the own-work listing with a page limit of 2 follows `next_cursor` across at least three pages and yields each written row once. |
 | Error mapping | A bad key is an `AuthError` (`auth.invalid`), a writer key asking for review is an `AccessError` (`access.verb_ceiling`), and a second claim under a live `claim_key` is a `SubmissionError` (`submission.claim_key_conflict`), each with its `rule`, `message`, `retryable` and `request_id`. A refusal raises `ApiError` carrying the envelope's `code` and `details`. Every family errors.md declares has its own class, read from errors.md itself. |
 | The URL and key | `OML_URL` and `OML_API_KEY` supply the pair when neither is passed and the arguments win over them; an environment or arguments setting one alone, and no source at all, refuse before any request; the key is in no `repr`. |
-| The verbs | A `write` without `claim_key` sends none; `replaces` supersedes and sends `reason`; a `read` with `artifact_id` and `query`, and any field outside the mode, raise `request.validation` naming it before sending; `read` with neither lists the key's own rows; `approve` without `serve_id` sends none; `workarea` without a name reads the key's default; `events` resumes from `after_seq`; the listing iterators send `own=true` unless the caller passes `own=False`; a `write` with `derives_from` sends no `kind` unless the caller names one; superseding a held version is `submission.tip_conflict`, and once a reviewer promotes it the supersede is held. |
+| The verbs | A `write` without `claim_key` sends none; `replaces` supersedes and sends `reason`; a `read` with `artifact_id` and `query`, and any field outside the mode, raise `request.validation` naming it before sending; `read` with neither lists the key's own rows; `approve` without `serve_id` sends none; `workspace` without a name reads the key's default; `events` resumes from `after_seq`; the listing iterators send `own=true` unless the caller passes `own=False`; a `write` with `derives_from` sends no `kind` unless the caller names one; superseding a held version is `submission.tip_conflict`, and once a reviewer promotes it the supersede is held. |
 
 The harness hands the server and the CLI an environment built from a short allow-list, so a key
 in the caller's environment never reaches either, and the tests remove `OML_API_KEY` and

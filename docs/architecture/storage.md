@@ -60,7 +60,7 @@ Run NTP on the lead's host. Without it, chain integrity does not degrade, but ev
 
 Delta Lake is a derived copy for analysis. It serves no client read. Recall, search and get all answer from Postgres. When the journal and the lake disagree, the journal wins. The benefit is that the lake's write path can be asynchronous and batched without a serving outage. The cost is a second storage system whose only readers are batch jobs. See [the lake](../operations/lake.md) for how to run it.
 
-**What reaches the lake.** No held body ever reaches the lake. `bronze.events` mirrors journal events with digest-only payloads. Silver materialization is enqueued by approval only. Lake bodies are ciphertext. Lake rows carry the artifact id, workarea id, writer, principal, timestamps, the plaintext digest, the lake ciphertext's digest and state.
+**What reaches the lake.** No held body ever reaches the lake. `bronze.events` mirrors journal events with digest-only payloads. Silver materialization is enqueued by approval only. Lake bodies are ciphertext. Lake rows carry the artifact id, workspace id, writer, principal, timestamps, the plaintext digest, the lake ciphertext's digest and state.
 
 **How the writer drains the outbox.** One `oml-lakewriter` runs at a time under a leader lease. It reads outbox rows in sequence order, in micro-batches.
 
@@ -80,4 +80,4 @@ Lake writer throughput and Delta commit latency have not been measured.
 
 ## Where held bodies live
 
-OML holds captured bodies inline in the PostgreSQL `memories` table, unencrypted, under the tenant's row security. There is no object store. A held body never goes to the lake. Its readers are its author, the reviewer it is served to, the readers of an in-progress workarea that holds it when it is a memory or derived fact the scan did not hold and last scanned under the current rule set, and an admin through the journaled admin read ([roles and keys](roles-and-keys.md#the-admin-read)). Approval alone releases a body to the lake, and the outbox carries it ([admission](admission.md)).
+OML holds captured bodies inline in the PostgreSQL `memories` table, unencrypted, under the tenant's row security. There is no object store. A held body never goes to the lake. Its readers are its author, the reviewer it is served to, the readers of an in-progress workspace that holds it when it is a memory or derived fact the scan did not hold and last scanned under the current rule set, and an admin through the journaled admin read ([roles and keys](roles-and-keys.md#the-admin-read)). Approval alone releases a body to the lake, and the outbox carries it ([admission](admission.md)).

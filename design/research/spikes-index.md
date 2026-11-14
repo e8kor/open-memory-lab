@@ -233,10 +233,10 @@ migration does need the harness updated in the same change when any of these hol
 The harness was run against the in-flight rewrite. On 2026-10-31 it ran on the host's 18.6, as
 the owner, over this branch's 0001–0005 plus `migrations/0006_names.sql` from `feat/iteration-3`
 at `65c07dc`, copied into scratch with `--migrations`. That migration adds the RLS table `crews`,
-moves `tenants.name` and `workareas.name` to `prior_name`, and adds a `name` column of the domain
+moves `tenants.name` and `workspaces.name` to `prior_name`, and adds a `name` column of the domain
 `oml_name`. With the harness as first committed, that run failed in two places. S3.1 reported
 `crews` empty for both tenants. S3.3's no-tenant write was refused with `23514`, because its
-workarea name was not an `oml_name`, so the policy never got to refuse it with `42501`. With the
+workspace name was not an `oml_name`, so the policy never got to refuse it with `42501`. With the
 harness as it stands, the run gives the verdicts of the 0001–0005 run and reports `crews` as
 unprobed. Three changes made that happen. The non-empty checks apply to seeded tables only. The
 no-tenant write uses a row that every constraint of either schema accepts. The non-leakproof

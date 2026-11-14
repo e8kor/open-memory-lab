@@ -140,13 +140,13 @@ a use case, and a capability is a parameter before it is a tool.
 
 - **d6 — Capture is asked of the running agent at `Stop`, under budgets, and the server calls no
   model.** Three hook verbs, each a no-op unless `OML_CHAT_CAPTURE=1` (or `OML_TURN_RECALL=1` for
-  the first) and a chat workarea is named (`OML_CHAT_WORKAREA`, or the plugin option
-  `chat_workarea`):
+  the first) and a chat workspace is named (`OML_CHAT_WORKSPACE`, or the plugin option
+  `chat_workspace`):
 
     | Event | Verb | What it does |
     |---|---|---|
     | `UserPromptSubmit` | `oml hook user-prompt` | Counts the turn and stores its `oml-turn/1` hash in the session cache (ADR-0038 d9's file, ids and digests only); then d10 when that is on. Sends no prompt text unless d10 is on. |
-    | `Stop` | `oml hook stop` | When a capture is due, prints `{"decision": "block", "reason": …}`: the instruction to run the `oml:oml-chat-capture` skill over turns `a..b`, naming each turn's anchor, the workarea, the idempotency key prefix and the facts left in the budget. Otherwise prints nothing. |
+    | `Stop` | `oml hook stop` | When a capture is due, prints `{"decision": "block", "reason": …}`: the instruction to run the `oml:oml-chat-capture` skill over turns `a..b`, naming each turn's anchor, the workspace, the idempotency key prefix and the facts left in the budget. Otherwise prints nothing. |
     | `PreCompact` | `oml hook pre-compact` | Records that the session compacted, so the next `Stop` asks at once; prints nothing and never blocks. |
 
     The three verbs are one dispatcher, `oml hook <event>`: it reads the event's JSON once, runs
@@ -186,58 +186,58 @@ a use case, and a capability is a parameter before it is a tool.
   reason; `kind: memory`. Zero facts is a valid answer, and the skill says so first.
 
 - **d8 — A person's chat memory lives in `chat` under their user root, created only by a key a
-  person holds.** The chat workarea is the child named `chat` of a user root (ADR-0044), so
+  person holds.** The chat workspace is the child named `chat` of a user root (ADR-0044), so
   its path is `universe.<user>.chat`. The name `chat` is reserved in every user root's namespace
-  for a key `held_by: human`, at any depth: creating a workarea named `chat` anywhere under a user
+  for a key `used_by: person`, at any depth: creating a workspace named `chat` anywhere under a user
   root with any other key, an agent's writer key in that root included, is refused with
   `access.verb_ceiling`, `details.reason: chat_scope_is_human_only`, before anything is
   journalled, so an agent cannot take the name first (the namespace is one per root, ADR-0044 d5).
   `oml chat init` creates it with the CLI's stored credentials; when the name is taken it adopts
-  only `universe.<user>.chat` and otherwise refuses with `chat_scope_not_the_persons`; it prints the `OML_CHAT_WORKAREA` value, and, once
+  only `universe.<user>.chat` and otherwise refuses with `chat_scope_not_the_persons`; it prints the `OML_CHAT_WORKSPACE` value, and, once
   the server serves ADR-0030's mode, sets it `in_progress`, so the person's other agent keys
   read each other's chat facts labelled unreviewed (ADR-0030 d3, d4). Until then an agent reads
   its own held chat facts, as every key reads its own (ADR-0025 d4). No MCP tool or argument
-  creates it. The cost, as for bulk review (ADR-0055 d1): `held_by` is the issuer's label, so an
+  creates it. The cost, as for bulk review (ADR-0055 d1): `used_by` is the issuer's label, so an
   agent with a shell and the person's stored CLI credentials can run `oml chat init` itself.
 
-- **d9 — Curation inside the chat workarea is ADR-0030's curator, narrow only.** A curator key
-  on the chat workarea rejects the newer of two near-duplicates found by ADR-0050's MinHash
+- **d9 — Curation inside the chat workspace is ADR-0030's curator, narrow only.** A curator key
+  on the chat workspace rejects the newer of two near-duplicates found by ADR-0050's MinHash
   check (lane `feat/remember-dedup`), flags two facts that disagree with a `contradicts` edge,
   and proposes the retirement of a preference a later fact replaced; it never promotes
   (ADR-0030 d8, d9). The reference curator peer stays outside the server with its own key,
-  cursor and budget (ADR-0030 d10). This record builds none of it: it names the chat workarea as
+  cursor and budget (ADR-0030 d10). This record builds none of it: it names the chat workspace as
   that peer's first scope.
 
 - **d10 — Recall on every turn is opt-in: `OML_TURN_RECALL=1` injects at most six hits, within a
   token and a latency budget, each labelled.** `oml hook user-prompt` takes up to eight
   distinctive words of the prompt by ADR-0038 d5's filter, every secret shape removed first, and
-  sends two recalls with `match: "any"` and `include_text`: the chat workarea with `k` 3 and
-  `include_unreviewed: true`, and the key's default workarea with `k` 3, promoted only. Each asks
+  sends two recalls with `match: "any"` and `include_text`: the chat workspace with `k` 3 and
+  `include_unreviewed: true`, and the key's default workspace with `k` 3, promoted only. Each asks
   `max_tokens` 150; the injected context is at most 1,600 bytes, each hit at most 400. The
   latency budget is `OML_TURN_RECALL_BUDGET_MS`, default 300 and at most 1,000: one deadline
   for both requests, and when it passes nothing is injected and the turn goes on. Three misses
   of the deadline in a session stop recall for that session; a miss is counted before a request is
   sent and taken back by an answer in time, so a refused connection or a hook ended by its
-  deadline counts too. Outside the opted-in chat workarea, per-turn recall reads promoted rows
+  deadline counts too. Outside the opted-in chat workspace, per-turn recall reads promoted rows
   only, a law its tests hold by the request bodies. A hit is a line naming its
-  artifact id, its `origin.kind`, its workarea and its time, with `[unreviewed]` when its state
+  artifact id, its `origin.kind`, its workspace and its time, with `[unreviewed]` when its state
   is held, under ADR-0029 d6's framing line and the line `Recalled from OML for this prompt; it
   may be irrelevant — ignore it if so.`; an artifact already injected in the session is not
   repeated. Off by default because the prompt's words leave the machine on every turn, and
   because no labelled set yet shows that injected hits help (#111).
 
 - **d11 — Chat memory reaches a team only by a person's review.** A chat fact is held when it is
-  written (R1). It becomes readable outside the chat workarea only when a person approves it
-  through bulk review (ADR-0055) and, in an in-progress chat workarea, commits it (ADR-0030 d6),
-  or writes it again in a team workarea. No hook, skill, curator or agent promotes, and no
+  written (R1). It becomes readable outside the chat workspace only when a person approves it
+  through bulk review (ADR-0055) and, in an in-progress chat workspace, commits it (ADR-0030 d6),
+  or writes it again in a team workspace. No hook, skill, curator or agent promotes, and no
   setting turns that on.
 
 - **d12 — An end-to-end benchmark runs LongMemEval (S) and LoCoMo through this path.** The
   harness is `eval/bench/chat.py`, beside `bench.py`, and writes `oml-bench/1` results. Each
   dataset's sessions are ingested as chat writes: one claim per turn, `origin.kind` `chat`, a
   chat anchor whose session is the pseudonym of the dataset's session id and whose turn is the
-  turn's number, by an agent key into a workarea per question group; the rows stay held and are
-  recalled by their author with `include_unreviewed: true`, as d8's chat workarea serves them. It
+  turn's number, by an agent key into a workspace per question group; the rows stay held and are
+  recalled by their author with `include_unreviewed: true`, as d8's chat workspace serves them. It
   then recalls with each question and measures two things:
 
     1. **Retrieval proxy, no model:** recall@k for k in 5, 10 and 50 of the evidence turns
@@ -260,8 +260,8 @@ a use case, and a capability is a parameter before it is a tool.
   the per-turn hook is recorded in `recall_events` like any recall, and its query text only
   when the tenant opted in (ADR-0054 d3). One metric family is added:
   `oml_recall_hits_by_origin_total{origin_kind}`, eight closed values (the seven kinds and
-  `none`), no workarea or key label (ADR-0054 d1's series budget). `oml doctor` names: chat
-  capture or turn recall switched on with no chat workarea named; a named chat workarea that does
+  `none`), no workspace or key label (ADR-0054 d1's series budget). `oml doctor` names: chat
+  capture or turn recall switched on with no chat workspace named; a named chat workspace that does
   not resolve, or that is not `universe.<user>.chat`; a server that does not accept
   `origin_kinds` (before v0.6.0), by one listing filtered by it; a chat salt file that is not
   0600; a switch set to a value it does not take; and per-turn recall that missed its budget in
@@ -283,7 +283,7 @@ a use case, and a capability is a parameter before it is a tool.
   the chat anchor's grammar and the composition rules (`oml-domain` anchor tests); an excerpt
   carrying a secret refused by the scanner; the hooks idempotent and bounded, by golden outputs
   for each verb; per-turn recall within its budget and skipped on timeout; an agent key refused
-  creating the chat workarea and a person's key admitted.
+  creating the chat workspace and a person's key admitted.
 
 ## Consequences
 
@@ -317,7 +317,7 @@ a use case, and a capability is a parameter before it is a tool.
 | **Capture at `SessionEnd` or `PreCompact`** | Neither can put text in front of the model (Context); only `Stop` can. | The harness lets either inject context. |
 | **Capture on every `Stop`** | A continuation per turn doubles the turns a session spends; every fifth turn bounds it. | — |
 | **`origin.kind` inferred by the server from the anchor** | The anchor says where, not what kind: a repository file may be a document or code; inference would be a guess signed as a statement. | — |
-| **A chat workarea per project** | Preferences belong to the person across projects; project facts already go to the project's workarea. A per-project chat workarea is a child the person may create under `chat`. | People ask for it. |
+| **A chat workspace per project** | Preferences belong to the person across projects; project facts already go to the project's workspace. A per-project chat workspace is a child the person may create under `chat`. | People ask for it. |
 | **The raw session id in the anchor** | It links a stored memory to a transcript file on the person's disk and to the harness's logs. | — |
 
 ## Open questions

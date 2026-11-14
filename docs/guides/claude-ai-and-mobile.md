@@ -53,7 +53,7 @@ connector keys only.
 An administrator can do the same from a terminal:
 
 ```sh
-oml keys issue-agent claude-mobile --principal crew/claude-mobile --workarea <workarea> --connect-code
+oml keys issue-agent claude-mobile --principal crew/claude-mobile --workspace <workspace> --connect-code
 ```
 
 It prints the connector address, such as `https://oml.example.com/mcp`, and a code such as
@@ -62,10 +62,10 @@ It prints the connector address, such as `https://oml.example.com/mcp`, and a co
 
 A code lives ten minutes. To hand one to someone who will connect later, such as a reviewer, add
 `--ttl`: `oml keys connect-code <key> --ttl 14d` mints a code that lives up to 30 days. The server
-mints a longer code only for a key whose grants sit on one workarea other than the universe, and
+mints a longer code only for a key whose grants sit on one workspace other than the universe, and
 refuses any other key with `oauth.connect_refused`. `oml keys show <key>` names the live code.
 
-To give that person something to recall, `oml demo seed <workarea>` fills a workarea with thirty
+To give that person something to recall, `oml demo seed <workspace>` fills a workspace with thirty
 memories of a fictional team: twenty approved, four approved and then replaced, six held.
 
 ## 2. Add the connector and paste the code
@@ -77,7 +77,7 @@ memories of a fictional team: twenty approved, four approved and then replaced, 
    phone", with a link to `/web`, and "Codes are shown once; use New connect code on the key's row
    if it was lost." If someone sent a link to the page and the connection was not started
    from the connector settings, close it.
-3. The page shows the organization, the agent identity and the workareas the connection will use,
+3. The page shows the organization, the agent identity and the workspaces the connection will use,
    and what it may do there. Where it may write, it says that nothing written reaches anyone else
    until someone else reviews it. Confirm.
 4. The connector is then available in every Claude app signed in to that account, the phone apps
@@ -89,8 +89,8 @@ fetched 2026-11-04: "Free users are limited to one custom connector.").
 
 ## What chat and mobile get
 
-The three tools, which a client lists as Remember (`oml_write`), Recall (`oml_read`) and Workarea
-(`oml_workarea`), under the connector key's grants.
+The three tools, which a client lists as Remember (`oml_write`), Recall (`oml_read`) and Workspace
+(`oml_workspace`), under the connector key's grants.
 They get no skill, no session-start hook, no failure recall and no librarian, because those are
 parts of the Claude Code plugin. The agent searches when the server's instructions and the tools'
 descriptions lead it to. Every write is held, as from any client.
@@ -102,7 +102,7 @@ and remember on its own, paste this into the personal preferences (Settings > Pr
 to every chat, or into a Project's instructions, which apply to chats in that project:
 
 ```text
-I have an external memory connected: Open Memory Lab (tools oml_read, oml_write, oml_workarea).
+I have an external memory connected: Open Memory Lab (tools oml_read, oml_write, oml_workspace).
 
 - At the start of a new topic, and before answering anything about my projects, preferences,
   people or past decisions, call oml_read with 2-4 specific keywords. If nothing useful comes back,
