@@ -122,8 +122,8 @@ impl Act {
         match self {
             Self::Propose(to) => format!("propose {to}"),
             Self::Ratify { from, to, .. } => format!("ratify {from} → {to}"),
-            Self::InProgress => "put in progress".to_owned(),
-            Self::Commit => "commit".to_owned(),
+            Self::InProgress => "drafts visible to: everyone working here".to_owned(),
+            Self::Commit => "drafts visible to: the writing key".to_owned(),
         }
     }
 
@@ -142,10 +142,10 @@ impl Act {
                 text(to)
             ),
             Self::InProgress => format!(
-                "Puts <code>{path}</code> in progress: the user's agents recall each other's unreviewed memories inside it, marked unreviewed, and nothing leaves it until it is committed."
+                "Makes the drafts in <code>{path}</code> visible to everyone working here: the user's agents recall each other's unreviewed memories inside it, marked unreviewed, and nothing leaves it until its drafts are visible to the writing key alone again."
             ),
             Self::Commit => format!(
-                "Commits <code>{path}</code>: it leaves in progress, which needs every memory in it reviewed."
+                "Makes the drafts in <code>{path}</code> visible to the writing key alone, which needs every memory in it reviewed."
             ),
         }
     }
@@ -318,7 +318,7 @@ impl NodeOffers {
         if let Some(held) = withheld {
             let _ = write!(
                 out,
-                r#"<option disabled selected>commit — {held} {} still held</option>"#,
+                r#"<option disabled selected>drafts visible to: the writing key — {held} {} still held</option>"#,
                 if held == 1 { "memory" } else { "memories" }
             );
         }
@@ -539,10 +539,12 @@ fn table(
                     out,
                     r#"<tr>{named}<td>{}{pending}</td><td>{}</td><td>{}</td></tr>"#,
                     text(&offers.transitions.status),
+                    // The mode as the drafts-visibility toggle reads it
+                    // (ADR-0091 d16); the stored modes do not change.
                     if offers.transitions.mode == "in_progress" {
-                        "in progress"
+                        "drafts visible to everyone working here"
                     } else {
-                        "standard"
+                        "drafts visible to the writing key"
                     },
                     offers.dropdown(page, &node.id)
                 );
@@ -805,7 +807,7 @@ async fn view(
                 r#"<h1>Workspaces</h1><p class="desc">Under <code>{}</code>. Apply asks for a confirmation.</p>{confirm}{table}"#,
                 short(user)
             );
-            body.push_str("<details class=\"help\"><summary>?</summary>In progress: the user's agents recall each other's unreviewed memories inside it, and nothing leaves it until it is committed, which needs every memory in it reviewed.</details>");
+            body.push_str("<details class=\"help\"><summary>?</summary>Drafts visible to everyone working here: the user's agents recall each other's unreviewed memories inside it, and nothing leaves it until its drafts are visible to the writing key alone again, which needs every memory in it reviewed.</details>");
             body.push_str("<h2>New workspace</h2>");
             // Creating a workspace is the view's act, through `POST
             // /v2/workspaces` under the form's nonce (ADR-0070 d7 (b)).
@@ -827,7 +829,7 @@ async fn view(
         Side::Admin => (session.administration(), {
             let user = short(session.whoami.user.as_ref().map_or("", |u| u.name.as_str()));
             format!(
-                r#"<h1>Workspaces</h1><p class="desc">Apply asks for a confirmation.</p><details class="help"><summary>?</summary>Status changes run as <code>{user}-admin</code> and need a second key to ratify; in progress and commit run as <code>{user}-review</code>.</details>{confirm}{table}"#
+                r#"<h1>Workspaces</h1><p class="desc">Apply asks for a confirmation.</p><details class="help"><summary>?</summary>Status changes run as <code>{user}-admin</code> and need a second key to ratify; the drafts-visibility toggle runs as <code>{user}-review</code>.</details>{confirm}{table}"#
             )
         }),
     };

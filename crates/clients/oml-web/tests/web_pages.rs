@@ -3783,7 +3783,7 @@ async fn the_user_page_opens_its_agents_held_rows_and_a_person_approves_their_ow
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(page.contains("is now promoted"), "{page}");
+    assert!(page.contains("is now approved"), "{page}");
     let promoted = rig
         .store
         .memory(rig.boot.tenant_id, memory)
@@ -6669,7 +6669,7 @@ async fn the_filters_narrow_the_list() {
         ],
     )
     .await;
-    assert!(page.contains("is now promoted"), "{page}");
+    assert!(page.contains("is now approved"), "{page}");
     let third = agent_writes(&rig, &agent, "still held kestrel").await;
     // A second agent of alice's, to filter by author.
     let (_, _, page) = act_and_follow(
@@ -6904,7 +6904,7 @@ async fn the_atlas_draws_and_counts_only_the_workspaces_and_rows_the_viewer_may_
     let (_, _, atlas) = send(&rig.router, get("/web/atlas", Some(&alice))).await;
     assert!(!atlas.contains("bob"), "{atlas}");
     assert!(
-        atlas.contains("aria-label=\"alice.proj, 2 readable: 1 promoted, 1 unreviewed in progress"),
+        atlas.contains("aria-label=\"alice.proj, 2 readable: 1 approved, 1 unreviewed in progress"),
         "the served row and the helper's held successor of it: {atlas}"
     );
     let (status, _, _) = send(

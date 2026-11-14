@@ -45,7 +45,7 @@ impl Counts {
     /// `(class, count, word)` of each non-zero state.
     fn parts(self) -> Vec<(&'static str, u64, &'static str)> {
         [
-            ("promoted", self.approved, "promoted"),
+            ("promoted", self.approved, "approved"),
             ("held", self.held, "held"),
             ("unreviewed", self.in_progress, "unreviewed in progress"),
             ("superseded", self.other, "other"),

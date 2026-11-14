@@ -575,7 +575,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         // A verdict without serve_id defaults to the one claimed item
         // (ADR-0039 d10).
         AppError::ServeIdUnresolved { several } => ApiError::validation(format!(
-            "serve_id is omitted and this key holds {} claimed review items: send the serve_id review next answered",
+            "serve_id is omitted and this key has taken {} review items: send the serve_id review next answered",
             if several { "several" } else { "no" }
         ))
         .with_details(json!({ "field": "/serve_id" })),

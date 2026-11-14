@@ -557,13 +557,14 @@ enum WorkspacesCommand {
         /// Workspace id or name.
         workspace: String,
     },
-    /// Set in_progress to recall labelled unreviewed memories within the workspace,
-    /// or standard to commit. Person-held reviewer keys only; commit is refused
-    /// while items are held.
+    /// Set who sees the drafts: in_progress makes them visible to everyone
+    /// working here, labelled unreviewed, and standard to the writing key alone,
+    /// which is refused while items are held. Reviewer keys used by a person only.
     Mode {
         /// Workspace id or name.
         workspace: String,
-        /// `in_progress`, or `standard` to commit.
+        /// `in_progress` (drafts visible to everyone working here) or `standard`
+        /// (drafts visible to the writing key).
         #[arg(value_parser = ["in_progress", "standard"])]
         mode: String,
     },
@@ -1076,12 +1077,12 @@ struct EventsArgs {
 
 #[derive(Subcommand)]
 enum ReviewCommand {
-    /// Claim and serve one held item for this key.
+    /// Take one held item for this key and serve it.
     Next,
     /// List held items this key may judge, with text, oldest first, without
-    /// claiming them. Person-held reviewer keys only.
+    /// taking them. Reviewer keys used by a person only.
     List(ReviewListArgs),
-    /// Promote one claimed serve (default) or each artifact in --ids.
+    /// Approve the one item this key took (default), or each artifact in --ids.
     Approve {
         /// serve_id printed by `oml review next`.
         #[arg(conflicts_with = "ids")]
@@ -2210,7 +2211,9 @@ fn run_chat_init(
     );
     match mode {
         Ok(_) => {
-            println!("in progress: your agents read each other's chat facts, labelled unreviewed")
+            println!(
+                "drafts visible to: everyone working here; your agents read each other's chat facts, labelled unreviewed"
+            )
         }
         Err(e) => println!(
             "not in progress ({}): each agent key reads only its own chat facts; retry with \
@@ -5105,8 +5108,9 @@ fn in_progress_doctor(
     let root = default_node.and_then(|n| n["in_progress_root"]["name"].as_str());
     match root {
         Some(root) => lines.push(format!(
-            "ok in progress: the default workspace is inside {root}; recall includes labelled \
-             unreviewed memories, which stay inside until a person commits them"
+            "ok in progress: the default workspace is inside {root}, whose drafts are visible to \
+             everyone working here; recall includes labelled unreviewed memories, which stay \
+             inside until a person makes the drafts visible to the writing key again"
         )),
         None if me["profile"] == "curator" => lines.push(
             "warn curator: the default workspace is not in progress; curator keys act only \
@@ -5307,6 +5311,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     );
     let in_progress_warn = in_progress.iter().any(|line| line.starts_with("warn"));
     let telemetry = telemetry_doctor(scrape.as_ref());
+    let journal = former_names_doctor(ready.as_ref());
     let mut scan = scan_doctor(ready.as_ref(), scrape.as_ref());
     scan.extend(scan_backlog_doctor(rescan_read.as_ref()));
     let scan_warn = scan.iter().any(|line| line.starts_with("warn"));
@@ -5426,6 +5431,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "sync": sync,
             "chat": chat,
             "telemetry": telemetry,
+            "journal": journal,
             "handlers": handlers,
             "scan": scan,
             "usage": usage,
@@ -5461,6 +5467,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                     println!("  {name:<10}: {}", state.as_str().unwrap_or("—"));
                 }
             }
+        }
+        if let Some(line) = &journal {
+            println!("journal     : {line}");
         }
         match &me {
             Some(Ok(_)) => println!(
@@ -6391,6 +6400,26 @@ fn web_doctor(
 /// configuration does not declare; nothing when neither holds, and
 /// nothing for a key that is no admin's, which does not read it. A read
 /// that fails is a line of its own: the counters are then unchecked.
+/// The journal's former names, as `/readyz`'s `former_names` check reports
+/// the lead's startup scan (ADR-0091 d4): `fail` names
+/// `journal_unmapped_former_name` and where the lead's log lists each event;
+/// nothing from a lead that does not report the check.
+fn former_names_doctor(ready: Option<&(u16, Value)>) -> Option<String> {
+    let (_, body) = ready?;
+    match body["checks"]["former_names"].as_str()? {
+        "ok" => Some(
+            "ok journal_unmapped_former_name: every stored event reads in the current names"
+                .to_owned(),
+        ),
+        _ => Some(
+            "fail journal_unmapped_former_name: the journal holds a former name the former-name \
+             map does not cover; the lead's start log names each tenant, seq and event \
+             (ADR-0091 d4)"
+                .to_owned(),
+        ),
+    }
+}
+
 fn usage_doctor(report: Option<&Result<Value, String>>) -> Vec<String> {
     let r = match report {
         None => return Vec::new(),
@@ -7062,6 +7091,24 @@ mod tests {
             web_doctor(Some(&set), None, None),
             vec!["on (google)".to_owned()]
         );
+    }
+
+    #[test]
+    fn doctor_names_journal_unmapped_former_name_when_the_lead_reports_one() {
+        let unmapped = (503, json!({"checks": {"former_names": "unmapped"}}));
+        let line = former_names_doctor(Some(&unmapped)).expect("a line");
+        assert!(
+            line.starts_with("fail journal_unmapped_former_name:"),
+            "{line}"
+        );
+        let ok = (200, json!({"checks": {"former_names": "ok"}}));
+        assert!(
+            former_names_doctor(Some(&ok))
+                .expect("a line")
+                .starts_with("ok journal_unmapped_former_name:")
+        );
+        let older = (200, json!({"checks": {"postgres": "ok"}}));
+        assert_eq!(former_names_doctor(Some(&older)), None);
     }
 
     #[test]

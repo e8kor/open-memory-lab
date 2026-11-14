@@ -461,7 +461,7 @@ fn list_view(
         &[
             ("", "any"),
             ("held", "held"),
-            ("promoted", "promoted"),
+            ("promoted", "approved"),
             ("rejected", "rejected"),
             ("superseded", "superseded"),
             ("demoted", "demoted"),

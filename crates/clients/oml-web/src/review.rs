@@ -116,7 +116,9 @@ fn notice(fields: &Fields) -> Option<String> {
     match fields.get("done")? {
         "verdict" => {
             let state = match fields.get("state")? {
-                s @ ("promoted" | "held" | "rejected") => s,
+                // The stored state `promoted` reads as approved (ADR-0091 d16).
+                "promoted" => "approved",
+                s @ ("held" | "rejected") => s,
                 _ => return None,
             };
             Some(format!(
@@ -1428,7 +1430,7 @@ mod tests {
         let fields = |q: &str| Fields::of(&format!("/web/review?{q}").parse().unwrap()).unwrap();
         assert_eq!(
             notice(&fields("done=verdict&version=3&state=promoted")).as_deref(),
-            Some("Recorded: version 3 is now promoted.")
+            Some("Recorded: version 3 is now approved.")
         );
         assert_eq!(
             notice(&fields("done=verdict&version=3&state=%3Cb%3E")),
