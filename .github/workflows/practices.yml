@@ -111,8 +111,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: python scripts/gen_design_tokens.py --check
-      # The landing site, built from site/src/ and the outputs above, is what site/dist/ holds.
-      - run: python site/build.py --check
       - run: python scripts/check_contrast.py
 
   # The one check to require: every job above succeeded or was skipped (numbers

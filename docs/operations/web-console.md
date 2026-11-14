@@ -165,7 +165,7 @@ proxy in front of the server, with the secret.
 ## Route the pages
 
 The proxy sends each page `oml-web` serves to it, and every other path to the server, sign-in
-included. For Caddy (`deploy/caddy/Caddyfile` adds the landing pages):
+included. For Caddy (`deploy/caddy/Caddyfile` is the full route table):
 
 ```caddyfile
 memory.example.com {

@@ -3,7 +3,7 @@
 Status: design, not implementation.  
 Source of truth: [ADR-0070](../docs/adr/ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core.md),
 as amended on 2026-11-10: `oml-web` is a separate process only (d4, d11), and the landing is a
-separate deployable built from `site/` (d12).
+separate deployable (d12), built and released outside this repository (amended 2026-11-14).
 
 ## Goal
 
@@ -70,7 +70,7 @@ Rules:
 ```text
 production
   browser ── Caddy, the public origin
-               ├─ / /teams /personal /privacy /terms ──> site/ static files
+               ├─ a landing, where the deployment serves one ──> its static files
                ├─ /web/sign-in /web/callback/* /web/sign-up ──> lead :8090
                ├─ /web /web/* ──> oml-web :8091 ──HTTP keep-alive──> lead :8090
                └─ /v1/* /v2/* /mcp /oauth/* /.well-known/* ──> lead :8090
@@ -94,8 +94,10 @@ local development (oml quickstart starts all three)
   path to the lead.
 - `deploy/caddy/Caddyfile` is the production route table; a test in `oml-web`
   holds it and both compose files to `oml_web::PAGES`.
-- The landing is static files from the `oml-site-<version>.tar.gz` release
-  archive, built from `site/`; neither the lead nor `oml-web` serves it.
+- A landing, where a deployment serves one, is static files the proxy serves from
+  outside this repository's releases; neither the lead nor `oml-web` serves it,
+  and `deploy/caddy/Caddyfile` carries no landing block (ADR-0070 d12, d4, as
+  amended 2026-11-14).
 
 ## Dependency boundary
 
@@ -331,7 +333,6 @@ API returns the same JSON as today, but with no page syntax
 - route wall
 - idempotency replay on each `POST`
 - parity over the loopback hop, `oml-web` as its own process
-- `site/build.py --check` (the landing's `site/dist/` is reproducible)
 - manual UAT for sessions, CSRF, CSP, and cookie boundaries
 
 ## Rollback strategy
