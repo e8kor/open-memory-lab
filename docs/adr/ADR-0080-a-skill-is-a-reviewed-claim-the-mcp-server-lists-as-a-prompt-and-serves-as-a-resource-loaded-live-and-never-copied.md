@@ -8,7 +8,7 @@ answers: what a skill is in OML and which fields it carries; how its name is uni
 # ADR-0080 — A skill is a reviewed claim the MCP server lists as a prompt and serves as a resource, loaded live and never copied
 
 **Status:** proposed · 2026-11-14 · tracking #374 · revised the same day with the operator's
-answers to its three questions (d13)
+answers (d13)
 
 **Release:** planned for v0.7.4
 
@@ -80,7 +80,8 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
   `skill` is refused on every other kind and on a retirement. The claim key is derived, never
   chosen: `skill/<name>`; a request that sends another `claim_key` is refused naming `claim_key`.
   `name` follows [ADR-0026](ADR-0026-names-are-keys.md) d2's creation grammar (a lowercase RFC
-  1035 label: a letter first, at most 63 characters) and additionally refuses `--`, which makes
+  1035 label: a letter first, at most 63 characters), is at most 52 characters so that
+  `<name>-unreviewed` (d10) is still a label, and additionally refuses `--`, which makes
   every skill name a valid Agent Skills `name`; `description` is 1 to 1024 characters of one line.
   Both are part of the signed submission (as the anchor is, ADR-0057 d2) and shown to the
   reviewer. The cost: one more kind value, one object on the wire and one migration for its two
@@ -142,7 +143,7 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
   the source workarea's path, and `description` the reviewed description. The order is depth from
   the scope node, nearest first, then name; when two workareas on the chain hold one name, the
   nearer is listed and the farther is reachable only as a resource (d7), and the nearer's
-  `description` ends "(overrides <path>)". `guardrails` is a reserved skill name, refused at write
+  `description` ends "(overrides <path>)". `guardrails` is a reserved skill name, and so is any name ending in `-unreviewed` (d10), refused at write
   with `request.validation`, `details.field: /skill/name`, so the guardrail prompt is never
   shadowed. `prompts/list` pages with MCP's `cursor` and `nextCursor`, 50 entries a page, the
   listing's default page size (`crates/transports/oml-transport-http/src/lib.rs:191`), the
@@ -213,7 +214,13 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
       `prompts/get`, `resources/list`, `resources/read` and the session-start index (d8). Held
       guardrails join `GET /v1/guardrails` (ADR-0037 d5) with `unreviewed: true`, the
       `oml hook guardrails` text (ADR-0037 d6), the per-session rule cache, and so the
-      `oml hook pre-tool-use` check (ADR-0037 d9) and the `guardrails` prompt (ADR-0037 d11). This
+      `oml hook pre-tool-use` check (ADR-0037 d9) and the `guardrails` prompt (ADR-0037 d11).
+      A held guardrail's rule never blocks a call before review (the operator, 2026-11-14): the
+      hook applies its `deny` as `ask` and its `ask` as `ask`, so the person at the session is
+      asked and decides; its text loads in full, marked. The downgrade is decided by the server,
+      which serves the held rule with `effect_inside: "ask"` beside its signed `effect`, and the
+      hook reads that field; the stored rule is unchanged, so on approval the same version binds
+      with its own effect. A promoted guardrail's rule is never downgraded. This
       amends ADR-0037 d3 ("No held guardrail is served as a rule, inside an in-progress workarea …
       included") for in-progress roots alone; its `own_held` list stays for every other scope.
     - **Marked.** Every served held item says so where an agent reads it: a prompt's header
@@ -223,17 +230,27 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
       begins `[unreviewed]` and its rule's ask or deny reason names it unreviewed; ADR-0030 d4's
       `unreviewed` member is set on every claim item. `approved_at` and `approver` are null
       (ADR-0077 d5).
-    - **Which versions: ADR-0030's rule for memories.** ADR-0030 serves a held version as a row of
-      its own beside the promoted tip it would replace (the tip moves only at approval,
-      ADR-0025 d10), and keeps a held retirement version author-only (ADR-0030 d3). Applied here:
+    - **Which versions: ADR-0030's rule for memories, and a held version only adds** (the
+      operator, 2026-11-14). ADR-0030 serves a held version as a row of its own beside the
+      promoted tip it would replace (the tip moves only at approval, ADR-0025 d10), and keeps a
+      held retirement version author-only (ADR-0030 d3). Applied here:
         - a held new skill or guardrail (version 1) is served, marked;
         - a held retirement of a promoted skill or guardrail is not served, so the promoted one
           stays offered and binding until a reviewer approves the retirement;
-        - a held successor (an edit) of a promoted item is served beside the promoted tip. For a
-          guardrail both are in the set, each its own line, and since rules union (ADR-0037 d4,
-          d8) a held edit can add strictness but cannot loosen: the promoted rule still binds
-          until its successor is approved. For a skill, two versions cannot share one prompt name,
-          which ADR-0030 does not settle for a name: d13's question 4 asks it.
+        - a held edit of a promoted guardrail joins the set beside the promoted tip, each its own
+          line; the promoted version stays binding with its own effect until review, so a held
+          edit cannot loosen it, and the held edit's rule, downgraded to ask, can only add a
+          question;
+        - a held edit of a promoted skill gives two commands: `<name>` serves the approved version
+          as it does outside, and `<name>-unreviewed` serves the held edit with the d6 header's
+          unreviewed mark. The session index shows both lines, the second ending
+          "(unreviewed)". The resources follow the same rule: `oml://workarea/<w>/skill/<name>`
+          reads the approved version and `oml://workarea/<w>/skill/<name>-unreviewed` the held
+          edit, with `_meta.oml.unreviewed: true`. A held version 1 with no approved version is
+          served under `<name>` itself, marked, since nothing approved holds the name. The suffix
+          `-unreviewed` is reserved: a skill name ending in it is refused at write,
+          `request.validation`, `details.field: /skill/name`, beside `guardrails` (d5), so the
+          two names never collide.
     - **Nowhere else.** Outside an in-progress root nothing changes: no held skill or guardrail is
       served (d4 offers promoted tips; ADR-0037 d3 holds), and recall never serves either kind as
       a hit (amends ADR-0025 d8). Federation and wide sources never carry one: ADR-0072 searches
@@ -242,10 +259,11 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
       commit still needs zero held versions in the subtree (ADR-0030 d6), held skills and
       guardrails among them, so every one is approved by a person or rejected before anything
       leaves.
-    - **The cost, stated.** An agent connected inside runs instructions and is stopped by rules no
-      reviewer has approved yet; the mark tells it so, and the person who put the workarea in
-      progress chose that. A held guardrail's rule binds inside before review, so a careless or
-      hostile writer there can block the agents connected there until a person rejects it.
+    - **The cost, stated.** An agent connected inside can run skill text no reviewer has approved
+      yet, and an unreviewed rule can make it ask before a tool call; an unreviewed rule never
+      stops the agent. The mark tells it what is unreviewed, and the person who put the workarea
+      in progress chose that. Every second command doubles a skill's lines in the index while its
+      edit is held.
 
 - **d11 — One provider-ring read serves the offered set: `GET /v1/skills`.** Under the key at its
   default workarea or the `workarea` query field ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md)
@@ -263,22 +281,13 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
   an `mcp_call` line and metric (ADR-0042 d10) and passes the key's request rate
   ([ADR-0079](ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md)).
 
-- **d13 — The operator's answers of 2026-11-14, and one question.** (1) The session-start index (d8) is on, capped
+- **d13 — The operator's answers of 2026-11-14.** (1) The session-start index (d8) is on, capped
   at 20 lines. (2) `guardrail_scope` also scopes skills (d4); a separate `skill_scope` waits until a
   deployment asks for it. (3) Agents may propose skills through `oml_write`; a skill stays held and
-  only a person's review approves it, never an agent's key (d3). (4, the later answer) Held skills
-  and guardrails follow ADR-0030's in-progress rule (d10). Open:
-    4. *Inside an in-progress workarea, when a promoted skill has a held successor, what does its
-       prompt name serve?* (a) the promoted version under `<name>`, and the held one under
-       `<name>-unreviewed` (a reserved suffix); (b) the held version under `<name>`, marked, and the
-       promoted one as a resource only; (c) the promoted version alone under `<name>`, the held one
-       as a resource only. Recommended: (b), since a workarea is put in progress to try its
-       unreviewed work, and the mark says what it is; the promoted version stays readable.
-    5. *A held guardrail binds inside before review (d10). Should a held guardrail only add, as
-       written, or also be allowed to loosen?* (a) only add: a held successor joins the set beside
-       the promoted tip and a held retirement is not served, so a promoted rule binds until
-       reviewed; (b) a held successor replaces its promoted tip inside, so a held edit may loosen.
-       Recommended: (a), which is also what ADR-0030's rule for memories gives.
+  only a person's review approves it, never an agent's key (d3). (4) Held skills and guardrails
+  follow ADR-0030's in-progress rule (d10). (5) A held guardrail's rule asks, never denies, before
+  review (d10). (6) A held version only adds: the approved version stays binding until review
+  (d10). (7) A skill with a held edit gets two commands, `<name>` and `<name>-unreviewed` (d10).
 
 ## Consequences
 
@@ -314,7 +323,12 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
 | **Skills as tools** | A tool is model-invoked with typed arguments and runs code; a skill is text. ADR-0039 d2 keeps three tools and admits prompts beside them; a tool per skill would also grow `tools/list` with every write. |
 | **Workarea-qualified prompt names (`<workarea>.<name>`) for every skill** | Long slash commands for the common case of one workarea, and a moved scope renames every command. Shadowing by depth keeps short names, and the farther skill stays readable by URI. |
 | **No held skill or guardrail served anywhere, in-progress workareas included** (this record's first draft) | The operator chose on 2026-11-14 that in-progress workareas serve them to the agents connected there, as they serve memories; the mark and the commit's zero-held rule carry the safety. |
-| **Held guardrails served inside as text only, never checked by the hook** | The operator asked that held guardrails be loaded and checked; text that is never checked would read as a rule that does not bind. |
+| **Held guardrails served inside as text only, never checked by the hook** | The operator chose on 2026-11-14 that a held rule is checked and asks; text alone would give the person at the session no prompt before the call the rule names. |
+| **A held guardrail's rule takes full effect at once, `deny` included** | An unreviewed rule could stop every agent connected inside until a person rejects it; the operator chose ask, never deny, on 2026-11-14. |
+| **A held edit replaces its promoted guardrail inside, so it may loosen it** | An unreviewed edit could switch off an approved rule; the operator chose "only add" on 2026-11-14, which is also what ADR-0030's rule for memories gives. |
+| **The held edit of a skill under `<name>`, the approved one as a resource only** | The approved command would vanish from the slash menu while an edit waits; the operator chose two commands on 2026-11-14. |
+| **The approved skill alone under `<name>`, the held edit as a resource only** | A person trying the edit could not run it as a command; the operator chose two commands on 2026-11-14. |
+| **The held skill edit under a version-qualified URI (`…/skill/<name>?version=<n>`) instead of `<name>-unreviewed`** | Prompt and resource would name one item two ways; one suffix for both keeps them aligned. |
 | **Recall serves skills as hits** | Recall's text is data and never instructions (`mcp.rs:69-70`); mixing would make a recalled skill read as either. |
 | **`listChanged: true` with notifications** | `/mcp` is stateless with no server stream (ADR-0014 d2); a declared capability with no sender is a broken promise. |
 | **`oml_write` refuses `skill`, as it refuses `guardrail`** | The operator chose on 2026-11-14 that agents may propose skills; the person-only approval (d3) carries the safety the refusal would have. |
