@@ -9,7 +9,7 @@ answers: what an in-progress workarea is and who may mark it (a person's key, ne
 
 **Status:** accepted design · 2026-11-06 (was accepted design) · introduced in v0.6.0 · first recorded 2026-11-05 · revision 2, rebuilt on the v0.5.8 API; revision 1
 ([#12](https://github.com/e8kor/open-memory-lab/pull/12), 2026-10-31, proposed) is preserved at tag
-`archive/feat/in-progress-workareas`
+`archive/feat/in-progress-workareas` · amended by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d3, 2026-11-14), [ADR-0081](ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource.md) (d3, 2026-11-14)
 
 **Release:** introduced in v0.6.0 ([releases](../changelog.md))
 

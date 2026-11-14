@@ -7,7 +7,7 @@ answers: which threats a stored memory can carry beyond leaked secrets; what the
 
 # ADR-0074 — The scan names a threat class for every finding, refuses only what can never be safe, holds or annotates the rest, and recall serves every hit as data with its findings
 
-**Status:** proposed · 2026-11-08
+**Status:** proposed · 2026-11-08 · will be amended by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d24) on its acceptance
 
 **Amends:** ADR-0065 (d1: `oml-scan/2` and the upgrade rescan; d2: the registry gains the
 classes of d3 below; d5: a hold finding requires a person's verdict; d13: the rescan gains a

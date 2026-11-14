@@ -7,7 +7,7 @@ answers: who may review in bulk and on which surfaces; why agent keys and MCP ne
 
 # ADR-0055 — A person reviews a listed set of held items in one act, each item judged and signed as one verdict
 
-**Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.7 · amended 2026-11-13 by [the amendment](#the-amendment-of-2026-11-13-the-persons-review-page-lists-what-waits-and-judges-one-item-from-the-list) (d1 and d10: the person's Review page lists what waits and judges one item from the list; ADR-0045 d9 and d11 and ADR-0070 d7 (b) follow), which the operator accepted the same day
+**Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.7 · amended 2026-11-13 by [the amendment](#the-amendment-of-2026-11-13-the-persons-review-page-lists-what-waits-and-judges-one-item-from-the-list) (d1 and d10: the person's Review page lists what waits and judges one item from the list; ADR-0045 d9 and d11 and ADR-0070 d7 (b) follow), which the operator accepted the same day · amended by [ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) (d10, 2026-11-14)
 
 **Release:** introduced in v0.5.7 ([releases](../changelog.md))
 

@@ -234,7 +234,7 @@ Decided, not built.
        name only the key acts (`crates/transports/oml-transport-http/src/console.rs:57-70`,
        `console.rs:1250`, `console.rs:1338`, `console.rs:1393`); the build proves it with a
        failing test first, since ADR-0070 d5's table lists submit under `curate` alone.
-    7. `GET /v2/workareas/{workarea}` gains `approved_by_kind`, the count of approved claims of
+    7. An API change decided here: `GET /v2/workareas/{workarea}` gains `approved_by_kind`, the count of approved claims of
        each kind at that workarea, one per claim, for the workarea page's kind links (d1); until it
        is served the links carry no number.
 
@@ -268,7 +268,7 @@ Decided, not built.
 | Alternative | Why not |
 |---|---|
 | **The builder writes as `<user>-review` always** | A dreamer proposal is the right act for another author's row, but for the person's own new items it would make every write a proposal its own reviewer key may not judge, and `<user>-review` holds no writer to start one. |
-| **An admin-side builder** | A builder writes held versions for review; an admin's change is a fix served at once and confirmed afterwards (ADR-0089 d1, d2), a different act on a different page (ADR-0083 d9). Curation has its own key and page (ADR-0045 d12). |
+| **An admin-side builder** | A builder writes held versions for review; an admin's change is a fix served at once and confirmed afterwards (ADR-0089 d2, d3, d8), a different act on a different page (ADR-0083 d9). Curation has its own key and page (ADR-0045 d12). |
 | **A Build page in the nav, or New and Edit inside the Memories cockpit** | The drafted options (a) and (c); the mockups put a workarea's contents and their acts on the workarea's own page, where the policy that decides who approves is shown, and the nav does not grow. |
 | **Diff on the edit form only, or on Judge only** | The drafted options (a) and (c); the author checks the change before proposing it and the reviewer judges what changed, so the mockups draw both. |
 | **Edit in place, or delete a draft** | ADR-0001 R4 keeps every version, and the only deletion proposed anywhere is ADR-0089's legal erasure, an admin act; a held version is the draft. |

@@ -149,7 +149,7 @@ Decided, not built.
     - **`resources/read`.** A document URI answers `{contents: [{uri, mimeType, text, _meta:
       {oml: {artifact_id, version, approved_at, approver, unreviewed, workarea_path, anchor,
       findings}}}]}`, `text` the body byte for byte, or with `?passage=` that passage alone; `approver` carries
-      ADR-0089 d4's `act` and `confirmed` once that record is built, so a document an
+      ADR-0089 d7's `act` and `confirmed` once that record is built, so a document an
       admin fix serves reads as one. The
       provenance and data framing travel in `_meta` and the list's `description`, never inside the
       text, so the bytes stay the signed source (ADR-0074 d12 keeps the JSON text byte for byte for

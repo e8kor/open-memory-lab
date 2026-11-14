@@ -9,7 +9,8 @@ answers: what a skill is in OML, how an agent's proposed or updated skill reache
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its open
 question 8 decided at its recommendation (putting a workarea in progress stays a person's act and
-is never an admin fix act) and every other default as drafted · proposed the same day, tracking
+is never an admin fix act), d14 recorded as ADR-0001 d5's third bounded exception, and every
+other default as drafted · proposed the same day, tracking
 #374, with the operator's answers (d13) · aligned with ADR-0089 (PR #377)
 
 **Release:** planned for v0.7.4
@@ -18,7 +19,7 @@ is never an admin fix act) and every other default as drafted · proposed the sa
 are parts and its fold is the journal's; the offered set, the index and the prompts are read from
 those rows and store nothing.
 
-**Amends:** ADR-0025 (d8: kind `skill` joins the kinds never served as a recall hit), ADR-0030
+**Amends:** ADR-0001 (d5: the third bounded exception, a held skill readable by its author's person's keys, d14), ADR-0025 (d8: kind `skill` joins the kinds never served as a recall hit), ADR-0030
 (d3: held `skill` and `guardrail` versions are served inside an in-progress workarea, marked
 unreviewed), ADR-0037 (d3, d5, d6, d9: held guardrails bind inside an in-progress workarea,
 marked), ADR-0037 (d11: the
@@ -74,7 +75,7 @@ What exists today:
   2026-11-14).
 
 The decision has to say what a skill is, who sees which, how it is served without a local copy,
-and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-constitution.md)'s R1 to R4, which this record cites and restates none of. Decided, not built.
+and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md)'s R1 to R4 and restates none of them; d14 is ADR-0001 d5's third bounded exception. Decided, not built.
 
 ## Decision
 
@@ -163,7 +164,7 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
   "OML skill `<name>` from `<workarea path>`, version `<n>`, approved `<approved_at>` by a
   `<held_by>` reviewer" with ", the author's own person" when `approver.same_user` is true
   ([ADR-0077](ADR-0077-a-served-memory-says-when-it-was-approved-and-by-what-kind-of-reviewer-and-never-names-the-reviewer.md)
-  d1, d2); no reviewer is named. A version an admin fix serves (ADR-0089 d4, PR #377:
+  d1, d2); no reviewer is named. A version an admin fix serves (ADR-0089 d7, PR #377:
   `approver.act: "admin_fix"`) reads instead "changed by an admin fix on `<at>`", followed by ", not
   yet confirmed by a person" while `confirmed` is false, so an agent can tell a hand fix from a
   review. Then the body as stored, then, when `input` is sent, a line
@@ -220,7 +221,7 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
       author-only as ADR-0030 d3 and ADR-0074 d20 have it; a skill held only because every skill
       needs a person (d3) is not held by a finding and is served.
     - **Who puts a workarea in progress.** A person's key, never an agent's (ADR-0030 d1), and
-      never an admin act: the mode is not among ADR-0089's fix acts (its d1), so an admin
+      never an admin act: the mode is not among ADR-0089's fix acts (its d2), so an admin
       cannot open a workarea's held skills and guardrails to its agents (the operator, 2026-11-14,
       d13, answer 8).
     - **Where.** Held skills join `GET /v1/skills` with `unreviewed: true`, `prompts/list`,
@@ -330,14 +331,15 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
       enforces; a second key of the same person may hold a rival (ADR-0025 d10), and each is
       served under `<name>-unreviewed` in turn, the newest first, the older reachable by its
       artifact id through `GET /v1/memories/{artifact_id}`.
-    - **How this relates to R3.** [ADR-0001](ADR-0001-the-constitution.md) R3 keeps a held row
-      readable by its author and its reviewers alone. This record reads "its author" as the
-      author's person for kind `skill`, as ADR-0045 d23 already reads it for a person's merged
-      listing (`with_own`, "every key naming its user's"): the held skill stays unreadable to
-      every other person's keys and to every agent outside that person, except a reviewer judging
-      it and ADR-0030's in-progress scope. It is a relaxation of R3's wording from key to person,
-      on one kind, by the operator's decision; ADR-0001's R3 states it as a reading of the rule,
-      amended on its acceptance with ADR-0089 (PR #377).
+    - **ADR-0001's third bounded exception** (the operator, 2026-11-14). [ADR-0001](ADR-0001-the-constitution.md)
+      R3 keeps a held row unreadable by others until it is ratified, and d5 says R2 and R3 hold
+      unconditionally in `committed` and `validated` workareas. This decision is a bounded
+      exception to both, for exactly this: kind `skill` only, a held version readable by every
+      key that acts for its author's person (or, for a key that acts for no person, by its own
+      principal's keys), once its scan holds no finding, never a scan-held or unscanned version,
+      and otherwise only by a reviewer judging it and inside ADR-0030's in-progress scope (d10).
+      ADR-0001 d5 records it as the third bounded exception (PR #377); ADR-0089's admin fixes are
+      the fourth.
     - **Never served.** A version the scan held for a finding, or one not yet scanned, stays
       readable by its author key alone and is never served as a prompt, a resource or an index
       line (ADR-0074 d20's rule, applied here outside in-progress workareas too).
