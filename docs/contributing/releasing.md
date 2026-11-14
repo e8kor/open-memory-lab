@@ -27,9 +27,6 @@ The release pull request then edits the section's lead paragraph by hand (the AD
 and bumps the version files, the SDKs' among them ([below](#publishing-the-sdks)). Because no change edited `docs/changelog.md`, the release pull
 request does not conflict on it.
 
-The landing footer and install command name the workspace version, so the same pull request runs
-`python site/build.py` after the bump; CI's `site/build.py --check` fails it otherwise.
-
 ## Markers in the release notes
 
 A release's notes can carry a line written for a program to read, not a person: an HTML comment,
