@@ -101,17 +101,18 @@ branch that reserved later renumbers.
 | adr | 0077 | `main` |  | a served memory says when it was approved and by what kind of reviewer | used |
 | adr | 0078 | `design/recall-improvement` |  | better recall combines cross-encoder reranking with an optional learned sparse retrieval stage measured against OML's standing eval | reserved |
 | adr | 0079 | `main` |  | a key ends on a date and is held to a request rate both set at issuanc | used |
-| adr | 0080 | `design/workarea-builder` |  | a skill is a reviewed claim the mcp server lists as a prompt and serves as a resource loaded live and never copied | reserved |
-| adr | 0081 | `design/workarea-builder` |  | a document is a reviewed markdown or text claim that recall searches by passage and the mcp server serves as a resource | reserved |
-| adr | 0082 | `design/workarea-builder` |  | a person builds and edits a workareas skills guardrails and documents in the console each edit a held version under the persons own keys | reserved |
-| adr | 0083 | `design/workarea-builder` |  | the memories page is one cockpit with approved to review and submitted views and held rows never appear as approved | reserved |
-| adr | 0084 | `design/workarea-lifecycle` |  | a workarea moves between servers as a signed bundle that lands held or in progress and is reviewed again unless its source server is pinned | reserved |
-| adr | 0085 | `design/workarea-lifecycle` |  | a workarea publishes immutable releases that one person cuts and another ratifies and each key binds to the tip the latest release or a pinned one | reserved |
-| adr | 0086 | `design/workarea-lifecycle` |  | a workareas tests are reviewed claims the server runs under the callers key and a release is published only through ordered gates | reserved |
-| adr | 0087 | `design/workarea-lifecycle` |  | an impact report shows under the callers own reads what a candidate release changes for the workareas that receive it | reserved |
-| adr | 0088 | `design/workarea-lifecycle` |  | an imported version counts as reviewed only from a trusted source a tenant pinned and never for instructions | reserved |
-| adr | 0089 | `design/workarea-lifecycle` |  | an admin fixes a production workarea at once by a marked break glass act that a person confirms or reverts afterwards | reserved |
-| adr | 0090 | `design/lake-twin` |  | the lake is a replayable twin of postgresql | reserved |
+| adr | 0080 | `main` |  | a skill is a reviewed claim the mcp server lists as a prompt and serve | used |
+| adr | 0081 | `main` |  | a document is a reviewed markdown or text claim that recall searches b | used |
+| adr | 0082 | `main` |  | a person builds and edits a workareas skills guardrails and documents  | used |
+| adr | 0083 | `main` |  | the memories page is one cockpit with approved to review and submitted | used |
+| adr | 0084 | `main` |  | a workarea moves between servers as a signed bundle that lands held or | used |
+| adr | 0085 | `main` |  | a workarea publishes immutable releases that one person cuts and anoth | used |
+| adr | 0086 | `main` |  | a workareas tests are reviewed claims the server runs under the caller | used |
+| adr | 0087 | `main` |  | an impact report shows under the callers own reads what a candidate re | used |
+| adr | 0088 | `main` |  | an imported version counts as reviewed only from a trusted source a te | used |
+| adr | 0089 | `main` |  | an admin fixes a production workarea at once by a marked break glass a | used |
+| adr | 0090 | `main` |  | the lake is a replayable twin of postgresql that holds every signed ev | used |
+| adr | 0091 | `design/workspace-rename` |  | workareas are renamed workspaces everywhere in one hard cut and old signed workarea events are read as workspace events | reserved |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |
