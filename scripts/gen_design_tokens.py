@@ -285,8 +285,11 @@ def diagram(src: Path, t: dict, theme: str) -> str:
 
 # The architecture views, from design/diagrams/arch-<view>.svg: the four views of what is built
 # (docs/architecture/views.md), then the lifecycle, sharing and exchange views of the workarea
-# lifecycle (docs/architecture/lifecycle.md), which mark every unbuilt element designed.
-ARCH_VIEWS = ("context", "deployment", "gate", "serving", "lifecycle", "sharing", "exchange")
+# lifecycle (docs/architecture/lifecycle.md, docs/scenarios/import-export.md), and the reach and
+# handoff Euler views (docs/concepts/producers-and-reviewers.md); each marks every unbuilt element designed.
+ARCH_VIEWS = (
+    "context", "deployment", "gate", "serving", "lifecycle", "sharing", "exchange", "reach", "handoff",
+)
 
 
 # What each architecture view file carries: one theme, or paper with night under the media query.
