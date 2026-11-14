@@ -71,13 +71,11 @@ rest is not built; [releases](../changelog.md) says which part each release buil
      a held retirement. R2 holds there without exception.
   2. **Own-root same-person approval** ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d8; ADR-0045 d11,
      d20; ADR-0046 d2; ADR-0055 d7; ADR-0082 d7). Of R2 at the person level: R2 excludes the keys
-     and principals of a row's lineage, not its person, so in the development and in-progress
-     parts of a person's own root their review key may approve a write by any of their own keys,
+     and principals of a row's lineage, not its person, so in a person's own root their review key may approve a write by any of their own keys,
      agents' included, and may clear a scan hold finding on such a write (ADR-0074 d26, accepted
      2026-11-14 within this scope). Every such approval is marked `same_user` to every reader
-     (ADR-0077 d2). A
-     `committed` or `validated` workarea inside that root is a production scope, where another
-     person approves and clears holds. Outside the root, a version any key of a person wrote
+     (ADR-0077 d2). A user root never leaves development (ADR-0085 d17), so the whole root is a
+     development scope. Outside the root, a version any key of a person wrote
      counts no verdict and no hold clearance from any key of the same person (ADR-0082 d7).
   3. **Admin fixes, with the admin read** ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d14;
      [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21). Of R2's order and R3's first sentence, for admin keys

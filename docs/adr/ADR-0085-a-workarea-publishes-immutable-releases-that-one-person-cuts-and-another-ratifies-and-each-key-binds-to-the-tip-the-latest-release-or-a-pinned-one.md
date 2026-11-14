@@ -179,12 +179,13 @@ Decided, not built.
 
 - **d7 — Binding defaults, issuance and change: widened by the key's issuer or its own person,
   narrowed by an admin, journalled always.**
-  - **Defaults:**
-    - `latest` for a key held by an agent or a service;
-    - `tip` for a key held by a person;
+  - **Defaults** (the operator, 2026-11-14):
+    - `tip` for any key whose scope node lies in a user root, and for any key held by a person;
+    - `latest` for every other key held by an agent or a service;
     - keys issued before this record keep `tip`.
   - **Development agent keys.** An admin, or the person issuing a key in their own root, may issue
-    an agent key at `tip` only when the key's scope node lies inside an in-progress root. The
+    an agent key at `tip` outside a user root only when the key's scope node lies inside, or at an
+    ancestor of, an in-progress root, the audience of ADR-0080 d16. The
     development agents of `payments.dev` are issued that way.
   - **Directions.** Widening means toward newer content: `latest` or a pin to `tip`, or a pin to a
     newer label. Narrowing means the reverse.
@@ -243,7 +244,7 @@ Decided, not built.
     diff per claim key against it. It is computed on read and never stored.
   - Review stays per item
     ([ADR-0055](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md) d4).
-  - `oml workarea revert --to <label>` writes, as the calling person's writes:
+  - `oml workareas revert --to <label>` writes, as the calling person's writes:
     - held supersessions back to that release's text;
     - held retirements of keys that release did not have.
 
@@ -260,8 +261,8 @@ Decided, not built.
     - `GET .../consumers`;
     - `POST /v2/keys/{key}/binding`.
   - **CLI:**
-    - `oml workarea release propose|publish|withdraw|acknowledge|list|show`;
-    - `oml workarea revert`;
+    - `oml workareas release propose|publish|withdraw|acknowledge|list|show`;
+    - `oml workareas revert`;
     - `oml keys bind`.
   - **Console:** a Releases section on a workarea's personal page. No MCP tool (R1).
   - **Events:** `workarea.release_proposed`, `workarea.release_ratified`,
@@ -310,6 +311,16 @@ Decided, not built.
   - An admin links a tenant key `held_by: human` to a signed-in person, journalled as
     `key.linked_person`. The console then offers that key for acts in the workareas it grants, one
     key per act, named on the page (the operator, 2026-11-14).
+
+- **d17 — A user root never leaves development** (the operator, 2026-11-14: "Cap at
+  development"). A user root and every workarea under it stay `development`: a proposal moving
+  any of them to `committed` or `validated` is refused `workarea.transition_refused` with reason
+  `user_root`. Production work happens in shared workareas, which publish releases. This amends
+  ADR-0046 d1 (the ceiling, from `committed` to `development`) and d2 (same-user ratification of
+  ladder moves, which has no move left to ratify inside a root). The cost: a person's own
+  knowledge reaches a production scope only by a new write in a shared workarea, reviewed there,
+  or a release cut there. The build today lets a user root reach `committed` (the `UserRoot`
+  ceiling in `ladder.rs`); lowering it is a build item of this record, not built.
 
 ## Consequences
 

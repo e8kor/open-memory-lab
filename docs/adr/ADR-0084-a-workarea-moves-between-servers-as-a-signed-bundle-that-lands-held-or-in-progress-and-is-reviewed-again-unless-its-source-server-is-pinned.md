@@ -5,10 +5,11 @@ status: accepted design · 2026-11-14
 answers: what a workarea export carries and what it never carries; the bundle's fixed layout, signature, encryption and hard limits, each with its refusal code; how authors and reviewers who do not exist on the target are represented; where an import lands and why every imported version is held; how a repeated import adds only what is new and refuses an older bundle; what happens when a name or claim key exists on the target; who may export under which tenant policy and who may import; how plaintext is staged; how import and export keep R4, and why an erasure marker reveals nothing; the flow for a new shared target; the same-server copy; which verbs, commands, events, doctor lines and meters it adds; and how it relates to oml-backup and to a tenant move
 -->
 
-# ADR-0084 — A workarea moves between servers as a signed bundle that lands held or in progress and is reviewed again unless its source server is pinned
+# ADR-0084 — A workarea moves between servers as a signed bundle that lands held or in progress and is reviewed again
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its four questions decided at their
-recommendations and every other default as drafted · proposed the same day
+recommendations and every other default as drafted · proposed the same day · the "unless its source server is
+pinned" of its file name is ADR-0088, which is deferred
 
 **Release:** not scheduled; after ADR-0085, whose release manifest `release` mode exports. A
 trusted source server, the "unless" of the title, is the deferred ADR-0088.
@@ -139,7 +140,7 @@ Decided, not built.
     `import.target_not_in_progress`.
   - Each version is written held by the importing key. The `tip` keys connected there read it
     marked unreviewed (ADR-0030 d3), and the target's tests and impact report run against it
-    (ADR-0086, ADR-0087). The import adds no reader of held rows.
+    (ADR-0086, ADR-0087). The import adds no reader of held rows beyond ADR-0080 d16's in-progress audience of the target.
   - Imported content reaches anyone else only through review on the target and a release there
     (ADR-0085). The review list shows the source verdict as evidence (amends ADR-0055 d2). One
     person may judge the listed set in one act, each item its own verdict.
@@ -269,7 +270,7 @@ Decided, not built.
     encryption of d5, and the export's output says so.
 
 - **d14 — The same-server copy is an import streamed from a release.**
-  `oml workarea import --from <workarea>@<label> --into <path>` reads the release manifest as a
+  `oml workareas import --from <workarea>@<label> --into <path>` reads the release manifest as a
   stream into an in-progress workarea, with no encryption and no staging. It keeps `derives_from`
   to each source version, since both are on one journal, so R2's lineage closure excludes the
   source's authors from reviewing the copy. There is no return path into a committed workarea: team
@@ -283,11 +284,11 @@ Decided, not built.
       (ADR-0004 d3) and answers with the plan or the outcome.
     - `GET /v2/imports/{id}` reports progress.
   - CLI:
-    - `oml workarea export <workarea> [--release <label> | --since <label> | --history]
+    - `oml workareas export <workarea> [--release <label> | --since <label> | --history]
       --recipient <age key>... --out <file>`;
-    - `oml workarea import <file> --into <path> --identity <age identity> [--dry-run]
+    - `oml workareas import <file> --into <path> --identity <age identity> [--dry-run]
       [--allow-older]`;
-    - `oml workarea import --from <workarea>@<label> --into <path>`.
+    - `oml workareas import --from <workarea>@<label> --into <path>`.
   - Console: Export and Import, on the personal side.
   - No MCP tool (R1, as in ADR-0046 d3).
   - Events: `workarea.exported`, `workarea.imported`, `import.erasure_notice`.

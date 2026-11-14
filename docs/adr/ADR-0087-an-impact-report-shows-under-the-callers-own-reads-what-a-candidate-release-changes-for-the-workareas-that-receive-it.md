@@ -96,7 +96,7 @@ Decided, not built.
 ## Consequences
 
 - A cached report per candidate digest; the release page links it.
-- The CLI gains `oml workarea impact <workarea> --candidate <proposal>`.
+- The CLI gains `oml workareas impact <workarea> --candidate <proposal>`.
 - Metrics: `oml_impact_report_seconds` (a histogram) and `oml_impact_blocking_findings_total`.
 - A doctor line names proposals whose report is older than their candidate.
 - Two people with different reads see different reports of one candidate. That is intended, and the

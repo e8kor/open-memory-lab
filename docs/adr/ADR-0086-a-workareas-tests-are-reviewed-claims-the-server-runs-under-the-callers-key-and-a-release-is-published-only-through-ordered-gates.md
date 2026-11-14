@@ -45,10 +45,9 @@ release is held to, so it is reviewed content) and R3 (a run reads only what its
   | `document` | a document key | it parses, its passages fit ADR-0081 d3's limits, and its `doc/` links resolve |
 
   A case is reviewed like any claim (R2): one written with the change it tests is held with it.
-  In the development and in-progress parts of the author's own user root, the author's second
-  dreamer key may approve it, marked `same_user` ([ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d2);
-  elsewhere, a `committed` or `validated` workarea in that root included, another person approves
-  it. A test case is never served as a hit, a prompt or a resource.
+  Inside the author's own user root, which never leaves development (ADR-0085 d17), the author's
+  second dreamer key may approve it, marked `same_user` ([ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d2);
+  elsewhere another person approves it. A test case is never served as a hit, a prompt or a resource.
 
 - **d2 — The server runs a suite under the caller's key and records the caller's read scope.**
   `POST /v2/workareas/{workarea}/test-runs {against}` evaluates every promoted `test` claim in the
@@ -59,7 +58,7 @@ release is held to, so it is reviewed content) and R3 (a run reads only what its
   saw, and the record says which scope that was. `against` is `release:<label>`,
   `candidate:<proposal>` (d5) or `tip`, and it overrides the calling key's binding for the run;
   access still bounds it. A gate run whose read scope does not cover every node of the release
-  subtree is refused as a gate, `gate.run_scope_insufficient`. A run is started from the CLI (`oml workarea test`), the
+  subtree is refused as a gate, `gate.run_scope_insufficient`. A run is started from the CLI (`oml workareas test`), the
   console or CI, all through this route; a result computed on a client is never a gate.
 
 - **d3 — A run is synthetic: it writes no recall event, moves no rank and no meter, and journals
@@ -124,7 +123,7 @@ release is held to, so it is reviewed content) and R3 (a run reads only what its
 ## Consequences
 
 - A migration adds test runs and gate records; the kind list gains `test`.
-- `oml workarea test [--against …] [--attach <proposal>]`; a Tests section on the workarea's page;
+- `oml workareas test [--against …] [--attach <proposal>]`; a Tests section on the workarea's page;
   the release page shows the gate records.
 - Doctor lines: proposals with no gate run, or with one refused for scope; overrides on published
   releases.

@@ -5,7 +5,7 @@ status: accepted design · 2026-11-06
 answers: what an in-progress workarea is and who may mark it (a person's key, never an agent); the one boundary rule every scoped read applies; which keys read other authors' unreviewed memories inside, labelled how; how R3 is relaxed there and only there, journalled; why ranking still reads no verdict and what telemetry records; what the commit is and why it needs zero unreviewed; how a curator agent narrows the unreviewed work inside and never widens it; how anchors, `oml sync` and draft workareas interact; how an in-progress workarea is abandoned or retired with nothing deleted; the surfaces, codes, migration, doctor lines and laws
 -->
 
-# ADR-0030 — An in-progress workarea serves unreviewed memories inside it, a curator agent may only narrow them, and nothing leaves until a person commits it
+# ADR-0030 — An in-progress workarea serves its held work to its subtree and its ancestors, a curator agent may only narrow it, and nothing leaves until a person commits it or a release is published
 
 **Status:** accepted design · 2026-11-06 (was accepted design) · introduced in v0.6.0 · first recorded 2026-11-05 · revision 2, rebuilt on the v0.5.8 API; revision 1
 ([#12](https://github.com/e8kor/open-memory-lab/pull/12), 2026-10-31, proposed) is preserved at tag
@@ -176,7 +176,7 @@ Questions revision 1 left open are settled below at their recommended answers, e
   `workarea.in_progress_refused` with reason `commit_first`, so the ladder never moves under an
   open subtree.
 
-- **d7 — Nothing crosses the boundary before the commit.** A claim edge (any kind, including
+- **d7 — Nothing crosses the boundary before the commit or a published release; held work reaches only the subtree and its ancestors.** A claim edge (any kind, including
   `brief`) whose two endpoints have different in-progress roots, or one root and none, is refused
   when proposed and, for one proposed before a mark, when ratified; a brief read leaves out a
   claim the boundary hides at its node, whenever its edge was made. It is refused
