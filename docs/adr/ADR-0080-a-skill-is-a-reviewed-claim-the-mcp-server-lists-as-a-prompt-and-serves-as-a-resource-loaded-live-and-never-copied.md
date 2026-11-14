@@ -20,8 +20,7 @@ own (the operator: "Skills is another type of claim it should obey same rules as
 are parts and its fold is the journal's; the offered set, the index and the prompts are read from
 those rows and store nothing.
 
-**Amends:** ADR-0030 (d2, d4: an in-progress subtree's held items reach keys scoped at its ancestors, d16), ADR-0025 (d8: kind `skill` joins the kinds never served as a recall hit, and no
-instruction-class row is `self_signed`, d16), ADR-0030 (d3: held `steering`, `guardrail` and
+**Amends:** ADR-0001 (d5: the in-progress exception reaches the subtree's ancestor chain, reads and offers alike, d16), ADR-0030 (d2, d4: an in-progress subtree's held items reach keys scoped at its ancestors, d16), ADR-0025 (d8: kind `skill` joins the kinds never served as a recall hit, d16), ADR-0030 (d3: held `steering`, `guardrail` and
 `skill` versions are served inside an in-progress workarea, marked unreviewed, d10, d16), ADR-0037
 (d3, d5, d6, d9: held guardrails are served inside an in-progress workarea, marked, and to their
 author key, d10, d14; d10: every guardrail version needs a person, d16; d11: the prompts
@@ -51,7 +50,7 @@ What exists today:
   `term_mapping`, `vocab_release` and `guardrail` (`crates/oml-domain/src/model.rs:60-71`).
   Guardrail is the precedent for an instruction kind: written on the HTTP API only, refused by
   `oml_write` (`mcp.rs:1181`; ADR-0037 d10), served by its own read and never in recall
-  (ADR-0037 d5), never self-signed, and only promoted versions bind (ADR-0037 d3).
+  (ADR-0037 d5), and only promoted versions bind (ADR-0037 d3).
 - **Formats.** A version names a media type from a closed list that already holds
   `text/markdown` and `text/plain` (`crates/adapters/oml-format/src/lib.rs:41`;
   [ADR-0056](ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md)
@@ -76,7 +75,7 @@ What exists today:
   2026-11-14).
 
 The decision has to say what a skill is, who sees which, how it is served without a local copy,
-and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-constitution.md)'s R1 to R4, which this record cites and restates none of. Decided, not built.
+and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md)'s R1 to R4 and restates none of them; d16 widens ADR-0001 d5's first exception, the in-progress workarea, as that exception's own text records. Decided, not built.
 
 ## Decision
 
@@ -117,14 +116,13 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
   instruction_needs_person` and the version stays held. This is the instruction class's rule (d16),
   which holds for steering and guardrails alike: an instruction runs with the weight of the
   person whose agent follows it, so an agent may draft one and a person decides. ADR-0001 R2 holds unchanged on top (the author's key and lineage never
-  count), and, as every instruction-class version, a skill is never self-signed in a `development`
-  workarea (d16). Inside the person's own root their own review key may approve a version their
+  count). Inside the person's own root their own review key may approve a version their
   agent or their web key wrote, marked `same_user` (ADR-0046 d2; ADR-0082 d7). The scan treats
   `skill` as an instruction kind beside `steering` and `guardrail`
   ([ADR-0074](ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings.md)
   d24): `injection.tool_coercion` does not run, and `exec.*`, `exfil.*`, `phish.*` and `ssrf.*`
-  hold instead of annotating. Every skill version lands in the person lane with `needs_person:
-  true` (`details.reason: skill_by_agent` when an agent or service key wrote it, `skill` otherwise).
+  hold instead of annotating. Every instruction-class version lands in the person lane with
+  `needs_person: true` and `details.reason: instruction_needs_person` (d16).
   A held skill served to a reviewer adds the sentence "every key that reads this workarea will be
   offered this skill as a command, here and below it unless its guardrail scope is workarea", the
   counterpart of ADR-0037 d10's load warning (`LOAD_WARNING`,
@@ -212,21 +210,18 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
   every other kind. `prompts/get` and `resources/read` serve a skill whole or refuse it; they never
   truncate an instruction.
 
-- **d10 — Inside a workarea a person put in progress, held skills and held guardrails are served
-  to the keys connected there, marked unreviewed, under ADR-0030's rule for memories; everywhere
-  else no held one is served** (the operator, 2026-11-14: "Same rule should work for guardrail and
+- **d10 — Inside a workarea a person put in progress, held skills, guardrails and steering are
+  served and offered, marked unreviewed, to d16's in-progress audience, as every held claim is;
+  everywhere else no held one is served** (the operator, 2026-11-14: "Same rule should work for guardrail and
   skill for in progress workspaces, it still should be accessible by agents connected there
   directly").
-    - **Who.** ADR-0030 d2 and d3's scope, unchanged: a key reads another key's held version on
-      node D exactly when D has an in-progress root, reader is in the key's effective access on D,
-      and the read is scoped inside that root. For a skill or a guardrail the scope node is the
-      key's default workarea (or the `workarea` field, d11; ADR-0037 d5), so "connected there
-      directly" means that node lies inside the in-progress root. Reads (listing, get,
-      recall) follow d16's in-progress audience, so a key scoped at an ancestor of the root reads
-      and recalls the subtree's held items, marked; offering follows d4, which inside an
-      in-progress root also reaches down, so a held skill, guardrail or steering row in the root
-      is offered, marked, to a `tip` key scoped in the root or at one of its ancestors as well as
-      to keys inside it. ADR-0030 d3 is amended: its served held kinds become
+    - **Who.** d16's in-progress audience, one rule for reading and offering: a key bound to `tip`
+      with reader access on node D, where D lies in an in-progress root's subtree, gets D's held
+      version when the key's scope node is in that subtree or on its ancestor chain. For a skill,
+      a guardrail or steering the scope node is the key's default workarea (or the `workarea`
+      field, d11; ADR-0037 d5), and offering follows d4, which inside an in-progress root reaches
+      down as well as up, so a held item in the root is read, recalled and offered, marked, to
+      keys inside the root and at its ancestors alike. ADR-0030 d3 is amended: its served held kinds become
       every knowledge and instruction kind, `memory`, `derived_fact`, `document` (ADR-0081 d5),
       `test`, `steering`, `guardrail`, `skill` and the vocabulary kinds: every kind (d16). A version the scan held for a finding, or one not yet scanned, stays
       author-only as ADR-0030 d3 and ADR-0074 d20 have it; a skill held only because every skill
@@ -339,9 +334,8 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
       since the caller is the author's own session. This amends ADR-0037 d3's "never by body" for
       the author key's own held guardrail.
     - **Who else.** No other key, of the same person or not, gets a held skill before review,
-      except a reviewer judging it and a key connected inside an in-progress workarea (d10). A
-      person whose several agents should share a draft puts the workarea in progress, as for any
-      claim.
+      except a reviewer judging it and d16's in-progress audience (d10). A person whose several
+      agents should share a draft puts the workarea in progress, as for any claim.
     - **Versioned updates.** `oml_write` with `replaces` naming a skill and the `expected_version`
       it last read ([ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
       d19) supersedes it (d2, d3); the held successor is served to its author key by d10's naming:
@@ -400,10 +394,11 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
   | | Knowledge | Instruction | Vocabulary | Why the classes differ |
   |---|---|---|---|---|
   | **Who writes** | any writer key, agent or person, over HTTP and `oml_write` (`test` over HTTP, ADR-0086 d1) | any writer key, agent or person; `oml_write` admits `steering` and `skill`, a `guardrail` is written over HTTP (ADR-0037 d10) | any writer key, over HTTP only (ADR-0025 d12) | not by class: `oml_write`'s inputs stay flat, so a kind with its own required fields (a guardrail's `severity` and `rule`, the vocabulary fields) is written over HTTP; this is the one kind-level difference left, named below |
-  | **Who approves** | a dreamer key outside the version's lineage (R2) under the workarea's review policy, a person or a crew; `self_signed` only in a `development` workarea (ADR-0001 d5) | the same, and only a person's verdict counts (`review.person_required`, `details.reason: instruction_needs_person`); never `self_signed`; in a person's root their own review key, marked `same_user` | as knowledge | an instruction is followed, not weighed as data, so it carries the weight of a person's look; this replaces three per-kind rules: ADR-0074 d24's for steering by an agent, this record's former skill rule, and ADR-0037 d10's "never self-signed" for guardrails |
+  | **Who approves** | a dreamer key outside the version's lineage (R2) under the workarea's review policy, a person or a crew; in a production scope (a `committed` or `validated` workarea, or what a release serves) a key of another person; in the development and in-progress parts of a person's own root, that person's review key may approve, marked `same_user` (ADR-0001 d5, the second exception) | the same, and only a person's verdict counts (`review.person_required`, `details.reason: instruction_needs_person`) | as knowledge | an instruction is followed, not weighed as data, so it carries the weight of a person's look; this replaces two per-kind rules, ADR-0074 d24's for steering by an agent and this record's former skill rule |
   | **What its author sees while held** | its own held rows in the `own` listing and in recall with `include_own_held` (ADR-0025 d4), marked by state | the same rule, carried to where the kind is served: its own held steering, guardrail or skill, marked unreviewed, under the in-progress mechanics below (d14) | its own held rows in the listing | none: one read-your-writes rule, applied where each class is served |
-  | **Held, in progress** | every held version inside an in-progress root is served, marked unreviewed, to every key with reader access whose scope node is in the root's subtree or on its ancestor chain, a crew's and a team's keys alike; never a held retirement, never a version the scan held or has not scanned; never to a sibling, another branch, federation or a wide source | the same | the same | none: one audience for every kind (the operator, 2026-11-14) |
+  | **Held, in progress** | every held version inside an in-progress root is served, and an instruction offered, marked unreviewed, to every key bound to `tip` with reader access whose scope node is in the root's subtree or on its ancestor chain, a crew's and a team's keys alike; never a held retirement, never a version the scan held or has not scanned; never to a sibling, another branch, federation or a wide source | the same | the same | none: one audience for every kind (the operator, 2026-11-14) |
   | **Serving mechanics while held** | a held version is a row of its own beside the promoted tip (ADR-0030) | a held version only adds beside the approved one and never replaces it (a skill edit as `<name>-unreviewed`, steering after the promoted rows prefixed `[unreviewed]`, a guardrail as its own line); a held rule asks and never denies; it is offered along d4's scope, the key's own workarea and its ancestors and, inside an in-progress root, the subtree below the key's workarea, so a parent's agent is offered a child's held instruction, marked | a held version is listed and read, marked, and joins query matching only once promoted | instruction: a held version must never loosen or replace what review approved, so it can only add a question or a marked line; vocabulary: matching applies to every query at once, so a held term would change other readers' results rather than add a row they can see marked |
+  | **Withdraw while held** | the author key, an agent's included, over HTTP or `oml_withdraw`, and the console for any of its person's keys' held versions; the version is kept as `withdrawn` and never served (ADR-0083 d13) | the same | the same | none |
   | **What a release binding serves** | the manifest's members for every kind, the key's own held rows still (ADR-0085 d5), never another key's held version | as knowledge | as knowledge | none |
   | **What an admin fix may do** | ADR-0089 d2's six acts; an edit is scanned as its kind requires (ADR-0089 d4) | the same; an edit is scanned as an instruction (ADR-0074 d24), and a fix that removes or weakens an instruction of any of the three kinds raises ADR-0089 d6's alert | as knowledge | an instruction removed or weakened can let an agent do what it was told not to, so a person is told at once |
 
@@ -436,10 +431,10 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
   ADR-0037 d8), a document's passages (ADR-0081 d3), the size caps (d9; ADR-0081 d2; ADR-0037 d7),
   and the HTTP-only writing of a guardrail named above. Removed as skill-only on 2026-11-14: a held
   skill served to every key of its author's person (d14 now follows the author rule); "only a
-  person approves" and "never self-signed" as skill or guardrail rules (now the instruction class's);
+  person approves" as a skill rule (now the instruction class's); the person-lane reasons
+  `skill_by_agent` and `skill` (now `instruction_needs_person`);
   held steering and held vocabulary kept author-only inside an in-progress workarea (now served as every kind is).
-  This amends ADR-0037 d10 (a guardrail needs a person's verdict), ADR-0025 d8 (a `self_signed`
-  steering row no longer exists), and supersedes ADR-0074 d24 (a steering version from a person
+  This amends ADR-0037 d10 (a guardrail needs a person's verdict) and supersedes ADR-0074 d24 (a steering version from a person
   session needs a person's verdict too).
 
 ## Consequences
@@ -455,9 +450,9 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
   keeps the guardrail prompt's case, and a new test,
   `prompts_get_serves_an_offered_skill_and_refuses_any_other_name_alike`, proves d6.
 - `oml hook session-start` gains the index (d8); the plugin's README says what it adds.
-- The scan's instruction-kind rules (ADR-0074 d24) name `skill`; the person lane gains the
-  reasons `skill_by_agent` and `skill`; review gains `review.person_required` with
-  `skill_needs_person` for an agent's or a service's verdict on a skill. `mcp-tools.json`'s
+- The scan's instruction-class rules (ADR-0074 d24, superseded by d16) name `skill`; the person
+  lane and review's `review.person_required` carry one reason, `instruction_needs_person`, for
+  every instruction-class version (d16). `mcp-tools.json`'s
   `oml_write` `kind` enum gains `skill` and its `skill` object, regenerated, not hand-edited.
 - `oml doctor` names: a server that does not serve `GET /v1/skills` ("this server predates
   skills"), a key whose scope offers more than one page of skills (informational), and a skill

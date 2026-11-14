@@ -287,9 +287,14 @@ Decided, not built.
 
 - **d13 — The author of a held version may withdraw it** (the operator, 2026-11-14; decided, to be
   built later). A version's author withdraws it with
-  `POST /v1/memories/{artifact_id}/withdraw {reason?}`: the author key itself, or a person's
-  session web key for a version any key acting for its person wrote (read the one way `same_user`
-  reads it, as ADR-0082 d2 reads it for supersession). It works in any workarea and only on a
+  `POST /v1/memories/{artifact_id}/withdraw {reason?}`, and over MCP with the tool
+  `oml_withdraw {artifact_id, reason?, idempotency_key}`, which joins the agent-safe catalog
+  (amends ADR-0025 d12 and ADR-0039's tool table). Who may: the author key itself, an agent's key
+  included, on its own held version; and a person's session web key, from the console, for a held
+  version any key of that person wrote (read the one way `same_user` reads it, as ADR-0082 d2 reads
+  it for supersession) (the operator, 2026-11-14). R1 is untouched: a withdrawal is the author
+  retracting its own unreviewed work, never a verdict on anyone's; it promotes nothing, signs
+  nothing, demotes no served version and deletes nothing, since the version and its text are kept. It works in any workarea and only on a
   held version; any other state answers `memory.not_held`, and another author's version
   `access.author_only`. The version's state becomes `withdrawn`: it is kept as history with its
   text (ADR-0001 R4), leaves every review queue, the To do page and its counts, is never served

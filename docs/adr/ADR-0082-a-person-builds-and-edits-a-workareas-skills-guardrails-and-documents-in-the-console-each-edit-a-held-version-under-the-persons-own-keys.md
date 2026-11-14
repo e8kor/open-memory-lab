@@ -205,14 +205,20 @@ Decided, not built.
       rule: never self-signed (ADR-0037 d10), which a verdict by another key satisfies. A person
       alone can therefore publish their own skills, guardrails and documents in their root, and every
       reader can see that the approver was the author's own person.
-    - **Outside it.** A version a person's session key wrote in a workarea outside that person's
-      root counts no verdict from a key acting for the same person, read the one way `same_user`
+    - **Inside the root, production scopes stay strict.** A `committed` or `validated` workarea
+      inside the person's root, and what a release serves, counts no `same_user` verdict: a person
+      of another principal approves there (ADR-0001 d5, whose relaxations hold in development
+      scopes only).
+    - **Outside it.** A version any key of a person wrote, an agent's key, a session key or a
+      tenant key acting for that person, in a workarea outside that person's root counts no
+      verdict from a key acting for the same person, read the one way `same_user`
       reads it (ADR-0044 d16), refused `review.author_in_lineage` with `details.reason:
       same_person`, and it is absent from that person's To review (ADR-0083). Under d2 the author
       there is `<user>-review`, which its lineage already excludes, and no other key of the person
       holds dreamer outside the root (user keys stay inside it, ADR-0044 d3; an admin key never
-      reviews), so the rule changes no outcome today; it states the operator's answer as a rule, so
-      a later grant cannot quietly let a person approve what they typed in a shared workarea.
+      reviews), so for a console write the rule changes no outcome today. For an agent key's write
+      it does: a person's tenant dreamer key no longer approves their own agent's write outside
+      their root (the operator, 2026-11-14: "own root only"), which amends ADR-0044 d8 there.
     - The cost: in a shared workarea a person's console write waits for someone else, as the
       operator chose; inside a root the `same_user` mark is the only signal that the author's own
       person approved.
