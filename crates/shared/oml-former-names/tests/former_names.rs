@@ -1,7 +1,7 @@
 //! The former-name map of ADR-0091 d4: each rule, its identity on what the
 //! v0.8.0 server writes, and its fail-closed case.
 
-use oml_former_names::{FORMER_EVENT_TYPES, UnmappedFormerName, read_event};
+use oml_former_names::{FORMER_EVENT_TYPES, UnmappedFormerName, read_event, unmapped_former_names};
 use serde_json::{Value, json};
 
 fn read(event_type: &str, payload: &Value) -> (String, Value) {
@@ -216,4 +216,59 @@ fn a_workarea_event_type_outside_the_list_fails_closed_naming_the_event_and_the_
     assert_eq!(err.name, "workarea.unheard_of");
     assert_eq!(err.doctor_check(), "journal_unmapped_former_name");
     assert!(err.to_string().contains("workarea.unheard_of"));
+}
+
+#[test]
+fn an_event_the_map_reads_in_full_leaves_no_former_name() {
+    for (event_type, payload) in [
+        (
+            "workarea.status_transition",
+            json!({"workarea_id": "w", "from": "committed", "to": "validated",
+                   "policy_snapshot": {"required_roles": ["dreamer"], "children_all_validated": true}}),
+        ),
+        (
+            "key.issued",
+            json!({"role": "dreamer", "held_by": "human", "guardrail_scope": "workarea", "name": "the-dreamer"}),
+        ),
+        (
+            "system.names_assigned",
+            json!({"names": [{"kind": "workarea", "name": "workarea"}]}),
+        ),
+        (
+            "submission.remember",
+            json!({"claim": "the workarea was committed and validated by a human"}),
+        ),
+        (
+            "workspace.create",
+            json!({"workspace_id": "w", "status": "protected"}),
+        ),
+    ] {
+        assert_eq!(
+            unmapped_former_names(event_type, &payload),
+            Vec::<String>::new(),
+            "{event_type}"
+        );
+    }
+}
+
+#[test]
+fn a_former_name_the_map_does_not_cover_is_named() {
+    assert_eq!(
+        unmapped_former_names("workarea.retired", &json!({})),
+        ["workarea.retired"]
+    );
+    assert_eq!(
+        unmapped_former_names(
+            "crew.updated",
+            &json!({"held_by": "agent", "role": "dreamer"})
+        ),
+        ["held_by", "role: dreamer"]
+    );
+    assert_eq!(
+        unmapped_former_names(
+            "review.ratify",
+            &json!({"policy_snapshot": {"children_all_validated": true}, "kind": "workarea"})
+        ),
+        ["children_all_validated", "kind: workarea"]
+    );
 }

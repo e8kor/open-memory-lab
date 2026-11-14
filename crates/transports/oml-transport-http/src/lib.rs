@@ -249,6 +249,8 @@ pub struct ApiState<J, S, C, I, Sc> {
     db_ping: DbPing,
     fork_check_ok: Arc<AtomicBool>,
     names_assigned: bool,
+    /// Why the startup former-names check failed, or `None` (ADR-0091 d4).
+    former_names: Option<Arc<String>>,
     enrollment: Arc<Mutex<Option<String>>>,
     build: Arc<BuildInfo>,
     /// The authorization request's sealer: one key per process, held in
@@ -273,6 +275,7 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
             db_ping: Arc::clone(&self.db_ping),
             fork_check_ok: Arc::clone(&self.fork_check_ok),
             names_assigned: self.names_assigned,
+            former_names: self.former_names.clone(),
             enrollment: Arc::clone(&self.enrollment),
             build: Arc::clone(&self.build),
             sealer: Arc::clone(&self.sealer),
@@ -443,6 +446,7 @@ where
             db_ping,
             fork_check_ok: Arc::new(AtomicBool::new(fork_check_ok)),
             names_assigned: true,
+            former_names: None,
             enrollment: Arc::new(Mutex::new(enrollment_token)),
             build: Arc::new(BuildInfo::unknown()),
             sealer: Arc::new(oauth::seal::AeadSealer::generate()),
@@ -496,6 +500,16 @@ where
         self
     }
 
+    /// The startup former-names check's failure, `None` when every stored
+    /// event reads in the current names: `/readyz` then reports
+    /// `former_names` not ready and names `journal_unmapped_former_name`
+    /// (ADR-0091 d4).
+    #[must_use]
+    pub fn with_former_names(mut self, failure: Option<String>) -> Self {
+        self.former_names = failure.map(Arc::new);
+        self
+    }
+
     /// The composition's startup names check. `false` means the lead's
     /// start, which names every row that predates names before it serves
     /// (ADR-0026 d11; http-api.md "Rows created before names"), left a row
@@ -524,13 +538,17 @@ where
     async fn readyz(State(st): State<Self>, rid: Rid) -> Response {
         let postgres_ok = (st.db_ping)().await;
         let fork_ok = st.fork_check_ok.load(Ordering::SeqCst);
-        let ready = postgres_ok && fork_ok && st.names_assigned;
+        let ready = postgres_ok && fork_ok && st.names_assigned && st.former_names.is_none();
         let body = json!({
             "status": if ready { "ok" } else { "unavailable" },
             "checks": {
                 "postgres": if postgres_ok { "ok" } else { "unreachable" },
                 "fork_check": if fork_ok { "ok" } else { "failed" },
                 "names_assigned": if st.names_assigned { "ok" } else { "unassigned" },
+                // Doctor's journal_unmapped_former_name line reads it; what
+                // the check found is the lead's start log's, never this
+                // answer's, which answers anyone (ADR-0091 d4).
+                "former_names": if st.former_names.is_none() { "ok" } else { "unmapped" },
             },
             // Ready or not, the probe names the build it belongs to.
             "build": st.build.to_json(),

@@ -257,6 +257,12 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
             tracing::error!(%failure, "STARTUP NAMES CHECK FAILED — serving no request")
         }
     }
+    if let Err(failure) = &start.former_names {
+        // ADR-0091 d4: a stored event names a former name the map does not
+        // cover; /readyz reports 503 and every reader that meets it fails
+        // closed naming it.
+        tracing::error!(%failure, "STARTUP FORMER-NAMES CHECK FAILED");
+    }
     if let Some(token) = &start.enrollment_token {
         // The one-time ceremony secret: stdout, once, never logged again
         // (deployment.md bootstrap — show-once).

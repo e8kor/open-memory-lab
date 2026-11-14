@@ -1621,6 +1621,53 @@ pub async fn startup_fork_check(
     }
 }
 
+/// The startup former-names check (ADR-0091 d4): every stored event reads in
+/// the current names through the former-name map, or the failure names
+/// `journal_unmapped_former_name`, each tenant, seq, event type and former
+/// name it found. A lead that fails it is not ready (`/readyz` reports
+/// `former_names`), and every reader that meets such an event fails closed
+/// naming it; `oml doctor` prints the line. A store the check cannot read
+/// fails it.
+pub async fn startup_former_names_check(store: &PgStore, tenants: &[Uuid]) -> Result<(), String> {
+    const PAGE: usize = 1024;
+    let mut found = Vec::new();
+    for tenant_id in tenants {
+        let mut from_seq = 1_u64;
+        loop {
+            let events = oml_app::ports::JournalStore::events_range(store, *tenant_id, from_seq, PAGE)
+                .await
+                .map_err(|e| {
+                    format!("journal_unmapped_former_name: the journal could not be read: {e}")
+                })?;
+            for event in &events {
+                let envelope = &event.envelope;
+                for name in oml_app::domain::former_names::unmapped_former_names(
+                    &envelope.event_type,
+                    &envelope.payload,
+                ) {
+                    found.push(format!(
+                        "tenant {tenant_id} seq {} {} names {name:?}",
+                        envelope.seq, envelope.event_type
+                    ));
+                }
+            }
+            match events.last() {
+                Some(last) if events.len() == PAGE => from_seq = last.envelope.seq + 1,
+                _ => break,
+            }
+        }
+    }
+    if found.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "journal_unmapped_former_name: {} former names the former-name map does not cover ({}) (ADR-0091 d4)",
+            found.len(),
+            found.join("; ")
+        ))
+    }
+}
+
 /// The startup names check: the store holds no row that predates names, or
 /// the failure names `names_assigned` and each table that holds one. The
 /// lead's start runs it after its naming, and alone when the fork check
@@ -1972,6 +2019,9 @@ pub struct LeadStart {
     /// a row is left with no name, in which case the router serves no
     /// request (ADR-0026 d11).
     pub names: Result<Vec<AssignedNames>, String>,
+    /// The startup former-names check: on a failure `/readyz` answers 503
+    /// naming `former_names` (ADR-0091 d4).
+    pub former_names: Result<(), String>,
     /// The single-use enrollment token, minted against an empty deployment
     /// whose fork check passed (deployment.md bootstrap).
     pub enrollment_token: Option<String>,
@@ -2204,6 +2254,7 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
             .await
             .map(|()| Vec::new())
     };
+    let former_names = startup_former_names_check(store, &tenants).await;
     let enrollment_token = (tenants.is_empty() && fork_check.is_ok()).then(mint_enrollment_token);
     let state = composed(
         app,
@@ -2221,11 +2272,13 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     let router = state
         .with_web_client(web_client)
         .with_names_assigned(names.is_ok())
+        .with_former_names(former_names.as_ref().err().cloned())
         .into_router();
     Ok(LeadStart {
         tenants,
         fork_check,
         names,
+        former_names,
         enrollment_token,
         router,
         recall_meter,

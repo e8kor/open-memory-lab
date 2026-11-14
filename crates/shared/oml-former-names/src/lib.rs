@@ -227,3 +227,62 @@ fn read_snapshots(event_type: &str, value: &mut Value) {
         _ => {}
     }
 }
+
+/// The former names an event still holds once read through the map: a
+/// `workarea.*` type the map does not list, a `held_by` key outside
+/// `key.issued`, and a former value in a field that names a kind, a role, a
+/// scope, a holder or a status in an event the map's lists do not reach.
+/// Empty for every event the map reads in full. This is what the lead's
+/// start reports as `journal_unmapped_former_name` (ADR-0091 d4); a name,
+/// a claim's text and any other value are content and are never read here.
+#[must_use]
+pub fn unmapped_former_names(event_type: &str, payload: &Value) -> Vec<String> {
+    let read = match read_event(event_type, payload) {
+        Ok(read) => read,
+        Err(e) => return vec![e.name],
+    };
+    let mut found = Vec::new();
+    leftovers(&read.event_type, &read.payload, None, &mut found);
+    found.sort();
+    found.dedup();
+    found
+}
+
+fn leftovers(event_type: &str, value: &Value, key: Option<&str>, found: &mut Vec<String>) {
+    let former_value = |field: &str, v: &str| -> bool {
+        match field {
+            "kind" | "guardrail_scope" => v == "workarea",
+            "role" | "required_roles" => v == "dreamer",
+            "used_by" | "approver_used_by" => v == "human",
+            "status" | "from_status" | "to_status" => v == "committed" || v == "validated",
+            "from" | "to" => {
+                event_type.starts_with("workspace.status_")
+                    && (v == "committed" || v == "validated")
+            }
+            _ => false,
+        }
+    };
+    match value {
+        Value::Object(fields) => {
+            for (k, v) in fields {
+                if k == "held_by" || k == "children_all_validated" {
+                    found.push(k.clone());
+                }
+                leftovers(event_type, v, Some(k), found);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                leftovers(event_type, item, key, found);
+            }
+        }
+        Value::String(v) => {
+            if let Some(field) = key
+                && former_value(field, v)
+            {
+                found.push(format!("{field}: {v}"));
+            }
+        }
+        _ => {}
+    }
+}

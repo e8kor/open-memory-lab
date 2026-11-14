@@ -27,7 +27,7 @@ use oml_app::ports::{CommitRequest, IdGen as _, JournalStore, MetadataFold, Outb
 use oml_pg::{MIGRATOR, PgStore};
 use oml_server_lead::{
     OsIds, enumerate_tenants, lead_state, pg_ping, start_lead, startup_fork_check,
-    startup_names_check,
+    startup_former_names_check, startup_names_check,
 };
 use oml_transport_http::DbPing;
 use sqlx::migrate::Migrate as _;
@@ -623,6 +623,97 @@ async fn the_startup_names_check_passes_on_a_deployment_this_build_bootstrapped(
     let (status, _, body) = send(router, "GET", "/readyz", Call::default()).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["checks"]["names_assigned"], "ok", "{body}");
+    drop_db(&rig.db_name).await;
+}
+
+/// A journal event that holds a former name the former-name map does not
+/// cover is found at the lead's start: the check names
+/// `journal_unmapped_former_name`, the tenant, the seq, the event and the
+/// name, and `/readyz` reports `former_names` unmapped and is not ready; a
+/// chain written in the current names, or in former names the map covers,
+/// passes (ADR-0091 d4).
+#[tokio::test]
+async fn a_journal_event_naming_a_former_name_the_map_does_not_cover_fails_the_startup_former_names_check()
+ {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (_admin, tenant, _root) = bootstrap(router).await;
+    let tenants = enumerate_tenants(rig.store.pool()).await.expect("tenants");
+    assert_eq!(
+        startup_former_names_check(&rig.store, &tenants).await,
+        Ok(())
+    );
+
+    let head = rig
+        .store
+        .chain_head(tenant)
+        .await
+        .expect("head")
+        .expect("chain");
+    let prev = rig
+        .store
+        .events_range(tenant, head.seq, 1)
+        .await
+        .expect("the head event")
+        .remove(0);
+    let draft = EventDraft {
+        tenant_id: tenant,
+        event_id: OsIds.new_id(),
+        event_type: "workarea.retired".to_owned(),
+        principal: "oml/admin".to_owned(),
+        api_key_id: None,
+        at: EventTime::parse("2026-11-02T10:30:00.123456Z").expect("time"),
+        payload: json!({}),
+    };
+    let event = sign(
+        next_envelope(Some(&prev), draft).expect("lawful"),
+        &rig.signing,
+    )
+    .expect("signs");
+    let seq = event.envelope.seq;
+    rig.store
+        .commit(CommitRequest {
+            outbox: OutboxRow {
+                event_id: event.envelope.event_id,
+                topic: event.envelope.event_type.clone(),
+                payload: json!({ "tenant_id": tenant.to_string(), "seq": seq }),
+            },
+            event,
+            fold: MetadataFold::AdminRead,
+            idempotency: None,
+            ceiling: None,
+            written: None,
+        })
+        .await
+        .expect("an event no released binary wrote");
+
+    let failure = startup_former_names_check(&rig.store, &tenants)
+        .await
+        .expect_err("the map does not cover workarea.retired");
+    for named in [
+        "journal_unmapped_former_name",
+        &format!("tenant {tenant} seq {seq} workarea.retired"),
+    ] {
+        assert!(failure.contains(named), "{named}: {failure}");
+    }
+    let router = lead_state(
+        &rig.store,
+        rig.signing.clone(),
+        pg_ping(rig.store.pool().clone()),
+        true,
+        None,
+    )
+    .with_former_names(Some(failure))
+    .into_router();
+    let (status, _, body) = send(&router, "GET", "/readyz", Call::default()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["checks"]["former_names"], "unmapped", "{body}");
+    assert!(
+        !body.to_string().contains("workarea.retired"),
+        "/readyz answers anyone and names no event: {body}"
+    );
     drop_db(&rig.db_name).await;
 }
 
