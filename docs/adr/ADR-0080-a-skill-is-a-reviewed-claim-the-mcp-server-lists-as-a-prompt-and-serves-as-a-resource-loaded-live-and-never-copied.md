@@ -142,7 +142,8 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
   its siblings. Inside one, the offer also reaches down (the operator, 2026-11-14, d16): a key
   bound to `tip` whose scope node N is an in-progress root, a node inside one, or an ancestor of
   one, with `guardrail_scope: ancestors`, is also offered the instruction items of that
-  in-progress subtree below N, promoted and held (held ones marked unreviewed), wherever its
+  in-progress subtree below N (the operator, 2026-11-14, confirmed for a key inside the subtree
+  too: any `tip` key there is offered the instruction items below its own node), promoted and held (held ones marked unreviewed), wherever its
   reader access covers them; siblings and other branches of N are never offered anything below
   them. `guardrail_scope: workarea` keeps N's own alone, in both directions. The cost: the issuance field named for guardrails also
   scopes skills, so an admin who wants a key to see its organisation's guardrails but not its

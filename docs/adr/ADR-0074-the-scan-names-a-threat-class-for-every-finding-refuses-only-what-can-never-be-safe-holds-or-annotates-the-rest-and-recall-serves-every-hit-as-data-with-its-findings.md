@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings
 tier: engineering
-status: accepted in part (built in phase 1: d6, d14, d15, d17, d18, d20, d21, d23, d28); d24 superseded by ADR-0080 d16; proposed (d1–d5, d7–d13, d16, d19, d22, d25–d27)
+status: accepted in part (built in phase 1: d6, d14, d15, d17, d18, d20, d21, d23, d28; and d26, limited to the own root's development scopes); d24 superseded by ADR-0080 d16; proposed (d1–d5, d7–d13, d16, d19, d22, d25, d27)
 answers: which threats a stored memory can carry beyond leaked secrets; what the scan does today, rule by rule, and where it stops; for each threat class whether a deterministic rule or an optional model detects it, whether it refuses, holds with a finding or annotates, how false positives are handled and whether the reviewer sees the finding; what oml-scan/2 adds; what a hold finding changes about who may approve; how an upgrade rescans stored memories without silently changing a verdict; how recall serves findings and hidden characters; the opt-in model tier; the write-time budget; the red-team corpus and how precision and recall are reported; who counts as a person and the person lane; the tenant scan policy; the findings list; the normalisation order; the in-progress exclusion; the phases and their issues; the operator's open questions
 -->
 
 # ADR-0074 — The scan names a threat class for every finding, refuses only what can never be safe, holds or annotates the rest, and recall serves every hit as data with its findings
 
-**Status:** accepted in part · 2026-11-14, by the operator, as ADR-0054 was: the decisions phase 1 built (#213), d6, d14, d15, d17, d18, d20 (reworded to the class rules and ADR-0080 d16's in-progress audience), d21, d23 and d28, are accepted; d24 is superseded by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16's instruction-class rule; d1 to d5, d7 to d13, d16, d19, d22 and d25 to d27 stay proposed · proposed 2026-11-08 · amended by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d20, d24, 2026-11-14)
+**Status:** accepted in part · 2026-11-14, by the operator, as ADR-0054 was: the decisions phase 1 built (#213), d6, d14, d15, d17, d18, d20 (reworded to the class rules and ADR-0080 d16's in-progress audience), d21, d23 and d28, are accepted, and d26 is accepted limited to the development and in-progress parts of the person's own root (the operator, 2026-11-14); d24 is superseded by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16's instruction-class rule; d1 to d5, d7 to d13, d16, d19, d22, d25 and d27 stay proposed · proposed 2026-11-08 · amended by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d20, d24, 2026-11-14)
 
 **Amends:** ADR-0065 (d1: `oml-scan/2` and the upgrade rescan; d2: the registry gains the
 classes of d3 below; d5: a hold finding requires a person's verdict; d13: the rescan gains a
@@ -1204,7 +1204,12 @@ flowchart TD
 
 - **d26 — A person's verdict on a hold finding their own agent wrote counts in a single-person
   tenant and, in a team, inside the author's own private user root, marked `same_user`; elsewhere a
-  team needs another person.** ADR-0044 d8 and ADR-0046 d2 let
+  team needs another person.** *(Accepted 2026-11-14 by the operator, limited: a person's own
+  approval or dismissal of a hold finding on a write by one of their own keys counts only in the
+  development and in-progress parts of that person's own root, marked `same_user`, as ADR-0001
+  d5's second exception allows. Everywhere else, a single-person tenant's shared workareas and any
+  `committed` or `validated` workarea included, another person clears the hold. The
+  single-person-tenant clause below is read within that limit.)* ADR-0044 d8 and ADR-0046 d2 let
   a person ratify or approve their own agents' work through another key, marked `same_user`, so
   that a solo user can move their own work. d2's first draft refused the author's user outright,
   which would leave every hold finding in a solo user's root unapprovable and, since dismissal
