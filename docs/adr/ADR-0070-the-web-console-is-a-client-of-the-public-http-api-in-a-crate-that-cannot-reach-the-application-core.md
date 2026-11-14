@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core
 tier: engineering
-status: accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11, 2026-11-12 and 2026-11-13 (accepted by the operator the same day); two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325), the one that keeps its export and deletion request open (#335), the three on sign-out (#327) and the two on a denied session key's pages that state the absent forms and the `whoami` boolean (#343) were accepted on 2026-11-12, the build's wording and the third row's store-call counts not having been put to the operator
+status: accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11, 2026-11-12 and 2026-11-13 (accepted by the operator the same day); two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325), the one that keeps its export and deletion request open (#335), the three on sign-out (#327) and the two on a denied session key's pages that state the absent forms and the `whoami` boolean (#343) were accepted on 2026-11-12, the build's wording and the third row's store-call counts not having been put to the operator; one amendment of 2026-11-14 is proposed and awaits the operator's acceptance: the landing, the legal pages and the Connectors Directory pack leave this repository, and its releases ship no site archive (d12 and d4 revised)
 answers: why the web pages stop calling oml-app's use cases and call the public HTTP API instead; which crate serves the pages and what it may depend on; how a signed-in person's session becomes an API credential without a key value at rest or in the browser; which middleware layer owns the request id, the session, CSRF, CSP, rate limits, audit and error mapping; how oml-web, always its own process, reaches the API; which existing operation serves each web call and which operations are new; what stays in the auth context; the bounded contexts; the migration phases and the test that proves parity; the overhead budget; what it amends in ADR-0042 and ADR-0045
 -->
 
 # ADR-0070 — The web console is a client of the public HTTP API, in a crate that cannot reach the application core
 
-**Status:** accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11, 2026-11-12 and 2026-11-13 (the person's Review lists what waits and judges one item, d7 (b) and d4; the picker's budget, d8: see [the console redesign](#the-console-redesign-of-2026-11-13-the-person-judges-from-a-list-and-the-picker-reads-names-only), accepted by the operator the same day); two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325), the one that keeps its export and deletion request open (#335), the three on sign-out (#327) and the two on a denied session key's pages that state the absent forms and the `whoami` boolean (#343) were accepted on 2026-11-12, the build's wording and the third row's store-call counts not having been put to the operator
+**Status:** accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11, 2026-11-12 and 2026-11-13 (the person's Review lists what waits and judges one item, d7 (b) and d4; the picker's budget, d8: see [the console redesign](#the-console-redesign-of-2026-11-13-the-person-judges-from-a-list-and-the-picker-reads-names-only), accepted by the operator the same day); two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325), the one that keeps its export and deletion request open (#335), the three on sign-out (#327) and the two on a denied session key's pages that state the absent forms and the `whoami` boolean (#343) were accepted on 2026-11-12, the build's wording and the third row's store-call counts not having been put to the operator; one amendment of 2026-11-14 is proposed and awaits the operator's acceptance: the landing, the legal pages and the Connectors Directory pack leave this repository, and its releases ship no site archive (d12 and d4 revised: see [The landing leaves this repository](#the-landing-leaves-this-repository-2026-11-14-194))
 
 **Amends:** ADR-0045 (d1: the page routes move to `oml-web` and the sign-in routes to the auth
 context; d6: a session key gains a per-session credential; d7: that credential, never the
@@ -61,6 +61,10 @@ page (#327; d2, d3 layer 4 and d5 revised): see
 pages (#343; d2, d5 and d8 revised, and ADR-0039 d15 amended): see
 [A denied session key's pages](#a-denied-session-keys-pages-2026-11-12-343). Amended on 2026-11-13, and accepted by the operator the same day: the person's Review page (d7 (b) and d4 revised) and the workarea picker's reads (d8 kept): see
 [The console redesign of 2026-11-13](#the-console-redesign-of-2026-11-13-the-person-judges-from-a-list-and-the-picker-reads-names-only).
+Amended on 2026-11-14, proposed and awaiting the operator's acceptance: the landing, the legal pages
+and the Connectors Directory pack leave this repository for the operator's private one, and this
+repository's releases ship no site archive (d12 and d4 revised): see
+[The landing leaves this repository](#the-landing-leaves-this-repository-2026-11-14-194).
 
 ## Context
 
@@ -111,7 +115,8 @@ operation, and defaults whatever the server can derive.
 "`oml-web` is a separate process only: its own binary and deployable, over the public HTTP API.
 Middleware (session → `omls_` credential, CSRF, CSP, rate limit, audit) lives in oml-web, with an
 optional external gateway in front. The in-process mode is dropped." The same decision gives the
-landing page its own folder, build and release archive, served by Caddy (d12).
+landing page its own folder, build and release archive, served by Caddy (d12; proposed on
+2026-11-14 to leave this repository: [The landing leaves this repository](#the-landing-leaves-this-repository-2026-11-14-194)).
 
 Built in phases (a) to (d), 2026-11-10 to 2026-11-11; the records below say how.
 
@@ -221,7 +226,7 @@ Built in phases (a) to (d), 2026-11-10 to 2026-11-11; the records below say how.
 
     | Shape | Browser reaches | `oml-web` reaches the API at |
     |---|---|---|
-    | Production | Caddy (or another proxy) on the public origin: each path of `oml_web::PAGES` and each prefix of `oml_web::PREFIXES` to `oml-web`; every other path to the lead by falling through: `/web` (sign-in without a session, sign-out), `/web/sign-in`, `/web/callback/*`, `/web/sign-up`, `/v1/*`, `/v2/*`, `/mcp`, `/oauth/*`, `/.well-known/*`; the landing paths to static files (d12) | the lead's listener on loopback or the LAN, not back through the public proxy |
+    | Production | Caddy (or another proxy) on the public origin: each path of `oml_web::PAGES` and each prefix of `oml_web::PREFIXES` to `oml-web`; every other path to the lead by falling through: `/web` (sign-in without a session, sign-out), `/web/sign-in`, `/web/callback/*`, `/web/sign-up`, `/v1/*`, `/v2/*`, `/mcp`, `/oauth/*`, `/.well-known/*`; the landing paths to static files (d12), where the deployment serves a landing of its own (proposed 2026-11-14) | the lead's listener on loopback or the LAN, not back through the public proxy |
     | Local development | four services started by `oml quickstart`: Postgres, the lead, `oml-web` and a path router (Caddy) in front of both, routing exactly as production does, so the browser sees one origin; the compose file sets `web.public_url` to the router's published address, and there is no `web.page_url` setting | the lead's address on the host or on the compose network |
     | Kubernetes | the chart's Ingress routes as production does, to two Deployments: each path in `web.ingressPaths` (`Exact`; `Prefix` for `/web/render` and `/web/assets`) to `oml-web`, every other path to the lead; the chart sets `web.public_url` from `web.publicUrl`, else `https://` and the first Ingress host | the lead's Service |
 
@@ -463,7 +468,8 @@ Built in phases (a) to (d), 2026-11-10 to 2026-11-11; the records below say how.
       client identity, a web-client secret or mutual TLS, and never on `/mcp` (d2).
     - **(d) Budget.** The overhead budget is restated for a network hop on loopback or a LAN,
       with pooling, keep-alive, a timeout per call and partial-page failure states (d8).
-    - **(e) Landing.** The landing page is a deployable of its own (d12).
+    - **(e) Landing.** The landing page is a deployable of its own (d12), built and released
+      outside this repository (proposed 2026-11-14).
 
 - **d12 — The landing page is a separate deployable: static files built from `site/` and
   shipped as their own release archive, served by the proxy, by neither the lead nor
@@ -477,6 +483,11 @@ Built in phases (a) to (d), 2026-11-10 to 2026-11-11; the records below say how.
   says. The cost: one more archive per release and one more deploy step; the landing can lag
   or lead the server by a release, which is why it names a shipped release and links the
   release map rather than describing planned work.
+
+  *Proposed amendment, 2026-11-14:* the landing, its build, the legal pages and the Connectors
+  Directory pack live in the operator's private repository, which builds and releases the site
+  archive; this repository holds none of them and releases no `oml-site` archive. See
+  [The landing leaves this repository](#the-landing-leaves-this-repository-2026-11-14-194).
 
 ## The amendment of 2026-11-10
 
@@ -1074,6 +1085,37 @@ The top label read is `GET /v2/workareas/{top}/tree?limit=1`: a path alone canno
 `universe.platform.oncall`, named `oncall`, from `universe.alice.docs`, named `alice.docs`, and the
 node's `user_root` mark can.
 
+## The landing leaves this repository (2026-11-14, #194)
+
+**Proposed, 2026-11-14; awaits the operator's acceptance.** On 2026-11-11 the operator decided that
+the hosted service's web material moves to a new private repository, `e8kor/oml-web`, holding the
+landing site, the legal drafts, the Connectors Directory pack and the hosted-only pages, while the
+`oml-web` console crate stays here for self-hosters
+([#194](https://github.com/e8kor/open-memory-lab/issues/194)). On 2026-11-14 the operator decided
+that the split happens now, before the legal pages are published (#183), and that this record's
+d12 is amended first. The rows below state that amendment. The repository the material moves to
+is not this record's to describe: its build, its release and how the hosted deployment fetches the
+archive are the operator's.
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d12 | the landing is a separate deployable built from `site/` of this repository; `site/build.py` writes `site/dist/`, CI fails when it differs from the build, and each release attaches `oml-site-<version>.tar.gz`, summed in `SHA256SUMS` and signed | the landing is still a deployable of its own, served by the proxy and by neither the lead nor `oml-web`, but it is not part of this repository. Its sources, its build, its tests, the legal pages (`docs/legal/`) and the Connectors Directory pack live in the operator's private repository, which builds and releases the site archive. This repository holds no `site/` and no `docs/legal/`, its CI builds no landing, and its releases attach no `oml-site` archive: `SHA256SUMS` and the signatures cover the product's own artifacts alone (the CLI, the servers, the lake writer, the agent artifacts and the SDKs), and a version bump touches no landing file. `scripts/gen_design_tokens.py` writes the console's and the documentation's outputs and no file for the landing; the design system stays the landing's source of truth ([ADR-0069](ADR-0069-oml-s-design-system-is-the-source-of-truth-for-every-surface.md)), read from this repository at a tagged revision | the landing, the legal drafts and the Directory pack describe one operator's hosted service: its contact address, its terms, its sign-up and its listing. A self-hoster builds, tests and releases none of them, and since [ADR-0076](ADR-0076-releases-ship-no-default-server-and-setup-asks-for-the-server-or-reads-it-from-the-key-or-the-environment.md) the releases name no server, so the landing archive was the one release asset tied to that service. The landing read its version from this workspace's `Cargo.toml`, so every version bump here rewrote `site/dist/`; apart, the landing keeps its own version line and names the release it describes. The cost: the landing and the design system live in two repositories, so a token change reaches the landing only when that repository takes a new tagged revision, and one more repository is built and released |
+| d4 | the production shape's proxy serves the landing paths (`/`, `/teams`, `/personal`, `/privacy`, `/terms`) as static files (d12), and the reference `deploy/caddy/Caddyfile` carries that block | the production shape routes the console's and the lead's paths as d4 says; a deployment that serves a landing adds its own static block in front, and the reference Caddyfile carries none. The hosted deployment's proxy configuration is the operator's | the reference router is what a self-hoster copies; a block that serves files no release ships points at nothing |
+
+Rejected alternatives:
+
+- **Keep `site/` here** (d12 as accepted on 2026-11-10). One repository, one CI and one release
+  for every surface, and the design system's outputs reach the landing without a tagged revision.
+  Rejected: every release of the open-source product then carries an archive only the hosted
+  service deploys, every version bump rewrites hosted marketing pages, and the hosted service's
+  contact address, legal drafts and Directory answers stay in a repository whose releases
+  ADR-0076 made name no server.
+- **A separate public repository** (#194, decided 2026-11-10 and reversed by the operator on
+  2026-11-11). The landing would stay open to read and to contribute to. Rejected by the
+  operator's choice of a private repository: it holds the legal drafts before they are published
+  (#183) and the Connectors Directory submission with its reviewer answers, and the pages it
+  serves are public once deployed whichever repository builds them.
+
 ## Consequences
 
 - `oml-web`, `oml-page` and `oml-sdk` join the workspace; `oml-transport-http` loses its page
@@ -1084,7 +1126,7 @@ node's `user_root` mark can.
   `oml-web`'s client identity (the secret or mutual TLS), and never on `/mcp`. d7's tests stay and gain the two of phase (a).
   d18 gains a row: `auth.invalid` `session_outside_web`, with the doctor line `warn web: no web client identity set; oml-web cannot reach the API (set web.client_secret on the lead and on oml-web)`, printed only when a sign-in provider is configured and `/readyz` names `web_client: none`, and `oml-web` refuses to start without its own half, naming the setting.
 - Two processes ship and run where one did: the release adds the `oml-web` binary and the
-  landing archive (d12), the Helm chart a second Deployment, the compose file two more services, `oml-web` and the Caddy router, and `oml quickstart` starts both. `oml-web --doctor` gains an `api` line that fails when `web.api_url` is unreachable or the lead is not ready; `oml doctor` gains only the lead's `warn web` line.
+  landing archive (d12; the archive leaves the release by the proposed amendment of 2026-11-14), the Helm chart a second Deployment, the compose file two more services, `oml-web` and the Caddy router, and `oml quickstart` starts both. `oml-web --doctor` gains an `api` line that fails when `web.api_url` is unreachable or the lead is not ready; `oml doctor` gains only the lead's `warn web` line.
 - The `http_request` line of the API now records `credential: session` for the inner calls,
   correlated to the page line (ADR-0042 d2, d6). Log volume per page view grows with its calls.
 - `docs/api/http-api.md`, `openapi.yaml`, `errors.md` and the SDKs gain the ten operations and
