@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-12
+verified: 2026-11-14
 answers: "when two recalls return the same answer: the inputs that define a recall's result under the default pipeline, what changes it between calls, what happens when a memory is approved between two calls, which parts of an answer are outside the guarantee, and how it is tested"
 ---
 
@@ -8,7 +8,7 @@ answers: "when two recalls return the same answer: the inputs that define a reca
 
 Under the default pipeline, `bm25-postings`, the same recall returns the same answer. The steering, the hits, their order and their scores are identical byte for byte, call after call, on one server process or on two that share a database. `recall_id` always differs, because it names the call. Two other members can differ where the server serves them: `timings`, which is served only when the request asks, and `search.widen`, a hint on a tenant with federation on that reads a per-process signal up to 300 seconds old and is never carried when the request sends `now`. Neither changes the hits.
 
-The test behind this page ran on a small tenant, 14 approved memories, whose queries PostgreSQL planned serially. A score is a sum whose order of addition PostgreSQL chooses, and a parallel plan's worker order can vary between runs of the same plan. So the last digit of a score, and with it the order of two hits whose scores differ by one `float4` step, is not proven identical across query plans. That is not observed and not excluded; [issue #310](https://github.com/e8kor/open-memory-lab/issues/310) tracks proving it at 100,000 rows.
+The test behind this page ran on a small tenant, 14 approved memories and two steering rows, whose queries PostgreSQL planned serially. A score is a sum whose order of addition PostgreSQL chooses, and a parallel plan's worker order can vary between runs of the same plan. So the last digit of a score, and with it the order of two hits whose scores differ by one `float4` step, is not proven identical across query plans. That is not observed and not excluded; [issue #310](https://github.com/e8kor/open-memory-lab/issues/310) tracks proving it at 100,000 rows.
 
 This page lists what "the same recall" means, what changes the answer, and what the guarantee leaves out. [Retrieval](retrieval.md) explains how the answer is ranked.
 
@@ -64,7 +64,7 @@ The ranking reads one snapshot of the database, and each ranked row is checked a
 Two cases serve unapproved memories, so a write changes the answer at once:
 
 - With `include_unreviewed`, the key's own held memories join the hits.
-- Inside an [in-progress workarea](workareas.md#in-progress-workareas), every author's held memories join, labeled `unreviewed`.
+- Inside an [in-progress workarea](workareas.md#in-progress-workareas), every author's held memories and derived facts that the scan did not hold join, labeled `unreviewed`.
 
 ## What is outside the guarantee
 
@@ -78,8 +78,9 @@ Other pipelines read more than the inputs above:
 
 | Pipeline | What else it reads |
 |---|---|
-| `sparse`, `bm25-sparse` | Weights a local model computes after each write. Until the encoder reaches a new memory, it ranks without them. A different model gives different weights. |
+| `sparse`, `bm25-sparse`, `bm25-sparse-rrf` | Weights a local model computes after each write. Until the encoder reaches a new memory, it ranks without them. A different model gives different weights. |
 | `bm25-rerank` | A local cross-encoder, under a time limit. When it is busy or late, the answer keeps the first stage's order and says `search.rerank: "skipped"`. |
+| `bm25-postings-time` | The memories' valid time, against the date window the query names, relative to `now`. |
 | `bm25-trigram`, `bm25`, `keyword-any`, `keyword-all` | They read no model. The test below does not cover them. |
 
 A recall with `as_of` reads the scope at that instant. The swap is made per list: the `bm25` scan reads each `bm25-postings` list and each `sparse` list, because their counts and weights are today's. So `bm25-postings` and `sparse` are swapped, and so are the pipelines that fuse those lists: `bm25-sparse`, `bm25-sparse-rrf` and `bm25-postings-time`. `keyword-all` is answered by `keyword-any` with every word required. `bm25`, `bm25-rerank`, `bm25-trigram` and `keyword-any` read their own lists as they are. The test below does not cover a recall with `as_of`.

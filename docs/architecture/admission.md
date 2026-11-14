@@ -10,9 +10,9 @@ The four rules, R1 to R4, are declared once, in [the constitution](https://githu
 
 Every write crosses one pipeline before recall serves it to keys other than its author's:
 
-> capture, scan, hold, non-author review, approval, journal entry, readable.
+> capture, scan, journal entry and hold, non-author review, approval (journaled), readable.
 
-Recall serves a memory to other keys from its approval on, and approval does not change its rank. Before that, readers inside an [in-progress workarea](workareas.md#in-progress-workareas) recall it, marked unreviewed. Also, an admin of the tenant reads it through the journaled [admin read](roles-and-keys.md#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
+Recall serves a memory to other keys from its approval on, and approval does not change its rank. Before that, readers inside an [in-progress workarea](workareas.md#in-progress-workareas) recall it, marked unreviewed, unless the scan held it. Also, an admin of the tenant reads it through the journaled [admin read](roles-and-keys.md#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
 
 ## The states of a memory
 
@@ -20,7 +20,7 @@ A memory is in one state at a time.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> held : capture (scan passed)
+    [*] --> held : capture (scan passed or held)
     held --> promoted : approved by a reviewer who did not write it
     held --> rejected : rejected, with a reason
     promoted --> demoted : demoted, bytes kept (designed, not built)
@@ -28,7 +28,7 @@ stateDiagram-v2
 
 | State | Who can read it |
 |---|---|
-| `held` | Its author; the reviewer it is served to; readers of an in-progress workarea that holds it, marked unreviewed; admin keys through the admin read |
+| `held` | Its author; the reviewer it is served to; readers of an in-progress workarea that holds it, marked unreviewed, when it is a memory or derived fact the scan raised no finding on; admin keys through the admin read |
 | `promoted` | Every key with read access to the workarea (state after approval) |
 | `rejected` | Its author, in its own listing |
 | `demoted` | Not served to recall. Designed, not built: no verb demotes in this build |
@@ -37,11 +37,11 @@ The `erased` state exists in the API enum. This build has no erase verb.
 
 ## What happens to a write
 
-1. **Capture.** A person runs `oml write`, or an agent calls `oml_write`. The server normalizes the text to Unicode NFC, then scans it. If the scan passes, the server commits one transaction. It holds a signed journal event, the memory row in state `held` and an outbox row. The write is durable once that transaction commits.
-2. **Hold.** Recall shows the held memory to its author with `--include-unreviewed`, and to the readers of an in-progress workarea that holds it. Every other read path filters it out, except the review serve and the admin read.
+1. **Capture.** A person runs `oml write`, or an agent calls `oml_write`. The server normalizes the text to Unicode NFC, then scans it. Unless the scan vetoes it, the server commits one transaction. It holds a signed journal event, the memory row in state `held` and an outbox row. The write is durable once that transaction commits.
+2. **Hold.** Recall shows the held memory to its author with `--include-unreviewed`, and to the readers of an in-progress workarea that holds it when it is a memory or derived fact the scan raised no finding on. Every other read path filters it out, except the review serve and the admin read.
 3. **Review.** A reviewer key (role `dreamer`) claims the memory with `oml review next`. The reviewer reads it and approves or rejects it.
 4. **Approval.** One approval from a reviewer who is not the author promotes the memory. The journal records the verdict and the review policy it was decided under. A supersession or a retirement passes the same pipeline. It changes the claim's current version only at approval.
-5. **Release.** The outbox drains to the lake after approval. A lagging lake delays analytics. It does not delay visibility, because reads come from PostgreSQL.
+5. **Release.** The outbox drains every journaled event to the lake; the lake records a claim row only once the version is promoted. A lagging lake delays analytics. It does not delay visibility, because reads come from PostgreSQL.
 
 For R2, the server checks the reviewing key and its person against the author and against every memory the author's `derives_from` names, including links still pending. If a memory's declared sources exclude every eligible reviewer, it stays held.
 
@@ -53,20 +53,20 @@ The rule set is `oml-scan/1.2` (`oml-scan/1.1` before the letters-only view was 
 
 | Action | Findings | Result |
 |---|---|---|
-| Veto | `secret.private_key`, `secret.api_token`, `secret.credential_pair`, `secret.assignment`, `format.scan_bound` (one field over 1 MiB) | The write is refused with `submission.scan_veto`. `details.finding` names the class. |
-| Hold | `injection.override`, `injection.role`, `injection.tool_call`, `unicode.bidi`, `unicode.invisible`, `encoding.base64_blob` | The memory is held for a reviewer to judge. |
+| Veto | `secret.private_key`, `secret.api_token`, `secret.credential_pair`, `secret.assignment`, `format.scan_bound` (one field over 1 MiB), `secret.keyed_value` (structured formats), `guardrail.too_long` and `guardrail.rule_unparsable` (guardrails), `test.marker` (the veto test marker) | The write is refused with `submission.scan_veto`. `details.finding` names each finding's class, rule and place, up to five. |
+| Hold | `injection.override`, `injection.role`, `injection.tool_call`, `unicode.bidi`, `unicode.invisible`, `encoding.base64_blob`, `test.marker` (the hold test marker) | The memory is held for a reviewer to judge, and an in-progress workarea does not serve it to other readers. In an anchor, a hold finding refuses the write. |
 
 A held version stores every finding behind its verdict, one row each in its findings list: the class, the rule, the rule set, the field (`/body`, `/title`, or `/body/` and a decoded view's path), the line, the view the rule read (`raw`, `clean`, `spaced`, `letters`), the byte range in that view, and who recorded it (`admission`, or a recording `rescan`). Never the matched text. The review card and the admin page's bulk table show the list, and `POST /v2/review/next` and `GET /v2/review/held` serve it as `scan_findings`. Design record: [ADR-0074](../adr/ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings.md) d23.
 
 The `pii.email` and `pii.phone` rules exist and are off in this build; no setting turns them on. A rule pass takes about 4 µs for a 124-byte chat turn and 26 µs for a 1.5 KB abstract. It takes 13 ms for a mebibyte of base64.
 
-A claim in a format other than prose is scanned twice over, never less than prose. The adapter accepts the source or refuses it by name (`submission.format_invalid`) before the scan. The scan then runs over the source as for prose, and over each decoded string the adapter hands it: the scalars of a JSON or YAML document after escapes, quoting, folding and block scalars are decoded, because a rule that reads only bytes does not see `"\u002d-----BEGIN PRIVATE KEY"`. A finding on a decoded string names its key path and never the value. A value under a key whose last segment is `password`, `passwd`, `secret`, `token`, `api_key`, `apikey`, `private_key`, `client_secret`, `authorization` or `credentials`, or ends `_secret`, `_token` or `_key`, is vetoed as `secret.keyed_value` unless it is empty or a placeholder (`<…>`, `${…}`, `{{…}}`, `***`, `changeme`, `example`, `redacted`). A format can add a finding and never remove one. The title is scanned as free text that reaches the journal. Design record: [ADR-0056](../adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md).
+A claim in a format other than prose is scanned twice over, never less than prose. The adapter accepts the source or refuses it by name (`submission.format_invalid`) before the scan. The scan then runs over the source as for prose, and over each decoded string the adapter hands it: the scalars of a JSON or YAML document after escapes, quoting, folding and block scalars are decoded, because a rule that reads only bytes does not see `"\u002d-----BEGIN PRIVATE KEY"`. A finding on a decoded string names its key path and never the value. A value under a key path any segment of which is `password`, `passwd`, `secret`, `token`, `api_key`, `apikey`, `private_key`, `client_secret`, `authorization` or `credentials`, or ends `_secret`, `_password`, `_passwd`, `_token` or `_key`, is vetoed as `secret.keyed_value` unless it is empty, `null`, a run of `*`, or a placeholder (`<…>`, `${…}`, `{{…}}`, `changeme`, `example`, `redacted`). A format can add a finding and never remove one. The title is scanned as free text that reaches the journal. Design record: [ADR-0056](../adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md).
 
-`oml admin rescan` reports what the current rule set would refuse or hold in memories already stored. It changes nothing.
+`oml admin rescan` reports what the current rule set would refuse or hold in memories already stored, and changes nothing. With `--record-held`, it records the findings on held versions under the current rule set and journals `scan.findings_recorded`. It moves nothing through review.
 
 ## Who reviews
 
-OML runs no model. Reviewers are agents or people that hold reviewer keys and use the same HTTP API as every other caller.
+No model reviews in OML. Reviewers are agents or people that hold reviewer keys and use the same HTTP API as every other caller.
 
 - A person uses `oml review next`, `oml review approve` and `oml review reject`.
 - A crew's agent calls the same routes. See [reviewer crews](../api/reviewer-crews.md).

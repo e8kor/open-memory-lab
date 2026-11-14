@@ -14,6 +14,10 @@ Outputs:
   docs/stylesheets/oml.css                                   Material's palette on the tokens
   docs/assets/brand/*, docs/assets/fonts/*                   the docs site's copies
   design/assets/review-gate-{dark,light}.svg                 the README's diagram, per theme
+  docs/architecture/img/<view>-{light,dark}.svg              the architecture views (views.md), one per
+                                                             docs theme, which the theme's toggle picks
+  docs/architecture/img/<view>.svg                           the same view standalone: paper, and night
+                                                             under prefers-color-scheme: dark
   site/design/{tokens,fonts}.css, site/design/brand.json    the landing's inputs; site/build.py
                                                              writes the pages (site/README.md)
 
@@ -280,6 +284,44 @@ def diagram(src: Path, t: dict, theme: str) -> str:
     return svg
 
 
+# The architecture views (docs/architecture/views.md), from design/diagrams/arch-<view>.svg.
+ARCH_VIEWS = ("context", "deployment", "gate", "serving")
+
+
+# What each architecture view file carries: one theme, or paper with night under the media query.
+ARCH_THEMES = {
+    "light": "paper",
+    "dark": "night",
+    "adaptive": "paper, night under prefers-color-scheme: dark",
+}
+
+
+def arch_view(src: Path, t: dict, theme: str) -> str:
+    """An architecture view as a standalone image in `theme` (ARCH_THEMES). Every colour sits in
+    the source's one <style>, so a theme is that style resolved. The docs page shows the light and
+    the dark file and lets the theme's toggle pick, since an image's own media query follows the
+    reader's system setting and not the toggle; the adaptive file is the click-through target.
+    A token reference outside the style, or a token the design system lacks, is refused by name."""
+    text = src.read_text()
+    head, style, tail = re.split(r"<style>|</style>", text)
+    if "var(--" in head + tail:
+        raise ValueError(f"{src.name}: a colour outside the style element would not follow the theme")
+    def resolve(name: str) -> str:
+        vals = dict(theme_vars(t, name)) | dict(static_vars(t))
+        def sub(m):
+            token = m.group(1).replace("\\.", ".")
+            if token not in vals:
+                raise ValueError(f"{src.name}: no design token --{token}")
+            return vals[token]
+        return re.sub(r"var\(--([\w\\.-]+)\)", sub, style)
+    if theme == "adaptive":
+        css = resolve("light") + "@media (prefers-color-scheme: dark) {" + resolve("dark") + "}\n"
+    else:
+        css = resolve(theme)
+    head = re.sub(r"^<!--.*?-->\n", f"<!-- {HEAD} Theme: {ARCH_THEMES[theme]}. -->\n", head, flags=re.S)
+    return f"{head}<style>{css}</style>{tail}"
+
+
 def inline_diagram(src: Path, cls: str) -> str:
     """A diagram for a page that styles it: no <style>, no plate, hidden from assistive tech
     (the page carries its "As text" list)."""
@@ -325,6 +367,11 @@ def outputs() -> dict[Path, bytes]:
     }
     for theme in THEMES:
         out[DESIGN / "assets" / f"review-gate-{theme}.svg"] = diagram(DESIGN / "diagrams/review-gate.svg", t, theme).encode()
+    for view in ARCH_VIEWS:
+        src = DESIGN / "diagrams" / f"arch-{view}.svg"
+        out[DOCS / "architecture/img" / f"{view}.svg"] = arch_view(src, t, "adaptive").encode()
+        for theme in THEMES:
+            out[DOCS / "architecture/img" / f"{view}-{theme}.svg"] = arch_view(src, t, theme).encode()
     out |= site_inputs(t)
     for name in DOCS_BRAND:
         out[DOCS / "assets/brand" / name] = (DESIGN / "assets" / name).read_bytes()

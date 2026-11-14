@@ -1,4 +1,5 @@
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -31,6 +32,45 @@ class DesignTokens(unittest.TestCase):
         fails = [r for r in C.pairs(t) if r[5] < r[6]]
         self.assertTrue(any(r[1] == "ink-faint" and r[0] == "dark" for r in fails))
         self.assertEqual([], [r for r in C.pairs(G.tokens()) if r[5] < r[6]])
+
+
+class ArchitectureViews(unittest.TestCase):
+    """The architecture views (docs/architecture/views.md): gen_design_tokens.arch_view."""
+
+    def view(self, body: str, style: str = ".box{fill:var(--ground-alt);stroke:var(--edge)}") -> Path:
+        d = Path(tempfile.mkdtemp())
+        src = d / "arch-test.svg"
+        src.write_text(f"<!-- a test view -->\n<svg><style>{style}</style>{body}</svg>\n")
+        return src
+
+    def colour(self, theme: str, name: str) -> str:
+        return next(tok["value"][theme] for tok in G.tokens()["color"]["tokens"] if tok["name"] == name)
+
+    def test_an_architecture_view_resolves_to_paper_to_night_and_to_both_under_the_media_query(self):
+        t, src = G.tokens(), self.view('<rect class="box"/>')
+        paper, night = self.colour("light", "ground-alt"), self.colour("dark", "ground-alt")
+        light, dark, both = (G.arch_view(src, t, theme) for theme in ("light", "dark", "adaptive"))
+        self.assertIn(paper, light)
+        self.assertNotIn(night, light)
+        self.assertNotIn("prefers-color-scheme", light)
+        self.assertIn(night, dark)
+        self.assertNotIn(paper, dark)
+        self.assertNotIn("prefers-color-scheme", dark)
+        before, after = both.split("@media (prefers-color-scheme: dark)")
+        self.assertIn(paper, before)
+        self.assertIn(night, after)
+        for out in (light, dark, both):
+            self.assertNotIn("var(--", out)
+
+    def test_an_architecture_view_with_a_colour_outside_its_style_is_refused(self):
+        src = self.view('<rect style="fill:var(--ground)"/>')
+        with self.assertRaisesRegex(ValueError, "outside the style element"):
+            G.arch_view(src, G.tokens(), "light")
+
+    def test_an_architecture_view_naming_an_unknown_token_is_refused_by_the_tokens_name(self):
+        src = self.view("<rect/>", style=".box{fill:var(--no-such-colour)}")
+        with self.assertRaisesRegex(ValueError, "--no-such-colour"):
+            G.arch_view(src, G.tokens(), "dark")
 
 
 if __name__ == "__main__":
