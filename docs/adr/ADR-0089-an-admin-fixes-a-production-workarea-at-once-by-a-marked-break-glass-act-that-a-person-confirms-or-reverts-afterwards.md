@@ -174,8 +174,16 @@ constitution. It does not hide that it does. Decided, not built.
     `oml review fixes`.
   - **Console:** fix actions on the administration side, and a "Fixes to confirm" list on the
     personal Review page.
+  - **Review-side read:** `GET /v2/review/fixes?count=true`, for a person's dreamer key (the
+    `<user>-review` key the Personal side reads with, ADR-0083 d8). It serves the unconfirmed admin
+    fixes on workareas where that key holds dreamer, and their count. Each entry carries the act,
+    the target version, the version it replaced, the reason and the time. It never names the admin
+    key, its principal or its user, as ADR-0077 d2 never names a reviewer. A fix taken by the
+    reader's own principal is listed without confirm or revert, since d3 refuses that principal.
+    Any other key is refused `access.verb_ceiling`.
   - **Doctor lines:** unconfirmed fixes, with the oldest one's age; fixes whose workarea has no
-    person holding dreamer, so nobody can confirm them; and reverted fixes.
+    person holding dreamer, so nobody can confirm them; fixes visible on the review-side read only
+    to the admin's own principal, so no one who sees them may confirm them; and reverted fixes.
   - **Metrics:** `oml_admin_fixes_total{act}`, `oml_admin_fixes_unconfirmed` and
     `oml_admin_fix_oldest_unconfirmed_seconds`, on the metrics port (ADR-0042).
 
