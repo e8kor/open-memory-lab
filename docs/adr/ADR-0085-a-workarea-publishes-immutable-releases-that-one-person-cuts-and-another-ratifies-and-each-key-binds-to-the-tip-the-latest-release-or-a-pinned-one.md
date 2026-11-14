@@ -13,7 +13,11 @@ answers: what a workarea release is and what it may contain; how it is named, pr
 ([review](https://github.com/e8kor/open-memory-lab/blob/main/design/workarea-lifecycle.md)), before
 ADR-0086, ADR-0087 and ADR-0084
 
-**Amends:** ADR-0026 (d15: admins read a release's manifest, notes and gate records), ADR-0030 (d2, d3: a release-bound read is served the
+**Amends:** ADR-0018 (d4: "published" is the word for a ratified release, and still never for a
+version), ADR-0025 (d8: a claim's served tip is the bound release's member for a `latest` or
+pinned key), ADR-0028 (d1, d2: `issue-agent` and `issue` take `--binding`), ADR-0079 (a key's
+binding, like its date and rate, is set at issuance and changed only as d7 says, never by the key
+itself), ADR-0026 (d15: admins read a release's manifest, notes and gate records), ADR-0030 (d2, d3: a release-bound read is served the
 manifest whatever the marks; d7: a release cut inside an in-progress workarea carries its promoted
 versions out), ADR-0037 (d5: the guardrail set is read from the bound release), ADR-0059 (d14: a
 release read beside `as_of`), ADR-0072 (d5: a federated source is read at its latest release), and,
@@ -62,7 +66,10 @@ ratifier differ), R3 (a release never carries a held row) and R4 (a withdrawal d
   a demotion has to reach every reader. The release then reads `degraded`, and its listing names
   the member that dropped out.
 
-- **d2 — Vocabulary: a version is promoted, a release is published.** A release is named
+- **d2 — Vocabulary: a version is promoted, a release is published.** ADR-0018 d4 lists
+  "published" as a word never to use for `promoted`; that stays true for a version, and this record
+  adds one row to its table: **published**, a release a second person ratified; never said of a
+  version. A release is named
   `<workarea path>@<label>`, the label a semantic version, unique per workarea, immutable and never
   released for reuse ([ADR-0026](ADR-0026-names-are-keys.md) d1, d10). "Publish" means ratifying a
   release proposal and nothing else; "promote" keeps its meaning, a verdict on a version.
@@ -106,6 +113,10 @@ ratifier differ), R3 (a release never carries a held row) and R4 (a withdrawal d
   a held item, inside or outside an in-progress root. Recall, the listing, get, the skill and
   guardrail reads and the MCP prompts and resources all read the manifest's versions. The guardrail
   set is the bound release's (amends ADR-0037 d5). This amends ADR-0030 d2 and d3 and ADR-0080 d10.
+
+  **The served tip follows the binding (amends ADR-0025 d8).** ADR-0025 d8's served tip, which steering and hits
+  read, is for a `tip` key the default or overlay tip as today, and for a `latest` or pinned key the
+  bound release's member for that claim key; a claim with no member is not served to that key.
 
 - **d7 — A binding is set at issuance and changed only by a person, toward newer content only with
   dreamer access; an admin key may only narrow it; a key never changes its own.** Toward newer

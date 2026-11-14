@@ -55,14 +55,14 @@ Citations are `ADR-nnnn dN :line` for a decision record in `docs/adr/` and `path
    each read journalled. This replaced, the same day, an earlier decision that admins keep erasure
    only. It is ADR-0089, and it relaxes R1, R2 and R3 for admin keys, boundedly and by name.
 
-## The four rules, as this page uses them
+## The four rules
 
-| Rule | What it says here | Declared at |
-|---|---|---|
-| **R1** | An agent's key never promotes, signs, demotes or deletes. Promotion is a verdict by a person's dreamer key. An admin key fixes production by the marked, confirmed acts of ADR-0089, the named exception. | [ADR-0001](../docs/adr/ADR-0001-the-constitution.md) d1 :25; ADR-0010 d6 :68; `crates/oml-domain/src/access.rs:131` |
-| **R2** | The reviewer is never the author, checked against the lineage closure, per key and principal. | ADR-0001 d2 :31; `crates/oml-domain/src/model.rs:232` (`check_reviewer`); ADR-0044 d8 :237 (per key inside a user root) |
-| **R3** | A held row is readable by its author only. The exception is a workarea a person put in progress, where `tip` keys read held rows marked unreviewed. | ADR-0001 d3 :38 and its amendment in d5 :53; ADR-0030 d3 :105 |
-| **R4** | Nothing is deleted silently. Rejection, retirement and demotion keep the bytes; erasure is a journalled crypto-shred. | ADR-0001 d4 :42; ADR-0005 d2 :47; ADR-0030 d12 :232 |
+R1 to R4 are declared in [ADR-0001](../docs/adr/ADR-0001-the-constitution.md) and not restated
+here: R1 is the verb ceiling, R2 the reviewer who is never the author, R3 the gate that changes
+visibility, not ranking, with its in-progress exception (ADR-0030 d3), and R4 no silent deletion.
+Two facts this page leans on: a version is promoted by a verdict of a dreamer key, a person's or a
+reviewer crew's (ADR-0012 d2), never the key or principal that wrote it; and ADR-0089 proposes a third bounded
+exception, an admin's marked fix that a person confirms afterwards.
 
 Two facts about today shape the whole lifecycle:
 
