@@ -246,8 +246,8 @@ Decided; introduced in v0.5.0.
   work. ADR-0001 d2 and ADR-0010 d5 are unchanged. *(Amended 2026-11-14 by ADR-0082 d7 and
   ADR-0001 d5: same-person approval holds only in the development and in-progress parts of the
   person's own root, marked `same_user`, and a user root never leaves development (ADR-0085 d17);
-  every workarea outside the root takes a verdict from another person, whichever of the person's
-  keys wrote the version.)*
+  every workarea outside the root takes no verdict from any key of the same person; an
+  instruction verdict comes from another person (ADR-0001 d5).)*
 
 - **d9 — A universe claim is served without its source: origin `universe`, no author, no
   lineage below it.** To every key outside the claim's own authoring key set

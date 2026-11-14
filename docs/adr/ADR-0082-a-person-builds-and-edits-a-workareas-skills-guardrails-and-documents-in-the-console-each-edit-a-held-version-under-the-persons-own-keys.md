@@ -83,7 +83,8 @@ Decided, not built.
       Memories cockpit filtered to the workarea). Under the kind: one line where it changes a
       decision, the one primary **New skill**, **New guardrail** or **New document** with a line
       saying who approves under the workarea's policy (in the person's root, `<user>-review`
-      marked same user; in a shared workarea, another person), and the table of that kind's claims
+      marked same user; in a shared workarea, a reviewer outside the author's person, a person for
+      a skill or a guardrail), and the table of that kind's claims
       on this workarea alone (not its subtree): name, state with the decision word for a held
       version, version and changed (severity and rule for a guardrail), and the act, **Edit** and
       **Retire** on an approved tip with nothing held after it, "in force · edit v3 waits for
@@ -196,8 +197,8 @@ Decided, not built.
   not the whole text (ADR-0081 d7's stated cost).
 
 - **d7 — Approval is the same as for memories today: inside the person's root their own review
-  key may approve, marked `same_user`; in any other workarea another person approves** (the
-  operator, 2026-11-14).
+  key may approve, marked `same_user`; in any other workarea a reviewer outside the author's
+  person approves, a person for an instruction kind** (the operator, 2026-11-14).
     - **Inside the root.** A version `<user>-web` wrote is approved by `<user>-review` as an agent's
       write is: ADR-0001 R2 holds per key and principal
       ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
@@ -209,8 +210,10 @@ Decided, not built.
       reader can see that the approver was the author's own person.
     - **A user root never leaves development** (the operator, 2026-11-14: "Cap at development";
       ADR-0085 d17). Every workarea in it is a development scope, so the `same_user` approval above
-      holds throughout the root, and production work happens in shared workareas, where another
-      person approves.
+      holds throughout the root, and production work happens in shared workareas, where the
+      approver is never the author's person: for a document any key outside its lineage, a
+      reviewer crew's agent key included (the operator, 2026-11-14: "Agents approve knowledge"), and for a skill or a guardrail a person
+      (ADR-0080 d16).
     - **Linked tenant keys.** A tenant key acts for a person only once it is linked to that
       person (ADR-0085 d16, `key.linked_person`). Until then the same-person rule below reaches
       the person's user keys and session keys only, and its check for tenant keys ships with
@@ -225,7 +228,7 @@ Decided, not built.
       reviews), so for a console write the rule changes no outcome today. For an agent key's write
       it does: a person's tenant dreamer key no longer approves their own agent's write outside
       their root (the operator, 2026-11-14: "own root only"), which amends ADR-0044 d8 there.
-    - The cost: in a shared workarea a person's console write waits for someone else, as the
+    - The cost: in a shared workarea a person's console write waits for another reviewer, as the
       operator chose; inside a root the `same_user` mark is the only signal that the author's own
       person approved.
 
@@ -273,7 +276,7 @@ Decided, not built.
 - `oml doctor` names a server that does not serve the preview route ("this server predates the
   builder").
 - Costs, stated: every edit is a full version that counts its text in `text_bytes`; a person
-  in a shared workarea waits for another person (d7); a preview runs the scan twice for one write.
+  in a shared workarea waits for another reviewer (d7); a preview runs the scan twice for one write.
 
 ## Rejected alternatives
 

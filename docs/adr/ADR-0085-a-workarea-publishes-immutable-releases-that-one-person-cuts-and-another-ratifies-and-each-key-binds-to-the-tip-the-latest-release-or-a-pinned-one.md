@@ -124,7 +124,11 @@ Decided, not built.
   - Both keys are tenant keys `held_by: human` with dreamer on the release node, such as
     `alice-dev-review` and `bob-dev-review`, and they belong to different principals.
   - A published release is a production scope (ADR-0001 d5), so the publisher is a person other
-    than the proposer, inside a user root too: the same user's second dreamer key never publishes.
+    than the proposer.
+  - No release is cut in a user root: a user root and every workarea under it stay `development`
+    (d17), and a proposal there is refused `workarea.release_refused`, reason `user_root`. A
+    person's own knowledge reaches production by a write in a shared workarea, reviewed there, and
+    a release cut there (d17).
   - No agent key, admin key or service key cuts or publishes.
   - A CI service key learns of a proposal from `GET /v2/workareas/{w}/releases?state=proposed`
     or from the events tail (`workarea.release_proposed`). It runs tests and attaches the runs
@@ -315,7 +319,8 @@ Decided, not built.
 - **d17 — A user root never leaves development** (the operator, 2026-11-14: "Cap at
   development"). A user root and every workarea under it stay `development`: a proposal moving
   any of them to `committed` or `validated` is refused `workarea.transition_refused` with reason
-  `user_root`. Production work happens in shared workareas, which publish releases. This amends
+  `user_root`, and no release is cut there (d4). Production work happens in shared workareas,
+  which publish releases. This amends
   ADR-0046 d1 (the ceiling, from `committed` to `development`) and d2 (same-user ratification of
   ladder moves, which has no move left to ratify inside a root). The cost: a person's own
   knowledge reaches a production scope only by a new write in a shared workarea, reviewed there,
