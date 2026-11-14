@@ -33,7 +33,7 @@ oml sync policies/ --workarea draft --adapter headings
 
 `oml write --format text/markdown` stores a markdown body with its one-line title. `oml sync` reads committed files at a revision, one claim per heading, and plans what is new, changed or removed before writing anything held ([sync docs and code](../use/sync.md)). Each claim keeps its source anchor, so a reviewer can open the file it came from.
 
-**Designed: documents** (ADR-0081, [#375](https://github.com/e8kor/open-memory-lab/pull/375)). A `document` claim, key `doc/<path>`, is a titled markdown or text body. Recall ranks it by passage and serves the best passage as the hit; the MCP server serves the whole document as a resource, `oml://…`, so an agent reads the policy, not a fragment. PDFs and other files wait for attachments.
+**Designed: documents** ([ADR-0081](../adr/ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource.md)). A `document` claim, key `doc/<path>`, is a titled markdown or text body. Recall ranks it by passage and serves the best passage as the hit; the MCP server serves the whole document as a resource, `oml://…`, so an agent reads the policy, not a fragment. PDFs and other files wait for attachments.
 
 ## 3. Define vocabulary
 
@@ -51,21 +51,21 @@ OML_API_KEY=$(cat keys/sam-review) oml review list --workarea draft --ids-only \
   | OML_API_KEY=$(cat keys/sam-review) oml review approve --ids -
 ```
 
-The review card shows each scan finding and, for a synced claim, the anchor. A reviewer crew may approve knowledge; a standing instruction counts only a person's verdict once ADR-0080 d16 is built.
+The review card shows each scan finding and, for a synced claim, the anchor. A reviewer crew may approve knowledge; a standing instruction counts only a person's verdict once [ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16 is built.
 
-**Designed** (ADR-0083, [#375](https://github.com/e8kor/open-memory-lab/pull/375)): the console's To do page lists what waits on each analyst, and the Memories cockpit shows Approved, To review and Submitted, where a held row never appears as approved. The builder edits documents in a form, each save a held version under the analyst's own key (ADR-0082).
+**Designed** ([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md)): the console's To do page lists what waits on each analyst, in a shared workarea once the analyst's tenant keys are linked to the sign-in (ADR-0083 d11, ADR-0085 d16), and the Memories cockpit shows Approved, To review and Submitted, where a held row never appears as approved. The builder edits documents in a form, each save a held version under the analyst's own key ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workareas-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md)).
 
-**Designed** (ADR-0086, ADR-0087, [#377](https://github.com/e8kor/open-memory-lab/pull/377)): recall test cases such as "a query for 'annual refund' finds `doc/policies/refunds` in the top 3", and an impact report naming near-copies already approved elsewhere.
+**Designed** ([ADR-0086](../adr/ADR-0086-a-workareas-tests-are-reviewed-claims-the-server-runs-under-the-callers-key-and-a-release-is-published-only-through-ordered-gates.md), [ADR-0087](../adr/ADR-0087-an-impact-report-shows-under-the-callers-own-reads-what-a-candidate-release-changes-for-the-workareas-that-receive-it.md)): recall test cases such as "a query for 'annual refund' finds `doc/policies/refunds` in the top 3", and an impact report naming near-copies already approved elsewhere.
 
 ## 5. Release on staging
 
-**Designed** (ADR-0085). priya cuts `pricing.draft@2.0.0`; sam publishes it once the gates pass. The release notes list every document, term and instruction added, changed or retired.
+**Designed** ([ADR-0085](../adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md)). priya cuts `pricing.draft@2.0.0`; sam publishes it once the gates pass. The release notes list every document, term and instruction added, changed or retired.
 
 Built today: the ladder. Committing `pricing.draft` needs zero held items and two keys; a `validated` workarea takes no new writes.
 
 ## 6. Export from staging, import to production
 
-**Designed** (ADR-0084, [import and export](import-export.md)).
+**Designed** ([ADR-0084](../adr/ADR-0084-a-workarea-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md), [import and export](import-export.md)).
 
 1. On staging, priya exports the release, encrypted to the production team's age key: `oml workareas export draft --release 2.0.0 --recipient age1… --out pricing-2.0.0.oml`. The tenant's export policy must allow a shared workarea's export.
 2. On production, an admin has created `pricing.prod` and granted the team. An analyst puts it in progress and imports with a writer key, and so becomes the author of every imported version on production. The production scan runs on each version.
@@ -88,5 +88,5 @@ Built today, without bindings, every key reads as `tip`: a support agent with re
 
 ## What the team pays
 
-- One review per item on staging and one again on production for each move. That second review is the price of not trusting the staging server's verdicts; a trusted source server is proposed and deferred (ADR-0088).
+- One review per item on staging and one again on production for each move. That second review is the price of not trusting the staging server's verdicts; a trusted source server is proposed and deferred ([ADR-0088](../adr/ADR-0088-an-imported-version-counts-as-reviewed-only-from-a-trusted-source-a-tenant-pinned-and-never-for-instructions.md)).
 - Under `latest`, an approved correction reaches support agents only with the next release. An urgent correction goes through an admin fix, confirmed afterwards by an analyst.

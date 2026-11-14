@@ -10,7 +10,7 @@ One person, Dana, keeps the memory of a few agents in OML: Claude Code on a lapt
 
 The control in this flow is one review per fact, by Dana, marked `same_user` so every reader can tell. Nothing waits on a second person while the work stays in the root. The pair, an agent writes and the same person approves, is one row of [producers and reviewers](../concepts/producers-and-reviewers.md), whose reach view draws a user root apart from team workareas.
 
-A personal root is a development scope for good. It is capped at `development` and never becomes `committed` or `validated`; work meant for production moves to a shared workarea (the operator, 2026-11-14). Today the code still lets a user root climb to `committed`; the design removes that.
+A personal root is a development scope for good. It is capped at `development` and never becomes `committed` or `validated`; work meant for production moves to a shared workarea ([ADR-0085](../adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d17, amending [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1). Today the code still lets a user root climb to `committed`; lowering the ceiling is designed, not built.
 
 ## 1. Sign in and connect
 
@@ -19,7 +19,7 @@ A personal root is a development scope for good. It is capped at `development` a
 3. In a terminal: `oml setup claude-code --url <server> --key-file ~/.config/oml/keys/laptop` installs the plugin with that key ([Claude Code](../guides/claude-code.md)).
 4. On **Start**, Dana chooses "claude.ai, Desktop or phone". The page issues a connector key and shows its connect code once. The server goes into claude.ai as a custom connector, and the code is entered once. The phone app, signed in to the same account, has the same three tools ([claude.ai and a phone](../guides/claude-ai-and-mobile.md)).
 
-Each agent has its own key. Each key reads and writes in `universe.dana` and nowhere else. Designed (ADR-0085 d7 as decided on 2026-11-14): every key scoped in a user root is bound to `tip` by default, so release binding never hides the person's own development work.
+Each agent has its own key. Each key reads and writes in `universe.dana` and nowhere else. Designed (ADR-0085 d7): every key scoped in a user root is bound to `tip` by default, so release binding never hides the person's own development work.
 
 ## 2. Capture
 
@@ -33,7 +33,7 @@ Every write is scanned in the same call. A leaked key is refused and nothing is 
 
 - The agent that wrote a fact recalls it at once: `oml_read` with `include_unreviewed` serves the key's own held rows, marked `unreviewed`.
 - Dana's other agents see each other's held work only inside an in-progress workarea. `chat` is one already. For a project, Dana chooses "put it in progress" on the **Workareas** page ([workareas](../use/workareas.md#in-progress-workareas)).
-- A recall from claude.ai on the phone that names the workarea `chat` reads the same held facts, marked. A recall scoped at the root reads only approved ones: today an in-progress subtree serves its held work only to reads scoped inside it, and its ancestors join that audience once ADR-0080 d16 is built ([#375](https://github.com/e8kor/open-memory-lab/pull/375)).
+- A recall from claude.ai on the phone that names the workarea `chat` reads the same held facts, marked. A recall scoped at the root reads only approved ones: today an in-progress subtree serves its held work only to reads scoped inside it, and its ancestors join that audience once [ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16 is built.
 
 ## 4. Approve the agents' work
 
@@ -41,7 +41,7 @@ Every write is scanned in the same call. A leaked key is refused and nothing is 
 - From a terminal, with a reviewer key an admin issued in the root (`oml keys issue dana-cli-review --role dreamer --held-by human --user dana --grant project:dreamer --grant project:reader`): `oml review list --workarea project --ids-only | oml review approve --ids -`.
 - An approved fact carries `approver.same_user: true` wherever it is served, so a reader never mistakes it for another person's review ([audit and lineage](../architecture/audit-and-lineage.md)).
 
-The rule is the constitution's second bounded exception: same-person approval counts only in the development parts of the person's own root, which with the cap is the whole root. Production scopes, where another person approves, are shared workareas (ADR-0001 d5 as amended in [#377](https://github.com/e8kor/open-memory-lab/pull/377)).
+The rule is the constitution's second bounded exception: same-person approval counts only in the development parts of the person's own root, which with the cap is the whole root. Production scopes, where another person approves, are shared workareas ([ADR-0001](../adr/ADR-0001-the-constitution.md) d5 as amended in ).
 
 ## 5. Correct and retire
 
@@ -50,7 +50,7 @@ The rule is the constitution's second bounded exception: same-person approval co
 
 ## 6. Withdraw a held draft
 
-Designed, not built ([ADR-0083](https://github.com/e8kor/open-memory-lab/pull/375) d13). The author key of a held version, an agent's included, withdraws it with `oml_withdraw` or `POST /v1/memories/{artifact_id}/withdraw`, and Dana withdraws any held version written by the person's own keys from the console's Submitted view. The version is kept as `withdrawn`, leaves every review queue and is never served. No verdict is recorded, so R1 is untouched.
+Designed, not built ([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d13). The author key of a held version, an agent's included, withdraws it with `oml_withdraw` or `POST /v1/memories/{artifact_id}/withdraw`, and Dana withdraws any held version written by the person's own keys from the console's Submitted view. The version is kept as `withdrawn`, leaves every review queue and is never served. No verdict is recorded, so R1 is untouched.
 
 Today, a held version leaves the queue only by a verdict: Dana's review key rejects it with a reason, and the bytes are kept.
 
@@ -59,7 +59,7 @@ Today, a held version leaves the queue only by a verdict: Dana's review key reje
 - A key with `--user dana` reaches `universe.dana` and the `universe` node, nothing else. It never reads another person's root or a shared workarea ([workareas](../architecture/workareas.md)).
 - Team work happens in a shared workarea, such as `payments.dev`, under tenant keys an admin issues to Dana ([engineering teams](engineering-teams.md)). Those keys never write into the root: a new memory there from a key that is not the person's is refused `submission.user_root_refused`.
 - Moving a personal fact into a team workarea is a new write there, reviewed by the team. The console's export, `GET /v2/web/export`, downloads everything in the root as one JSON file.
-- Designed: in a shared workarea the console acts with a tenant key an admin links to Dana's sign-in, named on the page for each act (ADR-0085 d16, [#377](https://github.com/e8kor/open-memory-lab/pull/377)).
+- Designed: in a shared workarea the console acts with a tenant key an admin links to Dana's sign-in, named on the page for each act (ADR-0085 d16).
 
 ## What it costs
 

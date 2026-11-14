@@ -34,7 +34,7 @@ oml workareas status ratify project <transition-id>
 A validated workarea stays readable and takes no new writes. The changes still allowed (removing a
 memory, updating the crew's recorded details) each leave a record. Today a person's own root climbs to
 `committed` at most; the design caps it at `development`, so production work happens in shared workareas
-(the operator, 2026-11-14). There are no backward transitions.
+([ADR-0085](../adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d17). There are no backward transitions.
 
 ## In-progress workareas
 
@@ -54,8 +54,7 @@ workarea only.
 
 The cost: an agent can act on a memory nobody has judged. Use this mode for development workareas,
 where that trade is the point. The reviewer is still never the author. Self-signing was retired on 2026-11-14
-([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5, as amended in
-[#377](https://github.com/e8kor/open-memory-lab/pull/377)). In a person's own root, their review key approves their
+([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5). In a person's own root, their review key approves their
 agents' work, marked `same_user`.
 
 ## Links and the brief

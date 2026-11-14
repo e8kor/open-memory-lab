@@ -57,7 +57,7 @@ Approve, sign and delete appear in no column: approval is an effect of review, `
 - **A global denial on an admin key is refused, `request.validation` with `details.field: key`.**
 - **Recall, search and the read by id need a reader grant, and no admin key can carry one.** An admin key that calls recall gets `access.verb_ceiling`.
 
-Self-signing was retired on 2026-11-14 ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5, as amended in [#377](https://github.com/e8kor/open-memory-lab/pull/377)). In a person's own root, their review key approves their agents' work, marked `same_user`.
+Self-signing was retired on 2026-11-14 ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5). In a person's own root, their review key approves their agents' work, marked `same_user`.
 
 ## Issuing keys
 
@@ -70,7 +70,7 @@ A key is issued with a role no higher than its issuer's. Admin keys issue, and t
 |---|---|
 | `reader` | `reader` |
 | `writer` | `reader`, `writer` |
-| `dreamer` | `reader`, `dreamer`; an agent-held `curator` profile may also carry `writer` inside an in-progress scope (ADR-0030 d8) |
+| `dreamer` | `reader`, `dreamer`; an agent-held `curator` profile may also carry `writer` inside an in-progress scope ([ADR-0030](../adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d8) |
 | `admin`, `operator` | none |
 
 A grant outside that set is refused with `access.issuer_ceiling`. An admin key with a dreamer grant is refused with `access.role_exclusive`: the two-key rule. A person who administers and reviews holds two keys, so the journal shows which capacity acted.

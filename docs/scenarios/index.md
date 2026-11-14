@@ -25,7 +25,7 @@ Each page below walks one audience through one flow, step by step, with the comm
 | Develop, in progress | nobody yet; the team reads held work, marked | one switch, `oml workareas mode <w> in_progress`, by a person |
 | Approve in a person's own root | that person's review key, marked `same_user` | one click on the console's Review page |
 | Approve in a shared workarea | a key outside the version's lineage | a second identity's time |
-| Publish a release (designed, ADR-0085) | one person cuts, another publishes | a second person's time per release, not per item |
-| Fix production at once (designed, ADR-0089) | an admin, confirmed afterwards by another person | nothing waits; the fix is marked until confirmed |
+| Publish a release (designed, [ADR-0085](../adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md)) | one person cuts, another publishes | a second person's time per release, not per item |
+| Fix production at once (designed, [ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)) | an admin, confirmed afterwards by another person | nothing waits; the fix is marked until confirmed |
 
 [Producers and reviewers](../concepts/producers-and-reviewers.md) lists every producer and reviewer pair by class and scope, with Euler views of what one key sees. The [workarea lifecycle](../architecture/lifecycle.md) draws these stages and where loose turns strict. The [architecture views](../architecture/views.md) draw what runs today.

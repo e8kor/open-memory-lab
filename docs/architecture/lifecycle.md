@@ -8,7 +8,7 @@ answers: "how a workarea moves from development to production, where loose rules
 
 Two views extend the [four architecture views](views.md) from one memory to one workarea's life. They follow one principle: **frictionless in development, controlled toward production.** Development scopes are loose, so a team sees its own work at once. Production scopes are strict, so a different person always decides what agents receive.
 
-Much of this is designed and not built. Each figure draws a built element solid and an unbuilt one dashed, tagged `designed`. The records are accepted on their pull requests and are not on `main` yet: [#375](https://github.com/e8kor/open-memory-lab/pull/375) (ADR-0080 to ADR-0083) and [#377](https://github.com/e8kor/open-memory-lab/pull/377) (ADR-0084 to ADR-0089).
+Much of this is designed and not built. Each figure draws a built element solid and an unbuilt one dashed, tagged `designed`. The records are accepted: [ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) to [ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) for skills, documents, the builder and the cockpit, [ADR-0084](../adr/ADR-0084-a-workarea-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) to [ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) for releases, tests, impact, export and import and admin fixes; the [design records](../reference/design-records.md) list them.
 
 ## Lifecycle: development to release
 
@@ -20,15 +20,15 @@ Much of this is designed and not built. Each figure draws a built element solid 
 
 | Scope | Rule | Built |
 |---|---|---|
-| A `development` workarea, an in-progress subtree | A team reads its held work, marked unreviewed. In a person's own root, that person's review key approves their agents' work, marked `same_user`; the root is capped at `development` and never becomes a production scope (decided 2026-11-14; today the code still lets it climb to `committed`). An admin fix there is confirmed by the admin's own person, marked `same_user`. | In-progress sharing inside the subtree and own-root approval: yes. Fixes: no (ADR-0089 d8). |
+| A `development` workarea, an in-progress subtree | A team reads its held work, marked unreviewed. In a person's own root, that person's review key approves their agents' work, marked `same_user`; the root is capped at `development` and never becomes a production scope (ADR-0085 d17; designed, not built: today the code still lets it climb to `committed`). An admin fix there is confirmed by the admin's own person, marked `same_user`. | In-progress sharing inside the subtree and own-root approval: yes. Fixes: no (ADR-0089 d8). |
 | A shared `committed` or `validated` workarea, a published release, every read of a `latest` or pinned key | Another person approves, publishes and confirms. Nothing unreviewed is served, except an admin fix's marked overlay. | Committed and validated: yes. Releases and bindings: no (ADR-0085). |
 | Every scope | An agent never promotes, signs, demotes or deletes. | Yes: no such verb exists on any agent surface ([roles and keys](roles-and-keys.md)). |
 
-**Bindings.** A key held by a person, and any key scoped in a user root, defaults to `tip`; other agent and service keys default to `latest`; an agent key may be issued at `tip` inside an in-progress root or at an ancestor of one (the operator, 2026-11-14, written into ADR-0085 d7). An admin may still ratify a ladder move (ADR-0009 d3, kept).
+**Bindings.** A key held by a person, and any key scoped in a user root, defaults to `tip`; other agent and service keys default to `latest`; an agent key may be issued at `tip` inside an in-progress root or at an ancestor of one (ADR-0085 d7, designed, not built). An admin may still ratify a ladder move ([ADR-0009](../adr/ADR-0009-status-ladder.md) d3).
 
 **What a stage costs.** Under a `latest` binding, an approved memory reaches production agents only with the next release (ADR-0085 d5). Teams that want approvals to flow at once keep their agents on `tip` and give up the staging step.
 
-**Rollback.** A person withdraws a release, and `latest` keys read the previous one on their next request (ADR-0085 d9). `oml workareas revert --to <label>` drafts the inverse change as held versions for review (ADR-0085 d11). When that cannot wait, an admin fixes at once and a person confirms or reverts afterwards (ADR-0089). Nothing is deleted. The release commands are designed; [ADR-0085](https://github.com/e8kor/open-memory-lab/pull/377) spells their noun `oml workarea`.
+**Rollback.** A person withdraws a release, and `latest` keys read the previous one on their next request (ADR-0085 d9). `oml workareas revert --to <label>` drafts the inverse change as held versions for review (ADR-0085 d11). When that cannot wait, an admin fixes at once and a person confirms or reverts afterwards (ADR-0089). Nothing is deleted. The release commands are designed.
 
 ## Sharing: vertical and horizontal
 
