@@ -7,7 +7,8 @@ answers: which console routes build and edit a workarea's skills, guardrails and
 
 # ADR-0082 — A person builds and edits a workarea's skills, guardrails and documents in the console, each edit a held version under the person's own keys
 
-**Status:** proposed · 2026-11-14 · tracking #374 · what a screen shows (d1's layout, d5's
+**Status:** proposed · 2026-11-14 · tracking #374 · revised the same day with the operator's
+answers (d7, d9) · what a screen shows (d1's layout, d5's
 preview drawing, d6's diff placement) is offered as options until the operator approves the
 builder mockups, published as artifacts first (the operator, 2026-11-14); the identities, the API
 and the review rule are decided here
@@ -17,8 +18,9 @@ and the review rule are decided here
 **Amends:** ADR-0045 (d9: the user page writes skills, guardrails and documents through the
 builder; d12: a person's web key supersedes rows any of the person's keys wrote), ADR-0037 (d17:
 a page writes guardrails, through the builder only), ADR-0070 (d5: the builder's calls in its
-tables), ADR-0044 (d8: a version a session key wrote is excluded from review by every key acting
-for the same person)
+tables), ADR-0044 (d8: outside the author's root, a version a person's session key wrote is excluded
+from review by every key acting for the same person), the roles table (a person's dreamer session
+key may start a held claim)
 
 **Depends on:** [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md)
 (kind `skill`), [ADR-0081](ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource.md)
@@ -87,12 +89,22 @@ Decided, not built.
     "builder" a name in the nav; (b) if the nav must not grow. The route names below use (a).
 
 - **d2 — Which key writes is decided by the act and the row, never by the form.**
-    - **A new item** is `POST /v1/memories` as `<user>-web` (capacity `web`), offered only where
-      that key holds writer: the person's root and the workareas under it (ADR-0044 d3, d16). In a
-      shared or crew workarea the builder offers no new item, since no key of the person may start
-      one there.
+    - **A new item, in any workarea the person may write in, held** (the operator, 2026-11-14).
+      In the person's root and the workareas under it it is `POST /v1/memories` as `<user>-web`
+      (capacity `web`), which holds writer there (ADR-0044 d3, d16). In any other workarea where
+      the person's `<user>-review` holds dreamer, a shared or crew workarea included, it is the same
+      call as `<user>-review` (capacity `review`). That needs one API change: a dreamer key that a
+      person session serves may submit a new claim's first version, held as every write is, where
+      today a dreamer proposes and supersedes and only a writer starts a claim
+      ([roles and keys](../architecture/roles-and-keys.md), verbs table). It widens no read and no
+      approval: the version is held, author-only (R3), and `<user>-review`, its author, is excluded
+      from judging it by its lineage (R2). Agent keys gain nothing, since the change is for session
+      keys alone. The builder never writes as `<user>-curate`: curation keeps its own page
+      (ADR-0045 d12). Where no key of the person holds writer or dreamer, the builder offers no new
+      item.
     - **An edit or a retirement of a row any of the person's keys wrote** is
-      `POST /v1/memories/{artifact_id}/supersede` as `<user>-web`. This needs one API change: a
+      `POST /v1/memories/{artifact_id}/supersede` as `<user>-web` inside the person's root, and as
+      `<user>-review` outside it (a dreamer supersedes). This needs one API change: a
       session web key supersedes a row authored by any key that acts for its person, read the one
       way `same_user` reads it (ADR-0044 d16), where today a writer supersedes only its own key's
       rows. The successor is still held and still reviewed by another key, so R2 is untouched; the
@@ -152,15 +164,28 @@ Decided, not built.
   records with the reason; (c) on Review only. Recommended: (b), since a long document's reviewer
   otherwise reads the whole text to find one changed line (ADR-0081 d7's stated cost).
 
-- **d7 — A version written in the console is reviewed by a key of another person.** A version
-  whose authoring key is a session key is excluded from review by every key that acts for the same
-  person, refused `review.author_in_lineage` with `details.reason: same_person`, and absent from
-  that person's To review (ADR-0083). This amends ADR-0044 d8 for rows a person typed, and only
-  those: an agent's write reviewed by its person stays admitted and marked `same_user`. It
-  strengthens R2 from per credential to per person exactly where the person is the author. The
-  cost: a person working alone cannot approve their own skills, guardrails or documents; another
-  person with a review grant on the workarea must, or a crew's reviewer key where the policy
-  admits agents. d9 asks the operator whether that cost is accepted.
+- **d7 — Approval is the same as for memories today: inside the person's root their own review
+  key may approve, marked `same_user`; in any other workarea another person approves** (the
+  operator, 2026-11-14).
+    - **Inside the root.** A version `<user>-web` wrote is approved by `<user>-review` as an agent's
+      write is: R2 holds per key and principal
+      ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
+      d8), and the verdict carries `same_user: true` (ADR-0046 d2), served as `approver.same_user`
+      to every reader (ADR-0077 d2) and in ADR-0080 d6's prompt header. Guardrails keep their own
+      rule: never self-signed (ADR-0037 d10), which a verdict by another key satisfies. A person
+      alone can therefore publish their own skills, guardrails and documents in their root, and every
+      reader can see that the approver was the author's own person.
+    - **Outside it.** A version a person's session key wrote in a workarea outside that person's
+      root counts no verdict from a key acting for the same person, read the one way `same_user`
+      reads it (ADR-0044 d16), refused `review.author_in_lineage` with `details.reason:
+      same_person`, and it is absent from that person's To review (ADR-0083). Under d2 the author
+      there is `<user>-review`, which its lineage already excludes, and no other key of the person
+      holds dreamer outside the root (user keys stay inside it, ADR-0044 d3; an admin key never
+      reviews), so the rule changes no outcome today; it states the operator's answer as a rule, so
+      a later grant cannot quietly let a person approve what they typed in a shared workarea.
+    - The cost: in a shared workarea a person's console write waits for someone else, as the
+      operator chose; inside a root the `same_user` mark is the only signal that the author's own
+      person approved.
 
 - **d8 — The API changes, plainly.**
     1. `POST /v1/memories/preview`, new (d5).
@@ -171,26 +196,20 @@ Decided, not built.
        `with_own` is refused as an unknown combination
        (`crates/transports/oml-transport-http/src/lib.rs:822-826`) and the listing's `kind`
        enum omits `guardrail` ([http-api.md](../api/http-api.md), `GET /v1/memories`).
-    4. Review: a session-key author excludes every key of the same person (d7), a new
-       `details.reason` on an existing code.
-    5. No change is needed for `<user>-web` to call `POST /v1/memories`: the session refusals
+    4. Review: outside the author's root, a version a session key wrote excludes every key of the
+       same person (d7), `details.reason: same_person` on the existing `review.author_in_lineage`.
+       Inside the root nothing changes.
+    5. Submit: a dreamer key served by a person session may start a new claim, held (d2).
+    6. No change is needed for `<user>-web` to call `POST /v1/memories`: the session refusals
        name only the key acts (`crates/transports/oml-transport-http/src/console.rs:57-70`,
        `console.rs:1250`, `console.rs:1338`, `console.rs:1393`); the build proves it with a
        failing test first, since ADR-0070 d5's table lists submit under `curate` alone.
 
-- **d9 — The operator's choices this record needs before acceptance.**
-    1. *Who may approve what a person wrote in the console (d7)?* (a) another person only, as
-       written; (b) the person's own `<user>-review`, marked `same_user`, as for their agents'
-       writes (ADR-0044 d8); (c) (a) for skills and guardrails, (b) for documents. Recommended:
-       (a), since the person is the author and R2 says the reviewer is never the author; (c) if a
-       solo deployment must publish its own documents.
-    2. *May the builder start items in a shared workarea where the person's `<user>-review` holds
-       dreamer but no key of theirs holds writer?* (a) no, edits only, as written; (b) yes,
-       through a new writer capacity an admin grants. Recommended: (a) for v0.7.4.
-    3. *Does the admin side get a read-only builder view (lists, no forms)?* (a) no, the admin
-       Memories cockpit's kind filter covers it; (b) yes. Recommended: (a).
-    4. *The screen choices of d1 (layout), d5 (preview drawing) and d6 (diff placement)*, to be
-       settled on the approved mockups.
+- **d9 — The operator's answers of 2026-11-14, and what stays open.** (1) Approval is as for
+  memories today (d7). (2) New items may be started in any workarea the person may write in,
+  shared ones where they hold only dreamer included, and all are held (d2). (3) The admin side gets
+  no builder view; the admin cockpit's kind filter covers reading. Open until the mockups are
+  approved: d1's layout, d5's preview drawing and d6's diff placement.
 
 ## Consequences
 
@@ -207,7 +226,7 @@ Decided, not built.
 - `oml doctor` names a server that does not serve the preview route ("this server predates the
   builder").
 - Costs, stated: every edit is a full version that counts its text in `text_bytes`; a person
-  alone cannot publish under d7 (a); a preview runs the scan twice for one write.
+  in a shared workarea waits for another person (d7); a preview runs the scan twice for one write.
 
 ## Rejected alternatives
 
@@ -218,5 +237,8 @@ Decided, not built.
 | **Edit in place, or delete a draft** | R4: nothing is deleted and the journal is never edited; a held version is the draft. |
 | **Preview computed in `oml-web`** | `oml-web` cannot reach the scan, the rule parser or the passage cutter (ADR-0070 d1), and a second copy of them would drift from capture. |
 | **Preview as submit with a `dry_run` flag** | One route whose answer is sometimes a write is easy to call wrongly; a separate route that never writes is checkable by its name. |
-| **Keep ADR-0044 d8's per-key independence for console writes** | It was decided for agents' writes reviewed by their person; for text the person typed it lets the author approve it. Offered as d9 option (b). |
+| **Another person always approves a console write, in the person's root too** | A person alone could never publish their own skill, guardrail or document; the operator chose "same as memories today" on 2026-11-14, with the `same_user` mark telling readers what the approval is worth. |
+| **Split by kind: another person for skills and guardrails, the person's own review key for documents** | Two rules for one page, and the instruction kinds already carry their own guard (ADR-0080 d3's person approval, ADR-0037 d10's never self-signed); the operator chose one rule on 2026-11-14. |
+| **Per-key independence everywhere, shared workareas included** | In a shared workarea the readers are other people, who are owed a reviewer other than the author; the operator asked for another person there. |
+| **New items only in the person's root, edits elsewhere** | The operator asked on 2026-11-14 for new items anywhere the person may write; everything new is held, so the wider start widens no read. |
 | **A rich-text or WYSIWYG editor** | It needs script, which the console does not run (ADR-0045 d26); a textarea of markdown with a server preview needs none. |

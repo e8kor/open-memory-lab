@@ -198,7 +198,7 @@ Decided, not built.
 | Alternative | Why not |
 |---|---|
 | **A document as `kind: memory` with `format: text/markdown`** | Recall cannot tell a long document to cut from a fact, `resources/list` would enumerate every memory, and the builder would list notes as documents. |
-| **Serve-time passage choice: rank the whole document, then pick its best passage** | No index change, but BM25 length normalisation ranks a long document low for a query one section answers, and the reranker reads only the first 4 KiB (ADR-0056 d4). Kept as the fallback if d4's index cost is refused. |
+| **Serve-time passage choice: rank the whole document, then pick its best passage** | No index change, but BM25 length normalisation ranks a long document low for a query one section answers, and the reranker reads only the first 4 KiB (ADR-0056 d4). The operator chose indexed passages on 2026-11-14, gated on a recall-eval run. |
 | **Store each passage as a claim of its own** | A document reviewed one passage at a time is what the `headings` adapter already does; the operator asked for a document reviewed and served as one item. |
 | **Provenance as a header line inside the resource text** | The text would no longer be the signed source, and a passage read would differ from the same span of a full read. |
 | **Subscriptions or `listChanged`** | `/mcp` has no server stream (ADR-0014 d2); proposed ADR-0036 d5 rejected both for the same reason. |

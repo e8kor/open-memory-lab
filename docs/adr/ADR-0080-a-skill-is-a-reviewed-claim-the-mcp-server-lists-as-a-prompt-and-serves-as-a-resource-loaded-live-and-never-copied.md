@@ -7,14 +7,16 @@ answers: what a skill is in OML and which fields it carries; how its name is uni
 
 # ADR-0080 — A skill is a reviewed claim the MCP server lists as a prompt and serves as a resource, loaded live and never copied
 
-**Status:** proposed · 2026-11-14 · tracking #374
+**Status:** proposed · 2026-11-14 · tracking #374 · revised the same day with the operator's
+answers to its three questions (d13)
 
 **Release:** planned for v0.7.4
 
 **Amends:** ADR-0025 (d8: kind `skill` joins the kinds never served as a recall hit), ADR-0030
 (d3: a held `skill` version stays author-only inside an in-progress workarea), ADR-0037 (d11: the
-prompts capability serves more than the one prompt `guardrails`), ADR-0039 (d2, d3: `oml_write`
-refuses kind `skill`), ADR-0074 (d24: kind `skill` is an instruction kind)
+prompts capability serves more than the one prompt `guardrails`), ADR-0039 (d3: `oml_write`
+admits kind `skill`), ADR-0074 (d24: kind `skill` is an instruction kind whose every version needs
+a person)
 
 **Depends on:** [ADR-0081](ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource.md) (d6: the `resources` capability and the `oml://` scheme this record's d7 uses)
 
@@ -93,22 +95,30 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
   ([ADR-0025](ADR-0025-the-agent-only-memory-surface.md) d11). The old version stays the served
   tip until the successor promotes (ADR-0025 d10); nothing is deleted (R4).
 
-- **d3 — A skill is written on the HTTP API and the console, never through `oml_write`, and
-  ratifies under its workarea's review policy with a person on any version an agent wrote.**
-  `oml_write` refuses `kind: "skill"` with `request.validation`, `details.field: kind`, and a
-  `replaces` that names a skill with `details.field: replaces`, as it refuses a guardrail
-  (`mcp.rs:1181`; amends ADR-0039 d3 as ADR-0037 d10 did). Any key with writer on the node may
-  propose one over HTTP. Review is the workarea's policy ([ADR-0012](ADR-0012-admission-and-review.md)
-  d3), R2 unchanged, never self-signed in a `development` workarea (as ADR-0037 d10 for
-  guardrails), and the scan treats `skill` as an instruction kind beside `steering` and
-  `guardrail` ([ADR-0074](ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings.md)
-  d24): `injection.tool_coercion` does not run, `exec.*`, `exfil.*`, `phish.*` and `ssrf.*` hold
-  instead of annotating, and a version from any key but a person session is held with
-  `needs_person: true`, `details.reason: skill_by_agent`. A held skill served to a reviewer adds
-  the sentence "every key that reads this workarea will be offered this skill as a command, here
-  and below it unless its guardrail scope is workarea", the counterpart of ADR-0037 d10's load
-  warning (`LOAD_WARNING`, `crates/oml-domain/src/guardrail/mod.rs:19`). The cost: an agent cannot publish
-  a skill on its own; it writes a memory proposing one, and a person writes the skill.
+- **d3 — Any writer proposes a skill, agents through `oml_write` included; every skill version
+  stays held until a person approves it, and no agent's or service's verdict counts.** `oml_write`
+  admits `kind: "skill"` with its `skill` object, and a `replaces` that names a skill (amends
+  ADR-0039 d3, which today refuses only `guardrail` there, `mcp.rs:1181`); any key with writer on
+  the node may propose one over HTTP or MCP, and the console writes through ADR-0082's keys. A
+  person approves: for kind `skill`, a verdict counts only from a session key held by a person
+  (ADR-0074 d2's definition of a person), whatever the workarea's policy, so an agent key or a
+  service key holding dreamer is refused `review.person_required` (the refusal ADR-0074 d2 names) with `details.reason:
+  skill_needs_person` and the version stays held. This is ADR-0074 d24's steering rule made
+  unconditional for skills: a skill runs with the weight of the person who invokes it, so an agent
+  may draft one and a person decides. R2 holds unchanged on top (the author's key and lineage never
+  count), and a skill is never self-signed in a `development` workarea (as ADR-0037 d10 for
+  guardrails). Inside the person's own root their own review key may approve a version their
+  agent or their web key wrote, marked `same_user` (ADR-0046 d2; ADR-0082 d7). The scan treats
+  `skill` as an instruction kind beside `steering` and `guardrail`
+  ([ADR-0074](ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings.md)
+  d24): `injection.tool_coercion` does not run, and `exec.*`, `exfil.*`, `phish.*` and `ssrf.*`
+  hold instead of annotating. Every skill version lands in the person lane with `needs_person:
+  true` (`details.reason: skill_by_agent` when an agent or service key wrote it, `skill` otherwise).
+  A held skill served to a reviewer adds the sentence "every key that reads this workarea will be
+  offered this skill as a command, here and below it unless its guardrail scope is workarea", the
+  counterpart of ADR-0037 d10's load warning (`LOAD_WARNING`,
+  `crates/oml-domain/src/guardrail/mod.rs:19`). The cost: a workarea whose only reviewers are
+  agents, such as a crew's, publishes no skill until a person reviews it.
 
 - **d4 — The skills a session is offered are the applicable set of kind `skill` at the key's
   default workarea, under the key's own read access and its guardrail scope.** The rule is
@@ -121,7 +131,7 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
   offered. A skill in a child workarea is not offered at its parent, since a skill written for one
   project should not reach its siblings. The cost: the issuance field named for guardrails also
   scopes skills, so an admin who wants a key to see its organisation's guardrails but not its
-  skills cannot say so; d13 asks the operator whether that needs a field of its own.
+  skills cannot say so; the operator kept one field on 2026-11-14 (d13).
 
 - **d5 — `prompts/list` names each offered skill by its bare name, the nearest workarea wins a
   name shared along the chain, and `guardrails` stays reserved.** Each entry is
@@ -171,7 +181,7 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
   request on the provider ring beside ADR-0029 d2's two, and fails open as the hook does (d5 of
   ADR-0029). The cost is up to 20 lines of context in every session that has skills, whose token
   cost per session is bounded by 20 descriptions of at most 1024 characters and is otherwise
-  unmeasured; d13 asks the operator whether the index is on by default.
+  unmeasured. The index is on by default (the operator, 2026-11-14).
 
 - **d9 — A skill's body is at most 32 KiB, and the offered set is never cut mid-skill.** 32,768
   UTF-8 bytes after NFC is 8,192 budget tokens under `oml-tc/1`
@@ -206,17 +216,10 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
   an `mcp_call` line and metric (ADR-0042 d10) and passes the key's request rate
   ([ADR-0079](ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md)).
 
-- **d13 — The operator's choices this record needs before acceptance.** Each is a question with
-  the recommendation this record is written to:
-    1. *Is the session-start index (d8) on by default?* (a) on, capped at 20; (b) off until the
-       plugin's `skills_index` setting turns it on; (c) not built, prompts and resources only.
-       Recommended: (a), since without it the model does not know a skill exists until a person
-       runs one.
-    2. *Does `guardrail_scope` also scope skills (d4)?* (a) yes, one field; (b) a new issuance
-       field `skill_scope`, default `ancestors`. Recommended: (a) until a deployment asks for (b).
-    3. *May an agent propose a skill (d3)?* (a) no: `oml_write` refuses the kind, HTTP writers may
-       propose, an agent's version needs a person; (b) `oml_write` admits it under the same
-       person rule. Recommended: (a), matching guardrails.
+- **d13 — The operator's answers of 2026-11-14.** (1) The session-start index (d8) is on, capped
+  at 20 lines. (2) `guardrail_scope` also scopes skills (d4); a separate `skill_scope` waits until a
+  deployment asks for it. (3) Agents may propose skills through `oml_write`; a skill stays held and
+  only a person's review approves it, never an agent's key (d3).
 
 ## Consequences
 
@@ -231,8 +234,10 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
   keeps the guardrail prompt's case, and a new test,
   `prompts_get_serves_an_offered_skill_and_refuses_any_other_name_alike`, proves d6.
 - `oml hook session-start` gains the index (d8); the plugin's README says what it adds.
-- The scan's instruction-kind rules (ADR-0074 d24) name `skill`; the person lane gains
-  `skill_by_agent`.
+- The scan's instruction-kind rules (ADR-0074 d24) name `skill`; the person lane gains the
+  reasons `skill_by_agent` and `skill`; review gains `review.person_required` with
+  `skill_needs_person` for an agent's or a service's verdict on a skill. `mcp-tools.json`'s
+  `oml_write` `kind` enum gains `skill` and its `skill` object, regenerated, not hand-edited.
 - `oml doctor` names: a server that does not serve `GET /v1/skills` ("this server predates
   skills"), a key whose scope offers more than one page of skills (informational), and a skill
   name shadowed along the chain (informational, naming both paths).
@@ -252,4 +257,6 @@ and how it stays reviewed text, without weakening R1 to R4. Decided, not built.
 | **Serving held skills inside in-progress workareas, labelled unreviewed** | An unreviewed instruction carries a person's weight when run; ADR-0030 d3 already keeps held steering and guardrails author-only for the same reason. |
 | **Recall serves skills as hits** | Recall's text is data and never instructions (`mcp.rs:69-70`); mixing would make a recalled skill read as either. |
 | **`listChanged: true` with notifications** | `/mcp` is stateless with no server stream (ADR-0014 d2); a declared capability with no sender is a broken promise. |
+| **`oml_write` refuses `skill`, as it refuses `guardrail`** | The operator chose on 2026-11-14 that agents may propose skills; the person-only approval (d3) carries the safety the refusal would have. |
+| **Agents' verdicts count on skills where the workarea's policy admits agents** | A skill carries the weight of the person who runs it; an agent approving another agent's instructions would put unreviewed-by-a-person text behind a slash command. |
 | **Front matter inside the body as the source of name and description** | Two sources for one field, and a body edit could rename a command without a field change a reviewer sees. |

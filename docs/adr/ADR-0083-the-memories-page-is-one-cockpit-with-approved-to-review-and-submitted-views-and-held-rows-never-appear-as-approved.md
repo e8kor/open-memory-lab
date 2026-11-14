@@ -7,7 +7,8 @@ answers: what the three views of the Memories cockpit show and which API call se
 
 # ADR-0083 — The Memories page is one cockpit with Approved, To review and Submitted views, and held rows never appear as approved
 
-**Status:** proposed · 2026-11-14 · tracking #374 · what a screen shows (d6's routes, tabs and
+**Status:** proposed · 2026-11-14 · tracking #374 · revised the same day with the operator's
+answers (d7) · what a screen shows (d6's routes, tabs and
 count placement, d5's admin views) is offered as options until the operator approves the cockpit
 mockups, published as artifacts first (the operator, 2026-11-14); which call serves each view, and
 what each view may never show, are decided here
@@ -71,9 +72,10 @@ Decided, not built.
   "Open to judge" of 2026-11-13); bulk review stays ADR-0055's act. Its count needs an API change:
   `GET /v2/review/held?count=true` answers `{held, truncated}`, the number of rows the list would
   serve at that workarea counted up to 1,000 (chosen, not measured) and `truncated` past it, with
-  no content and no claim. Under ADR-0082 d7 (a), rows the person wrote in the console are not
-  theirs to judge and are neither listed nor counted here. A person with no `<user>-review` grant
-  beyond their root sees their agents' held writes only.
+  no content and no claim. Under ADR-0082 d7, what the person wrote in the console inside their own
+  root is theirs to judge, and its card says the approval will be marked `same_user`; what they
+  wrote outside it is not, and is neither listed nor counted here. A person with no
+  `<user>-review` grant beyond their root sees their own root's held writes only.
 
 - **d3 — Submitted is every row any of the person's keys wrote that is held or rejected, and
   nothing else; it needs a `mine` filter.** The API change: `GET /v1/memories` gains `mine=true`,
@@ -84,7 +86,7 @@ Decided, not built.
   ADR-0082), the version it replaces if any, and the held reason the API already serves, scan
   findings and `needs_person` among them (ADR-0074 d17). A rejected row stays listed forever (R4);
   why it was rejected is not served to its author today, and this record adds nothing for it
-  (d7 question 3). R3 holds: every row in Submitted is the caller's person's own.
+  (d7). R3 holds: every row in Submitted is the caller's person's own.
 
 - **d4 — One picker, one search, one card across the three views.** The picker's workarea and
   the search query carry across the views. Search runs recall in Approved; in To review and
@@ -124,16 +126,11 @@ Decided, not built.
     `web_console_reads.rs` records with the reason. Every choice keeps the views server-rendered,
     paged by cursor, with no script (ADR-0045 d22, d26), and the neutral voice.
 
-- **d7 — The operator's choices this record needs before acceptance.**
-    1. *The screen choices of d5 (admin views) and d6 (routes, tabs, count placement)*, to be
-       settled on the approved mockups.
-    2. *Does To review count (d2) need the new read, or is "200+" from the first page of the
-       list enough?* (a) the count read; (b) the first page, counting up to 200 and saying "200+"
-       past it, no API change but the whole page's text read on every Memories load. Recommended:
-       (a).
-    3. *Is a rejection's reason served to its author in Submitted?* (a) not in v0.7.4, as
-       written; (b) yes, the verdict's reason text with no reviewer named (ADR-0077 d2), an API
-       change on the claim item. Recommended: (a) now and an issue for (b).
+- **d7 — The operator's answers of 2026-11-14, and what stays open.** To review's count has its
+  own read (d2), not a first page counted to "200+". A rejection's reason is not served in
+  Submitted in v0.7.4 (d3); an issue tracks serving the verdict's reason with no reviewer named
+  (ADR-0077 d2). Open until the mockups are approved: d5's admin views and d6's routes, tabs and
+  count placement.
 
 ## Consequences
 
