@@ -18,12 +18,12 @@ The reviewer pairs that count on the target are those of [producers and reviewer
 
 ## Place in the lifecycle
 
-Export starts from a **published release**, the last step on the source ([workarea lifecycle](../architecture/lifecycle.md)). Import ends in a **development workarea in progress** on the target, the first step there. A move between servers therefore runs the whole review on the target again: import, review, cut, publish.
+Export from a shared workarea starts from a **published release**, the last step on the source ([workarea lifecycle](../architecture/lifecycle.md)). A personal root has no release, so its export carries its history instead (below). Import ends in a **development workarea in progress** on the target, the first step there. A move between servers therefore runs the whole review on the target again: import, review, cut, publish.
 
 | Path | When | What it costs |
 |---|---|---|
 | One server, releases only | Development and production on the same server, separated by bindings | No copies and one review. Recommended by the lifecycle design as the default. |
-| Same-server copy | A second development line seeded from a release | One streamed import; the source's authors cannot review the copy, because `derives_from` is kept. |
+| Same-server copy | A second development line seeded from a release, or from a personal root's history | One streamed import; the source's authors cannot review the copy, because `derives_from` is kept. |
 | Two servers, export and import | Staging and production on separate servers, keys and people | A second review per move, a second server to run, and drift between the two to watch. |
 
 ## What moves and what never moves
@@ -37,7 +37,7 @@ Export starts from a **published release**, the last step on the source ([workar
 | Edges whose two ends are both exported | The salt behind the pseudonyms |
 | Attachments and bodies over 64 KiB, by digest | |
 
-`release` mode, the default, carries one release's members. `history` mode carries every version ever promoted, and the exporter's own held, rejected and demoted versions. An erased version travels as a marker with no digest, so a bundle holder cannot confirm a guessed text (ADR-0084 d2, d3, d13).
+`release` mode, the default outside a user root, carries one release's members. In a user root, `history` mode is the default, and asking for `release` mode or `--since` there is refused `request.validation` with `details.reason: user_root`, since a personal root never has a release. `history` mode carries every version ever promoted, and the exporter's own held, rejected and demoted versions. An erased version travels as a marker with no digest, so a bundle holder cannot confirm a guessed text (ADR-0084 d2, d3, d13).
 
 **Signatures and keys.** The manifest is signed by the source's journal key; the signing key itself never leaves. The bundle is encrypted to at least one named age recipient, or the export is refused `bundle.unencrypted`. The server never holds a recipient's identity (ADR-0084 d5).
 
@@ -74,8 +74,10 @@ oml workareas export payments.dev --release 1.4.0 --recipient age1… --out paym
 # on the target, as a person with writer there
 oml workareas import payments-1.4.0.oml --into payments.dev --identity key.txt --expect-key <fingerprint> --dry-run
 oml workareas import payments-1.4.0.oml --into payments.dev --identity key.txt --expect-key <fingerprint>
-# a same-server copy
+# a same-server copy from a release
 oml workareas import --from payments.dev@1.4.0 --into payments.copy
+# a same-server copy of a personal workarea, streamed from its history
+oml workareas import --from dana.project --into payments.dev
 ```
 
 The console's personal side gains Export and Import pages. The HTTP routes are `POST /v2/workareas/{workarea}/exports`, `POST /v2/imports` and `GET /v2/imports/{id}`.
