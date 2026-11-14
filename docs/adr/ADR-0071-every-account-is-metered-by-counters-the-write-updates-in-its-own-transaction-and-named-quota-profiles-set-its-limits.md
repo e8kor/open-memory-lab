@@ -305,7 +305,7 @@ of live data under [#164](https://github.com/e8kor/open-memory-lab/issues/164).
 | `requests_per_minute` | `quota.requests_per_minute` | 120 a minute per key | ADR-0068 d1's default, kept |
 | `text_bytes` | `quota.text_bytes` | 50000000 (50 MB) | no single account fills the disk; unlimited by default under d5 |
 | `writes` | `quota.writes_per_month` | 10000 a month | no single account fills the disk; unlimited by default under d5 |
-| `recalls` | none | 100,000 a month, recorded and not enforced | see below |
+| `recalls` | none | no cap; 100,000 a month is the threshold #164 watches | reading never blocks (d5) |
 
 The values sit on the `default` profile, which `quota.signup_profile` names when it is unset. No
 second profile is declared, since no second set of limits exists yet. The 50 MB is decimal,
@@ -315,13 +315,13 @@ built defaults, so only `text_bytes` and `writes_per_month` change what a sign-u
 to. Writing all six into the deployment's configuration states each one where the operator reviews
 it.
 
-**`recalls` has no setting.** d5 holds that reading never blocks and that `recalls` has no
-limit, and the code reads no `recalls` quota. The 100,000 a month is the operator's value and is
-recorded here. It is not enforced in this build. What a recall past it would be answered is a
-change to d5, not a setting, and no amendment decides it. Until one does, a key's recalls are
-bounded by `requests_per_minute`: 120 a minute is at most 5,356,800 requests in a 31-day month per
-key in each server process, every one of which may be a recall. The month's `recalls` count is in the ledger (d4) and the
-admin usage routes (d6), where an account past 100,000 shows.
+**`recalls` has no cap.** The operator decided on 2026-11-14 that d5's "reading never blocks"
+stands: no quota refuses a recall, and no setting names one. Recalls stay metered, in the ledger
+(d4) and the admin usage routes (d6), and bounded by `requests_per_minute`: 120 a minute is at
+most 5,356,800 requests in a 31-day month per key in each server process, every one of which may
+be a recall. 100,000 recalls a month is recorded as the threshold
+[#164](https://github.com/e8kor/open-memory-lab/issues/164) watches in the live data, not a
+limit.
 
 Sign-ups from one client address stay at ADR-0068 d9's 5 an hour (`signup.per_ip_per_hour`); its
 [record](ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md#operator-decision-2026-11-14-180-the-sign-up-limits-are-kept)
