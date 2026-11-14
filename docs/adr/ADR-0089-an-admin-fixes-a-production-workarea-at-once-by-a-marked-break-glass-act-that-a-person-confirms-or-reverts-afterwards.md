@@ -147,9 +147,15 @@ Decided, not built.
   - **Superseded fixes.** A fix whose target has since been superseded by a promoted version is
     refused revert, `admin.fix_superseded`: the claim has moved on, and a person fixes it forward.
   - **Erasure** is confirmed and never reverted.
-  - **A one-person development tenant.** In a tenant in `development` mode with one person
-    (ADR-0001 d5's home), that person may confirm their own fix, marked `self_signed` (the
-    operator, 2026-11-14).
+  - **Loose in development, strict in production** (the operator, 2026-11-14: "decisions are loose
+    for in-development\in-progress areas, but strict once we are publishing and preparing for
+    production"). On a target in a `development` workarea or an in-progress subtree, a dreamer
+    key of the admin's own person may confirm or revert the fix, the confirmation marked
+    `same_user`. On a target in a `committed` or `validated` workarea, and for the overlay a fix
+    places on a published release (d5), only a person of another principal confirms or reverts.
+    The cost: a one-person tenant confirms its own fixes in development, but a fixed item stays
+    unconfirmed in a production scope, excluded from every cut (ADR-0085 d1), until a second
+    person confirms it.
   - Every row a fix touched stays (R4).
 
 - **d9 — ADR-0077 d5's read-path law gains the fix.** Every served hit must satisfy one of:
@@ -196,7 +202,9 @@ Decided, not built.
     keys already demote and erase under ADR-0010 d6, and no agent key gains anything here.
   - **R2 changes in its order:**
     - an admin edit is served before any identity other than its author has reviewed it;
-    - it is reviewed afterwards, by a person of another principal (d8).
+    - it is reviewed afterwards: by a person of another principal in a production scope, and in a
+      development scope by any person holding dreamer there, its own person's key marked
+      `same_user` (d8).
   - **R3 changes in its first sentence:** an admin's edit is readable by others before it is
     ratified.
   - **ADR-0045 d21 already relaxed R3** for admin reads of held rows, without recording it in
@@ -209,12 +217,13 @@ Decided, not built.
     - the act is one of d2's, and in a `validated` workarea not an edit or a retirement (d12);
     - every reader sees the fix's mark (d7), a release rollback's `latest_by` and an erasure's
       record included;
-    - the act is queued for a person of another principal (d8);
+    - the act is queued for confirmation by a person, of another principal in a production scope
+      (d8);
     - while unconfirmed, the version is excluded from every cut (ADR-0085 d1).
   - **Numbering.** It is the third exception. ADR-0088, if accepted, would be the fourth.
-  - **The admin read is separate from these conditions.** It is admitted on the admin routes
-    alone, never on an agent surface, journalled, bound to an investigation's reason (d10), and
-    only for an admin key `held_by: human` (*operator to confirm*).
+  - **The admin read is separate from these conditions.** Any admin key may read claim text with
+    a reason, on the admin routes alone, never on an agent surface, each read journalled and bound
+    to an investigation's reason (d10) (the operator, 2026-11-14: no `held_by: human` requirement).
   - **No other record** widens it.
   - **The text** is edited into ADR-0001 d5, accepted with this record on 2026-11-14.
   - **ADR-0010 d6's sentence** "Edit or create by hand is this path and no other" gains: "except
@@ -258,12 +267,13 @@ Decided, not built.
 - Demotion is built with this record. `crates/oml-domain/src/model.rs:139` gains `Demoted`.
 - ADR-0084 records every version an import wrote, so its rollback can find them.
 - ADR-0077's contract change is additive: two members.
-- In a tenant whose only person is the admin, fixes stay unconfirmed outside development mode
-  (d8), and the doctor names them.
+- In a tenant whose only person is the admin, fixes in production scopes stay unconfirmed and
+  out of every cut until a second person confirms them (d8), and the doctor names them.
 - The operator's answers of 2026-11-14, each the recommendation: an admin key that fixes is
   `held_by: human` (d1); a frozen workarea refuses an admin edit or retirement (d12); a `universe`
-  fix carries the mark (d13); a one-person development tenant's person may confirm their own fix,
-  marked `self_signed` (d8); an unconfirmed fix never expires, and stays served and marked until a
+  fix carries the mark (d13); a fix in a development scope may be confirmed by the admin's own
+  person, marked `same_user`, and one in a production scope only by another principal (d8, which
+  replaced the one-person `self_signed` confirmation the same day); an unconfirmed fix never expires, and stays served and marked until a
   person confirms or reverts it.
 
 ## Rejected alternatives

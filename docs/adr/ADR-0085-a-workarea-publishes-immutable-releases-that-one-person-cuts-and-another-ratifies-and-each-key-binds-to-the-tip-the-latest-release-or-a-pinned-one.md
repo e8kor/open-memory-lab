@@ -14,7 +14,10 @@ recommendations and every other default as drafted · proposed the same day
 ([review](https://github.com/e8kor/open-memory-lab/blob/main/design/workarea-lifecycle.md)), before
 ADR-0086, ADR-0087 and ADR-0084, with ADR-0089
 
-**Twin parts** (ADR-0090 d18, PR #388): release manifests, their members, overlays, withdrawals and acknowledgements, and each key's `binding` are journal or part, never excluded; the build names each column's class under ADR-0090 d4.
+**Twin parts** (ADR-0090 d18, PR #388): release manifests, their members, withdrawals and
+acknowledgements, and each key's `binding` are journal or part, never excluded; an admin fix's
+overlay on a release is derived from the replayed fix, confirm and revert events, as ADR-0089's
+twin note and ADR-0090 d18 class it. The build names each column's class under ADR-0090 d4.
 
 **Amends:**
 - ADR-0018 (d4: "published" is the word for a ratified release, and still never for a version).
@@ -90,7 +93,6 @@ Decided, not built.
     is in the next cut.
   - **What it never holds:**
     - a held, rejected, demoted or erased version;
-    - a `self_signed` row (ADR-0001 d5 keeps those inside their development workarea);
     - a simulation row (ADR-0011 d4).
   - **Unconfirmed fixes block the cut.** A proposal is refused `workarea.release_refused`, reason
     `unconfirmed_fix`, while any member would be a version an unconfirmed admin fix serves (the
@@ -146,7 +148,8 @@ Decided, not built.
     items inside an in-progress workarea, and ADR-0080 d16's vertical audience: a `tip` key scoped
     in an in-progress subtree or on its ancestor chain reads its held items, marked. Only a `tip`
     key gets that view; a `latest` or pinned key at an ancestor reads the release and never a held
-    item.
+    item. As in ADR-0001 d5, that view never includes a version the scan held or has not scanned,
+    nor a held retirement.
   - **`latest`** reads, for each workarea in the read, the newest published, not withdrawn release
     whose subtree holds it.
   - **A pin** is `{<workarea>: <label>}`. A workarea without an entry resolves as `latest`.

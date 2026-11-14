@@ -44,40 +44,54 @@ rest is not built; [releases](../changelog.md) says which part each release buil
   demotion keeps the bytes. The erasure inventory and its honest boundary are owned by
   [audit and lineage](../architecture/audit-and-lineage.md).
 
-- **d5 — Three bounded exceptions, scoped here and nowhere else.** Outside them R2 and R3 hold
-  without exception. Each is named here on the day it is made, marks what it serves indelibly,
-  and is widened only by a new decision on this record; no other page may widen one. *(Amended
-  2026-11-14 by the operator: the development self-signing exception of 2026-10-29, never built,
-  is retired, and the list below replaces the earlier amendments.)*
+- **d5 — Three bounded exceptions, scoped here and nowhere else: loose in development, strict in
+  production.** The organising principle (the operator, 2026-11-14: "lets make sure decisions are
+  loose for in-development\in-progress areas, but strict once we are publishing and preparing for
+  production"):
+  - **Development scopes**, a `development` workarea and an in-progress subtree, carry the
+    relaxations below: a team sees held work, a person approves their own agents' work in their
+    own root, and an admin's fix is confirmed by its own person.
+  - **Production scopes**, a `committed` or `validated` workarea, a published release, and
+    everything a key bound to `latest` or a pin reads, are strict: every verdict and every
+    confirmation comes from a different person, and no unreviewed content is served, except an
+    admin fix's marked overlay, which a different person must confirm.
 
-  1. **The in-progress workarea** ([ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d2, d3, widened by
-     [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16). Of R3's first sentence only. Inside a workarea a
-     person put in progress, a held version of any kind is served, and an instruction offered,
-     marked unreviewed, to keys with reader access scoped in that subtree or on its ancestor chain and bound to `tip` (ADR-0085 d6);
-     never to a sibling, another branch, federation or a wide source, which read only promoted
-     rows of committed or validated workareas or a published release; never a version the scan
-     held or has not scanned, and never a held retirement. R2 holds there without exception.
+  Outside the three exceptions R2 and R3 hold without exception. Each is named here on the day it
+  is made, marks what it serves indelibly, and is widened only by a new decision on this record.
+  *(Amended 2026-11-14 by the operator: the development self-signing exception of 2026-10-29,
+  never built, is retired, and this list replaces the earlier amendments.)*
+
+  1. **In-progress sharing** ([ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d2, d3, widened by
+     [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16). Of R3's first sentence only, in development scopes only.
+     Inside a workarea a person put in progress, a held version of any kind is served, and an
+     instruction offered, marked unreviewed, to keys with reader access scoped in that subtree or
+     on its ancestor chain and bound to `tip` (ADR-0085 d6); never to a sibling, another branch,
+     federation or a wide source, which read only promoted rows of committed or validated
+     workareas or a published release; never a version the scan held or has not scanned, and never
+     a held retirement. R2 holds there without exception.
   2. **Own-root same-person approval** ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d8; ADR-0045 d11,
-     d20; ADR-0046 d2; ADR-0055 d7). Of R2 at the person level: R2 excludes the keys and
-     principals of a row's lineage, not its person, so inside a person's own root their review
-     key may approve a write by their own agents' keys or their web key. It holds in that root
-     only, and every such approval is marked `same_user` to every reader (ADR-0077 d2). Outside
-     the root a person's session-key writes count no verdict from a key of the same person
-     (ADR-0082 d7).
+     d20; ADR-0046 d2; ADR-0055 d7; ADR-0082 d7). Of R2 at the person level: R2 excludes the keys
+     and principals of a row's lineage, not its person, so in the development and in-progress
+     parts of a person's own root their review key may approve a write by any of their own keys,
+     agents' included. Every such approval is marked `same_user` to every reader (ADR-0077 d2). A
+     `committed` or `validated` workarea inside that root is a production scope, where another
+     person approves. Outside the root, a version any key of a person wrote counts no verdict
+     from any key of the same person (ADR-0082 d7).
   3. **Admin fixes, with the admin read** ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d14;
      [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21). Of R2's order and R3's first sentence, for admin keys
-     only, in every workarea status. A fix holds only while every one of these is true: the admin
-     key is `held_by: human`; a reason is given; the act is one of ADR-0089 d2's fix acts (demote,
-     edit, retire, release rollback, import rollback, erasure), except that a `validated`
-     workarea refuses an edit or a retirement (ADR-0089 d12); every reader sees the fix's mark
-     (ADR-0089 d7); the act is journalled and queued for a person of another principal to confirm
-     or revert; and, while unconfirmed, the version is excluded from every release cut. Such a fix
-     is served before any non-author review and is reviewed afterwards. The conditions above
-     govern fixes. Separately, an admin key reads claim text, held rows included, tenant-wide, on
-     the admin routes alone, never on an agent surface, journalled, and only when it is
-     `held_by: human` (*operator to confirm*); with ADR-0089 d10 each read is bound to an
-     investigation's reason. That read is the relaxation of R3 that ADR-0045 d21 already made,
-     recorded here.
+     only. A fix holds only while every one of these is true: the admin key is `held_by: human`;
+     a reason is given; the act is one of ADR-0089 d2's fix acts (demote, edit, retire, release
+     rollback, import rollback, erasure), except that a `validated` workarea refuses an edit or a
+     retirement (ADR-0089 d12); every reader sees the fix's mark (ADR-0089 d7); the act is
+     journalled and queued for confirmation; and, while unconfirmed, the version is excluded from
+     every release cut. Such a fix is served before any non-author review and is confirmed or
+     reverted afterwards: in a development scope by any person holding dreamer there, the admin's
+     own person included, marked `same_user`; in a production scope, and for a published
+     release's overlay, only by a person of another principal (ADR-0089 d8). The conditions above
+     govern fixes. Separately, any admin key reads claim text, held rows included, tenant-wide, on
+     the admin routes alone, never on an agent surface, each read journalled and bound to an
+     investigation's reason (ADR-0089 d10). That read is the relaxation of R3 that ADR-0045 d21
+     already made, recorded here.
 
   R1 has no exception: no agent key gains anything under any of the three. ADR-0088, deferred,
   would be the fourth.
@@ -96,7 +110,8 @@ rest is not built; [releases](../changelog.md) says which part each release buil
   enforcement binds [admission](../architecture/admission.md); the in-progress exception's
   workarea mechanics bind [workareas](../architecture/workareas.md).
 - Each exception's mark is a schema commitment: `unreviewed` on every served held item,
-  `same_user` on every own-root approval, `approver.act: "admin_fix"` on every fix. The records
+  `same_user` on every own-root approval and every development-scope confirmation of a fix, and
+  the fix's mark (ADR-0089 d7) on every fix. The records
   that still describe `self_signed` rows are amended in a later pass; the mark is never set.
 - R2's cost is liveness: review is a dependency, and the system fails closed when no eligible
   reviewer exists — a held item waits or expires under its workarea's review policy

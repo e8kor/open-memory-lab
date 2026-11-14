@@ -101,6 +101,12 @@ Questions revision 1 left open are settled below at their recommended answers, e
   each retriever filters before its own `LIMIT` and before any statistic it scores with, never
   after (ADR-0049 d2): a read outside returns the same rows, order and scores whatever is
   written, approved or curated inside (property `P-R3-BOUNDARY`).
+  *(Amended 2026-11-14 by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16: the boundary opens upward. A read
+  scoped at N also serves an in-progress subtree whose root lies under N: its promoted rows as
+  promoted and its held rows under d3, to a key bound to `tip` (ADR-0085 d6). A read scoped at a
+  sibling of the root, or on another branch, still serves nothing of the subtree until its commit
+  or a published release, and `P-R3-BOUNDARY` holds for those reads. Offering of instruction kinds
+  follows the same audience, down from an ancestor as well as up from inside.)*
 
 - **d3 — Inside, a key with reader access reads other authors' held memories, labelled
   `unreviewed`; this is the constitution's second bounded relaxation, of R3's first sentence,
@@ -121,6 +127,13 @@ Questions revision 1 left open are settled below at their recommended answers, e
   `workarea.mode_set` puts the node in progress — and every read that serves an unreviewed row
   records it in the read log as any served id is. ADR-0001 d5 gains this as its second bounded
   exception, by reference to this decision; no other page widens it.
+  *(Amended 2026-11-14 by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16, the operator: "lets make sure decisions
+  are loose for in-development\in-progress areas, but strict once we are publishing". Served held
+  versions are of every kind, knowledge, instruction and vocabulary alike, to keys with reader
+  access scoped in the in-progress subtree or on its ancestor chain and bound to `tip`; a held
+  retirement, and a version the scan held or has not scanned, stay author-only for every kind.
+  Held instruction versions only add beside the approved one and a held rule asks and never
+  denies (ADR-0080 d16). ADR-0001 d5 records the widened exception.)*
 
 - **d4 — Every claim item carries `unreviewed`, and inside an in-progress scope
   `include_unreviewed` defaults to `true`.** `unreviewed` is `true` exactly when the served

@@ -203,7 +203,7 @@ person's act.
 
 **Answer.** ADR-0085:
 - **d1:** a release is a manifest of promoted versions by artifact id, fixed when it is proposed.
-  It never holds a held, `self_signed` or simulation row, or an unconfirmed admin fix.
+  It never holds a held or simulation row, or an unconfirmed admin fix.
 - **d2:** a release is "published"; a version is "promoted".
 - **d4:** two persons publish. CI never proposes or ratifies.
 - **d5:** a release governs every kind for the keys bound to it. The cost is said plainly: approved
@@ -410,4 +410,5 @@ records; question 10 stays open with the deferred ADR-0088:
     the source" (ADR-0084 d4)?
 16. **Federation of a released in-progress workarea** at its latest release (ADR-0085 d15)?
 17. **Console acts through linked tenant keys** (ADR-0085 d16)?
-18. **Self-confirmation in a one-person development tenant,** marked `self_signed` (ADR-0089 d8)?
+18. **Self-confirmation of an admin fix** in a development scope, marked `same_user`, with another
+    principal confirming in a production scope (ADR-0089 d8)?
