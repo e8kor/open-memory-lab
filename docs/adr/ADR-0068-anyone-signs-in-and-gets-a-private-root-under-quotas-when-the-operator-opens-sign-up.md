@@ -337,7 +337,8 @@ server ([#186](https://github.com/e8kor/open-memory-lab/issues/186)). It changes
 The operator decided to open sign-up on d1's defaults: `quota.memories` 1000, `quota.keys` 5,
 `quota.connections` 5, `quota.requests_per_minute` 120 a minute per key, and
 `signup.per_ip_per_hour` 5 sign-ups an hour from one client address (d9). The two meters
-ADR-0071 added are capped beside them, `text_bytes` at 50 MB and `writes` at 10,000 a month. Recalls
+ADR-0071 added are capped beside them, `quota.text_bytes` at 50 MB and `quota.writes_per_month` at
+10,000 a month. Recalls
 have no cap, since reading never blocks; 100,000 a month is the threshold #164 watches. ADR-0071's
 [record of the same date](ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md#operator-decision-2026-11-14-180-the-limits-open-sign-up-launches-with)
 gives the settings and the reasons. Every value is recalibrated after 30 days of live data under
