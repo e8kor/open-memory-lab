@@ -7,7 +7,7 @@ answers: what the lake holds today and why PostgreSQL cannot be rebuilt from it;
 
 # ADR-0090 — The lake is a replayable twin of PostgreSQL: it holds every signed event with its sealed fold inputs, and rebuilds PostgreSQL into an empty database
 
-**Status:** proposed · 2026-11-14 · requested by the operator on 2026-11-14 ("persisting to deltalake, and having opportunity to reconsolidate postgresql state from delta lake"; asked which role the lake should have, the operator chose a full replayable copy); revised the same day after an independent review, with four decisions the operator took (d3, d8, d10, d11) and four defaults marked "operator to confirm"
+**Status:** proposed · 2026-11-14 · requested by the operator on 2026-11-14 ("persisting to deltalake, and having opportunity to reconsolidate postgresql state from delta lake"; asked which role the lake should have, the operator chose a full replayable copy); revised the same day after two independent reviews, with four decisions the operator took (d3, d8, d10, d11); every default and every reviewer recommendation taken since is marked "operator to confirm"
 
 **Amends:** ADR-0003 (d1, d3, d6), ADR-0060 (d2, d3, d6, d14, d19), ADR-0005 (d3, d4)
 
@@ -114,10 +114,13 @@ Decided, not built.
     (a closed set, d4), `key_ref`, `sealed`, `plaintext_digest`, `ciphertext_digest`.
   - **`twin/keys`, MERGE by `key_ref`.** The lake's copy of the wrapped data keys: `wrapped_dek`,
     `kek_id`, `created_at`, `destroyed_at`, `applied_seq`.
-  - **`twin/state`, replaced per drain, operator to confirm.** Images of the counters no event
-    reproduces: `account_meters`, `account_activity` and `usage_daily` (d4). A rebuild loads the
-    latest image; the lake's `telemetry.recall_daily` refresh stops replacing an existing table
-    with an empty one, so a rebuilt database with no recall events leaves the lake's counts alone.
+  - **`twin/state`, operator to confirm.** Images of the two counters no event reproduces:
+    `account_activity.recalls` and `usage_daily`, both written by `meter_recalls` outside any
+    commit (d4); the replay reproduces every other meter through `apply_meters`. Each image is
+    stamped with the outbox sequence value it was taken at, and is replaced only when it changed,
+    or daily. A rebuild loads the newest image; a cut (d10) loads the newest image at or before the
+    cut. The lake's `telemetry.recall_daily` refresh stops replacing an existing table with an
+    empty one, so a rebuilt database with no recall events leaves the lake's counts alone.
 
   Silver, gold and telemetry stay the analysis zone and are never read by a rebuild.
 
@@ -126,12 +129,27 @@ Decided, not built.
   `lake_staging`, in the same transaction as the journal row, the fold and the outbox row. A
   value written outside a commit (d4) stages in that write's own transaction under a `stage_seq`.
   The writer seals each staged row into `twin/inputs`, commits it to the lake, and only then
-  deletes it. This replaces ADR-0060 d2's drain-time read for every twin input, so no input
-  depends on being immutable or still present at drain (the earlier allowlist-removal gap is
-  gone). An erase deletes the version's staged rows in its own transaction. Staging adds no
-  exposure: it holds bytes PostgreSQL already holds in `memories`, `api_keys`, `web_emails` and
-  `idempotency`, under the same row security, for the time between commit and drain. The cost is
-  one more insert per input in the commit's transaction, unmeasured (#390).
+  deletes it, under a DELETE grant on `lake_staging` that it gives its own role at start
+  (ADR-0060 d13). This replaces ADR-0060 d2's drain-time read for every twin input, so no input
+  depends on being immutable or still present at drain.
+  - **Erase before drain (operator to confirm).** An erase replaces the version's staged rows,
+    in its own transaction, with tombstones: the part, `erased: true` and no bytes. The bytes
+    leave PostgreSQL's staging at once; the writer records the part in `twin/inputs` as absent
+    because erased, and the tenant keeps draining. The law
+    `an_erase_before_the_drain_leaves_the_tenant_draining_and_the_part_absent` holds it.
+  - **One order.** Each staged row records the outbox sequence value current at its insert, and
+    the writer reads `lake_staging` under the same insert-lock horizon it reads the outbox under
+    (ADR-0060 d4), so a staged row is never seen before the commit that staged it, nor after a
+    batch that passed it. A row staged outside a commit (`idempotency_settle`) takes the same
+    rule.
+  - **Cost.** Staging inserts run inside the chain lock, before the outbox insert, so they add
+    their bytes to the commit's WAL (a body is written twice, once to `memories` and once to
+    staging) and lengthen the time the tenant's chain lock is held; both are unmeasured (#390).
+    `lake.staging_age` names the age of the oldest staged row (operator to confirm).
+
+  Staging adds no exposure: it holds bytes PostgreSQL already holds in `memories`, `api_keys`,
+  `web_emails` and `idempotency`, under the same row security, for the time between commit and
+  drain.
 
 - **d4 — Every writer in `oml-pg` is classified, and the class decides how a rebuild reproduces
   it.** Four classes: **journal** (the event's payload is the fold), **part** (staged, d3),
@@ -146,11 +164,12 @@ Decided, not built.
   | the `KeyIssued` fold | `api_keys.hash` | part `key_hash`; new `key.issued` payloads gain `key_hash_digest` (operator to confirm) | loaded and checked against the digest; a key issued before the digest is named by `lake.keys_unverifiable` |
   | the `WebEmailAllowed` fold, `web.signed_up` | `web_emails.email` | part `email` | checked against `email_digest` |
   | `web_pin` | `web_emails.google_subject`, `github_subject` | journal `web.subject_pinned` with a subject digest, plus part `subject` (operator to confirm) | replayed; without it, the first sign-in after a rebuild would pin whoever presents that address (ADR-0045) |
-  | `append_event`, `idempotency_claim`, `idempotency_settle`, `idempotency_release` | `idempotency` | part `idempotency` at the commit or the settle that records an outcome; an unsettled claim and a release are excluded | a recorded outcome is loaded; an unsettled claim is dropped, so its act may run once more |
-  | `apply_meters` (inside commits), `meter_recalls` (outside) | `account_meters`, `account_activity`, `usage_daily` | state image (d2) | the latest image is loaded |
+  | `append_event`, `idempotency_claim`, `idempotency_settle`, `idempotency_release` | `idempotency` | part `idempotency` at the commit or the settle that records an outcome; an unsettled claim and a release are excluded | a recorded outcome is loaded; an unsettled claim is dropped, so a console act whose first commit landed and whose claim never settled can be submitted again, which duplicates that commit (operator to confirm) |
+  | `apply_meters`, inside commits | `account_meters`, `account_activity` | derived | the replay runs the same meters with no ceiling refused |
+  | `meter_recalls`, outside commits | `account_activity.recalls`, `usage_daily` | state image (d2, operator to confirm) | the newest image at or before the cut |
   | `enqueue_review`, `set_memory_status`, `promote_memory` | `review_queue` | derived | rebuilt by the replayed folds |
   | `review_claim_next` | `review_queue.held_by_key` | excluded | every claim is released; a reviewer claims again |
-  | the `ClaimEdgeProposed` fold | `lineage_principals`, `lineage_key_ids` | derived | the same fold widens the same closures in replay order |
+  | the `ClaimEdgeProposed` fold | `lineage_principals`, `lineage_key_ids` | derived | `fold_of` reads the closures from the rebuilt database as the live fold reads them, so replay order widens the same closures |
   | `sparse_*` and the postings trigger | `search_postings`, `search_term_rows`, the sparse queue and state | derived | the trigger and the sparse backfill run again (ADR-0052) |
   | `fold_code_issued`, `spend_code`, `void_unopened_codes` | `connect_codes` | excluded (d5) | rows replayed voided, with no hash |
   | `connection_connect`, `fold_connection_opened`, `fold_connection_revoked`, `sweep_expired` | `oauth_connections` | excluded (d5) | an opened connection replays revoked with cause `rebuilt` |
@@ -202,7 +221,7 @@ Decided, not built.
     `memories.claim` today.
 
 - **d7 — Erasure reaches the twin, and the signed metadata it cannot reach is named.** On
-  `lifecycle.erase` the lead deletes the version's staged rows (d3), and the writer destroys the
+  `lifecycle.erase` the lead replaces the version's staged rows with tombstones (d3), and the writer destroys the
   version's key in `artifact_keys` and MERGEs its `twin/keys` row to destroyed; the ciphertext in
   `twin/inputs` stays and opens under no live key. A removed allowlist entry
   (`web.email_removed`) and a closed deletion request (`web.deletion_closed`) destroy the key of
@@ -211,9 +230,13 @@ Decided, not built.
   version, so a rebuild cut before an erase still never opens what was erased later. Amends
   ADR-0005 d4 with three inventory rows (`lake_staging`, `twin/inputs`, `twin/keys`), and ADR-0005
   d3 to name what crypto-shredding cannot reach: clear text inside signed payloads, today a
-  version's `title`, a workarea's or key's `name`, an anchor's `uri`, `path` and `fragment`, and a
-  crew's `charter_uri`. The admission scan reads the title at write (`app.rs:7423`); the text is
-  kept as signed metadata. Moving titles to a digest with a sealed part is #389.
+  version's `title`, a verdict's `reason` (`app.rs:6054`), a workarea's or key's `name`, an
+  anchor's `uri`, `path` and `fragment`, a crew's `charter_uri` and `external_manager`
+  (`app.rs:1323`), and, once ADR-0089 is built, an `admin.fix` reason. The admission scan reads the
+  title at write (`app.rs:7423`) and the reason under the veto scan (`app.rs:5963`); the text is
+  kept as signed metadata. Until #389 lands, the named queries read no `title` of a held
+  submission from `bronze.events`, so held text does not surface in analysis through its title (operator to confirm).
+  Moving titles to a digest with a sealed part is #389.
 
 - **d8 — Each tenant drains on a frontier of its own (decided by the operator, 2026-11-14).**
   Amends ADR-0060 d3. The stable prefix stays global (ADR-0060 d4); within it, each tenant's
@@ -223,7 +246,8 @@ Decided, not built.
   and telemetry for the tenant commit after its frontier, may dead-letter as before
   (ADR-0060 d14), and never hold the frontier back. The provider tenant drains first in every
   tick; a tenant event that names a provider seq (`tenant.genesis`) waits until the provider's
-  frontier passes it, so a stalled provider holds back only new tenants. `_provider/lake/batches`
+  frontier passes it, so a stalled provider holds back only new tenants. The rule is inert until the provider's
+  `tenant.created` is journalled: today `tenant.genesis` names no provider seq, so no tenant waits. `_provider/lake/batches`
   becomes a log of ticks (start, horizon, tenants advanced, tenants stalled), no longer a frontier.
   Staged rows are deleted per tenant, only up to that tenant's frontier. On resume, the writer
   reads each tenant's frontier from its own log and nothing else.
@@ -236,6 +260,8 @@ Decided, not built.
     filled.
   - Bronze, `twin/inputs`, `twin/keys` and `twin/state` never dead-letter (amends ADR-0003 d6 and
     ADR-0060 d14 for these tables).
+  - The law `one_stalled_tenant_holds_no_other_tenant_back` stalls one tenant on a poison event
+    and drains the others past it.
 
 - **d9 — One rebuild verb, on the writer's binary, fenced and verified first.**
   `oml-lakewriter rebuild --into <owner URL of an empty database> --signing-key <public key file>
@@ -258,11 +284,20 @@ Decided, not built.
      the event's original seq. Parts staged outside a commit apply in `stage_seq` order between
      the events they fall between. Each part is checked against its payload digest where one
      exists.
+  **Cross-tenant conflicts (operator to confirm).** Tenants drain on separate frontiers, so a
+  rebuild can replay one tenant behind another, and a deployment-wide unique value can collide:
+  tenant A stalled before it removed an allowlist address, tenant B allowed the same address after.
+  The rebuild then refuses by name, `rebuild.cross_tenant_conflict`, naming both tenants and both
+  seqs, and writes nothing more; it offers a `--cut` at the stalled tenant's frontier, or a rebuild
+  without that tenant (`--tenant` for the rest). The law
+  `a_rebuild_refuses_when_a_stalled_tenant_still_holds_an_address_another_tenant_reused` holds it.
   4. **Keys and state.** It loads `artifact_keys` from `twin/keys` as it stands, destroys every
-     key whose erase it replayed, and loads the `twin/state` images.
+     key whose erase it replayed, and loads the `twin/state` images. The law
+     `a_replayed_erase_destroys_its_key_whatever_the_twin_keys_hold` holds the erase.
   5. **Sequence.** It sets `outbox_seq_seq` past the larger of the largest replayed seq and the
      largest tenant frontier, so the writer never skips a new row. `oml-lakewriter doctor` adds
-     `lake.sequence`: `fail` when any tenant's frontier is past the database's outbox sequence.
+     `lake.sequence`: `fail` when any tenant's frontier is past the database's outbox sequence. The
+     law `a_rebuilt_database_takes_new_outbox_rows_past_every_frontier` holds it.
   6. **Finish.** It writes `rebuild.json` beside the target's marker, sets the marker
      `complete`, and releases the lock.
 
@@ -297,16 +332,20 @@ Decided, not built.
   The lead writes, on a schedule (hourly by default, operator to confirm), a checkpoint file: each
   tenant's head seq and hash, the time, and the deployment key's signature over domain-separated
   canonical bytes (`oml-head-checkpoint/1`). It is not a journal event, so it grows no chain. The
-  file goes where the backups or the KEK escrow go, never under the lake root. A rebuild refuses
-  to finish below the checkpoint's head for any tenant (`rebuild.behind_checkpoint`) and names the
-  gap; `--accept-loss` lets it finish and records the gap in `rebuild.json`. `oml doctor` adds
-  `server.head_checkpoint`: `warn` past twice the interval, `fail` when none was ever written.
+  file goes where the backups or the KEK escrow go, never under the lake root. A rebuild takes the
+  newest checkpoint, prints its time, and refuses to finish below its head for any tenant
+  (`rebuild.behind_checkpoint`) and names the gap; a tenant the checkpoint names and the lake lacks
+  fails the rebuild the same way (operator to confirm); `--accept-loss` lets it finish and records the gap in `rebuild.json`. `oml doctor` adds
+  `server.head_checkpoint`: `warn` past twice the interval, `fail` when none was ever written. The law
+  `a_truncated_lake_is_caught_by_the_checkpoint` drops a lake's last commits and finds the
+  rebuild refused.
 
 - **d12 — Migrations and the fold law.** Every event folds into the current schema: `fold_of`
   reads every payload shape ever written, as the store does today (an event without `format` reads
   as `text/plain`). Two laws hold it: each use case's fold equals `fold_of` of its event and its
   staged parts; and the column-level classification of d4 covers every column of every table. The
-  build adds migrations, numbers reserved when it starts: `lake_staging`; `key_ref` on
+  build adds migrations, numbers reserved when it starts: `lake_staging` (with the writer's
+  SELECT and DELETE grant given at its start); `key_ref` on
   `artifact_keys`; `journal_seq` on `idempotency`; `rebuilt` in `oauth_connections.revoked_cause`;
   a null hash for a rebuilt `connect_codes` row; the `lake_rebuild` marker; and the
   `web.subject_pinned` fold.
@@ -324,8 +363,12 @@ Decided, not built.
   that a rebuild cannot reproduce: `review_queue.held_by_key` and `held_since`; kind-2 postings
   under a different model; and every column set by `now()` at commit rather than from the event's
   `at`: the columns whose default is `now()` where the insert does not set them (`created_at` of
-  `tenants`, `workareas`, `api_keys`, `memories` and `outbox`, migration 0001), and
-  `idempotency.committed_at` and `artifact_keys.created_at`. The build moves each `now()` column it can to the event's `at`
+  `tenants`, `workareas`, `api_keys` and `outbox`, migration 0001), and
+  `idempotency.committed_at` and `artifact_keys.created_at`. `memories.created_at` is different:
+  it is a separate application clock read, `self.clock.now()` in the `MemoryRecord`
+  (`app.rs:5428`), not the event's `at`. The build moves it to the event's `at` on the live
+  insert and in `fold_of` alike, so both sides agree (operator to confirm); until then it is
+  listed. The build moves each `now()` column it can to the event's `at`
   and lists the rest with a reason. The law
   `a_rebuilt_database_equals_the_database_it_was_drained_from` runs the demo workload on a
   throwaway cluster, drains, rebuilds into a second cluster and compares. The drill compares
@@ -351,7 +394,7 @@ Decided, not built.
   `oml_lake_rebuild_events`, `oml_lake_rebuild_seconds`; no tenant label. Doctor lines:
   `lake.rpo`, `lake.stalled`, `lake.sequence`, `lake.twin` (per tenant, bronze rows up to the
   frontier equal the journal's), `lake.twin_mismatch` (a part that fails its digest),
-  `lake.placement`, `lake.waivers`, `lake.drill` (`warn` with no drill younger than 35 days),
+  `lake.placement`, `lake.waivers`, `lake.staging_age`, `lake.drill` (`warn` with no drill younger than 35 days),
   `lake.keys_unverifiable` (keys issued before `key_hash_digest`), and `server.head_checkpoint`.
   The runbook gains "Rebuild PostgreSQL from the lake", "Roll a backup forward" and "Run a drill" in
   [lake operations](../operations/lake.md) and [restore](../operations/restore.md). Size per
