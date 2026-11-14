@@ -1,17 +1,16 @@
 <!--
 id: adr/ADR-0082-a-person-builds-and-edits-a-workareas-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys
 tier: engineering
-status: proposed
-answers: which console routes build and edit a workarea's skills, guardrails and documents; which of the person's keys writes each act and why the admin side writes none; why an edit is a held supersession and a removal a retirement proposal; how a guardrail is edited within ADR-0037; what preview shows and which call serves it; who may review what a person wrote in the console; what the API must add
+status: accepted design · 2026-11-14
+answers: which console routes build and edit a workarea's skills, guardrails and documents, on the workarea page; which of the person's keys writes each act and why the admin side writes none; why an edit is a held supersession and a removal a retirement proposal; how a guardrail is edited within ADR-0037; what preview shows and which call serves it; who may review what a person wrote in the console; what the API must add
 -->
 
 # ADR-0082 — A person builds and edits a workarea's skills, guardrails and documents in the console, each edit a held version under the person's own keys
 
-**Status:** proposed · 2026-11-14 · tracking #374 · revised the same day with the operator's
-answers (d7, d9) · what a screen shows (d1's layout, d5's
-preview drawing, d6's diff placement) is offered as options until the operator approves the
-builder mockups, published as artifacts first (the operator, 2026-11-14); the identities, the API
-and the review rule are decided here
+**Status:** accepted design · 2026-11-14, by the operator, before it is built, with the screen
+choices settled from the approved design system v18 mockups (d1's layout on the workarea page,
+d5's preview on the form's own page, d6's diff on the form and on Judge) and every other default
+as drafted · proposed the same day, tracking #374, with the operator's answers (d7, d9)
 
 **Release:** planned for v0.7.4
 
@@ -24,7 +23,11 @@ key may start a held claim)
 
 **Depends on:** [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md)
 (kind `skill`), [ADR-0081](ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource.md)
-(kind `document`); proposed ADR-0089 (PR #377: admin fixes, d1 of this record)
+(kind `document`); ADR-0089 (PR #377: admin fixes, d1 of this record)
+
+**Twin parts** (ADR-0090 d18, PR #388): a console edit is a `memories` row written by the same
+capture as any write, so its body, rule and search text are parts and its fold is the journal's;
+the preview stores nothing.
 
 ## Context
 
@@ -66,29 +69,43 @@ Decided, not built.
 
 ## Decision
 
-- **d1 — The builder lives on the user side only, behind its own paths, and the admin side has
-  none; its layout waits for the mockups.** Whatever the layout, these hold: every builder page is
-  a path in `PAGES` behind the human-only gate, the CSRF check and the hashed stylesheet, with no
-  script (ADR-0045 d8, d26); a write answers a `303` back to the list it came from
-  (Post/Redirect/Get, ADR-0070 d3); the picker's `workarea` chooses the workarea, the person's root
-  by default; a list shows the claims of a kind on that workarea alone (not its subtree), one card
-  per tip with its state, a "pending" line when a held successor of the person's own exists, and
-  only the acts d2 admits. The admin side has no builder: the builder writes held versions under a person's keys, while an
-  admin's change to a skill, a guardrail or a document is one of proposed ADR-0089's fix acts (PR
-  #377), served at once, marked and then confirmed or reverted by a person, taken from the admin
-  cockpit (ADR-0083 d9); a curator's `universe` items stay on `/web/admin/curate`. The layout is one of:
-    - **(a) One Build page.** `GET /web/build` with three sections, Skills, Guardrails and
-      Documents; `GET /web/build/edit?kind=…|memory=…` the form; `POST /web/build/edit` with
-      `action` `preview`, `submit` or `retire`. A nav item, Build.
-    - **(b) Inside Workareas.** The Workareas view's per-workarea acts (ADR-0045 d28) gain
-      "Skills", "Guardrails" and "Documents", each opening `GET /web/workareas/build?workarea=…&kind=…`
-      with the list and the form on one page. No new nav item.
-    - **(c) Inside the Memories cockpit.** The cockpit's kind filter (ADR-0083) lists the three
-      kinds, and each card and the empty state offer "New" or "Edit", opening the form at
-      `/web/build/edit`. The Guardrails view gains the same "New" and "Edit".
-
-    Recommended: (a), since it keeps writing out of the reading pages and gives the operator's
-    "builder" a name in the nav; (b) if the nav must not grow. The route names below use (a).
+- **d1 — The builder lives on the user side only, on the workarea's own page, and the admin side
+  has none** (the operator, 2026-11-14, as drawn in the v18 mockups WorkareaScreen and
+  ItemEditor). Every builder page is a path in `PAGES` behind the human-only gate, the CSRF check
+  and the hashed stylesheet, with no script (ADR-0045 d8, d26); a write answers a `303` back to
+  the page it came from (Post/Redirect/Get, ADR-0070 d3).
+    - **The workarea page**, `GET /web/workarea?workarea=<reference>&kind=<kind>`, reached from
+      the workarea's row on Workareas, offered for every workarea the person may write in, a
+      shared one where they hold dreamer included. A breadcrumb Personal / Workareas /
+      `<reference>`; the `<h1>` the reference; the workarea picker above the kinds, keeping the
+      kind. "Approved contents by kind", `nav.oml-views`: Memories, Skills, Guardrails and
+      Documents, each with its count of approved items, one per claim (Memories leads to the
+      Memories cockpit filtered to the workarea). Under the kind: one line where it changes a
+      decision, the one primary **New skill**, **New guardrail** or **New document** with a line
+      saying who approves under the workarea's policy (in the person's root, `<user>-review`
+      marked same user; in a shared workarea, another person), and the table of that kind's claims
+      on this workarea alone (not its subtree): name, state with the decision word for a held
+      version, version and changed (severity and rule for a guardrail), and the act, **Edit** and
+      **Retire** on an approved tip with nothing held after it, "in force · edit v3 waits for
+      review" otherwise, and **Judge it** where the person's review key may judge a held version.
+      Every version stays listed. Inside an in-progress workarea a held row carries the
+      `unreviewed` chip and "served here, unreviewed" (ADR-0080 d10).
+    - **Guardrails, In force here.** The Guardrails kind opens with the set an agent connected
+      to the workarea loads, inherited first, then this workarea's own (ADR-0083 d12, which
+      removes the Personal Guardrails tab), then this workarea's guardrails with New, Edit, Retire
+      and Judge it.
+    - **The forms**, `GET|POST /web/workarea/new`, `/web/workarea/edit` and
+      `/web/workarea/retire` (Personal only), each a `form.oml-form` with a breadcrumb to the
+      workarea, the act as `<h1>` ("New skill", "Edit release-checklist", "Retire
+      run-tests-before-commit"), one capacity line naming the key and the workarea's policy, the
+      fields (d4), and one primary named for the version it produces ("Propose skill",
+      "Propose v3", "Propose retirement"); no control says "save", "publish" or "delete".
+    - **The admin side** has `GET /web/admin/workarea?workarea=&kind=`, the same contents by kind,
+      read-only, and no builder: the builder writes held versions under a person's keys, while an
+      admin's change to a skill, a guardrail or a document is one of ADR-0089's fix acts, served at
+      once, marked and then confirmed or reverted by a person, taken from the admin workarea
+      page's Releases view (ADR-0083 d9); a curator's `universe` items stay on `/web/admin/curate`.
+    - A renamed skill is a new skill and a retirement of the old one (the operator, 2026-11-14).
 
 - **d2 — Which key writes is decided by the act and the row, never by the form.**
     - **A new item, in any workarea the person may write in, held** (the operator, 2026-11-14).
@@ -151,20 +168,31 @@ Decided, not built.
   any name it shadows or is shadowed by along the chain (ADR-0080 d5), and a guardrail's set size
   after it at its workarea against the cap. It journals nothing, holds nothing, counts in no meter
   (ADR-0071 d2 counts versions, and none is made), passes the key's request rate (ADR-0079), and
-  needs the same grant submit or supersede would. What the console draws from the answer waits for the
-  mockups; the options are (a) the result beside the form on the same page, (b) a separate preview
-  page with Back and Submit, and in either, optionally, what a session will receive (a skill's
-  prompt text with ADR-0080 d6's header, a guardrail's frame line as the hook prints it, a
-  document's passages). Recommended: (a) with the session's view, since it needs no extra route. The cost is one more route and a second
-  pass of the scan per previewed edit.
+  needs the same grant submit or supersede would. The console draws it on the form's own page
+  (the operator, 2026-11-14, as drawn): every form posts **Preview** first (`step=preview`, first
+  in the DOM and focus order, so Enter previews), and the page it answers draws the result above
+  the form with what a session will receive (a skill's command as the pattern
+  `/mcp__<server>__<name>`, its index line and its `prompts/list` entry; a guardrail's
+  session-start line, what its rule checks and who loads it; a document's resource address and its
+  passages). **Propose** is drawn only on a page a preview answered and posts the previewed
+  values; if a field changed, the page redraws the preview instead of writing. A refusal keeps the
+  form with every value and the error beside its field, leading with the sentence and ending with
+  the code. When the tip moved (`submission.tip_conflict`), the one primary is **Edit from v3 with
+  this text** (`step=rebase`), the console's own step, which re-reads the tip and redraws the form
+  with the typed text and the change against it; no API change. The cost is one more route and a
+  second pass of the scan per previewed edit.
 
-- **d6 — An edit can be judged by what changed; where the diff is drawn waits for the
-  mockups.** A line diff computed in `oml-web` from two texts the API already serves (the tip by
-  `GET /v1/memories/{artifact_id}`, the draft from the form) needs no API change. Where it shows is
-  one of: (a) on the edit form only; (b) on the form and on Review's card of a supersession,
-  against its `replaces`, one more `GET` per served review item, which `web_console_reads.rs`
-  records with the reason; (c) on Review only. Recommended: (b), since a long document's reviewer
-  otherwise reads the whole text to find one changed line (ADR-0081 d7's stated cost).
+- **d6 — An edit is judged by what changed, drawn on the edit form and on the Judge page** (the
+  operator, 2026-11-14, as drawn). The change is the console's own word comparison (longest
+  common subsequence over whitespace-split words, struck and underlined, no model), computed in
+  `oml-web` from two texts the API already serves (the tip by `GET /v1/memories/{artifact_id}`,
+  the draft from the form, or the served version and its successor on Judge), with name,
+  description and body each in its own labelled block, "Change against v2 · baseline: v2, the
+  served tip". It is drawn on the edit form after Preview and on To do's Judge page
+  (`/web/todo/judge`, ADR-0083 d2) for a supersession, against its `replaces`: one more `GET` per
+  served item, which `web_console_reads.rs` records with the reason. A list row draws no change;
+  it says "Replaces v2" and links the page. A long document's reviewer reads the changed words,
+  not the whole text (ADR-0081 d7's stated cost).
 
 - **d7 — Approval is the same as for memories today: inside the person's root their own review
   key may approve, marked `same_user`; in any other workarea another person approves** (the
@@ -206,23 +234,28 @@ Decided, not built.
        name only the key acts (`crates/transports/oml-transport-http/src/console.rs:57-70`,
        `console.rs:1250`, `console.rs:1338`, `console.rs:1393`); the build proves it with a
        failing test first, since ADR-0070 d5's table lists submit under `curate` alone.
+    7. `GET /v2/workareas/{workarea}` gains `approved_by_kind`, the count of approved claims of
+       each kind at that workarea, one per claim, for the workarea page's kind links (d1); until it
+       is served the links carry no number.
 
-- **d9 — The operator's answers of 2026-11-14, and what stays open.** (1) Approval is as for
+- **d9 — The operator's answers of 2026-11-14.** (1) Approval is as for
   memories today (d7). (2) New items may be started in any workarea the person may write in,
   shared ones where they hold only dreamer included, and all are held (d2). (3) The admin side gets
-  no builder view; the admin cockpit's kind filter covers reading. Open until the mockups are
-  approved: d1's layout, d5's preview drawing and d6's diff placement.
+  no builder view; the admin cockpit's kind filter covers reading. The screen choices are settled
+  by the approved design system v18 mockups: d1's workarea page and forms, d5's preview on the
+  form's own page, d6's diff on the form and on Judge. Nothing stays open.
 
 ## Consequences
 
-- `oml-web` gains `build.rs` with the routes d1's chosen layout names, the forms, the diff and
-  the preview's drawing; `PAGES`, `serves` and `lib.rs`'s route test grow by them (under (a):
-  `GET /web/build`, `GET /web/build/edit`, `POST /web/build/edit`, and Build in the user side's
-  nav).
+- `oml-web` gains `workarea.rs` with d1's routes, the forms, the diff and the preview's
+  drawing; `PAGES`, `serves` and `lib.rs`'s route test grow by them: `GET /web/workarea`,
+  `GET|POST /web/workarea/new`, `GET|POST /web/workarea/edit`, `GET|POST /web/workarea/retire`
+  and `GET /web/admin/workarea`. Workareas' rows link to the workarea page; neither nav gains an
+  item (ADR-0083 d12). ADR-0070 d7's list of pages gains them.
 - ADR-0070 d5's tables gain: `build_list` → `GET /v1/memories?with_own=true&kind=…` (web);
   `build_submit` → `POST /v1/memories` (web); `build_supersede` → supersede (web or review);
   `build_preview` → `POST /v1/memories/preview` (web or review).
-- `web_console_reads.rs` records the builder's reads and Review's added `GET` (d6).
+- `web_console_reads.rs` records the builder's reads, the counts by kind and Judge's added `GET` (d6).
 - Page tests assert the copy of every state, refusal and confirmation, in the neutral voice
   (the operator's rule of 2026-11-13: no "you", "your" or "my").
 - `oml doctor` names a server that does not serve the preview route ("this server predates the
@@ -235,7 +268,9 @@ Decided, not built.
 | Alternative | Why not |
 |---|---|
 | **The builder writes as `<user>-review` always** | A dreamer proposal is the right act for another author's row, but for the person's own new items it would make every write a proposal its own reviewer key may not judge, and `<user>-review` holds no writer to start one. |
-| **An admin-side builder** | A builder writes held versions for review; an admin's change is a fix served at once and confirmed afterwards (proposed ADR-0089 d1, d2), a different act on a different page (ADR-0083 d9). Curation has its own key and page (ADR-0045 d12). |
+| **An admin-side builder** | A builder writes held versions for review; an admin's change is a fix served at once and confirmed afterwards (ADR-0089 d1, d2), a different act on a different page (ADR-0083 d9). Curation has its own key and page (ADR-0045 d12). |
+| **A Build page in the nav, or New and Edit inside the Memories cockpit** | The drafted options (a) and (c); the mockups put a workarea's contents and their acts on the workarea's own page, where the policy that decides who approves is shown, and the nav does not grow. |
+| **Diff on the edit form only, or on Judge only** | The drafted options (a) and (c); the author checks the change before proposing it and the reviewer judges what changed, so the mockups draw both. |
 | **Edit in place, or delete a draft** | ADR-0001 R4 keeps every version, and the only deletion proposed anywhere is ADR-0089's legal erasure, an admin act; a held version is the draft. |
 | **Preview computed in `oml-web`** | `oml-web` cannot reach the scan, the rule parser or the passage cutter (ADR-0070 d1), and a second copy of them would drift from capture. |
 | **Preview as submit with a `dry_run` flag** | One route whose answer is sometimes a write is easy to call wrongly; a separate route that never writes is checkable by its name. |

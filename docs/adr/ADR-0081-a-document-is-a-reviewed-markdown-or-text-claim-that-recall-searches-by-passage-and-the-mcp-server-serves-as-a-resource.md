@@ -1,15 +1,20 @@
 <!--
 id: adr/ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-14
 answers: why a document is a kind and not a memory with a markdown format; which formats and sizes it takes; how its claim key names it; how its text is cut into passages and how a recall hit names its passage; what the MCP resources capability serves, under which URI scheme, scope and paging, and why there is no subscription; how a document is framed to a model; how oml sync's markdown adapters and documents agree; what is metered; what waits for attachments
 -->
 
 # ADR-0081 — A document is a reviewed markdown or text claim that recall searches by passage and the MCP server serves as a resource
 
-**Status:** proposed · 2026-11-14 · tracking #374
+**Status:** accepted design · 2026-11-14, by the operator, before it is built, every default as
+drafted · proposed the same day, tracking #374
 
 **Release:** planned for v0.7.4
+
+**Twin parts** (ADR-0090 d18, PR #388): a document is a `memories` row, so its body and search
+text are parts and its fold is the journal's; its passages are derived, cut again by the same rule
+from the replayed body.
 
 **Amends:** ADR-0025 (d8: a `document` hit is its best passage), ADR-0030 (d3: a held `document`
 version is served inside an in-progress workarea as `memory` is), ADR-0039 (d3, d4: `oml_write`
@@ -144,7 +149,7 @@ Decided, not built.
     - **`resources/read`.** A document URI answers `{contents: [{uri, mimeType, text, _meta:
       {oml: {artifact_id, version, approved_at, approver, unreviewed, workarea_path, anchor,
       findings}}}]}`, `text` the body byte for byte, or with `?passage=` that passage alone; `approver` carries
-      proposed ADR-0089 d4's `act` and `confirmed` once that record is built, so a document an
+      ADR-0089 d4's `act` and `confirmed` once that record is built, so a document an
       admin fix serves reads as one. The
       provenance and data framing travel in `_meta` and the list's `description`, never inside the
       text, so the bytes stay the signed source (ADR-0074 d12 keeps the JSON text byte for byte for

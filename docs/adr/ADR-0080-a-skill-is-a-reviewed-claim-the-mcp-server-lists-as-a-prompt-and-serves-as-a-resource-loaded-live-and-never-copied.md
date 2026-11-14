@@ -1,16 +1,22 @@
 <!--
 id: adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-14
 answers: what a skill is in OML, how an agent's proposed or updated skill reaches its author's agents at once, why skills are kept in OML rather than on disk and what the plugin's hook asks and which fields it carries; how its name is unique and how a new version replaces an old one; who may write one and how it is reviewed; which skills a session is offered; how MCP prompts/list and prompts/get name and serve them beside the guardrails prompt; how an agent reads one without a person invoking it; what the session-start hook says about skills; the size caps; what is metered; how a served skill is framed; when a held skill or guardrail is served inside an in-progress workarea and how it is marked
 -->
 
 # ADR-0080 — A skill is a reviewed claim the MCP server lists as a prompt and serves as a resource, loaded live and never copied
 
-**Status:** proposed · 2026-11-14 · tracking #374 · aligned with proposed ADR-0089 (PR #377) · revised the same day with the operator's
-answers (d13)
+**Status:** accepted design · 2026-11-14, by the operator, before it is built, with its open
+question 8 decided at its recommendation (putting a workarea in progress stays a person's act and
+is never an admin fix act) and every other default as drafted · proposed the same day, tracking
+#374, with the operator's answers (d13) · aligned with ADR-0089 (PR #377)
 
 **Release:** planned for v0.7.4
+
+**Twin parts** (ADR-0090 d18, PR #388): a skill is a `memories` row, so its body and search text
+are parts and its fold is the journal's; the offered set, the index and the prompts are read from
+those rows and store nothing.
 
 **Amends:** ADR-0025 (d8: kind `skill` joins the kinds never served as a recall hit), ADR-0030
 (d3: held `skill` and `guardrail` versions are served inside an in-progress workarea, marked
@@ -157,7 +163,7 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
   "OML skill `<name>` from `<workarea path>`, version `<n>`, approved `<approved_at>` by a
   `<held_by>` reviewer" with ", the author's own person" when `approver.same_user` is true
   ([ADR-0077](ADR-0077-a-served-memory-says-when-it-was-approved-and-by-what-kind-of-reviewer-and-never-names-the-reviewer.md)
-  d1, d2); no reviewer is named. A version an admin fix serves (proposed ADR-0089 d4, PR #377:
+  d1, d2); no reviewer is named. A version an admin fix serves (ADR-0089 d4, PR #377:
   `approver.act: "admin_fix"`) reads instead "changed by an admin fix on `<at>`", followed by ", not
   yet confirmed by a person" while `confirmed` is false, so an agent can tell a hand fix from a
   review. Then the body as stored, then, when `input` is sent, a line
@@ -214,9 +220,9 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
       author-only as ADR-0030 d3 and ADR-0074 d20 have it; a skill held only because every skill
       needs a person (d3) is not held by a finding and is served.
     - **Who puts a workarea in progress.** A person's key, never an agent's (ADR-0030 d1), and
-      never an admin act: the mode is not among proposed ADR-0089's fix acts (its d1), so an admin
-      cannot open a workarea's held skills and guardrails to its agents. This states the alignment
-      audit's recommendation of 2026-11-14, pending the operator (d13, question 8).
+      never an admin act: the mode is not among ADR-0089's fix acts (its d1), so an admin
+      cannot open a workarea's held skills and guardrails to its agents (the operator, 2026-11-14,
+      d13, answer 8).
     - **Where.** Held skills join `GET /v1/skills` with `unreviewed: true`, `prompts/list`,
       `prompts/get`, `resources/list`, `resources/read` and the session-start index (d8). Held
       guardrails join `GET /v1/guardrails` (ADR-0037 d5) with `unreviewed: true`, the
@@ -298,12 +304,10 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
   (d10). (7) A skill with a held edit gets two commands, `<name>` and `<name>-unreviewed` (d10). (9) A
   skill an agent proposes or updates is served at once, marked, to its author's person's agent
   keys (d14). (10) Skills are kept in OML over disk, and the plugin asks before a local skill file
-  is written (d15). Open:
-    8. *Does putting a workarea in progress stay a person's act and never an admin fix act?*
-       (a) yes: ADR-0030 d1 unchanged, and proposed ADR-0089's fix acts never include the mode;
-       (b) an admin may also set or clear in-progress mode as a fix, confirmed afterwards.
-       Recommended: (a), the audit's recommendation, since the mode decides whether unreviewed
-       instructions reach agents, and an admin who wants to fix content has ADR-0089's acts.
+  is written (d15). (8) Putting a workarea in progress stays a person's act and is never an admin
+  fix act: ADR-0030 d1 is unchanged and ADR-0089's fix acts never include the mode, since the mode
+  decides whether unreviewed instructions reach agents, and an admin who wants to fix content has
+  ADR-0089's acts (accepted at the recommendation, the operator, 2026-11-14).
 
 - **d14 — A skill an agent proposes or updates is served at once, marked unreviewed, to the agent
   keys of its author's person, and to no one else before review** (the operator, 2026-11-14:
@@ -332,8 +336,8 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
       listing (`with_own`, "every key naming its user's"): the held skill stays unreadable to
       every other person's keys and to every agent outside that person, except a reviewer judging
       it and ADR-0030's in-progress scope. It is a relaxation of R3's wording from key to person,
-      on one kind, by the operator's decision, and is named here so ADR-0001's list of bounded
-      exceptions can cite it on acceptance.
+      on one kind, by the operator's decision; ADR-0001's R3 states it as a reading of the rule,
+      amended on its acceptance with ADR-0089 (PR #377).
     - **Never served.** A version the scan held for a finding, or one not yet scanned, stays
       readable by its author key alone and is never served as a prompt, a resource or an index
       line (ADR-0074 d20's rule, applied here outside in-progress workareas too).
