@@ -23,7 +23,7 @@ OUT = docgen.DOCS / "reference" / "design-records.md"
 BLOB = "https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/"
 
 CATEGORIES = {
-    "Trust and governance": [1, 7, 9, 10, 12, 30, 55, 65],
+    "Trust and governance": [1, 7, 9, 10, 12, 30, 55, 65, 74],
     "Storage and data": [2, 3, 4, 5, 17, 60],
     "Search and recall": [13, 48, 49, 52, 53, 54, 59, 72],
     "Writing and review": [11, 20, 21, 50, 56],

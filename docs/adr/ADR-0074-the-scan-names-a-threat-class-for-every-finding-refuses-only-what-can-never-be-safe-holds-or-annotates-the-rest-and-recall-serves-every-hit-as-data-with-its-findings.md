@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings
 tier: engineering
-status: proposed
+status: accepted in part (built in phase 1: d6, d14, d15, d17, d18, d20, d21, d23, d28); d24 superseded by ADR-0080 d16; proposed (d1–d5, d7–d13, d16, d19, d22, d25–d27)
 answers: which threats a stored memory can carry beyond leaked secrets; what the scan does today, rule by rule, and where it stops; for each threat class whether a deterministic rule or an optional model detects it, whether it refuses, holds with a finding or annotates, how false positives are handled and whether the reviewer sees the finding; what oml-scan/2 adds; what a hold finding changes about who may approve; how an upgrade rescans stored memories without silently changing a verdict; how recall serves findings and hidden characters; the opt-in model tier; the write-time budget; the red-team corpus and how precision and recall are reported; who counts as a person and the person lane; the tenant scan policy; the findings list; the normalisation order; the in-progress exclusion; the phases and their issues; the operator's open questions
 -->
 
 # ADR-0074 — The scan names a threat class for every finding, refuses only what can never be safe, holds or annotates the rest, and recall serves every hit as data with its findings
 
-**Status:** proposed · 2026-11-08 · will be amended by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d24) on its acceptance
+**Status:** accepted in part · 2026-11-14, by the operator, as ADR-0054 was: the decisions phase 1 built (#213), d6, d14, d15, d17, d18, d20 (reworded to the class rules and ADR-0080 d16's in-progress audience), d21, d23 and d28, are accepted; d24 is superseded by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16's instruction-class rule; d1 to d5, d7 to d13, d16, d19, d22 and d25 to d27 stay proposed · proposed 2026-11-08 · amended by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d20, d24, 2026-11-14)
 
 **Amends:** ADR-0065 (d1: `oml-scan/2` and the upgrade rescan; d2: the registry gains the
 classes of d3 below; d5: a hold finding requires a person's verdict; d13: the rescan gains a
@@ -946,7 +946,7 @@ flowchart TD
        served unreviewed in progress (d5, d6, d20, d28); held versions scanned under `/1` stay
        author-only in progress until `oml admin rescan --record-held` scans them (d28). Then the `/2` rules run read-only over a restored copy of a live tenant's store, by
        the plain `oml admin rescan` with the new set loaded, and the hold, annotate and refuse
-       rates per class and per origin kind (`chat`, `sync`, `web`, `agent`, none) are published
+       rates per class and per origin kind (`repo`, `doc`, `code`, `lake`, `chat`, `web`, `manual`, `crates/oml-domain/src/origin.rs:15-29`) are published
        beside the corpus report, since load follows origin. The store is a restored copy of
        memory.doublegate.io's, read on that host and never copied off it, with rates published
        as aggregates only, no sample text and no claim keys; a second, synthetic tenant fed by
@@ -1071,17 +1071,17 @@ flowchart TD
       (chosen), or of any authors whose folded views hash equal. The card shows both versions.
 
 - **d20 — Inside an in-progress subtree, a version with a hold finding stays author-only.**
-  ADR-0030 d3 serves another author's held `memory` and `derived_fact` versions, labelled
-  `unreviewed`, to any key with reader access inside an in-progress root; held steering,
-  guardrails and retirements stay author-only. A version with an unresolved hold finding joins
-  that exception: it is served to its author and its reviewers only, never as `unreviewed` to
-  another reader, on every surface ADR-0030 d2's boundary rule governs (recall, listing, read by
-  id, the hook). Once a person dismisses every hold finding (d19) it is served as any held memory
-  inside is. This amends ADR-0030 d3 for this one condition; the reason is the same as for held
-  steering: what the scan says a person must read first must not reach a sibling agent's
-  context before anyone has. On `main` the predicate `served_unreviewed` and the two store
-  queries that mirror it do not read the finding (Context, "Three defects on `main`"), and phase
-  1 fixes them.
+  ADR-0030 d3, as ADR-0080 d16 amends it, serves another author's held versions of every kind,
+  labelled `unreviewed`, to keys with reader access scoped in an in-progress subtree or on its
+  ancestor chain, and keeps a held retirement author-only. A version with an unresolved hold
+  finding joins that exception: it is served to its author and its reviewers only, never as
+  `unreviewed` to another reader, on every surface ADR-0030 d2's boundary rule governs (recall,
+  listing, read by id, the hook, and the offering of instruction kinds). Once a person dismisses
+  every hold finding (d19) it is served as any held version inside is. This amends ADR-0030 d3 for
+  this one condition, for every kind alike: what the scan says a person must read first must not
+  reach another agent's context before anyone has. On `main` before phase 1 the predicate
+  `served_unreviewed` and the two store queries that mirror it did not read the finding (Context,
+  "Three defects on `main`"); phase 1 fixed them.
 
 - **d21 — Phases and rule sets ship small fixes as minors.** A defect in a shipped rule, such as
   the two of d5 and d6, ships as the next minor of the current major (`oml-scan/1.1`), with its
@@ -1138,7 +1138,9 @@ flowchart TD
   store's read path with the version, so d14's `withheld` and d11's filtering apply to it as to
   the body.
 
-- **d24 — The verdict depends on the version's kind for steering and guardrails.** Steering and
+- **d24 — The verdict depends on the version's kind for steering and guardrails.** *(Superseded
+  2026-11-14 by ADR-0080 d16: every instruction-class version, steering, guardrail or skill, needs
+  a person's verdict whoever wrote it; the scan treatment below stays the class's.)* Steering and
   guardrails are served first and never cut at session start (ADR-0025 d8; ADR-0037), and their
   content is instruction by design. On a `steering` or `guardrail` version:
   `injection.tool_coercion` does not run, since naming a tool is the point; every `exec.*`,
@@ -1448,7 +1450,7 @@ habits (d18, former question 3). The last, Q4, is decided below:
 
 ## Phase 1 as built (#213)
 
-Phase 1 is built on `feat/scan-phase1`. Where this record does not settle a point, the build takes
+Phase 1 is built (#213), on main since v0.7.x. Where this record does not settle a point, the build takes
 the reading below. Each reading is open to change before acceptance, and acceptance is the
 operator's.
 
