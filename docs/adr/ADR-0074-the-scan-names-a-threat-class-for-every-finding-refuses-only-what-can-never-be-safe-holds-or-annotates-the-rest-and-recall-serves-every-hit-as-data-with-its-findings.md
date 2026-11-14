@@ -370,7 +370,7 @@ flowchart TD
   languages.** OWASP LLM01:2025 ([genai.owasp.org/llmrisk/llm01-prompt-injection](https://genai.owasp.org/llmrisk/llm01-prompt-injection/),
   fetched 2026-11-08): "Indirect prompt injections occur when an LLM accepts input from external
   sources, such as websites or files", and "prompt injections do not need to be
-  human-visible/readable". Greshake et al., *Not what you've signed up for*
+  human-visible/readable". Greshake et al., *Not what you've signed up for* <!-- lint:allow-voice a paper's title -->
   ([arXiv:2302.12173](https://arxiv.org/abs/2302.12173), fetched 2026-11-08): "LLM-Integrated
   Applications blur the line between data and instructions", with prompts placed "into data
   likely to be retrieved". MITRE ATLAS AML.T0051.001 *Indirect*: "These malicious prompts may
@@ -646,7 +646,7 @@ flowchart TD
 - **d8 — Executable content annotates and never refuses.** A runbook memory that says how to
   wipe a scratch volume is the point of a team's memory; refusing it would lose it. ATLAS
   AML.T0086 *Exfiltration via AI Agent Tool Invocation* describes sensitive data "encoded into
-  the tool's input parameters". Spracklen et al., *We Have a Package for You!*
+  the tool's input parameters". Spracklen et al., *We Have a Package for You!* <!-- lint:allow-voice a paper's title -->
   ([arXiv:2406.10279](https://arxiv.org/abs/2406.10279), fetched 2026-11-08): "the average
   percentage of hallucinated packages is at least 5.2% for commercial models and 21.7% for
   open-source models", with "205,474 unique examples of hallucinated package names", which is

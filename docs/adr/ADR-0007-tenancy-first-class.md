@@ -40,7 +40,7 @@ and the STRIDE analysis written against hostile co-tenants are declared in
 - **d2 — Row-level security keyed by `tenant_id` on every Postgres table.** No
   table is exempted for convenience, and no role used by any OML workload holds
   `BYPASSRLS`. RLS is the second fence behind application scoping: a `WHERE`
-  clause bug stops at the policy, which Postgres evaluates, not our code. The
+  clause bug stops at the policy, which Postgres evaluates, not OML's code. The
   cost is carried openly — RLS predicates ride every query plan, and their
   performance under per-tenant partitioned indexes is unmeasured
   (#102 and #99 carry the

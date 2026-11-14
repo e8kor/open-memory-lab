@@ -50,7 +50,7 @@ on the user's behalf, so the address always comes from the server in use. On Win
 
 | | |
 |---|---|
-| **Remember** | The agent saves with `oml_write`. The save is *held*: only its author and the reviewers see it until someone else approves it. |
+| **Remember** | The agent saves with `oml_write`. The save is *held*: other agents recall it only once someone else approves it, unless a person put its workarea in progress, where it is marked unreviewed. An admin can read it through a journaled admin read. |
 | **Recall** | Each session starts from the agent's recent work and the memories that match the project; `oml_read` searches. |
 | **Review** | Approve or reject on the server's page, `<server>/web`, or with `oml review next`. Nobody reviews their own work. |
 | **Workareas** | One per project or crew. `oml_workarea` says where the agent is and what to read first. |

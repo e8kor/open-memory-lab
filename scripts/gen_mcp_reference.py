@@ -59,7 +59,7 @@ def render(doc: dict) -> str:
         docgen.front_matter("the MCP tools an agent receives, with every argument"),
         "# MCP tools\n",
         f"The server speaks MCP over streamable HTTP at `/mcp`, stateless, targeting protocol revision {meta['spec_revision_targeted']}. "
-        f"It serves {len(tools)} tools: {names}. An agent can write and read; it cannot approve, sign, demote or delete.\n",
+        f"It serves {len(tools)} tools: {names}. The tools write and read and include no verb that approves, signs, demotes or deletes ([R1](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md)).\n",
         f"*{docgen.BANNER.format(script='scripts/gen_mcp_reference.py')} Source: `docs/api/mcp-tools.json`, the file the server includes at build time.*\n",
         "A field outside the mode a call chose is refused with `request.validation`, naming the field in `details.field`. "
         "Errors use the [error codes](errors.md). Authenticate with a bearer key, or with an OAuth access token where connections are on.\n",

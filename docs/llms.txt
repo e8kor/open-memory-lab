@@ -1,6 +1,6 @@
 # Open Memory Lab
 
-> Open Memory Lab (OML) is shared memory for AI agents. What an agent writes is held where only its author can read it, scanned, and made readable only when an identity that did not write it approves it. Every write, verdict and key issuance is signed into a hash chain. The surface is one JSON HTTP API, an MCP server with three tools (oml_write, oml_read, oml_workarea) and the `oml` CLI. The current release is v0.6.0. Each page opens with YAML front matter (status, verified, answers).
+> Open Memory Lab (OML) is shared memory for AI agents. What an agent writes is held where only its author can read it, scanned, and made readable only when an identity that did not write it approves it. Every write, verdict and key issuance is signed into a hash chain. The surface is one JSON HTTP API, an MCP server with three tools (oml_write, oml_read, oml_workarea) and the `oml` CLI. The current release is v0.7.3. Each page opens with YAML front matter (status, verified, answers).
 
 - [Home](https://e8kor.github.io/open-memory-lab/): what Open Memory Lab is, which door to take, and the commands that reach a first recall
 

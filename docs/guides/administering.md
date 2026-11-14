@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "how an administrator runs an OML server with the oml CLI: the first hour (claim the server, create a workarea, issue an agent key and a reviewer key), where admin credentials live, workareas, crews, keys by role, denials, ending a connection, reading the journal, and the rules no admin key bypasses"
 ---
 
@@ -118,18 +118,14 @@ included. **Atlas** shows the workareas as a map sized by their rows, with a tab
 ratified only by a key other than the proposer's; in progress and commit as the reviewer key.
 Apply asks for confirmation first ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
 
-## The admin page
-
-At the overview, `/web/admin/people`, an administrator's session acts through its own keys. **Memories** lists every
-memory of the organisation, newest first, 50 a page, filtered by state, workarea, origin,
-author key or text; each page read is one `memory.admin_read` in the journal, the Atlas view's
-included. **Atlas** shows the workareas as a map sized by their rows, with a table twin.
-**Workareas** shows the tree with one dropdown a workarea: status changes as the admin key,
-ratified only by a key other than the proposer's; in progress and commit as the reviewer key.
-Apply asks for confirmation first ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
-
 ## Rules no admin key bypasses
 
-An admin verdict is refused, and a verdict from any key in a memory's lineage is refused as `review.author_in_lineage` ([roles and keys](../architecture/roles-and-keys.md#review-independence)). A person who administers and reviews holds two keys. There is no `oml promote` and no `oml delete`: only a different reviewer's verdict approves, and rejected and retired memories keep their bytes. Names are permanent, and the server reads the tenant off the key. `--guardrail-scope workarea|ancestors` sets a key's guardrail scope at issuance ([guardrails](../use/guardrails.md)).
+An admin key gives no verdict: its verdict is refused, and a verdict from any key in a memory's lineage is refused as `review.author_in_lineage` ([roles and keys](../architecture/roles-and-keys.md#review-independence)). A person who administers and reviews holds two keys.
+
+No verb promotes, demotes, erases or deletes a memory. There is no `oml promote` and no `oml delete`: only a different reviewer's verdict approves, a memory leaves recall only by an approved retirement, and rejected and retired memories keep their bytes. Demotion and erasure are designed and not built ([admin limits](../architecture/roles-and-keys.md#admin-limits)). Names are permanent, and the server reads the tenant off the key.
+
+An admin key does read memory text. The [admin read](../architecture/roles-and-keys.md#the-admin-read) serves every memory of the tenant with its text and attribution, held ones included, and journals each read as `memory.admin_read`.
+
+`--guardrail-scope workarea|ancestors` sets a key's guardrail scope at issuance ([guardrails](../use/guardrails.md)).
 
 Design record: [ADR-0015](../adr/ADR-0015-cli-administration.md), [ADR-0010](../adr/ADR-0010-roles-and-keys.md), [ADR-0026](../adr/ADR-0026-names-are-keys.md).
