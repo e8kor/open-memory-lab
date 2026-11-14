@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "which typed error codes exist, their family, HTTP status and retryability, and how an error response is shaped"
 ---
 
@@ -17,7 +17,7 @@ Every non-2xx response has one envelope.
   "error": {
     "code": "access.verb_ceiling",
     "message": "a writer key cannot transition a workarea",
-    "rule": "the surface an agent can call never promotes, signs, demotes or deletes",
+    "rule": "R1: the surface an agent can call never promotes, signs, demotes or deletes.",
     "details": {"verb": "POST /v2/workareas/{workarea}/transitions", "role": "writer"},
     "retryable": false
   },
@@ -71,7 +71,7 @@ A key's role, grants and denials decide these. Reads fail closed as absence.
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `access.verb_ceiling` | 403 | The key's role never calls this verb, whatever its grants. Examples: an agent key calling an admin verb, an admin key posting a verdict or reading memory text, a `held_by: service` key reviewing, any web-page request carrying an `Authorization` header. `details.reason` `session_key_only`: a person's own act (listing their keys, ending their session, the export, the deletion request) sent by any key but their web session key, an agent's key naming them included. `details.reason` `session_capacity`: a key operation sent as a person's session key of another capacity than the one it serves, such as `POST /v2/keys` as `<user>-admin`. `details.reason` `session_key_denied`: `POST /v2/keys`, `POST /v2/keys/{key}/connect-codes` or `POST /v2/keys/{key}/denials` sent as a person's session key that carries a denial, on any workarea; such a key issues no key, mints no connect code and cuts off no key, and still ends its session. `details.reason` `federation_is_human_only`: a workarea's federation field set by a key other than a person's reviewer key or an admin key. |
+| `access.verb_ceiling` | 403 | The key's role never calls this verb, whatever its grants. Examples: an agent key calling an admin verb, an admin key posting a verdict or calling recall (it reads memory text only through the journaled [admin read](../architecture/roles-and-keys.md#the-admin-read)), a `held_by: service` key reviewing, any web-page request carrying an `Authorization` header. `details.reason` `session_key_only`: a person's own act (listing their keys, ending their session, the export, the deletion request) sent by any key but their web session key, an agent's key naming them included. `details.reason` `session_capacity`: a key operation sent as a person's session key of another capacity than the one it serves, such as `POST /v2/keys` as `<user>-admin`. `details.reason` `session_key_denied`: `POST /v2/keys`, `POST /v2/keys/{key}/connect-codes` or `POST /v2/keys/{key}/denials` sent as a person's session key that carries a denial, on any workarea; such a key issues no key, mints no connect code and cuts off no key, and still ends its session. `details.reason` `federation_is_human_only`: a workarea's federation field set by a key other than a person's reviewer key or an admin key. |
 | `access.grant_refused` | 403 | The key can read the workarea, but its effective access does not confer the verb's role there. `details`: `workarea_id`, `needed_role`. |
 | `access.not_found` | 404 | The thing does not exist, or is outside the key's read scope. The two cases look the same. Also answers a name that resolves to nothing the key may see. |
 | `access.author_only` | 403 | A writer key tried to supersede a version it did not author. |
@@ -140,7 +140,7 @@ Refusals from the workarea tree and its status ladder.
 
 ## `review` — independence and the serve binding
 
-The reviewer is never the author.
+These codes enforce [R2](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) and the serve binding.
 
 | Code | HTTP | Fires when |
 |---|---|---|

@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "what a team lead needs to decide whether to adopt OML: why writes are held, what it costs, its limits, benchmarks and security, each with the page that owns the detail"
 ---
 
@@ -10,7 +10,7 @@ OML is a memory server for AI agents in which no write is readable by others unt
 
 ## Why writes are held
 
-An agent's wrong conclusion should not become every agent's fact. A write is stored where only its author reads it, scanned, and made readable after a reviewer who did not write it approves it. The cost is a delay and reviewer effort. [Why a write is held](../concepts/why-a-write-is-held.md) has the reasoning and the rejected alternatives. [See it in the quickstart](../start/quickstart.md).
+An agent's wrong conclusion should not become every agent's fact. A write is stored out of other keys' recall, scanned, and served to them after a reviewer who did not write it approves it. The cost is a delay and reviewer effort. [Why a write is held](../concepts/why-a-write-is-held.md) has the reasoning and the rejected alternatives. [See it in the quickstart](../start/quickstart.md).
 
 ## What it costs
 
@@ -30,7 +30,7 @@ Recall quality is keyword-search grade: nDCG@10 of 0.32 to 0.87 depending on the
 
 ## Security and guarantees
 
-The tenant comes from the key, never from the request. Row-level security covers every tenant table, and every write, verdict and key issue enters a signed, hash-chained journal. An agent has no approve, sign, demote or delete verb. Nobody has penetration-tested these controls. [Security](../architecture/security.md) and [what OML guarantees](commitments.md) list what is enforced, what is bounded and what is not claimed.
+The tenant comes from the key, never from the request. Row-level security covers every tenant table, and every write, verdict and key issue enters a signed, hash-chained journal. An agent has no approve, sign, demote or delete verb. A tenant admin reads every memory's text, held ones included, through a journaled [admin read](../architecture/roles-and-keys.md#the-admin-read). People sign in with Google or GitHub against a per-tenant email allowlist; SAML and SCIM are not offered. Erasure and an evidence export are designed and not built ([compliance](compliance.md)). Nobody has penetration-tested these controls. [Security](../architecture/security.md) and [what OML guarantees](commitments.md) list what is enforced, what is bounded and what is not claimed.
 
 ## When not to use it
 

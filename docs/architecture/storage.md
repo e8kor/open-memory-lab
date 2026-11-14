@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "where the transactional commit point is; how the per-tenant signed hash chain, the outbox and the derived lake fit together; why journal payloads carry digests and no body text; where held bodies live"
 ---
 
@@ -42,7 +42,7 @@ Journal payloads never carry body text. An event references content only by dige
 
 This has three effects.
 
-- **Chain verification survives erasure.** Erasing a memory destroys its encryption key. The body becomes unrecoverable, and the signed bytes stay untouched. The chain still verifies end to end.
+- **Chain verification survives erasure.** Erasure, designed ([ADR-0005](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0005-erasure-by-crypto-shredding.md)) and not built, destroys a memory's encryption key. The body becomes unrecoverable, and the signed bytes stay untouched. The chain still verifies end to end.
 - **Comparison needs no keys.** Anyone can check stored bytes against the signed ciphertext digest without decrypting.
 - **The journal alone cannot reproduce content.** Reading history back needs the body stores.
 

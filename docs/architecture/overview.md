@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "how OML fits together: the clients and what each starts from, the actors, the processes and stores, the code layout, how a write, a review, a read and a freeze move through them, and where each of the four rules is enforced"
 ---
 
@@ -139,13 +139,15 @@ The workarea then refuses new writes and approvals. There is no unfreeze. See [w
 
 ## The four rules and where they are enforced
 
+The four rules, R1 to R4, are declared once, in [the constitution](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md). This table names where the build enforces each, and what it does not build yet.
+
 | Rule | Enforced at |
 |---|---|
-| An agent's surface never promotes, signs, demotes or deletes. | The API itself: the MCP tool list omits those verbs, and every HTTP route checks the key's role. See [roles and keys](roles-and-keys.md). |
-| The reviewer is never the author. | Approval time, in the server. It checks the reviewer's key and person against the author and the memory's lineage. A workarea status change and a link need a second identity. See [admission](admission.md). |
-| The gate changes visibility, not ranking. | The read path. Held memories are excluded from every read, and steering comes first and unranked. See [retrieval](retrieval.md). |
-| Nothing is silently deleted. | The journal is append-only. A demotion keeps the bytes. See [audit and lineage](audit-and-lineage.md). |
+| [R1](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md), the verb ceiling | The API itself: no MCP tool reaches a verb above an agent key's role, and every HTTP route checks the key's role. See [roles and keys](roles-and-keys.md). |
+| [R2](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md), the reviewer is never the author | Approval time, in the server. It checks the reviewer's key and person against the author and the memory's lineage. A workarea status change and a link need a second identity. See [admission](admission.md). |
+| [R3](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md), the gate changes visibility, not ranking | The read path. Other keys recall promoted memories only, and steering comes first and unranked. Two exceptions are built: an [in-progress workarea](workareas.md#in-progress-workareas)'s held memories, marked unreviewed, and the journaled [admin read](roles-and-keys.md#the-admin-read). See [retrieval](retrieval.md). |
+| [R4](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md), no silent deletion | The journal is append-only, and a retirement keeps every version. Demotion and erasure by crypto-shredding are designed and not built. See [audit and lineage](audit-and-lineage.md). |
 
 ## What OML does not do
 
-OML returns memories, not answers, and runs no model. Review capacity comes from the reviewers, and the scan is deterministic rules. The Delta lake serves no read. Web pages cover sign-in, a user page and an admin page, with no dashboards. Memory does not cross tenants.
+OML returns memories, not answers, and runs no model. Review capacity comes from the reviewers, and the scan is deterministic rules. The Delta lake serves no read. The [web console](../operations/web-console.md) has a Personal side and an Administration side. Memory does not cross tenants.

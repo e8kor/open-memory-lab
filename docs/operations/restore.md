@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "how to back up an OML server and restore it: what to copy, the restore steps in order, why a restore rewinds the chain and can bring back erased content, and what each kind of loss costs"
 ---
 
@@ -33,7 +33,8 @@ A restore has two hazards:
   than the one the server signed. The restored journal is a consistent, signed prefix, so it verifies
   from inside. Only a head kept outside the server shows what the restore discarded.
 - **It can bring back erased content.** A backup taken before an erase holds the content and the wrapped
-  key that the erase destroyed.
+  key that the erase destroyed. No verb erases in this build ([ADR-0005](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0005-erasure-by-crypto-shredding.md) is designed, not built), so this
+  hazard starts when erasure does.
 
 A lost lake, or other derived data, is not a restore scenario. The lake is derived from the journal.
 
