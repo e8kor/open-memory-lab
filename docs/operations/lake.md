@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "how to run the lake writer, rotate its key, read the lake with the named queries or DuckDB, check its health, and what happens on erase"
 ---
 
@@ -94,6 +94,8 @@ checks are `lake.writer` (no writer holds the lease), `lake.lag`, `lake.lag_seco
 families ([metrics](../reference/metrics.md)).
 
 ## What happens on erase
+
+No verb journals `lifecycle.erase` in this build: erasure by crypto-shredding is designed ([ADR-0005](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0005-erasure-by-crypto-shredding.md)) and not built. The lake writer already handles the event, as follows.
 
 On `lifecycle.erase`, the writer destroys the version's key in `artifact_keys` and rewrites its
 `silver.claims` row as `erased` with no body. Every older table version that still holds the sealed body

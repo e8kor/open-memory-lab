@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "where the transactional commit point is; how the per-tenant signed hash chain, the outbox and the derived lake fit together; why journal payloads carry digests and no body text; where held bodies live"
 ---
 
@@ -42,7 +42,7 @@ Journal payloads never carry body text. An event references content only by dige
 
 This has three effects.
 
-- **Chain verification survives erasure.** Erasing a memory destroys its encryption key. The body becomes unrecoverable, and the signed bytes stay untouched. The chain still verifies end to end.
+- **Chain verification survives erasure.** Erasure, designed ([ADR-0005](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0005-erasure-by-crypto-shredding.md)) and not built, destroys a memory's encryption key. The body becomes unrecoverable, and the signed bytes stay untouched. The chain still verifies end to end.
 - **Comparison needs no keys.** Anyone can check stored bytes against the signed ciphertext digest without decrypting.
 - **The journal alone cannot reproduce content.** Reading history back needs the body stores.
 
@@ -72,7 +72,7 @@ Delta Lake is a derived copy for analysis. It serves no client read. Recall, sea
 
 After a crash, the writer rebuilds the same batch from the recorded bounds. It never re-cuts by time or size. Tables that committed skip it, and the rest apply it.
 
-**Retracts keep order.** A retract, such as a demotion or reassignment, is a Delta `MERGE` applied in the same sequence order as materialization. A promotion at sequence 100 and its demotion at 140 end in the demoted state, even in one batch. The cost is head-of-line blocking: a slow materialization delays the retracts behind it.
+**Retracts keep order.** A retract, such as a demotion or reassignment (neither built yet), is a Delta `MERGE` applied in the same sequence order as materialization. A promotion at sequence 100 and its demotion at 140 end in the demoted state, even in one batch. The cost is head-of-line blocking: a slow materialization delays the retracts behind it.
 
 **A failing row is dead-lettered.** After a bounded retry budget, the writer journals a `materialize-skipped` event, moves the row to the `dead_letter` table and moves on. The lake is then knowingly incomplete until repair. A stalled frontier would hide the same problem inside unbounded lag. `oml-lakewriter doctor` reports the count.
 

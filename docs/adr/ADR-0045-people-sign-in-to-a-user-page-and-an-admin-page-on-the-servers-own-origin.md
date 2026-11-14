@@ -1079,7 +1079,7 @@ The [security page](../architecture/security.md) keeps a short table for the web
 | Login forgery | The callback admits only the `state` sealed in the cookie of the browser that started the flow. | None known. |
 | A moved or recycled email address | Only a verified address from the provider counts. The provider account is pinned at first sign-in, and another account with the same address is `identity_changed`. | Before an entry's first sign-in, whoever controls the address at the provider holds it. |
 | Memory text rendered to a person | OML escapes it and strips control and bidirectional characters. | The text appears as text and still says whatever it says. |
-| Secrets in logs | Logs record the route template, never the query. No cookie, token or email reaches a line. The journal holds an email's digest. | Your reverse proxy's access log must drop the query on `/web/callback/*`. OML cannot check that. |
+| Secrets in logs | Logs record the route template, never the query. No cookie, token or email reaches a line. The journal holds an email's digest. | The deployment's reverse proxy's access log must drop the query on `/web/callback/*`. OML cannot check that. |
 | A person outliving their access | Removing an email ends its sessions. | The person's agent keys keep working until an admin cuts each off with a global denial. |
 | Admin authority through the pages | The admin key never reviews. Review runs as the person's reviewer key. The admin key reads content only on two admin read routes, and the journal records each read as `memory.admin_read`. | A tenant's admin can read every person's memories, held ones included. People who need privacy from that admin need their own tenant. |
 

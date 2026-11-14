@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "who approved this memory, what the journal records and never records, how lineage and supersession chains work, and what the signature does and does not prove"
 ---
 
@@ -15,7 +15,7 @@ The journal is the system of record. It is a signed, hash-chained, append-only s
 - every write, with the scan rule set that ran;
 - every review serve, with digests of what the reviewer was shown;
 - every approval and rejection, with the review policy in force;
-- every promotion, supersession and demotion;
+- every promotion and supersession;
 - key issuance, grants, denials and workarea changes.
 
 The [event catalog](../data/event-catalog.md) lists every event type. The byte-level format is in [chain format](../data/chain-format.md).
@@ -71,6 +71,6 @@ A superseded version is never deleted. It stays readable as history, with its ow
 
 ## What is not available
 
-- **Erasure.** This build has no erase verb. A demotion keeps the bytes.
-- **An evidence export.** `oml audit export` does not exist.
-- **Chain verification from the CLI.** `oml audit verify-chain` is refused until the server serves a chain export.
+- **Erasure.** No verb erases a memory in this build. Erasure by crypto-shredding is designed ([ADR-0005](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0005-erasure-by-crypto-shredding.md)) and not built. Demotion, which keeps the bytes, is designed and not built either. A retirement takes a claim out of recall and keeps every version.
+- **An evidence export.** `oml audit export` is designed ([ADR-0015](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0015-cli-administration.md) d4) and not built. A person's own export from the web console is built; it is a copy of the person's memories, not evidence.
+- **Chain verification from the CLI.** `oml audit verify-chain` is refused until the server serves a chain export. The [chain format](../data/chain-format.md) procedure verifies the journal table directly.

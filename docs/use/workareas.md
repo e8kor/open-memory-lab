@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "how memory is organized in workareas, what a person's own workarea and the shared universe are, how a workarea matures from development to validated, how an in-progress workarea serves unreviewed memories inside it, and what links and briefs do"
 ---
 
@@ -52,8 +52,8 @@ workarea only.
 4. **Narrow with a curator profile.** A key issued with `--profile curator` can reject, propose a retirement or a summary and flag a contradiction inside the in-progress workarea. It never approves.
 
 The cost: an agent can act on a memory nobody has judged. Use this mode for development workareas,
-where that trade is the point. The reviewer is still never the author. On a development home with
-one person, that person's approvals are marked `self_signed`.
+where that trade is the point. The reviewer is still never the author. A `self_signed` approval in a
+development workarea is designed ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5) and not built.
 
 ## Links and the brief
 

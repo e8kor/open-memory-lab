@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Four repository lints (docs/contributing/review-checklist.md).
+"""Five repository lints (docs/contributing/review-checklist.md).
 
-    python scripts/lint_practices.py migrations|ports|like|actions [--root DIR] [--no-allowlist]
+    python scripts/lint_practices.py migrations|ports|like|actions|voice [--root DIR] [--no-allowlist]
 
 migrations  every migration not in lint_allow/migrations.txt sets lock_timeout, adds CHECK and
             FOREIGN KEY constraints NOT VALID (an inline CHECK on an added column too) and validates them (in that or a later
@@ -12,9 +12,15 @@ like        no LIKE or ILIKE operator in the SQL of crates/adapters/oml-pg/src; 
             runs a non-leakproof operator before its policy (ADR-0052).
 actions     every `uses:` under .github/ is `owner/repo@<40 hex> # v<tag>`, and one action is one
             commit in every workflow (docs/contributing/ci-and-toolchain.md "Pinned actions").
+voice       no second- or first-person word (you, your, yours, yourself, yourselves, we, our, ours,
+            ourselves, us, me, my, mine, the pronoun I, let's) in the prose of docs/**/*.md,
+            changes/*.md and the descriptions in docs/api/mcp-tools.json: code (fenced, indented,
+            inline), HTML comments, link targets, URLs, quotations and blockquotes are not prose,
+            and a file in lint_allow/voice.txt is skipped (design/README.md, the neutral voice).
 
 An escape is a reasoned line comment: `-- lint:allow <rule> <why>` in SQL,
-`// lint:allow-like <why>` in Rust, `lint:allow-5432 <why>` anywhere on the line.
+`// lint:allow-like <why>` in Rust, `lint:allow-5432 <why>` anywhere on the line,
+`<!-- lint:allow-voice <why> -->` on a Markdown line, the reason not empty.
 Standard library only.
 """
 from __future__ import annotations
@@ -235,7 +241,162 @@ def lint_actions(root: Path, use_allow: bool = True) -> list[str]:
     return problems
 
 
-LINTS = {"migrations": lint_migrations, "ports": lint_ports, "like": lint_like, "actions": lint_actions}
+# ---- voice ------------------------------------------------------------------------------
+
+# The neutral voice (design/README.md): no second or first person in reader-facing prose.
+VOICE = re.compile(
+    r"(?<![-\w'’])(?:let['’]s|you|your|yours|yourself|yourselves|we|our|ours|ourselves|us|me|my|mine)(?![-\w'’])"
+    r"|(?<![-\w/.'’])I(?:['’](?:m|ve|ll|d))?(?![-\w/.'’])",
+    re.I,
+)
+# "I" counts only as the capital pronoun: a lower-case i, and an I after a word that numbers
+# (Phase I, Type I) or inside a Roman numeral (II, IV), are not it.
+NUMBERING = re.compile(r"(?:phase|type|part|tier|class|level|stage|appendix|chapter|volume|annex|article)\s*$", re.I)
+ESCAPE = re.compile(r"<!--\s*lint:allow-voice\s+\S[^>]*-->")
+FENCE = re.compile(r"^\s*(```|~~~)")
+LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
+CODE = [
+    re.compile(r"`[^`]*`"),                                    # inline code, also over lines
+    re.compile(r"<!--.*?-->", re.S),                           # HTML comments, also over lines
+]
+NOT_PROSE = [
+    re.compile(r"\]\([^)]*\)"),                                # link targets
+    re.compile(r"<[^>\s]+>"),                                  # autolinks and bare tags
+    re.compile(r"https?://\S+"),                               # bare URLs
+    # A quotation opens after a non-word and closes before one; a lone mark pairs with nothing.
+    re.compile(r'(?<![\w"])"(?=\S)[^"]*?(?<=\S)"(?![\w"])'),
+    re.compile(r"(?<![\w'])'(?=\S)[^'\n]*?(?<=\S)'(?![\w'])"),
+    re.compile(r"[“‘][^”’]*[”’]"),
+]
+
+
+def blank(match: re.Match) -> str:
+    """Blank a span but keep its newlines, so line numbers survive."""
+    return re.sub(r"[^\n]", " ", match.group(0))
+
+
+def fill(match: re.Match) -> str:
+    """Code or a comment becomes a run of filler that is no word, keeping its newlines, so a
+    quotation that ends in code still closes on a non-space."""
+    return re.sub(r"[^\n]", "\u00b7", match.group(0))
+
+
+# The pronoun I is a capital followed by a lower-case word or a contraction; a label (Option I),
+# a unit after a number (3.0 I) or a numeral (Phase I) is not it.
+PRONOUN_I = re.compile(r"I(?:['’](?:m|ve|ll|d)\b| +[a-z])")
+
+
+def voice_words(prose: str) -> list[str]:
+    words = []
+    for m in VOICE.finditer(prose):
+        w = m.group(0)
+        if w == "US":
+            continue
+        if w.lower() == "i" or w.lower().startswith(("i'", "i’")):
+            before = prose[: m.start()]
+            if (w[0] != "I" or not PRONOUN_I.match(prose, m.start())
+                    or NUMBERING.search(before) or re.search(r"\d\s*$", before)):
+                continue
+        words.append(w)
+    return words
+
+
+def paragraphs(text: str):
+    """Yield (first line number, paragraph text) for the prose blocks of a Markdown page.
+
+    Fenced code, 4-space indented code blocks and blockquotes are left out."""
+    lines = text.split("\n")
+    fenced, block, start, prev_list = False, [], 0, False
+
+    def flush():
+        nonlocal block, prev_list
+        if block:
+            first = block[0]
+            is_list = bool(LIST_ITEM.match(first))
+            indented_code = (first.startswith(("    ", "\t")) and not is_list and not prev_list
+                             and all(l.startswith(("    ", "\t")) for l in block))
+            if not indented_code:
+                yield start, "\n".join(l if not l.lstrip().startswith(">") else "" for l in block)
+            prev_list = is_list or (prev_list and first.startswith((" ", "\t")))
+        block = []
+
+    for i, line in enumerate(lines, 1):
+        if FENCE.match(line):
+            yield from flush()
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        if not line.strip():
+            yield from flush()
+            continue
+        if not block:
+            start = i
+        block.append(line)
+    yield from flush()
+
+
+def prose_of(text: str) -> str:
+    for pat in CODE:
+        text = pat.sub(fill, text)
+    for pat in NOT_PROSE:
+        text = pat.sub(blank, text)
+    return text
+
+
+def markdown_voice(rel: str, text: str) -> list[str]:
+    problems = []
+    raw = text.split("\n")
+    # Multi-line comments are blanked over the whole page first, keeping the line count.
+    text = re.sub(r"<!--.*?-->", lambda m: m.group(0) if ESCAPE.fullmatch(m.group(0)) else blank(m), text, flags=re.S)
+    for start, para in paragraphs(text):
+        for k, line in enumerate(prose_of(para).split("\n")):
+            n = start + k
+            if ESCAPE.search(raw[n - 1]):
+                continue
+            words = voice_words(line)
+            if words:
+                problems.append(f"{rel}:{n}: {', '.join(words)}: {raw[n - 1].strip()[:90]}")
+    return problems
+
+
+def descriptions(node, path=""):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            here = f"{path}.{k}" if path else k
+            if k == "description" and isinstance(v, str):
+                yield here, v
+            else:
+                yield from descriptions(v, here)
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            name = v.get("name") if isinstance(v, dict) and isinstance(v.get("name"), str) else str(i)
+            yield from descriptions(v, f"{path}[{name}]")
+
+
+def lint_voice(root: Path, use_allow: bool = True) -> list[str]:
+    """docs/**/*.md, changes/*.md and the descriptions of docs/api/mcp-tools.json."""
+    import json
+
+    skip = allowed("voice.txt", root, use_allow)
+    problems = []
+    pages = sorted((root / "docs").rglob("*.md")) + sorted((root / "changes").glob("*.md"))
+    for f in pages:
+        rel = f.relative_to(root).as_posix()
+        if any(Path(rel).match(pat) for pat in skip):
+            continue
+        problems += markdown_voice(rel, f.read_text())
+    tools = root / "docs" / "api" / "mcp-tools.json"
+    if tools.exists():
+        for where, text in descriptions(json.loads(tools.read_text())):
+            words = voice_words(prose_of(text))
+            if words:
+                problems.append(f"docs/api/mcp-tools.json: {where}: {', '.join(words)}")
+    return problems
+
+
+LINTS = {"migrations": lint_migrations, "ports": lint_ports, "like": lint_like, "actions": lint_actions,
+         "voice": lint_voice}
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "every lake table column by column: Delta types, partitioning, merge keys, what each table holds and never holds, the commit protocol, and the maintenance that keeps the lake compact and erasable"
 ---
 
@@ -35,7 +35,7 @@ credentials can be attached. The cost is one set of tables per tenant. Every ten
 | Table | One row per | Never holds | Written by |
 |---|---|---|---|
 | `bronze.events` | Journal event | Body text, body ciphertext, held content | Append only |
-| `silver.claims` | Memory version that was approved | Held bodies on first write, development-home (`self_signed`) rows, plaintext | Append on approval, merge on demote or erase |
+| `silver.claims` | Memory version that was approved | Held bodies on first write, `self_signed` rows (designed, not built), plaintext | Append on approval, merge on demote or erase |
 | `gold.lineage` | Ratified edge, and each version's derives-from or supersedes link | Pending edges | Append on ratification, merge on change |
 | `telemetry.recall_daily` | Day, pipeline and access path | Query text, version ids | Rewritten from the last 30 days |
 | `lake.batches` | Drained batch | Tenant data | Append only |
@@ -89,7 +89,7 @@ Partitioned by `event_date`.
 ## `silver.claims`
 
 One row per approved memory version. The row exists because a promotion event was drained from the outbox.
-Held bodies do not enter, and development-home (`self_signed`) rows never enter. Bodies are encrypted at rest
+Held bodies do not enter, and `self_signed` rows, a designed mark no approval carries yet, never enter. Bodies are encrypted at rest
 under a key of their own. The merge key is `artifact_id`, which names the version. Unpartitioned.
 
 | Column | Type | Null | Meaning |
@@ -170,7 +170,7 @@ store without conditional put is not a supported lake target.
 
 ## Retracts
 
-A demote or an erase is a Delta `MERGE` on `silver.claims`, applied in outbox order with materialization.
+A demote or an erase is a Delta `MERGE` on `silver.claims`, applied in outbox order with materialization. Neither verb is built: no event demotes or erases, so the writer's handling below is designed and waits for them.
 Merges are copy-on-write. They rewrite the files that hold matched rows and leave the old files unreferenced.
 
 | Retract | `silver.claims` | `bronze.events` |

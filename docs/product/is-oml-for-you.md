@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "who OML is for, what it gives and costs, when not to use it, and five scenarios that use only built verbs"
 ---
 
@@ -20,7 +20,7 @@ The store cannot tell a verified finding from a hallucination or a planted instr
 
 OML holds every memory until a second identity approves it. Every write is scanned, held, reviewed by someone who did not write it, signed, and only then readable by others. Read [why a write is held](../concepts/why-a-write-is-held.md) for the reasoning.
 
-Memory lives in workareas that mirror the crews. Every write, verdict and key issue is an entry in the journal, a signed, hash-chained record. `oml audit verify-chain` checks that record.
+Memory lives in workareas that mirror the crews. Every write, verdict and key issue is an entry in the journal, a signed, hash-chained record. The [chain format](../data/chain-format.md) procedure checks that record; `oml audit verify-chain` refuses until the server serves a chain export, which is not built.
 
 OML works as a memory provider on its own. Agents write, recall, fetch and replace memories through three tools. See [MCP tools](../api/mcp-plugin.md).
 
