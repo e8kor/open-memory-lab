@@ -1,0 +1,67 @@
+<!-- The architecture context view (docs/architecture/views.md). Every colour is a design token, referenced in the style element alone; scripts/gen_design_tokens.py resolves them per theme. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="380" viewBox="0 0 1000 380" role="img" aria-labelledby="title desc">
+<title id="title">Context: who uses Open Memory Lab and what it depends on</title>
+<desc id="desc">People use OML in the console or the CLI to write and review; admins and the operator administer it; AI agents remember and recall over MCP. OML depends on Google and GitHub for people's sign-in and on GitHub Releases, signed with Sigstore, for its builds, and feeds a Delta lake that analytics tools read.</desc>
+<style>
+.plate{fill:var(--ground);stroke:var(--rule)}
+text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+.box{fill:var(--ground-alt);stroke:var(--edge);stroke-width:1.3}
+.box.soft{fill:var(--panel)}
+.box.acc{fill:var(--held-soft);stroke:var(--star)}
+.box.plan{fill:none;stroke-dasharray:5 4}
+.box.acs{stroke:var(--star)}
+.zone{fill:none;stroke:var(--star);stroke-width:1.3;stroke-dasharray:6 5}
+.lane{fill:none;stroke:var(--rule);stroke-width:1}
+.t{fill:var(--ink);font-size:13px;font-weight:700}
+.t.big{font-size:15px}
+.s{fill:var(--ink-dim);font-size:11.5px}
+.s.hi{fill:var(--star);font-weight:700}
+.lanet{fill:var(--ink-faint);font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;letter-spacing:.06em}
+.e{fill:none;stroke:var(--edge);stroke-width:1.3}
+.e.acc{stroke:var(--star)}
+.e.dash{stroke-dasharray:5 4}
+.ah{fill:var(--edge)}
+.aha{fill:var(--star)}
+.el{fill:var(--ink);font-size:11.5px;paint-order:stroke;stroke:var(--ground);stroke-width:5px;stroke-linejoin:round}
+.step{fill:var(--star-fill)}
+.stept{fill:var(--on-star);font-size:11px;font-weight:700;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+.acct{fill:var(--star);font-size:11.5px;font-weight:700;paint-order:stroke;stroke:var(--ground);stroke-width:5px;stroke-linejoin:round}
+</style>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0 L10 5 L0 10 z"/></marker><marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="aha" d="M0 0 L10 5 L0 10 z"/></marker></defs>
+<rect class="plate" x="0.5" y="0.5" width="999" height="379" rx="6"/>
+<rect class="box" x="20" y="30" width="230" height="74" rx="5"/>
+<text class="t" x="36" y="58">Developers and reviewers</text>
+<text class="s" x="36" y="78">people, in the console or CLI</text>
+<rect class="box" x="20" y="153" width="230" height="74" rx="5"/>
+<text class="t" x="36" y="181">Admins and the operator</text>
+<text class="s" x="36" y="201">tenants, keys, quotas, deployment</text>
+<rect class="box" x="20" y="276" width="230" height="74" rx="5"/>
+<text class="t" x="36" y="304">AI agents</text>
+<text class="s" x="36" y="324">Claude Code, Codex, Cursor, claude.ai</text>
+<rect class="box acc" x="385" y="125" width="230" height="130" rx="6"/>
+<text class="t big" x="500" y="168" text-anchor="middle">Open Memory Lab</text>
+<text class="s" x="500" y="192" text-anchor="middle">memory an agent may only read</text>
+<text class="s" x="500" y="208" text-anchor="middle">after a different identity</text>
+<text class="s" x="500" y="224" text-anchor="middle">has reviewed it</text>
+<rect class="box" x="750" y="30" width="230" height="74" rx="5"/>
+<text class="t" x="766" y="58">Google and GitHub</text>
+<text class="s" x="766" y="78">sign-in for people (OAuth)</text>
+<rect class="box" x="750" y="153" width="230" height="74" rx="5"/>
+<text class="t" x="766" y="181">GitHub Releases, Sigstore</text>
+<text class="s" x="766" y="201">signed binaries, image, chart</text>
+<rect class="box" x="750" y="276" width="230" height="74" rx="5"/>
+<text class="t" x="766" y="304">Analytics tools</text>
+<text class="s" x="766" y="324">read the derived Delta lake</text>
+<path class="e" d="M250 67 C320 67 330 150 383 160" marker-end="url(#a)"/>
+<text class="el" x="300" y="95">write, review</text>
+<path class="e" d="M250 190 L383 190" marker-end="url(#a)"/>
+<text class="el" x="268" y="182">administer</text>
+<path class="e" d="M250 313 C320 313 330 230 383 220" marker-end="url(#a)"/>
+<text class="el" x="276" y="292">MCP: remember, recall</text>
+<path class="e" d="M617 160 C680 150 690 67 748 67" marker-end="url(#a)"/>
+<text class="el" x="640" y="95">code exchange</text>
+<path class="e" d="M748 190 L617 190" marker-end="url(#a)"/>
+<text class="el" x="628" y="182">verified releases</text>
+<path class="e" d="M617 220 C680 230 690 313 748 313" marker-end="url(#a)"/>
+<text class="el" x="640" y="292">lake tables</text>
+</svg>
