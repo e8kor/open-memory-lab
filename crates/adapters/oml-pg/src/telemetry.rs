@@ -198,7 +198,7 @@ impl Telemetry for PgTelemetry {
             });
             let rows = sqlx::query(&format!(
                 "SELECT e.recall_id, to_char(e.created_at AT TIME ZONE 'UTC', {AT}) AS at, \
-                        e.key_id, e.principal, e.scope_workarea_id, e.pipeline, e.access, \
+                        e.key_id, e.principal, e.scope_workspace_id, e.pipeline, e.access, \
                         encode(e.query_digest, 'hex') AS digest, e.query_text, e.hit_ids, \
                         e.hit_scores, \
                         COALESCE((SELECT json_agg(json_build_object( \
@@ -238,7 +238,7 @@ impl Telemetry for PgTelemetry {
             // derived or get, as ADR-0054 d11 decides; superseded grades but
             // does not make a query labelled by itself.
             let rows = sqlx::query(
-                "SELECT e.key_id, e.scope_workarea_id, e.query_text, \
+                "SELECT e.key_id, e.scope_workspace_id, e.query_text, \
                         array_agg(o.artifact_id ORDER BY o.artifact_id, o.label) AS ids, \
                         array_agg(o.label ORDER BY o.artifact_id, o.label) AS labels \
                  FROM recall_events e \
@@ -248,7 +248,7 @@ impl Telemetry for PgTelemetry {
                    AND e.created_at > now() - make_interval(days => $2) \
                    AND o.artifact_id IS NOT NULL \
                  GROUP BY e.tenant_id, e.recall_id, e.created_at, e.key_id, \
-                          e.scope_workarea_id, e.query_text \
+                          e.scope_workspace_id, e.query_text \
                  HAVING bool_or(o.source = 'explicit' OR o.label IN ('derived', 'get')) \
                  ORDER BY e.created_at, e.recall_id",
             )
@@ -273,7 +273,7 @@ impl Telemetry for PgTelemetry {
                     }
                     Ok(LabelledQuery {
                         key_id: row.try_get("key_id").map_err(backend)?,
-                        scope_workarea_id: row.try_get("scope_workarea_id").map_err(backend)?,
+                        scope_workspace_id: row.try_get("scope_workspace_id").map_err(backend)?,
                         query_text: row.try_get("query_text").map_err(backend)?,
                         grades: grades.into_iter().collect(),
                     })
@@ -314,7 +314,7 @@ fn stored_event(row: &PgRow) -> Result<StoredEvent, StoreError> {
         created_at: time(row, "at")?,
         key_id: row.try_get("key_id").map_err(backend)?,
         principal: row.try_get("principal").map_err(backend)?,
-        scope_workarea_id: row.try_get("scope_workarea_id").map_err(backend)?,
+        scope_workspace_id: row.try_get("scope_workspace_id").map_err(backend)?,
         pipeline: row.try_get("pipeline").map_err(backend)?,
         access: row.try_get("access").map_err(backend)?,
         query_digest: format!(
@@ -740,9 +740,9 @@ async fn insert_event(
     let (ids, scores): (Vec<Uuid>, Vec<f32>) = e.hits.iter().copied().unzip();
     sqlx::query(
         "INSERT INTO recall_events (tenant_id, recall_id, created_at, key_id, principal, \
-             scope_workarea_id, source_workarea_id, pipeline, access, query_digest, \
-             query_text, hit_ids, hit_scores, sources, federated_workarea_ids, \
-             reference_workarea_ids) \
+             scope_workspace_id, source_workspace_id, pipeline, access, query_digest, \
+             query_text, hit_ids, hit_scores, sources, federated_workspace_ids, \
+             reference_workspace_ids) \
          VALUES ($1, $2, $3::timestamptz, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
     )
     .bind(e.tenant_id)
@@ -750,8 +750,8 @@ async fn insert_event(
     .bind(e.created_at.as_str())
     .bind(e.key_id)
     .bind(&e.principal)
-    .bind(e.scope_workarea_id)
-    .bind(e.source_workarea_id)
+    .bind(e.scope_workspace_id)
+    .bind(e.source_workspace_id)
     .bind(e.pipeline)
     .bind(e.access)
     .bind(digest)
@@ -759,8 +759,8 @@ async fn insert_event(
     .bind(ids)
     .bind(scores)
     .bind(e.federation.as_ref().map(|f| f.sources.clone()))
-    .bind(e.federation.as_ref().map(|f| f.federated_workarea_ids.clone()))
-    .bind(e.federation.as_ref().map(|f| f.reference_workarea_ids.clone()))
+    .bind(e.federation.as_ref().map(|f| f.federated_workspace_ids.clone()))
+    .bind(e.federation.as_ref().map(|f| f.reference_workspace_ids.clone()))
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -778,7 +778,7 @@ async fn requery(tx: &mut Transaction<'_, Postgres>, e: &RecallEvent) -> Result<
          SELECT p.tenant_id, p.recall_id, p.created_at, NULL, 'requery', 'inferred', \
                 $5::timestamptz \
          FROM recall_events p \
-         WHERE p.tenant_id = $1 AND p.key_id = $2 AND p.scope_workarea_id = $3 \
+         WHERE p.tenant_id = $1 AND p.key_id = $2 AND p.scope_workspace_id = $3 \
            AND p.recall_id <> $4 \
            AND p.created_at < $5::timestamptz \
            AND p.created_at >= $5::timestamptz - make_interval(secs => $6) \
@@ -792,7 +792,7 @@ async fn requery(tx: &mut Transaction<'_, Postgres>, e: &RecallEvent) -> Result<
     )
     .bind(e.tenant_id)
     .bind(e.key_id)
-    .bind(e.scope_workarea_id)
+    .bind(e.scope_workspace_id)
     .bind(e.recall_id)
     .bind(e.created_at.as_str())
     .bind(REQUERY_WINDOW_SECS as f64)
@@ -868,7 +868,7 @@ async fn feedback(
     Ok(written)
 }
 
-/// Whether a served memory of the workarea, other than this one, holds
+/// Whether a served memory of the workspace, other than this one, holds
 /// exactly this text (ADR-0054 d12, as accepted).
 async fn duplicate(
     tx: &mut Transaction<'_, Postgres>,
@@ -876,11 +876,11 @@ async fn duplicate(
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM memories m \
-          WHERE m.tenant_id = $1 AND m.workarea_id = $2 AND m.status = 'promoted' \
+          WHERE m.tenant_id = $1 AND m.workspace_id = $2 AND m.status = 'promoted' \
             AND m.is_tip AND NOT m.retirement AND m.claim_digest = $3 AND m.id <> $4)",
     )
     .bind(r.tenant_id)
-    .bind(r.workarea_id)
+    .bind(r.workspace_id)
     .bind(
         r.body_digest
             .strip_prefix("sha256:")
@@ -944,6 +944,7 @@ pub(crate) fn tenant_partitions_ddl(tenant_id: Uuid) -> Vec<String> {
                 format!("ALTER TABLE {p} FORCE ROW LEVEL SECURITY"),
                 format!("CREATE POLICY tenant_isolation ON {p} {POLICY}"),
                 format!("ALTER TABLE {table} ATTACH PARTITION {p} FOR VALUES IN ('{tenant_id}')"),
+                crate::derived_index_names_ddl(&p),
             ]
         })
         .collect()
