@@ -40,7 +40,7 @@ bind every writer, and it is the page a reviewer holds any other page against.
       apologies in prose, and a limitation leaves only when its exit criterion is met.
     - Every unbuilt or unmeasured claim carries its marker: "decided, not built" or
       "unmeasured — FR-n". No present-tense capability claims for software that does not exist.
-    - No counts of our own output in prose.
+    - No counts of the project's own output in prose.
     - Compliance vocabulary: the sanctioned form is "produces the evidence an auditor asks
       for" — never "compliant", "audit-ready", "regulator-grade", and no regulator's
       requirement is named without the sourced regulation and article.
