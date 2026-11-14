@@ -204,7 +204,7 @@ ratifier differ), R3 (a release never carries a held row) and R4 (a withdrawal d
 |---|---|
 | **`validated` as the release** | Freezes the workarea against supersession (ADR-0009 d5), so a fact found wrong after release stays uncorrectable; ADR-0047 d10 rejected it for the same reason. |
 | **A frozen release child holding copies (ADR-0047 d10 as written)** | Copies every member, doubles review and storage, and the frozen copies cannot be demoted without a second path; a manifest by artifact id gives the same evidence. |
-| **A release as an `as_of` instant** | An instant names no set; members promoted within one instant of the cut are ambiguous, and an instant cannot exclude `self_signed` or simulation rows. |
+| **A release as an `as_of` instant** | An instant names no set that two people can check against each other, today's access and retirement change what it returns (ADR-0059 d15), and it cannot exclude `self_signed` or simulation rows. |
 | **CI proposes releases** | An automated actor would choose what a person is asked to publish; the person's act would shrink to approving a list a machine drew up. |
 | **Release-bound keys still see held items inside in progress** | Would make a "production" key read unreviewed text whenever its workarea is in progress, which the operator ruled out. |
 | **The key chooses its binding per request** | The gated thing would choose what gating applies to it (R1). |

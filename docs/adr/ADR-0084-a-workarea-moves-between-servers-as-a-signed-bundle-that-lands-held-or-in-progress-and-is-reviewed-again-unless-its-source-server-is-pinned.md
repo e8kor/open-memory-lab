@@ -140,8 +140,8 @@ Decided, not built.
     | an entry outside the fixed layout or out of order | `bundle.layout` |
     | a path with `..`, an absolute path, a symlink or a hard link | `bundle.path_unsafe` |
     | decompressed size or file count over its limit | `bundle.too_large` |
-    | a line over 2 MiB | `bundle.line_too_long` |
-    | JSON nesting deeper than 32 | `bundle.depth` |
+    | a line over 2 MiB, twice the 1 MiB bound on a field (ADR-0065 d9) | `bundle.line_too_long` |
+    | JSON nesting deeper than 32, more than any `oml-bundle/1` object needs | `bundle.depth` |
     | a duplicate artifact id and version, or a duplicate `bodies/` entry | `bundle.duplicate` |
     | a body no line references | `bundle.unreferenced_body` |
 

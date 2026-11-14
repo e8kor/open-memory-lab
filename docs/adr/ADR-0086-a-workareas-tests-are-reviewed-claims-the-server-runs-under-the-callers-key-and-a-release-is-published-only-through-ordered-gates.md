@@ -63,7 +63,7 @@ release is held to, so it is reviewed content) and R3 (a run reads only what its
   A run counts once on a new `test_runs` meter. Its journal event, `workarea.test_run`, carries the
   run id, the target digest, the read-scope digest, the server version, and per case the claim key,
   the version and `pass` or `fail`. No query text, hit, tool input or decision text goes into the
-  journal; the full result is served to the caller and kept for 30 days for the release page.
+  journal; the full result is served to the caller and kept for the release page for a retention set at the build.
 
 - **d4 — A guardrail case is judged against the signed `effect`, never the in-progress downgrade.**
   Inside an in-progress workarea a held rule is served with `effect_inside: "ask"` (ADR-0080 d10,
@@ -104,8 +104,7 @@ release is held to, so it is reviewed content) and R3 (a run reads only what its
 - A migration adds test runs and gate records; the kind list gains `test`.
 - `oml workarea test [--against …] [--attach <proposal>]`; a Tests section on the workarea's page;
   the release page shows the gate records.
-- Doctor lines: proposals whose gate run is stale against their candidate; overrides in the last
-  30 days.
+- Doctor lines: proposals whose gate run is stale against their candidate; overrides on published releases.
 - Each run costs one recall per `recall` case and one decision per `guardrail` case; a cap on cases
   per suite and runs per hour is set at the build, unmeasured until then.
 - Questions for the operator, recommendation first:
