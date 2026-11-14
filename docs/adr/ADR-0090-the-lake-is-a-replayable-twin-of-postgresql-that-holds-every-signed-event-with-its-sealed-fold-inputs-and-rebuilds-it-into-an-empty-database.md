@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0090-the-lake-is-a-replayable-twin-of-postgresql-that-holds-every-signed-event-with-its-sealed-fold-inputs-and-rebuilds-it-into-an-empty-database
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-14
 answers: what the lake holds today and why PostgreSQL cannot be rebuilt from it; the lake's role as PostgreSQL's durable twin; the replay set; commit-time staging of fold inputs; the inventory of every writer and how each is reproduced; what is excluded and what a rebuild makes of it; sealing, custody, placement and R3; erasure and the non-erasable signed metadata; per-tenant frontiers, the provider tenant, waivers and resume; the rebuild verb, its order, fencing, chain verification and sequence; cuts, epochs and drills; signed head checkpoints kept off the lake; migrations and the fold law; derived rows; the equality proof; the RPO; storage; doctor lines and metrics; what ADR-0080 to ADR-0089 owe the twin
 -->
 
 # ADR-0090 — The lake is a replayable twin of PostgreSQL: it holds every signed event with its sealed fold inputs, and rebuilds PostgreSQL into an empty database
 
-**Status:** proposed · 2026-11-14 · requested by the operator on 2026-11-14 ("persisting to deltalake, and having opportunity to reconsolidate postgresql state from delta lake"; asked which role the lake should have, the operator chose a full replayable copy); revised the same day after two independent reviews, with four decisions the operator took (d3, d8, d10, d11); every default and every reviewer recommendation taken since is marked "operator to confirm"
+**Status:** accepted design · 2026-11-14, by the operator, before it is built, with every default and reviewer recommendation drafted for confirmation decided as drafted, the RPO thresholds of 300 and 3,600 seconds and the hourly checkpoint included, and its amendments of ADR-0003, ADR-0005 and ADR-0060 · proposed the same day, requested by the operator on 2026-11-14 ("persisting to deltalake, and having opportunity to reconsolidate postgresql state from delta lake"; asked which role the lake should have, the operator chose a full replayable copy); revised the same day after two independent reviews, with four decisions the operator took (d3, d8, d10, d11)
 
 **Amends:** ADR-0003 (d1, d3, d6), ADR-0060 (d2, d3, d6, d14, d19), ADR-0005 (d3, d4)
 
@@ -114,7 +114,7 @@ Decided, not built.
     (a closed set, d4), `key_ref`, `sealed`, `plaintext_digest`, `ciphertext_digest`.
   - **`twin/keys`, MERGE by `key_ref`.** The lake's copy of the wrapped data keys: `wrapped_dek`,
     `kek_id`, `created_at`, `destroyed_at`, `applied_seq`.
-  - **`twin/state`, operator to confirm.** Images of the two counters no event reproduces:
+  - **`twin/state` (decided by the operator, 2026-11-14).** Images of the two counters no event reproduces:
     `account_activity.recalls`, written by `meter_recalls` outside any commit, and `usage_daily`,
     appended by the lead's `roll_up_usage` (`crates/adapters/oml-pg/src/lib.rs:5172`) from the
     stocks as read at the time (d4); the replay reproduces every other meter through
@@ -134,7 +134,7 @@ Decided, not built.
   deletes it, under a DELETE grant on `lake_staging` that it gives its own role at start
   (ADR-0060 d13). This replaces ADR-0060 d2's drain-time read for every twin input, so no input
   depends on being immutable or still present at drain.
-  - **Erase before drain (operator to confirm).** An erase replaces the version's staged rows,
+  - **Erase before drain (decided by the operator, 2026-11-14).** An erase replaces the version's staged rows,
     in its own transaction, with tombstones: the part, `erased: true` and no bytes. The bytes
     leave PostgreSQL's staging at once; the writer records the part in `twin/inputs` as absent
     because erased, and the tenant keeps draining. The law
@@ -148,7 +148,7 @@ Decided, not built.
   - **Cost.** Staging inserts run inside the chain lock, before the outbox insert, so they add
     their bytes to the commit's WAL (a body is written twice, once to `memories` and once to
     staging) and lengthen the time the tenant's chain lock is held; both are unmeasured (#390).
-    `lake.staging_age` names the age of the oldest staged row (operator to confirm).
+    `lake.staging_age` names the age of the oldest staged row (decided by the operator, 2026-11-14).
 
   Staging adds no exposure: it holds bytes PostgreSQL already holds in `memories`, `api_keys`,
   `web_emails` and `idempotency`, under the same row security, for the time between commit and
@@ -164,13 +164,13 @@ Decided, not built.
   |---|---|---|---|
   | `insert_memory`, from any fold that inserts a `memories` row | `memories` body, `rule`, `search_text`, `search_text_by`; `lineage_principals`, `lineage_key_ids` | part `body`, `rule`, `search_text`; the two lineage columns derived | the parts unsealed under the version's key, `search_text` staged rather than recomputed so an adapter change cannot drift it (d13); the lineage columns computed by `fold_of` from the rebuilt database, as the live fold computes them from the live one |
   | `insert_findings` | `scan_findings`, with `line`, `span_*`, `via`, `field` beyond the payload's one finding | part `findings` | loaded as staged |
-  | the `KeyIssued` fold | `api_keys.hash` | part `key_hash`; new `key.issued` payloads gain `key_hash_digest` (operator to confirm) | loaded and checked against the digest; a key issued before the digest is named by `lake.keys_unverifiable` |
+  | the `KeyIssued` fold | `api_keys.hash` | part `key_hash`; new `key.issued` payloads gain `key_hash_digest` (decided 2026-11-14) | loaded and checked against the digest; a key issued before the digest is named by `lake.keys_unverifiable` |
   | the `WebEmailAllowed` fold, `web.signed_up` | `web_emails.email` | part `email` | checked against `email_digest` |
-  | `web_pin` | `web_emails.google_subject`, `github_subject` | journal `web.subject_pinned` with a subject digest, plus part `subject` (operator to confirm) | replayed; without it, the first sign-in after a rebuild would pin whoever presents that address (ADR-0045) |
-  | `append_event`, `idempotency_claim`, `idempotency_settle`, `idempotency_release` | `idempotency` | part `idempotency` at the commit or the settle that records an outcome; an unsettled claim and a release are excluded | a recorded outcome is loaded; an unsettled claim is dropped, so a console act whose first commit landed and whose claim never settled can be submitted again, which duplicates that commit (operator to confirm) |
+  | `web_pin` | `web_emails.google_subject`, `github_subject` | journal `web.subject_pinned` with a subject digest, plus part `subject` (decided 2026-11-14) | replayed; without it, the first sign-in after a rebuild would pin whoever presents that address (ADR-0045) |
+  | `append_event`, `idempotency_claim`, `idempotency_settle`, `idempotency_release` | `idempotency` | part `idempotency` at the commit or the settle that records an outcome; an unsettled claim and a release are excluded | a recorded outcome is loaded; an unsettled claim is dropped, so a console act whose first commit landed and whose claim never settled can be submitted again, which duplicates that commit (decided 2026-11-14) |
   | `apply_meters`, inside commits | `account_meters`, `account_activity` | derived | the replay runs the same meters with no ceiling refused |
-  | `meter_recalls`, outside commits | `account_activity.recalls`, and an empty `account_meters` row for an account that has only read (`lib.rs:6720`–`6728`) | `recalls`: state image (d2, operator to confirm); the empty row: derived from the image, which names every account it counts | the newest image at or before the cut; an imaged account with no `account_meters` row gets the empty one |
-  | `roll_up_usage`, outside commits | `usage_daily`, appended and pruned past its retention | state image (d2, operator to confirm) | the newest image at or before the cut |
+  | `meter_recalls`, outside commits | `account_activity.recalls`, and an empty `account_meters` row for an account that has only read (`lib.rs:6720`–`6728`) | `recalls`: state image (d2, decided 2026-11-14); the empty row: derived from the image, which names every account it counts | the newest image at or before the cut; an imaged account with no `account_meters` row gets the empty one |
+  | `roll_up_usage`, outside commits | `usage_daily`, appended and pruned past its retention | state image (d2, decided 2026-11-14) | the newest image at or before the cut |
   | `enqueue_review`, `set_memory_status`, `promote_memory` | `review_queue` | derived | rebuilt by the replayed folds |
   | `review_claim_next` | `review_queue.held_by_key` | excluded | every claim is released; a reviewer claims again |
   | the `ClaimEdgeProposed` fold | `lineage_principals`, `lineage_key_ids` | derived | `fold_of` reads the closures from the rebuilt database as the live fold reads them, so replay order widens the same closures |
@@ -239,7 +239,7 @@ Decided, not built.
   (`app.rs:1323`), and, once ADR-0089 is built, an `admin.fix` reason. The admission scan reads the
   title at write (`app.rs:7423`) and the reason under the veto scan (`app.rs:5963`); the text is
   kept as signed metadata. Until #389 lands, the named queries read no `title` of a held
-  submission from `bronze.events`, so held text does not surface in analysis through its title (operator to confirm).
+  submission from `bronze.events`, so held text does not surface in analysis through its title (decided by the operator, 2026-11-14).
   Moving titles to a digest with a sealed part is #389.
 
 - **d8 — Each tenant drains on a frontier of its own (decided by the operator, 2026-11-14).**
@@ -298,7 +298,7 @@ Decided, not built.
   6. **Finish.** It writes `rebuild.json` beside the target's marker, sets the marker
      `complete`, and releases the lock.
 
-  **Cross-tenant conflicts (operator to confirm).** Tenants drain on separate frontiers, so a
+  **Cross-tenant conflicts (decided by the operator, 2026-11-14).** Tenants drain on separate frontiers, so a
   rebuild can replay one tenant behind another, and a deployment-wide unique value can collide:
   tenant A stalled before it removed an allowlist address, tenant B allowed the same address after.
   The rebuild then refuses by name, `rebuild.cross_tenant_conflict`, naming both tenants and both
@@ -334,13 +334,13 @@ Decided, not built.
     the lake brings it forward, erase events included.
 
 - **d11 — Signed head checkpoints are kept off the lake (decided by the operator, 2026-11-14).**
-  The lead writes, on a schedule (hourly by default, operator to confirm), a checkpoint file: each
+  The lead writes, on a schedule (hourly by default, decided by the operator, 2026-11-14), a checkpoint file: each
   tenant's head seq and hash, the time, and the deployment key's signature over domain-separated
   canonical bytes (`oml-head-checkpoint/1`). It is not a journal event, so it grows no chain. The
   file goes where the backups or the KEK escrow go, never under the lake root. A rebuild takes the
   newest checkpoint, prints its time, and refuses to finish below its head for any tenant
   (`rebuild.behind_checkpoint`) and names the gap; a tenant the checkpoint names and the lake lacks
-  fails the rebuild the same way (operator to confirm); `--accept-loss` lets it finish and records the gap in `rebuild.json`. `oml doctor` adds
+  fails the rebuild the same way (decided by the operator, 2026-11-14); `--accept-loss` lets it finish and records the gap in `rebuild.json`. `oml doctor` adds
   `server.head_checkpoint`: `warn` past twice the interval, `fail` when none was ever written. The law
   `a_truncated_lake_is_caught_by_the_checkpoint` drops a lake's last commits and finds the
   rebuild refused.
@@ -372,7 +372,7 @@ Decided, not built.
   `idempotency.committed_at` and `artifact_keys.created_at`. `memories.created_at` is different:
   it is a separate application clock read, `self.clock.now()` in the `MemoryRecord`
   (`app.rs:5428`), not the event's `at`. The build moves it to the event's `at` on the live
-  insert and in `fold_of` alike, so both sides agree (operator to confirm); until then it is
+  insert and in `fold_of` alike, so both sides agree (decided by the operator, 2026-11-14); until then it is
   listed. The build moves each `now()` column it can to the event's `at`
   and lists the rest with a reason. The law
   `a_rebuilt_database_equals_the_database_it_was_drained_from` runs the demo workload on a
@@ -385,7 +385,7 @@ Decided, not built.
   writer had not drained are lost when PostgreSQL is lost with no backup; `synchronous_commit`
   (ADR-0002 d2) does not shorten the lake's lag. `lake.rpo` reads the oldest undrained row over all
   tenants: `warn` past `--rpo-warn-seconds` (default 300), `fail` past `--rpo-fail-seconds`
-  (default 3600), a starting choice until #390 measures the lag. `lake.stalled` says how many
+  (default 3600), decided by the operator, 2026-11-14 as the starting values, revisited when #390 measures the lag. `lake.stalled` says how many
   tenants are stopped, never which (no tenant label).
 
 - **d16 — Storage: the object_store port, append-only, no retention cut.** The twin uses the
@@ -405,14 +405,16 @@ Decided, not built.
   [lake operations](../operations/lake.md) and [restore](../operations/restore.md). Size per
   memory, write amplification, staging cost, lag and rebuild time are unmeasured: #390.
 
-- **d18 — Every record that adds state names its twin parts.** The proposed records ADR-0080 to
-  ADR-0089 add state this record has not classified. Before each is built, it states its class per
-  d4, with this record's reading as the default: skill and document claims (ADR-0080, ADR-0081) and
-  console edits (ADR-0082) are `memories` rows, so their bodies are parts; the cockpit (ADR-0083)
-  and the impact report (ADR-0087) read only; a bundle's import ledger and its staging
-  (ADR-0084), release manifests and each key's binding (ADR-0085), test runs and gate results
-  (ADR-0086), trusted-source pins (ADR-0088) and an `admin.fix` reason (ADR-0089) are journal or
-  part, never excluded.
+- **d18 — Every record that adds state names its twin parts.** ADR-0080 to ADR-0087 and ADR-0089,
+  accepted the same day, add state this record had not classified. Each states its class per d4
+  in a "Twin parts" line under its Release (PRs #375 and #377), with this record's reading as the
+  default: skill and document claims (ADR-0080, ADR-0081) and console edits (ADR-0082) are
+  `memories` rows, so their bodies are parts; the cockpit and the To do page (ADR-0083) and the
+  impact report (ADR-0087) read only; a bundle's import ledger and its staging (ADR-0084), release
+  manifests and each key's binding (ADR-0085), test runs and gate results (ADR-0086) and an
+  `admin.fix` reason (ADR-0089) are journal or part, never excluded. ADR-0088, deferred, states
+  its trusted-source pins the same way when it is accepted. The build names each column's class
+  in the law of d12.
 
 - **d19 — The constitution holds unchanged.** [ADR-0001](ADR-0001-the-constitution.md) R1 to R4 are
   not restated. The rebuild is an operator act no agent surface reaches (R1); it replays approvals
@@ -446,6 +448,6 @@ Decided, not built.
 | **Resume the writer against a database cut to an earlier point** | Its frontier is past the cut, so it would skip every new row; a cut forks the root (d10). |
 | **Rebuild from silver** | State at drain time, approved versions only, a consumer zone. |
 | **Keep the wrapped keys only in PostgreSQL** | Then the lake opens nothing once PostgreSQL is gone. |
-| **Re-issue every API key after a rebuild** | Kept hashes authenticate nothing alone; re-keying every agent after an outage multiplies it. Operator to confirm (d4). |
+| **Re-issue every API key after a rebuild** | Kept hashes authenticate nothing alone; re-keying every agent after an outage multiplies it. The operator kept the hashes on 2026-11-14 (d4). |
 | **Trust the lake's own last version as complete** | A truncated lake verifies as a consistent prefix; only a head kept elsewhere shows the gap (d11). |
 | **Time-travel the key table for a cut** | It would resurrect keys erased after the cut (d7). |
