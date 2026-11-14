@@ -203,7 +203,10 @@ BEGIN
            AND (from_status IN ('committed', 'validated')
                 OR to_status IN ('committed', 'validated'));
         -- An act's claim is keyed `<key id>:<nil id>:<act>:<client key>`;
-        -- only the act names of ADR-0070 d5 change, never a client's own key.
+        -- only the act names of ADR-0070 d5 change. The match is a pattern:
+        -- a client's own key that itself began with one of those act names
+        -- and a colon would be rewritten too, a risk the operator accepted
+        -- (ADR-0091 implementation notes).
         UPDATE idempotency
            SET key = regexp_replace(key,
                    '^([0-9a-f-]{36}:[0-9a-f-]{36}:)workarea\.(create|transition|ratify|mode):',

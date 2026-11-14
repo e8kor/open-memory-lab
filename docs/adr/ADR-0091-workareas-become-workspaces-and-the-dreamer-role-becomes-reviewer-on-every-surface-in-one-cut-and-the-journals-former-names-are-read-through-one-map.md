@@ -21,7 +21,7 @@ into v0.8.0", so that clients take one breaking upgrade): the statuses `committe
 `validated` become `protected` and `frozen` (d14), and the key field `held_by` becomes `used_by`,
 its value `human` becoming `person` (d15); and accepted decision 3 of the lifecycle review, its display names (d16).
 
-**Release:** planned for v0.8.0; not built
+**Release:** planned for v0.8.0; built in PR #431, not released, except the law of d5, which waits for ADR-0090's compare (implementation notes)
 
 **Twin parts** (ADR-0090 d18): this record adds no state. It changes the names the twin's parts
 carry from the release on and adds the former-name map (d4) to `fold_of`; d5 shows the twin's
@@ -427,6 +427,47 @@ Decided, not built.
   The lifecycle review's decisions 1, 2, 4, 5 and 6 are not decided here. Its decision 3 also
   named reviewer, protected, frozen and used by as display names; this record makes those four
   stored renames instead (d13, d14, d15).
+
+## Implementation notes
+
+Recorded with the build (PR #431, 2026-11-14), each as the operator decided it the same day.
+
+- **The map is a leaf crate both sides link.** d4's one function lives in `oml-former-names`,
+  which `oml-domain` re-exports as `oml_domain::former_names`. The CLI links the leaf, not the
+  domain crate: it holds no domain logic and depends on `serde_json` alone, so `oml events` reads
+  a former name with the same function the server's readers use, and ADR-0006 d6 holds, under
+  which the CLI composes no port trait and no domain crate.
+- **`oml verify` maps nothing it checks.** The events tail serves each event as stored, and
+  verification reconstructs and checks the stored bytes; `oml events` maps the type it prints.
+- **The doctor line.** The lead's start reads every stored event through the map and names each
+  former name the map does not cover: a `workarea.*` type outside the list, a `held_by` key
+  outside `key.issued`, or a former value in a kind, role, scope, holder or status field the
+  lists do not reach. A lead that finds one is not ready, and `/readyz` reports `former_names`
+  as `unmapped`; `oml doctor` prints `journal_unmapped_former_name`, and the start log names
+  each tenant, seq, event and name. The tenant, seq and event stay out of `/readyz`'s answer,
+  because `/readyz` answers anyone.
+- **The lake kept its physical column (d7).** The spike found that the pinned deltalake refuses
+  to put an existing table into column mapping mode, so the fallback is built:
+  `bronze.events` and `silver.claims` keep the physical column `workarea_id`, and
+  [Delta tables](../data/delta-tables.md) names it `workspace_id`.
+- **The idempotency rewrite matches a pattern.** Migration 0047 renames an act's claim key of the
+  form `<key id>:<nil id>:workarea.<act>:<client key>`. A client key that itself began with
+  `workarea.create:` under the nil scope would be rewritten too; the migration names this risk,
+  and the operator accepted it.
+- **Partition index names keep apart.** A name PostgreSQL derived can already fill 63 bytes, and
+  `workspace` is one byte longer. The migration, and the lead when it creates a partition, cut
+  the byte before the name's suffix, and keep two names that then meet apart by a number. The
+  index columns PostgreSQL stores keep the column names they were built with; no query reads
+  them by name.
+- **The law of d5 waits for ADR-0090's compare.** Until the twin's drain, rebuild and compare are
+  built, `a_database_migrated_across_the_rename_equals_its_rebuild` cannot be written. Two laws
+  stand in its place: `the_schema_names_no_workarea_after_the_rename_migration`, and
+  `a_database_migrated_across_the_rename_holds_its_rows_in_the_new_names`, which reads rows
+  seeded at 0046 in the former names after 0047. The d5 law joins ADR-0090's comparison laws
+  when that ADR is built.
+- **Test function names.** Test functions named in the status sense, such as
+  `validated_is_refused_while_any_child_is_not_validated`, keep their names. The allow list
+  names each one.
 
 ## Consequences
 
