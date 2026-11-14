@@ -410,9 +410,11 @@ Decided, not built.
   in a "Twin parts" line under its Release (PRs #375 and #377), with this record's reading as the
   default: skill and document claims (ADR-0080, ADR-0081) and console edits (ADR-0082) are
   `memories` rows, so their bodies are parts; the cockpit and the To do page (ADR-0083) and the
-  impact report (ADR-0087) read only; a bundle's import ledger and its staging (ADR-0084), release
-  manifests and each key's binding (ADR-0085), test runs and gate results (ADR-0086) and an
-  `admin.fix` reason (ADR-0089) are journal or part, never excluded. ADR-0088, deferred, states
+  impact report (ADR-0087) read only, and ADR-0083's withdrawal is a journal event; a bundle's
+  import ledger (ADR-0084), release manifests and each key's binding (ADR-0085), test runs and
+  gate results (ADR-0086) and an `admin.fix` reason (ADR-0089) are journal or part, never
+  excluded; ADR-0084's per-import staging keys are excluded, transient and destroyed when the
+  import ends, and ADR-0089's release overlay state is derived from the replayed fix events. ADR-0088, deferred, states
   its trusted-source pins the same way when it is accepted. The build names each column's class
   in the law of d12.
 
@@ -427,6 +429,9 @@ Decided, not built.
 - PostgreSQL can be lost without losing the record: a rebuild returns every tenant to its frontier,
   verified against the public key and an off-lake checkpoint, at the cost of every session, token,
   connection and review claim.
+- Accepted cost: an idempotency claim that never settled is dropped by a rebuild (d4), so a
+  console act whose first commit landed before PostgreSQL was lost can be submitted again after the
+  rebuild and commit a second time.
 - The commit path gains staging inserts; the writer gains per-tenant batches and the twin tables;
   `oml-app` gains `fold_of`. Each cost is unmeasured (#390).
 - The migrations of d12 ship with the build, and the lead gains the checkpoint writer.
