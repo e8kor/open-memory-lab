@@ -8,11 +8,11 @@ target resolves to `adr/ADR-*.md` to the blob URL the design records page uses
 
 import posixpath
 import re
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-from gen_design_records import BLOB  # noqa: E402
+# Read, not imported: the generator's f-strings need Python 3.12, and the script tests run on 3.11.
+_GEN = (Path(__file__).resolve().parent.parent / "scripts" / "gen_design_records.py").read_text()
+BLOB = re.search(r'^BLOB = "([^"]+)"$', _GEN, re.M).group(1)
 
 INLINE = re.compile(r"(\]\()([^)\s]+)(\))")
 REFERENCE = re.compile(r"^(\s*\[[^\]]+\]:\s*)(\S+)", re.M)
