@@ -1,4 +1,5 @@
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -72,6 +73,22 @@ class ArchitectureViews(unittest.TestCase):
             if ">designed</text>" in text:
                 desc = text.split("<desc", 1)[1].split("</desc>", 1)[0]
                 self.assertIn("designed", desc, view)
+
+    def test_every_box_or_region_carrying_a_designed_tag_is_drawn_dashed(self):
+        # A tag sits on the top edge of the shape it marks, 74 px left of its right edge and 8 px
+        # above it (design/diagrams/arch-*.svg); a tag beside an arrow or in a legend marks no shape.
+        shape = re.compile(r'<rect class="([^"]*)" x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="[\d.]+"')
+        tag = re.compile(r'<rect class="tag" x="([\d.]+)" y="([\d.]+)"')
+        checked = 0
+        for view in G.ARCH_VIEWS:
+            text = (G.DESIGN / "diagrams" / f"arch-{view}.svg").read_text()
+            shapes = [(c, float(x), float(y), float(w)) for c, x, y, w in shape.findall(text)]
+            for tx, ty in tag.findall(text):
+                for cls, x, y, w in shapes:
+                    if cls != "tag" and y == float(ty) + 8 and x + w - 74 == float(tx):
+                        checked += 1
+                        self.assertIn("plan", cls.split(), f"{view}: a designed tag on a solid {cls} at x={x}")
+        self.assertGreaterEqual(checked, 20)
 
     def test_an_architecture_view_with_a_colour_outside_its_style_is_refused(self):
         src = self.view('<rect style="fill:var(--ground)"/>')

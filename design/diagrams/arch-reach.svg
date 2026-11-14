@@ -39,6 +39,7 @@ text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Aria
 .reach.plan{stroke-dasharray:9 5}
 .gh{fill:var(--ground);stroke:var(--ink);stroke-width:1.6}
 .gs{fill:var(--ink);stroke:var(--ink);stroke-width:1.6}
+.gh.plan{stroke-dasharray:2.6 1.8}
 .gx{fill:none;stroke:var(--ink-faint);stroke-width:1.4;stroke-dasharray:2 2}
 .it{fill:var(--ink);font-size:11.5px}
 .it.dim{fill:var(--ink-faint)}
@@ -56,14 +57,14 @@ text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Aria
 <rect class="reg ip" x="58" y="110" width="432" height="404" rx="12"/>
 <text class="t" x="72" y="132">payments.dev</text>
 <text class="s" x="72" y="149">development, in progress (the root)</text>
-<circle class="gh" cx="266" cy="130" r="5.5"/>
+<circle class="gh plan" cx="266" cy="130" r="5.5"/>
 <text class="it" x="278" y="134">steering · held (designed)</text>
 <rect class="reg " x="74" y="196" width="200" height="302" rx="12"/>
 <text class="t" x="88" y="218">…dev.api</text>
 <text class="s" x="88" y="235">in progress</text>
 <circle class="gh" cx="94" cy="264" r="5.5"/>
 <text class="it" x="106" y="268">memory · held</text>
-<circle class="gh" cx="94" cy="288" r="5.5"/>
+<circle class="gh plan" cx="94" cy="288" r="5.5"/>
 <text class="it" x="106" y="292">skill · held (designed)</text>
 <circle class="gs" cx="94" cy="312" r="5.5"/>
 <text class="it" x="106" y="316">guardrail · promoted</text>
@@ -74,15 +75,15 @@ text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Aria
 <text class="s" x="298" y="235">in progress</text>
 <circle class="gh" cx="304" cy="264" r="5.5"/>
 <text class="it" x="316" y="268">memory · held</text>
-<circle class="gh" cx="304" cy="288" r="5.5"/>
+<circle class="gh plan" cx="304" cy="288" r="5.5"/>
 <text class="it" x="316" y="292">guardrail · held (designed)</text>
-<circle class="gs" cx="304" cy="312" r="5.5"/>
-<text class="it" x="316" y="316">skill · promoted</text>
+<circle class="gs plan" cx="304" cy="312" r="5.5"/>
+<text class="it" x="316" y="316">skill · promoted (designed)</text>
 <rect class="reg " x="506" y="110" width="210" height="404" rx="12"/>
 <text class="t" x="520" y="132">payments.ops</text>
 <text class="s" x="520" y="149">validated; a sibling</text>
-<circle class="gs" cx="526" cy="178" r="5.5"/>
-<text class="it" x="538" y="182">skill · promoted</text>
+<circle class="gs plan" cx="526" cy="178" r="5.5"/>
+<text class="it" x="538" y="182">skill · promoted (designed)</text>
 <circle class="gs" cx="526" cy="202" r="5.5"/>
 <text class="it" x="538" y="206">memory · promoted</text>
 <circle class="gx" cx="526" cy="226" r="5.5"/><path class="gx" d="M521 231 L531 221"/>

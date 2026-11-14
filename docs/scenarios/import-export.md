@@ -48,9 +48,9 @@ Export starts from a **published release**, the last step on the source ([workar
 3. **Scan again.** Each version passes the target's scan rule set, which may be newer than the source's. A veto skips the version and names it; a hold keeps it author-only (ADR-0084 d11).
 4. **Land held.** The importing person's writer key becomes the author of every version on the target. The source's verdicts show on the review card as evidence and count for nothing (ADR-0084 d4, d6).
 5. **Review again.** A person on the target judges each item, one act for a listed set allowed. Approving an imported version attests "did not author this on the source", journalled with the verdict, because a person with keys on both servers cannot be recognised across them (ADR-0084 d4).
-6. **Publish on the target.** One person cuts a release and another publishes it. Keys bound to `latest` receive it then (ADR-0085 d4).
+6. **Publish on the target.** One person cuts a release and another publishes it. Keys bound to `latest` receive it then (ADR-0085 d6, ADR-0084 d12).
 
-Until step 6, only `tip` keys inside the in-progress target read the imported content, marked unreviewed.
+Until step 6, only `tip` keys inside the target's in-progress subtree, and, designed, `tip` keys on its ancestor chain, read the imported content, marked unreviewed (ADR-0080 d16).
 
 **Who acts.** A person's key exports, under the tenant's export policy: `off`, `own_root` (the default: a person's own root only) or `allowed`. An admin may allow one shared workarea's export, which reads no content. No agent, admin or service key exports, and only a person's writer key imports (ADR-0084 d10, d11). No MCP tool exists for either (R1).
 

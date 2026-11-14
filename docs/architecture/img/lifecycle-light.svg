@@ -39,6 +39,7 @@ text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Aria
 .reach.plan{stroke-dasharray:9 5}
 .gh{fill:#f1ebdc;stroke:#10153a;stroke-width:1.6}
 .gs{fill:#10153a;stroke:#10153a;stroke-width:1.6}
+.gh.plan{stroke-dasharray:2.6 1.8}
 .gx{fill:none;stroke:#565b7b;stroke-width:1.4;stroke-dasharray:2 2}
 .it{fill:#10153a;font-size:11.5px}
 .it.dim{fill:#565b7b}
@@ -50,7 +51,7 @@ text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Aria
 <text class="lanet hi" x="30" y="34">DEVELOPMENT SCOPES: LOOSE</text>
 <text class="s" x="30" y="54">the team reads held work, marked; own-root approval is marked same_user</text>
 <text class="lanet hi" x="600" y="34">PRODUCTION SCOPES: STRICT</text>
-<text class="s" x="600" y="54">another person decides; nothing unreviewed is served but a marked fix</text>
+<text class="s" x="600" y="54">never the author&#x27;s person; nothing unreviewed is served but a marked fix</text>
 <path class="zone" d="M580 20 V500"/>
 <text class="acct" x="580" y="84" text-anchor="middle">loose turns strict</text>
 <rect class="box ip" x="30" y="112" width="170" height="82" rx="5"/><text class="t" x="44" y="136">Development</text><text class="s" x="44" y="155">in progress: tip keys</text><text class="s" x="44" y="171">read held work, marked</text>
@@ -58,9 +59,9 @@ text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Aria
 <rect class="box" x="410" y="112" width="150" height="82" rx="5"/><text class="t" x="424" y="136">Review</text><text class="s" x="424" y="155">per item, another key;</text><text class="s" x="424" y="171">own root: same_user</text>
 <rect class="box" x="600" y="112" width="180" height="82" rx="5"/><text class="t" x="614" y="136">Committed, validated</text><text class="s" x="614" y="155">one key proposes the</text><text class="s" x="614" y="171">rung, another ratifies</text>
 <rect class="box acc plan" x="800" y="112" width="180" height="82" rx="5"/><text class="t" x="814" y="136">Release</text><text class="s" x="814" y="155">one person cuts, another</text><text class="s" x="814" y="171">publishes; a fixed list</text><rect class="tag" x="906" y="104" width="64" height="16" rx="3"/><text class="tagt" x="938" y="116" text-anchor="middle">designed</text>
-<path class="e" d="M200 153 H218" marker-end="url(#a)"/>
-<path class="e" d="M390 153 H408" marker-end="url(#a)"/>
-<path class="e" d="M780 153 H798" marker-end="url(#a)"/>
+<path class="e dash" d="M200 153 H218" marker-end="url(#a)"/>
+<path class="e dash" d="M390 153 H408" marker-end="url(#a)"/>
+<path class="e dash" d="M780 153 H798" marker-end="url(#a)"/>
 <path class="e acc" d="M560 153 H598" marker-end="url(#aa)"/>
 <path class="e dash" d="M980 153 H1076" marker-end="url(#a)"/>
 <text class="el" x="990" y="143">export</text>
@@ -70,13 +71,13 @@ text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Aria
 <path class="e" d="M485 268 V196" marker-end="url(#a)"/>
 <rect class="box plan" x="600" y="270" width="190" height="66" rx="5"/><text class="t" x="614" y="294">latest key</text><text class="s" x="614" y="313">the newest published release;</text><text class="s" x="614" y="329">never a held item</text><rect class="tag" x="716" y="262" width="64" height="16" rx="3"/><text class="tagt" x="748" y="274" text-anchor="middle">designed</text>
 <rect class="box plan" x="860" y="270" width="220" height="66" rx="5"/><text class="t" x="874" y="294">pinned key</text><text class="s" x="874" y="313">one release by its label,</text><text class="s" x="874" y="329">such as payments.dev@1.3.0</text><rect class="tag" x="1006" y="262" width="64" height="16" rx="3"/><text class="tagt" x="1038" y="274" text-anchor="middle">designed</text>
-<path class="e" d="M770 268 V232 H840 V196" marker-end="url(#a)"/>
-<path class="e" d="M930 268 V196" marker-end="url(#a)"/>
+<path class="e dash" d="M770 268 V232 H840 V196" marker-end="url(#a)"/>
+<path class="e dash" d="M930 268 V196" marker-end="url(#a)"/>
 <rect class="box acc plan" x="600" y="410" width="260" height="82" rx="5"/><text class="t" x="614" y="434">Admin fix</text><text class="s" x="614" y="453">demote, edit, retire, roll back a release</text><text class="s" x="614" y="469">or an import: served at once, marked</text><rect class="tag" x="786" y="402" width="64" height="16" rx="3"/><text class="tagt" x="818" y="414" text-anchor="middle">designed</text>
-<path class="e acc" d="M820 408 V232 H880 V196" marker-end="url(#aa)"/>
+<path class="e acc dash" d="M820 408 V232 H880 V196" marker-end="url(#aa)"/>
 <text class="acct" x="828" y="392">marked overlay</text>
 <rect class="box plan" x="880" y="410" width="200" height="82" rx="5"/><text class="t" x="894" y="434">Confirm or revert</text><text class="s" x="894" y="453">afterwards, by another</text><text class="s" x="894" y="469">person, never the admin&#x27;s own</text><rect class="tag" x="1006" y="402" width="64" height="16" rx="3"/><text class="tagt" x="1038" y="414" text-anchor="middle">designed</text>
-<path class="e" d="M860 451 H878" marker-end="url(#a)"/>
+<path class="e dash" d="M860 451 H878" marker-end="url(#a)"/>
 <rect class="box plan" x="30" y="410" width="250" height="82" rx="5"/><text class="t" x="44" y="434">Withdraw</text><text class="s" x="44" y="453">an author retracts its own held</text><text class="s" x="44" y="469">version; kept, never served</text><rect class="tag" x="206" y="402" width="64" height="16" rx="3"/><text class="tagt" x="238" y="414" text-anchor="middle">designed</text>
 <rect class="box plan" x="310" y="410" width="250" height="82" rx="5"/><text class="t" x="324" y="434">Fix in development</text><text class="s" x="324" y="453">confirmed by the admin&#x27;s own</text><text class="s" x="324" y="469">person, marked same_user</text><rect class="tag" x="486" y="402" width="64" height="16" rx="3"/><text class="tagt" x="518" y="414" text-anchor="middle">designed</text>
 <path class="e" d="M580 532 H620" marker-end="url(#a)"/>

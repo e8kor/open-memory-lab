@@ -10,7 +10,7 @@ One person, Dana, keeps the memory of a few agents in OML: Claude Code on a lapt
 
 The control in this flow is one review per fact, by Dana, marked `same_user` so every reader can tell. Nothing waits on a second person while the work stays in the root. The pair, an agent writes and the same person approves, is one row of [producers and reviewers](../concepts/producers-and-reviewers.md), whose reach view draws a user root apart from team workareas.
 
-A personal root is a development scope for good. It is capped at `development` and never becomes `committed` or `validated`; work meant for production moves to a shared workarea ([ADR-0085](../adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d17, amending [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1). Today the code still lets a user root climb to `committed`; lowering the ceiling is designed, not built.
+A personal root is a development scope for good. It is capped at `development` and never becomes `committed` or `validated`; work meant for production moves to a shared workarea, where releases are cut; a personal root never publishes a release ([ADR-0085](../adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d17, amending [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1). Today the code still lets a user root climb to `committed`; lowering the ceiling is designed, not built.
 
 ## 1. Sign in and connect
 

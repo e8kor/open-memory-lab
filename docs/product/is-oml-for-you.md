@@ -51,8 +51,8 @@ Each uses built verbs only. The full flows, with what is designed, are under [Sc
 
 **Remember a decision and find it next session.**
 
-1. The agent saves the decision with `oml_write`. OML answers held.
-2. Later it searches with `oml_read` and finds its own memory marked unreviewed.
+1. The agent saves the decision through its memory tool. OML answers held.
+2. Later it searches and finds its own memory marked unreviewed.
 3. A reviewer runs `oml review approve`.
 4. Next session, any agent in the workarea finds it.
 

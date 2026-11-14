@@ -8,13 +8,14 @@ answers: "how an engineering team and its agent crew build in a shared developme
 
 The payments team, alice and bob, runs a crew of coding agents. They build the crew's working knowledge in one shared workarea, `payments.dev`: runbook memories, standing rules, skills and tests. Production agents read only what the team has reviewed and published.
 
-The controls sit at two points. During development, nothing waits: the crew and the engineers read each other's held work at once, marked unreviewed. Toward production, a second person approves each item and, once releases are built, a second person publishes each release. The [workarea lifecycle](../architecture/lifecycle.md) draws the stages; [producers and reviewers](../concepts/producers-and-reviewers.md) says which approvals count, and its Euler views draw what each key sees.
+The controls sit at two points. During development, nothing waits: the crew and the engineers read each other's held work at once, marked unreviewed. Toward production, a key outside each item's lineage approves it, never a key of the author's person: a reviewer crew may approve knowledge, and a person approves every instruction. Once releases are built, a second person publishes each release. The [workarea lifecycle](../architecture/lifecycle.md) draws the stages; [producers and reviewers](../concepts/producers-and-reviewers.md) says which approvals count, and its Euler views draw what each key sees.
 
 ## 1. Set up the shared workarea
 
 An admin does this once. Built.
 
 ```sh
+oml workareas create universe payments       # the team's root, universe.payments
 oml workareas create payments dev            # universe.payments.dev, written payments.dev below
 oml crews create payments-crew
 oml keys issue alice-dev --role writer --held-by human --principal people/alice --grant dev:writer
@@ -112,11 +113,11 @@ OML_API_KEY=$(cat keys/bob-dev-review)   oml workareas status ratify dev <transi
 
 | Binding | Reads | Default for |
 |---|---|---|
-| `tip` | the promoted tip, plus held work in an in-progress subtree, marked | a key held by a person; any key scoped in a user root; an agent key may be issued at `tip` when its scope is inside an in-progress root or at an ancestor of one |
+| `tip` | the promoted tip, plus held work in an in-progress subtree, marked | a key held by a person; any key scoped in a user root |
 | `latest` | the newest published release; never a held item | every other agent or service key |
 | a pin | one release by label, such as `payments.dev@1.3.0` | none; set on purpose |
 
-The defaults are ADR-0085 d7's.
+The defaults are ADR-0085 d7's. An agent key outside a user root defaults to `latest`; an admin may choose to issue it at `tip` instead when its scope node lies inside an in-progress root or at an ancestor of one, as the development agents of `payments.dev` are. That is an option at issuance, not a default.
 
 A production agent bound to `latest` reads 1.4.0 from its next request and loads its guardrails and skills at its next session start. Its own held writes are still served to it. Only the key's issuer or its own person widens a binding; an admin only narrows one. Today every key reads as a `tip` key.
 
@@ -142,7 +143,7 @@ Built today: rejection and retirement through review. Demotion and erasure are n
 
 ## What the team pays
 
-- Each item needs a second person's look before production agents act on it; in development, nothing waits.
+- Each item needs a reviewer outside its lineage before production agents act on it, a person for every instruction; in development, nothing waits.
 - Under `latest`, an approved memory reaches production agents only with the next release. Agents that should see approvals at once stay on `tip` and skip the staging step.
 - A production fix that cannot wait is one admin's act, marked until a second person confirms.
 

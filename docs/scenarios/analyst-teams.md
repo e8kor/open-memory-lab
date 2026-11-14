@@ -15,6 +15,7 @@ The controls cost the analysts two things: a second analyst's look at each item,
 Built. An admin on staging creates `pricing.draft`, issues priya and sam a writer key and a reviewer key each (`--held-by human`, as for [engineering teams](engineering-teams.md#1-set-up-the-shared-workarea)), and priya puts it in progress:
 
 ```sh
+oml workareas create universe pricing
 oml workareas create pricing draft
 OML_API_KEY=$(cat keys/priya-review) oml workareas mode draft in_progress
 ```

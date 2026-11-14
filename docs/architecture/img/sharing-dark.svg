@@ -39,6 +39,7 @@ text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Aria
 .reach.plan{stroke-dasharray:9 5}
 .gh{fill:#0a0d22;stroke:#efe9da;stroke-width:1.6}
 .gs{fill:#efe9da;stroke:#efe9da;stroke-width:1.6}
+.gh.plan{stroke-dasharray:2.6 1.8}
 .gx{fill:none;stroke:#8c8fa8;stroke-width:1.4;stroke-dasharray:2 2}
 .it{fill:#efe9da;font-size:11.5px}
 .it.dim{fill:#8c8fa8}
@@ -64,8 +65,8 @@ text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Aria
 <path class="tree" d="M190 346 H270 V378"/>
 <text class="ipt" x="60" y="352">held work, marked, to tip keys here</text>
 <path class="e ip dash" d="M300 248 V196 H330 V182" marker-end="url(#ai)"/>
-<text class="ipt" x="380" y="222">held items, marked, to tip keys at an ancestor (ADR-0080 d16)</text>
-<rect class="tag" x="746" y="209" width="64" height="16" rx="3"/><text class="tagt" x="778" y="221" text-anchor="middle">designed</text>
+<text class="ipt" x="380" y="222">held items, marked, to ancestor tip keys</text>
+<rect class="tag" x="640" y="209" width="64" height="16" rx="3"/><text class="tagt" x="672" y="221" text-anchor="middle">designed</text>
 <path class="e" d="M340 280 H466" marker-end="url(#a)"/>
 <path class="no" d="M396 272 L412 288 M412 272 L396 288"/>
 <text class="el" x="470" y="340">a sibling reads nothing of the subtree</text>
@@ -74,8 +75,8 @@ text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Aria
 <text class="el" x="700" y="268">federation: promoted rows of</text>
 <text class="el" x="700" y="284">committed or validated workareas</text>
 <path class="e dash" d="M356 420 H990 V182" marker-end="url(#a)"/>
-<text class="el" x="520" y="412">federation: a published release of the in-progress subtree (ADR-0085 d15)</text>
-<rect class="tag" x="916" y="399" width="64" height="16" rx="3"/><text class="tagt" x="948" y="411" text-anchor="middle">designed</text>
+<text class="el" x="520" y="412">federation: a published release of the subtree</text>
+<rect class="tag" x="800" y="399" width="64" height="16" rx="3"/><text class="tagt" x="832" y="411" text-anchor="middle">designed</text>
 <rect class="box plan" x="720" y="456" width="360" height="50" rx="5"/><text class="t" x="734" y="480">latest key at payments</text><text class="s" x="734" y="499">reads the release; never a held item</text><rect class="tag" x="1006" y="448" width="64" height="16" rx="3"/><text class="tagt" x="1038" y="460" text-anchor="middle">designed</text>
 <text class="lanet hi" x="20" y="520">VERTICAL</text>
 <text class="s" x="96" y="520">held items stay inside the subtree and its ancestor chain</text>

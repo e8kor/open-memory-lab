@@ -10,7 +10,7 @@ OML is a memory server for AI agents in which no write is readable by others unt
 
 ## The experience
 
-Frictionless in development, controlled toward production. Inside a development workarea a person puts in progress, the team and its agents read each other's held work at once, marked unreviewed, and a person approves their own agents' work in their own root, marked `same_user`. In committed and validated workareas a different person always approves. Releases that a second person publishes, keys bound to them, and admin fixes confirmed afterwards are designed and not built ([workarea lifecycle](../architecture/lifecycle.md)).
+Frictionless in development, controlled toward production. Inside a development workarea a person puts in progress, the team and its agents read each other's held work at once, marked unreviewed, and a person approves their own agents' work in their own root, marked as the same person's. In committed and validated workareas the author's own person never approves: a reviewer crew or another person approves knowledge, and only a person approves standing instructions. Releases that a second person publishes, keys bound to them, and admin fixes confirmed afterwards are designed and not built ([workarea lifecycle](../architecture/lifecycle.md)).
 
 | Audience | Scenario |
 |---|---|
@@ -40,7 +40,7 @@ Recall quality is keyword-search grade: nDCG@10 of 0.32 to 0.87 depending on the
 
 ## Security and guarantees
 
-The tenant comes from the key, never from the request. Row-level security covers every tenant table, and every write, verdict and key issue enters a signed, hash-chained journal. An agent has no approve, sign, demote or delete verb. A tenant admin reads every memory's text, held ones included, through a journaled [admin read](../architecture/roles-and-keys.md#the-admin-read). People sign in with Google or GitHub: against a per-tenant email allowlist, or, where the operator opens sign-up (`signup.mode = open`, [ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md)), with any such account. SAML and SCIM are not offered. Erasure and an evidence export are designed and not built ([compliance](compliance.md)). Nobody has penetration-tested these controls. [Security](../architecture/security.md) and [what OML guarantees](commitments.md) list what is enforced, what is bounded and what is not claimed.
+The tenant comes from the key, never from the request. Row-level security covers every tenant table, and every write, verdict and key issue enters a signed, hash-chained journal. An agent has no approve, sign, demote or delete verb. A tenant admin reads every memory's text, held ones included, through a journaled [admin read](../architecture/roles-and-keys.md#the-admin-read). People sign in with Google or GitHub: against a per-tenant email allowlist, or, where the server's operator opens sign-up to everyone, with any such account. SAML and SCIM are not offered. Erasure and an evidence export are designed and not built ([compliance](compliance.md)). Nobody has penetration-tested these controls. [Security](../architecture/security.md) and [what OML guarantees](commitments.md) list what is enforced, what is bounded and what is not claimed.
 
 ## When not to use it
 

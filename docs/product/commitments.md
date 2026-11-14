@@ -21,7 +21,7 @@ This page lists every guarantee OML makes, in four tiers: guaranteed by construc
 | 7 | The lake writer cannot decrypt anything. | The binary holds no server keyring key and cannot unwrap a memory's data key; it seals what it writes with its own key-encryption key. |
 | 8 | No held memory body reaches the lake. See [storage](../architecture/storage.md). | The outbox carries digests for held writes. Only approval enqueues the body. |
 | 9 | No key exceeds the verbs its role allows. An agent can never approve, sign, demote or delete. See [roles and keys](../architecture/roles-and-keys.md). | A server-side check per role. Every transport is an adapter over the same application layer. |
-| 10 | A same-person approval is marked `same_user` to every reader. Self-signing was retired on 2026-11-14 ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5), and no approval is marked `self_signed`. See [audit and lineage](../architecture/audit-and-lineage.md). | `approver.same_user` on every served version and `same_user` on the `lifecycle.promote` event, set from the keys' person. |
+| 10 | A same-person approval is marked as such to every reader. When a person approves work their own agents wrote, every reader sees that the approver was the author's own person. No approval is ever presented as another identity's review. See [audit and lineage](../architecture/audit-and-lineage.md) for the mark. | A mark set by the server from the identities of the author and the reviewer, on every served memory and in the signed record. |
 | 11 | A verdict counts once, for exactly what the server showed the reviewer. | A single-use serve binding to the reviewer key, the version and its digests. |
 
 Guarantee 6 depends on three deployment settings: `FORCE ROW LEVEL SECURITY` on every tenant table, separate owner and service roles, and a tenant context set inside each pooled transaction. The [deployment page](../operations/deployment.md) lists them as requirements.
@@ -29,7 +29,7 @@ Guarantee 6 depends on three deployment settings: `FORCE ROW LEVEL SECURITY` on 
 ## Guaranteed within a bound
 
 - **Tamper evidence.** The chain detects rewriting by anyone who cannot sign. An attacker who holds the signing key and can write to the database can rebuild a consistent chain. Detection then depends on chain heads stored outside the deployment.
-- **Durability.** Surviving a failover without losing acknowledged commits needs quorum-synchronous replication with `remote_apply`. `remote_write` does not survive a standby operating-system crash. A single-node install is one machine's disk.
+- **Durability.** Surviving a failover without losing acknowledged commits needs a standby that applies each commit before it is acknowledged. A standby that only receives commits does not survive its own operating-system crash. A single-node install is one machine's disk. The settings are on the [deployment page](../operations/deployment.md).
 - **Exactly-once lake writes.** This rests on the Delta library's transaction-identifier behavior, which has not been tested under load.
 - **Access changes.** A denied key or withdrawn grant stops acting at the key's next request. The server recomputes access from the record on every request.
 
@@ -46,9 +46,9 @@ Each item works. Its quality has no figure yet.
 
 ## Not claimed
 
-- **That production agents read only published releases.** Release binding is designed ([ADR-0085](../adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md)) and not built: every key reads the promoted tip of what it may read today ([workarea lifecycle](../architecture/lifecycle.md)).
+- **That production agents read only published releases.** Release binding is designed and not built: today every key reads the newest approved version of what it may read ([workarea lifecycle](../architecture/lifecycle.md)).
 - **That a memory is true.** Review attests process: who looked, under what policy, at which digests.
-- **That lineage is complete.** The author declares `derives_from`. OML checks what was declared.
+- **That lineage is complete.** The author declares which memories a new one derives from. OML checks what was declared.
 - **Protection from the database administrator.** A superuser can reach what construction cannot. The chain makes their tampering evident within the bound above, not impossible.
 - **Review quality.** The gate guarantees that a different identity looked, not that they looked well.
 - **Privacy from the tenant's administrators.** An admin key reads every memory of its tenant, held ones included. Each read is journaled, and the journal is the only check on it.
