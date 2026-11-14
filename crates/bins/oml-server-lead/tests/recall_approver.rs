@@ -758,7 +758,7 @@ async fn no_read_of_a_memory_names_its_reviewer() {
         .expect("an approver");
     let mut members: Vec<&str> = approver.keys().map(String::as_str).collect();
     members.sort_unstable();
-    assert_eq!(members, ["used_by", "same_user"]);
+    assert_eq!(members, ["same_user", "used_by"]);
     drop_db(&w.rig.db_name).await;
 }
 
@@ -1014,6 +1014,8 @@ async fn run_the_fill(db: &str) {
         .await
         .expect("owner connect");
     let mut tx = owner.begin().await.expect("begin");
+    // 0047 renamed the columns the fill names (ADR-0091 d6, d15).
+    let fill = fill.replace("held_by", "used_by");
     tx.execute(fill.as_str()).await.expect("the fill runs");
     tx.commit().await.expect("commit");
     owner.close().await.expect("close");

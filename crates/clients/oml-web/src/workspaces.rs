@@ -657,7 +657,7 @@ async fn confirmation(
         Box::new(refused(
             StatusCode::BAD_REQUEST,
             "request.validation",
-            "op is propose:committed, propose:validated, ratify:<transition>, mode:in_progress or mode:standard",
+            "op is propose:protected, propose:frozen, ratify:<transition>, mode:in_progress or mode:standard",
             calls,
         ))
     };

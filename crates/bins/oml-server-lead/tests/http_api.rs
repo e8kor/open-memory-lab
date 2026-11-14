@@ -503,8 +503,8 @@ async fn poc_store() -> Option<(String, PgStore, Uuid)> {
         .await
         .expect("PoC tenant");
     sqlx::query(
-        "INSERT INTO workspaces (id, tenant_id, parent_id, name, status) \
-         VALUES ($1, $2, NULL, 'root', 'protected')",
+        "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
+         VALUES ($1, $2, NULL, 'root', 'committed')",
     )
     .bind(root)
     .bind(tenant)
@@ -656,10 +656,10 @@ async fn poc_chains_store(
                 json!({ "tenant_name": tenant_name }),
             ),
             (
-                event_types::WORKSPACE_CREATE,
+                "workarea.create",
                 json!({
-                    "workspace_id": root, "parent_id": null, "name": "root",
-                    "status": "protected", "crew": null, "prefix": null,
+                    "workarea_id": root, "parent_id": null, "name": "root",
+                    "status": "committed", "crew": null, "prefix": null,
                 }),
             ),
             (
@@ -667,7 +667,7 @@ async fn poc_chains_store(
                 json!({
                     "key_id": admin, "role": "admin", "principal": "oml/admin",
                     "issued_by_key_id": null, "expiry": null, "value_disclosed": false,
-                    "used_by": "person", "default_workspace_id": root,
+                    "held_by": "human", "default_workarea_id": root,
                 }),
             ),
         ];
@@ -738,8 +738,8 @@ async fn poc_chains_store(
         .await
         .expect("chain head");
         sqlx::query(
-            "INSERT INTO workspaces (id, tenant_id, parent_id, name, status) \
-             VALUES ($1, $2, NULL, 'root', 'protected')",
+            "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
+             VALUES ($1, $2, NULL, 'root', 'committed')",
         )
         .bind(root)
         .bind(tenant)
@@ -747,8 +747,8 @@ async fn poc_chains_store(
         .await
         .expect("PoC root");
         sqlx::query(
-            "INSERT INTO api_keys (id, tenant_id, hash, role, principal, used_by, \
-             default_workspace_id, issued_seq) VALUES ($1, $2, $3, 'admin', 'oml/admin', 'person', $4, 3)",
+            "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, \
+             default_workarea_id, issued_seq) VALUES ($1, $2, $3, 'admin', 'oml/admin', 'human', $4, 3)",
         )
         .bind(admin)
         .bind(tenant)

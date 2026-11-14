@@ -313,7 +313,7 @@ async fn the_admin_atlas_reads_the_scopes_offers_with_its_counts() {
         answered.body
     );
     assert!(
-        answered.body.contains("propose committed"),
+        answered.body.contains("propose protected"),
         "{}",
         answered.body
     );
@@ -382,7 +382,7 @@ async fn the_admin_atlas_reads_its_offers_apart_from_an_api_that_refuses_the_par
         answered.body
     );
     assert!(
-        answered.body.contains("propose committed"),
+        answered.body.contains("propose protected"),
         "{}",
         answered.body
     );

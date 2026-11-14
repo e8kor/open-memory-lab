@@ -6787,14 +6787,14 @@ async fn a_concurrent_child_create_and_a_validated_ratification_never_leave_a_va
         let to_committed = app
             .propose_transition(&admin, node.into(), WorkspaceStatus::Protected)
             .await
-            .expect("propose committed");
+            .expect("propose protected");
         app.ratify_transition(&dora.value, node.into(), to_committed.transition_id)
             .await
             .expect("ratify committed");
         let to_validated = app
             .propose_transition(&admin, node.into(), WorkspaceStatus::Frozen)
             .await
-            .expect("propose validated with no child");
+            .expect("propose frozen with no child");
 
         let create = {
             let (app, admin) = (Arc::clone(&app), admin.clone());

@@ -39,3 +39,5 @@ docs/data/delta-tables.md  # names the physical column workarea_id behind worksp
 crates/adapters/oml-lake/src/table.rs  # the physical column workarea_id behind workspace_id (d7)
 crates/adapters/oml-lake/src/query.rs  # the physical column workarea_id, and workarea.create rows the lake keeps as stored (d4, d7)
 crates/adapters/oml-lake/tests/column_mapping_spike.rs  # the spike that decided d7 names the column it tried to rename (d7)
+crates/bins/oml-server-lead/tests/http_api.rs  # the PoC chains and schema are seeded in the names a PoC deployment holds (d6, d11)
+crates/bins/oml-server-lead/tests/recall_approver.rs  # runs migration 0044's fill, which names held_by, over the renamed schema (d6, d11)

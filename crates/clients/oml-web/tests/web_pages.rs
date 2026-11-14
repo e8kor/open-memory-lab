@@ -728,9 +728,9 @@ async fn a_workspace_act_is_confirmed_before_it_runs() {
         "{page}"
     );
     assert!(page.contains("<select name=\"op\""), "{page}");
-    assert!(page.contains("value=\"propose:committed\""), "{page}");
+    assert!(page.contains("value=\"propose:protected\""), "{page}");
     assert!(page.contains("value=\"mode:in_progress\""), "{page}");
-    assert!(!page.contains("value=\"propose:validated\""), "{page}");
+    assert!(!page.contains("value=\"propose:frozen\""), "{page}");
     assert!(!page.contains("value=\"mode:standard\""), "{page}");
     // Apply is a GET that changes nothing and asks again.
     let (status, _, confirm) = send(
@@ -773,7 +773,7 @@ async fn a_workspace_act_is_confirmed_before_it_runs() {
     let (status, _, refused) = send(
         &rig.router,
         get(
-            &format!("/web/workspaces?workspace={proj}&op=propose:committed"),
+            &format!("/web/workspaces?workspace={proj}&op=propose:protected"),
             Some(&cookie),
         ),
     )
@@ -787,7 +787,7 @@ async fn a_workspace_act_is_confirmed_before_it_runs() {
         !refused.contains("value=\"workspace_transition\""),
         "{refused}"
     );
-    // Commit, then propose committed through the dropdown's action.
+    // Commit, then propose protected through the dropdown's action.
     let (status, _, page) = act(
         &rig,
         &cookie,
@@ -815,7 +815,7 @@ async fn a_workspace_act_is_confirmed_before_it_runs() {
     // The proposer is never offered the ratification; the admin is.
     let (_, _, page) = send(&rig.router, get("/web/workspaces", Some(&cookie))).await;
     assert!(!page.contains("value=\"ratify:"), "{page}");
-    assert!(page.contains("proposed: committed"), "{page}");
+    assert!(page.contains("proposed: protected"), "{page}");
     let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
     let (status, _, page) = send(&rig.router, get("/web/admin/workspaces", Some(&boss))).await;
     assert_eq!(status, StatusCode::OK, "{page}");
@@ -1205,7 +1205,7 @@ async fn a_resubmitted_confirmation_replays_its_act_and_acts_once() {
     let (status, _, confirm) = send(
         &rig.router,
         get(
-            &format!("/web/workspaces?workspace={proj}&op=propose:committed"),
+            &format!("/web/workspaces?workspace={proj}&op=propose:protected"),
             Some(&cookie),
         ),
     )
@@ -1296,7 +1296,7 @@ async fn a_confirmation_sent_twice_at_once_acts_once() {
     let (_, _, confirm) = send(
         &rig.router,
         get(
-            &format!("/web/workspaces?workspace={proj}&op=propose:committed"),
+            &format!("/web/workspaces?workspace={proj}&op=propose:protected"),
             Some(&cookie),
         ),
     )
