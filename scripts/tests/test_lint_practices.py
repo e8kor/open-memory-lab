@@ -239,5 +239,68 @@ class Actions(unittest.TestCase):
         self.assertEqual([], L.lint_actions(Path(__file__).resolve().parents[2], False))
 
 
+class Voice(unittest.TestCase):
+    def lint(self, text, path="docs/page.md", **extra):
+        return L.lint_voice(tree({path: text, **extra}), True)
+
+    def test_a_second_or_first_person_word_in_prose_is_flagged_with_its_line(self):
+        problems = self.lint("# Page\n\nThe key reads it.\nThen you read it, and we approve.\n")
+        self.assertEqual(1, len(problems), problems)
+        self.assertIn("docs/page.md:4: you, we:", problems[0])
+
+    def test_each_listed_word_is_flagged_whatever_its_case(self):
+        for word in ("you", "Your", "yours", "We", "our", "us", "My"):
+            self.assertEqual(1, len(self.lint(f"A line with {word} in it.\n")), word)
+
+    def test_a_word_that_only_contains_one_is_not_flagged(self):
+        self.assertEqual([], self.lint("Youth, ours, myself, usage, bus and Mycelium.\n"))
+
+    def test_code_comments_link_targets_and_compounds_are_not_prose(self):
+        text = (
+            "Run `oml read my-key` and see [the page](your-page.md) or <https://us.example>.\n"
+            "<!-- you may skip this -->\n"
+            "A read-your-writes token and the US region.\n"
+            "```sh\necho you\n```\n"
+            "~~~\nwe\n~~~\n"
+        )
+        self.assertEqual([], self.lint(text))
+
+    def test_a_quotation_is_not_prose_even_across_lines(self):
+        text = (
+            'The page said "Your keys" and \u201cwe saw it\u201d.\n'
+            '\nThe operator wrote "keep it, as\nwe agreed" on the day.\n'
+            "\n> You quote a block.\n"
+        )
+        self.assertEqual([], self.lint(text))
+
+    def test_a_quotation_left_open_ends_at_the_paragraph(self):
+        problems = self.lint('A stray " mark.\n\nThen you read it.\n')
+        self.assertEqual(1, len(problems), problems)
+        self.assertIn(":3: you:", problems[0])
+
+    def test_inline_code_that_runs_over_two_lines_is_not_prose(self):
+        self.assertEqual([], self.lint("Prints `ask the operator for\nyour URL` and stops.\n"))
+
+    def test_a_reasoned_escape_clears_one_line(self):
+        self.assertEqual([], self.lint("*We Have a Package for You!* <!-- lint:allow-voice a paper's title -->\n"))
+
+    def test_an_allow_listed_file_is_skipped_and_the_rest_are_not(self):
+        root = tree({
+            "docs/legal/terms.md": "You agree.\n",
+            "docs/page.md": "You agree.\n",
+            "scripts/lint_allow/voice.txt": "docs/legal/*.md   # pending removal\n",
+        })
+        problems = L.lint_voice(root, True)
+        self.assertEqual(1, len(problems), problems)
+        self.assertIn("docs/page.md", problems[0])
+        self.assertEqual(2, len(L.lint_voice(root, False)))
+
+    def test_only_markdown_under_docs_is_read(self):
+        self.assertEqual([], self.lint("You.\n", path="README.md", **{"docs/api/tools.json": '{"d": "you"}'}))
+
+    def test_the_committed_docs_are_neutral(self):
+        self.assertEqual([], L.lint_voice(Path(__file__).resolve().parents[2], True))
+
+
 if __name__ == "__main__":
     unittest.main()

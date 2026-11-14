@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Four repository lints (docs/contributing/review-checklist.md).
+"""Five repository lints (docs/contributing/review-checklist.md).
 
-    python scripts/lint_practices.py migrations|ports|like|actions [--root DIR] [--no-allowlist]
+    python scripts/lint_practices.py migrations|ports|like|actions|voice [--root DIR] [--no-allowlist]
 
 migrations  every migration not in lint_allow/migrations.txt sets lock_timeout, adds CHECK and
             FOREIGN KEY constraints NOT VALID (an inline CHECK on an added column too) and validates them (in that or a later
@@ -12,9 +12,13 @@ like        no LIKE or ILIKE operator in the SQL of crates/adapters/oml-pg/src; 
             runs a non-leakproof operator before its policy (ADR-0052).
 actions     every `uses:` under .github/ is `owner/repo@<40 hex> # v<tag>`, and one action is one
             commit in every workflow (docs/contributing/ci-and-toolchain.md "Pinned actions").
+voice       no you, your, yours, we, our, us or my as a whole word in the prose of docs/**/*.md:
+            code, HTML comments, link targets, double-quoted text and blockquotes are not prose,
+            and a file in lint_allow/voice.txt is skipped (design/README.md, the neutral voice).
 
 An escape is a reasoned line comment: `-- lint:allow <rule> <why>` in SQL,
-`// lint:allow-like <why>` in Rust, `lint:allow-5432 <why>` anywhere on the line.
+`// lint:allow-like <why>` in Rust, `lint:allow-5432 <why>` anywhere on the line,
+`<!-- lint:allow-voice <why> -->` on a Markdown line.
 Standard library only.
 """
 from __future__ import annotations
@@ -235,7 +239,70 @@ def lint_actions(root: Path, use_allow: bool = True) -> list[str]:
     return problems
 
 
-LINTS = {"migrations": lint_migrations, "ports": lint_ports, "like": lint_like, "actions": lint_actions}
+# ---- voice ------------------------------------------------------------------------------
+
+VOICE = re.compile(r"(?<![-\w])(you|your|yours|we|our|us|my)(?![-\w])", re.I)
+FENCE = re.compile(r"^\s*(```|~~~)")
+NOT_PROSE = [
+    re.compile(r"<!--.*?-->"),            # HTML comments, the voice escape among them
+    re.compile(r"\]\([^)]*\)"),           # link targets
+    re.compile(r"<[^>\s]+>"),             # autolinks and bare tags
+]
+
+
+def unspan(line: str, mark: str, open_: bool) -> tuple[str, bool]:
+    """Blank every span between pairs of `mark`, carrying one left open from the line before."""
+    if open_:
+        line = mark + line
+    still_open = line.count(mark) % 2 == 1
+    if still_open:
+        line += mark
+    return re.sub(re.escape(mark) + "[^" + re.escape(mark) + "]*" + re.escape(mark), " ", line), still_open
+
+
+def prose(line: str, state: tuple[bool, bool]) -> tuple[str, tuple[bool, bool]]:
+    """The line's prose, and whether inline code and a double quote are still open at its end.
+
+    Inline code and a quotation may run over several lines of one paragraph, so the caller
+    carries the state from line to line and resets it at a blank line."""
+    if line.lstrip().startswith(">"):
+        return "", (False, False)
+    code, quoted = state
+    line, code = unspan(line, "`", code)
+    for pat in NOT_PROSE:
+        line = pat.sub(" ", line)
+    line = line.replace("\u201c", '"').replace("\u201d", '"')
+    line, quoted = unspan(line, '"', quoted)
+    return line, (code, quoted)
+
+
+def lint_voice(root: Path, use_allow: bool = True) -> list[str]:
+    skip = allowed("voice.txt", root, use_allow)
+    problems = []
+    for f in sorted((root / "docs").rglob("*.md")):
+        rel = f.relative_to(root).as_posix()
+        if any(Path(rel).match(pat) for pat in skip):
+            continue
+        fenced, state = False, (False, False)
+        for i, line in enumerate(f.read_text().splitlines(), 1):
+            if FENCE.match(line):
+                fenced, state = not fenced, (False, False)
+                continue
+            if fenced:
+                continue
+            if not line.strip():
+                state = (False, False)
+                continue
+            text, state = prose(line, state)
+            if "lint:allow-voice" in line:
+                continue
+            words = [m.group(1) for m in VOICE.finditer(text) if m.group(1) != "US"]
+            if words:
+                problems.append(f"{rel}:{i}: {', '.join(words)}: {line.strip()[:90]}")
+    return problems
+
+LINTS = {"migrations": lint_migrations, "ports": lint_ports, "like": lint_like, "actions": lint_actions,
+         "voice": lint_voice}
 
 
 def main(argv: list[str] | None = None) -> int:

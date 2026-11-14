@@ -542,7 +542,7 @@ Each new call traces to a use case (ADR-0039 d8), declared on the
 
 | Call | Use case |
 |---|---|
-| `{children: "agent"}` on `POST /v2/workareas/{workarea}/mode`; `mode` on `POST /v2/workareas` under a code parent | UC-CC-01, let my agents keep each repository's knowledge in a workarea of its own |
+| `{children: "agent"}` on `POST /v2/workareas/{workarea}/mode`; `mode` on `POST /v2/workareas` under a code parent | UC-CC-01, a person's agents keep each repository's knowledge in a workarea of its own |
 | `oml setup repo [--mode]`, `oml hook git <event>`, `oml sync --ff-only --paths --background --flush` | UC-CC-02, keep a repository's documents and crates in step on every commit, whoever commits |
 | `oml hook pre-tool-use` filling `anchor`, `origin` and `workarea`; `origin.turn` | UC-CC-03, say where an agent's fact about code came from without the agent writing it |
 | `oml hook post-tool-use`, `oml hook stop`'s stale list | UC-CC-04, find out that a fact I wrote no longer matches the code I just changed |

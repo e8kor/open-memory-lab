@@ -84,7 +84,7 @@ smallest possible runtime. The hot-path rules the stack must obey are recorded i
 
 - **d4 — Scala/Spark enters only behind a named revisit trigger, and never inside
   the TCB.** The trigger is: *a reconciliation or compaction job that delta-rs
-  cannot express at our scale.* If it fires, Spark arrives as an untrusted batch
+  cannot express at OML's scale.* If it fires, Spark arrives as an untrusted batch
   job — its own credentials, read access scoped to what the job needs, never the
   signing key, never a KMS decrypt grant — and its output re-enters the system
   through the same journalled paths as any other privileged service's
