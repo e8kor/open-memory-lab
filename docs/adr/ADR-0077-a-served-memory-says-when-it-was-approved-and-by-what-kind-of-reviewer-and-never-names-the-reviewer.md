@@ -7,7 +7,7 @@ answers: what a served memory says about its approval over HTTP, MCP and the SDK
 
 # ADR-0077 — A served memory says when it was approved and by what kind of reviewer, and never names the reviewer
 
-**Status:** accepted design · 2026-11-12, by the operator, with its three open questions closed as the Decision records them (1: the reviewer is not named to readers, and an admin reads who through the journalled admin read; 2: `approver` is the verdict whose arrival met the policy, and a build with k > 1 adds a list of approving verdicts beside it without changing its meaning; 3: `held_by` is served to every reader of the memory, with the residuals d2 states) · proposed the same day with #175
+**Status:** accepted design · 2026-11-12, by the operator, with its three open questions closed as the Decision records them (1: the reviewer is not named to readers, and an admin reads who through the journalled admin read; 2: `approver` is the verdict whose arrival met the policy, and a build with k > 1 adds a list of approving verdicts beside it without changing its meaning; 3: `held_by` is served to every reader of the memory, with the residuals d2 states) · proposed the same day with #175 · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d2, d5, 2026-11-14)
 
 **Release:** v0.7.2, the release `openapi.yaml` names for the two new members
 
@@ -112,7 +112,7 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   path: for every hit not served unreviewed, the journal's approving verdict is by another key
   and another principal than the author's, and the served `approved_at` is that verdict's. The
   build marks no row `self_signed`: ADR-0025 d17's development exception is not built. So the
-  law has no exception today, and a build of that exception states its own.
+  law has no exception today, and a build of that exception states its own. *(Amended 2026-11-14: the development self-signing exception is retired (ADR-0001 d5); the build never sets `self_signed`, so this text describes nothing that is served.)*
 
 - **d6 — What a read serves of the approval is stored on the version's row when it is
   promoted, and the reviewer is not.** The fold of `lifecycle.promote` and

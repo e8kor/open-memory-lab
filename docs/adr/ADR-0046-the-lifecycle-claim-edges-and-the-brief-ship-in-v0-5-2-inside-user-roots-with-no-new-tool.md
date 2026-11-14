@@ -7,7 +7,7 @@ answers: how the status ladder and claim edges, built on two branches before the
 
 # ADR-0046 — The lifecycle, claim edges and the brief ship in v0.5.2 inside user roots, with no new tool
 
-**Status:** accepted design · 2026-11-04 · proposed and accepted on 2026-11-04 with release v0.5.2, its nine questions answered that day · amended by [ADR-0055](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md) (d2: `same_user` compares the person behind each key and marks a claim's approval too)
+**Status:** accepted design · 2026-11-04 · proposed and accepted on 2026-11-04 with release v0.5.2, its nine questions answered that day · amended by [ADR-0055](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md) (d2: `same_user` compares the person behind each key and marks a claim's approval too) · amended by [ADR-0085](ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) (d1, d2: user roots capped at development, 2026-11-14)
 
 **Release:** introduced in v0.5.2 ([releases](../changelog.md))
 
@@ -57,7 +57,10 @@ say otherwise.
   `universe`. A frozen user root would leave its user nowhere to create work, since ADR-0044 d3
   grants a user key nothing outside its root; its children climb freely, so a finished subtree
   inside it still freezes. This amends ADR-0009 d1 by one more status rule. The cost: a person's
-  whole space can never be presented as frozen evidence; only a subtree of it can.
+  whole space can never be presented as frozen evidence; only a subtree of it can. *(Amended
+  2026-11-14 by ADR-0085 d17: a user root and every workarea under it are capped at
+  `development`; neither `committed` nor `validated` is reachable there. The build still allows
+  `committed` until that record is built.)*
 
 - **d2 — Inside a user root, the user's own dreamer keys propose and ratify, independence is per
   key and principal, and a ratification by another key of the same user is marked `same_user`.**
@@ -68,7 +71,9 @@ say otherwise.
   `workarea.status_transition` and an edge's `review.ratify` payload carry `same_user: true`;
   otherwise `false`. A solo user can move their own work, and an auditor reading the export sees
   what the step is worth. This amends ADR-0009 d3's "second, non-proposing" by stating that the
-  identity it means is the key and principal, and adds the mark.
+  identity it means is the key and principal, and adds the mark. *(Amended 2026-11-14 by ADR-0085
+  d17: with user roots capped at `development` there is no ladder move left to ratify inside a
+  root; the `same_user` mark on edge ratification stays.)*
 
 - **d3 — The lifecycle is served on HTTP and the CLI, and to agents through the workarea read
   only.** `POST /v2/workareas/{workarea}/transitions` proposes and
@@ -185,7 +190,7 @@ say otherwise.
 | **Serve the transitions and claim edges as MCP tools** (`oml_transition`, `oml_relate_propose`) | ADR-0039 d8 requires a record showing that no parameter, resource or hook carries a capability; the workarea read already carries the status, and a transition is a governed act an agent should ask a person for. |
 | **Keep the built `/v2/claim-edges` routes** | ADR-0039 d9 merged them into `/v2/edges` with `kind`; a second family would be one more surface to remove before #150 closes. |
 | **A user root that reaches `validated`** (question 1 a) | It freezes its user out of creating any work; the child-status rule already freezes a finished subtree inside it. |
-| **A user root that never leaves `development`** (question 1 c) | It would keep ADR-0001 d5's development exception open over a person's whole space for good. |
+| **A user root that never leaves `development`** (question 1 c) | It would keep ADR-0001 d5's development exception open over a person's whole space for good. *(Adopted 2026-11-14 by ADR-0085 d17, the operator: "Cap at development". The cost this row named stands: the exception stays open over the person's whole space, accepted because that space is never a production scope.)* |
 | **Refuse a ratification by another key of the same user** (question 2 b) | A solo user could never move their own work; the mark tells the auditor the same thing without stopping the work. |
 | **Let a user key link into `universe`** (question 3 a) | The maintainer's rule is that users neither write nor propose to `universe`; failing closed can be reopened when a user needs to cite a curated claim. |
 | **A fourth tool for edges** (question 4 c) | ADR-0039 d8; the `links` field covers the case agents meet, linking the claim they are writing. |

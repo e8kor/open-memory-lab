@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0010-roles-and-keys
 tier: engineering
-status: accepted design · amended by ADR-0025
+status: accepted design · amended by ADR-0025, ADR-0089
 answers: why exactly five roles exist; how API keys are issued, scoped and banned; where provider-level bootstrap authority lives
 -->
 
 # ADR-0010 — Roles and keys: reader, writer, dreamer, admin, operator
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d6, 2026-11-14)
 
 **Release:** partly in v0.1.0 and v0.3.0; the rest not built ([releases](../changelog.md))
 
@@ -70,7 +70,7 @@ Everything here is decided, not built.
   combines the admin role with dreamer-class grants (typed refusal `access.role_exclusive`,
   [errors](../api/errors.md)) — a person holding both duties holds two keys. An
   admin needing to write an ordinary claim uses a writer-scoped key; that write is held and
-  non-author-reviewed like any other. "Edit or create by hand" is this path and no other —
+  non-author-reviewed like any other. "Edit or create by hand" is this path and no other *(amended 2026-11-14 by ADR-0089 d14: except an admin's marked fix, served at once and confirmed or reverted by a person afterwards)* —
   free-form manipulation of content exists only inside the simulation channel
   ([ADR-0011](ADR-0011-simulations.md)), marked as such. Admin's own verbs — issue/revoke keys,
   create/relate/re-parent/status workareas, reassign claims, ban, demote, erase, crew metadata,

@@ -490,7 +490,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
        names no row and answers `oauth.authorization_expired`, and one connect code yields at most
        one connection. The connect code stays spent either way. Any other combination of
        fields — a code and an action together, an action before a verified code, a second code
-       after one verified — is `request.validation` on the page.
+       after one verified — is `request.validation` on the page. *(Amended 2026-11-14: the development self-signing exception is retired (ADR-0001 d5); the build never sets `self_signed`, so this text describes nothing that is served.)*
 
     **Cross-site forgery.** The page sets no cookie, so a cross-site form has no ambient credential
     to ride. Each `POST` must carry the handle and either `Sec-Fetch-Site: same-origin` or, when
