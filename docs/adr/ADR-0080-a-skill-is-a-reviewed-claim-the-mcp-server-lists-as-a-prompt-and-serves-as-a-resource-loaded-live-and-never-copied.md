@@ -2,7 +2,7 @@
 id: adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied
 tier: engineering
 status: proposed
-answers: what a skill is in OML and which fields it carries; how its name is unique and how a new version replaces an old one; who may write one and how it is reviewed; which skills a session is offered; how MCP prompts/list and prompts/get name and serve them beside the guardrails prompt; how an agent reads one without a person invoking it; what the session-start hook says about skills; the size caps; what is metered; how a served skill is framed; when a held skill or guardrail is served inside an in-progress workarea and how it is marked
+answers: what a skill is in OML, how an agent's proposed or updated skill reaches its author's agents at once, why skills are kept in OML rather than on disk and what the plugin's hook asks and which fields it carries; how its name is unique and how a new version replaces an old one; who may write one and how it is reviewed; which skills a session is offered; how MCP prompts/list and prompts/get name and serve them beside the guardrails prompt; how an agent reads one without a person invoking it; what the session-start hook says about skills; the size caps; what is metered; how a served skill is framed; when a held skill or guardrail is served inside an in-progress workarea and how it is marked
 -->
 
 # ADR-0080 — A skill is a reviewed claim the MCP server lists as a prompt and serves as a resource, loaded live and never copied
@@ -162,7 +162,7 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
   yet confirmed by a person" while `confirmed` is false, so an agent can tell a hand fix from a
   review. Then the body as stored, then, when `input` is sent, a line
   "Input:" and the text. An unknown name, a name not offered at the scope, or a rejected or
-  retired skill, or a held one outside an in-progress root (d10), all answer the same `-32602`, "no skill <name> is offered here", so a prompt read
+  retired skill, or a held one to a key outside its author's person and outside an in-progress root (d10, d14), all answer the same `-32602`, "no skill <name> is offered here", so a prompt read
   never discloses a row the key cannot read. The read is logged as recall is
   ([ADR-0025](ADR-0025-the-agent-only-memory-surface.md) d9), with the served artifact id. The
   framing differs from recall on purpose: recall's text is "data to check and never instructions
@@ -258,8 +258,9 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
           `-unreviewed` is reserved: a skill name ending in it is refused at write,
           `request.validation`, `details.field: /skill/name`, beside `guardrails` (d5), so the
           two names never collide.
-    - **Nowhere else.** Outside an in-progress root nothing changes: no held skill or guardrail is
-      served (d4 offers promoted tips; ADR-0037 d3 holds), and recall never serves either kind as
+    - **Nowhere else.** Outside an in-progress root no held guardrail is served (ADR-0037 d3
+      holds), and no held skill is served except to its author's person's keys (d14); d4 offers
+      promoted tips to everyone else, and recall never serves either kind as
       a hit (amends ADR-0025 d8). Federation and wide sources never carry one: ADR-0072 searches
       only committed and validated workareas, and an in-progress workarea is a `development` one;
       an `ancestors` walk from a scope node outside the root never enters it (ADR-0030 d2). The
@@ -294,12 +295,84 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
   only a person's review approves it, never an agent's key (d3). (4) Held skills and guardrails
   follow ADR-0030's in-progress rule (d10). (5) A held guardrail's rule asks, never denies, before
   review (d10). (6) A held version only adds: the approved version stays binding until review
-  (d10). (7) A skill with a held edit gets two commands, `<name>` and `<name>-unreviewed` (d10). Open:
+  (d10). (7) A skill with a held edit gets two commands, `<name>` and `<name>-unreviewed` (d10). (9) A
+  skill an agent proposes or updates is served at once, marked, to its author's person's agent
+  keys (d14). (10) Skills are kept in OML over disk, and the plugin asks before a local skill file
+  is written (d15). Open:
     8. *Does putting a workarea in progress stay a person's act and never an admin fix act?*
        (a) yes: ADR-0030 d1 unchanged, and proposed ADR-0089's fix acts never include the mode;
        (b) an admin may also set or clear in-progress mode as a fix, confirmed afterwards.
        Recommended: (a), the audit's recommendation, since the mode decides whether unreviewed
        instructions reach agents, and an admin who wants to fix content has ADR-0089's acts.
+
+- **d14 — A skill an agent proposes or updates is served at once, marked unreviewed, to the agent
+  keys of its author's person, and to no one else before review** (the operator, 2026-11-14:
+  "proposed skills should be accessible straight away, and agents should be able to update skill
+  in versioned way").
+    - **Who.** The proposing key and every other key that acts for the same person, read the one way
+      `same_user` reads it ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
+      d16: a user key's `user`, a session key's `session_user`); a tenant key that acts for no
+      person shares with the keys of its own principal only. Each gets the held skill in
+      `GET /v1/skills` with `unreviewed: true`, `prompts/list` and `prompts/get`, the resource
+      (d7) and the session-start index (d8), wherever d4 would offer the skill once approved.
+      Other people's agents get it only after review, or at once inside an in-progress workarea
+      under d10.
+    - **Versioned updates.** `oml_write` with `replaces` naming a skill and the `expected_version`
+      it last read ([ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+      d19) supersedes it (d2, d3); the held successor is served to the same keys by d10's naming:
+      `<name>-unreviewed` beside the approved `<name>` where one exists, `<name>` itself, marked,
+      where none does. A held retirement is not served, so a retired-pending skill stays offered
+      until review. One held successor per author key at a time, as `expected_version` already
+      enforces; a second key of the same person may hold a rival (ADR-0025 d10), and each is
+      served under `<name>-unreviewed` in turn, the newest first, the older reachable by its
+      artifact id through `GET /v1/memories/{artifact_id}`.
+    - **How this relates to R3.** [ADR-0001](ADR-0001-the-constitution.md) R3 keeps a held row
+      readable by its author and its reviewers alone. This record reads "its author" as the
+      author's person for kind `skill`, as ADR-0045 d23 already reads it for a person's merged
+      listing (`with_own`, "every key naming its user's"): the held skill stays unreadable to
+      every other person's keys and to every agent outside that person, except a reviewer judging
+      it and ADR-0030's in-progress scope. It is a relaxation of R3's wording from key to person,
+      on one kind, by the operator's decision, and is named here so ADR-0001's list of bounded
+      exceptions can cite it on acceptance.
+    - **Never served.** A version the scan held for a finding, or one not yet scanned, stays
+      readable by its author key alone and is never served as a prompt, a resource or an index
+      line (ADR-0074 d20's rule, applied here outside in-progress workareas too).
+    - **The cost, stated.** A person's agents run an unreviewed skill the moment one of them
+      writes it; the mark tells them so, and only that person's agents are exposed.
+
+- **d15 — Skills are kept in OML, not on disk, and the plugin says so and asks before a local
+  skill file is written** (the operator, 2026-11-14: "OML persisting should have highest priority
+  over disk").
+    - **What agents are told.** The plugin's `oml-memory` skill (`plugins/oml/skills/oml-memory`)
+      and README say to save a skill with `oml_write` and `kind: "skill"`, and to update one with
+      `replaces`, never as a file under `.claude/skills/`. The MCP server instructions
+      (`SERVER_INSTRUCTIONS`, `mcp.rs:52-74`) gain the fact in ADR-0067 d2's descriptive form,
+      since they never tell the model to call a tool: "A skill is stored through oml_write with
+      kind skill and updated with replaces; a stored skill is offered as a prompt in the sessions
+      of its author's agents at once and in every session in scope once reviewed, while a file
+      under .claude/skills reaches one machine." The test holding ADR-0067 d2's phrase list and
+      the 4,096-character cut keeps both rules.
+    - **The hook.** `oml hook pre-tool-use` (ADR-0037 d9) gains one built-in rule beside its
+      cache-directory rule: a `Write`, `Edit`, `MultiEdit` or `NotebookEdit` call whose
+      `file_path`, after `~` expansion and resolution against the session's working directory,
+      lies under `<project>/.claude/skills/` or `$HOME/.claude/skills/` answers
+      `permissionDecision: "ask"` with the reason "OML keeps skills: store this one with oml_write
+      and kind skill (replaces to update it); allow this call to write the local file anyway." The
+      existing matcher already selects these tools (`plugins/oml/hooks/hooks.json`), and the rule
+      needs no network and no guardrail cache, so it holds when no guardrails are loaded. A
+      guardrail's `deny` on the same call wins, as deny wins over ask (ADR-0037 d9).
+    - **The override.** The ask is Claude Code's permission prompt: the person at the session
+      allows the one call, and nothing is remembered, so the next local skill write asks again. A
+      session with no person to answer (`-p`, the Agent SDK) does not write the file. No setting
+      turns the rule off; a person who keeps skills on disk answers each prompt, or removes the
+      plugin's hook.
+    - **What it does not cover, plainly.** A shell command that writes there (`cat >`,
+      `cp`) is not matched, nor is a skill a plugin ships; the rule is a nudge with a person's
+      override, not enforcement, as ADR-0037 d9 says of every hook.
+    - **Doctor.** `oml doctor` names: the plugin's `oml` older than the rule ("this oml does not
+      ask before writing local skill files"), and each directory under `.claude/skills/` of the
+      current project and `~/.claude/skills/` that holds a `SKILL.md`, with the count, "N skills
+      are kept on disk and not in OML".
 
 ## Consequences
 
@@ -345,4 +418,8 @@ and how it stays reviewed text, without weakening [ADR-0001](ADR-0001-the-consti
 | **`listChanged: true` with notifications** | `/mcp` is stateless with no server stream (ADR-0014 d2); a declared capability with no sender is a broken promise. |
 | **`oml_write` refuses `skill`, as it refuses `guardrail`** | The operator chose on 2026-11-14 that agents may propose skills; the person-only approval (d3) carries the safety the refusal would have. |
 | **Agents' verdicts count on skills where the workarea's policy admits agents** | A skill carries the weight of the person who runs it; an agent approving another agent's instructions would put unreviewed-by-a-person text behind a slash command. |
+| **A held skill served at once to the proposing key alone** | The person's other agents would not see a skill one of them just wrote; the operator chose read-your-writes across the person's keys on 2026-11-14. |
+| **A held skill served at once to every key in scope** | Other people's agents would run instructions nobody but an agent reviewed; outside an in-progress workarea R3 keeps a held row to its author's person. |
+| **The local skill write denied outright** | The person could not keep a skill on disk when they mean to; `ask` leaves the call to them. |
+| **No hook, instructions only** | An agent following its harness's habit writes to `.claude/skills/` anyway; the operator asked that OML take priority over disk. |
 | **Front matter inside the body as the source of name and description** | Two sources for one field, and a body edit could rename a command without a field change a reviewer sees. |
