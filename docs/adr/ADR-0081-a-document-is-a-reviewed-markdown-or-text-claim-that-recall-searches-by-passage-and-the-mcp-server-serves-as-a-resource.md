@@ -111,7 +111,13 @@ Decided, not built.
   with `request.payload_too_large`. Editing is supersession and retiring is `retirement: true`, as
   every claim (ADR-0025 d10, d11); a successor re-sends the whole text. Inside an in-progress
   workarea a held document is served to readers there labelled `unreviewed`, as a held memory is
-  (amends ADR-0030 d3, adding `document` to its served kinds).
+  (amends ADR-0030 d3, adding `document` to its served kinds). Documents follow ADR-0030 exactly as
+  memories do, under ADR-0080 d10's statement of it: a key whose scope node lies inside the
+  in-progress root gets held documents in recall, `resources/list` and `resources/read`, marked by
+  `unreviewed` and `_meta.oml.unreviewed`; a held successor is served beside the promoted tip, a
+  held retirement is not served; a version held for a scan finding stays author-only; outside the
+  root nothing held is served, wide sources never reach it (ADR-0072 searches committed and
+  validated workareas only), and the commit needs zero held versions (ADR-0030 d6).
 
 - **d6 — The MCP server declares `resources` and serves documents and skills under `oml://`,
   read-only and without subscription.**
