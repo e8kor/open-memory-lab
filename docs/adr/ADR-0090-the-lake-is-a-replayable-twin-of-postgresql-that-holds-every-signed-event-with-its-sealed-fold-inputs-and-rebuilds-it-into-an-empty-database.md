@@ -420,7 +420,7 @@ Decided, not built.
 
 - **d19 — The constitution holds unchanged.** [ADR-0001](ADR-0001-the-constitution.md) R1 to R4 are
   not restated. The rebuild is an operator act no agent surface reaches (R1); it replays approvals
-  the journal holds and decides none (R2); held text never reaches a consumer zone (R3, d6);
+  the journal holds and decides none (R2); held text never reaches a consumer zone (ADR-0090 d6; ADR-0001 R3);
   nothing is deleted, a staged row leaves only once the lake holds it, and an erase stays an erase
   through every rebuild (R4, d7).
 
