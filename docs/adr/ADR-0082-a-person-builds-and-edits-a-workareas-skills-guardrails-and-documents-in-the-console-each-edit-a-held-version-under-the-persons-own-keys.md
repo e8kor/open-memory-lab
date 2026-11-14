@@ -151,7 +151,8 @@ Decided, not built.
       ([ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
       d2, d8), each re-sent on a supersession (d10 of ADR-0037); the body cap and the set cap are
       ADR-0037 d7's (`BODY_MAX_BYTES = 300`, `SET_CAP = 12`, `crates/oml-guardrail/src/lib.rs:39,54`),
-      shown beside the field. A guardrail is never self-signed (ADR-0037 d10), and d17 of
+      shown beside the field. Guardrails, like every instruction kind, need a person's verdict
+      (ADR-0080 d16), and d17 of
       ADR-0037 is amended from "no page writes" to "only the builder writes, under this record".
     - **Document:** title, format (`text/markdown` or `text/plain`), body.
     - Every form has an optional claim-key field only for documents (ADR-0081 d2), and a free
@@ -201,8 +202,9 @@ Decided, not built.
       write is: ADR-0001 R2 holds per key and principal
       ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
       d8), and the verdict carries `same_user: true` (ADR-0046 d2), served as `approver.same_user`
-      to every reader (ADR-0077 d2) and in ADR-0080 d6's prompt header. Guardrails keep their own
-      rule: never self-signed (ADR-0037 d10), which a verdict by another key satisfies. A person
+      to every reader (ADR-0077 d2) and in ADR-0080 d6's prompt header. Guardrails, like every
+      instruction kind, need a person's verdict (ADR-0080 d16), which the person's own review key
+      gives here. A person
       alone can therefore publish their own skills, guardrails and documents in their root, and every
       reader can see that the approver was the author's own person.
     - **Inside the root, production scopes stay strict.** A `committed` or `validated` workarea
@@ -281,7 +283,7 @@ Decided, not built.
 | **Preview computed in `oml-web`** | `oml-web` cannot reach the scan, the rule parser or the passage cutter (ADR-0070 d1), and a second copy of them would drift from capture. |
 | **Preview as submit with a `dry_run` flag** | One route whose answer is sometimes a write is easy to call wrongly; a separate route that never writes is checkable by its name. |
 | **Another person always approves a console write, in the person's root too** | A person alone could never publish their own skill, guardrail or document; the operator chose "same as memories today" on 2026-11-14, with the `same_user` mark telling readers what the approval is worth. |
-| **Split by kind: another person for skills and guardrails, the person's own review key for documents** | Two rules for one page, and the instruction kinds already carry their own guard (ADR-0080 d3's person approval, ADR-0037 d10's never self-signed); the operator chose one rule on 2026-11-14. |
+| **Split by kind: another person for skills and guardrails, the person's own review key for documents** | Two rules for one page, and the instruction kinds already carry their own guard (a person's verdict for every instruction kind, ADR-0080 d16); the operator chose one rule on 2026-11-14. |
 | **Per-key independence everywhere, shared workareas included** | In a shared workarea the readers are other people, who are owed a reviewer other than the author; the operator asked for another person there. |
 | **New items only in the person's root, edits elsewhere** | The operator asked on 2026-11-14 for new items anywhere the person may write; everything new is held, so the wider start widens no read. |
 | **A rich-text or WYSIWYG editor** | It needs script, which the console does not run (ADR-0045 d26); a textarea of markdown with a server preview needs none. |

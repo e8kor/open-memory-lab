@@ -243,7 +243,11 @@ Decided; introduced in v0.5.0.
   The maintainer chose this on 2026-11-04 over widening R2 to the person. The cost is said
   plainly: R2 holds per credential, not per person, inside a user root, and the journal shows
   that both keys name the same user, so an audit can see a person approving their own agents'
-  work. ADR-0001 d2 and ADR-0010 d5 are unchanged.
+  work. ADR-0001 d2 and ADR-0010 d5 are unchanged. *(Amended 2026-11-14 by ADR-0082 d7 and
+  ADR-0001 d5: same-person approval holds only in the development and in-progress parts of the
+  person's own root, marked `same_user`; a `committed` or `validated` workarea there, and every
+  workarea outside the root, takes a verdict from another person, whichever of the person's keys
+  wrote the version.)*
 
 - **d9 — A universe claim is served without its source: origin `universe`, no author, no
   lineage below it.** To every key outside the claim's own authoring key set
