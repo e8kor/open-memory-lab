@@ -18,8 +18,8 @@ release, v0.8.0 (d12). The operator added the role rename the same day ("Use 're
 instead"; asked whether it joins this record and release: "Yes, same ADR and v0.8.0"), under the
 same rules (d13). The operator then folded three more stored names into the same cut ("Fold
 into v0.8.0", so that clients take one breaking upgrade): the statuses `committed` and
-`validated` become `protected` and `frozen` (d14), and the key field `held_by` becomes `used_by`
-(d15); and accepted decision 3 of the lifecycle review, its display names (d16).
+`validated` become `protected` and `frozen` (d14), and the key field `held_by` becomes `used_by`,
+its value `human` becoming `person` (d15); and accepted decision 3 of the lifecycle review, its display names (d16).
 
 **Release:** planned for v0.8.0; not built
 
@@ -60,8 +60,9 @@ scripts. The inventory and the build order are a plan beside this record, not pa
 `event_type` and its payload, and the signature and hash chain cover those bytes exactly
 ([chain format](../data/chain-format.md)): six event types spell `workarea.` today
 ([event catalog](../data/event-catalog.md)), and most payloads carry `workarea_id`. Rewriting a
-signed row breaks verification, and R4 keeps the journal append-only
-([ADR-0001](ADR-0001-the-constitution.md)). The lake twin holds the same rows and must rebuild a
+signed row breaks verification: the chain is append-only by its own construction
+([chain format](../data/chain-format.md)), and R4 (no silent deletion) forbids losing what a row
+said ([ADR-0001](ADR-0001-the-constitution.md)). The lake twin holds the same rows and must rebuild a
 database equal to the one it was drained from ([ADR-0090](ADR-0090-the-lake-is-a-replayable-twin-of-postgresql-that-holds-every-signed-event-with-its-sealed-fold-inputs-and-rebuilds-it-into-an-empty-database.md)
 d12, d14). sqlx records a checksum of each applied migration, so an applied migration is never
 edited. Instance names are keys and never change ([ADR-0026](ADR-0026-names-are-keys.md) d1, d10).
@@ -148,8 +149,8 @@ Decided, not built.
   (`workspace.create`, `workspace.mode_set`, `workspace.federation_set`,
   `workspace.status_proposed`, `workspace.status_transition`, `workspace.crew_updated`, and the
   designed ones), payload keys spell `workspace`, and payload values that named the kind spell
-  `workspace`. No signed row is rewritten, re-signed or re-hashed: R4 and the chain hold as they
-  are, and an auditor verifies a former row exactly as before.
+  `workspace`. No signed row is rewritten, re-signed or re-hashed: R4 (no silent deletion) and the
+  signed chain hold as they are, and an auditor verifies a former row exactly as before.
 
 - **d4 — Every reader reads a former name through one map, after verification.** One total, pure
   function in `oml-domain` maps an event as stored to the event as read:
@@ -163,12 +164,13 @@ Decided, not built.
      that records it;
   4. a closed list of (event type, field) values that hold a role has the value `dreamer`
      replaced by `reviewer`: `role` of `key.issued` and `grant.issued`, `required_roles` inside
-     a `policy_snapshot`, and every other field the catalog types as a role (d13);
+     a `policy_snapshot`; the catalog types no other event field as a role (d13);
   5. a status value `committed` or `validated`, in `status` of `workarea.create` and `from` and
      `to` of `workarea.status_proposed` and `workarea.status_transition`, becomes `protected` or
-     `frozen` (d14);
+     `frozen`, and inside the `policy_snapshot` of `workarea.status_transition` the key
+     `children_all_validated` becomes `children_all_frozen` (d14);
   6. the payload key `held_by` becomes `used_by`, and its value `human` becomes `person`, in
-     `key.issued` and every event that records a key's holder (d15).
+     `key.issued`, the one event that records a key's holder (d15).
 
   The map is the identity on every event the new server writes, so applying it twice changes
   nothing and the readers need no cut-over date. Replay, the lake twin's `fold_of` (ADR-0090 d12),
@@ -216,8 +218,9 @@ Decided, not built.
     the role check constraints of migrations 0001 and 0004 and the curator-profile check of
     migration 0028 (`profile = 'curator' AND role = 'reviewer'`) (d13);
   - rewrites the statuses `committed` and `validated` to `protected` and `frozen` in the
-    workspaces and their transitions, and replaces the status check constraints of migrations
-    0001 and 0017 (d14);
+    workspaces and their transitions, renames the key `children_all_validated` to
+    `children_all_frozen` in the stored transition snapshots (`policy_snapshot`), and replaces
+    the status check constraints of migrations 0001 and 0017 (d14);
   - renames the columns `held_by` and `approver_held_by` to `used_by` and `approver_used_by`,
     rewrites the value `human` to `person` in them, and replaces the check of migration 0001
     (d15).
@@ -386,15 +389,19 @@ Decided, not built.
   their other senses: an idempotency row or a transaction is still committed (`committed_at`),
   and the in-progress API's `commit` field and `commit_first` reason are not this rename and stay.
   The renames reach the status enum and its strings, the check constraints and the constraint
-  name `workareas_universe_committed`, the API and OpenAPI enums, the CLI's `status propose
+  name `workareas_universe_committed`, the `policy_snapshot` key `children_all_validated` (now
+  `children_all_frozen`), the refusal reason `children_not_validated` of
+  `workarea.transition_refused` (now `children_not_frozen` under `workspace.transition_refused`),
+  the API and OpenAPI enums, the CLI's `status propose
   --to`, the console's badges, the SDKs and the docs; events follow d4 rule 5.
 
 - **d15 — The key field `held_by` becomes `used_by`, valued `agent`, `person` or `service`
-  (decided by the operator, 2026-11-14; `person` decided here).** The attestation of who holds a
+  (decided by the operator, 2026-11-14, `human` becoming `person` included).** The attestation of who holds a
   key keeps its meaning and its rules (ADR-0025 d2, ADR-0037 d5, ADR-0077 d2); the field and one
-  value change. `human` becomes `person`, because the pages already say "a person's key",
-  "a person's verdict" and "a different person" for this attestation, and a field spelling a
-  different word from every sentence about it is the drift ADR-0018 d4 forbids. The rename reaches
+  value change. `human` becomes `person`, the operator's decision, which matches the pages that
+  already say "a person's key", "a person's verdict" and "a different person" for this
+  attestation; a field spelling a different word from every sentence about it is the drift
+  ADR-0018 d4 forbids. The rename reaches
   `held_by` on key issuance, whoami, key listings and served guardrail verdicts, `approver.held_by`
   (now `approver.used_by`), the reason `held_by_service` of `oauth.connect_refused` (now
   `used_by_service`), the `HeldBy` types (now `UsedBy`), the CLI's `--held-by` and its output,
@@ -449,7 +456,7 @@ Decided, not built.
 | **A separate record and a later release for the role** | Clients would break twice, once for each rename, and the former-name map and migration would be built twice. The operator put both in this record and v0.8.0 ("Yes, same ADR and v0.8.0"). |
 | **Refuse retired names by name for one release** | A retired header, query parameter or environment variable would answer `request.validation` naming its successor, so no v0.7 write lands in a default workspace. It adds a rule per retired name to build, test and later remove. The operator chose the pure cut and the upgrade order instead (2026-11-14). |
 | **Redirect renamed site pages with `mkdocs-redirects`** | Bookmarks of the two renamed pages would keep landing, at the price of a new pinned dependency for two pages. The operator chose no redirects (2026-11-14); old page URLs answer 404 and the landing site moves to the new paths. |
-| **Rewrite the journal into the new names** | Every rewritten row would need a new signature and hash, breaking the chain an auditor verified and R4's append-only rule. The map of d4 costs one function and a closed list. |
+| **Rewrite the journal into the new names** | Every rewritten row would need a new signature and hash, breaking the signed chain an auditor verified, whose rows are append-only (chain format), and erasing what each row said, which R4 (no silent deletion) forbids. The map of d4 costs one function and a closed list. |
 | **Keep the former names in the journal forever, new events included** | Readers would need no map, but every new event would carry the retired word, and the catalog would document two vocabularies for one release onward. |
 | **Edit the applied migrations to the new names** | sqlx refuses a migration whose checksum changed, and a database migrated with the old text would differ from one migrated with the new. |
 | **Stub files at the former design-record names** | Keeps old GitHub links working, but every tool that reads `ADR-*.md` would take each stub as a record. The register's list and commit permalinks serve the same reader without that. |
