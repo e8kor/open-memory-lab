@@ -60,8 +60,10 @@ Decided, not built.
 - **d4 — Name collisions are computed per receiving chain the caller can read.** For each receiving
   scope, the skill names offered along its chain after publication are compared with today's
   (ADR-0080 d5's nearest-wins rule). The report names every name the release would newly shadow,
-  or newly be shadowed by. Document keys are compared within each receiving workarea. A chain with
-  a node the caller cannot read is reported as "partly covered", without naming the node.
+  or newly be shadowed by. Document keys are compared within each receiving workarea. A chain is
+  computed over the nodes the caller reads, and nothing per chain says whether it held others:
+  the header's sentence (d1) is the only statement of coverage, so the report never discloses
+  that an unreadable node exists on a particular chain.
 
 - **d5 — Guardrail overlap is tested only against the suite's guardrail cases.** For each
   `guardrail` test case of the workarea and of each receiving scope the caller reads (ADR-0086 d1),
@@ -92,6 +94,7 @@ Decided, not built.
 
 - A cached report per candidate digest; the release page links it.
 - The CLI gains `oml workarea impact <workarea> --candidate <proposal>`.
+- Metrics: `oml_impact_report_seconds` (a histogram) and `oml_impact_blocking_findings_total`.
 - A doctor line names proposals whose report is older than their candidate.
 - Two people with different reads see different reports of one candidate. That is intended, and the
   ratifier's report is the one recorded for the gate.
@@ -100,7 +103,7 @@ Decided, not built.
 
 | Alternative | Why not |
 |---|---|
-| **A report under a server identity that reads the whole tenant** | Would show the caller content and structure its key cannot read (R3), and an admin's content reads are single, reasoned and journalled (ADR-0089 d5), never a tenant-wide computation for someone else. |
+| **A report under a server identity that reads the whole tenant** | Would show the caller content and structure its key cannot read (R3), and an admin's content reads are single, reasoned and journalled (ADR-0089 d10), never a tenant-wide computation for someone else. |
 | **A count of overlapping keys in other people's in-progress work** | The count itself discloses that unreadable work exists and what it touches. |
 | **Pattern-level guardrail conflict analysis** | Rules are shell-token patterns; proving two never overlap is undecidable in general, and a heuristic without cases produces findings nobody can check. |
 | **Model-based contradiction detection now** | Off the write path by ADR-0074 d13 and unmeasured; a blocking gate on an unmeasured detector would stop releases on noise. |

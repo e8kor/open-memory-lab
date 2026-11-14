@@ -70,7 +70,7 @@ Everything here is decided, not built.
   combines the admin role with dreamer-class grants (typed refusal `access.role_exclusive`,
   [errors](../api/errors.md)) — a person holding both duties holds two keys. An
   admin needing to write an ordinary claim uses a writer-scoped key; that write is held and
-  non-author-reviewed like any other. "Edit or create by hand" is this path and no other —
+  non-author-reviewed like any other. "Edit or create by hand" is this path and no other *(proposed amendment, ADR-0089 d14: except an admin's marked fix, served at once and confirmed by a person afterwards)* —
   free-form manipulation of content exists only inside the simulation channel
   ([ADR-0011](ADR-0011-simulations.md)), marked as such. Admin's own verbs — issue/revoke keys,
   create/relate/re-parent/status workareas, reassign claims, ban, demote, erase, crew metadata,

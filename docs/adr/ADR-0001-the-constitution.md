@@ -52,7 +52,17 @@ held to, not a property of running software.
   but never called a review. No other page may widen this scope; a change to it is a new
   decision on this record. *(Amended 2026-11-05 — a second bounded exception, of R3's first
   sentence only, inside a workarea a person put in progress: [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d3. R2 holds there
-  without exception.)*
+  without exception.)* *(Proposed amendment, to be accepted together with
+  [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)
+  d14 — a third bounded exception, of R2's order and R3's first sentence, for admin keys only, in
+  every workarea status, overriding "R2 and R3 hold unconditionally in `committed` and `validated`
+  workareas" for exactly this: an admin key `held_by: human` may take a fix act (demote, edit,
+  retire, release rollback, import rollback, erasure) that is served before any non-author review,
+  with a required reason, journalled, marked to every reader as `approver.act: "admin_fix"`,
+  excluded from every release cut until confirmed, and queued for a person of another principal to
+  confirm or revert; and an admin key reads claim text, held rows included, tenant-wide with a
+  reason on the admin routes alone, recording the relaxation of R3 that ADR-0045 d21 made. R1 is
+  unchanged: no agent key gains anything. No other record widens this exception.)*
 
 - **d6 — The honest limit on R2.** Undeclared derivation — a writer omitting `derives_from` —
   is not detectable by the service. Lineage-closure exclusion is exactly as good as the

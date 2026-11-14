@@ -9,7 +9,7 @@ answers: whether a verdict given on another server may count on this one; what a
 
 **Status:** proposed · deferred until ADR-0084 is built and the operator decides R2 on import · 2026-11-14
 
-**Amends:** ADR-0001 (d2: a third bounded reading of R2, for verified verdicts from a trusted source
+**Amends:** ADR-0001 (d5: a fourth bounded exception, of R2, after ADR-0089's third; for verified verdicts from a trusted source
 server), ADR-0084 (d6: an import from a trusted source may land promoted members)
 
 ## Context
@@ -44,9 +44,10 @@ workarea (`crates/oml-domain/src/federation.rs:29`, `is_trusted_source`). Every 
   A version failing any check lands held, as ADR-0084 d6 says.
 
 - **d3 — Instructions never count: skills, guardrails, steering and tests are reviewed again on the
-  target.** A skill needs a person's verdict on the server that serves it (ADR-0080 d3, proposed).
-  Guardrails and steering are served first and never cut (ADR-0030 d3). Tests decide what a release
-  is held to (ADR-0086 d1). A verdict from elsewhere is not enough for any of them.
+  target.** These four kinds tell the target's agents what to do or decide what the target's
+  releases are held to, so the person answerable for them must be someone the target knows: a
+  reviewer on another server cannot be asked, revoked or audited by the target, and a mistake in
+  them acts on every agent at once rather than on one recall.
 
 - **d4 — A counted version lands promoted, marked, inside an in-progress workarea, and is published
   only by a release on the target.** It carries `approver: "imported"` with the pin's id. The
@@ -56,7 +57,7 @@ workarea (`crates/oml-domain/src/federation.rs:29`, `is_trusted_source`). Every 
 
 ## Consequences
 
-- ADR-0001 gains its third bounded reading of R2, by reference to this record.
+- ADR-0001 d5 gains its fourth bounded exception, numbered after ADR-0089's third, by reference to this record.
 - Deferred: nothing here is built before ADR-0084 and the operator's answer to "may a verdict from
   another server count at all".
 

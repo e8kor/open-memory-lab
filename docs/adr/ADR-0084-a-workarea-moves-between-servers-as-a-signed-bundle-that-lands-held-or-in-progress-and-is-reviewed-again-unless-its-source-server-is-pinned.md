@@ -12,7 +12,8 @@ answers: what a workarea export carries and what it never carries; the bundle's 
 **Release:** not scheduled; after ADR-0085, whose release manifest `release` mode exports. A
 trusted source server, the "unless" of the title, is the deferred ADR-0088.
 
-**Amends:** ADR-0063 (d1: `origin` is kept verbatim and an imported version gains a separate
+**Amends:** ADR-0071 (d2: an `exports` meter), ADR-0005 (the erasure inventory gains the class
+"import staging", d11), ADR-0063 (d1: `origin` is kept verbatim and an imported version gains a separate
 `import_provenance`), ADR-0055 (d2: the review list shows a held imported version's source verdict
 as evidence), ADR-0030 (d1: an import is a write into an in-progress workarea and adds no reader
 of held rows)
@@ -39,7 +40,7 @@ The forces, from [ADR-0001](ADR-0001-the-constitution.md):
 - **R1:** an import that served content would be a promotion, so an import promotes nothing. An
   admin key reads claim text one journalled read at a time, with a reason
   ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)
-  d5); a bundle is bulk egress, not a read.
+  d10); a bundle is bulk egress, not a read.
 - **R2:** the source's reviewers are keys the target cannot see.
 - **R3:** a held row leaves no in-progress workarea, and a bundle is a way out.
 - **R4:** import and export delete nothing, and a copy is beyond the reach of a source erasure
@@ -107,6 +108,9 @@ Decided, not built.
   - R2 on the target is checked against the importer.
   - The honest limit, in the manner of ADR-0001 d6: a person who wrote a version on the source and
     holds a dreamer key on the target is not recognisable there, and could approve their own work.
+    So a reviewer approving an imported version attests "I did not author this on the source",
+    journalled with the verdict (`attests_not_source_author: true`); an opt-in link of a person
+    across servers is later work (*operator to confirm*).
 
 - **d5 — The manifest is signed by the source's journal key under a domain prefix; the bundle is
   encrypted to named recipients.**
@@ -115,6 +119,10 @@ Decided, not built.
     the reverse (`crates/oml-domain/src/envelope.rs:375`, `crates/oml-domain/src/chain.rs:105`).
   - The journal key is deployment-wide (ADR-0073 d1), so the signed manifest names the source
     tenant and verification checks it.
+  - **Authenticity.** An import may name `--expect-key <fingerprint>`, the source key's
+    fingerprint obtained out of band; a manifest signed by another key is refused
+    `bundle.signature_unexpected`. Without it, the signature proves integrity only and
+    authenticates nothing until ADR-0088; the plan and the `workarea.imported` event say which.
   - Export requires at least one age recipient and writes the tar encrypted to it; without one the
     export is refused as `bundle.unencrypted`. The server never holds a recipient's identity; the
     CLI decrypts on the importer's machine.
@@ -168,7 +176,13 @@ Decided, not built.
     into one target makes none.
   - A ledger per target workarea and source keeps the newest export instant and release imported.
     A bundle older than the ledger is refused as `import.bundle_older` unless `--allow-older` is
-    given.
+    given; an import that used it carries `allow_older: true` on `workarea.imported`, and the
+    doctor lists such imports.
+  - **`since <label>`** exports the signed difference between that release's manifest and the
+    exported release's: the versions added or changed and the claim keys dropped, with both
+    manifest digests in the bundle manifest. The target checks that its ledger's last imported
+    release from this source has the `since` manifest digest, and refuses `import.since_mismatch`
+    otherwise, so an incremental import never applies to the wrong base.
   - Each claim key is planned as `oml sync` plans (ADR-0057 d8):
     - `new`: written held;
     - `changed`: a held supersession of the target tip, with `expected_version`;
@@ -193,8 +207,11 @@ Decided, not built.
     - `off`;
     - `own_root`, the default: a person exports only inside their own root;
     - `allowed`: shared workarea subtrees too.
+  - Under `own_root`, an admin may allow one shared workarea's export as a policy act,
+    `export.allowance_set {workarea, until?}`, journalled. It is a policy change, not a fix
+    (ADR-0089), and it reads no content.
   - An admin key sets the policy; that changes what may leave and reads no content. An admin key
-    never exports: its reads of claim text are single, reasoned and journalled (ADR-0089 d5), and a
+    never exports: its reads of claim text are single, reasoned and journalled (ADR-0089 d10), and a
     bundle is the whole subtree's text leaving the server, which no fix needs.
   - An export changes nothing on the source. It is journalled as `workarea.exported` with the
     manifest digest, mode, counts and recipients' fingerprints, and counted in bytes on a new
@@ -216,9 +233,10 @@ Decided, not built.
     be rolled back.
   - **Rollback.** Developers roll an import back by rejecting its held versions and, for what has
     since been promoted, superseding or retiring through review. When that cannot wait, an admin
-    rolls the import back at once as a fix (ADR-0089 d1): every version the import brought in that
+    rolls the import back at once as a fix (ADR-0089 d2): every version the import brought in that
     has since been promoted is demoted, which restores the tips it replaced, and every claim key it
-    created is retired. The rollback is marked, journalled with a reason, and confirmed or reverted
+    created is retired; keys bound to a release receive the same as a marked overlay
+    (ADR-0089 d5). The rollback is marked, journalled with a reason, and confirmed or reverted
     by a person afterwards. Nothing is deleted.
 
 - **d12 — A new shared target is three actors' work.**
@@ -240,7 +258,7 @@ Decided, not built.
     plaintext.
   - When a later bundle carries a marker for a version already imported, the target raises an
     erasure notice, `import.erasure_notice`, which the doctor counts. The target's own erasure act
-    clears it (ADR-0005 d2; an admin's legal act, ADR-0089 d1).
+    clears it (ADR-0005 d2; an admin's legal act, ADR-0089 d2).
   - Bundle files are outside every server's erasure. The bound is the recipients' custody and the
     encryption of d5, and the export's output says so.
 
@@ -274,6 +292,7 @@ Decided, not built.
     - open erasure notices;
     - the tenant's export policy.
   - Meters: imported versions count as writes, memories and text bytes; exports count on `exports`.
+  - Metrics: `oml_import_refusals_total{code}`, `oml_exports_total`, `oml_import_versions_total{outcome}`.
   - Throughput and bundle sizes are unmeasured. The batch size, d7's size limits and a
     per-day export limit are set from measurement at the build, recorded as a bottleneck row.
 
@@ -309,7 +328,7 @@ Decided, not built.
 | **Only promoted tips, never history** | A move needs the superseded versions, which R4 keeps. `release` mode remains the tips-only path. |
 | **Every version, including other people's held and rejected ones** | Other people's held and rejected text would leave the server, which R3 and the reviewer's rejection forbid. |
 | **A `pg_dump` of the tenant's rows** | Moves keys, grants and the chain, cannot merge into an existing tenant, rewinds erasure, and needs `BYPASSRLS`. That is the backup's job. |
-| **An admin key exports** | An admin reads claim text one reasoned, journalled read at a time to fix something (ADR-0089 d5); a whole subtree leaving the server is not a fix. |
+| **An admin key exports** | An admin reads claim text one reasoned, journalled read at a time to fix something (ADR-0089 d10); a whole subtree leaving the server is not a fix. |
 | **An agent exports or imports through MCP** | A bulk egress or a bulk write started by the agent is the gate being called by the thing it gates (R1). |
 | **Import into a standard workarea, held** | Held rows there are author-only (R3), so the target's agents and tests could not see the import before it is served. |
 | **Server-to-server pull (live sync) instead of a file** | Needs a standing credential on the target into the source, and makes every move an online dependency. A file lets people check what moves. |

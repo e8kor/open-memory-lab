@@ -42,8 +42,9 @@ Citations are `ADR-nnnn dN :line` for a decision record in `docs/adr/` and `path
 ## The operator's decisions of 2026-11-14
 
 1. **Team delivery through shared development workareas.** A team develops in a shared workarea
-   such as `payments.dev`, written with persons' tenant keys, and binds to its releases. No copy
-   verb is added. Personal roots stay personal (ADR-0044 d3 unchanged).
+   such as `payments.dev`, written with persons' tenant keys, and binds to its releases. No verb is
+   added beyond import, whose same-server form makes a development copy (ADR-0084 d14). Personal
+   roots stay personal (ADR-0044 d3 unchanged).
 2. **Binding wins over in progress.** A key bound to `latest` or to a pinned release is served the
    release manifest by artifact id, whatever the workarea's marks, and never sees held items. Only
    `tip` keys are served as ADR-0030 d3 and ADR-0080 d10 serve.
@@ -51,9 +52,19 @@ Citations are `ADR-nnnn dN :line` for a decision record in `docs/adr/` and `path
    Held work by others is not in it.
 4. **The admin fixes production.** In the operator's words: "admin should be the person who can fix
    workareas on prod, so, all types of action, demote, edit, rollback imports for example". A fix
-   takes effect at once and is marked; admins read claim text in the workareas they administer,
-   each read journalled. This replaced, the same day, an earlier decision that admins keep erasure
-   only. It is ADR-0089, and it relaxes R1, R2 and R3 for admin keys, boundedly and by name.
+   takes effect at once and is marked; an admin reads claim text tenant-wide, as ADR-0045 d21
+   already allows, each read journalled with a reason. This replaced, the same day, an earlier
+   decision that admins keep erasure only. It is ADR-0089: a third bounded exception in ADR-0001 d5,
+   of R2's order and R3's first sentence, for admin keys; R1 does not change.
+5. **Releases govern every kind, memories included.** An agent on `latest` or a pin receives a newly
+   approved memory only through a release. Its own held writes are still served to it, and writes
+   check against the promoted tip (ADR-0085 d5).
+6. **An admin fix reaches release-bound keys as a marked overlay** on every release that lists the
+   claim; the release reads degraded until a person confirms (ADR-0085 d6, ADR-0089 d5).
+7. **Loosening a guardrail is one person's act, with an alert,** for an admin's fix and a
+   developer's withdrawal alike (ADR-0085 d9, ADR-0089 d6).
+8. **Only the key's issuer or its own person widens a binding;** an admin only narrows; every change
+   is journalled (ADR-0085 d7).
 
 ## The four rules
 
@@ -75,16 +86,20 @@ Two facts about today shape the whole lifecycle:
 
 ## The running example
 
-The payments team works in the shared workarea `payments.dev`, which alice marked in progress with
-her dreamer key. alice, bob and their agents write:
+The payments team works in the shared workarea `payments.dev`. The admin created it and issued
+each person tenant keys `held_by: human`: `alice-dev` and `bob-dev` (writer) and `alice-dev-review`
+and `bob-dev-review` (dreamer). alice marked it in progress with `alice-dev-review`. The admin issued
+the developers' agent keys at `tip`, which ADR-0085 d7 allows because their scope is inside the
+in-progress root, and the production agents' keys at `latest`. In the console, each person acts with
+the tenant key linked to their sign-in (ADR-0085 d16). alice, bob and their agents write:
 
 - three skills: `refund-flow`, `ledger-lookup` and `incident-triage`;
 - two guardrails: never `git push --force` on `main`, and ask before `psql` against production;
 - a runbook document, `doc/runbooks/refunds`;
 - test cases and memories.
 
-The team's production agents hold keys bound to `latest`. The developers' own keys are bound to
-`tip`. alice also keeps a personal experiment in `alice.scratch`, which stays in her root.
+Because releases govern every kind, a memory bob approves on Monday reaches the production agents
+only with the next release; the developers' `tip` keys see it at once. alice also keeps a personal experiment in `alice.scratch`, which stays in her root.
 
 ## The lifecycle at a glance
 
@@ -186,22 +201,25 @@ person's act.
 - R4: a version demoted or erased after the cut drops out of every release that lists it.
 
 **Answer.** ADR-0085:
-- **d1:** a release is an immutable manifest of promoted versions by artifact id. It never holds a
-  held, `self_signed` or simulation row.
+- **d1:** a release is a manifest of promoted versions by artifact id, fixed when it is proposed.
+  It never holds a held, `self_signed` or simulation row, or an unconfirmed admin fix.
 - **d2:** a release is "published"; a version is "promoted".
 - **d4:** two persons publish. CI never proposes or ratifies.
-- **d5:** each key binds to `tip`, `latest` or a pin, resolved per workarea. A `latest` key whose
-  workarea has no release is served the tip, never a held item, and the answer is marked
-  `binding_fallback`.
-- **d6:** binding wins over in-progress marks (decision 2).
-- **d7:** a person moves a binding toward newer content; an admin can only narrow it.
+- **d5:** a release governs every kind for the keys bound to it. The cost is said plainly: approved
+  memories reach those keys only at the next release. A key's own held writes are still served to
+  it.
+- **d6:** each key binds to `tip`, `latest` or a pin, resolved per workarea; binding wins over
+  in-progress marks; an admin fix overlays every release that lists its claim.
+- **d7:** the key's issuer or its own person widens a binding; an admin only narrows it.
 - **d8:** a consumers read shows counts to the ratifier and key names to admins.
-- **d9:** one person may withdraw a release. Two are needed if the withdrawal removes or loosens a
-  guardrail (operator to confirm).
+- **d9:** one person withdraws a release; a withdrawal that loosens a guardrail raises an alert
+  until a second person acknowledges it.
 - **d10:** release notes are generated and flag breaking changes.
 - **d13:** publishing stays with persons. The admin release view reads every release and rolls one
   back as a fix (ADR-0089).
 - **d14:** ADR-0047 d10 is answered without a frozen child.
+- **d15, d16:** a released in-progress workarea federates at its latest release, and the console acts
+  with linked tenant keys (both operator to confirm).
 
 ## Stage 5. Tests
 
@@ -313,21 +331,27 @@ leave an in-progress workarea before the commit.
 follows the new `refund-flow` skill and asks to refund twice: the skill's step 3 is wrong.
 
 1. **The developer withdraws the release** (ADR-0085 d9). bob, on the team, withdraws 1.4.0 with a
-   reason. The withdrawal does not remove or loosen a guardrail, so one person suffices. Every
+   reason. One person suffices; had 1.3.0 lacked a guardrail 1.4.0 has, the withdrawal would still
+   take effect and raise an alert until alice acknowledges it. Every
    `latest` key reads 1.3.0 on its next request and loads 1.3.0's skills at its next session start.
    Nothing is deleted: 1.4.0 stays listed as withdrawn.
 2. **The developer fixes forward.** alice runs `oml workarea revert --to 1.3.0` for the one skill,
    or writes a corrected `refund-flow`. bob reviews it, the tests and impact report run against the
    candidate (ADR-0086, ADR-0087), and alice proposes 1.4.1, which bob publishes.
-3. **When the fix cannot wait.** It is 03:00, nobody on the team answers, and the bad step is also
-   served to the developers' `tip` keys and to a sibling workarea that federates to `payments.dev`.
-   The tenant's admin demotes the bad `refund-flow` version with a reason (ADR-0089 d1). The
-   previous version is served at once, marked `approver.act: "admin_fix"`, `confirmed: false`. The
-   doctor and `oml_admin_fixes_unconfirmed` show one open fix.
+3. **When the fix cannot wait.** Suppose instead that the bad step shipped in 1.3.0 already, so a
+   withdrawal would return readers to the same text; the developers' `tip` keys read it too; and it
+   is 03:00, with nobody on the team answering. The tenant's admin demotes the bad `refund-flow` version with a reason
+   (ADR-0089 d2). At once, `tip` keys are served the previous promoted version, and every release
+   that lists the bad one, 1.3.0 and 1.4.0 and any pin to them, serves the previous version as a
+   marked overlay (ADR-0089 d5): `approver.act: "admin_fix"`, `confirmed: false`, and the releases
+   read `degraded`. The doctor and `oml_admin_fixes_unconfirmed` show one open fix, and no one can
+   cut 1.4.1 over it until it is confirmed.
 4. **The team confirms or reverts the admin's fix.** In the morning, bob sees "Fixes to confirm" on
-   his Review page, reads the reason, and confirms. The mark's `confirmed` turns true. Had the
-   admin been wrong, bob would revert: a new version carrying the demoted text, promoted by his
-   verdict, journalled as `admin.fix_reverted`. Either way, nothing is deleted.
+   his Personal Review page (`GET /v2/review/fixes`, which never names the admin), reads the reason,
+   and confirms. The mark's `confirmed` turns true and the releases read `fixed`. Had the admin been
+   wrong, bob would revert: the server writes a new version carrying the demoted text under the fix
+   id, promoted by bob's verdict, journalled as `admin.fix_reverted`. Either way, nothing is
+   deleted, and alice then fixes forward and cuts 1.4.1.
 
 ## Stage 10. Audit
 
@@ -338,10 +362,11 @@ follows the new `refund-flow` skill and asks to refund twice: the skill's step 3
 
 **Answer.**
 - New events, each carrying the digest of its manifest or report:
-  - `workarea.release_proposed`, `workarea.release_ratified`, `workarea.release_withdrawn`;
+  - `workarea.release_proposed`, `workarea.release_ratified`, `workarea.release_withdrawn`,
+    `workarea.release_withdrawal_acknowledged`;
   - `key.binding_set`;
-  - `workarea.test_run`, `workarea.gate_override`, `workarea.impact_report`;
-  - `workarea.exported`, `workarea.imported`, `import.erasure_notice`;
+  - `workarea.test_run`, `workarea.gate_override`, `workarea.gates_set`, `workarea.impact_report`;
+  - `workarea.exported`, `workarea.imported`, `import.erasure_notice`, `export.allowance_set`;
   - `admin.fix`, `admin.fix_confirmed`, `admin.fix_reverted`, and `memory.admin_read` with a reason.
 - A bundle carries the source's signed events for every version it holds (ADR-0084 d1).
 
@@ -349,7 +374,7 @@ follows the new `refund-flow` skill and asks to refund twice: the skill's step 3
 
 | # | Change | Record |
 |---|---|---|
-| 1 | Releases, publishing, binding, withdrawal, revert, release notes, consumers read, admin acts reduced to erasure | **ADR-0085**, new |
+| 1 | Releases governing every kind, cut and publish by two persons, binding, admin-fix overlays, withdrawal with an alert, revert, release notes, consumers read, the admin release view and rollback | **ADR-0085**, new |
 | 2 | Test suites as claims, server runs, ordered gates and overrides | **ADR-0086**, new |
 | 3 | Impact report | **ADR-0087**, new |
 | 4 | Bundle, export, an import that lands held, the same-server copy | **ADR-0084**, new |
@@ -360,13 +385,12 @@ follows the new `refund-flow` skill and asks to refund twice: the skill's step 3
 
 ## Questions still open
 
-The operator's four decisions are recorded above. These questions remain, each with the
+The operator's eight decisions are recorded above. These questions remain, each with the
 recommendation first:
 
 1. **Default binding:** `latest` for agent keys and `tip` for person keys (ADR-0085), or `tip`
    everywhere?
-2. **Withdrawal:** one person, or two when a guardrail is removed or loosened (ADR-0085 d9), or
-   always two?
+2. **A cut over an unconfirmed admin fix:** refused (ADR-0085 d1), or allowed and marked?
 3. **A pin to a withdrawn release:** served and marked, or refused?
 4. **Breaking changes:** force a major label, or only flag them?
 5. **Gate overrides:** by the ratifier with a reason (ADR-0086 d6), never, or with a second person?
@@ -377,3 +401,11 @@ recommendation first:
 10. **Verdicts from another server:** may they ever count (ADR-0088, deferred)?
 11. **Admin edits:** allowed in every workarea, or only in one with published releases (ADR-0089)?
 12. **Unconfirmed admin fixes:** stay served and marked indefinitely (recommended), or expire?
+13. **Admin keys that fix:** `held_by: human` only (recommended, ADR-0089 d1)?
+14. **Frozen workareas and `universe`:** admin edits refused when frozen, allowed and marked in
+    `universe` (ADR-0089 d12, d13)?
+15. **Cross-server attestation:** a reviewer of an imported version attests "did not author this on
+    the source" (ADR-0084 d4)?
+16. **Federation of a released in-progress workarea** at its latest release (ADR-0085 d15)?
+17. **Console acts through linked tenant keys** (ADR-0085 d16)?
+18. **Self-confirmation in a one-person development tenant,** marked `self_signed` (ADR-0089 d8)?

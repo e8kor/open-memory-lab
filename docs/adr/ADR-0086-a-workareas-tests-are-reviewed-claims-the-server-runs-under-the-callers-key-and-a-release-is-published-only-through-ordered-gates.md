@@ -49,10 +49,12 @@ release is held to, so it is reviewed content) and R3 (a run reads only what its
   `POST /v2/workareas/{workarea}/test-runs {against}` evaluates every promoted `test` claim in the
   subtree with the reads the server already has: recall with the workarea's pipeline,
   `oml-guardrail`'s `decide` over the guardrail set, the skill and document checks. It runs under
-  the calling key's access and binding, never wider (ADR-0072 d6), and records a digest of the read
-  scope it ran with (the served node set and the binding resolution). A run is only as good as the
-  scope it saw, and the record says which scope that was. `against` is `release:<label>`,
-  `candidate:<proposal>` (d5) or `tip`. A run is started from the CLI (`oml workarea test`), the
+  the calling key's access, never wider (ADR-0072 d6), and records a digest of the read scope it
+  ran with (the served node set and the binding resolution). A run is only as good as the scope it
+  saw, and the record says which scope that was. `against` is `release:<label>`,
+  `candidate:<proposal>` (d5) or `tip`, and it overrides the calling key's binding for the run;
+  access still bounds it. A gate run whose read scope does not cover every node of the release
+  subtree is refused as a gate, `gate.run_scope_insufficient`. A run is started from the CLI (`oml workarea test`), the
   console or CI, all through this route; a result computed on a client is never a gate.
 
 - **d3 — A run is synthetic: it writes no recall event, moves no rank and no meter, and journals
@@ -72,8 +74,8 @@ release is held to, so it is reviewed content) and R3 (a run reads only what its
 
 - **d5 — Gate runs count only against the candidate manifest; runs on in-progress content are
   advisory.** The candidate is the manifest a release proposal would publish (ADR-0085 d1): promoted
-  versions only. A run against it is a gate run, valid for exactly that manifest digest; any
-  promotion that changes the candidate invalidates it. A run under a `tip` key inside an in-progress
+  versions only. A run against it is a gate run, valid for exactly that manifest digest, which is
+  fixed at the proposal (ADR-0085 d1). A run under a `tip` key inside an in-progress
   workarea may read held items and is marked advisory, for the developer; it never satisfies a gate.
 
 - **d6 — A release is published only through ordered gates, each recorded against the candidate
@@ -81,18 +83,22 @@ release is held to, so it is reviewed content) and R3 (a run reads only what its
 
   | Gate | Runs | Passes when | Override |
   |---|---|---|---|
-  | 1. Scan | at every write ([ADR-0074](ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings.md)) | no member is held by the scan | none: a veto is never waived |
+  | 1. Scan | at the proposal, a re-scan of every member whose `scanned_under` is older than the server's current rule set ([ADR-0074](ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings.md); ADR-0065 d15) | no member draws a veto or a hold under the current rules | none: a finding is fixed by a new version, never waived |
   | 2. Review | per-item verdicts ([ADR-0055](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)) | every member promoted, which a manifest guarantees | none: R2 has no override |
   | 3. Tests | a gate run (d5) | every case passes and none regresses against the latest release | the ratifier, per case, with a reason |
-  | 4. Impact | ADR-0087's report on the candidate | every blocking finding acknowledged | the ratifier, per finding, with a reason |
+  | 4. Impact | ADR-0087's report on the candidate, computed under the ratifier's key; that report is the one that counts | every blocking finding acknowledged | the ratifier, per finding, with a reason |
   | 5. Publish | ADR-0085 d4 | gates 3 and 4 recorded for this digest | not applicable: this is the person's act |
 
   An override is journalled as `workarea.gate_override {release, gate, case or finding, reason}`
-  under the ratifier's key. A workarea's review policy object (ADR-0012 d3) lists which gates apply.
-  The default is all of them where a suite exists and gate 4 everywhere.
+  under the ratifier's key. A workarea's review policy object (ADR-0012 d3) lists which of gates 1,
+  3 and 4 apply; gates 2 and 5 always apply. The default is all of them where a suite exists, and
+  gates 1 and 4 everywhere. Changing the list is a two-person act: one person's dreamer key on the
+  node proposes it and another person's ratifies it, journalled as `workarea.gates_set`.
 
 - **d7 — CI runs tests and attaches results; it never proposes, ratifies or overrides.** A CI
-  service key may start runs and attach a gate run to a proposal, and that is all it does. Proposal
+  service key learns of a proposal from the releases listing or the events tail (ADR-0085 d4),
+  starts a run `against: candidate:<proposal>`, and attaches it; that is all it does. A service
+  key's binding defaults to `latest` (ADR-0085 d7), and `against` sets what the run reads. Proposal
   and publication are two persons' acts (ADR-0085 d4).
 
 - **d8 — Agent-driven scenario tests stay outside the gates.** A session of an agent against the
@@ -104,7 +110,10 @@ release is held to, so it is reviewed content) and R3 (a run reads only what its
 - A migration adds test runs and gate records; the kind list gains `test`.
 - `oml workarea test [--against …] [--attach <proposal>]`; a Tests section on the workarea's page;
   the release page shows the gate records.
-- Doctor lines: proposals whose gate run is stale against their candidate; overrides on published releases.
+- Doctor lines: proposals with no gate run, or with one refused for scope; overrides on published
+  releases.
+- Metrics: `oml_test_run_seconds` (a histogram), `oml_test_cases_failed_total`,
+  `oml_gate_overrides_total{gate}`.
 - Each run costs one recall per `recall` case and one decision per `guardrail` case; a cap on cases
   per suite and runs per hour is set at the build, unmeasured until then.
 - Questions for the operator, recommendation first:
