@@ -7,7 +7,7 @@ answers: why simulations are a fenced provenance channel with indelible marks, a
 
 # ADR-0011 — Simulations are a fenced provenance channel with taint propagation
 
-**Status:** accepted design · 2026-10-29
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d3, 2026-11-14)
 
 **Release:** not built ([releases](../changelog.md))
 

@@ -7,7 +7,7 @@ answers: what a user is and where their root workarea sits; how a key is tied to
 
 # ADR-0044 — Every user works under a root of their own beneath `universe`, and `universe` serves only curated claims, without their source
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-12 by [the amendment](#the-amendment-of-2026-11-12-a-memory-is-started-in-a-user-root-by-its-own-users-keys-only) (d16: a memory is started in a user root by that user's keys only; #329), which the operator accepted the same day
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-12 by [the amendment](#the-amendment-of-2026-11-12-a-memory-is-started-in-a-user-root-by-its-own-users-keys-only) (d16: a memory is started in a user root by that user's keys only; #329), which the operator accepted the same day · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d7, 2026-11-14)
 
 **Release:** introduced in v0.5.0 ([releases](../changelog.md))
 

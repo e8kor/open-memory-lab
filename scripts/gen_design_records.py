@@ -44,8 +44,8 @@ BLURB = {
 }
 
 
-# Records the page leaves out although they are accepted: ADR-0064 and ADR-0084 to ADR-0089 are
-# decided and not built, and ADR-0066 is about how this repository tracks work, which readers of
+# Records the page leaves out although they are accepted: ADR-0064, ADR-0084 to ADR-0087 and
+# ADR-0089 are decided and not built (ADR-0088 is deferred, not decided), and ADR-0066 is about how this repository tracks work, which readers of
 # the site do not need.
 HELD_BACK = {64, 66, 84, 85, 86, 87, 89}
 

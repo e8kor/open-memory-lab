@@ -13,7 +13,13 @@ it · proposed the same day
 
 **Release:** not scheduled; with ADR-0085, whose releases a fix overlays
 
-**Twin parts** (ADR-0090 d18, PR #388): an `admin.fix` and its reason, its confirmation or revert, and an investigation's reason are journal or part, never excluded; the build names each column's class under ADR-0090 d4.
+**Twin parts** (ADR-0090 d18, PR #388): an `admin.fix` and its reason, its confirmation or
+revert, and an investigation's reason are journal or part, never excluded. A release's overlay
+state (`degraded`, `admin_fix`, then `fixed`, d5) is derived: the replayed fix, confirm and revert
+events recompute it. An investigation session's binding of each read to its reason (d10) is
+journal, carried by every `memory.admin_read`'s session id; the live session row itself is
+excluded, as web sessions are (ADR-0090 d5). The build names each column's class under ADR-0090
+d4.
 
 **Amends:**
 - ADR-0001: d5 gains its third bounded exception (d14), edited into ADR-0001's text and accepted
@@ -106,8 +112,9 @@ Decided, not built.
   revert removes the overlay.
 
 - **d6 — A fix that loosens a guardrail is one person's act, with an alert.** A demotion,
-  retirement, edit or rollback can remove a guardrail, lower its severity, or withdraw a skill. It
-  still takes effect at once. It also:
+  retirement, edit or rollback can remove or weaken an instruction of any kind of the class
+  (ADR-0080 d16): withdraw a steering row, a guardrail or a skill, or lower a guardrail's severity.
+  It still takes effect at once. It also:
   - sets `loosens_guardrail: true` on the event;
   - increments `oml_admin_fixes_total{act, loosens_guardrail="true"}`;
   - holds a doctor alert open until a person confirms or reverts the fix.
@@ -199,11 +206,15 @@ Decided, not built.
   - **Conditions.** The exception holds only when all of these are true:
     - the admin key is `held_by: human`;
     - a reason is given;
-    - the act is one of d2's;
-    - readers see the mark (d7);
+    - the act is one of d2's, and in a `validated` workarea not an edit or a retirement (d12);
+    - every reader sees the fix's mark (d7), a release rollback's `latest_by` and an erasure's
+      record included;
     - the act is queued for a person of another principal (d8);
     - while unconfirmed, the version is excluded from every cut (ADR-0085 d1).
   - **Numbering.** It is the third exception. ADR-0088, if accepted, would be the fourth.
+  - **The admin read is separate from these conditions.** It is admitted on the admin routes
+    alone, never on an agent surface, journalled, bound to an investigation's reason (d10), and
+    only for an admin key `held_by: human` (*operator to confirm*).
   - **No other record** widens it.
   - **The text** is edited into ADR-0001 d5, accepted with this record on 2026-11-14.
   - **ADR-0010 d6's sentence** "Edit or create by hand is this path and no other" gains: "except
@@ -214,11 +225,14 @@ Decided, not built.
     - `POST /v2/admin/fixes {act, target, reason}`;
     - `GET /v2/admin/fixes?state=unconfirmed`;
     - `POST /v2/admin/investigations {reason}`, which opens d10's session.
+    - `GET /v2/admin/investigations?state=open`, the admin key's open investigations with their
+      reason, id, read count and age, for ADR-0083 d11's admin To do page.
   - **Person-side read:**
-    - `GET /v2/review/fixes?count=true` takes a person's dreamer key: the `<user>-review` key the
+    - `GET /v2/review/fixes` takes a person's dreamer key: the `<user>-review` key the
       Personal To do page reads with (ADR-0083 d8 makes "Admin fixes to confirm" a To do group,
       one page per fix at `/web/todo/fix`), or a tenant dreamer key.
-    - It serves the unconfirmed fixes on workareas where that key holds dreamer, and their count.
+    - It serves the unconfirmed fixes on workareas where that key holds dreamer. Their count is
+      the `fixes` member of ADR-0083 d11's counts read, `GET /v2/todo/counts`.
     - Each entry carries the act, the target version, the replaced version, the reason, the time
       and `loosens_guardrail`. It never names the admin key, principal or user.
     - A fix taken by the reader's own principal is listed without confirm or revert.

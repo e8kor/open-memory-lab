@@ -7,7 +7,7 @@ answers: what a guardrail is and how it differs from steering; how it composes w
 
 # ADR-0037 — A guardrail is a claim of its own kind, ratified under its workarea's review policy, that the agent plugin loads at every session start within the scope an admin set on its key, and whose optional rule a local hook checks before each tool call
 
-**Status:** accepted design · 2026-11-04 · proposed 2026-10-31, revised 2026-11-04 onto the v0.4.0 API, ADR-0044 and ADR-0045, and accepted with release v0.5.1
+**Status:** accepted design · 2026-11-04 · proposed 2026-10-31, revised 2026-11-04 onto the v0.4.0 API, ADR-0044 and ADR-0045, and accepted with release v0.5.1 · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d10, 2026-11-14)
 
 **Release:** introduced in v0.5.1 ([releases](../changelog.md))
 

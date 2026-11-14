@@ -97,11 +97,12 @@ release is held to, so it is reviewed content) and R3 (a run reads only what its
   under the ratifier's key. Its route is
   `POST /v2/workareas/{w}/releases/{proposal}/gates/{gate}/override {reason, case | finding}`
   (#384), with `gate` `tests` or `impact` and the body naming the one case or finding it waives;
-  the reason is required, stored in clear and scanned. Only the ratifier overrides: a person's
-  dreamer key (`held_by: human`) that may publish the proposal under ADR-0085 d4, so never the
-  proposer's principal, an agent key, an admin key or a service key, and the publish of a
-  proposal with overrides is refused `workarea.release_refused`, reason `override_by_other`,
-  unless the key that publishes made every override on it. The scan and review gates answer
+  the reason is required, stored in clear and scanned. Any ratifier may override (the operator,
+  2026-11-14): a person's dreamer key (`held_by: human`) that may publish the proposal under
+  ADR-0085 d4. The proposer's key, or any key of the proposer's principal, is refused
+  `gate.override_not_ratifier`, as are agent, admin and service keys. Every override is journalled
+  and shown on the release's page and in its gate records, with its key and reason; the publish
+  does not require that its own key made the overrides. The scan and review gates answer
   `request.validation`, `details.field: gate`: they have no override. The To do page lists a
   blocking gate on a candidate the person's key would ratify as a Gate overrides row
   (ADR-0083 d11). A workarea's review policy object (ADR-0012 d3) lists which of gates 1,

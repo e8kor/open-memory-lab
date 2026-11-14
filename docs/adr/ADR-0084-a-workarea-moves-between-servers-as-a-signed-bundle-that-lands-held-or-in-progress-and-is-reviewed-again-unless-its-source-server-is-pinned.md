@@ -13,7 +13,10 @@ recommendations and every other default as drafted · proposed the same day
 **Release:** not scheduled; after ADR-0085, whose release manifest `release` mode exports. A
 trusted source server, the "unless" of the title, is the deferred ADR-0088.
 
-**Twin parts** (ADR-0090 d18, PR #388): the import ledger, the staging keys, the erasure notices and the `export` policy are journal or part, never excluded; the build names each column's class under ADR-0090 d4.
+**Twin parts** (ADR-0090 d18, PR #388): the import ledger, the erasure notices and the `export`
+policy are journal or part, never excluded. The per-import staging keys are excluded: they are
+transient and destroyed when the import ends, so a rebuild needs none. The build names each
+column's class under ADR-0090 d4.
 
 **Amends:** ADR-0071 (d2: an `exports` meter), ADR-0005 (the erasure inventory gains the class
 "import staging", d11), ADR-0063 (d1: `origin` is kept verbatim and an imported version gains a separate

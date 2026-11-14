@@ -55,7 +55,7 @@ Citations are `ADR-nnnn dN :line` for a decision record in `docs/adr/` and `path
    workareas on prod, so, all types of action, demote, edit, rollback imports for example". A fix
    takes effect at once and is marked; an admin reads claim text tenant-wide, as ADR-0045 d21
    already allows, each read journalled with a reason. This replaced, the same day, an earlier
-   decision that admins keep erasure only. It is ADR-0089: a third bounded exception in ADR-0001 d5,
+   decision that admins keep erasure only. It is ADR-0089: the third bounded exception in ADR-0001 d5,
    of R2's order and R3's first sentence, for admin keys; R1 does not change.
 5. **Releases govern every kind, memories included.** An agent on `latest` or a pin receives a newly
    approved memory only through a release. Its own held writes are still served to it, and writes
@@ -73,7 +73,7 @@ R1 to R4 are declared in [ADR-0001](../docs/adr/ADR-0001-the-constitution.md) an
 here: R1 is the verb ceiling, R2 the reviewer who is never the author, R3 the gate that changes
 visibility, not ranking, with its in-progress exception (ADR-0030 d3), and R4 no silent deletion.
 Two facts this page leans on: a version is promoted by a verdict of a dreamer key, a person's or a
-reviewer crew's (ADR-0012 d2), never the key or principal that wrote it; and ADR-0089 proposes a third bounded
+reviewer crew's (ADR-0012 d2), never the key or principal that wrote it; and ADR-0089 adds the third bounded
 exception, an admin's marked fix that a person confirms afterwards.
 
 Two facts about today shape the whole lifecycle:
