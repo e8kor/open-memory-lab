@@ -41,7 +41,7 @@ Per-command sections below omit these options.
 | `oml workspaces create` | Create a child workspace in development status |
 | `oml workspaces tree` | List a workspace tree with each node's path, id, status, and crew |
 | `oml workspaces show` | Show a workspace's path, status, crew, and children |
-| `oml workspaces mode` | Set in_progress to recall labelled unreviewed memories within the workspace, or standard to commit. |
+| `oml workspaces mode` | Set who sees the drafts: in_progress makes them visible to everyone working here, labelled unreviewed, and standard to the writing key alone, which is refused while items are held. |
 | `oml workspaces federation` | Set whether recalls scoped elsewhere may search this workspace when they ask for wider sources; grants nothing. |
 | `oml workspaces crew set` | Set the workspace's crew record, including on frozen workspaces; journals workspace.crew_updated |
 | `oml workspaces status propose` | Propose the next forward rung; it waits for a second identity |
@@ -71,9 +71,9 @@ Per-command sections below omit these options.
 | `oml events` | Tail journal event digests within the key's reader access |
 | `oml sync` | Sync a workspace with committed repository documents: extract, diff, write, check, or link claims |
 | `oml anchor` | Print a JSON source anchor for a committed file or fragment at --rev, for oml write --anchor |
-| `oml review next` | Claim and serve one held item for this key |
-| `oml review list` | List held items this key may judge, with text, oldest first, without claiming them. |
-| `oml review approve` | Promote one claimed serve (default) or each artifact in --ids |
+| `oml review next` | Take one held item for this key and serve it |
+| `oml review list` | List held items this key may judge, with text, oldest first, without taking them. |
+| `oml review approve` | Approve the one item this key took (default), or each artifact in --ids |
 | `oml review reject` | Reject the claimed serve or each --ids artifact with one shared reason |
 | `oml audit verify-chain` | Verify the exported chain using chain-format.md; fails if the server has no export. |
 | `oml login` | Read an API key without echo from the terminal or stdin, verify it, and store the URL and key owner-only |
@@ -375,7 +375,7 @@ oml workspaces show [OPTIONS] <WORKSPACE>
 
 ### `oml workspaces mode`
 
-Set in_progress to recall labelled unreviewed memories within the workspace, or standard to commit. Person-held reviewer keys only; commit is refused while items are held
+Set who sees the drafts: in_progress makes them visible to everyone working here, labelled unreviewed, and standard to the writing key alone, which is refused while items are held. Reviewer keys used by a person only
 
 ```
 oml workspaces mode [OPTIONS] <WORKSPACE> <MODE>
@@ -384,7 +384,7 @@ oml workspaces mode [OPTIONS] <WORKSPACE> <MODE>
 | Argument | Meaning |
 |---|---|
 | `<WORKSPACE>` | Workspace id or name |
-| `<MODE>` | `in_progress`, or `standard` to commit [possible values: in_progress, standard] |
+| `<MODE>` | `in_progress` (drafts visible to everyone working here) or `standard` (drafts visible to the writing key) [possible values: in_progress, standard] |
 
 ### `oml workspaces federation`
 
@@ -896,7 +896,7 @@ Review held submissions
 
 ### `oml review next`
 
-Claim and serve one held item for this key
+Take one held item for this key and serve it
 
 ```
 oml review next [OPTIONS]
@@ -904,7 +904,7 @@ oml review next [OPTIONS]
 
 ### `oml review list`
 
-List held items this key may judge, with text, oldest first, without claiming them. Person-held reviewer keys only
+List held items this key may judge, with text, oldest first, without taking them. Reviewer keys used by a person only
 
 ```
 oml review list [OPTIONS]
@@ -921,7 +921,7 @@ oml review list [OPTIONS]
 
 ### `oml review approve`
 
-Promote one claimed serve (default) or each artifact in --ids
+Approve the one item this key took (default), or each artifact in --ids
 
 ```
 oml review approve [OPTIONS] [SERVE_ID]
