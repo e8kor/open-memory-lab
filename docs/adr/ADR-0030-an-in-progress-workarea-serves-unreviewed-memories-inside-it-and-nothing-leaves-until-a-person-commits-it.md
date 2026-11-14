@@ -5,11 +5,11 @@ status: accepted design · 2026-11-06
 answers: what an in-progress workarea is and who may mark it (a person's key, never an agent); the one boundary rule every scoped read applies; which keys read other authors' unreviewed memories inside, labelled how; how R3 is relaxed there and only there, journalled; why ranking still reads no verdict and what telemetry records; what the commit is and why it needs zero unreviewed; how a curator agent narrows the unreviewed work inside and never widens it; how anchors, `oml sync` and draft workareas interact; how an in-progress workarea is abandoned or retired with nothing deleted; the surfaces, codes, migration, doctor lines and laws
 -->
 
-# ADR-0030 — An in-progress workarea serves unreviewed memories inside it, a curator agent may only narrow them, and nothing leaves until a person commits it
+# ADR-0030 — An in-progress workarea serves its held work to its subtree and its ancestors, a curator agent may only narrow it, and nothing leaves until a person commits it or a release is published
 
 **Status:** accepted design · 2026-11-06 (was accepted design) · introduced in v0.6.0 · first recorded 2026-11-05 · revision 2, rebuilt on the v0.5.8 API; revision 1
 ([#12](https://github.com/e8kor/open-memory-lab/pull/12), 2026-10-31, proposed) is preserved at tag
-`archive/feat/in-progress-workareas`
+`archive/feat/in-progress-workareas` · amended by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d2, d3, d4, 2026-11-14), [ADR-0081](ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource.md) (d3, 2026-11-14)
 
 **Release:** introduced in v0.6.0 ([releases](../changelog.md))
 
@@ -101,6 +101,12 @@ Questions revision 1 left open are settled below at their recommended answers, e
   each retriever filters before its own `LIMIT` and before any statistic it scores with, never
   after (ADR-0049 d2): a read outside returns the same rows, order and scores whatever is
   written, approved or curated inside (property `P-R3-BOUNDARY`).
+  *(Amended 2026-11-14 by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16: the boundary opens upward. A read
+  scoped at N also serves an in-progress subtree whose root lies under N: its promoted rows as
+  promoted and its held rows under d3, to a key bound to `tip` (ADR-0085 d6). A read scoped at a
+  sibling of the root, or on another branch, still serves nothing of the subtree until its commit
+  or a published release, and `P-R3-BOUNDARY` holds for those reads. Offering of instruction kinds
+  follows the same audience, down from an ancestor as well as up from inside.)*
 
 - **d3 — Inside, a key with reader access reads other authors' held memories, labelled
   `unreviewed`; this is the constitution's second bounded relaxation, of R3's first sentence,
@@ -121,6 +127,13 @@ Questions revision 1 left open are settled below at their recommended answers, e
   `workarea.mode_set` puts the node in progress — and every read that serves an unreviewed row
   records it in the read log as any served id is. ADR-0001 d5 gains this as its second bounded
   exception, by reference to this decision; no other page widens it.
+  *(Amended 2026-11-14 by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16, the operator: "lets make sure decisions
+  are loose for in-development\in-progress areas, but strict once we are publishing". Served held
+  versions are of every kind, knowledge, instruction and vocabulary alike, to keys with reader
+  access scoped in the in-progress subtree or on its ancestor chain and bound to `tip`; a held
+  retirement, and a version the scan held or has not scanned, stay author-only for every kind.
+  Held instruction versions only add beside the approved one and a held rule asks and never
+  denies (ADR-0080 d16). ADR-0001 d5 records the widened exception.)* *(Amended 2026-11-14: the development self-signing exception is retired (ADR-0001 d5); the build never sets `self_signed`, so this text describes nothing that is served.)*
 
 - **d4 — Every claim item carries `unreviewed`, and inside an in-progress scope
   `include_unreviewed` defaults to `true`.** `unreviewed` is `true` exactly when the served
@@ -163,7 +176,7 @@ Questions revision 1 left open are settled below at their recommended answers, e
   `workarea.in_progress_refused` with reason `commit_first`, so the ladder never moves under an
   open subtree.
 
-- **d7 — Nothing crosses the boundary before the commit.** A claim edge (any kind, including
+- **d7 — Nothing crosses the boundary before the commit or a published release; held work reaches only the subtree and its ancestors.** A claim edge (any kind, including
   `brief`) whose two endpoints have different in-progress roots, or one root and none, is refused
   when proposed and, for one proposed before a mark, when ratified; a brief read leaves out a
   claim the boundary hides at its node, whenever its edge was made. It is refused

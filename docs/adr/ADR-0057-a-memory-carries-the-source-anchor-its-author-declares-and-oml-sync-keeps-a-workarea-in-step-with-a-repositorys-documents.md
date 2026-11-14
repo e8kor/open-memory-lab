@@ -8,7 +8,7 @@ answers: why source mapping's first slice is its own record beside ADR-0047; wha
 # ADR-0057 — A memory carries the source anchor its author declares, and `oml sync` keeps a workarea in step with a repository's documents
 
 **Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.8,
-with d18 to d22 added the same day from the competitor source studies (basic-memory, Hindsight) · amended by [ADR-0076](ADR-0076-releases-ship-no-default-server-and-setup-asks-for-the-server-or-reads-it-from-the-key-or-the-environment.md)
+with d18 to d22 added the same day from the competitor source studies (basic-memory, Hindsight) · amended by [ADR-0076](ADR-0076-releases-ship-no-default-server-and-setup-asks-for-the-server-or-reads-it-from-the-key-or-the-environment.md) · amended by [ADR-0081](ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource.md) (d7, 2026-11-14)
 
 **Release:** introduced in v0.5.8 ([releases](../product/releases.md#decisions))
 

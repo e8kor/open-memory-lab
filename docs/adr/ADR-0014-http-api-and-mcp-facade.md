@@ -7,7 +7,7 @@ answers: why there is one versioned JSON HTTP API, and why MCP over streamable H
 
 # ADR-0014 — One versioned JSON HTTP API; MCP streamable HTTP as a stateless facade
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended by [ADR-0081](ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource.md) (d2, 2026-11-14)
 
 **Release:** partly in v0.1.0; the rest not built ([releases](../changelog.md))
 

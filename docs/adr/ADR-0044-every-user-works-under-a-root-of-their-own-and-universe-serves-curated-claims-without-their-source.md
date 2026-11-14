@@ -7,7 +7,7 @@ answers: what a user is and where their root workarea sits; how a key is tied to
 
 # ADR-0044 — Every user works under a root of their own beneath `universe`, and `universe` serves only curated claims, without their source
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-12 by [the amendment](#the-amendment-of-2026-11-12-a-memory-is-started-in-a-user-root-by-its-own-users-keys-only) (d16: a memory is started in a user root by that user's keys only; #329), which the operator accepted the same day
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-12 by [the amendment](#the-amendment-of-2026-11-12-a-memory-is-started-in-a-user-root-by-its-own-users-keys-only) (d16: a memory is started in a user root by that user's keys only; #329), which the operator accepted the same day · amended by [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workareas-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d8, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d7, 2026-11-14)
 
 **Release:** introduced in v0.5.0 ([releases](../changelog.md))
 
@@ -243,7 +243,11 @@ Decided; introduced in v0.5.0.
   The maintainer chose this on 2026-11-04 over widening R2 to the person. The cost is said
   plainly: R2 holds per credential, not per person, inside a user root, and the journal shows
   that both keys name the same user, so an audit can see a person approving their own agents'
-  work. ADR-0001 d2 and ADR-0010 d5 are unchanged.
+  work. ADR-0001 d2 and ADR-0010 d5 are unchanged. *(Amended 2026-11-14 by ADR-0082 d7 and
+  ADR-0001 d5: same-person approval holds only in the development and in-progress parts of the
+  person's own root, marked `same_user`, and a user root never leaves development (ADR-0085 d17);
+  every workarea outside the root takes a verdict from another person, whichever of the person's
+  keys wrote the version.)*
 
 - **d9 — A universe claim is served without its source: origin `universe`, no author, no
   lineage below it.** To every key outside the claim's own authoring key set
