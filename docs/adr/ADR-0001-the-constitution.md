@@ -52,8 +52,8 @@ rest is not built; [releases](../changelog.md) says which part each release buil
 
   1. **The in-progress workarea** ([ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d2, d3, widened by
      [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16). Of R3's first sentence only. Inside a workarea a
-     person put in progress, a held version of any kind is served, marked unreviewed, to keys with
-     reader access scoped in that subtree or on its ancestor chain and bound to `tip` (ADR-0085 d6);
+     person put in progress, a held version of any kind is served, and an instruction offered,
+     marked unreviewed, to keys with reader access scoped in that subtree or on its ancestor chain and bound to `tip` (ADR-0085 d6);
      never to a sibling, another branch, federation or a wide source, which read only promoted
      rows of committed or validated workareas or a published release; never a version the scan
      held or has not scanned, and never a held retirement. R2 holds there without exception.
