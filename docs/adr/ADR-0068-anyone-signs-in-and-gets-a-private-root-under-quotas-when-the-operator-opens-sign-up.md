@@ -7,7 +7,7 @@ answers: how a deployment opens sign-up to anyone with a Google or GitHub accoun
 
 # ADR-0068 — When the operator opens sign-up, anyone signs in with Google or GitHub and gets a private root under quotas, and leaves through a journalled request
 
-**Status:** proposed · 2026-11-06 · amended by ADR-0071, ADR-0079 · amended 2026-11-13 by [the amendment](#the-amendment-of-2026-11-13-the-start-pages-heading-is-start) (d10: the Start page's heading and step wording, which follow the voice rule and ADR-0045's header amendment, both accepted by the operator on 2026-11-13); the ADR itself remains proposed
+**Status:** proposed · 2026-11-06 · amended by ADR-0071, ADR-0079 · amended 2026-11-13 by [the amendment](#the-amendment-of-2026-11-13-the-start-pages-heading-is-start) (d10: the Start page's heading and step wording, which follow the voice rule and ADR-0045's header amendment, both accepted by the operator on 2026-11-13); the ADR itself remains proposed · the sign-up limits kept by the [operator's decision of 2026-11-14](#operator-decision-2026-11-14-180-the-sign-up-limits-are-kept) (#180)
 
 **Amends:** ADR-0045 (d1: three routes join `WEB_ROUTES`; d2: in open mode a sign-in adds its own entry; d8: one page carries one hashed script; d15: sign-ups are limited per client address), ADR-0058 (d5 is the gate that opening sign-up on the public server waits for)
 
@@ -327,6 +327,22 @@ and its step headings only.
 Three things are not changed: the three steps, one button per client and what each issues, the
 status poll and the account section's acts. The documentation's rewrite to the same voice is
 [#357](https://github.com/e8kor/open-memory-lab/issues/357)'s, not this amendment's.
+
+## Operator decision 2026-11-14 (#180): the sign-up limits are kept
+
+**Status of this record:** the operator's decision of 2026-11-14, on
+[#180](https://github.com/e8kor/open-memory-lab/issues/180), for opening sign-up on the public
+server ([#186](https://github.com/e8kor/open-memory-lab/issues/186)). It changes no decision above.
+
+The operator decided to open sign-up on d1's defaults: `quota.memories` 1000, `quota.keys` 5,
+`quota.connections` 5, `quota.requests_per_minute` 120 a minute per key, and
+`signup.per_ip_per_hour` 5 sign-ups an hour from one client address (d9). The two meters
+ADR-0071 added are capped beside them, `text_bytes` at 50 MB and `writes` at 10,000 a month, and
+a `recalls` value of 100,000 a month is recorded and not enforced; ADR-0071's
+[record of the same date](ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md#operator-decision-2026-11-14-180-the-limits-open-sign-up-launches-with)
+gives the settings and the reasons. Every value is recalibrated after 30 days of live data under
+[#164](https://github.com/e8kor/open-memory-lab/issues/164). Turning `open` on stays the
+operator's act under ADR-0058 d5 (Consequences).
 
 ## Consequences
 
