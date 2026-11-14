@@ -311,8 +311,8 @@ an option with no default and no saved value reaches neither. Decided, not built
   order). The release notes of the release that builds this carry these lines; the hosted service
   tells its own users.
 - **Pages that change with the build** (the D-register's owners): the repository README's quick
-  start, which leads with `oml quickstart` and a server you run, and says a hosted server's sign-up
-  gives you its URL; `docs/start/install.md` and `docs/start/index.md`; the Claude Code,
+  start, which leads with `oml quickstart` and a server the reader runs, and says a hosted server's sign-up
+  hands out its URL; `docs/start/install.md` and `docs/start/index.md`; the Claude Code,
   other-harnesses, claude.ai-and-mobile and get-an-agent-key guides; `docs/help/troubleshooting-client.md`;
   `docs/use/sync.md` and `docs/use/chat-memory.md`; `docs/faq.md`; `docs/reference/limits.md`;
   `plugins/oml/README.md` and `kit/README.md`; `docs/cli/reference.md`, regenerated from clap;

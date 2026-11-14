@@ -1,12 +1,12 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "what the tenancy model isolates; who holds which key in the custody map; what the threat model defends against, hostile co-tenants included; what the connection and web surfaces add to the threat model and what they leave"
 ---
 
 # Security and tenancy
 
-The attacker is a **hostile co-tenant**: a party with valid API keys on the same Postgres cluster, object store and `oml-server`. See also [storage](storage.md) (signing chain), [roles and keys](roles-and-keys.md), [workareas](workareas.md), [admission](admission.md).
+The attacker is a **hostile co-tenant**: a party with valid API keys on the same Postgres cluster and the same lead, `oml-server-lead`. See also [storage](storage.md) (signing chain), [roles and keys](roles-and-keys.md), [workareas](workareas.md), [admission](admission.md).
 
 Nobody has penetration-tested, load-tested or measured these controls; they are stated by the code and its tests, not audited.
 
@@ -14,9 +14,9 @@ Nobody has penetration-tested, load-tested or measured these controls; they are 
 
 The server derives the tenant from the API key and never from the request: no parameter, header, path segment or MCP argument names a tenant.
 
-- **Row-level security covers every table** (`FORCE ROW LEVEL SECURITY`, keyed by tenant). The one exception is `_sqlx_migrations`, which holds no tenant data and only the owner reaches. No OML workload role holds `BYPASSRLS`.
-- **Two database roles.** The owner only migrates and creates each new tenant's partitions, because `FORCE` does not bind the owner's `pg_stats` view or its DDL. Requests run under a serving role that owns nothing. The lead refuses to start if both roles share one URL.
-- **Storage is per tenant:** journal chains, lake prefixes (bodies are sealed ciphertext, [the lake](../operations/lake.md)), embedding and full-text partitions, and quarantine and body paths. RLS stays the isolation authority if partition pruning fails.
+- **Row-level security covers every table** (`FORCE ROW LEVEL SECURITY`, keyed by tenant). The one exception is `_sqlx_migrations`, which holds no tenant data and only the owner reaches. The lead refuses to start on a serving role that is a superuser or holds `BYPASSRLS`, and the lake writer refuses the same of its own role. Nothing checks the owner role's attributes.
+- **Two database roles for the lead, and one for the lake writer.** The owner migrates at boot and creates each new tenant's partitions, because `FORCE` does not bind the owner's `pg_stats` view or its DDL. The lake writer, given `OML_LAKE_OWNER_URL`, connects as the owner at its start to grant its own role's privileges. Requests run under a serving role that owns nothing. The lead refuses to start when both URLs log in as the same role, reach different databases, or the serving role owns anything or holds a privileged attribute.
+- **Storage is per tenant:** journal chains, lake prefixes (bodies are sealed ciphertext, [the lake](../operations/lake.md)), and per-tenant partitions of memories, search postings and recall telemetry. RLS stays the isolation authority if partition pruning fails. Memory bodies are stored unencrypted in PostgreSQL; only the lake's copies are sealed.
 
 Tenants share the Postgres cluster, the lead process with its signing key, and the key store.
 
@@ -25,24 +25,24 @@ Tenants share the Postgres cluster, the lead process with its signing key, and t
 | Material | Held by |
 |---|---|
 | Ed25519 deployment signing key | The lead only. |
-| Memory encryption keys (DEKs) | Wrapped by the keyring file (`kms.keyring_path`; the `file` adapter is the only key store). The lead unwraps them to encrypt and to serve reads. |
-| Lake sealing key (KEK file) | The lake writer, which holds no signing key. |
+| The keyring file (`kms.keyring_path`; the `file` adapter is the only key store) | The lead. It holds the signing key alone, as 64 hex characters in a file of mode `0600`; the lead refuses a looser mode. |
+| Lake sealing key (KEK file) | The lake writer, which holds no signing key. It wraps one data key per lake body version (`artifact_keys`). |
 | API keys, connect codes, connection tokens | The lead stores hashes or digests only. |
-| Postgres access | The lead: an RLS-scoped serving role. The lake writer: its own role, which must not be the owner, the serving role, a superuser or an RLS-bypassing role; it refuses to start on one that is. |
+| Postgres access | The lead: an RLS-scoped serving role. The lake writer: its own role. It refuses to start on a superuser or `BYPASSRLS` role; keeping it apart from the owner and the serving role is the operator's duty. |
 
-**Lead compromise is signing-key compromise.** A compromised lead can sign arbitrary events and read any promoted body. Holders of an earlier chain head can detect forged history, and the startup fork check refuses to extend a chain that does not verify. Nothing detects quiet reads.
+**Lead compromise is signing-key compromise.** A compromised lead can sign arbitrary events and read any body, held or promoted. Holders of an earlier chain head can detect forged history, and the startup fork check refuses to extend a chain that does not verify. Nothing detects quiet reads.
 
-**The keyring is a file on the lead's host.** Whoever reads it can unwrap every DEK. Back it up with the database; a restore without it is unreadable.
+**The keyring is a file on the lead's host.** Whoever reads it can sign as the deployment. Back it up with the database: a lead started without it mints a new key, the startup fork check then fails under that key, and the lead refuses writes. The data stays readable.
 
-**A compromised lake writer cannot sign or alter the journal.** It can corrupt the lake, which the journal's ciphertext digests expose.
+**A compromised lake writer cannot sign or alter the journal.** It can corrupt the lake, which a comparison of the decrypted bodies against the journal's plaintext digests exposes.
 
 ## If the signing key is compromised
 
-There is no rotate command. Stop writes, replace the key at its custody point and start the lead, which journals `system.signing_key_rotated`. Verify each tenant's chain against heads kept outside the deployment; the [runbooks](../operations/runbooks.md) give the steps. Rotation bounds the future only: events the old key signed in the compromise window still verify, and separating them from attacker events is an audit against those heads.
+Rotation is designed and not built. There is no rotate command, and no code journals `system.signing_key_rotated`: a lead started with a replaced key fails the startup fork check, because every stored chain verifies only under the old key, and refuses writes. Stop writes and verify each tenant's chain against heads kept outside the deployment; the [runbooks](../operations/runbooks.md) give the steps. Events the old key signed in the compromise window still verify, and separating them from attacker events is an audit against those heads.
 
 ## Transport
 
-TLS 1.2 is the floor. Plaintext HTTP only on loopback or a private compose network: the bearer key is the whole capability. [Deployment](../operations/deployment.md) shows where TLS terminates per install path. Across hosts to Postgres, require `sslmode=verify-full`.
+The lead and `oml-web` listen on plain HTTP; TLS terminates at the reverse proxy, whose configuration sets the protocol floor. Plaintext HTTP only on loopback or a private compose network: the bearer key is the whole capability. [Deployment](../operations/deployment.md) shows where TLS terminates per install path. Across hosts to Postgres, require `sslmode=verify-full`.
 
 ## Hostile content after the gate
 
@@ -57,7 +57,7 @@ A connection lets Claude's hosted apps reach `/mcp` through an OAuth client boun
 
 | Threat | Control | What remains |
 |---|---|---|
-| A connect code is entered first by someone else | Single use, 10 minutes, one live code per key; `oml keys show` lists connections so an admin can end an unexpected one. | For its minutes the code is a bearer secret: its first enterer connects as the key, at `/mcp` only. The admin sees that a connection opened, not whose account. |
+| A connect code is entered first by someone else | Single use; 10 minutes, or up to 30 days when an admin mints one for a key confined to one workarea; one live code per key; `oml keys show` lists connections so an admin can end an unexpected one. | For its minutes the code is a bearer secret: its first enterer connects as the key, at `/mcp` only. The admin sees that a connection opened, not whose account. |
 | Consent phishing | The page names the client and redirect host and says to enter a code only on a page opened by the user. Authorization codes go only to `https://claude.ai/api/mcp/auth_callback`. | The page cannot tell which claude.ai account started the request; the warning works only if read. |
 | A co-tenant hands over a code for its own key | The confirmation names the tenant, using the name the operator set. | A person who does not read the tenant name connects into the other tenant. |
 | CSRF, clickjacking, injected content, open redirect | No cookie; same-origin check (`Origin: null` is `oauth.origin_refused`); `frame-ancestors 'none'`; exact-match redirect allowlist. | None known. |
@@ -70,7 +70,7 @@ Connection rows carry their key's tenant and fall under its RLS. Deployment-leve
 
 ## Web pages: sign-in and sessions
 
-A user page and an admin page run on the lead's origin. People sign in through Google or GitHub against a per-tenant email allowlist, and every act runs as a [session key](roles-and-keys.md#session-keys), so roles, grants and the journal are the same as for any key.
+A user page and an admin page are served by `oml-web` on the lead's public origin; the lead serves sign-in, the provider callback and sign-out. People sign in through Google or GitHub against a per-tenant email allowlist, and every act runs as a [session key](roles-and-keys.md#session-keys), so roles, grants and the journal are the same as for any key.
 
 | Threat | Control | What remains |
 |---|---|---|
@@ -91,42 +91,19 @@ A verdict counts only under a `serve_id` that `oml-server` bound to the reviewer
 
 ## Trust boundaries
 
-```mermaid
-flowchart LR
-  subgraph clients["Tenant clients (untrusted)"]
-    A["Agent, CLI<br/>(bearer key)"]
-    H["Claude hosted apps<br/>(access token, /mcp only)"]
-    W["Browser<br/>(session cookie, /web only)"]
-  end
-  S["oml-server lead (trusted)<br/>signing key, unwraps DEKs,<br/>tenant from the key"]
-  subgraph data["Data plane: RLS, no BYPASSRLS role"]
-    PG[("PostgreSQL")]
-    OS[("Object store<br/>ciphertext, per-tenant paths")]
-    DL[("Delta Lake<br/>per-tenant, derived only")]
-  end
-  LW["oml-lakewriter<br/>own role, no signing key"]
-  KMS["Keyring file"]
-  A --> S
-  H --> S
-  W --> S
-  S --> PG
-  S --> OS
-  S -- "wrap / unwrap DEK" --> KMS
-  PG -- "outbox drain" --> LW
-  LW --> DL
-```
+The [deployment view](views.md#deployment-a-request-from-the-client-to-the-disk) draws them: the reverse proxy, `oml-web`, the lead inside the one trust boundary, its signing key file, PostgreSQL, and the lake writer with its own role and sealing key.
 
-Every client path crosses one boundary, into `oml-server`; none reaches Postgres, the object store, the lake or the key store.
+Every client path crosses the reverse proxy and then the lead's API. A browser's console pages go through `oml-web`, which holds no database access and no signing key; its sign-in goes to the lead. No client path reaches Postgres, the lake or a key file.
 
 ## Residual risks
 
 1. Undeclared derivation is undetectable; lineage exclusion is as good as the declared `derives_from` graph.
 2. Two keys approving each other's work pass every per-row check.
-3. Lead compromise is signing-key and decrypt-everything compromise, and quiet reads go undetected.
+3. Lead compromise is signing-key and read-everything compromise, and quiet reads go undetected.
 4. The platform operator is trusted: a Postgres superuser, key store administrator or Kubernetes Secrets holder can read attribution metadata, destroy keys and rewrite unprotected state. Tenant-held chain heads make some of this detectable.
 5. Counts leak: a key sees tenant-wide journal positions for events it cannot read, a `claim_key` collision tells a writer a name is taken, and the lineage read names unreadable ancestors as redacted ids. Never content.
 6. A connect code is a bearer secret for its minutes, and the lead fetches client-chosen URLs.
 7. A key's rate, its own or its account's, is counted by each server process alone, so n processes admit up to n times the rate; a key with no rate of its own and no account quota is unlimited, and skewed load is untested ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) d4, d6).
-8. The widen hint reads word counts the lead holds in memory, per key and scope, for up to 300 seconds. An erasure, a demotion, or a change to a workarea's status, mode or federation setting drops them at once. A promotion, a supersession or a retirement reaches them within those 300 seconds. They hold counts of hashed words of rows the key could read, never text ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md#the-widen-hint-as-built-2026-11-11)).
+8. The widen hint reads word counts the lead holds in memory, per key and scope, for up to 300 seconds. An erasure or a demotion (both designed, not built), or a change to a workarea's status, mode or federation setting drops them at once. A promotion, a supersession or a retirement reaches them within those 300 seconds. They hold counts of hashed words of rows the key could read, never text ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md#the-widen-hint-as-built-2026-11-11)).
 
 Design record: [ADR-0007](../adr/ADR-0007-tenancy-first-class.md), [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md), [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md).

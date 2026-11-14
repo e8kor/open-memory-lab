@@ -1,7 +1,7 @@
 name: Practices
 
 # The merge gates of docs/contributing/review-checklist.md that a script can enforce: the
-# number registry, the changelog fragment, the three lints and the design tokens (ADR-0069),
+# number registry, the changelog fragment, the lints and the design tokens (ADR-0069),
 # with the scripts' own tests.
 
 on:
@@ -92,6 +92,8 @@ jobs:
       - run: python scripts/lint_practices.py migrations
       - run: python scripts/lint_practices.py ports
       - run: python scripts/lint_practices.py like
+      # Docs prose is neutral: no you, your, we, our, us or my outside code and quotations.
+      - run: python scripts/lint_practices.py voice
       # Every action is pinned to a commit with its tag in a comment, one commit per action.
       # The lint parses each workflow, so it needs PyYAML.
       - run: pip install --retries 5 --timeout 30 pyyaml==6.0.3

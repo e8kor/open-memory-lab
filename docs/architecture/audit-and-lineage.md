@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "who approved this memory, what the journal records and never records, how lineage and supersession chains work, and what the signature does and does not prove"
 ---
 
@@ -13,9 +13,8 @@ Two records answer that question. The **journal** says what happened, in order, 
 The journal is the system of record. It is a signed, hash-chained, append-only sequence of events for each tenant. Each event holds an actor, a timestamp and references to its content. The journal records:
 
 - every write, with the scan rule set that ran;
-- every review serve, with digests of what the reviewer was shown;
-- every approval and rejection, with the review policy in force;
-- every promotion, supersession and demotion;
+- every approval and rejection, with the digest of the body served to the reviewer; an approval's `review.ratify` also carries the review policy in force, and a rejection carries none;
+- every promotion and supersession;
 - key issuance, grants, denials and workarea changes.
 
 The [event catalog](../data/event-catalog.md) lists every event type. The byte-level format is in [chain format](../data/chain-format.md).
@@ -45,7 +44,7 @@ A memory names its author and never its reviewer: who reviewed it is readable on
 
 `oml events` is a feed, not a verification surface. A key sees events inside its read access. When the actor is not one of the reader's own keys, the event shows `principal` and `api_key_id` as `null`. So a reader learns that and when a memory was approved. Only the actor's own keys see the reviewer's identity in the feed. Each admin read of a memory's text is itself journaled as `memory.admin_read`.
 
-An approval consists of three events. `review.serve` records what the reviewer was shown. `review.approve` records the verdict. `review.ratify` records that the policy was met, with a snapshot of the policy and a digest of the author's lineage. `lifecycle.promote` then makes the memory readable.
+An approval consists of two review events. `review.approve` records the verdict and the digest of the body the reviewer was served; a serve itself is not journaled. `review.ratify` records that the policy was met, with a snapshot of the policy and a digest of the author's lineage. `lifecycle.promote` then makes the memory readable.
 
 ## Lineage
 
@@ -71,6 +70,6 @@ A superseded version is never deleted. It stays readable as history, with its ow
 
 ## What is not available
 
-- **Erasure.** This build has no erase verb. A demotion keeps the bytes.
-- **An evidence export.** `oml audit export` does not exist.
-- **Chain verification from the CLI.** `oml audit verify-chain` is refused until the server serves a chain export.
+- **Erasure.** No verb erases a memory in this build. Erasure by crypto-shredding is designed ([ADR-0005](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0005-erasure-by-crypto-shredding.md)) and not built. Demotion, which keeps the bytes, is designed and not built either. A retirement takes a claim out of recall and keeps every version.
+- **An evidence export.** `oml audit export` is designed ([ADR-0015](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0015-cli-administration.md) d4) and not built. A person's own export from the web console is built; it is a copy of the person's memories, not evidence.
+- **Chain verification from the CLI.** `oml audit verify-chain` is refused until the server serves a chain export. The [chain format](../data/chain-format.md) procedure verifies the journal table directly.

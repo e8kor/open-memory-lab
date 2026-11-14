@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-14
 answers: "the questions users and operators ask most, with a short answer and the page that holds the detail"
 ---
 
@@ -28,7 +28,7 @@ Until a reviewer approves it. How long that takes depends on the reviewers, and 
 
 ### Can review be turned off?
 
-No. A development home with one person is the one exception: that person's approval of their own memory counts once and is marked `self_signed`. See [why a write is held](concepts/why-a-write-is-held.md#the-exception-a-development-home).
+No. In an [in-progress workarea](use/workareas.md#in-progress-workareas), readers there recall held memories marked unreviewed before review, and nothing leaves it until a person commits it with nothing held; approval still takes a reviewer who did not write the memory. A development workarea where one person's approval of their own memory counts once, marked `self_signed`, is designed ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5) and not built. See [why a write is held](concepts/why-a-write-is-held.md).
 
 ### Which agents does it work with?
 
@@ -80,7 +80,7 @@ The scan found something it blocks, such as a leaked key. `details.finding` name
 
 ### Can an author approve their own memory?
 
-No. The author, and the author of anything the memory derives from, cannot approve it. A development home with one person is the exception: the approval counts once and is marked `self_signed`.
+No. The author, and the author of anything the memory derives from, cannot approve it. A `self_signed` approval in a development workarea is designed and not built.
 
 ### How are many memories reviewed at once?
 
@@ -88,7 +88,7 @@ List them with `oml review list`, then approve or reject the set. Each item gets
 
 ### What can an agent not do?
 
-An agent can write and read. It can never approve, sign, demote or delete. See [MCP tools](api/mcp-plugin.md).
+An agent can write and read. Its tools reach no verb that approves, signs, demotes or deletes ([R1](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md)). See [MCP tools](api/mcp-plugin.md).
 
 ## Run a server
 
@@ -106,4 +106,4 @@ Writes in one tenant serialize on the journal, so a lead takeover or a failed fo
 
 ### Is data sent anywhere, and can it be deleted?
 
-On any server, its operator can read stored memories, and its request logs are kept 30 days unless the operator changes that. OML does not delete memories; rejected and retired ones stay as history. See [commitments](product/commitments.md).
+On any server, its operator can read stored memories, and a tenant admin reads every memory's text through the journaled [admin read](architecture/roles-and-keys.md#the-admin-read). Request logs are kept 30 days unless the operator changes that. No verb deletes or erases a memory in this build: rejected and retired memories stay as history, and erasure by crypto-shredding is designed and not built. A person downloads their own memories from the web console and can file a deletion request; an admin who closes it disables the person, and the bytes stay until erasure exists. See [compliance](product/compliance.md) and [commitments](product/commitments.md).

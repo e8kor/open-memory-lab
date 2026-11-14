@@ -261,8 +261,8 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
     | `POST /web/admin/users` | `set_quota`, `disable_user`, `close_deletion` |
 
     The page has one heading and one line per step *(amended 2026-11-13: the heading's word; see [the amendment](#the-amendment-of-2026-11-13-the-start-pages-heading-is-start))*:
-    1. **Choose your client**: claude.ai, Desktop or phone; Claude Code; other MCP tools.
-    2. **Get your credential**: one button per client.
+    1. **Choose a client**: claude.ai, Desktop or phone; Claude Code; other MCP tools.
+    2. **Get a credential**: one button per client.
         - claude.ai: issues a connector key `<user>-claude-ai` and shows its connect code once,
           the exact MCP URL `<oauth.issuer>/mcp`, copy buttons, the three clicks in claude.ai
           (Settings → Connectors → Add custom connector), and the preferences snippet of

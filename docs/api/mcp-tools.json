@@ -15,7 +15,7 @@
     {
       "name": "oml_write",
       "title": "Remember",
-      "description": "Stores a claim, a claim derived from others, a new version of one, or a proposal to retire one. Held on arrival: scanned in the same call, then reviewed by an identity that did not write it, and visible to others only after approval. It only adds a held row and never changes or deletes an existing one; a new version or a retirement is a proposal that a reviewer decides. Without replaces it is a submission on POST /v1/memories, journalled learn when derives_from is non-empty and remember otherwise; with replaces it supersedes that version on POST /v1/memories/{artifact_id}/supersede. A field outside the chosen mode is refused with request.validation naming it in details.field, never dropped. The answer's similar names up to three memories you may read that hold the same text or a near copy, each with relation, jaccard, version and own.",
+      "description": "Stores a claim, a claim derived from others, a new version of one, or a proposal to retire one. Held on arrival: scanned in the same call, then reviewed by an identity that did not write it, and visible to others only after approval, or marked unreviewed inside an in-progress workarea. It only adds a held row and never changes or deletes an existing one; a new version or a retirement is a proposal that a reviewer decides. Without replaces it is a submission on POST /v1/memories, journalled learn when derives_from is non-empty and remember otherwise; with replaces it supersedes that version on POST /v1/memories/{artifact_id}/supersede. A field outside the chosen mode is refused with request.validation naming it in details.field, never dropped. The answer's similar names up to three memories the key may read that hold the same text or a near copy, each with relation, jaccard, version and own.",
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": false,
@@ -60,7 +60,7 @@
           "anchor": {
             "type": "object",
             "additionalProperties": false,
-            "description": "Where the memory came from, as you read it: {repo, rev, path, fragment?, hash?, hasher?} for a file in a git repository (repo like github.com/owner/name, rev the full commit id, path relative, fragment a heading slug, a decision handle such as d3, or a line span such as L10-L42), or {uri, rev?, fragment?} for a web page. The reviewer sees it beside the text; it is signed with the version and never changes. A successor declares its own; nothing is inherited. A chat fact names its turn: {uri: chat://<harness>/<session>, fragment: turn=<n>, hash, hasher: oml-turn/1}, exactly as the capture request gives it.",
+            "description": "Where the memory came from, as the author read it: {repo, rev, path, fragment?, hash?, hasher?} for a file in a git repository (repo like github.com/owner/name, rev the full commit id, path relative, fragment a heading slug, a decision handle such as d3, or a line span such as L10-L42), or {uri, rev?, fragment?} for a web page. The reviewer sees it beside the text; it is signed with the version and never changes. A successor declares its own; nothing is inherited. A chat fact names its turn: {uri: chat://<harness>/<session>, fragment: turn=<n>, hash, hasher: oml-turn/1}, exactly as the capture request gives it.",
             "properties": {
               "repo": {
                 "type": "string",
@@ -107,7 +107,7 @@
           "expected_version": {
             "type": "integer",
             "minimum": 1,
-            "description": "With replaces, required: the claim's latest version as you last read it (the version field of the tip you are replacing, or of your own newer held version). If the claim has moved on, the write is refused with submission.version_conflict and details.current_version; read it again before retrying."
+            "description": "With replaces, required: the claim's latest version as last read (the version field of the tip being replaced, or of the key's own newer held version). If the claim has moved on, the write is refused with submission.version_conflict and details.current_version; read it again before retrying."
           },
           "retirement": {
             "type": "boolean",
@@ -147,7 +147,7 @@
               "refuse"
             ],
             "default": "hold",
-            "description": "What the write does when a memory you may read already holds the same text or a near copy (90% of its words). hold writes and lists them in similar; refuse writes nothing and answers submission.similar_exists with details.similar, so you can read them and choose: write nothing, replace one with replaces, or resend with hold. Retirements are never checked."
+            "description": "What the write does when a memory the key may read already holds the same text or a near copy (90% of its words). hold writes and lists them in similar; refuse writes nothing and answers submission.similar_exists with details.similar, so the agent can read them and choose: write nothing, replace one with replaces, or resend with hold. Retirements are never checked."
           },
           "valid_from": {
             "type": "string",
