@@ -7,7 +7,7 @@ answers: what an account is and which column names it; the six meters and exactl
 
 # ADR-0071 — Every account is metered by counters the write updates in its own transaction, and named quota profiles set its limits
 
-**Status:** accepted design · 2026-11-12, by the operator, for usage metering; proposed 2026-11-06. The acceptance covers d5's un-assigning, written on 2026-11-12 after the review of the port.
+**Status:** accepted design · 2026-11-12, by the operator, for usage metering; proposed 2026-11-06. The acceptance covers d5's un-assigning, written on 2026-11-12 after the review of the port. The launch limits are the [operator's decision of 2026-11-14](#operator-decision-2026-11-14-180-the-limits-open-sign-up-launches-with) (#180).
 
 **Release:** v0.7.3, the release `openapi.yaml` names for the new members
 
@@ -285,3 +285,44 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
 | **Plans and prices in code** | They are the operator's commercial terms, which change without a release, and a self-hoster has none. A named profile is the whole mechanism the code needs. |
 | **Repair drift automatically in the doctor pass** | A drift is a bug in a fold or a hand edit. Rewriting the counter would hide it and change a person's limit without a journal entry. |
 | **Admin usage routes on `/v1` as asked** | `/v1` is the provider ring that agents speak. Admin acts live on `/v2` with the other admin routes (ADR-0022), so the own-usage read is `/v1` and the admin routes are `/v2/admin/…`. |
+
+## Operator decision 2026-11-14 (#180): the limits open sign-up launches with
+
+**Status of this record:** the operator's decision of 2026-11-14, on
+[#180](https://github.com/e8kor/open-memory-lab/issues/180), for opening sign-up on the public
+server ([#186](https://github.com/e8kor/open-memory-lab/issues/186)). It sets values d5 leaves to
+configuration and changes no decision above.
+
+The operator decided to launch on ADR-0068's defaults and to cap the two meters d5 leaves
+unlimited, so that no single account can fill the disk. Every value is recalibrated after 30 days
+of live data under [#164](https://github.com/e8kor/open-memory-lab/issues/164).
+
+| Meter or quota | Setting | Value | Reason |
+|---|---|---|---|
+| `memories` | `quota.memories` | 1000 | ADR-0068 d1's default, kept |
+| `keys` | `quota.keys` | 5 | ADR-0068 d1's default, kept |
+| `connections` | `quota.connections` | 5 | ADR-0068 d1's default, kept |
+| `requests_per_minute` | `quota.requests_per_minute` | 120 a minute per key | ADR-0068 d1's default, kept |
+| `text_bytes` | `quota.text_bytes` | 50000000 (50 MB) | no single account fills the disk; unlimited by default under d5 |
+| `writes` | `quota.writes_per_month` | 10000 a month | no single account fills the disk; unlimited by default under d5 |
+| `recalls` | none | no cap; 100,000 a month is the threshold #164 watches | reading never blocks (d5) |
+
+The values sit on the `default` profile, which `quota.signup_profile` names when it is unset. No
+second profile is declared, since no second set of limits exists yet. The 50 MB is decimal,
+50,000,000 bytes, as `text_bytes`' ceiling of 10^12 is a decimal terabyte
+(`crates/oml-domain/src/signup.rs`, `TEXT_BYTES_LIMIT_MAX`). The four kept values are already the
+built defaults, so only `text_bytes` and `writes_per_month` change what a sign-up account is held
+to. Writing all six into the deployment's configuration states each one where the operator reviews
+it.
+
+**`recalls` has no cap.** The operator decided on 2026-11-14 that d5's "reading never blocks"
+stands: no quota refuses a recall, and no setting names one. Recalls stay metered, in the ledger
+(d4) and the admin usage routes (d6), and bounded by `requests_per_minute`: 120 a minute is at
+most 5,356,800 requests in a 31-day month per key in each server process, every one of which may
+be a recall. 100,000 recalls a month is recorded as the threshold
+[#164](https://github.com/e8kor/open-memory-lab/issues/164) watches in the live data, not a
+limit.
+
+Sign-ups from one client address stay at ADR-0068 d9's 5 an hour (`signup.per_ip_per_hour`); its
+[record](ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md#operator-decision-2026-11-14-180-the-sign-up-limits-are-kept)
+says so.
