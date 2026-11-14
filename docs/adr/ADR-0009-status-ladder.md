@@ -7,7 +7,7 @@ answers: why a workarea's status is a forward-only ladder of development, commit
 
 # ADR-0009 — The status ladder: development, committed, validated; forward only; medallion words stay in the lake
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14)
 
 **Release:** introduced in v0.5.2 ([releases](../changelog.md))
 
@@ -34,7 +34,7 @@ of running software.
   [ADR-0001](ADR-0001-the-constitution.md) d5 and widened nowhere. `committed`: full non-author
   review required; promotions allowed; the permanent status of the universe root. `validated`:
   frozen — refuses new writes, promotions into it, reassignment in or out, child creation and
-  re-parenting; serves reads.
+  re-parenting; serves reads. *(Amended 2026-11-14: the development self-signing exception is retired (ADR-0001 d5); the build never sets `self_signed`, so this text describes nothing that is served.)*
 
 - **d2 — One write-eligibility rule across all statuses.** Who may write into a workarea is
   decided by effective access ([ADR-0008](ADR-0008-workarea-algebra.md) d4) and by nothing else.

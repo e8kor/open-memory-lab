@@ -217,7 +217,7 @@ sequenceDiagram
   The cost: "production-ready" is read as `committed`, the working state of a governed space,
   and not as `validated`, which is frozen. A tenant whose committed areas are drafts has no
   narrowing switch in phase 1: its owners turn `accept_federated` off on those areas (d5), and a
-  `min_status` setting returns as an amendment when a tenant names that use.
+  `min_status` setting returns as an amendment when a tenant names that use. *(Amended 2026-11-14: the development self-signing exception is retired (ADR-0001 d5); the build never sets `self_signed`, so this text describes nothing that is served.)*
 
 - **d2 — A descriptor is a reviewed claim of a new kind, `descriptor`, on the workarea it
   describes, one live per workarea; promoting it is the owner's opt-in to selection by it.** Its

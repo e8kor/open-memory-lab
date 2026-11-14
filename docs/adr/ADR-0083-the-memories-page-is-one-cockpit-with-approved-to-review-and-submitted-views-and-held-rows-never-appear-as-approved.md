@@ -184,7 +184,8 @@ Decided, not built.
   there is one, the reason and when, with **Confirm** and **Revert**, each asking for confirmation
   and posting to ADR-0089 d15's `POST /v2/review/fixes/{id}/confirm|revert` as `<user>-review`
   (capacity `review`). The list is `GET /v2/review/fixes` (ADR-0089 d15), which serves a person's
-  dreamer key. A fix the person's own principal took is listed without either act (ADR-0089 d15);
+  dreamer key. A fix the person's own admin key took is listed with both acts in a development scope, the
+  confirmation marked `same_user`, and without either in a production scope (ADR-0089 d8, d15);
   an erasure offers Confirm and a dispute comment only. A revert refused because a promoted
   version has since superseded the target answers `admin.fix_superseded` (ADR-0089 d8). The
   Memories cockpit has no fixes view. ADR-0055 is amended: the review a person runs covers held
@@ -230,8 +231,8 @@ Decided, not built.
       "Nothing waits for this account." and links to Memories, Submitted.
     - **Administration, `/web/admin/todo`.** Title `Admin · To do · OML`, no filter, admin work
       only: **Admin fixes, unconfirmed** (fixes this admin key took, with their alert), 
-      **Guardrail-loosening alerts** (withdrawals that stopped a guardrail, until a person of
-      another principal acknowledges them; an alert raised by one of the admin's own fixes is
+      **Guardrail-loosening alerts** (withdrawals that stopped a guardrail, until another
+      person acknowledges them; an alert raised by one of the admin's own fixes is
       listed with that fix) and **Open investigations** (ADR-0089 d10; the row opens the
       investigation). No row offers a verdict, a ratification, a confirmation or an
       acknowledgement: those are a person's acts (ADR-0001 R1).
@@ -257,12 +258,12 @@ Decided, not built.
           serves with each item (an API change decided here), grouped apart by the console.
         - Admin fixes to confirm: `GET /v2/review/fixes` (ADR-0089 d15).
         - Releases to ratify, an API change decided here: `GET /v2/review/releases?workarea=&cursor=`,
-          the proposed releases (ADR-0085 d4) the key may publish, that is, whose proposer's
-          principal differs from its own, with workarea, label, proposal id, the proposer's key
+          the proposed releases (ADR-0085 d4) the key may publish, that is, whose proposer is a
+          person other than the key's own, with workarea, label, proposal id, the proposer's key
           name and a gate summary.
         - Withdrawal alerts to acknowledge, an API change decided here:
           `GET /v2/review/withdrawals?workarea=&cursor=`, the withdrawals that loosened a guardrail
-          and wait for acknowledgement by a person of another principal (ADR-0085 d9).
+          and wait for acknowledgement by another person (ADR-0085 d9).
         - Gate overrides, an API change decided here: `GET /v2/review/gates?workarea=&cursor=`, the
           blocking tests and impact gates (ADR-0086 d6) of proposals the key may ratify, each with
           its case or finding.
@@ -345,5 +346,5 @@ Decided, not built.
 | **`count=true` on each listing, read per group** | Six count reads on every page view; one counts read serves the badge. |
 | **Fix acts on the admin one-memory page or every admin card** | A fix reaches release-bound keys and bindings (ADR-0089 d5), which the Releases view shows beside the form; one place for a break-glass act. |
 | **Bulk review stays on the admin page with Judge removed around it** | A review view on the admin side would hold the one act there that is not an admin's, and the admin side no longer reviews. |
-| **Admin fixes confirmed on the admin side** | A fix is confirmed by a person's dreamer key whose principal differs from the admin's (ADR-0089 d8); the admin side acts as the admin key. |
+| **Admin fixes confirmed on the admin side** | In a production scope a fix is confirmed by a person other than the admin's own, and in a development scope by any person holding dreamer there, through that person's dreamer key (ADR-0089 d8); the admin side acts as the admin key. |
 | **Search over held rows in To review and Submitted by recall** | Recall's shared index never serves another author's held text (ADR-0025 d5); a held row is matched only through a read fenced to its author. |

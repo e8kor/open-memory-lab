@@ -16,12 +16,12 @@ The rules that make a write held, reviewed by someone else and signed.
 
 | Decision |
 |---|
-| [The constitution: four rules, one bounded development exception](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) |
+| [The constitution: four rules, three bounded exceptions](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) |
 | [Tenancy is first-class](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0007-tenancy-first-class.md) |
 | [The status ladder: development, committed, validated; forward only; medallion words stay in the lake](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0009-status-ladder.md) |
 | [Roles and keys: reader, writer, dreamer, admin, operator](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0010-roles-and-keys.md) |
 | [Admission and review: external crews, serve binding, policy objects](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0012-admission-and-review.md) |
-| [An in-progress workarea serves unreviewed memories inside it, a curator agent may only narrow them, and nothing leaves until a person commits it](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) |
+| [An in-progress workarea serves its held work to its subtree and its ancestors, a curator agent may only narrow it, and nothing leaves until a person commits it or a release is published](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) |
 | [A person reviews a listed set of held items in one act, each item judged and signed as one verdict](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md) |
 | [The scan is a versioned, compiled-in rule set that vetoes leaked keys and holds what a reviewer should judge](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) |
 | [The scan names a threat class for every finding, refuses only what can never be safe, holds or annotates the rest, and recall serves every hit as data with its findings](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings.md) |

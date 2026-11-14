@@ -105,6 +105,12 @@ branch that reserved later renumbers.
 | adr | 0081 | `design/workarea-builder` |  | a document is a reviewed markdown or text claim that recall searches by passage and the mcp server serves as a resource | reserved |
 | adr | 0082 | `design/workarea-builder` |  | a person builds and edits a workareas skills guardrails and documents in the console each edit a held version under the persons own keys | reserved |
 | adr | 0083 | `design/workarea-builder` |  | the memories page is one cockpit with approved to review and submitted views and held rows never appear as approved | reserved |
+| adr | 0084 | `design/workarea-lifecycle` |  | a workarea moves between servers as a signed bundle that lands held or in progress and is reviewed again unless its source server is pinned | reserved |
+| adr | 0085 | `design/workarea-lifecycle` |  | a workarea publishes immutable releases that one person cuts and another ratifies and each key binds to the tip the latest release or a pinned one | reserved |
+| adr | 0086 | `design/workarea-lifecycle` |  | a workareas tests are reviewed claims the server runs under the callers key and a release is published only through ordered gates | reserved |
+| adr | 0087 | `design/workarea-lifecycle` |  | an impact report shows under the callers own reads what a candidate release changes for the workareas that receive it | reserved |
+| adr | 0088 | `design/workarea-lifecycle` |  | an imported version counts as reviewed only from a trusted source a tenant pinned and never for instructions | reserved |
+| adr | 0089 | `design/workarea-lifecycle` |  | an admin fixes a production workarea at once by a marked break glass act that a person confirms or reverts afterwards | reserved |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |

@@ -60,7 +60,7 @@ Read against `origin/main` at v0.5.7, these parts of it and its pages are stale:
   `promoted_at` is null is never written, so no held body enters the lake (ADR-0003 d3 holds).
   A `self_signed` promotion stays out (ADR-0001); a `same_user` one enters with that column set,
   because on a one-person install those are most of what was gathered. `review.ratify` naming
-  an `edge_id` upserts its edge when ratified. Amends ADR-0003 d3's mechanism, not its rule.
+  an `edge_id` upserts its edge when ratified. Amends ADR-0003 d3's mechanism, not its rule. *(Self-signing retired 2026-11-14 (ADR-0001 d5); no row carries the mark.)*
 
 - **d3 — Exactly-once by per-table transaction version and a per-row filter.** Every commit
   carries `txn(appId = oml-lakewriter, version = batch_end)`. Each table applies only rows whose

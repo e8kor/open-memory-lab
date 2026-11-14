@@ -95,7 +95,7 @@ partial loads and refusals are journalled, never silent.
   ratified under policy P, rate r, seed s" — and the evidence export says exactly that. A row
   sheds the mark only by passing the normal pipeline individually — a journalled per-row
   serve, verdict and promote referencing the manifest. Escalation is available row by row,
-  never required.
+  never required. *(Self-signing retired 2026-11-14 (ADR-0001 d5); no row carries the mark.)*
 
 - **d5 — A new `import` event family.** `import.manifest_submitted` (roots, counts,
   mapping-spec digest, snapshot pin, scan result); the `review.*` family reused with
