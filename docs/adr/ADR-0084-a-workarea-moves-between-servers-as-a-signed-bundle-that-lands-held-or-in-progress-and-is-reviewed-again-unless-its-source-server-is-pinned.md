@@ -92,6 +92,11 @@ Decided, not built.
   - Simulation rows keep their mark (ADR-0011 d8).
   - An erased version is carried as a marker, under d13.
   - `history` is for moving or archiving one workarea's record. It is not a backup (d16).
+  - **In a user root, `history` is the default** (the operator, 2026-11-14: "History by
+    default"). A user root never leaves development and has no release (ADR-0085 d4, d17), so an
+    export whose subtree lies in a user root takes `history` mode without a flag. Asking for
+    `release` mode there is refused `request.validation`, `details.field: mode`,
+    `details.reason: user_root`. A shared workarea keeps `release` as its default.
 
 - **d3 — Claims of every kind ride as versions; grants, keys, crews and settings never do.**
   Memories, steering, terms, guardrails, skills, documents and tests travel as versions. Each
@@ -212,7 +217,8 @@ Decided, not built.
     cannot read refuses the whole export as `export.not_readable`.
   - The tenant policy `export` takes one of three values:
     - `off`;
-    - `own_root`, the default: a person exports only inside their own root;
+    - `own_root`, the default: a person exports only inside their own root, in `history` mode
+      (d2);
     - `allowed`: shared workarea subtrees too.
   - Under `own_root`, an admin may allow one shared workarea's export as a policy act,
     `export.allowance_set {workarea, until?}`, journalled. It is a policy change, not a fix
