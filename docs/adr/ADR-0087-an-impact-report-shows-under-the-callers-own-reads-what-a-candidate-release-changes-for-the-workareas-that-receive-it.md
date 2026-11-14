@@ -100,7 +100,7 @@ Decided, not built.
 
 | Alternative | Why not |
 |---|---|
-| **A report under a server identity that reads the whole tenant** | Would show the caller content and structure its key cannot read (R3), and an admin-wide read is what ADR-0026 d15 forbids for content. |
+| **A report under a server identity that reads the whole tenant** | Would show the caller content and structure its key cannot read (R3), and an admin's content reads are single, reasoned and journalled (ADR-0089 d5), never a tenant-wide computation for someone else. |
 | **A count of overlapping keys in other people's in-progress work** | The count itself discloses that unreadable work exists and what it touches. |
 | **Pattern-level guardrail conflict analysis** | Rules are shell-token patterns; proving two never overlap is undecidable in general, and a heuristic without cases produces findings nobody can check. |
 | **Model-based contradiction detection now** | Off the write path by ADR-0074 d13 and unmeasured; a blocking gate on an unmeasured detector would stop releases on noise. |

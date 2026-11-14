@@ -36,8 +36,10 @@ restores only into an empty cluster. A restore rewinds the chain and can bring b
 
 The forces, from [ADR-0001](ADR-0001-the-constitution.md):
 
-- **R1:** an import that served content would be a promotion, so an import promotes nothing; an
-  admin key never reads claim text, so it never exports.
+- **R1:** an import that served content would be a promotion, so an import promotes nothing. An
+  admin key reads claim text one journalled read at a time, with a reason
+  ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)
+  d5); a bundle is bulk egress, not a read.
 - **R2:** the source's reviewers are keys the target cannot see.
 - **R3:** a held row leaves no in-progress workarea, and a bundle is a way out.
 - **R4:** import and export delete nothing, and a copy is beyond the reach of a source erasure
@@ -192,7 +194,8 @@ Decided, not built.
     - `own_root`, the default: a person exports only inside their own root;
     - `allowed`: shared workarea subtrees too.
   - An admin key sets the policy; that changes what may leave and reads no content. An admin key
-    never exports, because a bundle is claim text (ADR-0026 d15, ADR-0010 d6).
+    never exports: its reads of claim text are single, reasoned and journalled (ADR-0089 d5), and a
+    bundle is the whole subtree's text leaving the server, which no fix needs.
   - An export changes nothing on the source. It is journalled as `workarea.exported` with the
     manifest digest, mode, counts and recipients' fingerprints, and counted in bytes on a new
     `exports` meter.
@@ -209,7 +212,14 @@ Decided, not built.
   - Writes go in batches, each its own transaction under the chain lock with its meters. An
     interrupted import resumes from its ledger, because d8 makes every write idempotent.
   - The import is journalled as `workarea.imported` with the source manifest digest and the
-    outcome counts.
+    outcome counts, and the server records every version the import wrote, so that the import can
+    be rolled back.
+  - **Rollback.** Developers roll an import back by rejecting its held versions and, for what has
+    since been promoted, superseding or retiring through review. When that cannot wait, an admin
+    rolls the import back at once as a fix (ADR-0089 d1): every version the import brought in that
+    has since been promoted is demoted, which restores the tips it replaced, and every claim key it
+    created is retired. The rollback is marked, journalled with a reason, and confirmed or reverted
+    by a person afterwards. Nothing is deleted.
 
 - **d12 — A new shared target is three actors' work.**
   1. An admin creates `payments.dev` and grants the team.
@@ -230,7 +240,7 @@ Decided, not built.
     plaintext.
   - When a later bundle carries a marker for a version already imported, the target raises an
     erasure notice, `import.erasure_notice`, which the doctor counts. The target's own erasure act
-    clears it (ADR-0005 d2; an admin act, as a legal act, ADR-0085 d13).
+    clears it (ADR-0005 d2; an admin's legal act, ADR-0089 d1).
   - Bundle files are outside every server's erasure. The bound is the recipients' custody and the
     encryption of d5, and the export's output says so.
 
@@ -299,7 +309,7 @@ Decided, not built.
 | **Only promoted tips, never history** | A move needs the superseded versions, which R4 keeps. `release` mode remains the tips-only path. |
 | **Every version, including other people's held and rejected ones** | Other people's held and rejected text would leave the server, which R3 and the reviewer's rejection forbid. |
 | **A `pg_dump` of the tenant's rows** | Moves keys, grants and the chain, cannot merge into an existing tenant, rewinds erasure, and needs `BYPASSRLS`. That is the backup's job. |
-| **An admin key exports** | An admin key never reads claim text (ADR-0026 d15). |
+| **An admin key exports** | An admin reads claim text one reasoned, journalled read at a time to fix something (ADR-0089 d5); a whole subtree leaving the server is not a fix. |
 | **An agent exports or imports through MCP** | A bulk egress or a bulk write started by the agent is the gate being called by the thing it gates (R1). |
 | **Import into a standard workarea, held** | Held rows there are author-only (R3), so the target's agents and tests could not see the import before it is served. |
 | **Server-to-server pull (live sync) instead of a file** | Needs a standing credential on the target into the source, and makes every move an online dependency. A file lets people check what moves. |

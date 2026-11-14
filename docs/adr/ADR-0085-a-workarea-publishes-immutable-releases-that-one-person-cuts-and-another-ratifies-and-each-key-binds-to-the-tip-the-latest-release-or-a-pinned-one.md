@@ -2,7 +2,7 @@
 id: adr/ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one
 tier: engineering
 status: proposed
-answers: what a workarea release is and what it may contain; how it is named, proposed, published and withdrawn, and by whom; what a key binds to and how a binding resolves per workarea; how a release-bound key and an in-progress workarea meet; whether a release can be cut while the workarea is in progress; who may change a binding; who sees which keys a release reaches; what the release notes say and which changes they flag as breaking; how this answers ADR-0047 d10's frozen release child; which admin acts end; and the questions left for the operator
+answers: what a workarea release is and what it may contain; how it is named, proposed, published and withdrawn, and by whom; what a key binds to and how a binding resolves per workarea; how a release-bound key and an in-progress workarea meet; whether a release can be cut while the workarea is in progress; who may change a binding; who sees which keys a release reaches; what the release notes say and which changes they flag as breaking; how this answers ADR-0047 d10's frozen release child; where the admin's fix acts meet a release; and the questions left for the operator
 -->
 
 # ADR-0085 — A workarea publishes immutable releases that one person cuts and another ratifies, and each key binds to the tip, the latest release or a pinned one
@@ -13,9 +13,7 @@ answers: what a workarea release is and what it may contain; how it is named, pr
 ([review](https://github.com/e8kor/open-memory-lab/blob/main/design/workarea-lifecycle.md)), before
 ADR-0086, ADR-0087 and ADR-0084
 
-**Amends:** ADR-0009 (d3: the ratifier of a status move is a person's dreamer key, never an admin's),
-ADR-0010 (d6: an admin key neither demotes nor ratifies a status move; erasure stays),
-ADR-0026 (d15: admins read release status), ADR-0030 (d2, d3: a release-bound read is served the
+**Amends:** ADR-0026 (d15: admins read a release's manifest, notes and gate records), ADR-0030 (d2, d3: a release-bound read is served the
 manifest whatever the marks; d7: a release cut inside an in-progress workarea carries its promoted
 versions out), ADR-0037 (d5: the guardrail set is read from the bound release), ADR-0059 (d14: a
 release read beside `as_of`), ADR-0072 (d5: a federated source is read at its latest release), and,
@@ -44,8 +42,10 @@ On 2026-11-14 the operator decided four points this record takes as given:
    as ADR-0030 d3 and ADR-0080 d10 serve.
 3. A release may be cut from approved versions while the workarea stays in progress; held work by
    others is not in it.
-4. Admin acts keep erasure only, as a legal act; admin demotion and admin ratification of status
-   moves end; admins read release status without claim keys.
+4. The admin is the person who fixes a workarea in production: every fix act, a release rollback
+   among them, takes effect at once and is marked, and admins read claim text with each read
+   journalled. That is ADR-0089; this record keeps the developer's path and names where the admin's
+   acts meet it. (This replaced, the same day, an earlier decision that admins keep erasure only.)
 
 Held against R1 (a release changes what agents receive, so it is a person's act), R2 (proposer and
 ratifier differ), R3 (a release never carries a held row) and R4 (a withdrawal deletes nothing)
@@ -121,7 +121,7 @@ ratifier differ), R3 (a release never carries a held row) and R4 (a withdrawal d
   reads counts and scopes; an admin key also reads key names, since admins manage keys
   (ADR-0026 d15). The ratifier is shown the counts before publishing.
 
-- **d9 — Withdrawing returns readers to the previous release and deletes nothing.** A withdrawal is
+- **d9 — Withdrawing returns readers to the previous release and deletes nothing.** An admin may also withdraw, as a fix (d13, ADR-0089). A withdrawal is
   journalled as `workarea.release_withdrawn {release, reason}`, and the release stays listed as
   withdrawn. `latest` keys read the previous published release on their next request, and their
   guardrail and skill sets at the next session start. One person's dreamer key may withdraw, unless
@@ -164,13 +164,14 @@ ratifier differ), R3 (a release never carries a held row) and R4 (a withdrawal d
   - Doctor: agent keys on `tip` beside a release; `latest` keys served `binding_fallback`; pins to
     withdrawn releases; degraded releases.
 
-- **d13 — Admin acts on content end, except erasure, and admins read release status.** This amends
-  ADR-0010 d6 by removing demote and status-move ratification from admin's verbs, and ADR-0009 d3:
-  a status move is ratified by a person's dreamer key that did not propose it; an admin may still
-  propose one, since a proposal promotes nothing. Erasure stays an admin act, as a legal act
-  ([ADR-0005](ADR-0005-erasure-by-crypto-shredding.md)). Demotion is left to the record that builds
-  it, as a person's act. ADR-0026 d15 gains a release status read for admins: labels, state,
-  proposer and ratifier kind, `same_user`, member counts by kind and digests, and no claim keys.
+- **d13 — Publishing stays with persons; the admin view reads every release and rolls one back as
+  a fix.** An admin key neither proposes nor ratifies a release (d4): publishing is the developer's
+  act. The admin release view reads every release of its tenant (labels, state, proposer and
+  ratifier kind, `same_user`, the manifest with its claim keys, the notes and the gate records),
+  each read journalled with a reason (ADR-0089 d5; amends ADR-0026 d15). It offers ADR-0089's
+  release rollback: withdraw a release, or re-point a workarea's `latest` to an earlier published
+  release, served at once, marked `latest_by: "admin_fix"`, and queued for a person to confirm or
+  revert. A person's next publish ends a re-point. ADR-0009 d3 and ADR-0010 d6 are unchanged here.
 
 - **d14 — This answers ADR-0047 d10 without a frozen child.** ADR-0047 d10 creates a
   `<repo>-r-<version>` child that freezes as evidence, because freezing the living workarea would
@@ -190,8 +191,7 @@ ratifier differ), R3 (a release never carries a held row) and R4 (a withdrawal d
   tip at an instant", a release "what did people publish".
 - ADR-0084's `release` mode exports a manifest; ADR-0086's gates and ADR-0087's report attach to a
   proposal.
-- The roles page loses demote and ratify from the admin row; the ladder's code
-  (`crates/oml-app/src/app.rs:4660`, `ratify_admitted`) refuses an admin key.
+- The roles page gains the admin release view and its rollback (d13, ADR-0089).
 - Questions for the operator, recommendation first:
   1. Default binding: `latest` for agent keys and `tip` for person keys, or `tip` everywhere?
   2. Withdrawal: one person, two when it removes or loosens a guardrail (d9), or always two?
@@ -208,4 +208,4 @@ ratifier differ), R3 (a release never carries a held row) and R4 (a withdrawal d
 | **CI proposes releases** | An automated actor would choose what a person is asked to publish; the person's act would shrink to approving a list a machine drew up. |
 | **Release-bound keys still see held items inside in progress** | Would make a "production" key read unreviewed text whenever its workarea is in progress, which the operator ruled out. |
 | **The key chooses its binding per request** | The gated thing would choose what gating applies to it (R1). |
-| **Admins read the manifest's claim keys** | Claim keys can carry content (`doc/<path>`, `skill/<name>`); ADR-0026 d15 keeps admins to structure. |
+| **Admins publish releases** | Publishing is the developer's act and the reviewed path; the admin's acts are fixes, marked and confirmed afterwards (ADR-0089), not a second way to publish. |

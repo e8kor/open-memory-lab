@@ -24,7 +24,7 @@ stage it says:
 - which constitutional rule constrains the stage;
 - which proposed record answers the gap.
 
-The decisions themselves are in five records, all proposed:
+The decisions themselves are in six records, all proposed:
 
 | Record | Decides | Order |
 |---|---|---|
@@ -32,6 +32,7 @@ The decisions themselves are in five records, all proposed:
 | [ADR-0086](../docs/adr/ADR-0086-a-workareas-tests-are-reviewed-claims-the-server-runs-under-the-callers-key-and-a-release-is-published-only-through-ordered-gates.md) | test suites as claims, server runs, the ordered gates | second |
 | [ADR-0087](../docs/adr/ADR-0087-an-impact-report-shows-under-the-callers-own-reads-what-a-candidate-release-changes-for-the-workareas-that-receive-it.md) | the impact report on other workareas | beside ADR-0086 |
 | [ADR-0084](../docs/adr/ADR-0084-a-workarea-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) | the bundle, export, and an import that lands held | third |
+| [ADR-0089](../docs/adr/ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) | the admin fixes production at once, marked, confirmed by a person afterwards | with ADR-0085 |
 | [ADR-0088](../docs/adr/ADR-0088-an-imported-version-counts-as-reviewed-only-from-a-trusted-source-a-tenant-pinned-and-never-for-instructions.md) | verdicts from a trusted source server | deferred |
 
 Citations are `ADR-nnnn dN :line` for a decision record in `docs/adr/` and `path:line` for code, at
@@ -48,14 +49,17 @@ Citations are `ADR-nnnn dN :line` for a decision record in `docs/adr/` and `path
    `tip` keys are served as ADR-0030 d3 and ADR-0080 d10 serve.
 3. **A release may be cut while the workarea is in progress.** It is cut from approved versions.
    Held work by others is not in it.
-4. **Admin acts on content end, except erasure.** Erasure stays as a legal act. Admins read release
-   status without seeing claim keys.
+4. **The admin fixes production.** In the operator's words: "admin should be the person who can fix
+   workareas on prod, so, all types of action, demote, edit, rollback imports for example". A fix
+   takes effect at once and is marked; admins read claim text in the workareas they administer,
+   each read journalled. This replaced, the same day, an earlier decision that admins keep erasure
+   only. It is ADR-0089, and it relaxes R1, R2 and R3 for admin keys, boundedly and by name.
 
 ## The four rules, as this page uses them
 
 | Rule | What it says here | Declared at |
 |---|---|---|
-| **R1** | An agent's key and an admin key never promote, sign, demote or delete. Promotion is a verdict by a person's dreamer key. | [ADR-0001](../docs/adr/ADR-0001-the-constitution.md) d1 :25; ADR-0010 d6 :68; `crates/oml-domain/src/access.rs:131` |
+| **R1** | An agent's key never promotes, signs, demotes or deletes. Promotion is a verdict by a person's dreamer key. An admin key fixes production by the marked, confirmed acts of ADR-0089, the named exception. | [ADR-0001](../docs/adr/ADR-0001-the-constitution.md) d1 :25; ADR-0010 d6 :68; `crates/oml-domain/src/access.rs:131` |
 | **R2** | The reviewer is never the author, checked against the lineage closure, per key and principal. | ADR-0001 d2 :31; `crates/oml-domain/src/model.rs:232` (`check_reviewer`); ADR-0044 d8 :237 (per key inside a user root) |
 | **R3** | A held row is readable by its author only. The exception is a workarea a person put in progress, where `tip` keys read held rows marked unreviewed. | ADR-0001 d3 :38 and its amendment in d5 :53; ADR-0030 d3 :105 |
 | **R4** | Nothing is deleted silently. Rejection, retirement and demotion keep the bytes; erasure is a journalled crypto-shred. | ADR-0001 d4 :42; ADR-0005 d2 :47; ADR-0030 d12 :232 |
@@ -195,8 +199,8 @@ person's act.
 - **d9:** one person may withdraw a release. Two are needed if the withdrawal removes or loosens a
   guardrail (operator to confirm).
 - **d10:** release notes are generated and flag breaking changes.
-- **d13:** admin acts end except erasure (amending ADR-0010 d6 and ADR-0009 d3), and admins gain a
-  release status read (decision 4).
+- **d13:** publishing stays with persons. The admin release view reads every release and rolls one
+  back as a fix (ADR-0089).
 - **d14:** ADR-0047 d10 is answered without a frozen child.
 
 ## Stage 5. Tests
@@ -292,15 +296,38 @@ leave an in-progress workarea before the commit.
 
 **Rule.**
 - R4: nothing is deleted.
-- R1: no agent or admin demotes.
-- R2: a fix needs another reviewer.
+- R1: no agent demotes; an admin does, as a marked fix (ADR-0089).
+- R2: a developer's fix needs another reviewer; an admin's fix is reviewed afterwards.
 
 **Answer.** ADR-0085:
 - **d9:** withdraw the release. `latest` keys return to the previous release at once.
 - **d11:** revert the tip. This drafts the inverse change set, which is reviewed and published as a
   new release.
-- **d13:** a version that must never be served again is demoted once demotion is built, as a
-  person's act.
+- ADR-0089: when the fix cannot wait, an admin demotes, edits, retires, rolls back the release or
+  rolls back an import at once. The fix is marked to readers, journalled with a reason, and queued
+  for a person on the team to confirm or revert.
+
+## Scenario: a bad publish found in production
+
+`payments.dev@1.4.0` is published on Tuesday. On Wednesday an on-call agent, bound to `latest`,
+follows the new `refund-flow` skill and asks to refund twice: the skill's step 3 is wrong.
+
+1. **The developer withdraws the release** (ADR-0085 d9). bob, on the team, withdraws 1.4.0 with a
+   reason. The withdrawal does not remove or loosen a guardrail, so one person suffices. Every
+   `latest` key reads 1.3.0 on its next request and loads 1.3.0's skills at its next session start.
+   Nothing is deleted: 1.4.0 stays listed as withdrawn.
+2. **The developer fixes forward.** alice runs `oml workarea revert --to 1.3.0` for the one skill,
+   or writes a corrected `refund-flow`. bob reviews it, the tests and impact report run against the
+   candidate (ADR-0086, ADR-0087), and alice proposes 1.4.1, which bob publishes.
+3. **When the fix cannot wait.** It is 03:00, nobody on the team answers, and the bad step is also
+   served to the developers' `tip` keys and to a sibling workarea that federates to `payments.dev`.
+   The tenant's admin demotes the bad `refund-flow` version with a reason (ADR-0089 d1). The
+   previous version is served at once, marked `approver.act: "admin_fix"`, `confirmed: false`. The
+   doctor and `oml_admin_fixes_unconfirmed` show one open fix.
+4. **The team confirms or reverts the admin's fix.** In the morning, bob sees "Fixes to confirm" on
+   his Review page, reads the reason, and confirms. The mark's `confirmed` turns true. Had the
+   admin been wrong, bob would revert: a new version carrying the demoted text, promoted by his
+   verdict, journalled as `admin.fix_reverted`. Either way, nothing is deleted.
 
 ## Stage 10. Audit
 
@@ -314,7 +341,8 @@ leave an in-progress workarea before the commit.
   - `workarea.release_proposed`, `workarea.release_ratified`, `workarea.release_withdrawn`;
   - `key.binding_set`;
   - `workarea.test_run`, `workarea.gate_override`, `workarea.impact_report`;
-  - `workarea.exported`, `workarea.imported`, `import.erasure_notice`.
+  - `workarea.exported`, `workarea.imported`, `import.erasure_notice`;
+  - `admin.fix`, `admin.fix_confirmed`, `admin.fix_reverted`, and `memory.admin_read` with a reason.
 - A bundle carries the source's signed events for every version it holds (ADR-0084 d1).
 
 ## Proposed changes in priority order
@@ -325,9 +353,10 @@ leave an in-progress workarea before the commit.
 | 2 | Test suites as claims, server runs, ordered gates and overrides | **ADR-0086**, new |
 | 3 | Impact report | **ADR-0087**, new |
 | 4 | Bundle, export, an import that lands held, the same-server copy | **ADR-0084**, new |
-| 5 | Verdicts from a trusted source server | **ADR-0088**, new, deferred |
-| 6 | Opt-in guardrail-hit report | a later record or an ADR-0037 amendment |
-| 7 | Demote and erase built | none needed: ADR-0009 d5 and ADR-0005 decide them, and ADR-0085 d13 makes demotion a person's act |
+| 5 | Admin fixes in production: demote, edit, retire, release and import rollback, ladder moves, erasure; marked, confirmed afterwards; admin reads with a reason | **ADR-0089**, new |
+| 6 | Verdicts from a trusted source server | **ADR-0088**, new, deferred |
+| 7 | Opt-in guardrail-hit report | a later record or an ADR-0037 amendment |
+| 8 | Erasure built | none needed: ADR-0005 decides it; demotion is built with ADR-0089 |
 
 ## Questions still open
 
@@ -346,3 +375,5 @@ recommendation first:
 8. **Encryption:** always, or plaintext allowed for a same-host move?
 9. **Default export policy:** `own_root`, `off` or `allowed`?
 10. **Verdicts from another server:** may they ever count (ADR-0088, deferred)?
+11. **Admin edits:** allowed in every workarea, or only in one with published releases (ADR-0089)?
+12. **Unconfirmed admin fixes:** stay served and marked indefinitely (recommended), or expire?

@@ -66,5 +66,5 @@ workarea (`crates/oml-domain/src/federation.rs:29`, `is_trusted_source`). Every 
 |---|---|
 | **Pin by server key alone** | The key is deployment-wide, so any tenant on the source could produce verdicts the pin would accept. |
 | **Count verdicts for every kind** | Skills, guardrails, steering and tests direct agents or define gates; a reviewer the target cannot see is not enough for instructions. |
-| **One admin pins** | A pin lets content arrive reviewed; that is a promotion in effect, and admins do not promote (R1). |
+| **One admin pins** | A pin is standing trust that lets content arrive reviewed, for every future import; an admin's acts are single fixes, marked and confirmed afterwards (ADR-0089), not standing trust. |
 | **Land promoted outside in progress** | It would be served the moment it is written, with no person on the target having acted. |
