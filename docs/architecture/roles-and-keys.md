@@ -57,7 +57,7 @@ Approve, sign and delete appear in no column: approval is an effect of review, `
 - **A global denial on an admin key is refused, `request.validation` with `details.field: key`.**
 - **Recall, search and the read by id need a reader grant, and no admin key can carry one.** An admin key that calls recall gets `access.verb_ceiling`.
 
-A development workarea letting a writer approve its own memories, marked `self_signed`, is designed ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5) and not built: the server marks no approval `self_signed`.
+Self-signing was retired on 2026-11-14 ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5, as amended in [#377](https://github.com/e8kor/open-memory-lab/pull/377)). In a person's own root, their review key approves their agents' work, marked `same_user`.
 
 ## Issuing keys
 

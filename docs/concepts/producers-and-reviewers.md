@@ -21,13 +21,13 @@ Every write has a producer and needs a reviewer who is not that producer. Three 
 | Class | Producer | Reviewer | Counts in development and in-progress scopes | Counts in committed, validated and published scopes | Marking | Built |
 |---|---|---|---|---|---|---|
 | Knowledge: `memory`, `derived_fact` | agent key A | another person's dreamer key, `held_by: human` (the built check: another key and principal) | yes | yes | `approver.held_by: human` | built |
-| Knowledge | agent key A of person P | P's review key, inside P's own root | yes | no: another person approves (ADR-0082 d7) | `same_user: true` | built for development scopes; the production-scope refusal is designed |
+| Knowledge | agent key A of person P | P's review key, inside P's own root | yes | not applicable: the root stays `development` (the operator, 2026-11-14) | `same_user: true` | built; today a user root can still climb to `committed`, which the design removes |
 | Knowledge | agent key A of person P | a key of P, outside P's root | no (ADR-0082 d7, refused `same_person`) | no | none | designed; today it counts when the principals differ |
 | Knowledge | agent key A | agent key B: a reviewer crew's dreamer key, `held_by: agent`, over HTTP | yes | yes | `approver.held_by: agent` | built |
 | Knowledge | person A | person B | yes | yes | `held_by: human` | built |
 | Knowledge: `document`, `test` | as `memory` | as `memory` | as `memory` | as `memory` | as `memory` | designed kinds (ADR-0081, ADR-0086) |
 | Instruction: `steering`, `guardrail` | agent key A or a person | another person (the built check: another key and principal) | yes | yes | `held_by: human` | built |
-| Instruction | agent key A of person P | P's review key, inside P's own root | yes | no | `same_user: true` | built for development scopes |
+| Instruction | agent key A of person P | P's review key, inside P's own root | yes | not applicable: the root stays `development` | `same_user: true` | built for guardrail and steering; skill designed |
 | Instruction | agent key A | agent key B (`held_by: agent`) | no: `review.person_required` (ADR-0080 d16) | no | none | designed; today an agent's verdict counts on a guardrail or steering row |
 | Instruction: `skill` | agent key A or a person | a person, as above | as above | as above | as above | designed kind (ADR-0080) |
 | Vocabulary: `term`, `term_mapping`, `vocab_release` | a writer key, over HTTP only | as knowledge, an agent's key included | yes | yes | as knowledge | built |

@@ -20,9 +20,11 @@ Much of this is designed and not built. Each figure draws a built element solid 
 
 | Scope | Rule | Built |
 |---|---|---|
-| A `development` workarea, an in-progress subtree | A team reads its held work, marked unreviewed. In a person's own root, that person's review key approves their agents' work, marked `same_user`. An admin fix there is confirmed by the admin's own person, marked `same_user`. | In-progress sharing inside the subtree and own-root approval: yes. Fixes: no (ADR-0089 d8). |
-| A `committed` or `validated` workarea, a published release, every read of a `latest` or pinned key | Another person approves, publishes and confirms. Nothing unreviewed is served, except an admin fix's marked overlay. | Committed and validated: yes. Releases and bindings: no (ADR-0085). |
+| A `development` workarea, an in-progress subtree | A team reads its held work, marked unreviewed. In a person's own root, that person's review key approves their agents' work, marked `same_user`; the root is capped at `development` and never becomes a production scope (decided 2026-11-14; today the code still lets it climb to `committed`). An admin fix there is confirmed by the admin's own person, marked `same_user`. | In-progress sharing inside the subtree and own-root approval: yes. Fixes: no (ADR-0089 d8). |
+| A shared `committed` or `validated` workarea, a published release, every read of a `latest` or pinned key | Another person approves, publishes and confirms. Nothing unreviewed is served, except an admin fix's marked overlay. | Committed and validated: yes. Releases and bindings: no (ADR-0085). |
 | Every scope | An agent never promotes, signs, demotes or deletes. | Yes: no such verb exists on any agent surface ([roles and keys](roles-and-keys.md)). |
+
+**Bindings.** A key held by a person, and any key scoped in a user root, defaults to `tip`; other agent and service keys default to `latest`; an agent key may be issued at `tip` inside an in-progress root or at an ancestor of one (the operator, 2026-11-14, written into ADR-0085 d7). An admin may still ratify a ladder move (ADR-0009 d3, kept).
 
 **What a stage costs.** Under a `latest` binding, an approved memory reaches production agents only with the next release (ADR-0085 d5). Teams that want approvals to flow at once keep their agents on `tip` and give up the staging step.
 

@@ -32,7 +32,7 @@ Designed: in the console, the admin links `alice-dev` and `alice-dev-review` to 
 
 ## 2. Develop in progress
 
-alice puts the workarea in progress with her review key. Built.
+alice puts the workarea in progress with the review key `alice-dev-review`. Built.
 
 ```sh
 OML_API_KEY=$(cat keys/alice-dev-review) oml workareas mode dev in_progress
@@ -65,7 +65,7 @@ The plugin loads promoted guardrails at session start and checks each rule befor
 
 ## 4. Review
 
-Built. bob reviews what alice and the agents wrote, never his own work.
+Built. bob reviews what alice and the agents wrote, never bob's own work.
 
 ```sh
 OML_API_KEY=$(cat keys/bob-dev-review) oml review list --workarea dev
@@ -114,9 +114,11 @@ OML_API_KEY=$(cat keys/bob-dev-review)   oml workareas status ratify dev <transi
 
 | Binding | Reads | Default for |
 |---|---|---|
-| `tip` | the promoted tip, plus held work in an in-progress subtree, marked | a person's key; a development agent key whose scope is inside an in-progress root |
-| `latest` | the newest published release; never a held item | an agent or service key |
+| `tip` | the promoted tip, plus held work in an in-progress subtree, marked | a key held by a person; any key scoped in a user root; an agent key may be issued at `tip` when its scope is inside an in-progress root or at an ancestor of one |
+| `latest` | the newest published release; never a held item | every other agent or service key |
 | a pin | one release by label, such as `payments.dev@1.3.0` | none; set on purpose |
+
+The defaults are the operator's decision of 2026-11-14, being written into ADR-0085 d7.
 
 A production agent bound to `latest` reads 1.4.0 from its next request and loads its guardrails and skills at its next session start. Its own held writes are still served to it. Only the key's issuer or its own person widens a binding; an admin only narrows one. Today every key reads as a `tip` key.
 
@@ -134,7 +136,7 @@ oml admin fix demote <artifact_id> --reason "refund-flow step 3 refunds twice"
 
 - `tip` keys get the previous promoted version at once. Every release that lists the bad version serves the previous one as a marked overlay, `approver.act: "admin_fix"`, `confirmed: false`, and reads `degraded`.
 - No one can cut 1.4.1 over an unconfirmed fix.
-- In the morning bob sees the fix in To do, or with `oml review fixes`, reads the reason, and confirms or reverts it. The admin is never named to him. In a production scope only another person confirms, never the admin's own.
+- In the morning bob sees the fix in To do, or with `oml review fixes`, reads the reason, and confirms or reverts it. The admin is never named to the reviewer. In a production scope only another person confirms, never the admin's own.
 
 Admin fixes are demote, edit, retire, release rollback, import rollback and erasure. Each takes an admin key held by a person and a reason, is marked to every reader, and is journalled. An admin key never reaches an agent surface.
 

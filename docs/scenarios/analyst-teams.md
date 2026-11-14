@@ -43,7 +43,7 @@ oml sync policies/ --workarea draft --adapter headings
 
 ## 4. Review and validate
 
-**Built.** sam reviews priya's items and the drafting agents', never his own:
+**Built.** sam reviews priya's items and the drafting agents', never sam's own:
 
 ```sh
 OML_API_KEY=$(cat keys/sam-review) oml review list --workarea draft
@@ -68,8 +68,8 @@ Built today: the ladder. Committing `pricing.draft` needs zero held items and tw
 **Designed** (ADR-0084, [import and export](import-export.md)).
 
 1. On staging, priya exports the release, encrypted to the production team's age key: `oml workareas export draft --release 2.0.0 --recipient age1… --out pricing-2.0.0.oml`. The tenant's export policy must allow a shared workarea's export.
-2. On production, an admin has created `pricing.prod` and granted the team. An analyst puts it in progress and imports with a writer key; she becomes the author of every imported version on production. The production scan runs on each version.
-3. A second analyst on production reviews every imported item again, attesting that she did not author it on staging. The staging verdicts show as evidence and count for nothing.
+2. On production, an admin has created `pricing.prod` and granted the team. An analyst puts it in progress and imports with a writer key, and so becomes the author of every imported version on production. The production scan runs on each version.
+3. A second analyst on production reviews every imported item again, attesting no authorship of it on staging. The staging verdicts show as evidence and count for nothing.
 4. Two analysts cut and publish `pricing.prod@2.0.0`.
 
 ## What the consuming agents see
