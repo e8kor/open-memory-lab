@@ -1,5 +1,5 @@
 # Open Memory Lab — the path router in front of the lead and oml-web
-# (ADR-0070 d4, d12). One public origin, because the session cookie is a
+# (ADR-0070 d4). One public origin, because the session cookie is a
 # __Host- cookie the browser sends to one host only.
 #
 #   - each page oml-web serves (oml_web::PAGES in
@@ -7,8 +7,10 @@
 #   - every other path goes to the lead, 127.0.0.1:8090: the API (/v1, /v2),
 #     /mcp, /oauth, /.well-known, /readyz, sign-in (/web/sign-in,
 #     /web/callback/*, /web/sign-up) and sign-out (POST /web); an old page
-#     URL of v0.6 reaches it too and is not found there (v0.7.1);
-#   - the landing pages are static files from oml-site-<version>.tar.gz.
+#     URL of v0.6 reaches it too and is not found there (v0.7.1).
+#
+# A landing page is not part of this repository's releases (ADR-0070 d12):
+# a deployment that serves one adds its own static block here.
 #
 # oml-web reaches the lead at its own address (web.api_url), never back
 # through this proxy. docker-compose.yml and `oml quickstart` route the same
@@ -17,13 +19,6 @@
 # PAGES.
 
 memory.example.com {
-	@landing path / /teams /personal /privacy /terms
-	handle @landing {
-		root * /srv/oml-site
-		try_files {path}.html /index.html
-		file_server
-	}
-
 	@oml_web path /web/guardrails /web/workareas /web/admin/workareas /web/memories /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/keys /web/admin/keys /web/memory /web/admin/memory /web/admin/curate /web/start /web/start/status /web/start/export /web/setup /web/admin/people /web/admin/users /web/render/* /web/assets/*
 	reverse_proxy @oml_web 127.0.0.1:8091
 
