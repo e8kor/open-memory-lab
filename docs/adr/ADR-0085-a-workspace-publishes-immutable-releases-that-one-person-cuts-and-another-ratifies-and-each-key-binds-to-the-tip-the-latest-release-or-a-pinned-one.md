@@ -324,8 +324,8 @@ Decided, not built.
   ADR-0046 d1 (the ceiling, from `protected` to `development`) and d2 (same-user ratification of
   ladder moves, which has no move left to ratify inside a root). The cost: a person's own
   knowledge reaches a production scope only by a new write in a shared workspace, reviewed there,
-  or a release cut there. The build today lets a user root reach `protected` (the `UserRoot`
-  ceiling in `ladder.rs`); lowering it is a build item of this record, not built.
+  or a release cut there. The `UserRoot` ceiling in `ladder.rs` covered the root alone and
+  stopped at `protected`; built in v0.8.0 (#393).
 
 ## Consequences
 

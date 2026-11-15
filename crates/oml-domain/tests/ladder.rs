@@ -257,8 +257,24 @@ fn development_and_committed_refuse_none_of_the_frozen_operations() {
 }
 
 #[test]
-fn a_user_root_climbs_to_committed_and_validated_is_refused_as_user_root() {
-    assert_eq!(propose_check(UserRoot, Development, Protected, &[]), Ok(()));
+fn a_user_root_is_refused_protected() {
+    // A user root and every node under it stay development (ADR-0085 d17):
+    // the ladder's one forward step from there is refused as user_root, at
+    // the proposal and again at ratification.
+    assert_eq!(
+        propose_check(UserRoot, Development, Protected, &[]),
+        Err(LadderRefusal::UserRoot)
+    );
+    assert_eq!(
+        ratify_check(Development, UserRoot, Development, Protected, &[]),
+        Err(LadderRefusal::UserRoot)
+    );
+    assert_eq!(LadderRefusal::UserRoot.reason(), "user_root");
+}
+
+#[test]
+fn a_user_root_already_protected_is_refused_frozen_as_user_root() {
+    // A root that climbed before the cap moves no further (ADR-0085 d17).
     assert_eq!(
         propose_check(UserRoot, Protected, Frozen, &[Frozen]),
         Err(LadderRefusal::UserRoot)
@@ -267,9 +283,28 @@ fn a_user_root_climbs_to_committed_and_validated_is_refused_as_user_root() {
         ratify_check(Protected, UserRoot, Protected, Frozen, &[]),
         Err(LadderRefusal::UserRoot)
     );
-    assert_eq!(LadderRefusal::UserRoot.reason(), "user_root");
-    // Its children climb freely, so a finished subtree inside it freezes.
+}
+
+#[test]
+fn a_proposal_skipping_to_frozen_inside_a_user_root_is_refused_as_user_root() {
+    // Every proposal inside a user root answers user_root, before the rung
+    // order is read (ADR-0085 d17).
+    assert_eq!(
+        propose_check(UserRoot, Development, Frozen, &[]),
+        Err(LadderRefusal::UserRoot)
+    );
+    assert_eq!(
+        ratify_check(Development, UserRoot, Development, Frozen, &[]),
+        Err(LadderRefusal::UserRoot)
+    );
+    // A shared workspace still climbs and freezes, and still names the
+    // skipped rung (ADR-0009 d3).
+    assert_eq!(propose_check(Ordinary, Development, Protected, &[]), Ok(()));
     assert_eq!(propose_check(Ordinary, Protected, Frozen, &[]), Ok(()));
+    assert_eq!(
+        propose_check(Ordinary, Development, Frozen, &[]),
+        Err(LadderRefusal::Skipped)
+    );
 }
 
 #[test]

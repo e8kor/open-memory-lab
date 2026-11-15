@@ -20,7 +20,7 @@ Much of this is designed and not built. Each figure draws a built element solid 
 
 | Scope | Rule | Built |
 |---|---|---|
-| A `development` workspace, an in-progress subtree | A team reads its held work, marked unreviewed. In a person's own root, that person's review key approves their agents' work, marked `same_user`; the root is capped at `development` and never comes under production rules (ADR-0085 d17; designed, not built: today the code still lets it climb to `protected`). An admin fix there is confirmed by the admin's own person, marked `same_user`. | In-progress sharing inside the subtree and own-root approval: yes. Fixes: no (ADR-0089 d8). |
+| A `development` workspace, an in-progress subtree | A team reads its held work, marked unreviewed. In a person's own root, that person's review key approves their agents' work, marked `same_user`; the root is capped at `development` and never comes under production rules (ADR-0085 d17). An admin fix there is confirmed by the admin's own person, marked `same_user`. | In-progress sharing inside the subtree and own-root approval: yes. Fixes: no (ADR-0089 d8). |
 | A shared `protected` or `frozen` workspace, a published release, every read of a `latest` or pinned key | A key outside the item's lineage approves, never a key of the author's person; a reviewer crew may approve knowledge, and a person approves instructions. Another person publishes and confirms. Nothing unreviewed is served, except an admin fix's marked overlay. | Protected and frozen: yes. Releases and bindings: no (ADR-0085). |
 | Every scope | An agent never promotes, signs, demotes or deletes. | Yes: no such verb exists on any agent surface ([roles and keys](roles-and-keys.md)). |
 

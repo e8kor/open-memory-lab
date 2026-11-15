@@ -1028,8 +1028,6 @@ impl RecordedVerdict {
     }
 }
 
-/// What `node` is to the ladder (ADR-0046 d1): the universe root, a user
-/// root (ADR-0044 d1), or an ordinary node.
 /// What `set_workspace_mode` admits (ADR-0030 d1, d6): the node already in
 /// the mode, which journals nothing, or a change with the mode it leaves
 /// and, for a commit, the nodes it frees.
@@ -1042,14 +1040,31 @@ pub(crate) enum ModeAdmitted {
     },
 }
 
-fn ladder_node(node: &WorkspaceRecord) -> LadderNode {
-    if node.parent_id.is_none() {
-        LadderNode::Universe
-    } else if node.user_root {
-        LadderNode::UserRoot
-    } else {
-        LadderNode::Ordinary
+/// What a node is to the ladder, from its ancestry, the node first: the
+/// universe root; a user root or any node under one, which stays
+/// `development` (ADR-0044 d1; ADR-0085 d17); or an ordinary node.
+fn ladder_node(ancestry: &[WorkspaceRecord]) -> LadderNode {
+    match ancestry.first() {
+        Some(node) if node.parent_id.is_none() => LadderNode::Universe,
+        _ if ancestry.iter().any(|w| w.user_root) => LadderNode::UserRoot,
+        _ => LadderNode::Ordinary,
     }
+}
+
+/// The in-progress root of a node from its ancestry, the node first
+/// (ADR-0030 d1).
+fn in_progress_root_in(ancestry: &[WorkspaceRecord]) -> Option<Uuid> {
+    let marks: Vec<(Uuid, bool, bool)> = ancestry
+        .iter()
+        .map(|w| {
+            (
+                w.workspace_id,
+                w.in_progress,
+                w.status == WorkspaceStatus::Development,
+            )
+        })
+        .collect();
+    in_progress::in_progress_root_of(&marks)
 }
 
 /// The request digest of a claim-edge proposal: SHA-256 over the RFC 8785
@@ -2236,17 +2251,27 @@ where
         Ok(())
     }
 
-    /// A status transition on a node inside an in-progress subtree waits for
-    /// its commit (ADR-0030 d6): `workspace.in_progress_refused`, reason
-    /// `commit_first`.
-    async fn refuse_inside(&self, tenant_id: Uuid, node: Uuid) -> Result<(), AppError> {
-        match self.in_progress_root(tenant_id, node).await? {
-            Some(_) => Err(AppError::InProgressRefused {
+    /// What the node is to the ladder, from the one ancestry read a
+    /// transition makes; first, a status transition on a node inside an
+    /// in-progress subtree waits for its commit (ADR-0030 d6):
+    /// `workspace.in_progress_refused`, reason `commit_first`.
+    async fn ladder_node_outside(
+        &self,
+        tenant_id: Uuid,
+        node: Uuid,
+    ) -> Result<LadderNode, AppError> {
+        let ancestry = self
+            .journal
+            .workspace_ancestry(tenant_id, node)
+            .await?
+            .unwrap_or_default();
+        if in_progress_root_in(&ancestry).is_some() {
+            return Err(AppError::InProgressRefused {
                 workspace_id: node,
                 reason: InProgressReason::CommitFirst,
-            }),
-            None => Ok(()),
+            });
         }
+        Ok(ladder_node(&ancestry))
     }
 
     /// The node's in-progress root, or `None` (ADR-0030 d1).
@@ -2255,21 +2280,12 @@ where
         tenant_id: Uuid,
         node: Uuid,
     ) -> Result<Option<Uuid>, AppError> {
-        let marks: Vec<(Uuid, bool, bool)> = self
+        let ancestry = self
             .journal
             .workspace_ancestry(tenant_id, node)
             .await?
-            .unwrap_or_default()
-            .iter()
-            .map(|w| {
-                (
-                    w.workspace_id,
-                    w.in_progress,
-                    w.status == WorkspaceStatus::Development,
-                )
-            })
-            .collect();
-        Ok(in_progress::in_progress_root_of(&marks))
+            .unwrap_or_default();
+        Ok(in_progress_root_in(&ancestry))
     }
 
     /// Each node of subtree(`top`) with its in-progress root, parent before
@@ -4584,7 +4600,9 @@ where
             .workspace(key.tenant_id, workspace_id)
             .await?
             .ok_or(AppError::NotFound)?;
-        self.refuse_inside(key.tenant_id, workspace_id).await?;
+        let ladder = self
+            .ladder_node_outside(key.tenant_id, workspace_id)
+            .await?;
         let children: Vec<WorkspaceStatus> = self
             .journal
             .workspace_children(key.tenant_id, workspace_id)
@@ -4595,7 +4613,7 @@ where
         // "No simulation is fenced on the subtree" holds vacuously while
         // simulations are unbuilt, and lands in the ladder's preconditions
         // with them (workspaces.md, readings the build takes).
-        propose_check(ladder_node(&node), node.status, to, &children).map_err(|reason| {
+        propose_check(ladder, node.status, to, &children).map_err(|reason| {
             AppError::TransitionRefused {
                 workspace_id,
                 from: node.status,
@@ -4705,7 +4723,9 @@ where
             self.require_access(caller, workspace_id, Role::Reviewer, VERB)
                 .await?;
         }
-        self.refuse_inside(key.tenant_id, workspace_id).await?;
+        let ladder = self
+            .ladder_node_outside(key.tenant_id, workspace_id)
+            .await?;
         let proposal = self
             .journal
             .transition(key.tenant_id, transition_id)
@@ -4747,14 +4767,8 @@ where
         // fenced on the subtree" would sit there too and holds vacuously
         // while simulations are unbuilt (workspaces.md, readings the build
         // takes).
-        ratify_check(
-            proposal.from,
-            ladder_node(&node),
-            node.status,
-            proposal.to,
-            &children,
-        )
-        .map_err(refused)?;
+        ratify_check(proposal.from, ladder, node.status, proposal.to, &children)
+            .map_err(refused)?;
         Ok((proposal, node))
     }
 

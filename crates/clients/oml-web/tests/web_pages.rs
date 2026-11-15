@@ -750,7 +750,9 @@ async fn a_workspace_act_is_confirmed_before_it_runs() {
         "{page}"
     );
     assert!(page.contains("<select name=\"op\""), "{page}");
-    assert!(page.contains("value=\"propose:protected\""), "{page}");
+    // A workspace in a person's root stays development, so no ladder move
+    // is offered there (ADR-0085 d17).
+    assert!(!page.contains("value=\"propose:protected\""), "{page}");
     assert!(page.contains("value=\"mode:in_progress\""), "{page}");
     assert!(!page.contains("value=\"propose:frozen\""), "{page}");
     assert!(!page.contains("value=\"mode:standard\""), "{page}");
@@ -816,7 +818,8 @@ async fn a_workspace_act_is_confirmed_before_it_runs() {
         !refused.contains("value=\"workspace_transition\""),
         "{refused}"
     );
-    // Commit, then propose protected through the dropdown's action.
+    // Commit; inside the root the ladder move is still refused by name at
+    // the confirmation, with no form to run it (ADR-0085 d17).
     let (status, _, page) = act(
         &rig,
         &cookie,
@@ -829,44 +832,91 @@ async fn a_workspace_act_is_confirmed_before_it_runs() {
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-    let (status, _, page) = act(
-        &rig,
-        &cookie,
-        "/web/workspaces",
-        &[
-            ("action", "workspace_transition"),
-            ("workspace", &proj.to_string()),
-            ("to", "protected"),
-        ],
+    let (status, _, refused) = send(
+        &rig.router,
+        get(
+            &format!("/web/workspaces?workspace={proj}&op=propose:protected"),
+            Some(&cookie),
+        ),
     )
     .await;
-    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-    // The proposer is never offered the ratification; the admin is.
-    let (_, _, page) = send(&rig.router, get("/web/workspaces", Some(&cookie))).await;
-    assert!(!page.contains("value=\"ratify:"), "{page}");
-    assert!(page.contains("proposed: protected"), "{page}");
+    assert_eq!(status, StatusCode::OK, "{refused}");
+    assert!(
+        refused.contains("workspace.transition_refused"),
+        "{refused}"
+    );
+    assert!(
+        !refused.contains("value=\"workspace_transition\""),
+        "{refused}"
+    );
+    // In a shared workspace an admin proposes protected through the
+    // dropdown's action; the proposer is never offered the ratification,
+    // and another admin is.
+    let team = shared_team(&rig).await;
     let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    let (status, _, page) = send(&rig.router, get("/web/admin/workspaces", Some(&boss))).await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    let marker = "value=\"ratify:";
-    let at = page
-        .find(marker)
-        .expect("the admin is offered the ratification")
-        + marker.len();
-    let transition = page[at..at + 36].to_owned();
+    let (_, _, page) = send(&rig.router, get("/web/admin/workspaces", Some(&boss))).await;
+    assert!(page.contains("value=\"propose:protected\""), "{page}");
     let (status, _, page) = act(
         &rig,
         &boss,
         "/web/admin/workspaces",
         &[
+            ("action", "workspace_transition"),
+            ("workspace", &team.to_string()),
+            ("to", "protected"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+    let (_, _, page) = send(&rig.router, get("/web/admin/workspaces", Some(&boss))).await;
+    assert!(!page.contains("value=\"ratify:"), "{page}");
+    assert!(page.contains("proposed: protected"), "{page}");
+    rig.allow("chief@example.com", "chief", true).await;
+    let chief = signed_in(&rig, "sub-chief", "chief@example.com").await;
+    let (status, _, page) = send(&rig.router, get("/web/admin/workspaces", Some(&chief))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let marker = "value=\"ratify:";
+    let at = page
+        .find(marker)
+        .expect("another admin is offered the ratification")
+        + marker.len();
+    let transition = page[at..at + 36].to_owned();
+    let (status, _, page) = act(
+        &rig,
+        &chief,
+        "/web/admin/workspaces",
+        &[
             ("action", "workspace_ratify"),
-            ("workspace", &proj.to_string()),
+            ("workspace", &team.to_string()),
             ("transition", &transition),
         ],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-    assert_eq!(node().await.status.as_str(), "protected");
+    let team_node = rig
+        .store
+        .workspace(rig.boot.tenant_id, team)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(team_node.status.as_str(), "protected");
+}
+
+/// `team`, a shared workspace under universe, created with the tenant's
+/// bootstrap admin key: the ladder moves outside every user root
+/// (ADR-0085 d17).
+async fn shared_team(rig: &Rig) -> uuid::Uuid {
+    issuer_app(rig)
+        .create_workspace(
+            rig.boot.admin_key.value.as_str(),
+            &Name::parse("team").expect("a name"),
+            Some(rig.boot.root_workspace_id.into()),
+            None,
+        )
+        .await
+        .expect("a shared workspace")
+        .workspace
+        .workspace_id
 }
 
 async fn agent_writes_in(rig: &Rig, value: &str, body: &str, workspace: &str) -> uuid::Uuid {
@@ -1227,15 +1277,19 @@ async fn alice_proj(rig: &Rig, cookie: &str) -> uuid::Uuid {
 async fn a_resubmitted_confirmation_replays_its_act_and_acts_once() {
     // ADR-0070 d3 layer 4: the confirmation's form carries a nonce, and the
     // act's Idempotency-Key is its digest with the session token, so the
-    // same form sent again replays at the API instead of acting again.
+    // same form sent again replays at the API instead of acting again. A
+    // ladder move happens in a shared workspace, where an admin proposes
+    // and another ratifies (ADR-0085 d17).
     let rig = rig().await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let proj = alice_proj(&rig, &cookie).await;
+    rig.allow("boss@example.com", "boss", true).await;
+    rig.allow("chief@example.com", "chief", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let team = shared_team(&rig).await;
     let (status, _, confirm) = send(
         &rig.router,
         get(
-            &format!("/web/workspaces?workspace={proj}&op=propose:protected"),
-            Some(&cookie),
+            &format!("/web/admin/workspaces?workspace={team}&op=propose:protected"),
+            Some(&boss),
         ),
     )
     .await;
@@ -1249,46 +1303,44 @@ async fn a_resubmitted_confirmation_replays_its_act_and_acts_once() {
     ];
     let fields: Vec<(&str, &str)> = fields.iter().map(|(n, v)| (*n, v.as_str())).collect();
     for _ in 0..2 {
-        let (status, headers, page) =
-            send(&rig.router, post("/web/workspaces", &fields, Some(&cookie))).await;
+        let (status, headers, page) = send(
+            &rig.router,
+            post("/web/admin/workspaces", &fields, Some(&boss)),
+        )
+        .await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-        assert_eq!(headers[header::LOCATION], "/web/workspaces?done=proposed");
+        assert_eq!(
+            headers[header::LOCATION],
+            "/web/admin/workspaces?done=proposed"
+        );
     }
     let pending = rig
         .store
-        .pending_transitions(rig.boot.tenant_id, proj)
+        .pending_transitions(rig.boot.tenant_id, team)
         .await
         .unwrap();
     assert_eq!(pending.len(), 1, "one proposal for one form: {pending:?}");
-    // A fresh confirmation carries a fresh nonce.
-    let (_, _, again) = send(
-        &rig.router,
-        get(
-            &format!("/web/workspaces?workspace={proj}&op=mode:in_progress"),
-            Some(&cookie),
-        ),
-    )
-    .await;
-    assert_ne!(field_of(&again, "nonce"), field_of(&confirm, "nonce"));
-    // The admin's ratification, sent twice, ratifies once and lands on the
-    // view both times: without the replay the second would find the
+    let proposed_nonce = field_of(&confirm, "nonce");
+    // Another admin's ratification, sent twice, ratifies once and lands on
+    // the view both times: without the replay the second would find the
     // proposal no longer live.
-    rig.allow("boss@example.com", "boss", true).await;
-    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let chief = signed_in(&rig, "sub-chief", "chief@example.com").await;
     let transition = pending[0].transition_id;
     let (status, _, confirm) = send(
         &rig.router,
         get(
-            &format!("/web/admin/workspaces?workspace={proj}&op=ratify:{transition}"),
-            Some(&boss),
+            &format!("/web/admin/workspaces?workspace={team}&op=ratify:{transition}"),
+            Some(&chief),
         ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{confirm}");
+    // A fresh confirmation carries a fresh nonce.
+    assert_ne!(field_of(&confirm, "nonce"), proposed_nonce);
     let fields = [
         ("action", "workspace_ratify".to_owned()),
         ("csrf_token", field_of(&confirm, "csrf_token")),
-        ("workspace", proj.to_string()),
+        ("workspace", team.to_string()),
         ("transition", field_of(&confirm, "transition")),
         ("nonce", field_of(&confirm, "nonce")),
     ];
@@ -1296,7 +1348,7 @@ async fn a_resubmitted_confirmation_replays_its_act_and_acts_once() {
     for _ in 0..2 {
         let (status, headers, page) = send(
             &rig.router,
-            post("/web/admin/workspaces", &fields, Some(&boss)),
+            post("/web/admin/workspaces", &fields, Some(&chief)),
         )
         .await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
@@ -1307,7 +1359,7 @@ async fn a_resubmitted_confirmation_replays_its_act_and_acts_once() {
     }
     let node = rig
         .store
-        .workspace(rig.boot.tenant_id, proj)
+        .workspace(rig.boot.tenant_id, team)
         .await
         .unwrap()
         .unwrap();
@@ -1318,39 +1370,50 @@ async fn a_resubmitted_confirmation_replays_its_act_and_acts_once() {
 async fn a_confirmation_sent_twice_at_once_acts_once() {
     // A double click sends the same form twice before either answers; the
     // second waits for the first and replays it (ADR-0070 d3 layer 4). Two
-    // processes of oml-web racing the same key remain #233's case.
+    // processes of oml-web racing the same key remain #233's case. The
+    // ladder move is an admin's, in a shared workspace (ADR-0085 d17).
     let rig = rig().await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let proj = alice_proj(&rig, &cookie).await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let team = shared_team(&rig).await;
     let (_, _, confirm) = send(
         &rig.router,
         get(
-            &format!("/web/workspaces?workspace={proj}&op=propose:protected"),
-            Some(&cookie),
+            &format!("/web/admin/workspaces?workspace={team}&op=propose:protected"),
+            Some(&boss),
         ),
     )
     .await;
     let fields = [
         ("action", "workspace_transition".to_owned()),
         ("csrf_token", field_of(&confirm, "csrf_token")),
-        ("workspace", proj.to_string()),
+        ("workspace", team.to_string()),
         ("to", "protected".to_owned()),
         ("nonce", field_of(&confirm, "nonce")),
     ];
     let fields: Vec<(&str, &str)> = fields.iter().map(|(n, v)| (*n, v.as_str())).collect();
     for _ in 0..5 {
         let (a, b) = tokio::join!(
-            send(&rig.router, post("/web/workspaces", &fields, Some(&cookie))),
-            send(&rig.router, post("/web/workspaces", &fields, Some(&cookie))),
+            send(
+                &rig.router,
+                post("/web/admin/workspaces", &fields, Some(&boss))
+            ),
+            send(
+                &rig.router,
+                post("/web/admin/workspaces", &fields, Some(&boss))
+            ),
         );
         for (status, headers, page) in [a, b] {
             assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-            assert_eq!(headers[header::LOCATION], "/web/workspaces?done=proposed");
+            assert_eq!(
+                headers[header::LOCATION],
+                "/web/admin/workspaces?done=proposed"
+            );
         }
     }
     let pending = rig
         .store
-        .pending_transitions(rig.boot.tenant_id, proj)
+        .pending_transitions(rig.boot.tenant_id, team)
         .await
         .unwrap();
     assert_eq!(pending.len(), 1, "{pending:?}");
