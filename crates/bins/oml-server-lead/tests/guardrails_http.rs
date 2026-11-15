@@ -443,6 +443,59 @@ async fn oml_write_refuses_the_skill_document_and_test_kinds_naming_kind() {
 }
 
 #[tokio::test]
+async fn oml_write_with_replaces_naming_a_document_is_refused_naming_kind() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    let document = submit_guardrail(
+        &router,
+        &t,
+        "d-1",
+        json!({"kind": "document", "body": "# Runbook\nStep one.", "workspace": t.crew}),
+    )
+    .await;
+    approve_next(&router, &t, 1).await;
+    let result = call_tool(
+        &router,
+        &t.writer,
+        "oml_write",
+        json!({"expected_version": 1, "text": "# Runbook\nStep two.", "replaces": document,
+               "idempotency_key": "w-doc"}),
+    )
+    .await;
+    assert_eq!(
+        tool_refusal_field(&result),
+        ("request.validation".to_owned(), "/kind".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn oml_write_retiring_a_skill_is_refused_naming_kind() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    let skill = submit_guardrail(
+        &router,
+        &t,
+        "k-1",
+        json!({"kind": "skill", "skill": {"name": "deploy", "description": "Deploy it."},
+               "body": "Run the deploy script.", "workspace": t.crew}),
+    )
+    .await;
+    approve_next(&router, &t, 1).await;
+    let result = call_tool(
+        &router,
+        &t.writer,
+        "oml_write",
+        json!({"expected_version": 1, "text": "No longer used.", "replaces": skill,
+               "retirement": true, "idempotency_key": "w-retire"}),
+    )
+    .await;
+    assert_eq!(
+        tool_refusal_field(&result),
+        ("request.validation".to_owned(), "/kind".to_owned())
+    );
+}
+
+#[tokio::test]
 async fn post_v1_memories_takes_kind_skill_with_its_object_and_serves_it_back() {
     let router = doubles_router();
     let t = tenant(&router).await;

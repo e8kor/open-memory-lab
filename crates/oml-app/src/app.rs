@@ -8225,6 +8225,20 @@ where
         if req.refuse_vocabulary_target && target.kind == MemoryKind::Guardrail {
             return Err(AppError::GuardrailTarget);
         }
+        // Nor a skill, a document or a test case, which are written on the
+        // HTTP API with their objects until their serving lands (ADR-0080
+        // d3; #403, #405, #419): a successor of one takes its kind.
+        if req.refuse_vocabulary_target
+            && matches!(
+                target.kind,
+                MemoryKind::Skill | MemoryKind::Document | MemoryKind::Test
+            )
+        {
+            return Err(AppError::KindField(oml_domain::claim_kinds::FieldRefusal {
+                field: "/kind",
+                reason: "a skill, a document or a test case is superseded and retired on the HTTP API in this release, with its object",
+            }));
+        }
         // Step 5's last check, after the head read above: a ratification
         // that validates the area in between moves the head and the commit
         // conflicts (roles-and-keys.md supersede; ADR-0009 d5).

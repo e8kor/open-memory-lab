@@ -187,27 +187,41 @@ pub fn check_document_key(key: &str) -> Result<(), FieldRefusal> {
 }
 
 /// A document's title when it sends none: the first level-1 heading of a
-/// markdown body (ADR-0081 d1). `None` when there is none; the caller then
-/// takes the claim key's last segment.
+/// markdown body (ADR-0081 d1), cut to 200 characters at a character
+/// boundary so it meets the title's bound. `None` when there is none; the
+/// caller then takes the claim key's last segment.
 #[must_use]
 pub fn markdown_title(body: &str) -> Option<String> {
     body.lines()
         .filter_map(|line| line.strip_prefix("# "))
         .map(str::trim)
         .find(|title| !title.is_empty())
-        .map(str::to_owned)
+        .map(|title| title.chars().take(DOCUMENT_TITLE_MAX).collect())
 }
 
-/// The document key derived from a title: `doc/` and the title lowercased,
-/// every character outside `a-z 0-9 . _ -` mapped to `-`, cut to one
-/// segment's 64 characters (ADR-0081 d2, by ADR-0057 d7's key rule). The
-/// caller checks the result, so a title that maps to `.` or `..` is
-/// refused.
+/// The document key derived from a title, by ADR-0057 d7's rule
+/// (ADR-0081 d2): the title's heading slug as GitHub renders it (lower
+/// case, punctuation dropped, spaces to `-`), then every character outside
+/// `a-z 0-9 . _ -` mapped to `-`. A slug longer than one segment's 64
+/// characters keeps its first 47 and ends in `-` and the first 16 hex
+/// digits of the SHA-256 of the full key, ADR-0057 d7's fitting cut to
+/// ADR-0081 d2's segment bound, so two long titles sharing a prefix keep
+/// distinct keys. The caller checks the result, so a title that slugs to
+/// nothing, such as `.` or `..`, is refused.
 #[must_use]
 pub fn document_key_from_title(title: &str) -> String {
-    let segment: String = title
+    let slug: String = title
         .to_lowercase()
         .chars()
+        .filter_map(|c| {
+            if c == ' ' {
+                Some('-')
+            } else if c.is_alphanumeric() || c == '-' || c == '_' {
+                Some(c)
+            } else {
+                None
+            }
+        })
         .map(|c| {
             if c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-') {
                 c
@@ -215,9 +229,15 @@ pub fn document_key_from_title(title: &str) -> String {
                 '-'
             }
         })
-        .take(DOCUMENT_SEGMENT_MAX)
         .collect();
-    format!("doc/{segment}")
+    let key = format!("doc/{slug}");
+    if slug.len() <= DOCUMENT_SEGMENT_MAX {
+        return key;
+    }
+    let digest = crate::sha256_digest_string(key.as_bytes());
+    let hex = digest.strip_prefix("sha256:").unwrap_or(&digest);
+    let head: String = slug.chars().take(DOCUMENT_SEGMENT_MAX - 17).collect();
+    format!("doc/{head}-{}", &hex[..16])
 }
 
 /// Whether `key` is a test case's key: `test/` and a name under ADR-0026

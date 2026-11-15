@@ -157,5 +157,5 @@ branch that reserved later renumbers.
 | migration | 0045 | `main` |  | usage metering | used |
 | migration | 0046 | `main` |  | key limits | used |
 | migration | 0047 | `main` |  | workspace rename | used |
-| migration | 0048 | `feat/claim-kinds-and-withdrawn` |  | claim kinds skill document and test, withdrawn state, document passages (ADR-0080 d1, ADR-0081 d1 d2 d3, ADR-0086 d1, ADR-0083 d13) | reserved |
-| migration | 0049 | `feat/claim-kinds-and-withdrawn` |  | validate the claim kind, state and kind-field constraints | reserved |
+| migration | 0048 | `feat/claim-kinds-and-withdrawn` | #438 | claim kinds and withdrawn | open |
+| migration | 0049 | `feat/claim-kinds-and-withdrawn` | #438 | claim kinds validate | open |

@@ -89,7 +89,6 @@ fn a_documents_title_is_its_first_level_1_heading_and_its_key_follows_the_title(
         document_key_from_title("Release Notes 2026"),
         "doc/release-notes-2026"
     );
-    assert!(check_document_key(&document_key_from_title(&"T".repeat(300))).is_ok());
     assert!(check_document_title("Runbook").is_ok());
     assert_eq!(
         check_document_title("two\nlines").map_err(|e| e.field),
@@ -152,4 +151,40 @@ fn only_a_held_version_is_withdrawn() {
         );
     }
     assert_eq!(MemoryStatus::Withdrawn.as_str(), "withdrawn");
+}
+
+#[test]
+fn a_documents_key_follows_the_heading_slug_rule_and_a_long_title_ends_in_its_digest() {
+    // GitHub's slug: lower case, punctuation dropped, spaces to `-`
+    // (ADR-0057 d7), then every character outside the key grammar to `-`.
+    assert_eq!(
+        document_key_from_title("What's new in v1.2? (draft)"),
+        "doc/whats-new-in-v12-draft"
+    );
+    assert_eq!(document_key_from_title("Café menu"), "doc/caf--menu");
+    // Two long titles sharing a prefix get distinct keys that fit one
+    // segment: 47 characters, `-` and 16 hex digits of the full key's
+    // SHA-256.
+    let a = document_key_from_title(&format!("{} alpha", "shared prefix ".repeat(8)));
+    let b = document_key_from_title(&format!("{} beta", "shared prefix ".repeat(8)));
+    assert_ne!(a, b);
+    for key in [&a, &b] {
+        assert!(check_document_key(key).is_ok(), "{key}");
+        assert_eq!(key.len(), "doc/".len() + 64, "{key}");
+    }
+    // `.` and `..` slug to nothing, which the grammar refuses.
+    for title in [".", ".."] {
+        assert!(
+            check_document_key(&document_key_from_title(title)).is_err(),
+            "{title}"
+        );
+    }
+}
+
+#[test]
+fn a_heading_title_is_cut_to_200_characters_at_a_character_boundary() {
+    let long = format!("# {}", "é".repeat(250));
+    let title = markdown_title(&long).expect("a title");
+    assert_eq!(title.chars().count(), 200);
+    assert!(check_document_title(&title).is_ok());
 }

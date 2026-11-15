@@ -41,9 +41,9 @@ class SubmitRequest:
                 otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact.
             claim_key (str | Unset): Groups versions of one claim; one live claim per (tenant, workspace): a new claim
                 collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every
-                version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server
-                derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a
-                conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with
+                version is rejected, withdrawn or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the
+                server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body),
+                so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with
                 request.validation, details.field /claim_key (ADR-0039 d6).
             kind (SubmitRequestKind | Unset): guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1).
                 skill requires skill and format text/markdown, its default, and derives claim_key skill/<name>; a sent claim_key

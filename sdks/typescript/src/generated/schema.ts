@@ -1555,7 +1555,7 @@ export interface components {
              * @enum {string}
              */
             verb?: "remember" | "learn";
-            /** @description Groups versions of one claim; one live claim per (tenant, workspace): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with request.validation, details.field /claim_key (ADR-0039 d6). */
+            /** @description Groups versions of one claim; one live claim per (tenant, workspace): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected, withdrawn or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with request.validation, details.field /claim_key (ADR-0039 d6). */
             claim_key?: string;
             /**
              * @description guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1). skill requires skill and format text/markdown, its default, and derives claim_key skill/<name>; a sent claim_key other than that, a body opening with a --- line and a body past 32,768 bytes are refused (request.validation naming the field; request.payload_too_large naming /body) (ADR-0080 d1, d9). document takes text/markdown, its default, or text/plain and an optional document; its claim_key is doc/ and segments of a-z 0-9 . _ -, or derived from its title (ADR-0081 d1, d2). test requires test and a claim_key test/<name> (ADR-0086 d1). The three are written over this API only: oml_write refuses them (since v0.8.0).
@@ -3442,7 +3442,7 @@ export interface operations {
                 workspace?: components["schemas"]["WorkspaceRef"];
                 claim_key?: string;
                 state?: "held" | "promoted" | "demoted" | "rejected" | "erased" | "withdrawn";
-                kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
+                kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "skill" | "document" | "test";
                 own?: boolean;
                 /** @description true: the scoped listing (at workspace, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with author, include_text, workspace, state (held, promoted, rejected, superseded, demoted), one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
                 with_own?: boolean;
