@@ -20,7 +20,7 @@ own (the operator: "Skills is another type of claim it should obey same rules as
 are parts and its fold is the journal's; the offered set, the index and the prompts are read from
 those rows and store nothing.
 
-**Amends:** ADR-0001 (d5: the in-progress exception reaches the subtree's ancestor chain, reads and offers alike, d16), ADR-0030 (d2, d4: an in-progress subtree's held items reach keys scoped at its ancestors, d16), ADR-0025 (d8: kind `skill` joins the kinds never served as a recall hit, d16), ADR-0030 (d3: held `steering`, `guardrail` and
+**Amends:** ADR-0001 (d5: the in-progress exception reaches the subtree's ancestor chain, reads and offers alike, d16), ADR-0030 (d2, d4: an in-progress subtree's held items reach keys scoped at its ancestors, d16), ADR-0025 (d8: kind `skill` joins the kinds never served as a recall hit, d16) *(Reopened and taken 2026-11-15 by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) d3, d5.)*, ADR-0030 (d3: held `steering`, `guardrail` and
 `skill` versions are served inside an in-progress workspace, marked unreviewed, d10, d16), ADR-0037
 (d3, d5, d6, d9: held guardrails are served inside an in-progress workspace, marked, and to their
 author key, d10, d14; d10: every guardrail version needs a person, d16; d11: the prompts
@@ -478,7 +478,7 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
 | **The held edit of a skill under `<name>`, the approved one as a resource only** | The approved command would vanish from the slash menu while an edit waits; the operator chose two commands on 2026-11-14. |
 | **The approved skill alone under `<name>`, the held edit as a resource only** | A person trying the edit could not run it as a command; the operator chose two commands on 2026-11-14. |
 | **The held skill edit under a version-qualified URI (`…/skill/<name>?version=<n>`) instead of `<name>-unreviewed`** | Prompt and resource would name one item two ways; one suffix for both keeps them aligned. |
-| **Recall serves skills as hits** | Recall's text is data and never instructions (`mcp.rs:69-70`); mixing would make a recalled skill read as either. |
+| **Recall serves skills as hits** | Recall's text is data and never instructions (`mcp.rs:69-70`); mixing would make a recalled skill read as either. *(Reopened and taken 2026-11-15 by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) d3, d5.)* |
 | **`listChanged: true` with notifications** | `/mcp` is stateless with no server stream (ADR-0014 d2); a declared capability with no sender is a broken promise. |
 | **`oml_write` refuses `skill`, as it refuses `guardrail`** | The operator chose on 2026-11-14 that agents may propose skills; the person-only approval (d3) carries the safety the refusal would have. |
 | **Agents' verdicts count on skills where the workspace's policy admits agents** | A skill carries the weight of the person who runs it; an agent approving another agent's instructions would put unreviewed-by-a-person text behind a slash command. |

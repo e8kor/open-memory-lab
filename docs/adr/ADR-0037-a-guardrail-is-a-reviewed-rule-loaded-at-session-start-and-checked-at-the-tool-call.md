@@ -137,7 +137,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
   tokens, promoted_at, verdicts: [{used_by, at}], conflict}], own_held:
   [{claim_key, version}]}`; `set_digest`, over the served ids and versions, is opaque to clients,
   which only compare it (d11). Recall never serves kind `guardrail`, and the read is logged as
-  recall is (ADR-0025 d9). No reviewer key name is served: ADR-0025 d15 keeps review events in
+  recall is (ADR-0025 d9). *(Amended 2026-11-15 by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) d3: recall ranks applicable guardrails as data hits; this read stays the only set that binds.)* No reviewer key name is served: ADR-0025 d15 keeps review events in
   the evidence export. The cost: every reader in scope learns how many reviewers ratified a rule
   and how many of them were human. `GET /v2/whoami` serves the key's `guardrail_scope` beside
   its grants, as ADR-0039 d15 reserved, so `oml doctor` and a page can say which scope a key

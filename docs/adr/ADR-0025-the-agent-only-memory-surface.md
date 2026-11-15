@@ -430,7 +430,7 @@ sourced to the code that has them; nothing decided below is built.
   structurally and never by the query: depth from the universe root ascending, then `promoted_at`
   ascending, then `artifact_id` ascending. A `self_signed` steering row applies only when N is its
   own workspace; it never applies at a descendant scope. Steering never appears in hits, and
-  `kinds` filters hits only.
+  `kinds` filters hits only. *(Amended 2026-11-15 by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) d1 to d3: `kinds` takes every kind, a recall naming none serves hits of every kind the key reads, offered skills and applicable guardrails are hits, and `kinds` also decides whether the steering list is served; steering is still never a hit.)*
 
     **Served tip.** For a key in a simulation's audience, a claim's served tip is its overlay tip
     for that simulation where one shadows the default tip (d10), and the default tip it shadows

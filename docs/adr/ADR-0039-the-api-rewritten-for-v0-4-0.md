@@ -95,6 +95,7 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
     | recall | `query`, `workspace`, `k`, `kinds`, `include_unreviewed`, `max_tokens` | `POST /v1/memories/recall` |
     | listing | `own` (default `true`), `workarea`, `claim_key`, `state`, `kind`, `since`, `until`, `limit`, `cursor` | `GET /v1/memories` |
 
+    *(Amended 2026-11-15 by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) d6, d11 answer 12: the listing's default `own: true` on MCP is reversed; without a query `oml_read` is the scoped catalog, `kinds` replaces `kind`, and `own: true` asks for the key's own work.)*
     `workspace` names the subtree read. Omitted, recall and the scoped listing (`own: false`, new
     on MCP) read the key's default workspace, and the own-work listing everything the key wrote.
     Every mode returns ADR-0025 d12's claim item, with its text, under a `mode` field. The lineage

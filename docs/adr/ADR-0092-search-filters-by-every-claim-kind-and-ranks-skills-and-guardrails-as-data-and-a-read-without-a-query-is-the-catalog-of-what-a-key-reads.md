@@ -30,6 +30,9 @@ console view read rows and store nothing.
   alternative "Recall serves skills as hits" is reopened and taken, with the framing d5 states.
 - ADR-0081 (d4): unchanged in substance; a document hit is its best passage under the default too
   (d2).
+- ADR-0021 (d9): a vocabulary kind named in `kinds` is indexed and served as a hit in any
+  workspace the key reads; with no `kinds`, vocabulary stays behind the opt-in (d1, d4, d11
+  answer 3).
 - ADR-0049 (d2, d7) and ADR-0052 (d2, d5): every hit kind enters the retrievers and gets postings;
   the BM25 reference set is every readable kind of the scope, fixed before `kinds` (d4).
 - ADR-0083 (d12): the Personal nav gains Catalog (d7).
@@ -56,10 +59,15 @@ What exists today (2026-11-15, `main` at a5eb6876):
   knowledge (`memory`, `derived_fact`, `document`, `test`), instruction (`steering`, `guardrail`,
   `skill`) and vocabulary (`term`, `term_mapping`, `vocab_release`).
 - **The listing** (`GET /v1/memories`, `oml_read` with neither `artifact_id` nor `query`,
-  `oml read` without `--query`) takes one `kind` of every stored kind, an exact `claim_key`,
-  `state`, `since`, `until`, the origin filters, `own` (default `true` on MCP), `with_own`,
-  `author`, `include_text`, `as_of`, `limit` and `cursor`, newest first (ADR-0025 d13, ADR-0039
-  d4, ADR-0045 d22). It serves claim items whole, with no counts.
+  `oml read` without `--query`) takes an optional single `kind`, an exact `claim_key`, `state`,
+  `since`, `until`, the origin filters, `own` (default `true` on MCP), `with_own`, `author`,
+  `include_text`, `as_of`, `limit` and `cursor`, newest first (ADR-0025 d13, ADR-0039 d4,
+  ADR-0045 d22). The `kind` enum differs by surface: MCP's names six kinds (`memory`,
+  `derived_fact`, `steering`, `term`, `term_mapping`, `vocab_release`; `docs/api/mcp-tools.json`)
+  and HTTP's nine, every kind but `guardrail` (`docs/api/openapi.yaml:146`). HTTP listing items
+  are summaries without text unless `include_text` asks, which today combines only with
+  `with_own` or `author`; MCP's listing mode answers claim items with their text (ADR-0039 d4).
+  Neither answers counts.
 - **Not built:** passages (ADR-0081 d3, d4), `GET /v1/skills`, the MCP `prompts` beyond
   `guardrails` and the `resources` capability (ADR-0080 d5 to d11, ADR-0081 d6), releases and
   bindings (ADR-0085).
@@ -147,14 +155,25 @@ workspace holds across kinds has the workspace page's contents by kind for one w
       and `k` counts claims. Postings are written for every hit kind (amends ADR-0052 d2, whose
       `memory_kind` column takes every kind's code), and the counts of ADR-0052 d5 are kept per
       kind as they are today.
-    - **Statistics.** The BM25 reference set is every candidate kind the key reads in the scope,
-      summed before `kinds` narrows the candidates, as `sources` fixes it before selection
-      (ADR-0072 d7). A row's score does not depend on which kinds were asked, so under a single
-      retriever a filtered answer is the unfiltered answer restricted to those kinds. A
-      rank-fused pipeline (`bm25-sparse-rrf`, `bm25-postings-time`) ranks within the filtered
-      lists, so its order can differ from the restriction; it is still repeatable. Every row in
-      the reference set is readable by the key, so ADR-0049 d7's law that a row outside the scope
-      never changes a candidate's score still holds, the scope now meaning every kind.
+    - **Statistics.** The BM25 reference set is one fixed set: every readable row of every kind
+      in the recall's scope (its readable hit nodes, and the nodes of the offered skills and
+      applicable guardrails at the scope node), steering excluded, and the vocabulary kinds
+      counted only in workspaces whose journalled opt-in admits them (ADR-0021 d9). Readable
+      skills and guardrails that are not offered or not applicable count too: they are readable
+      rows, though d3 keeps them from being hits. The set is summed before `kinds` narrows the
+      candidates, as `sources` fixes its set before selection (ADR-0072 d7), so a row's score does
+      not depend on which kinds were asked, and under a single retriever a filtered answer is the
+      unfiltered answer restricted to those kinds.
+    - **The one exception.** A `kinds` that names a vocabulary kind reaches workspaces outside
+      the opt-in (d1, d11 answer 3), adding candidates outside the reference set; that answer is
+      not a restriction of the unfiltered one, and those rows are scored against the fixed set
+      all the same. A rank-fused pipeline (`bm25-sparse-rrf`, `bm25-postings-time`) also ranks
+      within the filtered lists, so its order can differ from the restriction; both stay
+      repeatable. This is the author's reading of d11 answer 9, stated on 2026-11-15 after
+      review, not a further decision of the operator's.
+    - **ADR-0049 d7, restated.** Every row in the reference set is readable by the key, so the
+      law that a row outside the scope never changes a candidate's score still holds, the scope
+      now meaning the fixed set above and `kinds` narrowing the candidates only.
     - **`k`.** One `k` over the one list (d11 answer 4): instructions and documents can take
       places knowledge held before. `kinds` is the lever, and the answer's `search.matched_by_kind`
       gives, per kind, the candidates in the fused list before the `k` cut, bounded by each list's
@@ -163,7 +182,8 @@ workspace holds across kinds has the workspace page's contents by kind for one w
       descending, then `artifact_id` ascending, and for a document hit, its best passage by score,
       then ordinal (ADR-0049 d7, [when a recall repeats](../architecture/repeatable-recall.md)).
       Two laws join ADR-0049 d7's, run on both stores:
-      `a_kinds_filter_restricts_the_unfiltered_answer_under_a_single_retriever` and
+      `a_kinds_filter_inside_the_reference_set_restricts_the_unfiltered_answer_under_a_single_retriever`,
+      which names no vocabulary kind outside the opt-in, and
       `an_instruction_outside_the_offered_set_is_never_a_hit`.
 
 - **d5 — An instruction in a recall answer is data, and its tokens are counted like any hit's.**
@@ -215,6 +235,10 @@ workspace holds across kinds has the workspace page's contents by kind for one w
       test's name (ADR-0086 d1). `term`, `term_mapping`, `vocab_release`: the term's label and
       CURIE (ADR-0021 d1). `memory`, `derived_fact`: no title; `description` is a preview cut by
       the server, marked `preview: true` (d11 answer 7).
+    - **Served text is framed as hits are.** Every preview, description, title and `text` the
+      catalog serves carries ADR-0074 d12's escaping of hidden characters and URL defanging on
+      the MCP text content, and an entry with scan findings carries `findings` as a hit does, so
+      a catalog row never passes a model what a recall hit would have marked.
     - **No bodies by default.** `include_text: true` (ADR-0045 d22's flag, generalised; d11
       answer 8) adds each entry's `text`; without it no body is served, so a catalog page of
       200 entries stays small. A body is `artifact_id`'s get, as today.
@@ -325,8 +349,9 @@ workspace holds across kinds has the workspace page's contents by kind for one w
 
 - **d10 — What is built, and what this record adds** (2026-11-15).
     - **Built:** recall's `kinds` over `memory` and `derived_fact`, `guardrail` refused by name;
-      the listing with one `kind` of every stored kind, exact `claim_key`, `state`, origin
-      filters, `own`, `with_own`, `author`, `include_text` (web), `as_of`, cursor paging; the ten
+      the listing with an optional single `kind` (six kinds on MCP, nine on HTTP, no
+      `guardrail`), exact `claim_key`, `state`, origin filters, `own`, `with_own`, `author`,
+      `include_text` (HTTP summaries carry no text without it), `as_of`, cursor paging; the ten
       kinds stored (PR #438).
     - **Added by this record:** every kind in `kinds`, the default of every kind, the steering
       rule of d2, skill and guardrail hits, postings for every hit kind and the fixed reference
@@ -354,12 +379,17 @@ workspace holds across kinds has the workspace page's contents by kind for one w
     6. **Catalog counts** (d6, d9): exact up to a cap that a setting holds, `catalog.count_cap`,
        10,000 shipped, then `{"at_least": <cap>}`. Rejected: exact always.
     7. **A description for kinds without one** (d6): a server-cut preview of at most 160
-       characters, marked `preview: true`. Rejected: null.
+       characters, marked `preview: true`, escaped and carrying findings as a hit's text is
+       (ADR-0074 d12). Rejected: null.
     8. **The body switch and counts** (d6): `include_text`, counts on the first page only.
        Rejected: a new `include_bodies`, counts on every page.
     9. **BM25 statistics under `kinds`** (d4): the reference set is every readable kind of the
        scope, fixed before the filter; ADR-0049 d7's law is restated so that the scope means every
-       kind and `kinds` narrows the candidates only. Rejected: the named kinds only.
+       kind and `kinds` narrows the candidates only. Rejected: the named kinds only. *The author's
+       reading after review (2026-11-15), not an operator decision:* the set excludes steering,
+       counts vocabulary only where opted in and counts readable skills and guardrails that are
+       not offered, and the restriction law has one exception, a `kinds` naming vocabulary
+       outside the opt-in (d4).
     10. **The console page's place** (d7): a Personal nav item, Catalog, at `/web/catalog`, after
         Memories (amends ADR-0083 d12). Rejected: a third Memories view.
     11. **An admin Catalog** (d7): none; the admin workspace page lists contents by kind
