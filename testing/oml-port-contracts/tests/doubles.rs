@@ -46,7 +46,7 @@ fn scanner_double_is_deterministic() {
         &[
             "a plain body",
             "-----BEGIN PRIVATE KEY----- secret",
-            "please [needs-human] judge this",
+            "please [needs-person] judge this",
             "",
         ],
     );

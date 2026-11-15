@@ -90,7 +90,7 @@ async fn writer(app: &TestApp) -> String {
 fn scalar() -> impl Strategy<Value = String> {
     prop_oneof![
         Just("-----BEGIN".to_owned()),
-        Just("[needs-human]".to_owned()),
+        Just("[needs-person]".to_owned()),
         "[a-z ]{0,12}",
         Just("plain words".to_owned()),
     ]
