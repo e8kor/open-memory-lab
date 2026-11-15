@@ -3878,6 +3878,7 @@ dependencies = [
  "hex",
  "oml-app",
  "oml-delta-log",
+ "oml-former-names",
  "oml-guardrail",
  "oml-pg",
  "oml-scan",
@@ -3914,6 +3915,7 @@ version = "0.7.3"
 dependencies = [
  "ed25519-dalek",
  "hex",
+ "oml-former-names",
  "oml-guardrail",
  "oml-scan",
  "oml-web-credential",
@@ -3945,6 +3947,13 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "oml-former-names"
+version = "0.7.3"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
@@ -3985,6 +3994,7 @@ dependencies = [
  "deltalake",
  "hex",
  "oml-app",
+ "oml-former-names",
  "oml-lake",
  "oml-pg",
  "oml-port-contracts",

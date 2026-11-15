@@ -17,19 +17,19 @@ use uuid::Uuid;
 use oml_domain::access::{Covers, check_issuance};
 use oml_domain::name::{Name, NamedKind, Reference, UNIVERSE};
 use oml_domain::web::SESSION_KEY_SUFFIXES;
-use oml_domain::{EventTime, HeldBy, Role, Sha256Hash, SignedEnvelope, event_types};
+use oml_domain::{EventTime, Role, Sha256Hash, SignedEnvelope, UsedBy, event_types};
 
 use super::{App, Caller, Head, Issuance, issuance_refusal, require_role};
 use crate::ports::{Clock, ConnectionStore, IdGen, MetadataFold, Scanner, Signer, WebStore};
-use oml_domain::in_progress::WorkareaMode;
+use oml_domain::in_progress::WorkspaceMode;
 use oml_domain::origin::OriginKind;
-use oml_domain::{MemoryStatus, WorkareaStatus};
+use oml_domain::{MemoryStatus, WorkspaceStatus};
 
 use crate::cursor::ListingCursor;
 use crate::types::{
     AdminSearch, AdminState, AppError, Bearer, ConnectCodeIssued, Credential, DenialRecord,
     GrantRecord, GrantRequest, IssueKeyRequest, IssuedKey, KeyAccess, KeyRecord, MemoryRecord,
-    QueueDepth, WorkareaRecord,
+    QueueDepth, WorkspaceRecord,
 };
 use crate::types::{AnchorFilter, ListRequest, ListingPosition, MemoryPage, ServedMemory};
 
@@ -92,7 +92,7 @@ pub struct OwnKey {
     pub cut_off: bool,
 }
 
-/// One workarea's queue with its path (ADR-0045 d10).
+/// One workspace's queue with its path (ADR-0045 d10).
 #[derive(Debug, Clone)]
 pub struct QueueRow {
     pub depth: QueueDepth,
@@ -117,7 +117,7 @@ pub struct VerdictTrail {
 pub struct AdminMemory {
     pub memory: MemoryRecord,
     pub state: AdminState,
-    pub workarea_path: String,
+    pub workspace_path: String,
     pub author: Option<KeyRecord>,
     pub author_user: Option<Name>,
     pub verdicts: Vec<VerdictTrail>,
@@ -134,7 +134,7 @@ pub struct AdminPage {
 #[derive(Debug, Clone)]
 pub struct AdminSearchRequest<'a> {
     pub query: Option<&'a str>,
-    pub workarea: Option<Reference>,
+    pub workspace: Option<Reference>,
     pub state: Option<AdminState>,
     pub origin: Option<OriginKind>,
     /// The authoring key, by name or id.
@@ -147,7 +147,7 @@ pub struct AdminSearchRequest<'a> {
 /// d23); the states are the admin read's words.
 #[derive(Debug, Clone, Default)]
 pub struct WebListRequest {
-    pub workarea: Option<Reference>,
+    pub workspace: Option<Reference>,
     pub state: Option<AdminState>,
     pub origin: Option<OriginKind>,
     /// One of the person's own keys, by name.
@@ -198,12 +198,12 @@ impl ActTicket {
     }
 }
 
-/// One workarea of the Atlas (ADR-0045 d30): the node, its path, and its
+/// One workspace of the Atlas (ADR-0045 d30): the node, its path, and its
 /// rows the viewer may read by state: approved (promoted tips), held,
 /// unreviewed inside an in-progress scope, and every other state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Region {
-    pub workarea: WorkareaRecord,
+    pub workspace: WorkspaceRecord,
     pub path: String,
     pub approved: u64,
     pub held: u64,
@@ -211,7 +211,7 @@ pub struct Region {
     pub other: u64,
 }
 
-/// The Atlas's workareas and whether the count stopped at
+/// The Atlas's workspaces and whether the count stopped at
 /// [`REGION_COUNT_MAX`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Regions {
@@ -222,32 +222,32 @@ pub struct Regions {
     pub ancestors: Vec<(Uuid, Name)>,
 }
 
-/// One act a workarea's dropdown may offer (ADR-0045 d28).
+/// One act a workspace's dropdown may offer (ADR-0045 d28).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkareaOffer {
+pub enum WorkspaceOffer {
     /// Propose the next rung (ADR-0009 d3).
-    Propose(WorkareaStatus),
+    Propose(WorkspaceStatus),
     /// Ratify a live proposal another key made.
     Ratify {
         transition_id: Uuid,
-        from: WorkareaStatus,
-        to: WorkareaStatus,
+        from: WorkspaceStatus,
+        to: WorkspaceStatus,
     },
-    /// Put the workarea in progress (ADR-0030 d1).
+    /// Put the workspace in progress (ADR-0030 d1).
     InProgress,
     /// Commit an in-progress root (ADR-0030 d6).
     Commit,
 }
 
-/// What a workarea's dropdown shows: the node's status and mode, the acts
+/// What a workspace's dropdown shows: the node's status and mode, the acts
 /// its verbs admit now, and a commit withheld with the held rows that stop
 /// it (ADR-0045 d28).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkareaOffers {
-    pub workarea_id: Uuid,
-    pub status: WorkareaStatus,
+pub struct WorkspaceOffers {
+    pub workspace_id: Uuid,
+    pub status: WorkspaceStatus,
     pub in_progress: bool,
-    pub offers: Vec<WorkareaOffer>,
+    pub offers: Vec<WorkspaceOffer>,
     /// `Some(held)` when the node is an in-progress root whose commit the
     /// held rows refuse.
     pub commit_withheld: Option<u64>,
@@ -258,15 +258,15 @@ pub struct WorkareaOffers {
 /// row on a node the tree did not serve is not counted.
 fn count_into(regions: &mut [Region], m: &MemoryRecord) {
     let inside = {
-        let mut node = Some(m.workarea_id);
+        let mut node = Some(m.workspace_id);
         let mut found = false;
         while let Some(id) = node {
-            match regions.iter().find(|r| r.workarea.workarea_id == id) {
-                Some(r) if r.workarea.in_progress => {
+            match regions.iter().find(|r| r.workspace.workspace_id == id) {
+                Some(r) if r.workspace.in_progress => {
                     found = true;
                     break;
                 }
-                Some(r) => node = r.workarea.parent_id,
+                Some(r) => node = r.workspace.parent_id,
                 None => break,
             }
         }
@@ -274,7 +274,7 @@ fn count_into(regions: &mut [Region], m: &MemoryRecord) {
     };
     let Some(region) = regions
         .iter_mut()
-        .find(|r| r.workarea.workarea_id == m.workarea_id)
+        .find(|r| r.workspace.workspace_id == m.workspace_id)
     else {
         return;
     };
@@ -306,13 +306,13 @@ where
     // -- the web console's acts, replayed by their Idempotency-Key ----------
 
     /// The scope a web console act records its outcome under: the acting
-    /// key, no workarea, and the act's name beside the client's key, so
+    /// key, no workspace, and the act's name beside the client's key, so
     /// one key's value names one act (ADR-0070 d3 layer 4, d5).
     fn act_scope(caller: &Caller, act: &str, idem_key: &str) -> crate::ports::IdempotencyScope {
         crate::ports::IdempotencyScope {
             tenant_id: caller.key.tenant_id,
             key_id: caller.key.key_id,
-            workarea_id: Uuid::nil(),
+            workspace_id: Uuid::nil(),
             idem_key: format!("{act}:{idem_key}"),
         }
     }
@@ -515,8 +515,8 @@ where
             role,
             principal: name.as_str().to_owned(),
             name,
-            held_by: Some(HeldBy::Agent),
-            default_workarea: None,
+            used_by: Some(UsedBy::Agent),
+            default_workspace: None,
             crew: None,
             grants,
             connect_code: connector,
@@ -584,7 +584,7 @@ where
             .user
             .ok_or(AppError::WebKeyMissing { capacity: "web" })?;
         self.journal
-            .workarea(web.key.tenant_id, root)
+            .workspace(web.key.tenant_id, root)
             .await?
             .map(|w| w.name)
             .ok_or(AppError::NotFound)
@@ -613,14 +613,14 @@ where
 
     /// The tenant's `universe`, read off any node's ancestry.
     async fn universe_of(&self, tenant_id: Uuid, node: Uuid) -> Result<Option<Uuid>, AppError> {
-        if let Some(ancestry) = self.journal.workarea_ancestry(tenant_id, node).await? {
-            return Ok(ancestry.last().map(|w| w.workarea_id));
+        if let Some(ancestry) = self.journal.workspace_ancestry(tenant_id, node).await? {
+            return Ok(ancestry.last().map(|w| w.workspace_id));
         }
         Ok(self
             .journal
             .resolve_name(
                 tenant_id,
-                NamedKind::Workarea,
+                NamedKind::Workspace,
                 &Name::parse(UNIVERSE).expect("universe is a name"),
             )
             .await?)
@@ -640,7 +640,7 @@ where
         let tenant_id = admin.key.tenant_id;
         let Some(root) = self
             .journal
-            .resolve_name(tenant_id, NamedKind::Workarea, user)
+            .resolve_name(tenant_id, NamedKind::Workspace, user)
             .await?
         else {
             return Ok(Vec::new());
@@ -665,22 +665,22 @@ where
     }
 
     /// `POST /v2/web/users/{user}/capacities` with `capacity: review` (ADR-0070
-    /// d5 #3; ADR-0045 d10): the user's `<user>-review` gains dreamer and
-    /// reader on `workarea`, journalled as `grant.issued` by `<user>-admin`.
+    /// d5 #3; ADR-0045 d10): the user's `<user>-review` gains reviewer and
+    /// reader on `workspace`, journalled as `grant.issued` by `<user>-admin`.
     /// The key exists from the user's first sign-in.
     pub async fn grant_review_capacity(
         &self,
         admin: &Caller,
         user: &Name,
-        workarea: Reference,
+        workspace: Reference,
     ) -> Result<CapacityGranted, AppError> {
         require_role(&admin.key, Role::Admin, "grant_review")?;
         let review = self
             .session_key_of(admin.key.tenant_id, user, Capacity::Review)
             .await?
             .ok_or(AppError::WebKeyMissing { capacity: "review" })?;
-        let grants = [Role::Dreamer, Role::Reader].map(|role| GrantRequest {
-            node: workarea.clone(),
+        let grants = [Role::Reviewer, Role::Reader].map(|role| GrantRequest {
+            node: workspace.clone(),
             role,
             deny: Vec::new(),
             covers: Covers::Subtree,
@@ -695,18 +695,18 @@ where
     /// `POST /v2/web/users/{user}/capacities` with `capacity: curate` (ADR-0070
     /// d5 #3; ADR-0045 d10, ADR-0044 d7): the user's `<user>-curate`, a tenant
     /// writer key with writer on the `universe` node alone and reader on
-    /// `workarea`, created by `<user>-admin` at the first designation and
+    /// `workspace`, created by `<user>-admin` at the first designation and
     /// extended by a reader grant after it.
     pub async fn grant_curation_capacity(
         &self,
         admin: &Caller,
         user: &Name,
-        workarea: Reference,
+        workspace: Reference,
     ) -> Result<CapacityGranted, AppError> {
         require_role(&admin.key, Role::Admin, "grant_curation")?;
         let tenant_id = admin.key.tenant_id;
         let reader = GrantRequest {
-            node: workarea,
+            node: workspace,
             role: Role::Reader,
             deny: Vec::new(),
             covers: Covers::Subtree,
@@ -730,8 +730,8 @@ where
             role: Role::Writer,
             principal: name.as_str().to_owned(),
             name,
-            held_by: Some(HeldBy::Human),
-            default_workarea: None,
+            used_by: Some(UsedBy::Person),
+            default_workspace: None,
             crew: None,
             grants: vec![
                 GrantRequest {
@@ -795,8 +795,8 @@ where
             .unwrap_or_default();
         let mut resolved = Vec::new();
         for g in grants {
-            let node = self.resolve(admin, NamedKind::Workarea, &g.node).await?;
-            if self.journal.workarea(tenant_id, node).await?.is_none() {
+            let node = self.resolve(admin, NamedKind::Workspace, &g.node).await?;
+            if self.journal.workspace(tenant_id, node).await?.is_none() {
                 return Err(AppError::NotFound);
             }
             if held.iter().any(|h| {
@@ -825,39 +825,39 @@ where
     }
 
     /// `GET /v2/review/queue` (ADR-0070 d5 #2): the review queue's depth and
-    /// age per workarea, tenant-wide, no content (ADR-0045 d10, amending
+    /// age per workspace, tenant-wide, no content (ADR-0045 d10, amending
     /// ADR-0026 d15).
     pub async fn review_queue(&self, admin: &Caller) -> Result<Vec<QueueRow>, AppError> {
         require_role(&admin.key, Role::Admin, "review_queue")?;
         let tenant_id = admin.key.tenant_id;
         let mut out = Vec::new();
         for depth in self.journal.web_queue(tenant_id).await? {
-            let path = self.path_of(tenant_id, depth.workarea_id).await?;
+            let path = self.path_of(tenant_id, depth.workspace_id).await?;
             out.push(QueueRow { depth, path });
         }
         out.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(out)
     }
 
-    /// A workarea's path, by which `GET /v2/keys` names a grant's node.
-    pub async fn workarea_path(&self, caller: &Caller, node: Uuid) -> Result<String, AppError> {
+    /// A workspace's path, by which `GET /v2/keys` names a grant's node.
+    pub async fn workspace_path(&self, caller: &Caller, node: Uuid) -> Result<String, AppError> {
         self.path_of(caller.key.tenant_id, node).await
     }
 
     async fn path_of(&self, tenant_id: Uuid, node: Uuid) -> Result<String, AppError> {
         Ok(self
             .journal
-            .workarea_ancestry(tenant_id, node)
+            .workspace_ancestry(tenant_id, node)
             .await?
             .map(|a| super::derived_path(&a))
             .unwrap_or_default())
     }
 
-    // -- the Memories list and the workarea dropdowns ------------------------
+    // -- the Memories list and the workspace dropdowns ------------------------
 
     /// `GET /v1/memories?with_own=true` (ADR-0070 d5; ADR-0045 d22, d23), the
     /// Memories list: the scoped listing `<user>-web` is served at `universe`
-    /// (or at the filter's workarea) and the own-work listing of every key
+    /// (or at the filter's workspace) and the own-work listing of every key
     /// naming the user, each read after the same position and merged newest
     /// first, a row in both shown once. `author` narrows to one of the person's
     /// keys and drops the scoped listing; a key that is not theirs is not
@@ -886,9 +886,9 @@ where
             Some(AdminState::Rejected) => (Some(MemoryStatus::Rejected), None),
             Some(AdminState::Demoted) => (Some(MemoryStatus::Demoted), None),
         };
-        let listing = |own: bool, workarea: Option<Reference>| ListRequest {
+        let listing = |own: bool, workspace: Option<Reference>| ListRequest {
             own,
-            workarea,
+            workspace,
             state,
             kind: None,
             claim_key: None,
@@ -906,12 +906,12 @@ where
             as_of: None,
         };
         let own = self
-            .list_memories(Bearer::Session(web), &listing(true, req.workarea.clone()))
+            .list_memories(Bearer::Session(web), &listing(true, req.workspace.clone()))
             .await?;
         let scoped = if author.is_some() {
             None
         } else {
-            let scope = req.workarea.clone().unwrap_or_else(|| {
+            let scope = req.workspace.clone().unwrap_or_else(|| {
                 Reference::Name(Name::parse(UNIVERSE).expect("universe is a name"))
             });
             Some(
@@ -946,9 +946,9 @@ where
         })
     }
 
-    /// `GET /v2/workareas/{workarea}/tree?counts=true` for a user key (ADR-0070
-    /// d5; ADR-0045 d30), the Atlas's workareas: the nodes the tree read serves
-    /// `<user>-web` under `workarea` (by default `universe`, which a user key
+    /// `GET /v2/workspaces/{workspace}/tree?counts=true` for a user key (ADR-0070
+    /// d5; ADR-0045 d30), the Atlas's workspaces: the nodes the tree read serves
+    /// `<user>-web` under `workspace` (by default `universe`, which a user key
     /// reads as its root and the `universe` node), each with the rows of
     /// [`Self::list_memories_with_own`] on it counted by state, so a region and
     /// a count exist only where the list would show the row; a held row outside
@@ -956,9 +956,9 @@ where
     pub async fn user_regions(
         &self,
         web: &Caller,
-        workarea: Option<Reference>,
+        workspace: Option<Reference>,
     ) -> Result<Regions, AppError> {
-        let scope = workarea
+        let scope = workspace
             .clone()
             .unwrap_or_else(|| Reference::Name(Name::parse(UNIVERSE).expect("universe is a name")));
         let (mut regions, tree_cut) = self.tree_regions(web, scope).await?;
@@ -966,31 +966,31 @@ where
         // tree read as its own scope, where every author's held rows are
         // served (ADR-0030 d3), its subtree's counts replaced by that read.
         let mut partial = self
-            .count_listing(web, workarea, &mut regions, &BTreeSet::new())
+            .count_listing(web, workspace, &mut regions, &BTreeSet::new())
             .await?;
         partial |= tree_cut;
         let roots: Vec<Uuid> = regions
             .iter()
-            .filter(|r| r.workarea.in_progress)
-            .map(|r| r.workarea.workarea_id)
+            .filter(|r| r.workspace.in_progress)
+            .map(|r| r.workspace.workspace_id)
             .collect();
         for root in roots {
             let subtree: BTreeSet<Uuid> = self
                 .journal
-                .workarea_subtree(web.key.tenant_id, root)
+                .workspace_subtree(web.key.tenant_id, root)
                 .await?
                 .into_iter()
-                .map(|w| w.workarea_id)
+                .map(|w| w.workspace_id)
                 .collect();
             for r in regions
                 .iter_mut()
-                .filter(|r| subtree.contains(&r.workarea.workarea_id))
+                .filter(|r| subtree.contains(&r.workspace.workspace_id))
             {
                 (r.approved, r.held, r.in_progress, r.other) = (0, 0, 0, 0);
             }
             let outside: BTreeSet<Uuid> = regions
                 .iter()
-                .map(|r| r.workarea.workarea_id)
+                .map(|r| r.workspace.workspace_id)
                 .filter(|id| !subtree.contains(id))
                 .collect();
             partial |= self
@@ -1016,24 +1016,24 @@ where
         };
         let ancestry = self
             .journal
-            .workarea_ancestry(tenant_id, top.workarea.workarea_id)
+            .workspace_ancestry(tenant_id, top.workspace.workspace_id)
             .await?
             .unwrap_or_default();
         Ok(ancestry
             .iter()
             .skip(1)
             .rev()
-            .map(|w| (w.workarea_id, w.name.clone()))
+            .map(|w| (w.workspace_id, w.name.clone()))
             .collect())
     }
 
-    /// Counts the rows [`Self::list_memories_with_own`] lists under `workarea`
+    /// Counts the rows [`Self::list_memories_with_own`] lists under `workspace`
     /// onto `regions`, skipping rows on `skip`; whether it stopped at
     /// [`REGION_COUNT_MAX`].
     async fn count_listing(
         &self,
         web: &Caller,
-        workarea: Option<Reference>,
+        workspace: Option<Reference>,
         regions: &mut [Region],
         skip: &BTreeSet<Uuid>,
     ) -> Result<bool, AppError> {
@@ -1044,7 +1044,7 @@ where
                 .list_memories_with_own(
                     web,
                     &WebListRequest {
-                        workarea: workarea.clone(),
+                        workspace: workspace.clone(),
                         cursor: cursor.take(),
                         limit: 200,
                         ..WebListRequest::default()
@@ -1055,7 +1055,7 @@ where
             for m in page
                 .items
                 .iter()
-                .filter(|m| !skip.contains(&m.memory.workarea_id))
+                .filter(|m| !skip.contains(&m.memory.workspace_id))
             {
                 count_into(regions, &m.memory);
             }
@@ -1067,8 +1067,8 @@ where
         }
     }
 
-    /// The admin page's Atlas workareas (ADR-0045 d30): the tenant's tree
-    /// under `workarea`, which an admin key reads as structure, with every
+    /// The admin page's Atlas workspaces (ADR-0045 d30): the tenant's tree
+    /// under `workspace`, which an admin key reads as structure, with every
     /// row on each node counted by state, the admin read's scope and no
     /// wider. Counts carry no content, so they are read as the queue's
     /// depth is (d16) and journal nothing; the page of rows beside them is
@@ -1076,14 +1076,14 @@ where
     pub async fn admin_regions(
         &self,
         admin: &Caller,
-        workarea: Option<Reference>,
+        workspace: Option<Reference>,
     ) -> Result<Regions, AppError> {
         require_role(&admin.key, Role::Admin, "admin_read")?;
         let tenant_id = admin.key.tenant_id;
-        let scope = workarea
+        let scope = workspace
             .unwrap_or_else(|| Reference::Name(Name::parse(UNIVERSE).expect("universe is a name")));
         let (mut regions, tree_cut) = self.tree_regions(admin, scope).await?;
-        let nodes: Vec<Uuid> = regions.iter().map(|r| r.workarea.workarea_id).collect();
+        let nodes: Vec<Uuid> = regions.iter().map(|r| r.workspace.workspace_id).collect();
         let mut after = None;
         let mut counted = 0;
         let partial = loop {
@@ -1134,7 +1134,7 @@ where
         let mut cursor: Option<String> = None;
         loop {
             let page = self
-                .workarea_tree(
+                .workspace_tree(
                     Bearer::Session(caller),
                     scope.clone(),
                     cursor.as_deref(),
@@ -1142,7 +1142,7 @@ where
                 )
                 .await?;
             regions.extend(page.items.into_iter().map(|node| Region {
-                workarea: node.workarea,
+                workspace: node.workspace,
                 path: node.path,
                 approved: 0,
                 held: 0,
@@ -1161,21 +1161,21 @@ where
         Ok((regions, truncated))
     }
 
-    /// The acts a workarea's dropdown offers (ADR-0045 d28): a status
+    /// The acts a workspace's dropdown offers (ADR-0045 d28): a status
     /// transition as `transitions`, the mode and the commit as `mode`, each
     /// offered only where the verb's own check admits it now; a commit the
     /// held rows refuse is withheld with their count. A refusal hides an
     /// act; a store failure is answered.
-    pub async fn workarea_offers(
+    pub async fn workspace_offers(
         &self,
         transitions: &Caller,
         mode: &Caller,
-        workarea_id: Uuid,
-    ) -> Result<WorkareaOffers, AppError> {
+        workspace_id: Uuid,
+    ) -> Result<WorkspaceOffers, AppError> {
         let tenant_id = transitions.key.tenant_id;
         let node = self
             .journal
-            .workarea(tenant_id, workarea_id)
+            .workspace(tenant_id, workspace_id)
             .await?
             .ok_or(AppError::NotFound)?;
         let admitted = |result: Result<(), AppError>| match result {
@@ -1184,28 +1184,28 @@ where
             Err(_) => Ok(false),
         };
         let mut offers = Vec::new();
-        for to in [WorkareaStatus::Committed, WorkareaStatus::Validated] {
+        for to in [WorkspaceStatus::Protected, WorkspaceStatus::Frozen] {
             let check = self
-                .propose_admitted(transitions, workarea_id, to)
+                .propose_admitted(transitions, workspace_id, to)
                 .await
                 .map(|_| ());
             if admitted(check)? {
-                offers.push(WorkareaOffer::Propose(to));
+                offers.push(WorkspaceOffer::Propose(to));
             }
         }
         for t in self
             .journal
-            .pending_transitions(tenant_id, workarea_id)
+            .pending_transitions(tenant_id, workspace_id)
             .await?
             .into_iter()
             .filter(|t| t.from == node.status)
         {
             let check = self
-                .ratify_admitted(transitions, workarea_id, t.transition_id)
+                .ratify_admitted(transitions, workspace_id, t.transition_id)
                 .await
                 .map(|_| ());
             if admitted(check)? {
-                offers.push(WorkareaOffer::Ratify {
+                offers.push(WorkspaceOffer::Ratify {
                     transition_id: t.transition_id,
                     from: t.from,
                     to: t.to,
@@ -1214,24 +1214,24 @@ where
         }
         let mut commit_withheld = None;
         let wanted = if node.in_progress {
-            WorkareaMode::Standard
+            WorkspaceMode::Standard
         } else {
-            WorkareaMode::InProgress
+            WorkspaceMode::InProgress
         };
-        match self.mode_admitted(mode, workarea_id, wanted).await {
+        match self.mode_admitted(mode, workspace_id, wanted).await {
             Ok(super::ModeAdmitted::Change { .. }) => offers.push(if node.in_progress {
-                WorkareaOffer::Commit
+                WorkspaceOffer::Commit
             } else {
-                WorkareaOffer::InProgress
+                WorkspaceOffer::InProgress
             }),
             Ok(super::ModeAdmitted::Already(_)) => {}
             Err(AppError::HeldRemaining { .. }) => {
                 let nodes: Vec<Uuid> = self
                     .journal
-                    .workarea_subtree(tenant_id, workarea_id)
+                    .workspace_subtree(tenant_id, workspace_id)
                     .await?
                     .iter()
-                    .map(|w| w.workarea_id)
+                    .map(|w| w.workspace_id)
                     .collect();
                 commit_withheld = Some(self.journal.held_count(tenant_id, &nodes).await?);
             }
@@ -1239,8 +1239,8 @@ where
                 admitted(Err(e))?;
             }
         }
-        Ok(WorkareaOffers {
-            workarea_id,
+        Ok(WorkspaceOffers {
+            workspace_id,
             status: node.status,
             in_progress: node.in_progress,
             offers,
@@ -1249,84 +1249,86 @@ where
     }
 
     /// Whether one act of the dropdown is admitted now, by the same check
-    /// as [`Self::workarea_offers`]: `Ok` exactly when it is offered, else
+    /// as [`Self::workspace_offers`]: `Ok` exactly when it is offered, else
     /// the refusal its verb would answer (ADR-0045 d28). Setting the mode a
     /// node already holds is no act, refused naming `op`.
-    pub async fn workarea_offer_check(
+    pub async fn workspace_offer_check(
         &self,
         transitions: &Caller,
         mode: &Caller,
-        workarea_id: Uuid,
-        offer: WorkareaOffer,
+        workspace_id: Uuid,
+        offer: WorkspaceOffer,
     ) -> Result<(), AppError> {
         match offer {
-            WorkareaOffer::Propose(to) => self
-                .propose_admitted(transitions, workarea_id, to)
+            WorkspaceOffer::Propose(to) => self
+                .propose_admitted(transitions, workspace_id, to)
                 .await
                 .map(|_| ()),
-            WorkareaOffer::Ratify { transition_id, .. } => self
-                .ratify_admitted(transitions, workarea_id, transition_id)
+            WorkspaceOffer::Ratify { transition_id, .. } => self
+                .ratify_admitted(transitions, workspace_id, transition_id)
                 .await
                 .map(|_| ()),
-            WorkareaOffer::InProgress | WorkareaOffer::Commit => {
-                let wanted = if offer == WorkareaOffer::Commit {
-                    WorkareaMode::Standard
+            WorkspaceOffer::InProgress | WorkspaceOffer::Commit => {
+                let wanted = if offer == WorkspaceOffer::Commit {
+                    WorkspaceMode::Standard
                 } else {
-                    WorkareaMode::InProgress
+                    WorkspaceMode::InProgress
                 };
-                match self.mode_admitted(mode, workarea_id, wanted).await? {
+                match self.mode_admitted(mode, workspace_id, wanted).await? {
                     super::ModeAdmitted::Change { .. } => Ok(()),
                     super::ModeAdmitted::Already(_) => Err(field(
                         "op",
-                        "the workarea is already in that mode, so there is nothing to do",
+                        "the workspace is already in that mode, so there is nothing to do",
                     )),
                 }
             }
         }
     }
 
-    /// [`Self::workarea_offers`] for one key acting in both capacities, by
+    /// [`Self::workspace_offers`] for one key acting in both capacities, by
     /// its value or a session: what a dropdown would offer that key.
-    pub async fn workarea_offers_for(
+    pub async fn workspace_offers_for(
         &self,
         bearer: impl Into<Bearer<'_>>,
-        workarea: Reference,
-    ) -> Result<WorkareaOffers, AppError> {
+        workspace: Reference,
+    ) -> Result<WorkspaceOffers, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
-        let workarea_id = self
-            .resolve(&caller.key, NamedKind::Workarea, &workarea)
+        let workspace_id = self
+            .resolve(&caller.key, NamedKind::Workspace, &workspace)
             .await?;
-        self.workarea_offers(&caller, &caller, workarea_id).await
+        self.workspace_offers(&caller, &caller, workspace_id).await
     }
 
-    /// [`Self::workarea_offers_for`], and beside the offers each act a
+    /// [`Self::workspace_offers_for`], and beside the offers each act a
     /// dropdown names that is not offered now with the refusal its verb
-    /// would answer: proposing either rung, putting the workarea in
+    /// would answer: proposing either rung, putting the workspace in
     /// progress and committing it. A confirmation reads the refusal off
     /// the wire, as the lead's page read it from
-    /// [`Self::workarea_offer_check`] (ADR-0045 d28; ADR-0070 d5).
-    pub async fn workarea_offers_explained_for(
+    /// [`Self::workspace_offer_check`] (ADR-0045 d28; ADR-0070 d5).
+    pub async fn workspace_offers_explained_for(
         &self,
         bearer: impl Into<Bearer<'_>>,
-        workarea: Reference,
-    ) -> Result<(WorkareaOffers, Vec<(WorkareaOffer, AppError)>), AppError> {
+        workspace: Reference,
+    ) -> Result<(WorkspaceOffers, Vec<(WorkspaceOffer, AppError)>), AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
-        let workarea_id = self
-            .resolve(&caller.key, NamedKind::Workarea, &workarea)
+        let workspace_id = self
+            .resolve(&caller.key, NamedKind::Workspace, &workspace)
             .await?;
-        let offers = self.workarea_offers(&caller, &caller, workarea_id).await?;
+        let offers = self
+            .workspace_offers(&caller, &caller, workspace_id)
+            .await?;
         let mut refused = Vec::new();
         for act in [
-            WorkareaOffer::Propose(WorkareaStatus::Committed),
-            WorkareaOffer::Propose(WorkareaStatus::Validated),
-            WorkareaOffer::InProgress,
-            WorkareaOffer::Commit,
+            WorkspaceOffer::Propose(WorkspaceStatus::Protected),
+            WorkspaceOffer::Propose(WorkspaceStatus::Frozen),
+            WorkspaceOffer::InProgress,
+            WorkspaceOffer::Commit,
         ] {
             if offers.offers.contains(&act) {
                 continue;
             }
             match self
-                .workarea_offer_check(&caller, &caller, workarea_id, act)
+                .workspace_offer_check(&caller, &caller, workspace_id, act)
                 .await
             {
                 // Offered by the same check, so not reached; a page that
@@ -1349,7 +1351,7 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
         query: Option<&str>,
-        workarea: Option<Reference>,
+        workspace: Option<Reference>,
         state: Option<AdminState>,
         after: Option<(EventTime, Uuid)>,
         limit: usize,
@@ -1358,7 +1360,7 @@ where
             bearer,
             &AdminSearchRequest {
                 query,
-                workarea,
+                workspace,
                 state,
                 origin: None,
                 author: None,
@@ -1383,7 +1385,7 @@ where
         let tenant_id = caller.key.tenant_id;
         let AdminSearchRequest {
             query,
-            workarea,
+            workspace,
             state,
             origin,
             author,
@@ -1394,17 +1396,17 @@ where
             None => None,
             Some(reference) => Some(self.resolve(&caller.key, NamedKind::Key, reference).await?),
         };
-        let nodes = match &workarea {
+        let nodes = match &workspace {
             None => None,
             Some(reference) => {
                 let node = self
-                    .resolve(&caller.key, NamedKind::Workarea, reference)
+                    .resolve(&caller.key, NamedKind::Workspace, reference)
                     .await?;
-                let subtree = self.journal.workarea_subtree(tenant_id, node).await?;
+                let subtree = self.journal.workspace_subtree(tenant_id, node).await?;
                 if subtree.is_empty() {
                     return Err(AppError::NotFound);
                 }
-                Some(subtree.into_iter().map(|w| w.workarea_id).collect())
+                Some(subtree.into_iter().map(|w| w.workspace_id).collect())
             }
         };
         let search = AdminSearch {
@@ -1470,12 +1472,12 @@ where
         memory: MemoryRecord,
         with_verdicts: bool,
     ) -> Result<AdminMemory, AppError> {
-        let workarea_path = self.path_of(tenant_id, memory.workarea_id).await?;
+        let workspace_path = self.path_of(tenant_id, memory.workspace_id).await?;
         let author = self.journal.key(tenant_id, memory.author_key_id).await?;
         let author_user = match author.as_ref().and_then(|k| k.user) {
             Some(root) => self
                 .journal
-                .workarea(tenant_id, root)
+                .workspace(tenant_id, root)
                 .await?
                 .map(|w| w.name),
             None => None,
@@ -1488,7 +1490,7 @@ where
         Ok(AdminMemory {
             state: AdminState::of(&memory),
             memory,
-            workarea_path,
+            workspace_path,
             author,
             author_user,
             verdicts,

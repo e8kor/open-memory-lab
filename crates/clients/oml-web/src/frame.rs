@@ -28,11 +28,11 @@ fn cut(text: &str, cap: usize) -> String {
 /// One guardrail's line: severity, text and provenance; a conflict names
 /// the other rows (ADR-0037 d4, d6).
 fn line(g: &ServedGuardrail) -> String {
-    let humans = g.verdicts.iter().filter(|v| v.held_by == "human").count();
+    let persons = g.verdicts.iter().filter(|v| v.used_by == "person").count();
     let reviewers = g.verdicts.len();
     let provenance = format!(
-        "{}, {} v{}, ratified {} by {reviewers} reviewer{} ({humans} human)",
-        g.workarea_path.as_deref().unwrap_or("?"),
+        "{}, {} v{}, ratified {} by {reviewers} reviewer{} ({persons} by a person)",
+        g.workspace_path.as_deref().unwrap_or("?"),
         one_line(&g.claim_key),
         g.version,
         g.promoted_at.get(..10).unwrap_or(&g.promoted_at),
@@ -82,15 +82,15 @@ mod tests {
             "artifact_id": format!("a{i}"),
             "claim_key": format!("rule  {i}"),
             "version": i,
-            "workarea_id": "w",
-            "workarea_path": "universe.alice",
+            "workspace_id": "w",
+            "workspace_path": "universe.alice",
             "depth": 1,
             "severity": "must",
             "text": format!("Run\tthe tests  before commit {i}."),
             "rule": null,
             "tokens": 9,
             "promoted_at": "2026-11-09T10:11:12Z",
-            "verdicts": [{"held_by": "human", "at": "x"}, {"held_by": "agent", "at": "y"}],
+            "verdicts": [{"used_by": "person", "at": "x"}, {"used_by": "agent", "at": "y"}],
             "conflict": [],
         });
         for (k, v) in extra.as_object().unwrap() {
@@ -122,7 +122,7 @@ mod tests {
                     guardrail(1, json!({"severity": "never", "conflict": ["a7", "a8"]})),
                     guardrail(
                         2,
-                        json!({"workarea_path": null, "verdicts": [{"held_by": "agent", "at": "z"}]}),
+                        json!({"workspace_path": null, "verdicts": [{"used_by": "agent", "at": "z"}]}),
                     ),
                     guardrail(3, json!({"claim_key": long, "promoted_at": "2026"})),
                     guardrail(

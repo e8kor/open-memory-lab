@@ -109,4 +109,4 @@ job.
 whose held writes, the reviewer's verdicts (`duplicate_of`, d1) and the session that wrote them
 give labelled duplicate and update pairs without a model choosing them. Its paraphrased queries
 are written by someone who did not write the memories or their keywords, at least 30 per
-category, and it adds held rows, workareas and steering rows, which version 1 lacks.
+category, and it adds held rows, workspaces and steering rows, which version 1 lacks.

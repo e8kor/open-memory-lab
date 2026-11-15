@@ -58,7 +58,7 @@ Each tenant has its own prefix, `<lake>/<tenant id>/`. The provider prefix, `<la
 | `recall-volume-per-pipeline` | recalls and empty recalls per pipeline per day |
 | `recall-outcomes` | what readers did after a recall, per pipeline |
 | `stale-share` | share of promoted versions no longer the served tip |
-| `top-workareas` | workareas by journalled activity, with names |
+| `top-workspaces` | workspaces by journalled activity, with names |
 | `bench-latest` | each suite's methods on their overall metrics |
 
 DuckDB, with its `delta` extension, answers the same questions against one tenant:

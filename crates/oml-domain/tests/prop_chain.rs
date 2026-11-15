@@ -47,7 +47,7 @@ struct DraftSpec {
 fn arb_draft() -> impl Strategy<Value = DraftSpec> {
     (
         proptest::sample::select(vec![
-            event_types::WORKAREA_CREATE,
+            event_types::WORKSPACE_CREATE,
             event_types::KEY_ISSUED,
             event_types::SUBMISSION_REMEMBER,
             event_types::REVIEW_APPROVE,

@@ -18,10 +18,10 @@ The rules that make a write held, reviewed by someone else and signed.
 |---|
 | [The constitution: four rules, three bounded exceptions](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) |
 | [Tenancy is first-class](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0007-tenancy-first-class.md) |
-| [The status ladder: development, committed, validated; forward only; medallion words stay in the lake](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0009-status-ladder.md) |
-| [Roles and keys: reader, writer, dreamer, admin, operator](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0010-roles-and-keys.md) |
+| [The status ladder: development, protected, frozen; forward only; medallion words stay in the lake](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0009-status-ladder.md) |
+| [Roles and keys: reader, writer, reviewer, admin, operator](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0010-roles-and-keys.md) |
 | [Admission and review: external crews, serve binding, policy objects](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0012-admission-and-review.md) |
-| [An in-progress workarea serves its held work to its subtree and its ancestors, a curator agent may only narrow it, and nothing leaves until a person commits it or a release is published](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) |
+| [An in-progress workspace serves its held work to its subtree and its ancestors, a curator agent may only narrow it, and nothing leaves until a person commits it or a release is published](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) |
 | [A person reviews a listed set of held items in one act, each item judged and signed as one verdict](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md) |
 | [The scan is a versioned, compiled-in rule set that vetoes leaked keys and holds what a reviewer should judge](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) |
 | [The scan names a threat class for every finding, refuses only what can never be safe, holds or annotates the rest, and recall serves every hit as data with its findings](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings.md) |
@@ -50,7 +50,7 @@ How recall finds, ranks and filters memories.
 | [Reranking is a local cross-encoder stage after fusion, off by default until it fits the latency budget](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md) |
 | [Recall is measured by what readers do next, and only other readers' use moves a rank, within a bound](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) |
 | [A memory states when it is true, recall hides what has ended, and recall searches the dates a query names without a model](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0059-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md) |
-| [Recall searches the trusted workareas a key already reads, chosen per query by reviewed descriptors, and never widens what it may read](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md) |
+| [Recall searches the trusted workspaces a key already reads, chosen per query by reviewed descriptors, and never widens what it may read](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md) |
 
 ## Writing and review
 
@@ -66,11 +66,11 @@ What a write may carry and how review judges it.
 
 ## Sources and sync
 
-Where a memory came from and how a workarea follows a repository or a chat.
+Where a memory came from and how a workspace follows a repository or a chat.
 
 | Decision |
 |---|
-| [A memory carries the source anchor its author declares, and `oml sync` keeps a workarea in step with a repository's documents](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) |
+| [A memory carries the source anchor its author declares, and `oml sync` keeps a workspace in step with a repository's documents](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md) |
 | [`oml sync` reads a Rust workspace as one claim per crate and one per module doc, and a claim goes stale only when its docs or its crate's facts change](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0061-oml-sync-reads-a-rust-workspace-as-one-claim-per-crate-and-one-per-module-doc-and-a-claim-goes-stale-only-when-its-docs-or-its-crates-facts-change.md) |
 | [A chat turn becomes memory only when the agent in it writes the fact, and every memory says what kind of source it came from](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md) |
 
@@ -86,11 +86,11 @@ The API, the MCP tools, the plugin and the hooks agents use.
 | [The CLI issues an agent's key in one call with its reader grant by default, and an admin skill runs it without the key value entering a transcript](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0028-agent-key-issuance.md) |
 | [The agent plugin starts every session from what OML holds for its key, through `oml hook session-start`](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0029-session-start-hook.md) |
 | [Claude's hosted apps reach the agent plugin over OAuth, through a connection that a one-time connect code binds to one agent key](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0031-oauth-connections-by-connect-code.md) |
-| [A guardrail is a claim of its own kind, ratified under its workarea's review policy, that the agent plugin loads at every session start within the scope an admin set on its key, and whose optional rule a local hook checks before each tool call](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) |
+| [A guardrail is a claim of its own kind, ratified under its workspace's review policy, that the agent plugin loads at every session start within the scope an admin set on its key, and whose optional rule a local hook checks before each tool call](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) |
 | [The agent recalls for itself, and a failed command recalls only when the user opted in](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md) |
 | [The API is rewritten for v0.4.0 while OML is pre-release: three task-shaped MCP tools, a contract that declares only what is served, one URL and one key to start, and nothing lost](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) |
 | [The plugin takes its server URL and its key through Claude Code's plugin configuration, keeps the key in the keychain, and falls back to `OML_URL` and `OML_API_KEY` only in its hooks](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0040-plugin-setup-in-claude-code.md) |
-| [A directory reviewer reaches a demo workarea through a connect code that lives longer, and the tools and instructions describe instead of command](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) |
+| [A directory reviewer reaches a demo workspace through a connect code that lives longer, and the tools and instructions describe instead of command](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workspace-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) |
 | [OML releases name no server: setup asks for one or takes it beside the key, and a key goes only to a server its holder named](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0076-releases-ship-no-default-server-and-setup-asks-for-the-server-or-reads-it-from-the-key-or-the-environment.md) |
 | [A served memory says when it was approved and by what kind of reviewer, and never names the reviewer](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0077-a-served-memory-says-when-it-was-approved-and-by-what-kind-of-reviewer-and-never-names-the-reviewer.md) |
 
@@ -103,7 +103,7 @@ Deployment, identity, observability and the web pages.
 | [The CLI is the administration surface; a web console is declined](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0015-cli-administration.md) |
 | [Kubernetes workloads, two Helm profiles, deployment identity replaces volume identity](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0016-kubernetes-workloads.md) |
 | [Three install profiles, one conformance bar; cluster-mode lead/follower](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0023-install-profiles-and-cluster-mode.md) |
-| [Workareas, crews, keys and tenants are named by unique, immutable keys that every surface accepts in place of their ids](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0026-names-are-keys.md) |
+| [Workspaces, crews, keys and tenants are named by unique, immutable keys that every surface accepts in place of their ids](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0026-names-are-keys.md) |
 | [The lead migrates as an owner role and serves as a role that owns nothing; `_sqlx_migrations` is the one table without row-level security](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) |
 | [A quick start in one command per role: an installer that checks what it downloads, `oml login`, `oml setup claude-code` and `oml quickstart`](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0041-a-quick-start-in-one-command-per-role.md) |
 | [Every request logs one line under an id the caller may name, metrics stay off the public port, and trace export is opt-in](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) |
@@ -116,13 +116,32 @@ Deployment, identity, observability and the web pages.
 
 ## Architecture and platform
 
-The stack, the workarea tree and how decisions are recorded.
+The stack, the workspace tree and how decisions are recorded.
 
 | Decision |
 |---|
 | [Pure Rust, with Scala/Spark behind a named trigger outside the TCB](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0006-pure-rust.md) |
-| [Workarea algebra: per-tenant universe tree, node-id grants, deny semantics, edges](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0008-workarea-algebra.md) |
+| [Workspace algebra: per-tenant universe tree, node-id grants, deny semantics, edges](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0008-workspace-algebra.md) |
 | [The documentation set: tiers, honesty discipline, llms.txt, frontmatter](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0018-the-documentation-set.md) |
 | [Hexagonal architecture and plugin modularity](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0019-hexagonal-architecture-and-plugins.md) |
 | [The performance foundation](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0024-performance-foundation.md) |
 | [The web console is a client of the public HTTP API, in a crate that cannot reach the application core](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core.md) |
+
+## Renamed records
+
+A record keeps its number when its file is renamed, and GitHub does not redirect the former file name. Each row gives a former file name and the record it now is.
+
+| Former file name | Record |
+|---|---|
+| `ADR-0008-workarea-algebra.md` | [ADR-0008](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0008-workspace-algebra.md) |
+| `ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md` | [ADR-0030](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) |
+| `ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md` | [ADR-0057](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workspace-in-step-with-a-repositorys-documents.md) |
+| `ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md` | [ADR-0067](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workspace-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) |
+| `ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md` | [ADR-0072](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md) |
+| `ADR-0073-a-leader-signs-every-write-and-nodes-serve-the-workareas-placed-on-them-each-read-routed-to-the-closest-less-busy-replica-fresh-enough-for-it.md` | [ADR-0073](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0073-a-leader-signs-every-write-and-nodes-serve-the-workspaces-placed-on-them-each-read-routed-to-the-closest-less-busy-replica-fresh-enough-for-it.md) |
+| `ADR-0082-a-person-builds-and-edits-a-workareas-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md` | [ADR-0082](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) |
+| `ADR-0084-a-workarea-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md` | [ADR-0084](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) |
+| `ADR-0085-a-workarea-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md` | [ADR-0085](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) |
+| `ADR-0086-a-workareas-tests-are-reviewed-claims-the-server-runs-under-the-callers-key-and-a-release-is-published-only-through-ordered-gates.md` | [ADR-0086](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0086-a-workspaces-tests-are-reviewed-claims-the-server-runs-under-the-callers-key-and-a-release-is-published-only-through-ordered-gates.md) |
+| `ADR-0087-an-impact-report-shows-under-the-callers-own-reads-what-a-candidate-release-changes-for-the-workareas-that-receive-it.md` | [ADR-0087](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0087-an-impact-report-shows-under-the-callers-own-reads-what-a-candidate-release-changes-for-the-workspaces-that-receive-it.md) |
+| `ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md` | [ADR-0089](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) |

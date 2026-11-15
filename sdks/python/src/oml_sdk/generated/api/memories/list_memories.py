@@ -15,7 +15,7 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
@@ -47,12 +47,12 @@ def _get_kwargs(
 
     params: dict[str, Any] = {}
 
-    json_workarea: str | Unset
-    if isinstance(workarea, Unset):
-        json_workarea = UNSET
+    json_workspace: str | Unset
+    if isinstance(workspace, Unset):
+        json_workspace = UNSET
     else:
-        json_workarea = workarea
-    params["workarea"] = json_workarea
+        json_workspace = workspace
+    params["workspace"] = json_workspace
 
     params["claim_key"] = claim_key
 
@@ -154,7 +154,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
@@ -178,18 +178,18 @@ def sync_detailed(
 
      Requires: reader effective access; own=true admits any tenant role except operator
     (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state,
-    across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With
-    own=true and no workarea it lists every workarea the key wrote in. Without own, the listing returns
-    promoted served tips within reader effective access in the workarea's subtree, defaulting to the
-    key's default_workarea (ADR-0039 d4) — a self_signed version only when the scope node is its own
-    workarea; a retired claim's tip, its retirement version, among them, flagged retirement true;
-    others' held rows are never returned (R3). workarea is the subtree read (see the parameter);
-    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in
+    across all workspaces minus its globally denied subtrees, no grant needed (ADR-0025 d13). With
+    own=true and no workspace it lists every workspace the key wrote in. Without own, the listing
+    returns promoted served tips within reader effective access in the workspace's subtree, defaulting
+    to the key's default_workspace (ADR-0039 d4) — a self_signed version only when the scope node is its
+    own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
+    others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
+    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in
     details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
     cursor is bound to the calling key and expires under api.cursor_ttl.
 
     Args:
-        workarea (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -227,7 +227,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         claim_key=claim_key,
         state=state,
         kind=kind,
@@ -258,7 +258,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
@@ -282,18 +282,18 @@ def sync(
 
      Requires: reader effective access; own=true admits any tenant role except operator
     (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state,
-    across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With
-    own=true and no workarea it lists every workarea the key wrote in. Without own, the listing returns
-    promoted served tips within reader effective access in the workarea's subtree, defaulting to the
-    key's default_workarea (ADR-0039 d4) — a self_signed version only when the scope node is its own
-    workarea; a retired claim's tip, its retirement version, among them, flagged retirement true;
-    others' held rows are never returned (R3). workarea is the subtree read (see the parameter);
-    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in
+    across all workspaces minus its globally denied subtrees, no grant needed (ADR-0025 d13). With
+    own=true and no workspace it lists every workspace the key wrote in. Without own, the listing
+    returns promoted served tips within reader effective access in the workspace's subtree, defaulting
+    to the key's default_workspace (ADR-0039 d4) — a self_signed version only when the scope node is its
+    own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
+    others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
+    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in
     details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
     cursor is bound to the calling key and expires under api.cursor_ttl.
 
     Args:
-        workarea (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -332,7 +332,7 @@ def sync(
 
     return sync_detailed(
         client=client,
-        workarea=workarea,
+        workspace=workspace,
         claim_key=claim_key,
         state=state,
         kind=kind,
@@ -357,7 +357,7 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
@@ -381,18 +381,18 @@ async def asyncio_detailed(
 
      Requires: reader effective access; own=true admits any tenant role except operator
     (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state,
-    across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With
-    own=true and no workarea it lists every workarea the key wrote in. Without own, the listing returns
-    promoted served tips within reader effective access in the workarea's subtree, defaulting to the
-    key's default_workarea (ADR-0039 d4) — a self_signed version only when the scope node is its own
-    workarea; a retired claim's tip, its retirement version, among them, flagged retirement true;
-    others' held rows are never returned (R3). workarea is the subtree read (see the parameter);
-    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in
+    across all workspaces minus its globally denied subtrees, no grant needed (ADR-0025 d13). With
+    own=true and no workspace it lists every workspace the key wrote in. Without own, the listing
+    returns promoted served tips within reader effective access in the workspace's subtree, defaulting
+    to the key's default_workspace (ADR-0039 d4) — a self_signed version only when the scope node is its
+    own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
+    others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
+    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in
     details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
     cursor is bound to the calling key and expires under api.cursor_ttl.
 
     Args:
-        workarea (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -430,7 +430,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         claim_key=claim_key,
         state=state,
         kind=kind,
@@ -459,7 +459,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
@@ -483,18 +483,18 @@ async def asyncio(
 
      Requires: reader effective access; own=true admits any tenant role except operator
     (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state,
-    across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With
-    own=true and no workarea it lists every workarea the key wrote in. Without own, the listing returns
-    promoted served tips within reader effective access in the workarea's subtree, defaulting to the
-    key's default_workarea (ADR-0039 d4) — a self_signed version only when the scope node is its own
-    workarea; a retired claim's tip, its retirement version, among them, flagged retirement true;
-    others' held rows are never returned (R3). workarea is the subtree read (see the parameter);
-    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in
+    across all workspaces minus its globally denied subtrees, no grant needed (ADR-0025 d13). With
+    own=true and no workspace it lists every workspace the key wrote in. Without own, the listing
+    returns promoted served tips within reader effective access in the workspace's subtree, defaulting
+    to the key's default_workspace (ADR-0039 d4) — a self_signed version only when the scope node is its
+    own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
+    others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
+    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in
     details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
     cursor is bound to the calling key and expires under api.cursor_ttl.
 
     Args:
-        workarea (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -534,7 +534,7 @@ async def asyncio(
     return (
         await asyncio_detailed(
             client=client,
-            workarea=workarea,
+            workspace=workspace,
             claim_key=claim_key,
             state=state,
             kind=kind,

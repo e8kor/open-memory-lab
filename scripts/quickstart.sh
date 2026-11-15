@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Quickstart: turn a freshly booted oml-server into a usable crew.
 #
-# Claims the single-use enrollment token, creates one workarea, and issues two
-# keys on it, naming the root `universe` and the workarea by its name wherever
+# Claims the single-use enrollment token, creates one workspace, and issues two
+# keys on it, naming the root `universe` and the workspace by its name wherever
 # an id would go (ADR-0026 d4, d6): the agent's one key, a writer key with a
-# writer and a reader grant, and a dreamer key (the reviewer, a different
+# writer and a reader grant, and a reviewer key (the reviewer, a different
 # identity). Then checks
 # the agent plugin end to end over /mcp on the agent's one key, through
 # oml_write and oml_read alone: write -> held in its own work -> its held row
-# in its own recall -> approved by the dreamer, as its own work's state says ->
+# in its own recall -> approved by the reviewer, as its own work's state says ->
 # recalled (docs/api/mcp-plugin.md, "Wiring it into your agent"; ADR-0025,
 # ADR-0039 d2). Prints the environment the `oml` Claude Code plugin reads.
 #
@@ -28,13 +28,13 @@
 #                         the container, else OML_URL)
 #   OML_ENROLLMENT_TOKEN  the token the server printed at first boot (default: read
 #                         from `docker compose logs oml-server`)
-#   OML_WORKAREA_NAME     the workarea to create (default: crew)
+#   OML_WORKSPACE_NAME     the workspace to create (default: crew)
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 OML_URL="${OML_URL:-http://127.0.0.1:8080}"
-WORKAREA_NAME="${OML_WORKAREA_NAME:-crew}"
+WORKSPACE_NAME="${OML_WORKSPACE_NAME:-crew}"
 if [ -n "${OML_CLI:-}" ]; then
     read -r -a CLI <<<"$OML_CLI"
     CLI_SERVER="${OML_CLI_URL:-$OML_URL}"
@@ -77,21 +77,21 @@ fi
 # The secret travels on stdin, never in argv (ADR-0039 d10).
 boot="$(printf '%s\n' "$TOKEN" | oml --url "$CLI_SERVER" bootstrap claim quickstart-admin --token-stdin --tenant-name quickstart --principal platform/admin)" \
     || fail "bootstrap claim refused (already claimed? the token is single-use): $boot"
-workarea="$(oml workareas create universe "$WORKAREA_NAME" | jq -r .id)"
+workspace="$(oml workspaces create universe "$WORKSPACE_NAME" | jq -r .id)"
 
-issue() { # key_name role held_by principal grant_role...
-    local key_name="$1" role="$2" held_by="$3" principal="$4" grant issued
+issue() { # key_name role used_by principal grant_role...
+    local key_name="$1" role="$2" used_by="$3" principal="$4" grant issued
     local grants=()
     shift 4
-    for grant in "$@"; do grants+=(--grant "$WORKAREA_NAME:$grant"); done
-    issued="$(oml keys issue "$key_name" --role "$role" --held-by "$held_by" --principal "$principal" \
-        --default-workarea "$WORKAREA_NAME" "${grants[@]}")"
-    [ "$(jq -r .default_workarea_id <<<"$issued")" = "$workarea" ] \
-        || fail "the workarea name $WORKAREA_NAME did not resolve to its id $workarea: $issued"
+    for grant in "$@"; do grants+=(--grant "$WORKSPACE_NAME:$grant"); done
+    issued="$(oml keys issue "$key_name" --role "$role" --used-by "$used_by" --principal "$principal" \
+        --default-workspace "$WORKSPACE_NAME" "${grants[@]}")"
+    [ "$(jq -r .default_workspace_id <<<"$issued")" = "$workspace" ] \
+        || fail "the workspace name $WORKSPACE_NAME did not resolve to its id $workspace: $issued"
     jq -r .value <<<"$issued"
 }
 agent="$(issue quickstart-agent writer agent crew/agent writer reader)"
-dreamer="$(issue quickstart-reviewer dreamer human crew/reviewer dreamer)"
+reviewer="$(issue quickstart-reviewer reviewer person crew/reviewer reviewer)"
 
 rpc() { # id method params
     curl -fsS "$OML_URL/mcp" \
@@ -116,8 +116,8 @@ work="$(call 3 oml_read "$claim")"
 own="$(call 4 oml_read '{"query":"quickstart wrote","include_unreviewed":true}')"
 [ "$(state_of hits "$artifact" "$own")" = "held" ] || fail "oml_read with include_unreviewed did not recall the held write to its author: $own"
 
-oml --url "$CLI_SERVER" --api-key "$dreamer" review next >/dev/null
-oml --url "$CLI_SERVER" --api-key "$dreamer" review approve >/dev/null
+oml --url "$CLI_SERVER" --api-key "$reviewer" review next >/dev/null
+oml --url "$CLI_SERVER" --api-key "$reviewer" review approve >/dev/null
 approved="$(call 5 oml_read '{"state":"promoted"}')"
 [ "$(state_of items "$artifact" "$approved")" = "promoted" ] || fail "oml_read with state promoted does not list the approved write: $approved"
 recalled="$(call 6 oml_read '{"query":"quickstart wrote"}')"
@@ -128,11 +128,11 @@ OML is ready at $OML_URL. The MCP check passed on the agent's one key: write ->
 held in its own work and its own recall -> approved by a different identity, as
 its own work shows -> recalled. Tools served: $tools.
 
-Workarea "$WORKAREA_NAME": $workarea
+Workspace "$WORKSPACE_NAME": $workspace
 
 Each key is shown once; store them now.
   agent   (writes and recalls)  $agent
-  dreamer (a person reviews)    $dreamer
+  reviewer (a person reviews)    $reviewer
 
 Give the agent its one key: in a Claude Code session, install the plugin, and
 the install asks for its two settings, url $OML_URL and api_key the agent key
@@ -140,7 +140,7 @@ above, kept in the system keychain:
   /plugin marketplace add e8kor/open-memory-lab
   /plugin install oml@open-memory-lab
 
-Nothing the agent writes reaches another key until the dreamer key approves it:
-  ${CLI[*]} --url $CLI_SERVER --api-key <dreamer> review next
-  ${CLI[*]} --url $CLI_SERVER --api-key <dreamer> review approve
+Nothing the agent writes reaches another key until the reviewer key approves it:
+  ${CLI[*]} --url $CLI_SERVER --api-key <reviewer> review next
+  ${CLI[*]} --url $CLI_SERVER --api-key <reviewer> review approve
 EOF

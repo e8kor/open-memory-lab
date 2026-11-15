@@ -7,7 +7,7 @@ answers: why simulations are a fenced provenance channel with indelible marks, a
 
 # ADR-0011 — Simulations are a fenced provenance channel with taint propagation
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workarea-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d3, 2026-11-14)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d3, 2026-11-14)
 
 **Release:** not built ([releases](../changelog.md))
 
@@ -44,12 +44,12 @@ decided, not built. *(Amended 2026-11-14: the development self-signing exception
 
 - **d3 — Simulation writes pass the full admission pipeline.** Capture, quarantine, scan,
   non-author review, ratification ([ADR-0012](ADR-0012-admission-and-review.md)) — nothing is
-  waived. Review comes only from dreamer keys in the simulation's audience; a simulation with no
-  dreamer in its audience can promote nothing. Fail closed is the design: an admin cannot use
+  waived. Review comes only from reviewer keys in the simulation's audience; a simulation with no
+  reviewer in its audience can promote nothing. Fail closed is the design: an admin cannot use
   the channel to inject promoted rows on their own authority
   ([ADR-0010](ADR-0010-roles-and-keys.md) d6).
 
-- **d4 — Containment at every read path.** Simulation rows never enter `validated` workareas.
+- **d4 — Containment at every read path.** Simulation rows never enter `frozen` workspaces.
   They are served only to keys in the audience: every read path — FTS, vector, fetch, graph —
   applies the predicate (provenance ≠ simulation OR key ∈ audience). Simulation rows stay out of
   the shared FTS and vector indexes and are indexed per simulation, so a leak would require a
@@ -62,7 +62,7 @@ decided, not built. *(Amended 2026-11-14: the development self-signing exception
   refused (`simulation.tip_refused`).
 
 - **d5 — Taint propagates through lineage.** A claim whose lineage closure touches a simulation
-  row carries that `simulation_id` as sim-derived, is refused promotion into `validated`, never
+  row carries that `simulation_id` as sim-derived, is refused promotion into `frozen`, never
   takes a claim's default served tip (d4), is demoted or re-reviewed when its simulation ends,
   and is listed in the simulations section of every evidence export. The closure is the declared graph, with the limit
   [ADR-0001](ADR-0001-the-constitution.md) d6 states: undeclared derivation is not detectable.
@@ -92,10 +92,10 @@ decided, not built. *(Amended 2026-11-14: the development self-signing exception
   ([retrieval](../architecture/retrieval.md)). d4's tip rule is likewise a schema commitment:
   the served-tip index excludes `provenance: simulation` rows and sim-derived claims, and
   audience overlay tips live beside it, per simulation. The reconciler can check the containment
-  mechanically — a simulation row in a shared index, in a `validated` workarea or in the default
+  mechanically — a simulation row in a shared index, in a `frozen` workspace or in the default
   tip position is a finding, not a debate.
 - The cost of d3 is that simulations are as slow as reality: they consume real review capacity
-  from their audience's dreamers. That is accepted — a simulation that skipped review would not
+  from their audience's reviewers. That is accepted — a simulation that skipped review would not
   exercise the system it claims to test, and comparability with production behaviour is the
   channel's purpose.
 - d5's re-review obligation means ending a large simulation creates a review backlog sized by

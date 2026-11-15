@@ -180,7 +180,7 @@ class Tree:
 
 
 def make_tree(r: random.Random, n: int) -> Tree:
-    """universe -> projects -> leaves; about one workarea per 2,000 memories,
+    """universe -> projects -> leaves; about one workspace per 2,000 memories,
     at least 20 (10k: 20, 100k: 50, 1M: 500)."""
     w = max(20, n // 2000)
     n_proj = max(4, w // 10)
@@ -210,7 +210,7 @@ def readable_sets(r: random.Random, tree: Tree, count: int) -> list[tuple[str, l
 
 
 def rows(n: int, tenant: uuid.UUID, tree: Tree, seed: int, keys: list[uuid.UUID]):
-    """Yield memory rows (dicts) for one tenant. Workarea sizes are skewed:
+    """Yield memory rows (dicts) for one tenant. Workspace sizes are skewed:
     a leaf's weight is drawn from a Pareto, and 3% of rows live on project
     nodes, 1% on universe."""
     seeds = Seeds.load()
@@ -234,7 +234,7 @@ def rows(n: int, tenant: uuid.UUID, tree: Tree, seed: int, keys: list[uuid.UUID]
         yield {
             "id": uuid.UUID(int=r.getrandbits(128), version=4),
             "tenant_id": tenant,
-            "workarea_id": wa,
+            "workspace_id": wa,
             "claim": text,
             "claim_digest": hashlib.sha256(b).digest(),
             "status": status,

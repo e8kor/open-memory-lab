@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The federated recall eval (ADR-0072 d11): boots a lead built from this tree
-# against a throwaway database, makes one committed workarea per corpus topic
+# against a throwaway database, makes one protected workspace per corpus topic
 # under eval-fed, turns federation on, and runs federated.py: scope, wide and
 # the union on the scoped and cross splits, the widen hint, and, given
 # SciFact's source.zip, the skew split. EVAL_PHASE2=1 runs fed2.py's collect
@@ -100,27 +100,27 @@ done
 OML="$BIN/oml"
 "$OML" --url "$URL" --json bootstrap claim eval-admin --token-stdin \
     --tenant-name evalfed --principal eval/admin <<<"$TOKEN" >/dev/null || fail "bootstrap claim"
-"$OML" --json workareas create universe eval-fed >/dev/null || fail "workarea"
+"$OML" --json workspaces create universe eval-fed >/dev/null || fail "workspace"
 TOPICS="$(python3 -c 'import json; print(" ".join(sorted({m["topic"] for m in json.load(open("eval/recall/corpus.json"))["memories"]})))')"
 for topic in $TOPICS; do
-    "$OML" --json workareas create eval-fed "fed-$topic" >/dev/null || fail "workarea fed-$topic"
+    "$OML" --json workspaces create eval-fed "fed-$topic" >/dev/null || fail "workspace fed-$topic"
 done
 (umask 077
- "$OML" --json keys issue fed-writer --role writer --held-by agent --principal crew/writer \
-     --default-workarea eval-fed --grant eval-fed:writer --grant eval-fed:reader \
+ "$OML" --json keys issue fed-writer --role writer --used-by agent --principal crew/writer \
+     --default-workspace eval-fed --grant eval-fed:writer --grant eval-fed:reader \
      | jq -r .value >"$STATE/writer.key"
- "$OML" --json keys issue fed-reviewer --role dreamer --held-by human --principal crew/reviewer \
-     --default-workarea eval-fed --grant eval-fed:dreamer --grant eval-fed:reader \
+ "$OML" --json keys issue fed-reviewer --role reviewer --used-by person --principal crew/reviewer \
+     --default-workspace eval-fed --grant eval-fed:reviewer --grant eval-fed:reader \
      | jq -r .value >"$STATE/reviewer.key"
- "$OML" --json keys issue fed-reader --role reader --held-by agent --principal crew/reader \
-     --default-workarea eval-fed --grant eval-fed:reader \
+ "$OML" --json keys issue fed-reader --role reader --used-by agent --principal crew/reader \
+     --default-workspace eval-fed --grant eval-fed:reader \
      | jq -r .value >"$STATE/reader.key") || fail "keys"
 # Each topic is committed: the admin proposes, the person ratifies (ADR-0009 d3).
 for topic in $TOPICS; do
-    id="$("$OML" --json workareas status propose "fed-$topic" --to committed | jq -r .transition_id)" \
+    id="$("$OML" --json workspaces status propose "fed-$topic" --to protected | jq -r .transition_id)" \
         || fail "propose fed-$topic"
     "$OML" --url "$URL" --api-key "$(cat "$STATE/reviewer.key")" --json \
-        workareas status ratify "fed-$topic" "$id" >/dev/null || fail "ratify fed-$topic"
+        workspaces status ratify "fed-$topic" "$id" >/dev/null || fail "ratify fed-$topic"
 done
 "$OML" --json search federation --enabled on >/dev/null || fail "federation on"
 

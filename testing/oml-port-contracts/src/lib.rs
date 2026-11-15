@@ -29,9 +29,9 @@ use oml_app::domain::oauth::{
 };
 use oml_app::domain::vocab_edges::{ClaimEdge, DerivesFrom, EdgeState, lineage_artifacts};
 use oml_app::domain::{
-    ChainHead, EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role,
-    SignedEnvelope, WorkareaStatus, event_types, key_fingerprint, next_envelope,
-    sha256_digest_string, sign, verify_chain,
+    ChainHead, EventDraft, EventTime, KeySet, MemoryKind, MemoryStatus, Role, SignedEnvelope,
+    UsedBy, WorkspaceStatus, event_types, key_fingerprint, next_envelope, sha256_digest_string,
+    sign, verify_chain,
 };
 use oml_app::doubles::FakeSparseEncoder;
 use oml_app::ed25519_dalek::{SigningKey, Verifier as _};
@@ -53,7 +53,7 @@ use oml_app::types::{
     GrantRecord, GuardrailFields, HeldFilter, HeldRow, KeyAccess, KeyRecord, ListingFilter,
     ListingPosition, ListingScope, MemoryRecord, MintedToken, OAuthClientRecord, RefreshFacts,
     RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
-    TransitionState, UnnamedRows, WorkareaRecord,
+    TransitionState, UnnamedRows, WorkspaceRecord,
 };
 use oml_app::types::{FindingVerdict, FoundBy, VersionFinding};
 use serde_json::{Value, json};
@@ -265,7 +265,7 @@ impl ChainRig {
         receipt
     }
 
-    /// Commit one `workarea.status_proposed` folding `proposal`, its
+    /// Commit one `workspace.status_proposed` folding `proposal`, its
     /// payload the event catalog's.
     pub async fn propose_transition<S: JournalStore>(
         &mut self,
@@ -274,9 +274,9 @@ impl ChainRig {
     ) -> Result<CommitReceipt, StoreError> {
         self.commit(
             store,
-            event_types::WORKAREA_STATUS_PROPOSED,
+            event_types::WORKSPACE_STATUS_PROPOSED,
             json!({
-                "workarea_id": proposal.workarea_id.to_string(),
+                "workspace_id": proposal.workspace_id.to_string(),
                 "from": proposal.from.as_str(),
                 "to": proposal.to.as_str(),
                 "transition_id": proposal.transition_id.to_string(),
@@ -288,65 +288,65 @@ impl ChainRig {
         .await
     }
 
-    /// The `workarea.status_transition` link that ratifies `transition_id`
-    /// on `workarea_id` to `to` by `ratifier_key_id`, for [`Self::commit`]
+    /// The `workspace.status_transition` link that ratifies `transition_id`
+    /// on `workspace_id` to `to` by `ratifier_key_id`, for [`Self::commit`]
     /// or [`Self::commit_chain`].
     #[must_use]
     pub fn ratification(
         transition_id: Uuid,
-        workarea_id: Uuid,
-        to: WorkareaStatus,
+        workspace_id: Uuid,
+        to: WorkspaceStatus,
         ratifier_key_id: Uuid,
     ) -> (&'static str, Value, MetadataFold) {
         (
-            event_types::WORKAREA_STATUS_TRANSITION,
+            event_types::WORKSPACE_STATUS_TRANSITION,
             json!({
-                "workarea_id": workarea_id.to_string(),
+                "workspace_id": workspace_id.to_string(),
                 "to": to.as_str(),
                 "transition_id": transition_id.to_string(),
                 "ratified_by_key_id": ratifier_key_id.to_string(),
             }),
             MetadataFold::TransitionRatified {
                 transition_id,
-                workarea_id,
+                workspace_id,
                 to,
                 ratifier_key_id,
             },
         )
     }
 
-    /// Commit one `workarea.status_transition` ratifying `transition_id`.
+    /// Commit one `workspace.status_transition` ratifying `transition_id`.
     pub async fn ratify_transition<S: JournalStore>(
         &mut self,
         store: &S,
         transition_id: Uuid,
-        workarea_id: Uuid,
-        to: WorkareaStatus,
+        workspace_id: Uuid,
+        to: WorkspaceStatus,
         ratifier_key_id: Uuid,
     ) -> Result<CommitReceipt, StoreError> {
         let (event_type, payload, fold) =
-            Self::ratification(transition_id, workarea_id, to, ratifier_key_id);
+            Self::ratification(transition_id, workspace_id, to, ratifier_key_id);
         self.commit(store, event_type, payload, fold, None).await
     }
 
-    /// Commit one `workarea.create` folding `workarea`.
-    pub async fn create_workarea<S: JournalStore>(
+    /// Commit one `workspace.create` folding `workspace`.
+    pub async fn create_workspace<S: JournalStore>(
         &mut self,
         store: &S,
-        workarea: WorkareaRecord,
+        workspace: WorkspaceRecord,
     ) -> CommitReceipt {
         self.commit(
             store,
-            event_types::WORKAREA_CREATE,
+            event_types::WORKSPACE_CREATE,
             json!({
-                "workarea_id": workarea.workarea_id.to_string(),
-                "name": workarea.name.as_str(),
+                "workspace_id": workspace.workspace_id.to_string(),
+                "name": workspace.name.as_str(),
             }),
-            MetadataFold::WorkareaCreated(workarea),
+            MetadataFold::WorkspaceCreated(workspace),
             None,
         )
         .await
-        .expect("workarea commit")
+        .expect("workspace commit")
     }
 
     /// Commit one `key.issued` folding `key`.
@@ -501,7 +501,7 @@ impl ChainRig {
 #[must_use]
 pub fn held_memory(
     tenant_id: Uuid,
-    workarea_id: Uuid,
+    workspace_id: Uuid,
     memory_id: Uuid,
     author_principal: &str,
     author_key_id: Uuid,
@@ -510,7 +510,7 @@ pub fn held_memory(
     MemoryRecord {
         memory_id,
         tenant_id,
-        workarea_id,
+        workspace_id,
         claim_key: format!("claim-{}", memory_id.simple()),
         version: 1,
         kind: MemoryKind::Memory,
@@ -545,7 +545,7 @@ pub fn held_memory(
 #[must_use]
 pub fn fixture_approval() -> Box<Approval> {
     Box::new(Approval {
-        held_by: HeldBy::Human,
+        used_by: UsedBy::Person,
         same_user: Some(false),
         at: EventTime::parse("2026-10-29T14:00:00.000000Z").expect("fixture time"),
     })
@@ -639,25 +639,25 @@ pub fn name(value: &str) -> Name {
     Name::parse(value).expect("a fixture name the creation grammar admits")
 }
 
-/// A fixture workarea node with no crew, at the status `workarea.create`
-/// stores: `committed` for a root, `development` for every other node.
+/// A fixture workspace node with no crew, at the status `workspace.create`
+/// stores: `protected` for a root, `development` for every other node.
 #[must_use]
-pub fn workarea_record(
+pub fn workspace_record(
     tenant_id: Uuid,
-    workarea_id: Uuid,
+    workspace_id: Uuid,
     parent_id: Option<Uuid>,
-    workarea_name: &str,
-) -> WorkareaRecord {
-    WorkareaRecord {
+    workspace_name: &str,
+) -> WorkspaceRecord {
+    WorkspaceRecord {
         in_progress: false,
-        workarea_id,
+        workspace_id,
         tenant_id,
         parent_id,
-        name: name(workarea_name),
+        name: name(workspace_name),
         status: if parent_id.is_none() {
-            WorkareaStatus::Committed
+            WorkspaceStatus::Protected
         } else {
-            WorkareaStatus::Development
+            WorkspaceStatus::Development
         },
         crew: None,
         crew_id: None,
@@ -688,8 +688,8 @@ pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<U
         tenant_id,
         role,
         principal: format!("fixture/{key_id}"),
-        held_by: HeldBy::Agent,
-        default_workarea: None,
+        used_by: UsedBy::Agent,
+        default_workspace: None,
         issued_by,
         credential: Credential::Bearer,
         key_hash: Some(sha256_digest_string(key_id.as_bytes())),
@@ -811,7 +811,7 @@ pub async fn journal_events_range_pages<S: JournalStore>(store: &S) {
 /// A tail scan reads at most `limit` raw events from `from_seq`, seq
 /// ascending, joins each event that names a claim version — the version a
 /// submission or promotion names, the successor a supersession ratifies —
-/// to that row's workarea and authoring key as data, and reads `head_seq`
+/// to that row's workspace and authoring key as data, and reads `head_seq`
 /// with it (http-api.md events tail; ADR-0025 d15).
 pub async fn a_tail_scan_joins_each_claim_subject_to_its_row_and_reads_the_head_with_it<
     S: JournalStore,
@@ -828,13 +828,13 @@ pub async fn a_tail_scan_joins_each_claim_subject_to_its_row_and_reads_the_head_
     assert_eq!(unknown.head_seq, 0, "a tenant with no chain");
 
     rig.seed_chain(store, 0).await; // seq 1
-    let workarea = Uuid::from_u128(0x7001);
-    rig.create_workarea(store, workarea_record(tenant, workarea, None, "universe"))
+    let workspace = Uuid::from_u128(0x7001);
+    rig.create_workspace(store, workspace_record(tenant, workspace, None, "universe"))
         .await; // seq 2
     let author = Uuid::from_u128(0x7002);
     let first = held_memory(
         tenant,
-        workarea,
+        workspace,
         Uuid::from_u128(0x7003),
         "wanda",
         author,
@@ -851,7 +851,7 @@ pub async fn a_tail_scan_joins_each_claim_subject_to_its_row_and_reads_the_head_
     let row = |m: &MemoryRecord| {
         Some(SubjectRow {
             artifact_id: m.memory_id,
-            workarea_id: m.workarea_id,
+            workspace_id: m.workspace_id,
             author_key_id: m.author_key_id,
         })
     };
@@ -903,11 +903,11 @@ pub async fn a_tail_scan_joins_each_claim_subject_to_its_row_and_reads_the_head_
 pub async fn journal_memory_fold_and_lookup<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(4);
     rig.seed_chain(store, 0).await;
-    let workarea = Uuid::from_u128(0xB1);
+    let workspace = Uuid::from_u128(0xB1);
     let memory_id = Uuid::from_u128(0xC1);
     let memory = held_memory(
         rig.tenant_id,
-        workarea,
+        workspace,
         memory_id,
         "wanda",
         Uuid::from_u128(0xD1),
@@ -1118,12 +1118,12 @@ fn hit_ids(hits: &[Candidate]) -> Vec<Uuid> {
 }
 
 /// The hit kinds recall admits by default (retrieval.md: vocabulary kinds
-/// only by a workarea's opt-in, which is unbuilt).
+/// only by a workspace's opt-in, which is unbuilt).
 const HIT_KINDS: [MemoryKind; 2] = [MemoryKind::Memory, MemoryKind::DerivedFact];
 
 /// Recall serves promoted served tips only — R3 at the store (retrieval.md)
 /// — never a held row or a replaced version, searches exactly the readable
-/// workarea set it is handed, an empty set included, admits exactly the
+/// workspace set it is handed, an empty set included, admits exactly the
 /// kinds it is handed, and honours the `k` bound (ADR-0025 d1: no
 /// tenant-wide fallback; d8).
 pub async fn recall_serves_promoted_tips_only_within_the_readable_set<S: JournalStore>(store: &S) {
@@ -1179,7 +1179,7 @@ pub async fn recall_serves_promoted_tips_only_within_the_readable_set<S: Journal
         recall(vec![Uuid::from_u128(0xBF)], HIT_KINDS.to_vec(), 10)
             .await
             .is_empty(),
-        "the workarea set holds"
+        "the workspace set holds"
     );
     assert!(
         recall(Vec::new(), HIT_KINDS.to_vec(), 10).await.is_empty(),
@@ -2158,7 +2158,7 @@ pub async fn a_placeless_finding_stands_for_one_place_of_its_rule<S: JournalStor
 }
 
 /// The review queue serves each item to one reviewer, only from the
-/// workarea set it is handed — the reviewer's dreamer effective access
+/// workspace set it is handed — the reviewer's reviewer effective access
 /// (ADR-0025 d1) — skips rows the reviewer's lineage excludes, and
 /// re-serves a reviewer its own claim.
 pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
@@ -2170,7 +2170,7 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
     let m2 = Uuid::from_u128(0xC5);
     let m3 = Uuid::from_u128(0xC6);
     let author1_key = Uuid::from_u128(0xD2);
-    for (id, workarea, author, key) in [
+    for (id, workspace, author, key) in [
         (m1, wa, "alice", author1_key),
         (m2, wa, "bob", Uuid::from_u128(0xD3)),
         (m3, elsewhere, "bob", Uuid::from_u128(0xD3)),
@@ -2180,7 +2180,7 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
-                memory: held_memory(rig.tenant_id, workarea, id, author, key, "body"),
+                memory: held_memory(rig.tenant_id, workspace, id, author, key, "body"),
                 enqueue: true,
                 findings: Box::default(),
             },
@@ -2190,12 +2190,12 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
         .expect("commit");
     }
 
-    // A reviewer with no dreamer node is served nothing, never the tenant.
+    // A reviewer with no reviewer node is served nothing, never the tenant.
     let none = store
         .review_claim_next(rig.tenant_id, "erin", Uuid::from_u128(0xE4), &[])
         .await
         .expect("claim");
-    assert!(none.is_none(), "an empty workarea set serves nothing");
+    assert!(none.is_none(), "an empty workspace set serves nothing");
     // alice (in m1's lineage) is served m2, never her own row.
     let alice_key = Uuid::from_u128(0xE1);
     let served = store
@@ -2277,8 +2277,8 @@ pub async fn journal_review_held_laws<S: JournalStore>(store: &S) {
         ),
         (Uuid::from_u128(0xC6), wa, "loader", loader, "adr-0004-d1"),
     ];
-    for (id, workarea, author, key, claim_key) in rows {
-        let mut memory = held_memory(rig.tenant_id, workarea, id, author, key, "body");
+    for (id, workspace, author, key, claim_key) in rows {
+        let mut memory = held_memory(rig.tenant_id, workspace, id, author, key, "body");
         memory.claim_key = claim_key.to_owned();
         rig.commit(
             store,
@@ -2409,8 +2409,8 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
         tenant_id: rig.tenant_id,
         role: oml_app::domain::Role::Writer,
         principal: "wanda".to_owned(),
-        held_by: oml_app::domain::HeldBy::Agent,
-        default_workarea: None,
+        used_by: oml_app::domain::UsedBy::Agent,
+        default_workspace: None,
         issued_by: None,
         credential: Credential::Bearer,
         key_hash: Some("sha256:feed".to_owned()),
@@ -2699,7 +2699,7 @@ pub async fn journal_idempotency_roundtrip<S: JournalStore>(store: &S) {
     let scope = IdempotencyScope {
         tenant_id: rig.tenant_id,
         key_id: Uuid::from_u128(0xD9),
-        workarea_id: Uuid::from_u128(0xB9),
+        workspace_id: Uuid::from_u128(0xB9),
         idem_key: "idem-1".to_owned(),
     };
     assert_eq!(
@@ -2748,7 +2748,7 @@ pub async fn a_second_record_under_one_idempotency_scope_commits_nothing<S: Jour
     let scope = IdempotencyScope {
         tenant_id: rig.tenant_id,
         key_id: Uuid::from_u128(0xD26),
-        workarea_id: Uuid::nil(),
+        workspace_id: Uuid::nil(),
         idem_key: "sup-1".to_owned(),
     };
     let put = |memory: &MemoryRecord| IdempotencyPut {
@@ -2819,12 +2819,12 @@ pub async fn a_second_record_under_one_idempotency_scope_commits_nothing<S: Jour
 }
 
 /// An act's claim scope for the claim laws: a key's web console act, no
-/// workarea, as `App::act_scope` builds it (ADR-0070 d5).
+/// workspace, as `App::act_scope` builds it (ADR-0070 d5).
 fn act_claim_scope(tenant_id: Uuid, idem_key: &str) -> IdempotencyScope {
     IdempotencyScope {
         tenant_id,
         key_id: Uuid::from_u128(0xD233),
-        workarea_id: Uuid::nil(),
+        workspace_id: Uuid::nil(),
         idem_key: format!("keys.issue:{idem_key}"),
     }
 }
@@ -3028,13 +3028,13 @@ pub async fn a_claim_left_unsettled_holds_its_scope_and_only_a_release_frees_it<
 }
 
 // ---------------------------------------------------------------------------
-// Grants, denials and the workarea tree (ADR-0025 d1, d2, d14)
+// Grants, denials and the workspace tree (ADR-0025 d1, d2, d14)
 // ---------------------------------------------------------------------------
 
 /// Grant and denial rows fold in with their events and read back whole
 /// through `key_access`, in epoch order, deny lists in their given order,
 /// and the key row carries its issuer; a key the tenant does not hold has no
-/// access state (postgres-schema.md grants, key_denials; workareas.md).
+/// access state (postgres-schema.md grants, key_denials; workspaces.md).
 pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S: JournalStore>(
     store: &S,
 ) {
@@ -3047,13 +3047,13 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
     let masked_too = Uuid::from_u128(0xB0E);
     let crew_b = Uuid::from_u128(0xB13);
     for w in [
-        workarea_record(t, universe, None, "universe"),
-        workarea_record(t, crew_a, Some(universe), "crew-a"),
-        workarea_record(t, masked, Some(crew_a), "masked"),
-        workarea_record(t, masked_too, Some(crew_a), "masked-too"),
-        workarea_record(t, crew_b, Some(universe), "crew-b"),
+        workspace_record(t, universe, None, "universe"),
+        workspace_record(t, crew_a, Some(universe), "crew-a"),
+        workspace_record(t, masked, Some(crew_a), "masked"),
+        workspace_record(t, masked_too, Some(crew_a), "masked-too"),
+        workspace_record(t, crew_b, Some(universe), "crew-b"),
     ] {
-        rig.create_workarea(store, w).await;
+        rig.create_workspace(store, w).await;
     }
     let admin = key_record(t, Uuid::from_u128(0xD10), Role::Admin, None);
     let agent = key_record(t, Uuid::from_u128(0xD11), Role::Writer, Some(admin.key_id));
@@ -3155,13 +3155,13 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
 
 /// A grant's and a denial's epoch, and a key's `issued_seq`, are the journal
 /// seq of the event that wrote the row — never a count of grants, never 1
-/// (workareas.md permission epoch; event-catalog.md `grant.issued`).
+/// (workspaces.md permission epoch; event-catalog.md `grant.issued`).
 pub async fn a_grant_epoch_is_its_event_seq<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(11);
     rig.seed_chain(store, 2).await; // seq 1..=3
     let t = rig.tenant_id;
     let node = Uuid::from_u128(0xB20);
-    rig.create_workarea(store, workarea_record(t, node, None, "universe"))
+    rig.create_workspace(store, workspace_record(t, node, None, "universe"))
         .await; // seq 4
     let key = key_record(t, Uuid::from_u128(0xD20), Role::Writer, None);
     let issued = rig.issue_key(store, key.clone()).await; // seq 5
@@ -3218,7 +3218,7 @@ pub async fn a_grant_epoch_is_its_event_seq<S: JournalStore>(store: &S) {
 
 /// A grant or denial the schema refuses — an unknown key or node, a key or
 /// node another tenant holds, or a grant role outside reader, writer and
-/// dreamer — fails its commit whole: no event, no row (postgres-schema.md
+/// reviewer — fails its commit whole: no event, no row (postgres-schema.md
 /// grants CHECK and tenant-scoped foreign keys; ADR-0002 one-transaction
 /// commit). Each case carries its own id, so one wrongly accepted row cannot
 /// make a later case fail on a duplicate id instead.
@@ -3227,7 +3227,7 @@ pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStor
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
     let node = Uuid::from_u128(0xB30);
-    rig.create_workarea(store, workarea_record(t, node, None, "universe"))
+    rig.create_workspace(store, workspace_record(t, node, None, "universe"))
         .await;
     let key = key_record(t, Uuid::from_u128(0xD30), Role::Writer, None);
     rig.issue_key(store, key.clone()).await;
@@ -3235,9 +3235,9 @@ pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStor
     other.seed_chain(store, 0).await;
     let foreign_node = Uuid::from_u128(0xB31);
     other
-        .create_workarea(
+        .create_workspace(
             store,
-            workarea_record(other.tenant_id, foreign_node, None, "universe"),
+            workspace_record(other.tenant_id, foreign_node, None, "universe"),
         )
         .await;
     let foreign_key = key_record(other.tenant_id, Uuid::from_u128(0xD31), Role::Writer, None);
@@ -3346,7 +3346,7 @@ pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStor
 /// the permission epoch counts, while the key's other denials stay in force.
 /// A lift of a denial the tenant does not hold, of one held on another key,
 /// or of one already lifted is refused and commits nothing
-/// (postgres-schema.md `key_denials`; workareas.md permission epoch;
+/// (postgres-schema.md `key_denials`; workspaces.md permission epoch;
 /// event-catalog.md `key.denial_lifted`; ADR-0026 d11, rule 5).
 pub async fn a_lifted_denial_masks_nothing_and_its_lift_moves_the_permission_epoch<
     S: JournalStore,
@@ -3357,9 +3357,9 @@ pub async fn a_lifted_denial_masks_nothing_and_its_lift_moves_the_permission_epo
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
     let (universe, team) = (Uuid::from_u128(0xB460), Uuid::from_u128(0xB461));
-    rig.create_workarea(store, workarea_record(t, universe, None, "universe"))
+    rig.create_workspace(store, workspace_record(t, universe, None, "universe"))
         .await;
-    rig.create_workarea(store, workarea_record(t, team, Some(universe), "team"))
+    rig.create_workspace(store, workspace_record(t, team, Some(universe), "team"))
         .await;
     let key = key_record(t, Uuid::from_u128(0xD460), Role::Writer, None);
     let other_key = key_record(t, Uuid::from_u128(0xD461), Role::Writer, None);
@@ -3444,38 +3444,43 @@ pub async fn a_lifted_denial_masks_nothing_and_its_lift_moves_the_permission_epo
 
 /// The ancestry of a node is the node and each parent in turn, up to the
 /// root, whatever order the ids run in; an unknown node has none
-/// (workareas.md effective access, one ancestry walk per request).
-pub async fn workarea_ancestry_walks_parent_ids_to_the_root<S: JournalStore>(store: &S) {
+/// (workspaces.md effective access, one ancestry walk per request).
+pub async fn workspace_ancestry_walks_parent_ids_to_the_root<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(13);
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
-    let universe = workarea_record(t, Uuid::from_u128(0xB49), None, "universe");
-    let research = workarea_record(
+    let universe = workspace_record(t, Uuid::from_u128(0xB49), None, "universe");
+    let research = workspace_record(
         t,
         Uuid::from_u128(0xB41),
-        Some(universe.workarea_id),
+        Some(universe.workspace_id),
         "research",
     );
-    let experiments = workarea_record(
+    let experiments = workspace_record(
         t,
         Uuid::from_u128(0xB45),
-        Some(research.workarea_id),
+        Some(research.workspace_id),
         "experiments",
     );
-    let run = workarea_record(
+    let run = workspace_record(
         t,
         Uuid::from_u128(0xB42),
-        Some(experiments.workarea_id),
+        Some(experiments.workspace_id),
         "run-7",
     );
-    let sibling = workarea_record(t, Uuid::from_u128(0xB40), Some(universe.workarea_id), "ops");
+    let sibling = workspace_record(
+        t,
+        Uuid::from_u128(0xB40),
+        Some(universe.workspace_id),
+        "ops",
+    );
     for w in [&universe, &research, &experiments, &run, &sibling] {
-        rig.create_workarea(store, w.clone()).await;
+        rig.create_workspace(store, w.clone()).await;
     }
 
     assert_eq!(
         store
-            .workarea_ancestry(t, run.workarea_id)
+            .workspace_ancestry(t, run.workspace_id)
             .await
             .expect("walk"),
         Some(vec![
@@ -3488,7 +3493,7 @@ pub async fn workarea_ancestry_walks_parent_ids_to_the_root<S: JournalStore>(sto
     );
     assert_eq!(
         store
-            .workarea_ancestry(t, universe.workarea_id)
+            .workspace_ancestry(t, universe.workspace_id)
             .await
             .expect("walk"),
         Some(vec![universe.clone()]),
@@ -3496,7 +3501,7 @@ pub async fn workarea_ancestry_walks_parent_ids_to_the_root<S: JournalStore>(sto
     );
     assert_eq!(
         store
-            .workarea_ancestry(t, Uuid::from_u128(0xBFF))
+            .workspace_ancestry(t, Uuid::from_u128(0xBFF))
             .await
             .expect("walk"),
         None,
@@ -3504,14 +3509,14 @@ pub async fn workarea_ancestry_walks_parent_ids_to_the_root<S: JournalStore>(sto
     );
     assert_eq!(
         store
-            .workarea(t, experiments.workarea_id)
+            .workspace(t, experiments.workspace_id)
             .await
             .expect("read"),
         Some(experiments)
     );
     assert_eq!(
         store
-            .workarea(t, Uuid::from_u128(0xBFF))
+            .workspace(t, Uuid::from_u128(0xBFF))
             .await
             .expect("read"),
         None,
@@ -3521,7 +3526,7 @@ pub async fn workarea_ancestry_walks_parent_ids_to_the_root<S: JournalStore>(sto
     other.seed_chain(store, 0).await;
     assert_eq!(
         store
-            .workarea_ancestry(other.tenant_id, run.workarea_id)
+            .workspace_ancestry(other.tenant_id, run.workspace_id)
             .await
             .expect("walk"),
         None,
@@ -3529,13 +3534,13 @@ pub async fn workarea_ancestry_walks_parent_ids_to_the_root<S: JournalStore>(sto
     );
 }
 
-/// A workarea whose parent is another tenant's node is refused at its
+/// A workspace whose parent is another tenant's node is refused at its
 /// commit as one whose parent is no node at all: no event, no row, so no
 /// ancestry can leave its tenant. PostgreSQL runs a foreign-key check
 /// without row-level security, so the parent reference carries the
-/// tenant, `(tenant_id, parent_id)` (postgres-schema.md `workareas`;
+/// tenant, `(tenant_id, parent_id)` (postgres-schema.md `workspaces`;
 /// ADR-0034 d12).
-pub async fn a_workarea_under_another_tenants_node_is_refused_as_one_under_no_node<
+pub async fn a_workspace_under_another_tenants_node_is_refused_as_one_under_no_node<
     S: JournalStore,
 >(
     store: &S,
@@ -3543,17 +3548,17 @@ pub async fn a_workarea_under_another_tenants_node_is_refused_as_one_under_no_no
     let mut home = ChainRig::new(18);
     home.seed_chain(store, 0).await;
     let foreign_root = Uuid::from_u128(0xB89);
-    home.create_workarea(
+    home.create_workspace(
         store,
-        workarea_record(home.tenant_id, foreign_root, None, "universe"),
+        workspace_record(home.tenant_id, foreign_root, None, "universe"),
     )
     .await;
     let mut rig = ChainRig::new(19);
     rig.seed_chain(store, 0).await;
     let root = Uuid::from_u128(0xB80);
-    rig.create_workarea(
+    rig.create_workspace(
         store,
-        workarea_record(rig.tenant_id, root, None, "universe"),
+        workspace_record(rig.tenant_id, root, None, "universe"),
     )
     .await;
     let head = store.chain_head(rig.tenant_id).await.expect("head");
@@ -3566,9 +3571,9 @@ pub async fn a_workarea_under_another_tenants_node_is_refused_as_one_under_no_no
         let refused = rig
             .commit(
                 store,
-                event_types::WORKAREA_CREATE,
-                json!({ "workarea_id": stray.to_string(), "name": "stray" }),
-                MetadataFold::WorkareaCreated(workarea_record(
+                event_types::WORKSPACE_CREATE,
+                json!({ "workspace_id": stray.to_string(), "name": "stray" }),
+                MetadataFold::WorkspaceCreated(workspace_record(
                     rig.tenant_id,
                     stray,
                     Some(parent),
@@ -3579,12 +3584,12 @@ pub async fn a_workarea_under_another_tenants_node_is_refused_as_one_under_no_no
             .await;
         assert!(
             matches!(refused, Err(StoreError::Backend(_))),
-            "a workarea under {case} is refused, got {refused:?}"
+            "a workspace under {case} is refused, got {refused:?}"
         );
         assert_eq!(
-            store.workarea(rig.tenant_id, stray).await.expect("read"),
+            store.workspace(rig.tenant_id, stray).await.expect("read"),
             None,
-            "a workarea under {case} writes no row"
+            "a workspace under {case} writes no row"
         );
     }
     assert_eq!(
@@ -3598,7 +3603,7 @@ pub async fn a_workarea_under_another_tenants_node_is_refused_as_one_under_no_no
 /// the node first and then each depth in id order, so a parent always
 /// precedes its children; an unknown node's subtree is empty
 /// (ADR-0025 d1: recall searches subtree(scope) ∩ the reader set).
-pub async fn workarea_subtree_lists_every_descendant_once<S: JournalStore>(store: &S) {
+pub async fn workspace_subtree_lists_every_descendant_once<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(15);
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
@@ -3607,25 +3612,25 @@ pub async fn workarea_subtree_lists_every_descendant_once<S: JournalStore>(store
     //              │        └─ a2(3)
     //              └─ b(2) ─── b1(4)
     let tree = [
-        workarea_record(t, id(9), None, "universe"),
-        workarea_record(t, id(1), Some(id(9)), "a"),
-        workarea_record(t, id(6), Some(id(1)), "a1"),
-        workarea_record(t, id(0), Some(id(6)), "a1x"),
-        workarea_record(t, id(3), Some(id(1)), "a2"),
-        workarea_record(t, id(2), Some(id(9)), "b"),
-        workarea_record(t, id(4), Some(id(2)), "b1"),
+        workspace_record(t, id(9), None, "universe"),
+        workspace_record(t, id(1), Some(id(9)), "a"),
+        workspace_record(t, id(6), Some(id(1)), "a1"),
+        workspace_record(t, id(0), Some(id(6)), "a1x"),
+        workspace_record(t, id(3), Some(id(1)), "a2"),
+        workspace_record(t, id(2), Some(id(9)), "b"),
+        workspace_record(t, id(4), Some(id(2)), "b1"),
     ];
     for w in &tree {
-        rig.create_workarea(store, w.clone()).await;
+        rig.create_workspace(store, w.clone()).await;
     }
-    let ids = |rows: Vec<WorkareaRecord>| rows.iter().map(|w| w.workarea_id).collect::<Vec<_>>();
+    let ids = |rows: Vec<WorkspaceRecord>| rows.iter().map(|w| w.workspace_id).collect::<Vec<_>>();
 
     assert_eq!(
-        ids(store.workarea_subtree(t, id(1)).await.expect("subtree")),
+        ids(store.workspace_subtree(t, id(1)).await.expect("subtree")),
         vec![id(1), id(3), id(6), id(0)],
         "a's subtree: a, then depth 1 by id, then depth 2 — no sibling, no ancestor"
     );
-    let whole = store.workarea_subtree(t, id(9)).await.expect("subtree");
+    let whole = store.workspace_subtree(t, id(9)).await.expect("subtree");
     assert_eq!(
         ids(whole.clone()),
         vec![id(9), id(1), id(2), id(3), id(4), id(6), id(0)],
@@ -3635,13 +3640,13 @@ pub async fn workarea_subtree_lists_every_descendant_once<S: JournalStore>(store
         assert!(tree.contains(row), "rows read back whole: {row:?}");
     }
     assert_eq!(
-        ids(store.workarea_subtree(t, id(0)).await.expect("subtree")),
+        ids(store.workspace_subtree(t, id(0)).await.expect("subtree")),
         vec![id(0)],
         "a leaf's subtree is itself"
     );
     assert!(
         store
-            .workarea_subtree(t, Uuid::from_u128(0xBFF))
+            .workspace_subtree(t, Uuid::from_u128(0xBFF))
             .await
             .expect("subtree")
             .is_empty(),
@@ -3650,31 +3655,33 @@ pub async fn workarea_subtree_lists_every_descendant_once<S: JournalStore>(store
 }
 
 /// The children of a node are its immediate children only, ordered by name
-/// in byte order — the order the workarea read serves them in (ADR-0025
-/// d14; openapi.yaml `WorkareaView.children`). Names are unique in the
+/// in byte order — the order the workspace read serves them in (ADR-0025
+/// d14; openapi.yaml `WorkspaceView.children`). Names are unique in the
 /// tenant, so no two children tie (ADR-0026 d1).
-pub async fn workarea_children_are_immediate_and_ordered_by_name_bytes<S: JournalStore>(store: &S) {
+pub async fn workspace_children_are_immediate_and_ordered_by_name_bytes<S: JournalStore>(
+    store: &S,
+) {
     let mut rig = ChainRig::new(16);
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
     let parent = Uuid::from_u128(0xB69);
     let id = |n: u128| Uuid::from_u128(0xB60 + n);
-    rig.create_workarea(store, workarea_record(t, parent, None, "universe"))
+    rig.create_workspace(store, workspace_record(t, parent, None, "universe"))
         .await;
     // Byte order puts "a-z" before "ab", where a linguistic collation that
     // skips the hyphen would put it after; the ids run against the names.
     for (n, name) in [(4, "a-z"), (3, "ab"), (2, "beta"), (1, "q9"), (0, "qa")] {
-        rig.create_workarea(store, workarea_record(t, id(n), Some(parent), name))
+        rig.create_workspace(store, workspace_record(t, id(n), Some(parent), name))
             .await;
     }
-    rig.create_workarea(store, workarea_record(t, id(5), Some(id(3)), "aaa"))
+    rig.create_workspace(store, workspace_record(t, id(5), Some(id(3)), "aaa"))
         .await;
 
-    let children = store.workarea_children(t, parent).await.expect("children");
+    let children = store.workspace_children(t, parent).await.expect("children");
     assert_eq!(
         children
             .iter()
-            .map(|w| (w.name.as_str(), w.workarea_id))
+            .map(|w| (w.name.as_str(), w.workspace_id))
             .collect::<Vec<_>>(),
         vec![
             ("a-z", id(4)),
@@ -3687,7 +3694,7 @@ pub async fn workarea_children_are_immediate_and_ordered_by_name_bytes<S: Journa
     );
     assert!(
         store
-            .workarea_children(t, id(2))
+            .workspace_children(t, id(2))
             .await
             .expect("children")
             .is_empty(),
@@ -3695,7 +3702,7 @@ pub async fn workarea_children_are_immediate_and_ordered_by_name_bytes<S: Journa
     );
     assert!(
         store
-            .workarea_children(t, Uuid::from_u128(0xBFF))
+            .workspace_children(t, Uuid::from_u128(0xBFF))
             .await
             .expect("children")
             .is_empty(),
@@ -3704,51 +3711,51 @@ pub async fn workarea_children_are_immediate_and_ordered_by_name_bytes<S: Journa
 }
 
 /// The status is one stored column, not a value derived from the node's
-/// place in the tree: every workarea read serves the status its row
-/// stores, a child stored `committed` or `validated` among them
-/// (ADR-0009 d1; postgres-schema.md `workareas.status`).
-pub async fn a_workarea_read_serves_the_status_its_row_stores<S: JournalStore>(store: &S) {
+/// place in the tree: every workspace read serves the status its row
+/// stores, a child stored `protected` or `frozen` among them
+/// (ADR-0009 d1; postgres-schema.md `workspaces.status`).
+pub async fn a_workspace_read_serves_the_status_its_row_stores<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(47);
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
-    let universe = workarea_record(t, Uuid::from_u128(0xB410), None, "universe");
-    let committed = WorkareaRecord {
-        status: WorkareaStatus::Committed,
-        ..workarea_record(
+    let universe = workspace_record(t, Uuid::from_u128(0xB410), None, "universe");
+    let committed = WorkspaceRecord {
+        status: WorkspaceStatus::Protected,
+        ..workspace_record(
             t,
             Uuid::from_u128(0xB411),
-            Some(universe.workarea_id),
+            Some(universe.workspace_id),
             "procurement",
         )
     };
-    let validated = WorkareaRecord {
-        status: WorkareaStatus::Validated,
-        ..workarea_record(
+    let validated = WorkspaceRecord {
+        status: WorkspaceStatus::Frozen,
+        ..workspace_record(
             t,
             Uuid::from_u128(0xB412),
-            Some(committed.workarea_id),
+            Some(committed.workspace_id),
             "metals",
         )
     };
-    let development = workarea_record(
+    let development = workspace_record(
         t,
         Uuid::from_u128(0xB413),
-        Some(committed.workarea_id),
+        Some(committed.workspace_id),
         "redline",
     );
     for w in [&universe, &committed, &validated, &development] {
-        rig.create_workarea(store, w.clone()).await;
+        rig.create_workspace(store, w.clone()).await;
     }
-    let statuses = |rows: Vec<WorkareaRecord>| -> Vec<(Uuid, WorkareaStatus)> {
+    let statuses = |rows: Vec<WorkspaceRecord>| -> Vec<(Uuid, WorkspaceStatus)> {
         rows.into_iter()
-            .map(|w| (w.workarea_id, w.status))
+            .map(|w| (w.workspace_id, w.status))
             .collect()
     };
 
     for w in [&universe, &committed, &validated, &development] {
         assert_eq!(
             store
-                .workarea(t, w.workarea_id)
+                .workspace(t, w.workspace_id)
                 .await
                 .expect("read")
                 .as_ref(),
@@ -3760,48 +3767,48 @@ pub async fn a_workarea_read_serves_the_status_its_row_stores<S: JournalStore>(s
     assert_eq!(
         statuses(
             store
-                .workarea_ancestry(t, validated.workarea_id)
+                .workspace_ancestry(t, validated.workspace_id)
                 .await
                 .expect("ancestry")
                 .expect("held")
         ),
         vec![
-            (validated.workarea_id, WorkareaStatus::Validated),
-            (committed.workarea_id, WorkareaStatus::Committed),
-            (universe.workarea_id, WorkareaStatus::Committed),
+            (validated.workspace_id, WorkspaceStatus::Frozen),
+            (committed.workspace_id, WorkspaceStatus::Protected),
+            (universe.workspace_id, WorkspaceStatus::Protected),
         ]
     );
     assert_eq!(
         statuses(
             store
-                .workarea_children(t, committed.workarea_id)
+                .workspace_children(t, committed.workspace_id)
                 .await
                 .expect("children")
         ),
         vec![
-            (validated.workarea_id, WorkareaStatus::Validated),
-            (development.workarea_id, WorkareaStatus::Development),
+            (validated.workspace_id, WorkspaceStatus::Frozen),
+            (development.workspace_id, WorkspaceStatus::Development),
         ]
     );
     assert_eq!(
         statuses(
             store
-                .workarea_subtree(t, committed.workarea_id)
+                .workspace_subtree(t, committed.workspace_id)
                 .await
                 .expect("subtree")
         ),
         vec![
-            (committed.workarea_id, WorkareaStatus::Committed),
-            (validated.workarea_id, WorkareaStatus::Validated),
-            (development.workarea_id, WorkareaStatus::Development),
+            (committed.workspace_id, WorkspaceStatus::Protected),
+            (validated.workspace_id, WorkspaceStatus::Frozen),
+            (development.workspace_id, WorkspaceStatus::Development),
         ]
     );
 }
 
-/// The universe root is permanently `committed`: a root created at any
+/// The universe root is permanently `protected`: a root created at any
 /// other status is refused at its commit, no event and no row, so no later
 /// write can leave a tenant whose root sits on another rung (ADR-0009 d1;
-/// postgres-schema.md `workareas_universe_committed`).
+/// postgres-schema.md `workspaces_universe_committed`).
 pub async fn a_universe_root_created_at_any_status_but_committed_is_refused<S: JournalStore>(
     store: &S,
 ) {
@@ -3811,19 +3818,19 @@ pub async fn a_universe_root_created_at_any_status_but_committed_is_refused<S: J
     let head = store.chain_head(t).await.expect("head");
 
     for (case, raw, status) in [
-        ("development", 0xB420, WorkareaStatus::Development),
-        ("validated", 0xB421, WorkareaStatus::Validated),
+        ("development", 0xB420, WorkspaceStatus::Development),
+        ("frozen", 0xB421, WorkspaceStatus::Frozen),
     ] {
-        let root = WorkareaRecord {
+        let root = WorkspaceRecord {
             status,
-            ..workarea_record(t, Uuid::from_u128(raw), None, "universe")
+            ..workspace_record(t, Uuid::from_u128(raw), None, "universe")
         };
         let refused = rig
             .commit(
                 store,
-                event_types::WORKAREA_CREATE,
-                json!({ "workarea_id": root.workarea_id.to_string(), "name": "universe" }),
-                MetadataFold::WorkareaCreated(root.clone()),
+                event_types::WORKSPACE_CREATE,
+                json!({ "workspace_id": root.workspace_id.to_string(), "name": "universe" }),
+                MetadataFold::WorkspaceCreated(root.clone()),
                 None,
             )
             .await;
@@ -3832,7 +3839,7 @@ pub async fn a_universe_root_created_at_any_status_but_committed_is_refused<S: J
             "a universe root stored {case} is refused, got {refused:?}"
         );
         assert_eq!(
-            store.workarea(t, root.workarea_id).await.expect("read"),
+            store.workspace(t, root.workspace_id).await.expect("read"),
             None,
             "a universe root stored {case} writes no row"
         );
@@ -3845,24 +3852,24 @@ pub async fn a_universe_root_created_at_any_status_but_committed_is_refused<S: J
 }
 
 /// A fixture pending proposal of one rung forward from `from` on
-/// `workarea_id` by `proposer_key_id`, under the principal [`key_record`]
+/// `workspace_id` by `proposer_key_id`, under the principal [`key_record`]
 /// gives that key.
 #[must_use]
 pub fn pending_transition(
     tenant_id: Uuid,
     transition_id: Uuid,
-    workarea_id: Uuid,
-    from: WorkareaStatus,
+    workspace_id: Uuid,
+    from: WorkspaceStatus,
     proposer_key_id: Uuid,
 ) -> TransitionRecord {
     TransitionRecord {
         transition_id,
         tenant_id,
-        workarea_id,
+        workspace_id,
         from,
         to: match from {
-            WorkareaStatus::Development => WorkareaStatus::Committed,
-            WorkareaStatus::Committed | WorkareaStatus::Validated => WorkareaStatus::Validated,
+            WorkspaceStatus::Development => WorkspaceStatus::Protected,
+            WorkspaceStatus::Protected | WorkspaceStatus::Frozen => WorkspaceStatus::Frozen,
         },
         state: TransitionState::Pending,
         proposer_key_id,
@@ -3884,11 +3891,11 @@ async fn transition_ground<S: JournalStore>(
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
     let root = Uuid::from_u128(node.as_u128() + 0x100);
-    rig.create_workarea(store, workarea_record(t, root, None, "universe"))
+    rig.create_workspace(store, workspace_record(t, root, None, "universe"))
         .await;
-    rig.create_workarea(
+    rig.create_workspace(
         store,
-        workarea_record(t, node, Some(root), &format!("area-{seed}")),
+        workspace_record(t, node, Some(root), &format!("area-{seed}")),
     )
     .await;
     for key in [keys.0, keys.1] {
@@ -3901,8 +3908,8 @@ async fn transition_ground<S: JournalStore>(
 /// A proposal is a pending row the store serves back whole, by its id and
 /// in its node's pending list, which lists the node's proposals in the
 /// order they were proposed, not in id order, and no other node's
-/// (ADR-0009 d3; workareas.md, several proposals may wait on one node).
-pub async fn a_proposed_transition_is_pending_and_listed_by_its_workarea_in_proposal_order<
+/// (ADR-0009 d3; workspaces.md, several proposals may wait on one node).
+pub async fn a_proposed_transition_is_pending_and_listed_by_its_workspace_in_proposal_order<
     S: JournalStore,
 >(
     store: &S,
@@ -3912,9 +3919,9 @@ pub async fn a_proposed_transition_is_pending_and_listed_by_its_workarea_in_prop
     let mut rig = transition_ground(store, 49, node, (proposer, ratifier)).await;
     let t = rig.tenant_id;
     let other = Uuid::from_u128(0xB491);
-    rig.create_workarea(
+    rig.create_workspace(
         store,
-        workarea_record(t, other, Some(Uuid::from_u128(0xB590)), "area-49-other"),
+        workspace_record(t, other, Some(Uuid::from_u128(0xB590)), "area-49-other"),
     )
     .await;
 
@@ -3923,21 +3930,21 @@ pub async fn a_proposed_transition_is_pending_and_listed_by_its_workarea_in_prop
         t,
         Uuid::from_u128(0xE492),
         node,
-        WorkareaStatus::Development,
+        WorkspaceStatus::Development,
         proposer,
     );
     let elsewhere = pending_transition(
         t,
         Uuid::from_u128(0xE493),
         other,
-        WorkareaStatus::Development,
+        WorkspaceStatus::Development,
         ratifier,
     );
     let second = pending_transition(
         t,
         Uuid::from_u128(0xE491),
         node,
-        WorkareaStatus::Development,
+        WorkspaceStatus::Development,
         ratifier,
     );
     for proposal in [&first, &elsewhere, &second] {
@@ -4001,11 +4008,11 @@ pub async fn a_proposed_transition_is_pending_and_listed_by_its_workarea_in_prop
 
 /// A ratification is one commit: the row turns `ratified` with its
 /// ratifier and the node takes the row's `to`, both with the
-/// `workarea.status_transition` event at the head; a chain whose later link
+/// `workspace.status_transition` event at the head; a chain whose later link
 /// is refused leaves the row pending and the node where it was. A
 /// proposal another ratification overtook stays pending as history
-/// (ADR-0002 d1; ADR-0009 d3; workareas.md, ratification re-checks).
-pub async fn ratifying_a_transition_moves_the_workareas_status_in_the_same_commit_as_its_event<
+/// (ADR-0002 d1; ADR-0009 d3; workspaces.md, ratification re-checks).
+pub async fn ratifying_a_transition_moves_the_workspaces_status_in_the_same_commit_as_its_event<
     S: JournalStore,
 >(
     store: &S,
@@ -4018,14 +4025,14 @@ pub async fn ratifying_a_transition_moves_the_workareas_status_in_the_same_commi
         t,
         Uuid::from_u128(0xE500),
         node,
-        WorkareaStatus::Development,
+        WorkspaceStatus::Development,
         proposer,
     );
     let overtaken = pending_transition(
         t,
         Uuid::from_u128(0xE501),
         node,
-        WorkareaStatus::Development,
+        WorkspaceStatus::Development,
         proposer,
     );
     for p in [&proposal, &overtaken] {
@@ -4043,7 +4050,7 @@ pub async fn ratifying_a_transition_moves_the_workareas_status_in_the_same_commi
                 ChainRig::ratification(
                     proposal.transition_id,
                     node,
-                    WorkareaStatus::Committed,
+                    WorkspaceStatus::Protected,
                     ratifier,
                 ),
                 (
@@ -4063,11 +4070,11 @@ pub async fn ratifying_a_transition_moves_the_workareas_status_in_the_same_commi
     assert_eq!(store.chain_head(t).await.expect("head"), head);
     assert_eq!(
         store
-            .workarea(t, node)
+            .workspace(t, node)
             .await
             .expect("read")
             .map(|w| w.status),
-        Some(WorkareaStatus::Development),
+        Some(WorkspaceStatus::Development),
         "the refused chain moved no status"
     );
     assert_eq!(
@@ -4084,7 +4091,7 @@ pub async fn ratifying_a_transition_moves_the_workareas_status_in_the_same_commi
             store,
             proposal.transition_id,
             node,
-            WorkareaStatus::Committed,
+            WorkspaceStatus::Protected,
             ratifier,
         )
         .await
@@ -4099,15 +4106,15 @@ pub async fn ratifying_a_transition_moves_the_workareas_status_in_the_same_commi
         .expect("the ratification's event");
     assert_eq!(
         event.envelope.event_type,
-        event_types::WORKAREA_STATUS_TRANSITION
+        event_types::WORKSPACE_STATUS_TRANSITION
     );
     assert_eq!(
         store
-            .workarea(t, node)
+            .workspace(t, node)
             .await
             .expect("read")
             .map(|w| w.status),
-        Some(WorkareaStatus::Committed),
+        Some(WorkspaceStatus::Protected),
         "the node stands on the row's to"
     );
     assert_eq!(
@@ -4135,7 +4142,7 @@ pub async fn ratifying_a_transition_moves_the_workareas_status_in_the_same_commi
 /// [`StoreError::RatifierIsProposer`], and one naming another node, another
 /// `to`, no proposal at all or a key the tenant does not hold as a defect.
 /// None journals its event, moves the node, or changes the row (ADR-0009
-/// d3; ADR-0010 R2; workareas.md, ratification re-checks).
+/// d3; ADR-0010 R2; workspaces.md, ratification re-checks).
 pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_moves_nothing<
     S: JournalStore,
 >(
@@ -4146,30 +4153,30 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
     let mut rig = transition_ground(store, 51, node, (proposer, ratifier)).await;
     let t = rig.tenant_id;
     let sibling = Uuid::from_u128(0xB511);
-    rig.create_workarea(
+    rig.create_workspace(
         store,
-        workarea_record(t, sibling, Some(Uuid::from_u128(0xB610)), "area-51-sibling"),
+        workspace_record(t, sibling, Some(Uuid::from_u128(0xB610)), "area-51-sibling"),
     )
     .await;
     let ratified = pending_transition(
         t,
         Uuid::from_u128(0xE510),
         node,
-        WorkareaStatus::Development,
+        WorkspaceStatus::Development,
         proposer,
     );
     let stale = pending_transition(
         t,
         Uuid::from_u128(0xE511),
         node,
-        WorkareaStatus::Development,
+        WorkspaceStatus::Development,
         proposer,
     );
     let live = pending_transition(
         t,
         Uuid::from_u128(0xE512),
         sibling,
-        WorkareaStatus::Development,
+        WorkspaceStatus::Development,
         proposer,
     );
     for p in [&ratified, &stale, &live] {
@@ -4181,7 +4188,7 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
         store,
         ratified.transition_id,
         node,
-        WorkareaStatus::Committed,
+        WorkspaceStatus::Protected,
         ratifier,
     )
     .await
@@ -4191,7 +4198,7 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
     let stale_as = |row: &TransitionRecord| {
         Some(StoreError::TransitionStale {
             transition_id: row.transition_id,
-            workarea_id: row.workarea_id,
+            workspace_id: row.workspace_id,
             from: row.from,
             to: row.to,
         })
@@ -4202,7 +4209,7 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
             "a proposal whose from is no longer the node's status",
             stale.transition_id,
             node,
-            WorkareaStatus::Committed,
+            WorkspaceStatus::Protected,
             ratifier,
             stale_as(&stale),
         ),
@@ -4210,7 +4217,7 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
             "a proposal already ratified",
             ratified.transition_id,
             node,
-            WorkareaStatus::Committed,
+            WorkspaceStatus::Protected,
             ratifier,
             stale_as(&ratified),
         ),
@@ -4218,7 +4225,7 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
             "a ratification naming another node",
             live.transition_id,
             node,
-            WorkareaStatus::Committed,
+            WorkspaceStatus::Protected,
             ratifier,
             None,
         ),
@@ -4226,7 +4233,7 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
             "a ratification naming another to",
             live.transition_id,
             sibling,
-            WorkareaStatus::Validated,
+            WorkspaceStatus::Frozen,
             ratifier,
             None,
         ),
@@ -4234,7 +4241,7 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
             "a ratification naming no proposal",
             Uuid::from_u128(0xE51F),
             sibling,
-            WorkareaStatus::Committed,
+            WorkspaceStatus::Protected,
             ratifier,
             None,
         ),
@@ -4242,7 +4249,7 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
             "a ratification by the proposing key",
             live.transition_id,
             sibling,
-            WorkareaStatus::Committed,
+            WorkspaceStatus::Protected,
             proposer,
             Some(StoreError::RatifierIsProposer {
                 transition_id: live.transition_id,
@@ -4252,14 +4259,14 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
             "a ratification by a key the tenant does not hold",
             live.transition_id,
             sibling,
-            WorkareaStatus::Committed,
+            WorkspaceStatus::Protected,
             Uuid::from_u128(0xD51F),
             None,
         ),
     ];
-    for (case, transition_id, workarea_id, to, by, expected) in cases {
+    for (case, transition_id, workspace_id, to, by, expected) in cases {
         let refused = rig
-            .ratify_transition(store, transition_id, workarea_id, to, by)
+            .ratify_transition(store, transition_id, workspace_id, to, by)
             .await;
         match expected {
             Some(expected) => assert_eq!(refused, Err(expected), "{case} is refused by name"),
@@ -4275,12 +4282,16 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
         );
     }
     let statuses = [
-        (node, WorkareaStatus::Committed),
-        (sibling, WorkareaStatus::Development),
+        (node, WorkspaceStatus::Protected),
+        (sibling, WorkspaceStatus::Development),
     ];
     for (id, status) in statuses {
         assert_eq!(
-            store.workarea(t, id).await.expect("read").map(|w| w.status),
+            store
+                .workspace(t, id)
+                .await
+                .expect("read")
+                .map(|w| w.status),
             Some(status),
             "no refused ratification moved {id}"
         );
@@ -4310,7 +4321,7 @@ async fn step_once<S: JournalStore>(
     store: &S,
     transition_id: Uuid,
     node: Uuid,
-    from: WorkareaStatus,
+    from: WorkspaceStatus,
     (proposer, ratifier): (Uuid, Uuid),
 ) {
     let proposal = pending_transition(rig.tenant_id, transition_id, node, from, proposer);
@@ -4323,12 +4334,12 @@ async fn step_once<S: JournalStore>(
         .expect("ratification");
 }
 
-/// A step to `validated` is re-checked against the node's children inside
+/// A step to `frozen` is re-checked against the node's children inside
 /// the ratifying commit: a child created after the proposal and still
-/// short of `validated` refuses the ratification as
-/// [`StoreError::ChildrenNotValidated`], journalling nothing, moving
-/// nothing and leaving the row pending; once that child is `validated` the
-/// same proposal ratifies (ADR-0009 d4; workareas.md, ratification
+/// short of `frozen` refuses the ratification as
+/// [`StoreError::ChildrenNotFrozen`], journalling nothing, moving
+/// nothing and leaving the row pending; once that child is `frozen` the
+/// same proposal ratifies (ADR-0009 d4; workspaces.md, ratification
 /// re-checks).
 pub async fn a_child_created_between_proposal_and_ratification_refuses_the_step_to_validated<
     S: JournalStore,
@@ -4344,7 +4355,7 @@ pub async fn a_child_created_between_proposal_and_ratification_refuses_the_step_
         store,
         Uuid::from_u128(0xE530),
         node,
-        WorkareaStatus::Development,
+        WorkspaceStatus::Development,
         keys,
     )
     .await;
@@ -4352,17 +4363,17 @@ pub async fn a_child_created_between_proposal_and_ratification_refuses_the_step_
         t,
         Uuid::from_u128(0xE531),
         node,
-        WorkareaStatus::Committed,
+        WorkspaceStatus::Protected,
         keys.0,
     );
     rig.propose_transition(store, proposal.clone())
         .await
-        .expect("a step to validated with no child is proposed");
+        .expect("a step to frozen with no child is proposed");
 
     let child = Uuid::from_u128(0xB532);
-    rig.create_workarea(
+    rig.create_workspace(
         store,
-        workarea_record(t, child, Some(node), "area-53-child"),
+        workspace_record(t, child, Some(node), "area-53-child"),
     )
     .await;
     let head = store.chain_head(t).await.expect("head");
@@ -4371,15 +4382,15 @@ pub async fn a_child_created_between_proposal_and_ratification_refuses_the_step_
             store,
             proposal.transition_id,
             node,
-            WorkareaStatus::Validated,
+            WorkspaceStatus::Frozen,
             keys.1,
         )
         .await;
     assert_eq!(
         refused,
-        Err(StoreError::ChildrenNotValidated {
+        Err(StoreError::ChildrenNotFrozen {
             transition_id: proposal.transition_id,
-            workarea_id: node,
+            workspace_id: node,
         }),
         "a child created after the proposal refuses the step by name"
     );
@@ -4390,11 +4401,11 @@ pub async fn a_child_created_between_proposal_and_ratification_refuses_the_step_
     );
     assert_eq!(
         store
-            .workarea(t, node)
+            .workspace(t, node)
             .await
             .expect("read")
             .map(|w| w.status),
-        Some(WorkareaStatus::Committed),
+        Some(WorkspaceStatus::Protected),
         "the refused ratification moves nothing"
     );
     assert_eq!(
@@ -4411,7 +4422,7 @@ pub async fn a_child_created_between_proposal_and_ratification_refuses_the_step_
         store,
         Uuid::from_u128(0xE532),
         child,
-        WorkareaStatus::Development,
+        WorkspaceStatus::Development,
         keys,
     )
     .await;
@@ -4420,7 +4431,7 @@ pub async fn a_child_created_between_proposal_and_ratification_refuses_the_step_
         store,
         Uuid::from_u128(0xE533),
         child,
-        WorkareaStatus::Committed,
+        WorkspaceStatus::Protected,
         keys,
     )
     .await;
@@ -4428,18 +4439,18 @@ pub async fn a_child_created_between_proposal_and_ratification_refuses_the_step_
         store,
         proposal.transition_id,
         node,
-        WorkareaStatus::Validated,
+        WorkspaceStatus::Frozen,
         keys.1,
     )
     .await
     .expect("with every child validated the same proposal ratifies");
     assert_eq!(
         store
-            .workarea(t, node)
+            .workspace(t, node)
             .await
             .expect("read")
             .map(|w| w.status),
-        Some(WorkareaStatus::Validated)
+        Some(WorkspaceStatus::Frozen)
     );
 }
 
@@ -4469,7 +4480,7 @@ pub async fn a_ratification_by_another_key_of_the_proposers_principal_is_refused
         t,
         Uuid::from_u128(0xE540),
         node,
-        WorkareaStatus::Development,
+        WorkspaceStatus::Development,
         proposer,
     );
     rig.propose_transition(store, proposal.clone())
@@ -4482,7 +4493,7 @@ pub async fn a_ratification_by_another_key_of_the_proposers_principal_is_refused
             store,
             proposal.transition_id,
             node,
-            WorkareaStatus::Committed,
+            WorkspaceStatus::Protected,
             twin,
         )
         .await;
@@ -4500,11 +4511,11 @@ pub async fn a_ratification_by_another_key_of_the_proposers_principal_is_refused
     );
     assert_eq!(
         store
-            .workarea(t, node)
+            .workspace(t, node)
             .await
             .expect("read")
             .map(|w| w.status),
-        Some(WorkareaStatus::Development),
+        Some(WorkspaceStatus::Development),
         "the refused ratification moves nothing"
     );
     assert_eq!(
@@ -4534,7 +4545,7 @@ pub async fn a_proposal_whose_principal_is_not_its_proposing_keys_is_refused<S: 
             t,
             Uuid::from_u128(0xE550),
             node,
-            WorkareaStatus::Development,
+            WorkspaceStatus::Development,
             proposer,
         )
     };
@@ -4560,47 +4571,47 @@ pub async fn a_proposal_whose_principal_is_not_its_proposing_keys_is_refused<S: 
 }
 
 /// A crew given at create is stored with the node and read back whole by
-/// every workarea read; a node created without one reads back without one
-/// (event-catalog.md `workarea.create`; postgres-schema.md `workareas.crew`).
-pub async fn crew_round_trips_through_workarea_created<S: JournalStore>(store: &S) {
+/// every workspace read; a node created without one reads back without one
+/// (event-catalog.md `workspace.create`; postgres-schema.md `workspaces.crew`).
+pub async fn crew_round_trips_through_workspace_created<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(17);
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
-    let universe = workarea_record(t, Uuid::from_u128(0xB79), None, "universe");
-    let metals = WorkareaRecord {
+    let universe = workspace_record(t, Uuid::from_u128(0xB79), None, "universe");
+    let metals = WorkspaceRecord {
         crew: Some(Crew {
             name: Some("metals-crew".to_owned()),
             charter_uri: Some("https://crews.example.com/metals/charter.md".to_owned()),
             external_manager: Some("crewd.example.com".to_owned()),
         }),
-        ..workarea_record(
+        ..workspace_record(
             t,
             Uuid::from_u128(0xB71),
-            Some(universe.workarea_id),
+            Some(universe.workspace_id),
             "metals-crew",
         )
     };
-    let named_only = WorkareaRecord {
+    let named_only = WorkspaceRecord {
         crew: Some(Crew {
             name: Some("redline".to_owned()),
             charter_uri: None,
             external_manager: None,
         }),
-        ..workarea_record(
+        ..workspace_record(
             t,
             Uuid::from_u128(0xB72),
-            Some(universe.workarea_id),
+            Some(universe.workspace_id),
             "redline",
         )
     };
     for w in [&universe, &metals, &named_only] {
-        rig.create_workarea(store, w.clone()).await;
+        rig.create_workspace(store, w.clone()).await;
     }
 
     for w in [&universe, &metals, &named_only] {
         assert_eq!(
             store
-                .workarea(t, w.workarea_id)
+                .workspace(t, w.workspace_id)
                 .await
                 .expect("read")
                 .as_ref(),
@@ -4610,7 +4621,7 @@ pub async fn crew_round_trips_through_workarea_created<S: JournalStore>(store: &
     }
     assert_eq!(
         store
-            .workarea_children(t, universe.workarea_id)
+            .workspace_children(t, universe.workspace_id)
             .await
             .expect("children"),
         vec![metals.clone(), named_only.clone()],
@@ -4618,7 +4629,7 @@ pub async fn crew_round_trips_through_workarea_created<S: JournalStore>(store: &
     );
     assert_eq!(
         store
-            .workarea_ancestry(t, metals.workarea_id)
+            .workspace_ancestry(t, metals.workspace_id)
             .await
             .expect("walk"),
         Some(vec![metals, universe]),
@@ -4763,7 +4774,7 @@ pub async fn promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its
 
 /// The compare-and-set of ratification: a successor takes the tip only
 /// while the version it replaces is still the promoted tip under the
-/// successor's own workarea and claim_key; a lost compare-and-set commits
+/// successor's own workspace and claim_key; a lost compare-and-set commits
 /// nothing, journal row included, and leaves the successor held
 /// (audit-and-lineage.md supersession chains; ADR-0025 d10).
 pub async fn tip_superseded_refuses_when_the_target_is_no_longer_tip<S: JournalStore>(store: &S) {
@@ -5058,7 +5069,7 @@ pub async fn a_second_served_tip_of_one_claim_commits_nothing<S: JournalStore>(s
 }
 
 /// No two held, promoted or demoted versions of one `claim_key` in one
-/// workarea share an ordinal; a rejected version leaves its ordinal free
+/// workspace share an ordinal; a rejected version leaves its ordinal free
 /// (postgres-schema.md `memories_claim_version`; ADR-0025 d18).
 pub async fn a_second_live_version_with_one_ordinal_commits_nothing<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(23);
@@ -5093,15 +5104,15 @@ pub async fn a_second_live_version_with_one_ordinal_commits_nothing<S: JournalSt
         "the refused commit stored no row"
     );
 
-    // Elsewhere the ordinal is free: another workarea, another claim_key.
+    // Elsewhere the ordinal is free: another workspace, another claim_key.
     let elsewhere = MemoryRecord {
         memory_id: Uuid::from_u128(0xC28),
-        workarea_id: Uuid::from_u128(0xB24),
+        workspace_id: Uuid::from_u128(0xB24),
         ..twin.clone()
     };
     hold(&mut rig, store, elsewhere)
         .await
-        .expect("another workarea's claim_key is another claim");
+        .expect("another workspace's claim_key is another claim");
 
     // A rejected version 1 releases its ordinal.
     reject(&mut rig, store, first.memory_id)
@@ -5114,7 +5125,7 @@ pub async fn a_second_live_version_with_one_ordinal_commits_nothing<S: JournalSt
 
 /// A capture reads the greatest version of a `claim_key` in any state, and
 /// whether a held, promoted or demoted version holds it, within one
-/// workarea (audit-and-lineage.md supersession chains; ADR-0025 d10, d18).
+/// workspace (audit-and-lineage.md supersession chains; ADR-0025 d10, d18).
 pub async fn claim_key_state_counts_every_version_and_only_live_ones_hold_the_key<
     S: JournalStore,
 >(
@@ -5132,11 +5143,11 @@ pub async fn claim_key_state_counts_every_version_and_only_live_ones_hold_the_ke
         "v1",
     );
     let key = v1.claim_key.clone();
-    let state = |workarea| {
+    let state = |workspace| {
         let key = key.clone();
         async move {
             store
-                .claim_key_state(rig_tenant(24), workarea, &key)
+                .claim_key_state(rig_tenant(24), workspace, &key)
                 .await
                 .expect("claim_key_state")
         }
@@ -5155,7 +5166,7 @@ pub async fn claim_key_state_counts_every_version_and_only_live_ones_hold_the_ke
     assert_eq!(
         state(Uuid::from_u128(0xB26)).await,
         ClaimKeyState::default(),
-        "claim_key is namespaced by workarea"
+        "claim_key is namespaced by workspace"
     );
 
     reject(&mut rig, store, v1.memory_id)
@@ -5213,13 +5224,19 @@ fn listing(scope: ListingScope) -> ListingFilter {
 }
 
 /// A held fixture row of the listing laws, written at second `second`.
-fn listed_row(seed: u64, n: u128, workarea: Uuid, author_key_id: Uuid, second: u8) -> MemoryRecord {
+fn listed_row(
+    seed: u64,
+    n: u128,
+    workspace: Uuid,
+    author_key_id: Uuid,
+    second: u8,
+) -> MemoryRecord {
     MemoryRecord {
         created_at: EventTime::parse(&format!("2026-10-29T13:00:{second:02}.000000Z"))
             .expect("fixture time"),
         ..held_memory(
             rig_tenant(seed),
-            workarea,
+            workspace,
             Uuid::from_u128(n),
             "wanda",
             author_key_id,
@@ -5533,33 +5550,33 @@ async fn resolved<S: JournalStore>(
         .expect("resolve")
 }
 
-/// ADR-0044 d1, d2, d4, d5: a workarea's name is unique in its namespace —
+/// ADR-0044 d1, d2, d4, d5: a workspace's name is unique in its namespace —
 /// the shared one, or the namespace of the user root it lies beneath — so
 /// two user roots each hold a `project` beside a shared one; the shared
 /// lookup reads the shared namespace alone and the user lookup one user
 /// root's; a user root, a node's namespace, a key's user and a node grant's
 /// coverage round-trip through their folds.
-pub async fn workarea_names_are_unique_per_namespace_and_resolve_in_their_own<S: JournalStore>(
+pub async fn workspace_names_are_unique_per_namespace_and_resolve_in_their_own<S: JournalStore>(
     store: &S,
 ) {
     let mut rig = ChainRig::new(31);
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
-    let universe = workarea_record(t, Uuid::from_u128(0xB310), None, "universe");
-    let root = |id: u128, user: &str| WorkareaRecord {
+    let universe = workspace_record(t, Uuid::from_u128(0xB310), None, "universe");
+    let root = |id: u128, user: &str| WorkspaceRecord {
         user_root: true,
-        ..workarea_record(t, Uuid::from_u128(id), Some(universe.workarea_id), user)
+        ..workspace_record(t, Uuid::from_u128(id), Some(universe.workspace_id), user)
     };
     let (alice, bob) = (root(0xB311, "alice"), root(0xB312, "bob"));
-    let shared = workarea_record(
+    let shared = workspace_record(
         t,
         Uuid::from_u128(0xB313),
-        Some(universe.workarea_id),
+        Some(universe.workspace_id),
         "project",
     );
-    let under = |id: u128, root: &WorkareaRecord| WorkareaRecord {
-        namespace: Some(root.workarea_id),
-        ..workarea_record(t, Uuid::from_u128(id), Some(root.workarea_id), "project")
+    let under = |id: u128, root: &WorkspaceRecord| WorkspaceRecord {
+        namespace: Some(root.workspace_id),
+        ..workspace_record(t, Uuid::from_u128(id), Some(root.workspace_id), "project")
     };
     let (alice_project, bob_project) = (under(0xB314, &alice), under(0xB315, &bob));
     for w in [
@@ -5570,24 +5587,24 @@ pub async fn workarea_names_are_unique_per_namespace_and_resolve_in_their_own<S:
         alice_project.clone(),
         bob_project.clone(),
     ] {
-        rig.create_workarea(store, w).await;
+        rig.create_workspace(store, w).await;
     }
     let head = store.chain_head(t).await.expect("head");
-    let twin = WorkareaRecord {
-        parent_id: Some(alice_project.workarea_id),
+    let twin = WorkspaceRecord {
+        parent_id: Some(alice_project.workspace_id),
         ..under(0xB316, &alice)
     };
     assert_eq!(
         rig.commit(
             store,
-            event_types::WORKAREA_CREATE,
-            json!({ "workarea_id": twin.workarea_id.to_string(), "name": "project" }),
-            MetadataFold::WorkareaCreated(twin.clone()),
+            event_types::WORKSPACE_CREATE,
+            json!({ "workspace_id": twin.workspace_id.to_string(), "name": "project" }),
+            MetadataFold::WorkspaceCreated(twin.clone()),
             None,
         )
         .await,
         Err(StoreError::NameTaken {
-            kind: NamedKind::Workarea,
+            kind: NamedKind::Workspace,
             name: name("project"),
         }),
         "one name once in one user's namespace"
@@ -5595,32 +5612,32 @@ pub async fn workarea_names_are_unique_per_namespace_and_resolve_in_their_own<S:
     assert_eq!(store.chain_head(t).await.expect("head"), head);
     assert_eq!(
         store
-            .resolve_name(t, NamedKind::Workarea, &name("project"))
+            .resolve_name(t, NamedKind::Workspace, &name("project"))
             .await
             .expect("resolve"),
-        Some(shared.workarea_id),
+        Some(shared.workspace_id),
         "the shared lookup reads the shared namespace alone"
     );
     assert_eq!(
         store
-            .resolve_name(t, NamedKind::Workarea, &name("alice"))
+            .resolve_name(t, NamedKind::Workspace, &name("alice"))
             .await
             .expect("resolve"),
-        Some(alice.workarea_id),
+        Some(alice.workspace_id),
         "a user root's name is shared"
     );
     for (root, project) in [(&alice, &alice_project), (&bob, &bob_project)] {
         assert_eq!(
             store
-                .resolve_user_workarea(t, root.workarea_id, &name("project"))
+                .resolve_user_workspace(t, root.workspace_id, &name("project"))
                 .await
                 .expect("resolve"),
-            Some(project.workarea_id)
+            Some(project.workspace_id)
         );
     }
     assert_eq!(
         store
-            .resolve_user_workarea(t, shared.workarea_id, &name("project"))
+            .resolve_user_workspace(t, shared.workspace_id, &name("project"))
             .await
             .expect("resolve"),
         None,
@@ -5628,7 +5645,7 @@ pub async fn workarea_names_are_unique_per_namespace_and_resolve_in_their_own<S:
     );
     assert_eq!(
         store
-            .workarea(t, alice.workarea_id)
+            .workspace(t, alice.workspace_id)
             .await
             .expect("read")
             .as_ref(),
@@ -5636,7 +5653,7 @@ pub async fn workarea_names_are_unique_per_namespace_and_resolve_in_their_own<S:
     );
     assert_eq!(
         store
-            .workarea(t, alice_project.workarea_id)
+            .workspace(t, alice_project.workspace_id)
             .await
             .expect("read")
             .as_ref(),
@@ -5644,7 +5661,7 @@ pub async fn workarea_names_are_unique_per_namespace_and_resolve_in_their_own<S:
     );
 
     let key = KeyRecord {
-        user: Some(alice.workarea_id),
+        user: Some(alice.workspace_id),
         name: Some(name("alice-laptop")),
         ..key_record(t, Uuid::from_u128(0xD310), Role::Writer, None)
     };
@@ -5655,11 +5672,11 @@ pub async fn workarea_names_are_unique_per_namespace_and_resolve_in_their_own<S:
             .await
             .expect("read")
             .map(|k| k.user),
-        Some(Some(alice.workarea_id))
+        Some(Some(alice.workspace_id))
     );
     let node = Grant {
         grant_id: Uuid::from_u128(0xF310),
-        node: universe.workarea_id,
+        node: universe.workspace_id,
         role: Role::Reader,
         deny: Vec::new(),
         covers: Covers::Node,
@@ -5678,33 +5695,33 @@ pub async fn workarea_names_are_unique_per_namespace_and_resolve_in_their_own<S:
     );
 }
 
-/// A workarea's name is unique in its tenant across the whole tree: a
+/// A workspace's name is unique in its tenant across the whole tree: a
 /// second node of that name, under any parent, is refused with `NameTaken`
 /// and commits nothing, its event included, while another tenant's node
-/// takes the same name (postgres-schema.md `workareas`; ADR-0026 d1, d5).
-pub async fn two_workareas_in_one_tenant_cannot_share_a_name<S: JournalStore>(store: &S) {
+/// takes the same name (postgres-schema.md `workspaces`; ADR-0026 d1, d5).
+pub async fn two_workspaces_in_one_tenant_cannot_share_a_name<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(30);
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
-    let universe = workarea_record(t, Uuid::from_u128(0xB300), None, "universe");
-    let metals = workarea_record(
+    let universe = workspace_record(t, Uuid::from_u128(0xB300), None, "universe");
+    let metals = workspace_record(
         t,
         Uuid::from_u128(0xB301),
-        Some(universe.workarea_id),
+        Some(universe.workspace_id),
         "metals-crew",
     );
-    rig.create_workarea(store, universe.clone()).await;
-    rig.create_workarea(store, metals.clone()).await;
+    rig.create_workspace(store, universe.clone()).await;
+    rig.create_workspace(store, metals.clone()).await;
     let head = store.chain_head(t).await.expect("head");
 
     let twin = Uuid::from_u128(0xB302);
-    for parent in [universe.workarea_id, metals.workarea_id] {
+    for parent in [universe.workspace_id, metals.workspace_id] {
         let refused = rig
             .commit(
                 store,
-                event_types::WORKAREA_CREATE,
-                json!({ "workarea_id": twin.to_string(), "name": "metals-crew" }),
-                MetadataFold::WorkareaCreated(workarea_record(
+                event_types::WORKSPACE_CREATE,
+                json!({ "workspace_id": twin.to_string(), "name": "metals-crew" }),
+                MetadataFold::WorkspaceCreated(workspace_record(
                     t,
                     twin,
                     Some(parent),
@@ -5716,7 +5733,7 @@ pub async fn two_workareas_in_one_tenant_cannot_share_a_name<S: JournalStore>(st
         assert_eq!(
             refused,
             Err(StoreError::NameTaken {
-                kind: NamedKind::Workarea,
+                kind: NamedKind::Workspace,
                 name: name("metals-crew"),
             }),
             "one shared namespace across the tree outside user roots"
@@ -5727,33 +5744,33 @@ pub async fn two_workareas_in_one_tenant_cannot_share_a_name<S: JournalStore>(st
         head,
         "a refused creation journals nothing"
     );
-    assert_eq!(store.workarea(t, twin).await.expect("read"), None);
+    assert_eq!(store.workspace(t, twin).await.expect("read"), None);
 
     let mut other = ChainRig::new(31);
     other.seed_chain(store, 0).await;
     let o = other.tenant_id;
-    let root = workarea_record(o, Uuid::from_u128(0xB310), None, "universe");
-    let theirs = workarea_record(
+    let root = workspace_record(o, Uuid::from_u128(0xB310), None, "universe");
+    let theirs = workspace_record(
         o,
         Uuid::from_u128(0xB311),
-        Some(root.workarea_id),
+        Some(root.workspace_id),
         "metals-crew",
     );
-    other.create_workarea(store, root).await;
-    other.create_workarea(store, theirs.clone()).await;
+    other.create_workspace(store, root).await;
+    other.create_workspace(store, theirs.clone()).await;
     assert_eq!(
-        store.workarea(o, theirs.workarea_id).await.expect("read"),
+        store.workspace(o, theirs.workspace_id).await.expect("read"),
         Some(theirs),
         "another tenant's namespace is its own"
     );
 }
 
 /// The root, and only the root, is named `universe`, as the CHECK on
-/// `workareas` holds: a root of another name is refused, and a non-root
+/// `workspaces` holds: a root of another name is refused, and a non-root
 /// `universe` is refused with `NameTaken`, as errors.md answers it; neither
-/// commits anything, its event included (postgres-schema.md `workareas`;
+/// commits anything, its event included (postgres-schema.md `workspaces`;
 /// ADR-0026 d5, d6).
-pub async fn the_root_and_only_the_root_workarea_is_named_universe<S: JournalStore>(store: &S) {
+pub async fn the_root_and_only_the_root_workspace_is_named_universe<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(39);
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
@@ -5762,9 +5779,9 @@ pub async fn the_root_and_only_the_root_workarea_is_named_universe<S: JournalSto
     let refused = rig
         .commit(
             store,
-            event_types::WORKAREA_CREATE,
-            json!({ "workarea_id": stray.to_string(), "name": "procurement" }),
-            MetadataFold::WorkareaCreated(workarea_record(t, stray, None, "procurement")),
+            event_types::WORKSPACE_CREATE,
+            json!({ "workspace_id": stray.to_string(), "name": "procurement" }),
+            MetadataFold::WorkspaceCreated(workspace_record(t, stray, None, "procurement")),
             None,
         )
         .await;
@@ -5777,21 +5794,21 @@ pub async fn the_root_and_only_the_root_workarea_is_named_universe<S: JournalSto
         head,
         "a root of another name commits nothing"
     );
-    assert_eq!(store.workarea(t, stray).await.expect("read"), None);
+    assert_eq!(store.workspace(t, stray).await.expect("read"), None);
 
-    let universe = workarea_record(t, Uuid::from_u128(0xB391), None, "universe");
-    rig.create_workarea(store, universe.clone()).await;
+    let universe = workspace_record(t, Uuid::from_u128(0xB391), None, "universe");
+    rig.create_workspace(store, universe.clone()).await;
     let head = store.chain_head(t).await.expect("head");
     let impostor = Uuid::from_u128(0xB392);
     let refused = rig
         .commit(
             store,
-            event_types::WORKAREA_CREATE,
-            json!({ "workarea_id": impostor.to_string(), "name": "universe" }),
-            MetadataFold::WorkareaCreated(workarea_record(
+            event_types::WORKSPACE_CREATE,
+            json!({ "workspace_id": impostor.to_string(), "name": "universe" }),
+            MetadataFold::WorkspaceCreated(workspace_record(
                 t,
                 impostor,
-                Some(universe.workarea_id),
+                Some(universe.workspace_id),
                 "universe",
             )),
             None,
@@ -5800,7 +5817,7 @@ pub async fn the_root_and_only_the_root_workarea_is_named_universe<S: JournalSto
     assert_eq!(
         refused,
         Err(StoreError::NameTaken {
-            kind: NamedKind::Workarea,
+            kind: NamedKind::Workspace,
             name: name("universe"),
         })
     );
@@ -5809,7 +5826,7 @@ pub async fn the_root_and_only_the_root_workarea_is_named_universe<S: JournalSto
         head,
         "a non-root universe commits nothing"
     );
-    assert_eq!(store.workarea(t, impostor).await.expect("read"), None);
+    assert_eq!(store.workspace(t, impostor).await.expect("read"), None);
 }
 
 /// A tenant's name is unique in the deployment: a second tenant's genesis
@@ -5845,7 +5862,7 @@ pub async fn a_second_tenant_cannot_take_a_tenants_name<S: JournalStore>(store: 
 }
 
 /// A name resolves to the id of the row of its kind that holds it in the
-/// caller's tenant — a workarea, a crew, a key — and to nothing in another
+/// caller's tenant — a workspace, a crew, a key — and to nothing in another
 /// tenant, for another kind, or where no row holds it; a tenant's own name
 /// is in the deployment's namespace and resolves in no tenant's
 /// (http-api.md names and ids; ADR-0026 d1, d4).
@@ -5859,15 +5876,15 @@ pub async fn a_name_resolves_to_its_rows_id_in_the_callers_tenant_and_to_nothing
     let mut b = ChainRig::new(33);
     b.seed_chain(store, 0).await;
     let (ta, tb) = (a.tenant_id, b.tenant_id);
-    let universe = workarea_record(ta, Uuid::from_u128(0xB320), None, "universe");
-    let metals = workarea_record(
+    let universe = workspace_record(ta, Uuid::from_u128(0xB320), None, "universe");
+    let metals = workspace_record(
         ta,
         Uuid::from_u128(0xB321),
-        Some(universe.workarea_id),
+        Some(universe.workspace_id),
         "metals",
     );
-    a.create_workarea(store, universe.clone()).await;
-    a.create_workarea(store, metals.clone()).await;
+    a.create_workspace(store, universe.clone()).await;
+    a.create_workspace(store, metals.clone()).await;
     let redline = crew_record(ta, Uuid::from_u128(0xC320), "redline");
     a.create_crew(store, redline.clone()).await.expect("crew");
     let laptop = KeyRecord {
@@ -5876,12 +5893,12 @@ pub async fn a_name_resolves_to_its_rows_id_in_the_callers_tenant_and_to_nothing
     };
     a.issue_key(store, laptop.clone()).await;
     let their_root = Uuid::from_u128(0xB330);
-    b.create_workarea(store, workarea_record(tb, their_root, None, "universe"))
+    b.create_workspace(store, workspace_record(tb, their_root, None, "universe"))
         .await;
 
     for (kind, value, id) in [
-        (NamedKind::Workarea, "universe", universe.workarea_id),
-        (NamedKind::Workarea, "metals", metals.workarea_id),
+        (NamedKind::Workspace, "universe", universe.workspace_id),
+        (NamedKind::Workspace, "metals", metals.workspace_id),
         (NamedKind::Crew, "redline", redline.crew_id),
         (NamedKind::Key, "claude-laptop", laptop.key_id),
     ] {
@@ -5892,12 +5909,12 @@ pub async fn a_name_resolves_to_its_rows_id_in_the_callers_tenant_and_to_nothing
         );
     }
     assert_eq!(
-        resolved(store, tb, NamedKind::Workarea, "universe").await,
+        resolved(store, tb, NamedKind::Workspace, "universe").await,
         Some(their_root),
         "each tenant resolves its own row of a name both hold"
     );
     for (kind, value) in [
-        (NamedKind::Workarea, "metals"),
+        (NamedKind::Workspace, "metals"),
         (NamedKind::Crew, "redline"),
         (NamedKind::Key, "claude-laptop"),
     ] {
@@ -5910,8 +5927,8 @@ pub async fn a_name_resolves_to_its_rows_id_in_the_callers_tenant_and_to_nothing
     for (kind, value) in [
         (NamedKind::Crew, "metals"),
         (NamedKind::Key, "redline"),
-        (NamedKind::Workarea, "claude-laptop"),
-        (NamedKind::Workarea, "nowhere"),
+        (NamedKind::Workspace, "claude-laptop"),
+        (NamedKind::Workspace, "nowhere"),
     ] {
         assert_eq!(
             resolved(store, ta, kind, value).await,
@@ -6008,7 +6025,7 @@ pub async fn a_revoked_keys_name_still_resolves<S: JournalStore>(store: &S) {
 }
 
 /// A crew record folds in with `crew.created` and reads back whole, its
-/// name unique in its tenant; a workarea or a key that names it reads back
+/// name unique in its tenant; a workspace or a key that names it reads back
 /// with its `crew_id`; and a row naming another tenant's crew, or a crew no
 /// tenant holds, is refused and commits nothing — the reference names the
 /// tenant with the id, since PostgreSQL runs a foreign-key check without
@@ -6056,21 +6073,21 @@ pub async fn a_crew_record_round_trips_and_only_its_own_tenants_rows_name_it<S: 
         .await
         .expect("another tenant's crew takes the name");
 
-    let universe = workarea_record(ta, Uuid::from_u128(0xB350), None, "universe");
-    a.create_workarea(store, universe.clone()).await;
-    let procurement = WorkareaRecord {
+    let universe = workspace_record(ta, Uuid::from_u128(0xB350), None, "universe");
+    a.create_workspace(store, universe.clone()).await;
+    let procurement = WorkspaceRecord {
         crew_id: Some(redline.crew_id),
-        ..workarea_record(
+        ..workspace_record(
             ta,
             Uuid::from_u128(0xB351),
-            Some(universe.workarea_id),
+            Some(universe.workspace_id),
             "procurement",
         )
     };
-    a.create_workarea(store, procurement.clone()).await;
+    a.create_workspace(store, procurement.clone()).await;
     assert_eq!(
         store
-            .workarea(ta, procurement.workarea_id)
+            .workspace(ta, procurement.workspace_id)
             .await
             .expect("read"),
         Some(procurement)
@@ -6090,21 +6107,21 @@ pub async fn a_crew_record_round_trips_and_only_its_own_tenants_rows_name_it<S: 
 
     let head = store.chain_head(ta).await.expect("head");
     for crew_id in [theirs.crew_id, Uuid::from_u128(0xC3FF)] {
-        let stray = WorkareaRecord {
+        let stray = WorkspaceRecord {
             crew_id: Some(crew_id),
-            ..workarea_record(
+            ..workspace_record(
                 ta,
                 Uuid::from_u128(0xB352),
-                Some(universe.workarea_id),
+                Some(universe.workspace_id),
                 "stray",
             )
         };
         let refused = a
             .commit(
                 store,
-                event_types::WORKAREA_CREATE,
-                json!({ "workarea_id": stray.workarea_id.to_string() }),
-                MetadataFold::WorkareaCreated(stray),
+                event_types::WORKSPACE_CREATE,
+                json!({ "workspace_id": stray.workspace_id.to_string() }),
+                MetadataFold::WorkspaceCreated(stray),
                 None,
             )
             .await;
@@ -6248,11 +6265,11 @@ pub async fn crews_lists_the_tenants_crew_records_in_name_byte_order<S: JournalS
     );
 }
 
-/// `workarea.crew_updated` points a workarea at a crew record of its own
-/// tenant; one naming another tenant's crew, or a workarea the tenant does
+/// `workspace.crew_updated` points a workspace at a crew record of its own
+/// tenant; one naming another tenant's crew, or a workspace the tenant does
 /// not hold, is refused and commits nothing (postgres-schema.md `crews`;
 /// ADR-0026 d8).
-pub async fn a_workarea_crew_update_points_the_node_at_a_crew_record_of_its_own_tenant<
+pub async fn a_workspace_crew_update_points_the_node_at_a_crew_record_of_its_own_tenant<
     S: JournalStore,
 >(
     store: &S,
@@ -6262,30 +6279,30 @@ pub async fn a_workarea_crew_update_points_the_node_at_a_crew_record_of_its_own_
     let mut b = ChainRig::new(42);
     b.seed_chain(store, 0).await;
     let ta = a.tenant_id;
-    let universe = workarea_record(ta, Uuid::from_u128(0xB410), None, "universe");
-    a.create_workarea(store, universe.clone()).await;
+    let universe = workspace_record(ta, Uuid::from_u128(0xB410), None, "universe");
+    a.create_workspace(store, universe.clone()).await;
     let redline = crew_record(ta, Uuid::from_u128(0xC410), "redline");
     a.create_crew(store, redline.clone()).await.expect("crew");
     let theirs = crew_record(b.tenant_id, Uuid::from_u128(0xC420), "redline");
     b.create_crew(store, theirs.clone()).await.expect("crew");
 
-    let point = |workarea_id: Uuid, crew_id: Uuid| {
+    let point = |workspace_id: Uuid, crew_id: Uuid| {
         (
-            event_types::WORKAREA_CREW_UPDATED,
-            json!({ "workarea_id": workarea_id.to_string(), "crew_id": crew_id.to_string() }),
-            MetadataFold::WorkareaCrewUpdated {
-                workarea_id,
+            event_types::WORKSPACE_CREW_UPDATED,
+            json!({ "workspace_id": workspace_id.to_string(), "crew_id": crew_id.to_string() }),
+            MetadataFold::WorkspaceCrewUpdated {
+                workspace_id,
                 crew_id,
             },
         )
     };
-    let (event_type, payload, fold) = point(universe.workarea_id, redline.crew_id);
+    let (event_type, payload, fold) = point(universe.workspace_id, redline.crew_id);
     a.commit(store, event_type, payload, fold, None)
         .await
         .expect("point");
     assert_eq!(
         store
-            .workarea(ta, universe.workarea_id)
+            .workspace(ta, universe.workspace_id)
             .await
             .expect("read")
             .expect("node")
@@ -6294,12 +6311,12 @@ pub async fn a_workarea_crew_update_points_the_node_at_a_crew_record_of_its_own_
     );
 
     let head = store.chain_head(ta).await.expect("head");
-    for (workarea_id, crew_id) in [
-        (universe.workarea_id, theirs.crew_id),
-        (universe.workarea_id, Uuid::from_u128(0xC4FF)),
+    for (workspace_id, crew_id) in [
+        (universe.workspace_id, theirs.crew_id),
+        (universe.workspace_id, Uuid::from_u128(0xC4FF)),
         (Uuid::from_u128(0xB4FF), redline.crew_id),
     ] {
-        let (event_type, payload, fold) = point(workarea_id, crew_id);
+        let (event_type, payload, fold) = point(workspace_id, crew_id);
         let refused = a.commit(store, event_type, payload, fold, None).await;
         assert!(
             matches!(refused, Err(StoreError::Backend(_))),
@@ -6309,7 +6326,7 @@ pub async fn a_workarea_crew_update_points_the_node_at_a_crew_record_of_its_own_
     assert_eq!(store.chain_head(ta).await.expect("head"), head);
     assert_eq!(
         store
-            .workarea(ta, universe.workarea_id)
+            .workspace(ta, universe.workspace_id)
             .await
             .expect("read")
             .expect("node")
@@ -6368,7 +6385,7 @@ pub async fn a_key_reads_by_its_id_in_its_tenant_a_revoked_one_with_the_at_of_it
 }
 
 /// Every row a creation folds is named, so a store this build writes lists
-/// no tenant and no workarea without a name; a key folded with none, as a
+/// no tenant and no workspace without a name; a key folded with none, as a
 /// key that predates names is, is listed (ADR-0026 d9, d11).
 pub async fn every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_listed<
     S: JournalStore,
@@ -6378,8 +6395,8 @@ pub async fn every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_liste
     let mut rig = ChainRig::new(45);
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
-    let universe = workarea_record(t, Uuid::from_u128(0xB450), None, "universe");
-    rig.create_workarea(store, universe).await;
+    let universe = workspace_record(t, Uuid::from_u128(0xB450), None, "universe");
+    rig.create_workspace(store, universe).await;
     let named = KeyRecord {
         name: Some(name("named-key")),
         ..key_record(t, Uuid::from_u128(0xD450), Role::Writer, None)
@@ -6391,7 +6408,7 @@ pub async fn every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_liste
         store.unnamed_rows(t).await.expect("read"),
         UnnamedRows {
             tenant: false,
-            workareas: Vec::new(),
+            workspaces: Vec::new(),
             keys: vec![unnamed.key_id],
         }
     );
@@ -6486,7 +6503,7 @@ pub async fn guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_ro
 // Claim edges
 // ---------------------------------------------------------------------------
 
-/// A tenant with its root workarea and a dreamer key that proposes edges.
+/// A tenant with its root workspace and a reviewer key that proposes edges.
 struct EdgeWorld {
     rig: ChainRig,
     root: Uuid,
@@ -6498,15 +6515,15 @@ impl EdgeWorld {
         let mut rig = ChainRig::new(seed);
         rig.seed_chain(store, 0).await;
         let root = Uuid::from_u128((u128::from(seed) << 32) | 0x01);
-        rig.create_workarea(
+        rig.create_workspace(
             store,
-            workarea_record(rig.tenant_id, root, None, "universe"),
+            workspace_record(rig.tenant_id, root, None, "universe"),
         )
         .await;
         let proposer = key_record(
             rig.tenant_id,
             Uuid::from_u128((u128::from(seed) << 32) | 0x02),
-            Role::Dreamer,
+            Role::Reviewer,
             None,
         );
         rig.issue_key(store, proposer.clone()).await;
@@ -6642,9 +6659,9 @@ impl EdgeWorld {
         memory
     }
 
-    /// Issues a dreamer key that is not the proposer, to ratify with.
+    /// Issues a reviewer key that is not the proposer, to ratify with.
     async fn ratifier<S: JournalStore>(&mut self, store: &S, key_id: Uuid) -> KeyRecord {
-        let key = key_record(self.rig.tenant_id, key_id, Role::Dreamer, None);
+        let key = key_record(self.rig.tenant_id, key_id, Role::Reviewer, None);
         self.rig.issue_key(store, key.clone()).await;
         key
     }
@@ -7075,7 +7092,7 @@ pub async fn a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_fil
     let side = Uuid::from_u128((320_u128 << 32) | 0x03);
     world
         .rig
-        .create_workarea(store, workarea_record(tenant, side, Some(root), "side"))
+        .create_workspace(store, workspace_record(tenant, side, Some(root), "side"))
         .await;
     let a = world
         .hold(store, root, Uuid::from_u128(0x320A), "alice", &[])
@@ -7211,7 +7228,7 @@ pub async fn a_claim_edges_page_holds_only_edges_whose_endpoints_are_promoted_or
     let side = Uuid::from_u128((322_u128 << 32) | 0x03);
     world
         .rig
-        .create_workarea(store, workarea_record(tenant, side, Some(root), "side"))
+        .create_workspace(store, workspace_record(tenant, side, Some(root), "side"))
         .await;
     let p1 = world
         .hold(store, root, Uuid::from_u128(0x322A), "alice", &[])
@@ -7408,7 +7425,7 @@ pub async fn a_brief_edge_folds_pending_and_its_ratification_records_the_ratifie
         edge_id: Uuid::from_u128(0x391E),
         tenant_id: world.rig.tenant_id,
         artifact_id: claim.memory_id,
-        workarea_id: root,
+        workspace_id: root,
         state: EdgeState::Pending,
         proposer_key_id: world.proposer.key_id,
         proposer_principal: world.proposer.principal.clone(),
@@ -7466,7 +7483,7 @@ pub async fn a_brief_edge_folds_pending_and_its_ratification_records_the_ratifie
     assert_eq!(
         store.brief_edges(tenant, root).await.expect("read"),
         vec![ratified.clone()],
-        "the workarea's brief edges"
+        "the workspace's brief edges"
     );
 
     let head = store.chain_head(tenant).await.expect("head");
@@ -7977,7 +7994,7 @@ pub async fn a_promotion_stores_the_approving_verdict_on_its_row_and_a_held_vers
         "a held version holds no approval"
     );
     let first = Box::new(Approval {
-        held_by: HeldBy::Agent,
+        used_by: UsedBy::Agent,
         same_user: Some(true),
         at: EventTime::parse("2026-10-29T15:00:00.123456Z").expect("fixture time"),
     });
@@ -8222,20 +8239,20 @@ pub async fn a_commit_past_its_ceiling_writes_nothing_and_the_usage_read_is_the_
     let mut rig = ChainRig::new(70);
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
-    let universe = workarea_record(t, Uuid::from_u128(0x7010), None, "universe");
-    let root = WorkareaRecord {
+    let universe = workspace_record(t, Uuid::from_u128(0x7010), None, "universe");
+    let root = WorkspaceRecord {
         user_root: true,
-        ..workarea_record(
+        ..workspace_record(
             t,
             Uuid::from_u128(0x7011),
-            Some(universe.workarea_id),
+            Some(universe.workspace_id),
             "ada",
         )
     };
     for w in [universe, root.clone()] {
-        rig.create_workarea(store, w).await;
+        rig.create_workspace(store, w).await;
     }
-    let account = root.workarea_id;
+    let account = root.workspace_id;
     let key_id = Uuid::from_u128(0x7020);
     rig.issue_key(
         store,
@@ -8377,20 +8394,20 @@ pub async fn a_versions_write_is_counted_on_the_day_its_row_was_stored<S: Journa
     let mut rig = ChainRig::new(72);
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
-    let universe = workarea_record(t, Uuid::from_u128(0x7210), None, "universe");
-    let root = WorkareaRecord {
+    let universe = workspace_record(t, Uuid::from_u128(0x7210), None, "universe");
+    let root = WorkspaceRecord {
         user_root: true,
-        ..workarea_record(
+        ..workspace_record(
             t,
             Uuid::from_u128(0x7211),
-            Some(universe.workarea_id),
+            Some(universe.workspace_id),
             "ada",
         )
     };
     for w in [universe, root.clone()] {
-        rig.create_workarea(store, w).await;
+        rig.create_workspace(store, w).await;
     }
-    let account = root.workarea_id;
+    let account = root.workspace_id;
     let key_id = Uuid::from_u128(0x7220);
     rig.issue_key(
         store,
@@ -8467,20 +8484,20 @@ pub async fn a_claim_captured_under_a_released_key_counts_on_the_account_that_st
     let mut rig = ChainRig::new(74);
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
-    let universe = workarea_record(t, Uuid::from_u128(0x7410), None, "universe");
-    let root = WorkareaRecord {
+    let universe = workspace_record(t, Uuid::from_u128(0x7410), None, "universe");
+    let root = WorkspaceRecord {
         user_root: true,
-        ..workarea_record(
+        ..workspace_record(
             t,
             Uuid::from_u128(0x7411),
-            Some(universe.workarea_id),
+            Some(universe.workspace_id),
             "ada",
         )
     };
     for w in [universe, root.clone()] {
-        rig.create_workarea(store, w).await;
+        rig.create_workspace(store, w).await;
     }
-    let account = root.workarea_id;
+    let account = root.workspace_id;
     let (ada_key, tenant_key) = (Uuid::from_u128(0x7420), Uuid::from_u128(0x7421));
     rig.issue_key(
         store,
@@ -8565,20 +8582,20 @@ pub async fn a_commit_under_a_recorded_idempotency_key_moves_no_meter_and_is_ref
     let mut rig = ChainRig::new(71);
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
-    let universe = workarea_record(t, Uuid::from_u128(0x7110), None, "universe");
-    let root = WorkareaRecord {
+    let universe = workspace_record(t, Uuid::from_u128(0x7110), None, "universe");
+    let root = WorkspaceRecord {
         user_root: true,
-        ..workarea_record(
+        ..workspace_record(
             t,
             Uuid::from_u128(0x7111),
-            Some(universe.workarea_id),
+            Some(universe.workspace_id),
             "ada",
         )
     };
     for w in [universe, root.clone()] {
-        rig.create_workarea(store, w).await;
+        rig.create_workspace(store, w).await;
     }
-    let account = root.workarea_id;
+    let account = root.workspace_id;
     let key_id = Uuid::from_u128(0x7120);
     rig.issue_key(
         store,
@@ -8598,7 +8615,7 @@ pub async fn a_commit_under_a_recorded_idempotency_key_moves_no_meter_and_is_ref
     let scope = IdempotencyScope {
         tenant_id: t,
         key_id,
-        workarea_id: account,
+        workspace_id: account,
         idem_key: "idem-metered".to_owned(),
     };
     let put = |memory: &MemoryRecord| IdempotencyPut {
@@ -8812,40 +8829,40 @@ where
         a_lifted_denial_masks_nothing_and_its_lift_moves_the_permission_epoch(&new_store().await),
     )
     .await;
-    Box::pin(workarea_ancestry_walks_parent_ids_to_the_root(
+    Box::pin(workspace_ancestry_walks_parent_ids_to_the_root(
         &new_store().await,
     ))
     .await;
     Box::pin(
-        a_workarea_under_another_tenants_node_is_refused_as_one_under_no_node(&new_store().await),
+        a_workspace_under_another_tenants_node_is_refused_as_one_under_no_node(&new_store().await),
     )
     .await;
-    Box::pin(workarea_subtree_lists_every_descendant_once(
+    Box::pin(workspace_subtree_lists_every_descendant_once(
         &new_store().await,
     ))
     .await;
-    Box::pin(workarea_children_are_immediate_and_ordered_by_name_bytes(
+    Box::pin(workspace_children_are_immediate_and_ordered_by_name_bytes(
         &new_store().await,
     ))
     .await;
-    Box::pin(crew_round_trips_through_workarea_created(
+    Box::pin(crew_round_trips_through_workspace_created(
         &new_store().await,
     ))
     .await;
-    Box::pin(a_workarea_read_serves_the_status_its_row_stores(
+    Box::pin(a_workspace_read_serves_the_status_its_row_stores(
         &new_store().await,
     ))
     .await;
     Box::pin(a_universe_root_created_at_any_status_but_committed_is_refused(&new_store().await))
         .await;
     Box::pin(
-        a_proposed_transition_is_pending_and_listed_by_its_workarea_in_proposal_order(
+        a_proposed_transition_is_pending_and_listed_by_its_workspace_in_proposal_order(
             &new_store().await,
         ),
     )
     .await;
     Box::pin(
-        ratifying_a_transition_moves_the_workareas_status_in_the_same_commit_as_its_event(
+        ratifying_a_transition_moves_the_workspaces_status_in_the_same_commit_as_its_event(
             &new_store().await,
         ),
     )
@@ -8912,13 +8929,13 @@ where
         a_listing_pages_newest_first_and_resumes_strictly_after_its_position(&new_store().await),
     )
     .await;
-    Box::pin(two_workareas_in_one_tenant_cannot_share_a_name(
+    Box::pin(two_workspaces_in_one_tenant_cannot_share_a_name(
         &new_store().await,
     ))
     .await;
-    Box::pin(workarea_names_are_unique_per_namespace_and_resolve_in_their_own(&new_store().await))
+    Box::pin(workspace_names_are_unique_per_namespace_and_resolve_in_their_own(&new_store().await))
         .await;
-    Box::pin(the_root_and_only_the_root_workarea_is_named_universe(
+    Box::pin(the_root_and_only_the_root_workspace_is_named_universe(
         &new_store().await,
     ))
     .await;
@@ -8942,7 +8959,7 @@ where
     ))
     .await;
     Box::pin(
-        a_workarea_crew_update_points_the_node_at_a_crew_record_of_its_own_tenant(
+        a_workspace_crew_update_points_the_node_at_a_crew_record_of_its_own_tenant(
             &new_store().await,
         ),
     )
@@ -11470,20 +11487,20 @@ pub async fn a_revoked_keys_open_connection_leaves_the_connections_meter_with_th
     let mut rig = ChainRig::new(73);
     rig.seed_chain(store, 0).await;
     let t = rig.tenant_id;
-    let universe = workarea_record(t, Uuid::from_u128(0x7310), None, "universe");
-    let root = WorkareaRecord {
+    let universe = workspace_record(t, Uuid::from_u128(0x7310), None, "universe");
+    let root = WorkspaceRecord {
         user_root: true,
-        ..workarea_record(
+        ..workspace_record(
             t,
             Uuid::from_u128(0x7311),
-            Some(universe.workarea_id),
+            Some(universe.workspace_id),
             "ada",
         )
     };
     for w in [universe, root.clone()] {
-        rig.create_workarea(store, w).await;
+        rig.create_workspace(store, w).await;
     }
-    let account = root.workarea_id;
+    let account = root.workspace_id;
     let at = fixture_time("2026-10-29T13:00:00.000000Z");
     let (kept, gone) = (
         KeyRecord {
@@ -14176,7 +14193,7 @@ pub async fn two_tenants_sparse_queues_never_meet<S: JournalStore>(store: &S) {
 }
 
 /// A sparse list never holds a version its scope excludes, however the
-/// version was encoded: another workarea's served version, another key's
+/// version was encoded: another workspace's served version, another key's
 /// held version and a held version when no own keys are named are absent
 /// (ADR-0049 d2; ADR-0052 d16).
 pub async fn a_sparse_list_never_holds_a_version_its_scope_excludes<S: JournalStore>(store: &S) {

@@ -85,7 +85,7 @@ def exact_case(a):
         c.execute("VACUUM ANALYZE")
         c.execute("SELECT set_config('oml.tenant_id', %s, false)", (str(t),))
         wa_rows = {uuid.UUID(str(w)): n for w, n in c.execute(
-            "SELECT workarea_id, count(*) FROM memory_vectors WHERE served AND kind IN ('memory', 'derived_fact') "
+            "SELECT workspace_id, count(*) FROM memory_vectors WHERE served AND kind IN ('memory', 'derived_fact') "
             "GROUP BY 1").fetchall()}
     centers = R.embed_centers()
     rng = np.random.default_rng(3)
@@ -159,7 +159,7 @@ def exact_case(a):
 
 SPARSE_DDL = """
 CREATE TABLE sparse_postings (tenant_id uuid NOT NULL, memory_id bigint NOT NULL, token_id integer NOT NULL,
-    weight real NOT NULL, workarea_id uuid NOT NULL, served boolean NOT NULL) PARTITION BY LIST (tenant_id);
+    weight real NOT NULL, workspace_id uuid NOT NULL, served boolean NOT NULL) PARTITION BY LIST (tenant_id);
 ALTER TABLE sparse_postings ENABLE ROW LEVEL SECURITY; ALTER TABLE sparse_postings FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON sparse_postings
     USING (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid)
@@ -171,7 +171,7 @@ SPARSE_SQL = """SELECT p.memory_id, sum(p.weight * q.w) AS score
     FROM sparse_postings p
     JOIN unnest(%(tok)s::int[], %(qw)s::real[]) AS q(token_id, w) ON q.token_id = p.token_id
     WHERE p.tenant_id = %(t)s AND p.token_id = ANY(%(tok)s::int[]) AND p.served
-      AND p.workarea_id = ANY(%(ws)s::uuid[])
+      AND p.workspace_id = ANY(%(ws)s::uuid[])
     GROUP BY p.memory_id ORDER BY score DESC, p.memory_id LIMIT %(k)s"""
 
 
@@ -201,7 +201,7 @@ def sparse_case(a):
         c.execute(f"CREATE TABLE {p} (LIKE sparse_postings INCLUDING DEFAULTS INCLUDING CONSTRAINTS)")
         t0 = time.perf_counter()
         nnz = 0
-        with c.cursor().copy(f"COPY {p} (tenant_id, memory_id, token_id, weight, workarea_id, served) "
+        with c.cursor().copy(f"COPY {p} (tenant_id, memory_id, token_id, weight, workspace_id, served) "
                              "FROM STDIN") as cp:
             batch = 2000
             for start in range(0, a.scale, batch):

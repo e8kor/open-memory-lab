@@ -48,7 +48,7 @@ fn replaced_by(from: &str, to: &str) -> TermEdge {
     term_edge(OmlLabel::ReplacedBy, from, to)
 }
 
-/// A promoted memory version in a content workarea.
+/// A promoted memory version in a content workspace.
 fn memory(n: u128) -> EndpointVersion {
     EndpointVersion {
         artifact_id: id(0x1000 + n),
@@ -58,7 +58,7 @@ fn memory(n: u128) -> EndpointVersion {
     }
 }
 
-/// A promoted term version in its vocabulary workarea.
+/// A promoted term version in its vocabulary workspace.
 fn term(n: u128) -> EndpointVersion {
     EndpointVersion {
         artifact_id: id(0x2000 + n),

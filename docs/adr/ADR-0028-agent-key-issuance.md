@@ -17,7 +17,7 @@ answers: how the CLI issues the one key the agent plugin needs in one call and p
 
 **The plugin's key takes three steps and one easy mistake.** The `oml` agent plugin reads two
 environment variables, `OML_URL` and `OML_API_KEY` ([agent plugin](../api/mcp-plugin.md)). One
-writer-role key that holds a writer grant and a reader grant on one workarea both remembers and
+writer-role key that holds a writer grant and a reader grant on one workspace both remembers and
 recalls ([grant admissibility](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order),
 [ADR-0025](ADR-0025-the-agent-only-memory-surface.md) d1). Today an operator issues it with
 `oml keys issue`, which sends exactly the grants it is told, then copies the value out of a
@@ -32,7 +32,7 @@ show-once ceremony ([ADR-0015](ADR-0015-cli-administration.md) d1) and the
 **Drafted with names, shipped before them.** These decisions were drafted as d12–d14 of the
 proposed ADR-0026 (names are keys), where `issue-agent` takes the key's name as its positional
 argument. The maintainer decided to ship the key tool in v0.2.1, before names exist. This record
-carries those decisions as d1–d3, adapted to the server as it is now: a workarea is addressed by
+carries those decisions as d1–d3, adapted to the server as it is now: a workspace is addressed by
 its node id, a key by its id and its principal, and the CLI's context is the server and key it
 resolves from `--server`, `OML_CLI_SERVER` or the stored credentials
 ([CLI reference](../cli/reference.md#oml-keys-issuance-revocation-rotation)). ADR-0026 d1 adds the
@@ -47,11 +47,11 @@ maintainer accepts it.
 
 ## Decision
 
-- **d1 — `oml keys issue-agent --principal <principal> --workarea <workarea-id>` issues the
+- **d1 — `oml keys issue-agent --principal <principal> --workspace <workspace-id>` issues the
   plugin's one key in one `POST /v2/keys` and prints the two export lines the `oml` plugin
-  reads.** The verb sends a writer-role issuance with the given principal, `held_by` from
-  `--held-by agent|human` (default `agent`), a writer grant on the workarea and its reader grant
-  (d2), and `default_workarea_id` set to that workarea, so the key's default never rests on the
+  reads.** The verb sends a writer-role issuance with the given principal, `used_by` from
+  `--used-by agent|person` (default `agent`), a writer grant on the workspace and its reader grant
+  (d2), and `default_workspace_id` set to that workspace, so the key's default never rests on the
   order of its grants. It sends no other request, before or after. On success it prints exactly
   two lines on stdout:
 
@@ -90,16 +90,16 @@ maintainer accepts it.
 
     The verb composes an existing call, so every rule of the issuance order applies unchanged, and
     its acceptance test is that the printed lines, exported, let one key remember and recall on
-    that workarea. The principal is required: it is the one readable thing a key carries until
+    that workspace. The principal is required: it is the one readable thing a key carries until
     names exist, and review independence and the reciprocal-approval statistics key on it, so
     every plugin key should have its own. The positional key name of ADR-0026 d12 arrives with
     ADR-0026 d1. The cost is a verb that must stay in step with `POST /v2/keys`, and with
     `--out`, a second place the value rests: owner-only, and the operator's to delete. The rule
     is declared on the [CLI reference](../cli/reference.md#oml-keys-issuance-revocation-rotation).
 
-- **d2 — `oml keys issue` and `oml keys issue-agent` add a reader grant on the same workarea
+- **d2 — `oml keys issue` and `oml keys issue-agent` add a reader grant on the same workspace
   beside every writer grant unless `--write-only` is passed.** For each writer grant the request
-  asks for, the CLI sends a reader grant on the same workarea with the same deny masks, unless
+  asks for, the CLI sends a reader grant on the same workspace with the same deny masks, unless
   the request already names that reader grant or `--write-only` is given. `POST /v2/keys` takes a
   mask on each grant (ADR-0025 d2), but neither verb takes one yet, so today both grants are sent
   without one; the copy keeps the added grant from ever reading a subtree its writer grant is
@@ -114,15 +114,15 @@ maintainer accepts it.
     the authority explicit: the grant exists because a request named it, the journal shows it,
     and `--write-only` is the visible choice for a crew whose writers must not read each other's
     promoted work. The cost is that a writer key issued by the CLI without the flag now reads its
-    workarea's promoted memory, which every existing caller of `oml keys issue` gets on its next
+    workspace's promoted memory, which every existing caller of `oml keys issue` gets on its next
     run, the repository's quickstart and demo scripts included. The flag and the default are
     declared on the [CLI reference](../cli/reference.md#oml-keys-issuance-revocation-rotation).
 
 - **d3 — An `oml-admin` Claude Code plugin holds one skill that runs `issue-agent` with `--out`,
   serves no MCP tool, and never puts a key value in the model's context.** The plugin is listed
   beside `oml` in the repository's marketplace and holds one skill, `issue-agent-key`, and no MCP
-  server entry. The skill runs `oml keys issue-agent --principal <principal> --workarea
-  <workarea-id> --out <path>` itself, always with `--out`, under
+  server entry. The skill runs `oml keys issue-agent --principal <principal> --workspace
+  <workspace-id> --out <path>` itself, always with `--out`, under
   `~/.config/oml/keys/<principal>` with each `/` of the principal written as `-`, or a path the
   operator names outside any repository, and never with `--json`. It hands the operator only the
   two printed lines, which carry a path and no value, to run in the shell that will start the
@@ -150,8 +150,8 @@ maintainer accepts it.
   `--json`.
 - The skill checks no context role before it runs: the CLI has no `oml context show` yet, and a
   key that may not issue is refused by the issuance itself. Key revocation is not built, so the
-  write-failure message also names `oml deny set <key-id> <root workarea id>`, a journalled global
-  denial that keeps the key from every workarea, as the stop until it is.
+  write-failure message also names `oml deny set <key-id> <root workspace id>`, a journalled global
+  denial that keeps the key from every workspace, as the stop until it is.
 - What arrives later, with ADR-0026: the positional key name (its d1) and `--crew` (its d8). The
   skill's checks by `oml context show` and `oml keys show` wait on those verbs, and `--expires`
   and `--label` pass-through on key expiry and on the CLI verbs that would show a label; none of
@@ -169,7 +169,7 @@ maintainer accepts it.
 |---|---|
 | **d1 — Wait for names and ship the verb with ADR-0026** | The plugin key is the first key every operator issues, and the maintainer chose to ship it in v0.2.1; the positional name ADR-0026 adds is additive. |
 | **d1 — The principal as the positional argument** | The positional slot belongs to the key name ADR-0026 d1 adds; an argument whose meaning changed when names land would break every script that used it. |
-| **d1 — Leave `default_workarea_id` out and let the server take the first grant's node** | The default would hold only while the writer grant comes first; naming it states what the verb means. |
+| **d1 — Leave `default_workspace_id` out and let the server take the first grant's node** | The default would hold only while the writer grant comes first; naming it states what the verb means. |
 | **d1 — A new HTTP operation for agent keys** | `POST /v2/keys` already carries every field the verb needs; a second issuance path would need its own validation order and refusals. |
 | **d1 — Print the value alone and let the operator write the exports** | The two lines are what the plugin reads; printing them removes a step where the value gets pasted somewhere else. |
 | **d1 — Let `--out` overwrite an existing file** | A mistyped path would destroy an unrelated file, and a second issuance to one path would destroy the only copy of an earlier key's value. |
@@ -177,7 +177,7 @@ maintainer accepts it.
 | **d1 — Handle every failed issuance call as a refusal** | A transport or body failure can follow a key the server committed: removing the file and reporting only the failure would hide a live key, and echoing an unparsed `201` as the error would print its value. |
 | **d2 — The server implies read from writer** | It contradicts roles-and-keys.md ("not a writer key with implied read") and ADR-0025's rejected "writer implying read", and the authority would never appear in the journal. |
 | **d2 — The HTTP issuance adds the reader grant** | It would amend ADR-0025 d2, under which the server takes exactly the grants it is sent. |
-| **d2 — A tenant-wide default read** | It voids per-workarea access. |
+| **d2 — A tenant-wide default read** | It voids per-workspace access. |
 | **d2 — No default** | Every issuer of the common key must remember the second grant, and the key that forgets it fails only at its first recall. |
 | **d2 — Add the reader grant without the writer grant's deny masks** | The key would read the subtrees its writer grant is denied, a hole that opens with nothing refusing it the day an issuing verb takes a per-grant mask. |
 | **d2 — Send no masks and refuse a mask on an issuing verb until the copy is decided** | It leaves the rule to whichever change adds the mask, and a key with masked grants could then not be issued in one call. |

@@ -1,6 +1,6 @@
 //! The run of `oml sync --adapter delta` (ADR-0062 d2, d8, d11): it reads each
 //! table's log, maps it to claims, diffs them against the key's own claims in
-//! the workarea, and writes, checks or prints the plan through the same calls
+//! the workspace, and writes, checks or prints the plan through the same calls
 //! `oml sync` makes for documents.
 
 use std::collections::BTreeMap;
@@ -31,7 +31,7 @@ pub struct Options {
     /// The canonical location the root stands for; required, since the root's
     /// own path is a local one and no anchor carries it.
     pub uri_base: Option<String>,
-    pub workarea: String,
+    pub workspace: String,
     pub dry_run: bool,
     /// Report each claim's state against the log; write no memory.
     pub check: bool,
@@ -72,7 +72,7 @@ fn table_json(t: &TableRead) -> Value {
 pub fn execute(api: &dyn SyncApi, opts: &Options, out: &mut dyn Write) -> Result<Report, CliError> {
     let base = base_uri(opts)?;
     let depth = if opts.depth == 0 { DEPTH } else { opts.depth };
-    let workarea_id = api.workarea_id(&opts.workarea)?;
+    let workspace_id = api.workspace_id(&opts.workspace)?;
     let me = api.me()?;
     let tables = read_lake(&opts.root, depth, opts.at_version);
     let mut say = |text: &str| {
@@ -83,7 +83,7 @@ pub fn execute(api: &dyn SyncApi, opts: &Options, out: &mut dyn Write) -> Result
     say(&format!(
         "source    {base}  adapter delta  hashers oml-delta-table/1, oml-delta-schema/1, oml-delta-col/1"
     ));
-    say(&format!("workarea  {}  key {}", opts.workarea, me.name));
+    say(&format!("workspace  {}  key {}", opts.workspace, me.name));
     let mut states: BTreeMap<String, TableState> = BTreeMap::new();
     let mut all: Vec<LakeItem> = Vec::new();
     let mut unread = false;
@@ -114,13 +114,13 @@ pub fn execute(api: &dyn SyncApi, opts: &Options, out: &mut dyn Write) -> Result
         ));
     }
     let own = api.list(&ListQuery {
-        workarea: opts.workarea.clone(),
+        workspace: opts.workspace.clone(),
         own: true,
         ..ListQuery::default()
     })?;
     let ctx = Context {
-        workarea: opts.workarea.clone(),
-        workarea_id,
+        workspace: opts.workspace.clone(),
+        workspace_id,
         max_writes: opts.max_writes,
         check: opts.check,
     };
@@ -129,7 +129,7 @@ pub fn execute(api: &dyn SyncApi, opts: &Options, out: &mut dyn Write) -> Result
         return run_check(api, opts, &plan, &tables, &base, &mut say);
     }
     if !opts.dry_run {
-        write_plan(api, &mut plan, &opts.workarea)?;
+        write_plan(api, &mut plan, &opts.workspace)?;
     }
     for e in &plan.entries {
         say(&entry_line(e));
@@ -158,8 +158,8 @@ pub fn execute(api: &dyn SyncApi, opts: &Options, out: &mut dyn Write) -> Result
     ));
     if !opts.dry_run && plan.entries.iter().any(|e| e.writes_this_run) {
         say(&format!(
-            "review    oml review list --workarea {} --author-key {}",
-            opts.workarea, me.name
+            "review    oml review list --workspace {} --author-key {}",
+            opts.workspace, me.name
         ));
     }
     let failed = unread || plan.entries.iter().any(|e| e.outcome.fails());
@@ -167,7 +167,7 @@ pub fn execute(api: &dyn SyncApi, opts: &Options, out: &mut dyn Write) -> Result
         exit: u8::from(failed),
         json: json!({
             "source": { "uri": base, "adapter": "delta" },
-            "workarea": opts.workarea,
+            "workspace": opts.workspace,
             "tables": tables.iter().map(table_json).collect::<Vec<_>>(),
             "items": plan.entries,
             "summary": summary,
@@ -238,7 +238,7 @@ fn run_check(
         exit: u8::from(failing),
         json: json!({
             "source": { "uri": base, "adapter": "delta" },
-            "workarea": opts.workarea,
+            "workspace": opts.workspace,
             "tables": tables.iter().map(table_json).collect::<Vec<_>>(),
             "claims": rows,
         }),

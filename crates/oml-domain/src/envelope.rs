@@ -15,19 +15,19 @@ pub mod event_types {
     pub const TENANT_GENESIS: &str = "tenant.genesis";
     /// Tenant creation in the reserved provider tenant's chain.
     pub const TENANT_CREATED: &str = "tenant.created";
-    /// New workarea node under an existing parent.
-    pub const WORKAREA_CREATE: &str = "workarea.create";
-    /// A person's key set a workarea's mode; `standard` on an in-progress
+    /// New workspace node under an existing parent.
+    pub const WORKSPACE_CREATE: &str = "workspace.create";
+    /// A person's key set a workspace's mode; `standard` on an in-progress
     /// root is its commit (ADR-0030 d1, d6).
-    pub const WORKAREA_MODE_SET: &str = "workarea.mode_set";
-    /// A workarea now names another crew record (ADR-0026 d8).
-    pub const WORKAREA_CREW_UPDATED: &str = "workarea.crew_updated";
-    /// A forward ladder step proposed by a dreamer or admin; pending until
+    pub const WORKSPACE_MODE_SET: &str = "workspace.mode_set";
+    /// A workspace now names another crew record (ADR-0026 d8).
+    pub const WORKSPACE_CREW_UPDATED: &str = "workspace.crew_updated";
+    /// A forward ladder step proposed by a reviewer or admin; pending until
     /// a second identity ratifies it (ADR-0009 d3).
-    pub const WORKAREA_STATUS_PROPOSED: &str = "workarea.status_proposed";
-    /// The ratification of a pending `workarea.status_proposed` by a second
+    pub const WORKSPACE_STATUS_PROPOSED: &str = "workspace.status_proposed";
+    /// The ratification of a pending `workspace.status_proposed` by a second
     /// identity, with the policy snapshot (ADR-0009 d3, d4).
-    pub const WORKAREA_STATUS_TRANSITION: &str = "workarea.status_transition";
+    pub const WORKSPACE_STATUS_TRANSITION: &str = "workspace.status_transition";
     /// A named crew record, created by an admin (ADR-0026 d8).
     pub const CREW_CREATED: &str = "crew.created";
     /// A crew record's charter URI or external manager, corrected by an
@@ -61,10 +61,10 @@ pub mod event_types {
     pub const REVIEW_REJECT: &str = "review.reject";
     /// The act that finds the review policy satisfied.
     pub const REVIEW_RATIFY: &str = "review.ratify";
-    /// A dreamer(propose) key proposes a labelled claim↔claim edge; pending,
+    /// A reviewer(propose) key proposes a labelled claim↔claim edge; pending,
     /// it confers nothing (event-catalog.md, claim-edge family).
     pub const CLAIM_EDGE_PROPOSED: &str = "claim_edge.proposed";
-    /// A claim proposed into a workarea's brief (ADR-0046 d7).
+    /// A claim proposed into a workspace's brief (ADR-0046 d7).
     pub const BRIEF_EDGE_PROPOSED: &str = "brief_edge.proposed";
     /// Ratified content becomes readable by others.
     pub const LIFECYCLE_PROMOTE: &str = "lifecycle.promote";
@@ -135,9 +135,9 @@ pub mod event_types {
     /// A tenant admin set the tenant's federation policy: `enabled`,
     /// `default_sources` and `max_sources` (ADR-0072 d5).
     pub const FEDERATION_POLICY_SET: &str = "federation.policy_set";
-    /// A person's dreamer key or a tenant admin set a workarea's federation
+    /// A person's reviewer key or a tenant admin set a workspace's federation
     /// field, `accept_federated` (ADR-0072 d5).
-    pub const WORKAREA_FEDERATION_SET: &str = "workarea.federation_set";
+    pub const WORKSPACE_FEDERATION_SET: &str = "workspace.federation_set";
     /// An admin key read the tenant's recall events: how many, how many
     /// carried query text, and the page's bounds (ADR-0054 d2, as amended).
     pub const TELEMETRY_EVENTS_READ: &str = "telemetry.events_read";

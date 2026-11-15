@@ -83,7 +83,7 @@ def sync_detailed(
     """One account's meters against its limits this UTC month.
 
      Requires: admin key role (ADR-0071 d6); every other role answers access.verb_ceiling. account is the
-    root workarea's id or the user's name, in the admin's tenant; anything else answers
+    root workspace's id or the user's name, in the admin's tenant; anything else answers
     access.not_found. The same shape as GET /v1/account/usage. Journals nothing.
 
     Args:
@@ -125,7 +125,7 @@ def sync(
     """One account's meters against its limits this UTC month.
 
      Requires: admin key role (ADR-0071 d6); every other role answers access.verb_ceiling. account is the
-    root workarea's id or the user's name, in the admin's tenant; anything else answers
+    root workspace's id or the user's name, in the admin's tenant; anything else answers
     access.not_found. The same shape as GET /v1/account/usage. Journals nothing.
 
     Args:
@@ -162,7 +162,7 @@ async def asyncio_detailed(
     """One account's meters against its limits this UTC month.
 
      Requires: admin key role (ADR-0071 d6); every other role answers access.verb_ceiling. account is the
-    root workarea's id or the user's name, in the admin's tenant; anything else answers
+    root workspace's id or the user's name, in the admin's tenant; anything else answers
     access.not_found. The same shape as GET /v1/account/usage. Journals nothing.
 
     Args:
@@ -202,7 +202,7 @@ async def asyncio(
     """One account's meters against its limits this UTC month.
 
      Requires: admin key role (ADR-0071 d6); every other role answers access.verb_ceiling. account is the
-    root workarea's id or the user's name, in the admin's tenant; anything else answers
+    root workspace's id or the user's name, in the admin's tenant; anything else answers
     access.not_found. The same shape as GET /v1/account/usage. Journals nothing.
 
     Args:

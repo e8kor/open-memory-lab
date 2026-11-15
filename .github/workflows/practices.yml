@@ -94,6 +94,8 @@ jobs:
       - run: python scripts/lint_practices.py like
       # Docs prose is neutral: no you, your, we, our, us or my outside code and quotations.
       - run: python scripts/lint_practices.py voice
+      # No former name of ADR-0091 outside scripts/lint_allow/rename.txt, each entry with its reason.
+      - run: python scripts/lint_practices.py vocabulary
       # Every action is pinned to a commit with its tag in a comment, one commit per action.
       # The lint parses each workflow, so it needs PyYAML.
       - run: pip install --retries 5 --timeout 30 pyyaml==6.0.3

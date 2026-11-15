@@ -18,18 +18,18 @@ class Transition:
     """
     Attributes:
         transition_id (str):
-        workarea_id (str):
+        workspace_id (str):
         from_ (TransitionFrom):
         to (TransitionTo):
         state (TransitionState):
         proposed_by_key_id (None | str): The proposing key, served only to that key; null to every other reader, an
             admin key included (ADR-0025 d15).
-        ratified_by_key_id (None | str): Null on this build's answers; the journal's workarea.status_transition names
+        ratified_by_key_id (None | str): Null on this build's answers; the journal's workspace.status_transition names
             the ratifier.
     """
 
     transition_id: str
-    workarea_id: str
+    workspace_id: str
     from_: TransitionFrom
     to: TransitionTo
     state: TransitionState
@@ -40,7 +40,7 @@ class Transition:
     def to_dict(self) -> dict[str, Any]:
         transition_id = self.transition_id
 
-        workarea_id = self.workarea_id
+        workspace_id = self.workspace_id
 
         from_ = self.from_.value
 
@@ -59,7 +59,7 @@ class Transition:
         field_dict.update(
             {
                 "transition_id": transition_id,
-                "workarea_id": workarea_id,
+                "workspace_id": workspace_id,
                 "from": from_,
                 "to": to,
                 "state": state,
@@ -75,7 +75,7 @@ class Transition:
         d = dict(src_dict)
         transition_id = d.pop("transition_id")
 
-        workarea_id = d.pop("workarea_id")
+        workspace_id = d.pop("workspace_id")
 
         from_ = TransitionFrom(d.pop("from"))
 
@@ -99,7 +99,7 @@ class Transition:
 
         transition = cls(
             transition_id=transition_id,
-            workarea_id=workarea_id,
+            workspace_id=workspace_id,
             from_=from_,
             to=to,
             state=state,

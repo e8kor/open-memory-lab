@@ -145,7 +145,7 @@ fn draft(event_type: &str) -> EventDraft {
 #[test]
 fn the_first_event_must_be_tenant_genesis() {
     assert_eq!(
-        next_envelope(None, draft(event_types::WORKAREA_CREATE)).unwrap_err(),
+        next_envelope(None, draft(event_types::WORKSPACE_CREATE)).unwrap_err(),
         ChainError::GenesisTypeRequired
     );
     let genesis = next_envelope(None, draft(event_types::TENANT_GENESIS)).unwrap();

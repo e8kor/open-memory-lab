@@ -4,11 +4,11 @@
     python3 eval/recall/federated.py --url http://127.0.0.1:8437 --state DIR \
         --out eval/recall/results [--scifact-zip PATH]
 
-federated.sh boots the lead, makes the workareas and the keys, and runs this.
+federated.sh boots the lead, makes the workspaces and the keys, and runs this.
 It reads the keys from DIR (writer.key, reviewer.key, reader.key) and calls
 `oml` for the admin's acts with the credentials federated.sh stored.
 
-1. load: the 200-memory corpus, one committed workarea `fed-<topic>` per topic
+1. load: the 200-memory corpus, one protected workspace `fed-<topic>` per topic
    (11) under `eval-fed`, written by an agent key and approved by a person's.
 2. splits, every query through POST /v1/memories/recall with the reader key,
    k 10, bm25-postings:
@@ -57,15 +57,15 @@ def oml(*args):
     return json.loads(out.stdout) if out.stdout.strip() else None
 
 
-def workarea(topic):
+def workspace(topic):
     return f"fed-{topic}"
 
 
 def write_all(writer, reviewer, rows):
-    """rows: [(claim_key, text, workarea)] -> {artifact_id: claim_key}, approved."""
+    """rows: [(claim_key, text, workspace)] -> {artifact_id: claim_key}, approved."""
     idmap = {}
     for key, text, wa in rows:
-        body = {"body": text, "claim_key": CLAIM_PREFIX + key, "kind": "memory", "workarea": wa}
+        body = {"body": text, "claim_key": CLAIM_PREFIX + key, "kind": "memory", "workspace": wa}
         status, resp = writer.call("POST", "/v1/memories", body, idempotent=True)
         if status != 202:
             raise SystemExit(f"write {key} refused: {status} {resp}")
@@ -88,7 +88,7 @@ def write_all(writer, reviewer, rows):
 
 
 def recall(reader, query, scope, sources):
-    body = {"query": query, "k": K, "workarea": scope, "search": SEARCH, "include_text": False}
+    body = {"query": query, "k": K, "workspace": scope, "search": SEARCH, "include_text": False}
     if sources is not None:
         body["sources"] = sources
     t0 = time.perf_counter()
@@ -108,9 +108,9 @@ def run_split(reader, idmap, topic_of, items, sources):
     """items: [(query, scope topic)] -> per-query rows."""
     rows = []
     for q, scope in items:
-        resp, ms = recall(reader, q["query"], workarea(scope), sources)
+        resp, ms = recall(reader, q["query"], workspace(scope), sources)
         ranked = [idmap.get(h["memory"]["artifact_id"], "?") for h in resp["hits"]]
-        searched = [s["workarea_path"].rsplit(".", 1)[-1]
+        searched = [s["workspace_path"].rsplit(".", 1)[-1]
                     for s in (resp["search"].get("sources") or {}).get("searched", [])]
         rows.append({
             "id": q["id"], "category": q["category"], "scope": scope, "ranked": ranked,
@@ -133,7 +133,7 @@ def summarize(rows, queries_by_id, topic_of):
         s5.append(metrics.success_at(r["ranked"], rel, 5))
         nd.append(metrics.ndcg_at(r["ranked"], rel, 10))
         if r["searched"]:
-            holding = {workarea(topic_of[m]) for m, g in rel.items() if g == 2}
+            holding = {workspace(topic_of[m]) for m, g in rel.items() if g == 2}
             searched = set(r["searched"])
             sel_p.append(len(searched & holding) / len(searched))
             sel_r.append(len(searched & holding) / len(holding))
@@ -195,7 +195,7 @@ def main():
     topics = sorted({m["topic"] for m in memories})
 
     idmap = write_all(writer, reviewer,
-                      [(m["id"], m["text"], workarea(m["topic"])) for m in memories])
+                      [(m["id"], m["text"], workspace(m["topic"])) for m in memories])
 
     answerable = [q for q in queries if q["category"] != metrics.UNANSWERABLE]
     unanswerable = [q for q in queries if q["category"] == metrics.UNANSWERABLE]
@@ -204,7 +204,7 @@ def main():
     cross = [(q, t) for q in answerable if (t := cross_scope(q, topic_of, topics))]
     unans = [(q, topics[i % len(topics)]) for i, q in enumerate(unanswerable)]
 
-    recall(reader, "warm up", workarea(topics[0]), None)
+    recall(reader, "warm up", workspace(topics[0]), None)
     report = OrderedDict()
     raw = {}
     modes = [("scope", "scope", None), ("wide@8", "wide", 8), ("union", "wide", 64)]
@@ -223,7 +223,7 @@ def main():
         sizes = Counter(m["topic"] for m in memories)
         pad = SKEW_FACTOR * max(c for t, c in sizes.items() if t != SKEW_TOPIC)
         idmap.update(write_all(writer, reviewer,
-                               [(k, t, workarea(SKEW_TOPIC)) for k, t in scifact(a.scifact_zip, pad)]))
+                               [(k, t, workspace(SKEW_TOPIC)) for k, t in scifact(a.scifact_zip, pad)]))
         report["skew"] = OrderedDict([("padded_topic", SKEW_TOPIC), ("padded_rows", pad),
                                       ("max_sources", SKEW_MAX_SOURCES)])
         for label, sources, max_sources in (("scope", "scope", None),
@@ -239,14 +239,14 @@ def main():
         oml("search", "federation", "--max-sources", "64")
         agree = []
         for q, scope in cross:
-            body = {"query": q["query"], "k": 100, "workarea": workarea(scope), "search": SEARCH,
+            body = {"query": q["query"], "k": 100, "workspace": workspace(scope), "search": SEARCH,
                     "include_text": False, "sources": "wide"}
             status, resp = reader.call("POST", "/v1/memories/recall", body)
-            counts = Counter(h["memory"]["workarea_path"].rsplit(".", 1)[-1]
+            counts = Counter(h["memory"]["workspace_path"].rsplit(".", 1)[-1]
                              for h in resp["hits"] if h.get("via") == "federated")
             redde = [w for w, _ in sorted(counts.items(), key=lambda x: (-x[1], x[0]))][:SKEW_MAX_SOURCES]
             chosen = [s for s in next(r for r in raw[f"skew/wide@{SKEW_MAX_SOURCES}"]
-                                      if r["id"] == q["id"])["searched"] if s != workarea(scope)]
+                                      if r["id"] == q["id"])["searched"] if s != workspace(scope)]
             if redde:
                 agree.append(len(set(chosen) & set(redde)) / len(redde))
         report["skew"]["agreement_with_redde_analogue"] = round(sum(agree) / len(agree), 3)

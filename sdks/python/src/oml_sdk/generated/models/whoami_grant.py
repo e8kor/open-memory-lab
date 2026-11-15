@@ -19,14 +19,14 @@ class WhoamiGrant:
 
         Attributes:
             grant_id (str):
-            workarea_node_id (str): Node id, never a path.
+            workspace_node_id (str): Node id, never a path.
             role (WhoamiGrantRole):
             epoch (int): The journal seq of this grant's grant.issued event.
             covers (WhoamiGrantCovers | Unset): The node's subtree, or the node alone (ADR-0044 d4).
     """
 
     grant_id: str
-    workarea_node_id: str
+    workspace_node_id: str
     role: WhoamiGrantRole
     epoch: int
     covers: WhoamiGrantCovers | Unset = UNSET
@@ -34,7 +34,7 @@ class WhoamiGrant:
     def to_dict(self) -> dict[str, Any]:
         grant_id = self.grant_id
 
-        workarea_node_id = self.workarea_node_id
+        workspace_node_id = self.workspace_node_id
 
         role = self.role.value
 
@@ -49,7 +49,7 @@ class WhoamiGrant:
         field_dict.update(
             {
                 "grant_id": grant_id,
-                "workarea_node_id": workarea_node_id,
+                "workspace_node_id": workspace_node_id,
                 "role": role,
                 "epoch": epoch,
             }
@@ -64,7 +64,7 @@ class WhoamiGrant:
         d = dict(src_dict)
         grant_id = d.pop("grant_id")
 
-        workarea_node_id = d.pop("workarea_node_id")
+        workspace_node_id = d.pop("workspace_node_id")
 
         role = WhoamiGrantRole(d.pop("role"))
 
@@ -79,7 +79,7 @@ class WhoamiGrant:
 
         whoami_grant = cls(
             grant_id=grant_id,
-            workarea_node_id=workarea_node_id,
+            workspace_node_id=workspace_node_id,
             role=role,
             epoch=epoch,
             covers=covers,

@@ -41,6 +41,24 @@ class AdrLinks(unittest.TestCase):
             left += [f"{rel}: {m}" for m in re.findall(r"\]\(((?:\.\./)*adr/ADR-[^)]*)\)", out)]
         self.assertEqual([], left)
 
+    def test_a_link_to_a_former_record_name_fails_the_strict_build_naming_the_current_one(self):
+        with self.assertLogs("mkdocs.plugins.adr_links", "WARNING") as logs:
+            H.rewrite("[a](../adr/ADR-0008-workarea-algebra.md)", "architecture/overview.md")
+        self.assertIn("ADR-0008-workarea-algebra.md was renamed to ADR-0008-workspace-algebra.md", logs.output[0])
+
+    def test_a_link_to_a_record_that_does_not_exist_fails_the_strict_build(self):
+        with self.assertLogs("mkdocs.plugins.adr_links", "WARNING") as logs:
+            H.rewrite("[a](adr/ADR-0999-no-such-record.md)", "faq.md")
+        self.assertIn("ADR-0999-no-such-record.md does not exist", logs.output[0])
+
+    def test_every_renamed_record_row_names_a_former_file_that_is_gone_and_a_current_one_that_exists(self):
+        rows = H.renamed()
+        self.assertGreaterEqual(len(rows), 12)
+        for former, current in rows.items():
+            self.assertFalse((H.ADR_DIR / former).exists(), former)
+            self.assertTrue((H.ADR_DIR / current).is_file(), current)
+            self.assertEqual(former[:8], current[:8], (former, current))
+
 
 if __name__ == "__main__":
     unittest.main()

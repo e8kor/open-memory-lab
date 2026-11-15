@@ -1,6 +1,6 @@
 //! Federated recall's policy routes (ADR-0072 d5): `GET /v2/federation`
 //! and `POST /v2/federation`, admin by key role, and `POST
-//! /v2/workareas/{workarea}/federation`, a person's dreamer key or a tenant
+//! /v2/workspaces/{workspace}/federation`, a person's reviewer key or a tenant
 //! admin. Each change is journalled; nothing here grants a read.
 
 use axum::body::Bytes;
@@ -31,10 +31,10 @@ struct PolicyBody {
     max_sources: Option<u32>,
 }
 
-/// openapi.yaml `WorkareaFederationRequest`, closed.
+/// openapi.yaml `WorkspaceFederationRequest`, closed.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WorkareaBody {
+struct WorkspaceBody {
     accept_federated: bool,
 }
 
@@ -129,13 +129,13 @@ where
         finish(&rid, result)
     }
 
-    /// `POST /v2/workareas/{workarea}/federation`: sets the node's
-    /// `accept_federated`, journalled as `workarea.federation_set`; answers
+    /// `POST /v2/workspaces/{workspace}/federation`: sets the node's
+    /// `accept_federated`, journalled as `workspace.federation_set`; answers
     /// the field as it now is.
-    pub(crate) async fn set_workarea_federation(
+    pub(crate) async fn set_workspace_federation(
         State(st): State<Self>,
         rid: Rid,
-        Path(workarea_id): Path<String>,
+        Path(workspace_id): Path<String>,
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
@@ -143,12 +143,12 @@ where
             st.require_writes_open()?;
             let acting = acting(&headers, None)?;
             let _idem = idempotency_key(&headers)?;
-            let workarea = reference("workarea", &workarea_id)?;
-            let req: WorkareaBody = parse_json(&headers, &body)?;
+            let workspace = reference("workspace", &workspace_id)?;
+            let req: WorkspaceBody = parse_json(&headers, &body)?;
             let federation = retry_chain(|| {
-                st.app.set_workarea_federation(
+                st.app.set_workspace_federation(
                     acting.bearer(),
-                    workarea.clone(),
+                    workspace.clone(),
                     req.accept_federated,
                 )
             })

@@ -1,7 +1,7 @@
 //! The use-cases: every verb the transports will front, enforcing the
 //! constitution here — verb ceilings (R1), reviewer-never-author (R2),
 //! promoted-only reads (R3) — never in an adapter (ADR-0019 d1). Every
-//! workarea-scoped verb resolves effective access from the key's grants and
+//! workspace-scoped verb resolves effective access from the key's grants and
 //! denials on each request, in the one refusal order of roles-and-keys.md
 //! (ADR-0025 d1).
 
@@ -23,7 +23,7 @@ pub use metering::{AccountLimits, UsageDriftReport};
 pub use pages::{
     ActClaim, ActTicket, AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted,
     OwnKey, QueueRow, REGION_COUNT_MAX, Region, Regions, VerdictTrail, WebListRequest,
-    WorkareaOffer, WorkareaOffers,
+    WorkspaceOffer, WorkspaceOffers,
 };
 pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
@@ -61,7 +61,7 @@ use oml_domain::guardrail::{
     guardrail_order, set_digest,
 };
 use oml_domain::in_progress::{
-    self as in_progress, CuratorAct, CuratorRefusal, InProgressReason, KeyProfile, WorkareaMode,
+    self as in_progress, CuratorAct, CuratorRefusal, InProgressReason, KeyProfile, WorkspaceMode,
     admissible_roles, crosses_into, curator_scope, curator_verb, may_set_mode, profile_admits,
 };
 use oml_domain::name::{
@@ -87,11 +87,11 @@ use oml_domain::similar::{
 use oml_domain::vocab::{Curie, OmlLabel};
 use oml_domain::vocab_edges::{EdgeState, TermEdge, check_acyclic, edge_transition};
 use oml_domain::{
-    ChainHead, DERIVED_CLAIM_KEY_PREFIX, Envelope, EventDraft, EventTime, FrozenOp, HeldBy, KeySet,
+    ChainHead, DERIVED_CLAIM_KEY_PREFIX, Envelope, EventDraft, EventTime, FrozenOp, KeySet,
     LadderNode, LadderRefusal, LineageClosure, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, WorkareaStatus, canonical_bytes, check_reviewer, derive_claim_key, event_types,
-    frozen_refuses, next_envelope, nfc, propose_check, ratifier_is_proposer, ratify_check,
-    same_user, sha256_digest_string, transition,
+    SignedEnvelope, UsedBy, WorkspaceStatus, canonical_bytes, check_reviewer, derive_claim_key,
+    event_types, frozen_refuses, next_envelope, nfc, propose_check, ratifier_is_proposer,
+    ratify_check, same_user, sha256_digest_string, transition,
 };
 
 use crate::cursor::{ClaimEdgeCursor, ListingCursor, NameCursor, PathCursor};
@@ -110,20 +110,20 @@ use crate::types::{
     ClaimEdgeQuery, ClaimEdgeRatification, ClaimEdgeRecord, ClaimEdgeSelection,
     ClientAuthentication, ClientDescription, ClientKind, CodeEntryOutcome, ConfirmAction,
     ConfirmOutcome, ConfirmationGrant, ConfirmationView, ConnectCode, ConnectCodeIssued,
-    ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, CreatedWorkarea, Credential,
-    CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DenialRecord, EdgeRatification,
-    ExchangeForm, FormatFields, GrantRecord, GuardrailFields, GuardrailRequest, GuardrailSet,
-    GuardrailVerdict, HIT_KINDS, IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess, KeyDetail,
-    KeyRecord, ListRequest, ListingFilter, ListingPosition, ListingScope, LiveConnectCode,
-    MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal, OAuthClientRecord, OnSimilar,
-    OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge, ProposeClaimEdge, RecallHit,
-    RecallRequest, RecallResult, RefreshFacts, RefreshForm, RegisteredClient, RerankOutcome,
-    SIMILAR_KINDS, ServedGuardrail, ServedMemory, SimilarItem, SourceCheck, SourceCheckReceipt,
-    SourceCheckRequest, SubmitOutcome, SubmitReceipt, SubmitRequest, SubmitVerb, SupersedeOutcome,
-    SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TenantRow, TokenPair,
-    TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage, UnnamedRows, Verdict,
-    VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
-    WorkareaStatusView,
+    ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, CreatedWorkspace,
+    Credential, CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DenialRecord,
+    EdgeRatification, ExchangeForm, FormatFields, GrantRecord, GuardrailFields, GuardrailRequest,
+    GuardrailSet, GuardrailVerdict, HIT_KINDS, IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess,
+    KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition, ListingScope,
+    LiveConnectCode, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
+    OAuthClientRecord, OnSimilar, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge,
+    ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm,
+    RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail, ServedMemory, SimilarItem,
+    SourceCheck, SourceCheckReceipt, SourceCheckRequest, SubmitOutcome, SubmitReceipt,
+    SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage,
+    TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode,
+    TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
+    WorkspaceInfo, WorkspaceRecord, WorkspaceStatusView,
 };
 use crate::types::{
     BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX,
@@ -152,12 +152,12 @@ struct PipelineRun {
 const EVENTS_PAGE: usize = 512;
 
 /// The review policy in force: the one PoC constant `{k: 1,
-/// required_roles: ["dreamer"]}`. A verdict's ratification and a status
+/// required_roles: ["reviewer"]}`. A verdict's ratification and a status
 /// transition's `policy_snapshot` both read it here, so the two cannot
-/// disagree (admission.md review and ratification; workareas.md, the policy
+/// disagree (admission.md review and ratification; workspaces.md, the policy
 /// snapshot is the policy in force plus the precondition; ADR-0009 d3).
 fn review_policy() -> Value {
-    json!({ "k": 1, "required_roles": ["dreamer"] })
+    json!({ "k": 1, "required_roles": ["reviewer"] })
 }
 
 /// The fixed reason a failed issuance's `key.revoked` digests
@@ -182,7 +182,7 @@ pub const CONNECT_CODE_TTL_SECS: i64 = 600;
 
 /// The longest an admin may ask a connect code to live, 30 days, in seconds:
 /// the reviewer code of a directory listing, minted only for a key confined
-/// to one workarea (ADR-0067 d3).
+/// to one workspace (ADR-0067 d3).
 pub const CONNECT_CODE_TTL_MAX_SECS: i64 = 30 * 24 * 3600;
 
 /// `oauth.access_token_ttl`'s shipped default, 1 hour, in seconds: the
@@ -219,7 +219,7 @@ pub struct App<J, S, C, I, Sc> {
     /// Told what each request resolved, for its log line; it decides
     /// nothing (ADR-0042 d2, d14).
     observer: Arc<dyn RequestObserver>,
-    /// `brief.max_tokens`: the budget a workarea's brief is cut to
+    /// `brief.max_tokens`: the budget a workspace's brief is cut to
     /// (ADR-0046 d8; #145).
     brief_max_tokens: u64,
     /// The pipelines this deployment serves and its default (ADR-0049 d4).
@@ -264,7 +264,7 @@ pub struct App<J, S, C, I, Sc> {
 }
 
 /// The authenticated key and what its effective access is computed from,
-/// read once per request and never cached (workareas.md effective access;
+/// read once per request and never cached (workspaces.md effective access;
 /// ADR-0025 d1, d14). A key value and an access token of a live connection
 /// each resolve to one, the same for one key (ADR-0031 d11).
 #[derive(Debug)]
@@ -272,7 +272,7 @@ pub struct Caller {
     key: KeyRecord,
     grants: Vec<Grant>,
     denials: Vec<KeyDenial>,
-    /// The epoch of the access read above (workareas.md permission epoch).
+    /// The epoch of the access read above (workspaces.md permission epoch).
     permission_epoch: u64,
     /// The own key set when it is wider than the key itself: a person's
     /// `<user>-web` session key owns every key naming its user (ADR-0045
@@ -336,7 +336,7 @@ impl Caller {
         &self.denials
     }
 
-    /// The epoch of the access read (workareas.md permission epoch).
+    /// The epoch of the access read (workspaces.md permission epoch).
     #[must_use]
     pub fn permission_epoch(&self) -> u64 {
         self.permission_epoch
@@ -522,7 +522,7 @@ fn require_role(key: &KeyRecord, role: Role, verb: &'static str) -> Result<(), A
 }
 
 /// Step 1 of the refusal order: the key's role must admit the grant role the
-/// verb needs. It reads no node, so it runs before the workarea resolves
+/// verb needs. It reads no node, so it runs before the workspace resolves
 /// (roles-and-keys.md grant admissibility and refusal order; ADR-0025 d1).
 fn require_admissible(key: &KeyRecord, needed: Role, verb: &'static str) -> Result<(), AppError> {
     // A curator key reaches only the verbs that read or narrow (ADR-0030
@@ -541,7 +541,7 @@ fn require_admissible(key: &KeyRecord, needed: Role, verb: &'static str) -> Resu
 }
 
 /// The role the refusal order reads for `needed`: a curator key's writer
-/// grants confer the writer verbs, which a dreamer's ceiling would refuse
+/// grants confer the writer verbs, which a reviewer's ceiling would refuse
 /// (ADR-0030 d8).
 fn ceiling_role(key: &KeyRecord, needed: Role) -> Role {
     if key.profile == Some(KeyProfile::Curator) && needed == Role::Writer {
@@ -555,26 +555,26 @@ fn ceiling_role(key: &KeyRecord, needed: Role) -> Role {
 /// conflict: the single verdict route's retry count (ADR-0055 d4).
 const BULK_CHAIN_RETRIES: usize = 16;
 
-/// The listing and the bulk verdict admit a dreamer key a person holds,
+/// The listing and the bulk verdict admit a reviewer key a person holds,
 /// and refuse every other key before any lookup (ADR-0055 d1): a writer or
-/// reader key (R1), a service key (ADR-0025 d1) and a dreamer key held by
+/// reader key (R1), a service key (ADR-0025 d1) and a reviewer key used by
 /// an agent, whose crew reviews one serve at a time.
 fn require_person_reviewer(key: &KeyRecord) -> Result<(), AppError> {
-    if key.role == Role::Dreamer && key.held_by == HeldBy::Human {
+    if key.role == Role::Reviewer && key.used_by == UsedBy::Person {
         Ok(())
     } else {
         Err(AppError::BulkReviewHumanOnly {
             role: key.role,
-            held_by: key.held_by,
+            used_by: key.used_by,
         })
     }
 }
 
-/// A `held_by: service` key is refused every review-class verb before any
-/// lookup: its dreamer grant confers them like any other, and this rule, not
+/// A `used_by: service` key is refused every review-class verb before any
+/// lookup: its reviewer grant confers them like any other, and this rule, not
 /// the grant, keeps it out of review (roles-and-keys.md; ADR-0025 d1).
 fn refuse_service(key: &KeyRecord, verb: &'static str) -> Result<(), AppError> {
-    if key.held_by == HeldBy::Service {
+    if key.used_by == UsedBy::Service {
         Err(AppError::VerbCeiling {
             role: key.role,
             verb,
@@ -584,13 +584,13 @@ fn refuse_service(key: &KeyRecord, verb: &'static str) -> Result<(), AppError> {
     }
 }
 
-/// A refusal-order answer as the typed refusal; `node` is the workarea
+/// A refusal-order answer as the typed refusal; `node` is the workspace
 /// `access.grant_refused` names.
 fn access_refusal(refusal: AccessRefusal, node: Uuid, verb: &'static str) -> AppError {
     match refusal {
         AccessRefusal::VerbCeiling { role, .. } => AppError::VerbCeiling { role, verb },
         AccessRefusal::GrantRefused { needed_role } => AppError::GrantRefused {
-            workarea_id: node,
+            workspace_id: node,
             needed_role,
         },
         AccessRefusal::NotFound => AppError::NotFound,
@@ -655,10 +655,13 @@ fn base62_43(bytes: &[u8; 32]) -> String {
     String::from_utf8(digits).expect("base62 alphabet is ASCII")
 }
 
-/// The ancestry of `node` as `workarea_ancestry` serves it, the node then
+/// The ancestry of `node` as `workspace_ancestry` serves it, the node then
 /// each parent in turn to the root, from records already read; `None` where
 /// they do not reach the root, and the caller reads it instead.
-fn ancestry_of(walked: &BTreeMap<Uuid, WorkareaRecord>, node: Uuid) -> Option<Vec<WorkareaRecord>> {
+fn ancestry_of(
+    walked: &BTreeMap<Uuid, WorkspaceRecord>,
+    node: Uuid,
+) -> Option<Vec<WorkspaceRecord>> {
     let mut ancestry = Vec::new();
     let mut at = Some(node);
     while let Some(id) = at {
@@ -676,7 +679,7 @@ fn ancestry_of(walked: &BTreeMap<Uuid, WorkareaRecord>, node: Uuid) -> Option<Ve
 /// A node's derived path from its ancestry, listed node to root: the names
 /// from `universe` down to the node, joined with `.` (ADR-0025 d14). Every
 /// path the app serves is this derivation.
-fn derived_path(ancestry: &[WorkareaRecord]) -> String {
+fn derived_path(ancestry: &[WorkspaceRecord]) -> String {
     ancestry
         .iter()
         .rev()
@@ -692,7 +695,7 @@ fn submit_request_digest(
     req: &SubmitRequest,
     claim_key: &str,
     verb: SubmitVerb,
-    workarea_id: Uuid,
+    workspace_id: Uuid,
 ) -> String {
     let doc = json!({
         "body": req.body,
@@ -700,7 +703,7 @@ fn submit_request_digest(
         "verb": verb.as_str(),
         "kind": req.kind.as_str(),
         "derives_from": req.derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        "workarea_id": workarea_id.to_string(),
+        "workspace_id": workspace_id.to_string(),
     });
     let mut doc = with_guardrail_fields(doc, req.severity, req.rule.as_ref());
     if let Some(members) = doc.as_object_mut() {
@@ -734,9 +737,9 @@ fn with_format(mut doc: Value, format: Option<&str>, title: Option<&str>) -> Val
     doc
 }
 
-/// The name of a person's chat workarea under their user root (ADR-0063
+/// The name of a person's chat workspace under their user root (ADR-0063
 /// d8).
-pub const CHAT_WORKAREA: &str = "chat";
+pub const CHAT_WORKSPACE: &str = "chat";
 
 /// A request digest's document with `origin` when sent, and unchanged
 /// otherwise, so a request without one digests as it did before
@@ -1017,19 +1020,19 @@ impl RecordedVerdict {
 
 /// What `node` is to the ladder (ADR-0046 d1): the universe root, a user
 /// root (ADR-0044 d1), or an ordinary node.
-/// What `set_workarea_mode` admits (ADR-0030 d1, d6): the node already in
+/// What `set_workspace_mode` admits (ADR-0030 d1, d6): the node already in
 /// the mode, which journals nothing, or a change with the mode it leaves
 /// and, for a commit, the nodes it frees.
 pub(crate) enum ModeAdmitted {
-    Already(WorkareaRecord),
+    Already(WorkspaceRecord),
     Change {
-        node: WorkareaRecord,
-        current: WorkareaMode,
+        node: WorkspaceRecord,
+        current: WorkspaceMode,
         held_free: Vec<Uuid>,
     },
 }
 
-fn ladder_node(node: &WorkareaRecord) -> LadderNode {
+fn ladder_node(node: &WorkspaceRecord) -> LadderNode {
     if node.parent_id.is_none() {
         LadderNode::Universe
     } else if node.user_root {
@@ -1042,7 +1045,7 @@ fn ladder_node(node: &WorkareaRecord) -> LadderNode {
 /// The request digest of a claim-edge proposal: SHA-256 over the RFC 8785
 /// JSON of the method, the route template, no path parameters and the body
 /// as sent, `kind: claim` included, since ADR-0039 d9 merges the claim-edge
-/// and workarea-edge families into `/v2/edges` (http-api.md idempotency).
+/// and workspace-edge families into `/v2/edges` (http-api.md idempotency).
 fn claim_edge_request_digest(req: &ProposeClaimEdge) -> Result<String, AppError> {
     let doc = json!({
         "method": "POST",
@@ -1059,7 +1062,7 @@ fn claim_edge_request_digest(req: &ProposeClaimEdge) -> Result<String, AppError>
 }
 
 /// The request digest of a brief-edge proposal: the `/v2/edges` family's,
-/// `kind: brief`, the workarea as sent (http-api.md idempotency).
+/// `kind: brief`, the workspace as sent (http-api.md idempotency).
 fn brief_edge_request_digest(req: &ProposeBriefEdge) -> Result<String, AppError> {
     let doc = json!({
         "method": "POST",
@@ -1068,7 +1071,7 @@ fn brief_edge_request_digest(req: &ProposeBriefEdge) -> Result<String, AppError>
         "body": {
             "kind": "brief",
             "from_artifact_id": req.artifact_id.to_string(),
-            "to_workarea_id": req.workarea.to_string(),
+            "to_workspace_id": req.workspace.to_string(),
         },
     });
     Ok(sha256_digest_string(&canonical_bytes(&doc)?))
@@ -1140,14 +1143,14 @@ fn term_curie(kind: MemoryKind, claim_key: &str) -> Result<Curie, AppError> {
 fn with_universe(
     caller: &Caller,
     readable: &[Uuid],
-    scope_ancestry: &[WorkareaRecord],
+    scope_ancestry: &[WorkspaceRecord],
 ) -> Vec<Uuid> {
     // A scope inside a user root also searches `universe`'s own claims
     // where the key reads that node, ranked with the scope's own; own held
     // rows never include them (ADR-0044 d10).
     let mut hit_nodes = readable.to_vec();
     if scope_ancestry.iter().any(|w| w.user_root)
-        && let Some(universe) = scope_ancestry.last().map(|w| w.workarea_id)
+        && let Some(universe) = scope_ancestry.last().map(|w| w.workspace_id)
         && caller.effective(&[universe]).contains(&Role::Reader)
         && !hit_nodes.contains(&universe)
     {
@@ -1205,7 +1208,7 @@ fn recall_query_digest(
             members.insert("as_of".to_owned(), Value::from(at.as_str()));
         }
         // `sources` only when it searched wider than the scope, `wide` or
-        // the list's workarea ids, so a `scope` recall digests as it did
+        // the list's workspace ids, so a `scope` recall digests as it did
         // before (ADR-0072 d9).
         if let Some(record) = federation
             && record.sources != "scope"
@@ -1247,6 +1250,20 @@ fn successor_kind(
     } else {
         Err(AppError::KindChangeRefused { target, sent })
     }
+}
+
+/// An event as its readers read it (ADR-0091 d4): its type and payload
+/// through the former-name map, every other signed field as stored. The
+/// stored envelope is never replaced: verification reads the stored bytes,
+/// and only interpretation reads this.
+pub(crate) fn read_as_current(envelope: &Envelope) -> Result<Envelope, StoreError> {
+    let read = oml_domain::former_names::read_event(&envelope.event_type, &envelope.payload)
+        .map_err(|e| StoreError::Backend(format!("seq {}: {e}", envelope.seq)))?;
+    Ok(Envelope {
+        event_type: read.event_type,
+        payload: read.payload,
+        ..envelope.clone()
+    })
 }
 
 /// One event's commit request, with its outbox row.
@@ -1293,7 +1310,7 @@ fn payload_id(payload: &Value, field: &str) -> Option<Uuid> {
         .and_then(|id| Uuid::parse_str(id).ok())
 }
 
-/// A crew object as a PoC `workarea.create` or `workarea.crew_updated`
+/// A crew object as a PoC `workspace.create` or `workspace.crew_updated`
 /// carried it; `None` for null or absent (ADR-0026 d11, rule 4).
 fn crew_object(value: Option<&Value>) -> Option<CrewObject> {
     let object = value?.as_object()?;
@@ -1321,7 +1338,7 @@ fn names_assigned_payload(naming: &Naming) -> Value {
             "name": c.name.as_str(),
             "charter_uri": c.charter_uri,
             "external_manager": c.external_manager,
-            "workarea_ids": c.workarea_ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            "workspace_ids": c.workspace_ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
     })
 }
@@ -1332,11 +1349,11 @@ struct PredatingChain {
     tenant_id: Uuid,
     /// The tenant's own row, named in the deployment's namespace.
     tenant: Option<UnnamedRow>,
-    /// The root workarea, which rule 1 names `universe`.
+    /// The root workspace, which rule 1 names `universe`.
     root: Option<Uuid>,
-    /// The chain's workareas and keys.
+    /// The chain's workspaces and keys.
     rows: Vec<UnnamedRow>,
-    /// Each workarea's current crew object, in journal order.
+    /// Each workspace's current crew object, in journal order.
     crews: Vec<(Uuid, CrewObject)>,
     /// Every global denial on an admin key not yet lifted, as `(denial_id,
     /// key_id)` in journal order: rule 5 lifts each in the commit that names
@@ -1358,7 +1375,8 @@ fn predating_chain(
     let mut crews: Vec<(Uuid, Option<CrewObject>)> = Vec::new();
     let (mut admin_keys, mut denials) = (BTreeSet::new(), Vec::new());
     for event in events {
-        let envelope = &event.envelope;
+        let read = read_as_current(&event.envelope)?;
+        let envelope = &read;
         let payload = &envelope.payload;
         match envelope.event_type.as_str() {
             event_types::SYSTEM_NAMES_ASSIGNED => {
@@ -1373,24 +1391,24 @@ fn predating_chain(
                         .or_else(|| payload_str(payload, "tenant_name")),
                 });
             }
-            event_types::WORKAREA_CREATE => {
-                if let Some(id) = payload_id(payload, "workarea_id")
-                    && unnamed.workareas.contains(&id)
+            event_types::WORKSPACE_CREATE => {
+                if let Some(id) = payload_id(payload, "workspace_id")
+                    && unnamed.workspaces.contains(&id)
                 {
                     if payload.get("parent_id").is_none_or(Value::is_null) {
                         root = Some(id);
                     }
                     rows.push(UnnamedRow {
-                        kind: NamedKind::Workarea,
+                        kind: NamedKind::Workspace,
                         id,
                         prior_name: payload_str(payload, "name"),
                     });
                     crews.push((id, crew_object(payload.get("crew"))));
                 }
             }
-            // The latest crew object of a workarea is its current one.
-            event_types::WORKAREA_CREW_UPDATED => {
-                if let Some(id) = payload_id(payload, "workarea_id")
+            // The latest crew object of a workspace is its current one.
+            event_types::WORKSPACE_CREW_UPDATED => {
+                if let Some(id) = payload_id(payload, "workspace_id")
                     && let Some(object) = crew_object(payload.get("crew"))
                     && let Some(slot) = crews.iter_mut().find(|(w, _)| *w == id)
                 {
@@ -1436,10 +1454,10 @@ fn predating_chain(
         .then_some((NamedKind::Tenant, tenant_id))
         .or_else(|| {
             unnamed
-                .workareas
+                .workspaces
                 .iter()
-                .find(|w| !created(NamedKind::Workarea, **w))
-                .map(|w| (NamedKind::Workarea, *w))
+                .find(|w| !created(NamedKind::Workspace, **w))
+                .map(|w| (NamedKind::Workspace, *w))
         })
         .or_else(|| {
             unnamed
@@ -1557,7 +1575,7 @@ where
         self.reranker.as_deref().map(Reranker::model)
     }
 
-    /// The app whose workarea briefs are cut to `max_tokens`, the
+    /// The app whose workspace briefs are cut to `max_tokens`, the
     /// deployment's `brief.max_tokens` (ADR-0046 d8; #145).
     #[must_use]
     pub fn with_brief_max_tokens(self, max_tokens: u64) -> Self {
@@ -1589,7 +1607,7 @@ where
     }
 
     /// The app that tells `observer` what each request resolved: the key
-    /// its credential named and the workarea its verb targets, which the
+    /// its credential named and the workspace its verb targets, which the
     /// transport's request line logs by id (ADR-0042 d2). Without it the
     /// app tells no one.
     #[must_use]
@@ -1644,7 +1662,7 @@ where
     // -- internals ----------------------------------------------------------
 
     /// The key the value names and the grants and denials of its effective
-    /// access: one hash lookup and one access read per request (workareas.md
+    /// access: one hash lookup and one access read per request (workspaces.md
     /// effective access; ADR-0025 d1).
     async fn authenticate(&self, api_key: &str) -> Result<Caller, AppError> {
         let key = self.key_of_value(api_key).await?;
@@ -1735,7 +1753,7 @@ where
         if let Some(root) = key.user {
             let is_root = self
                 .journal
-                .workarea(key.tenant_id, root)
+                .workspace(key.tenant_id, root)
                 .await?
                 .is_some_and(|w| w.user_root);
             if !is_root {
@@ -1762,8 +1780,8 @@ where
         self.resolve_as(key, key.user, kind, reference).await
     }
 
-    /// [`Self::resolve`] with the workarea namespace of `user`, a user root,
-    /// or the shared one for `None`: a user key's bare workarea name
+    /// [`Self::resolve`] with the workspace namespace of `user`, a user root,
+    /// or the shared one for `None`: a user key's bare workspace name
     /// resolves in its own user namespace, and otherwise only as `universe`
     /// or its own root's name; a tenant key's in the shared namespace; and a
     /// qualified name `<user>.<name>` in the named user root's namespace,
@@ -1788,14 +1806,14 @@ where
             Reference::Id(id) => return Ok(*id),
             Reference::Qualified { user, name } => {
                 let resolved = match kind {
-                    NamedKind::Workarea => match self
+                    NamedKind::Workspace => match self
                         .journal
-                        .resolve_name(tenant_id, NamedKind::Workarea, user)
+                        .resolve_name(tenant_id, NamedKind::Workspace, user)
                         .await?
                     {
                         Some(root) => {
                             self.journal
-                                .resolve_user_workarea(tenant_id, root, name)
+                                .resolve_user_workspace(tenant_id, root, name)
                                 .await?
                         }
                         None => None,
@@ -1809,10 +1827,10 @@ where
             Reference::Name(name) => name,
         };
         let found = match (kind, user) {
-            (NamedKind::Workarea, Some(root)) => {
+            (NamedKind::Workspace, Some(root)) => {
                 match self
                     .journal
-                    .resolve_user_workarea(tenant_id, root, name)
+                    .resolve_user_workspace(tenant_id, root, name)
                     .await?
                 {
                     Some(id) => Some(id),
@@ -1843,20 +1861,20 @@ where
         }
     }
 
-    /// A workarea the request names, else the key's journalled default,
-    /// else `request.workarea_unresolved`; called only after step 1 of the
+    /// A workspace the request names, else the key's journalled default,
+    /// else `request.workspace_unresolved`; called only after step 1 of the
     /// refusal order (ADR-0025 d1; ADR-0026 d4).
-    async fn target_workarea(
+    async fn target_workspace(
         &self,
         key: &KeyRecord,
         named: Option<&Reference>,
     ) -> Result<Uuid, AppError> {
         let target = self
-            .resolve_opt(key, NamedKind::Workarea, named)
+            .resolve_opt(key, NamedKind::Workspace, named)
             .await?
-            .or(key.default_workarea)
-            .ok_or(AppError::WorkareaUnresolved)?;
-        self.observer.workarea(target);
+            .or(key.default_workspace)
+            .ok_or(AppError::WorkspaceUnresolved)?;
+        self.observer.workspace(target);
         Ok(target)
     }
 
@@ -1883,9 +1901,9 @@ where
     async fn ancestry(&self, tenant_id: Uuid, node: Uuid) -> Result<Vec<Uuid>, AppError> {
         Ok(self
             .journal
-            .workarea_ancestry(tenant_id, node)
+            .workspace_ancestry(tenant_id, node)
             .await?
-            .map(|ancestry| ancestry.into_iter().map(|w| w.workarea_id).collect())
+            .map(|ancestry| ancestry.into_iter().map(|w| w.workspace_id).collect())
             .unwrap_or_default())
     }
 
@@ -1908,13 +1926,13 @@ where
         .map_err(|refusal| access_refusal(refusal, node, verb))
     }
 
-    /// Freeze as admission policy: `workarea.frozen` when the stored status
+    /// Freeze as admission policy: `workspace.frozen` when the stored status
     /// of `node` refuses `op` (ADR-0009 d5). It reads the node's status and
     /// nothing else, never a grant, so freezing moves no permission epoch
     /// (ADR-0009 d2). Every caller reads the chain head before calling it,
     /// so a ratification that lands between this read and the commit moves
     /// the head and the commit conflicts rather than writing into an area
-    /// validated since. Reassign, re-parent, demote and erasure are not
+    /// frozen since. Reassign, re-parent, demote and erasure are not
     /// built; their checks join here when they are.
     async fn refuse_frozen(
         &self,
@@ -1922,9 +1940,9 @@ where
         node: Uuid,
         op: FrozenOp,
     ) -> Result<(), AppError> {
-        match self.journal.workarea(tenant_id, node).await? {
-            Some(w) if frozen_refuses(w.status, op) => Err(AppError::WorkareaFrozen {
-                workarea_id: node,
+        match self.journal.workspace(tenant_id, node).await? {
+            Some(w) if frozen_refuses(w.status, op) => Err(AppError::WorkspaceFrozen {
+                workspace_id: node,
                 op,
             }),
             _ => Ok(()),
@@ -1935,7 +1953,7 @@ where
     /// (ADR-0044 d16): `submission.user_root_refused` when `node` is a user
     /// root or lies beneath one and `key` does not act for that root's
     /// user, so a tenant key and another person's key are refused alike,
-    /// whatever writer or dreamer grant reaches the node. The person a key
+    /// whatever writer or reviewer grant reaches the node. The person a key
     /// acts for is read as `same_user` reads it, by [`Self::person_of`]: a
     /// user key's root, or a session key's `session_user`, which is how
     /// `<user>-review` names its person (ADR-0045 d6). The two acts that
@@ -1948,7 +1966,7 @@ where
     async fn refuse_another_users_root(&self, key: &KeyRecord, node: Uuid) -> Result<(), AppError> {
         let root = self
             .journal
-            .workarea_ancestry(key.tenant_id, node)
+            .workspace_ancestry(key.tenant_id, node)
             .await?
             .unwrap_or_default()
             .into_iter()
@@ -1962,7 +1980,7 @@ where
     }
 
     /// Whether the caller can read `memory`: its own row in any state,
-    /// unless a global denial masks the row's workarea, or a promoted version
+    /// unless a global denial masks the row's workspace, or a promoted version
     /// within its reader effective access (roles-and-keys.md#own; ADR-0025
     /// d3). Own is the authoring key for a bearer caller, and every key in the
     /// session caller's own-key set for the user page (ADR-0045 d16).
@@ -1980,7 +1998,7 @@ where
 
     async fn readable(&self, caller: &Caller, memory: &MemoryRecord) -> Result<bool, AppError> {
         let ancestry = self
-            .ancestry(caller.key.tenant_id, memory.workarea_id)
+            .ancestry(caller.key.tenant_id, memory.workspace_id)
             .await?;
         if caller.owns(memory.author_key_id) {
             return Ok(!caller.denied(&ancestry));
@@ -1992,25 +2010,25 @@ where
             // (ADR-0030 d3).
             return Ok(served_unreviewed(memory, self.scanner.version())
                 && self
-                    .in_progress_root(caller.key.tenant_id, memory.workarea_id)
+                    .in_progress_root(caller.key.tenant_id, memory.workspace_id)
                     .await?
                     .is_some());
         }
         Ok(memory.status == MemoryStatus::Promoted && reader)
     }
 
-    /// The served tip of `claim_key` in the workarea as a refusal may name it:
+    /// The served tip of `claim_key` in the workspace as a refusal may name it:
     /// only when the caller can read it (errors.md `submission.tip_conflict`
     /// details; ADR-0025 d10, d16).
     async fn readable_tip(
         &self,
         caller: &Caller,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         claim_key: &str,
     ) -> Result<Option<VersionRef>, AppError> {
         match self
             .journal
-            .claim_tip(caller.key.tenant_id, workarea_id, claim_key)
+            .claim_tip(caller.key.tenant_id, workspace_id, claim_key)
             .await?
         {
             Some(tip) if self.readable(caller, &tip).await? => Ok(Some(VersionRef {
@@ -2031,7 +2049,7 @@ where
     /// Not set-wise yet: each ancestor and the replaced version are read for
     /// this one row, so recall, get and every listing issue those reads once
     /// per served row, against ADR-0024 d4 ("never N+1"); recall reads the
-    /// path once per workarea ([`Self::served_in`]). Only the rows
+    /// path once per workspace ([`Self::served_in`]). Only the rows
     /// themselves hydrate set-wise (`JournalStore::memories`). Measured at
     /// `k` 100 in ADR-0049 d12; elsewhere unmeasured (#99, #150).
     ///
@@ -2048,31 +2066,31 @@ where
         self.served_in(caller, memory, &mut BTreeMap::new()).await
     }
 
-    /// [`Self::served`] with the workarea ancestries already read, by node:
-    /// a use case serving many rows reads each workarea's ancestry once
+    /// [`Self::served`] with the workspace ancestries already read, by node:
+    /// a use case serving many rows reads each workspace's ancestry once
     /// (ADR-0024 d4; ADR-0049 d12).
     async fn served_in(
         &self,
         caller: &Caller,
         mut memory: MemoryRecord,
-        ancestries: &mut BTreeMap<Uuid, Option<Vec<WorkareaRecord>>>,
+        ancestries: &mut BTreeMap<Uuid, Option<Vec<WorkspaceRecord>>>,
     ) -> Result<ServedMemory, AppError> {
         let tenant_id = caller.key.tenant_id;
-        let ancestry = match ancestries.get(&memory.workarea_id) {
+        let ancestry = match ancestries.get(&memory.workspace_id) {
             Some(read) => read.clone(),
             None => {
                 let read = self
                     .journal
-                    .workarea_ancestry(tenant_id, memory.workarea_id)
+                    .workspace_ancestry(tenant_id, memory.workspace_id)
                     .await?;
-                ancestries.insert(memory.workarea_id, read.clone());
+                ancestries.insert(memory.workspace_id, read.clone());
                 read
             }
         };
         // `universe` is the one node with no parent.
         let anonymous = ancestry.as_ref().is_some_and(|a| a.len() == 1)
             && memory.author_key_id != caller.key.key_id;
-        let workarea_path = ancestry.map(|ancestry| derived_path(&ancestry));
+        let workspace_path = ancestry.map(|ancestry| derived_path(&ancestry));
         let mut derives_from = Vec::with_capacity(memory.derives_from.len());
         if !anonymous {
             for ancestor in &memory.derives_from {
@@ -2088,7 +2106,7 @@ where
         let mut replaces_valid_until = None;
         if let Some(id) = memory.replaces
             && let Some(m) = self.journal.memory(tenant_id, id).await?
-            && (!anonymous || m.workarea_id == memory.workarea_id)
+            && (!anonymous || m.workspace_id == memory.workspace_id)
             && self.readable(caller, &m).await?
         {
             replaces = Some(VersionRef {
@@ -2118,7 +2136,7 @@ where
             memory,
             replaces,
             replaces_valid_until,
-            workarea_path,
+            workspace_path,
             anonymous,
             load_warning,
             scan_findings: None,
@@ -2137,7 +2155,7 @@ where
         self.nodes_walked(caller, root, role, None).await
     }
 
-    /// [`Self::nodes_with`], keeping in `walked` every workarea record the
+    /// [`Self::nodes_with`], keeping in `walked` every workspace record the
     /// walk read: the root's ancestry and its subtree, from which
     /// [`ancestry_of`] derives any of their ancestries without another read.
     async fn nodes_walked(
@@ -2145,27 +2163,27 @@ where
         caller: &Caller,
         root: Uuid,
         role: Role,
-        mut walked: Option<&mut BTreeMap<Uuid, WorkareaRecord>>,
+        mut walked: Option<&mut BTreeMap<Uuid, WorkspaceRecord>>,
     ) -> Result<Vec<Uuid>, AppError> {
         let tenant_id = caller.key.tenant_id;
         let above_records = self
             .journal
-            .workarea_ancestry(tenant_id, root)
+            .workspace_ancestry(tenant_id, root)
             .await?
             .unwrap_or_default();
-        let above: Vec<Uuid> = above_records.iter().map(|w| w.workarea_id).collect();
+        let above: Vec<Uuid> = above_records.iter().map(|w| w.workspace_id).collect();
         if above.is_empty() {
             return Ok(Vec::new());
         }
         if let Some(walked) = walked.as_deref_mut() {
-            walked.extend(above_records.into_iter().map(|w| (w.workarea_id, w)));
+            walked.extend(above_records.into_iter().map(|w| (w.workspace_id, w)));
         }
         let mut ancestries: BTreeMap<Uuid, Vec<Uuid>> = BTreeMap::from([(root, above)]);
         let mut nodes = Vec::new();
         // The subtree lists a parent before its children, so each node's
         // ancestry is its parent's with the node in front.
-        for node in self.journal.workarea_subtree(tenant_id, root).await? {
-            let id = node.workarea_id;
+        for node in self.journal.workspace_subtree(tenant_id, root).await? {
+            let id = node.workspace_id;
             if let Some(walked) = walked.as_deref_mut() {
                 walked.insert(id, node.clone());
             }
@@ -2189,8 +2207,8 @@ where
     }
 
     /// An edge whose endpoints have different in-progress roots, or one and
-    /// none, crosses the boundary (ADR-0030 d7): `workarea.in_progress_refused`,
-    /// reason `edge_crosses`, naming the first endpoint's workarea.
+    /// none, crosses the boundary (ADR-0030 d7): `workspace.in_progress_refused`,
+    /// reason `edge_crosses`, naming the first endpoint's workspace.
     async fn refuse_crossing_edge(
         &self,
         tenant_id: Uuid,
@@ -2201,7 +2219,7 @@ where
             != self.in_progress_root(tenant_id, dst).await?
         {
             return Err(AppError::InProgressRefused {
-                workarea_id: src,
+                workspace_id: src,
                 reason: InProgressReason::EdgeCrosses,
             });
         }
@@ -2209,12 +2227,12 @@ where
     }
 
     /// A status transition on a node inside an in-progress subtree waits for
-    /// its commit (ADR-0030 d6): `workarea.in_progress_refused`, reason
+    /// its commit (ADR-0030 d6): `workspace.in_progress_refused`, reason
     /// `commit_first`.
     async fn refuse_inside(&self, tenant_id: Uuid, node: Uuid) -> Result<(), AppError> {
         match self.in_progress_root(tenant_id, node).await? {
             Some(_) => Err(AppError::InProgressRefused {
-                workarea_id: node,
+                workspace_id: node,
                 reason: InProgressReason::CommitFirst,
             }),
             None => Ok(()),
@@ -2229,15 +2247,15 @@ where
     ) -> Result<Option<Uuid>, AppError> {
         let marks: Vec<(Uuid, bool, bool)> = self
             .journal
-            .workarea_ancestry(tenant_id, node)
+            .workspace_ancestry(tenant_id, node)
             .await?
             .unwrap_or_default()
             .iter()
             .map(|w| {
                 (
-                    w.workarea_id,
+                    w.workspace_id,
                     w.in_progress,
-                    w.status == WorkareaStatus::Development,
+                    w.status == WorkspaceStatus::Development,
                 )
             })
             .collect();
@@ -2253,20 +2271,20 @@ where
     ) -> Result<BTreeMap<Uuid, Option<Uuid>>, AppError> {
         let mut roots = BTreeMap::new();
         let top_root = self.in_progress_root(tenant_id, top).await?;
-        for node in self.journal.workarea_subtree(tenant_id, top).await? {
+        for node in self.journal.workspace_subtree(tenant_id, top).await? {
             // A node that is not `development` is never inside, nor is
             // anything beneath it (ADR-0030 d3).
-            let root = if node.status != WorkareaStatus::Development {
+            let root = if node.status != WorkspaceStatus::Development {
                 None
             } else if node.in_progress {
-                Some(node.workarea_id)
-            } else if node.workarea_id == top {
+                Some(node.workspace_id)
+            } else if node.workspace_id == top {
                 top_root
             } else {
                 node.parent_id
                     .and_then(|p| roots.get(&p).copied().flatten())
             };
-            roots.insert(node.workarea_id, root);
+            roots.insert(node.workspace_id, root);
         }
         Ok(roots)
     }
@@ -2290,7 +2308,7 @@ where
                 continue;
             }
             // Inside the scope's root, every node of which is development;
-            // a committed or validated node, and anything under one, never
+            // a protected or frozen node, and anything under one, never
             // is (d3).
             if root.is_some() {
                 served.inside.push(node);
@@ -2326,32 +2344,32 @@ where
         Ok(())
     }
 
-    /// Every node where dreamer is effective for the caller: the union over
-    /// its dreamer grants' subtrees, a row outside which is never served
+    /// Every node where reviewer is effective for the caller: the union over
+    /// its reviewer grants' subtrees, a row outside which is never served
     /// (ADR-0025 d1).
-    async fn dreamer_nodes(&self, caller: &Caller) -> Result<Vec<Uuid>, AppError> {
-        self.nodes_holding(caller, Role::Dreamer).await
+    async fn reviewer_nodes(&self, caller: &Caller) -> Result<Vec<Uuid>, AppError> {
+        self.nodes_holding(caller, Role::Reviewer).await
     }
 
-    /// [`Self::dreamer_nodes`] with the workarea records the walk read, so
+    /// [`Self::reviewer_nodes`] with the workspace records the walk read, so
     /// a listing serving rows across many of those nodes derives each
-    /// row's workarea path from them instead of reading an ancestry per
-    /// workarea (ADR-0070 d8, the held listing of 2026-11-13).
-    async fn dreamer_nodes_walked(
+    /// row's workspace path from them instead of reading an ancestry per
+    /// workspace (ADR-0070 d8, the held listing of 2026-11-13).
+    async fn reviewer_nodes_walked(
         &self,
         caller: &Caller,
-    ) -> Result<(Vec<Uuid>, BTreeMap<Uuid, WorkareaRecord>), AppError> {
+    ) -> Result<(Vec<Uuid>, BTreeMap<Uuid, WorkspaceRecord>), AppError> {
         let roots: BTreeSet<Uuid> = caller
             .grants
             .iter()
-            .filter(|g| g.role == Role::Dreamer)
+            .filter(|g| g.role == Role::Reviewer)
             .map(|g| g.node)
             .collect();
         let mut walked = BTreeMap::new();
         let mut nodes = BTreeSet::new();
         for root in roots {
             nodes.extend(
-                self.nodes_walked(caller, root, Role::Dreamer, Some(&mut walked))
+                self.nodes_walked(caller, root, Role::Reviewer, Some(&mut walked))
                     .await?,
             );
         }
@@ -2507,7 +2525,7 @@ where
         &self,
         tenant_id: Uuid,
         req: &IssueKeyRequest,
-        default_workarea: Option<Uuid>,
+        default_workspace: Option<Uuid>,
         crew_id: Option<Uuid>,
         user: Option<Uuid>,
         issued_by: Option<Uuid>,
@@ -2526,9 +2544,9 @@ where
             role: req.role,
             principal: req.principal.clone(),
             // The schema default when no attestation was sent
-            // (postgres-schema.md api_keys.held_by); the journal says null.
-            held_by: req.held_by.unwrap_or(HeldBy::Agent),
-            default_workarea,
+            // (postgres-schema.md api_keys.used_by); the journal says null.
+            used_by: req.used_by.unwrap_or(UsedBy::Agent),
+            default_workspace,
             issued_by,
             credential,
             key_hash: (credential == Credential::Bearer)
@@ -2548,8 +2566,8 @@ where
     }
 
     /// The catalog payload of `key.issued` (event-catalog.md): never the
-    /// value (roles-and-keys.md show-once rule), and `held_by` as sent.
-    fn key_issued_payload(record: &KeyRecord, held_by: Option<HeldBy>) -> Value {
+    /// value (roles-and-keys.md show-once rule), and `used_by` as sent.
+    fn key_issued_payload(record: &KeyRecord, used_by: Option<UsedBy>) -> Value {
         let mut payload = json!({
             "key_id": record.key_id.to_string(),
             "role": record.role.as_str(),
@@ -2557,8 +2575,8 @@ where
             "issued_by_key_id": record.issued_by.map(|k| k.to_string()),
             "expiry": record.expiry.as_ref().map(EventTime::as_str),
             "value_disclosed": false,
-            "held_by": held_by.map(HeldBy::as_str),
-            "default_workarea_id": record.default_workarea.map(|w| w.to_string()),
+            "used_by": used_by.map(UsedBy::as_str),
+            "default_workspace_id": record.default_workspace.map(|w| w.to_string()),
             "name": record.name.as_ref().map(Name::as_str),
             "crew_id": record.crew_id.map(|c| c.to_string()),
             "credential": record.credential.as_str(),
@@ -2629,7 +2647,7 @@ where
             json!({
                 "grant_id": grant.grant_id.to_string(),
                 "key_id": key_id.to_string(),
-                "workarea_node_id": grant.node.to_string(),
+                "workspace_node_id": grant.node.to_string(),
                 "role": grant.role.as_str(),
                 "deny": grant
                     .deny
@@ -2703,9 +2721,9 @@ where
     }
 
     /// The user root an issuance names in `user`: `user` is admitted on a
-    /// reader, writer or dreamer key held by an agent or a human, and never
+    /// reader, writer or reviewer key used by an agent or a person, and never
     /// names `universe`; a user root holding the name is joined, a shared
-    /// workarea holding it is `name.taken`, and otherwise the root is to be
+    /// workspace holding it is `name.taken`, and otherwise the root is to be
     /// created, under a fresh id (ADR-0044 d2, d14). Nothing is journalled
     /// here.
     async fn user_root_for(
@@ -2719,9 +2737,9 @@ where
                 "user is refused on an admin or operator key, whose authority sits in no one's root",
             ));
         }
-        if req.held_by == Some(HeldBy::Service) {
+        if req.used_by == Some(UsedBy::Service) {
             return Err(AppError::UserRefused(
-                "user is refused on a held_by service key, which acts for a process and not a person",
+                "user is refused on a used_by service key, which acts for a process and not a person",
             ));
         }
         if user.as_str() == UNIVERSE {
@@ -2733,15 +2751,15 @@ where
         let universe = self.universe(tenant_id).await?;
         let held = self
             .journal
-            .resolve_name(tenant_id, NamedKind::Workarea, user)
+            .resolve_name(tenant_id, NamedKind::Workspace, user)
             .await?;
         let (id, created) = match held {
             None => (self.ids.new_id(), true),
             Some(id) => {
-                let root = self.journal.workarea(tenant_id, id).await?;
+                let root = self.journal.workspace(tenant_id, id).await?;
                 if !root.is_some_and(|w| w.user_root) {
                     return Err(AppError::NameTaken {
-                        kind: NamedKind::Workarea,
+                        kind: NamedKind::Workspace,
                         name: user.clone(),
                     });
                 }
@@ -2756,7 +2774,7 @@ where
         })
     }
 
-    /// A workarea reference of an issuance, in the namespace of the user
+    /// A workspace reference of an issuance, in the namespace of the user
     /// it names, the user's own name naming its root even before the
     /// issuance creates it (ADR-0044 d5, d11); with no user, the issuer's.
     async fn resolve_for(
@@ -2768,10 +2786,10 @@ where
         match (user, reference) {
             (Some(u), Reference::Name(name)) if *name == u.name => Ok(u.id),
             (Some(u), _) => {
-                self.resolve_as(issuer, Some(u.id), NamedKind::Workarea, reference)
+                self.resolve_as(issuer, Some(u.id), NamedKind::Workspace, reference)
                     .await
             }
-            (None, _) => self.resolve(issuer, NamedKind::Workarea, reference).await,
+            (None, _) => self.resolve(issuer, NamedKind::Workspace, reference).await,
         }
     }
 
@@ -2789,17 +2807,17 @@ where
         }
     }
 
-    /// Journal `workarea.create` of a user root under `universe`, the
+    /// Journal `workspace.create` of a user root under `universe`, the
     /// issuing admin as actor, `user_root: true` in its payload (ADR-0044
     /// d1, d2).
     async fn create_user_root(&self, issuer: &KeyRecord, user: &UserRoot) -> Result<(), AppError> {
-        let workarea = WorkareaRecord {
+        let workspace = WorkspaceRecord {
             in_progress: false,
-            workarea_id: user.id,
+            workspace_id: user.id,
             tenant_id: issuer.tenant_id,
             parent_id: Some(user.universe),
             name: user.name.clone(),
-            status: WorkareaStatus::Development,
+            status: WorkspaceStatus::Development,
             crew: None,
             crew_id: None,
             user_root: true,
@@ -2809,27 +2827,27 @@ where
         let event = self.seal(
             prev.as_ref(),
             issuer.tenant_id,
-            event_types::WORKAREA_CREATE,
+            event_types::WORKSPACE_CREATE,
             &issuer.principal,
             Some(issuer.key_id),
-            Self::workarea_create_payload(&workarea),
+            Self::workspace_create_payload(&workspace),
         )?;
-        self.commit(event, MetadataFold::WorkareaCreated(workarea), None)
+        self.commit(event, MetadataFold::WorkspaceCreated(workspace), None)
             .await?;
         Ok(())
     }
 
-    /// The catalog payload of `workarea.create` (event-catalog.md), with
+    /// The catalog payload of `workspace.create` (event-catalog.md), with
     /// `user_root` (ADR-0044 d1).
-    fn workarea_create_payload(workarea: &WorkareaRecord) -> Value {
+    fn workspace_create_payload(workspace: &WorkspaceRecord) -> Value {
         json!({
-            "workarea_id": workarea.workarea_id.to_string(),
-            "parent_id": workarea.parent_id.map(|p| p.to_string()),
-            "name": workarea.name.as_str(),
-            "status": workarea.status.as_str(),
-            "crew_id": workarea.crew_id.map(|c| c.to_string()),
+            "workspace_id": workspace.workspace_id.to_string(),
+            "parent_id": workspace.parent_id.map(|p| p.to_string()),
+            "name": workspace.name.as_str(),
+            "status": workspace.status.as_str(),
+            "crew_id": workspace.crew_id.map(|c| c.to_string()),
             "prefix": Value::Null,
-            "user_root": workarea.user_root,
+            "user_root": workspace.user_root,
         })
     }
 
@@ -2843,14 +2861,14 @@ where
         let Some(root) = user else {
             return Ok(None);
         };
-        let workarea = self
+        let workspace = self
             .journal
-            .workarea(tenant_id, root)
+            .workspace(tenant_id, root)
             .await?
             .ok_or_else(|| StoreError::Backend(format!("user root {root} is not held")))?;
         Ok(Some(NamedRef {
             id: root,
-            name: workarea.name,
+            name: workspace.name,
         }))
     }
 
@@ -2859,17 +2877,17 @@ where
         let universe_name = Name::parse(UNIVERSE).expect("universe is a name (ADR-0026 d6)");
         Ok(self
             .journal
-            .resolve_name(tenant_id, NamedKind::Workarea, &universe_name)
+            .resolve_name(tenant_id, NamedKind::Workspace, &universe_name)
             .await?
             .ok_or_else(|| StoreError::Backend(format!("tenant {tenant_id} has no universe")))?)
     }
 
     // -- use-cases ----------------------------------------------------------
 
-    /// The operator ceremony: genesis event, the `universe` root workarea,
-    /// first admin key (roles-and-keys.md bootstrap; workareas.md, one
+    /// The operator ceremony: genesis event, the `universe` root workspace,
+    /// first admin key (roles-and-keys.md bootstrap; workspaces.md, one
     /// universe per tenant). The root's name is the first segment of every
-    /// served `workarea_path` (ADR-0025 d14). Unauthenticated by design — the
+    /// served `workspace_path` (ADR-0025 d14). Unauthenticated by design — the
     /// composition decides who may run it.
     ///
     /// The tenant's partitions come first, created by the store before
@@ -2898,15 +2916,15 @@ where
         };
         self.commit(genesis, fold, None).await?;
 
-        let root_workarea_id = self.ids.new_id();
-        let workarea = WorkareaRecord {
+        let root_workspace_id = self.ids.new_id();
+        let workspace = WorkspaceRecord {
             in_progress: false,
-            workarea_id: root_workarea_id,
+            workspace_id: root_workspace_id,
             tenant_id,
             parent_id: None,
             name: Name::parse(UNIVERSE).expect("universe is a name (ADR-0026 d6)"),
-            // The universe root is permanently committed (ADR-0009 d1).
-            status: WorkareaStatus::Committed,
+            // The universe root is permanently protected (ADR-0009 d1).
+            status: WorkspaceStatus::Protected,
             crew: None,
             crew_id: None,
             user_root: false,
@@ -2915,20 +2933,20 @@ where
         let event = self.seal(
             Some(&prev),
             tenant_id,
-            event_types::WORKAREA_CREATE,
+            event_types::WORKSPACE_CREATE,
             "operator",
             None,
             json!({
-                "workarea_id": root_workarea_id.to_string(),
+                "workspace_id": root_workspace_id.to_string(),
                 "parent_id": Value::Null,
-                "name": workarea.name.as_str(),
-                "status": workarea.status.as_str(),
+                "name": workspace.name.as_str(),
+                "status": workspace.status.as_str(),
                 "crew_id": Value::Null,
                 "prefix": Value::Null,
             }),
         )?;
         prev = event.clone();
-        self.commit(event, MetadataFold::WorkareaCreated(workarea), None)
+        self.commit(event, MetadataFold::WorkspaceCreated(workspace), None)
             .await?;
 
         // The ceremony's admin key takes the name the claim gives it
@@ -2938,8 +2956,8 @@ where
             role: Role::Admin,
             name: req.admin_key_name.clone(),
             principal: req.admin_principal.clone(),
-            held_by: Some(HeldBy::Human),
-            default_workarea: Some(root_workarea_id.into()),
+            used_by: Some(UsedBy::Person),
+            default_workspace: Some(root_workspace_id.into()),
             crew: None,
             grants: Vec::new(),
             user: None,
@@ -2949,7 +2967,7 @@ where
             requests_per_minute: None,
         };
         let (record, value) =
-            self.mint_key(tenant_id, &issue, Some(root_workarea_id), None, None, None);
+            self.mint_key(tenant_id, &issue, Some(root_workspace_id), None, None, None);
         let key_id = record.key_id;
         let guardrail_scope = record.guardrail_scope;
         let event = self.seal(
@@ -2958,7 +2976,7 @@ where
             event_types::KEY_ISSUED,
             "operator",
             None,
-            Self::key_issued_payload(&record, issue.held_by),
+            Self::key_issued_payload(&record, issue.used_by),
         )?;
         let receipt = self
             .commit(event, MetadataFold::KeyIssued(record), None)
@@ -2966,14 +2984,14 @@ where
 
         Ok(BootstrapResult {
             tenant_id,
-            root_workarea_id,
+            root_workspace_id,
             admin_key: IssuedKey {
                 key_id,
                 value,
                 role: issue.role,
                 principal: issue.principal,
-                held_by: issue.held_by,
-                default_workarea: Some(root_workarea_id),
+                used_by: issue.used_by,
+                default_workspace: Some(root_workspace_id),
                 name: issue.name,
                 crew_id: None,
                 user: None,
@@ -2995,7 +3013,7 @@ where
     /// roles-and-keys.md (ADR-0025 d2): the two-key rule, the issuer ceiling,
     /// grant admissibility, node and crew existence, deny containment, the
     /// default's coverage, with `connect_code` whether the key can hold a
-    /// connection, and last the key's name. Every workarea and crew
+    /// connection, and last the key's name. Every workspace and crew
     /// reference is resolved, in the issuer's tenant, once the issuer's role
     /// admits the verb and before step 1, so an unknown name fails step 4 as
     /// an unknown id does (ADR-0026 d4, d8). `key.issued`, journalling the
@@ -3008,7 +3026,7 @@ where
     /// authenticates nothing either way.
     ///
     /// With `connect_code`, step 7 refuses a key role of `admin` or
-    /// `operator`, `held_by: service` and a deployment without `oauth.issuer`
+    /// `operator`, `used_by: service` and a deployment without `oauth.issuer`
     /// with `oauth.connect_refused`, by that reason. The key then has no
     /// value: `key.issued` journals its credential `connection`, and it,
     /// every `grant.issued` and `connection.code_issued` commit as one
@@ -3069,7 +3087,7 @@ where
                 covers: g.covers,
             });
         }
-        let default_workarea = match &req.default_workarea {
+        let default_workspace = match &req.default_workspace {
             Some(sent) => Some(self.resolve_for(&issuer, user.as_ref(), sent).await?),
             None => None,
         };
@@ -3081,10 +3099,10 @@ where
             Issuance::PersonsOwn(_) => Role::Admin,
             Issuance::Plain | Issuance::Session(_) => issuer.role,
         };
-        // A curator is a dreamer key held by an agent, whose writer grants
-        // the dreamer's admissible set is read as if absent (ADR-0030 d8).
+        // A curator is a reviewer key used by an agent, whose writer grants
+        // the reviewer's admissible set is read as if absent (ADR-0030 d8).
         if let Some(profile) = req.profile
-            && !profile_admits(profile, req.role, req.held_by.unwrap_or(HeldBy::Agent))
+            && !profile_admits(profile, req.role, req.used_by.unwrap_or(UsedBy::Agent))
         {
             return Err(AppError::ProfileMismatch {
                 profile: profile.as_str(),
@@ -3168,34 +3186,34 @@ where
         }
         // Step 6: a sent default lies in some grant's reach and outside
         // that grant's denies; absent, it is the first grant's node, and
-        // never the issuer's (workareas.md per-grant attenuation).
-        let default_workarea = match (default_workarea, &req.default_workarea) {
-            (Some(workarea_id), Some(sent)) => {
+        // never the issuer's (workspaces.md per-grant attenuation).
+        let default_workspace = match (default_workspace, &req.default_workspace) {
+            (Some(workspace_id), Some(sent)) => {
                 let ancestry = self
-                    .issuance_ancestry(tenant_id, user.as_ref(), workarea_id)
+                    .issuance_ancestry(tenant_id, user.as_ref(), workspace_id)
                     .await?;
                 let covered = grants
                     .iter()
                     .any(|g| g.reaches(&ancestry) && !g.deny.iter().any(|d| ancestry.contains(d)));
                 if !covered {
                     return Err(AppError::DefaultUncovered {
-                        workarea: sent.clone(),
+                        workspace: sent.clone(),
                     });
                 }
-                Some(workarea_id)
+                Some(workspace_id)
             }
             _ => grants.first().map(|g| g.node),
         };
 
         // Step 7: with `connect_code`, the key can hold a connection — a
-        // role other than admin or operator, `held_by` other than service,
+        // role other than admin or operator, `used_by` other than service,
         // and a deployment that sets `oauth.issuer` (ADR-0031 d7).
         let oauth = if req.connect_code {
             if matches!(req.role, Role::Admin | Role::Operator) {
                 return Err(connect_refused(ConnectRefused::Role));
             }
-            if req.held_by == Some(HeldBy::Service) {
-                return Err(connect_refused(ConnectRefused::HeldByService));
+            if req.used_by == Some(UsedBy::Service) {
+                return Err(connect_refused(ConnectRefused::UsedByService));
             }
             Some(
                 self.oauth_issuer
@@ -3224,7 +3242,7 @@ where
         let (mut record, mut value) = self.mint_key(
             tenant_id,
             req,
-            default_workarea,
+            default_workspace,
             crew_id,
             user.as_ref().map(|u| u.id),
             Some(issuer.key_id),
@@ -3249,7 +3267,7 @@ where
             event_types::KEY_ISSUED,
             &issuer.principal,
             Some(issuer.key_id),
-            Self::key_issued_payload(&record, req.held_by),
+            Self::key_issued_payload(&record, req.used_by),
         )?;
         let mut last = event.clone();
         // A key of an account counts on its `keys` meter, a session key
@@ -3294,8 +3312,8 @@ where
                 value,
                 role: req.role,
                 principal: req.principal.clone(),
-                held_by: req.held_by,
-                default_workarea,
+                used_by: req.used_by,
+                default_workspace,
                 name: req.name.clone(),
                 crew_id,
                 user: user_ref.clone(),
@@ -3335,8 +3353,8 @@ where
             value,
             role: req.role,
             principal: req.principal.clone(),
-            held_by: req.held_by,
-            default_workarea,
+            used_by: req.used_by,
+            default_workspace,
             name: req.name.clone(),
             crew_id,
             user: user_ref.clone(),
@@ -3383,11 +3401,11 @@ where
         let admin = admin.clone();
         let tenant_id = admin.tenant_id;
         let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
-        let node = self.resolve(&admin, NamedKind::Workarea, &node).await?;
+        let node = self.resolve(&admin, NamedKind::Workspace, &node).await?;
         let Some(target) = self.journal.key(tenant_id, key_id).await? else {
             return Err(AppError::NotFound);
         };
-        if self.journal.workarea(tenant_id, node).await?.is_none() {
+        if self.journal.workspace(tenant_id, node).await?.is_none() {
             return Err(AppError::NotFound);
         }
         if target.role == Role::Admin {
@@ -3408,7 +3426,7 @@ where
             json!({
                 "denial_id": denial.denial_id.to_string(),
                 "key_id": key_id.to_string(),
-                "workarea_node_id": node.to_string(),
+                "workspace_node_id": node.to_string(),
                 "epoch": epoch,
             }),
         )?;
@@ -3434,9 +3452,9 @@ where
     /// crew each by id or name. A parent the tenant does not hold is absent,
     /// and so, checked after it, is a `crew` that names no crew record of
     /// the tenant (ADR-0026 d8). The crew is recorded, not operated:
-    /// `workarea.create` journals its `crew_id` and the fold stores it, so
-    /// the workarea read serves the record from the store (event-catalog.md
-    /// `workarea.create`; ADR-0025 d14). The answer carries the node's path
+    /// `workspace.create` journals its `crew_id` and the fold stores it, so
+    /// the workspace read serves the record from the store (event-catalog.md
+    /// `workspace.create`; ADR-0025 d14). The answer carries the node's path
     /// derived from the parent's stored ancestry, as the read derives it. A
     /// name the namespace already holds, `universe` included, is checked
     /// last, by the store's unique index: `name.taken`, and nothing is
@@ -3444,16 +3462,16 @@ where
     /// parent inside its own root where its effective access confers
     /// writer, the root itself when `parent` is omitted, by the refusal
     /// order on the parent; the node's name lands in that root's namespace
-    /// (ADR-0044 d5, d6). A parent that is `validated` refuses the child as
-    /// `workarea.frozen` after both lookups and before the name, so a frozen
+    /// (ADR-0044 d5, d6). A parent that is `frozen` refuses the child as
+    /// `workspace.frozen` after both lookups and before the name, so a frozen
     /// node never acquires an unfrozen descendant (ADR-0009 d4, d5).
-    pub async fn create_workarea(
+    pub async fn create_workspace(
         &self,
         bearer: impl Into<Bearer<'_>>,
         name: &Name,
         parent: Option<Reference>,
         crew: Option<Reference>,
-    ) -> Result<CreatedWorkarea, AppError> {
+    ) -> Result<CreatedWorkspace, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         // A user key with the writer role creates inside its own root, by
@@ -3465,20 +3483,20 @@ where
                 if crew.is_some() {
                     return Err(AppError::VerbCeiling {
                         role: key.role,
-                        verb: "set_workarea_crew",
+                        verb: "set_workspace_crew",
                     });
                 }
                 let parent_id = match &parent {
-                    Some(parent) => self.resolve(key, NamedKind::Workarea, parent).await?,
+                    Some(parent) => self.resolve(key, NamedKind::Workspace, parent).await?,
                     None => root,
                 };
-                self.require_access(&caller, parent_id, Role::Writer, "create_workarea")
+                self.require_access(&caller, parent_id, Role::Writer, "create_workspace")
                     .await?;
                 Some(parent_id)
             }
             _ => {
-                require_role(key, Role::Admin, "create_workarea")?;
-                self.resolve_opt(key, NamedKind::Workarea, parent.as_ref())
+                require_role(key, Role::Admin, "create_workspace")?;
+                self.resolve_opt(key, NamedKind::Workspace, parent.as_ref())
                     .await?
             }
         };
@@ -3491,7 +3509,7 @@ where
         let ancestors = match parent_id {
             Some(parent) => self
                 .journal
-                .workarea_ancestry(key.tenant_id, parent)
+                .workspace_ancestry(key.tenant_id, parent)
                 .await?
                 .ok_or(AppError::NotFound)?,
             None => Vec::new(),
@@ -3507,46 +3525,46 @@ where
         };
         // `chat` is reserved in every user root's namespace for a key a
         // person holds, at any depth, so an agent never takes the name
-        // before the person opens their chat workarea; refused before
+        // before the person opens their chat workspace; refused before
         // anything is journalled (ADR-0063 d8).
         if let Some(parent) = ancestors.first()
             && parent.user().is_some()
-            && name.as_str() == CHAT_WORKAREA
-            && key.held_by != HeldBy::Human
+            && name.as_str() == CHAT_WORKSPACE
+            && key.used_by != UsedBy::Person
         {
             return Err(AppError::ChatScopeHumanOnly {
-                held_by: key.held_by,
+                used_by: key.used_by,
             });
         }
         if let Some(parent) = ancestors.first()
             && frozen_refuses(parent.status, FrozenOp::CreateChild)
         {
-            return Err(AppError::WorkareaFrozen {
-                workarea_id: parent.workarea_id,
+            return Err(AppError::WorkspaceFrozen {
+                workspace_id: parent.workspace_id,
                 op: FrozenOp::CreateChild,
             });
         }
         // A node beneath a user root takes its name in that root's
         // namespace, where `universe` and the user's own name are reserved
         // (ADR-0044 d5).
-        let namespace = ancestors.first().and_then(WorkareaRecord::user);
+        let namespace = ancestors.first().and_then(WorkspaceRecord::user);
         if let Some(root) = namespace
             && ancestors
                 .iter()
-                .any(|w| w.workarea_id == root && &w.name == name)
+                .any(|w| w.workspace_id == root && &w.name == name)
         {
             return Err(AppError::NameTaken {
-                kind: NamedKind::Workarea,
+                kind: NamedKind::Workspace,
                 name: name.clone(),
             });
         }
-        let workarea = WorkareaRecord {
+        let workspace = WorkspaceRecord {
             in_progress: false,
-            workarea_id: self.ids.new_id(),
+            workspace_id: self.ids.new_id(),
             tenant_id: key.tenant_id,
             parent_id,
             name: name.clone(),
-            status: WorkareaStatus::Development,
+            status: WorkspaceStatus::Development,
             crew: None,
             crew_id,
             user_root: false,
@@ -3555,25 +3573,30 @@ where
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
-            event_types::WORKAREA_CREATE,
+            event_types::WORKSPACE_CREATE,
             &key.principal,
             Some(key.key_id),
-            Self::workarea_create_payload(&workarea),
+            Self::workspace_create_payload(&workspace),
         )?;
-        self.commit(event, MetadataFold::WorkareaCreated(workarea.clone()), None)
-            .await?;
-        let ancestry: Vec<WorkareaRecord> =
-            std::iter::once(workarea.clone()).chain(ancestors).collect();
-        Ok(CreatedWorkarea {
+        self.commit(
+            event,
+            MetadataFold::WorkspaceCreated(workspace.clone()),
+            None,
+        )
+        .await?;
+        let ancestry: Vec<WorkspaceRecord> = std::iter::once(workspace.clone())
+            .chain(ancestors)
+            .collect();
+        Ok(CreatedWorkspace {
             path: derived_path(&ancestry),
-            workarea,
+            workspace,
             crew,
         })
     }
 
-    /// One workarea as the calling key may see it, at reader effective
+    /// One workspace as the calling key may see it, at reader effective
     /// access by the refusal order and otherwise absent (http-api.md
-    /// workareas; ADR-0025 d14): the node and its derived path, the crew
+    /// workspaces; ADR-0025 d14): the node and its derived path, the crew
     /// record it names, the immediate children the key can read, the verbs
     /// its effective roles on the node confer, and the permission epoch of
     /// the access this request read. An admin key reads it by its key role,
@@ -3582,46 +3605,46 @@ where
     /// footnote 6; ADR-0026 d15). The node, by id or name, or else the key's
     /// journalled default, is resolved only after step 1 of the refusal
     /// order, as recall resolves it (roles-and-keys.md refusal order;
-    /// mcp-plugin.md `oml_workarea`; ADR-0026 d4).
-    pub async fn workarea_info(
+    /// mcp-plugin.md `oml_workspace`; ADR-0026 d4).
+    pub async fn workspace_info(
         &self,
         bearer: impl Into<Bearer<'_>>,
         node: Option<Reference>,
-    ) -> Result<WorkareaInfo, AppError> {
+    ) -> Result<WorkspaceInfo, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let structure = caller.key.role == Role::Admin;
         if !structure {
-            require_admissible(&caller.key, Role::Reader, "workarea_info")?;
+            require_admissible(&caller.key, Role::Reader, "workspace_info")?;
         }
-        let node = self.target_workarea(&caller.key, node.as_ref()).await?;
+        let node = self.target_workspace(&caller.key, node.as_ref()).await?;
         let tenant_id = caller.key.tenant_id;
         let ancestry = self
             .journal
-            .workarea_ancestry(tenant_id, node)
+            .workspace_ancestry(tenant_id, node)
             .await?
             .unwrap_or_default();
-        let ids: Vec<Uuid> = ancestry.iter().map(|w| w.workarea_id).collect();
+        let ids: Vec<Uuid> = ancestry.iter().map(|w| w.workspace_id).collect();
         let effective = caller.effective(&ids);
         if !structure {
             resolve(caller.key.role, &effective, Role::Reader)
-                .map_err(|refusal| access_refusal(refusal, node, "workarea_info"))?;
+                .map_err(|refusal| access_refusal(refusal, node, "workspace_info"))?;
         }
-        let workarea = ancestry.first().cloned().ok_or(AppError::NotFound)?;
+        let workspace = ancestry.first().cloned().ok_or(AppError::NotFound)?;
         let mut children = Vec::new();
         // A child's ancestry is the node's with the child in front.
-        for child in self.journal.workarea_children(tenant_id, node).await? {
-            let child_ancestry: Vec<Uuid> = std::iter::once(child.workarea_id)
+        for child in self.journal.workspace_children(tenant_id, node).await? {
+            let child_ancestry: Vec<Uuid> = std::iter::once(child.workspace_id)
                 .chain(ids.iter().copied())
                 .collect();
             if structure || caller.effective(&child_ancestry).contains(&Role::Reader) {
                 children.push(child);
             }
         }
-        let crew = match workarea.crew_id {
+        let crew = match workspace.crew_id {
             Some(crew_id) => self.journal.crew(tenant_id, crew_id).await?,
             None => None,
         };
-        let pending_transitions = self.live_transitions(&caller.key, &workarea).await?;
+        let pending_transitions = self.live_transitions(&caller.key, &workspace).await?;
         // An admin key reads structure and never claim content, so its
         // brief is empty (roles-and-keys.md permission matrix, footnote 6).
         let brief = if structure {
@@ -3641,14 +3664,14 @@ where
         let in_progress_root = ancestry.iter().find(|w| w.in_progress).cloned();
         // The node's federation field, served beside the policy (ADR-0072
         // d5).
-        let federation = crate::federation::WorkareaFederation {
+        let federation = crate::federation::WorkspaceFederation {
             accept_federated: self
                 .journal
                 .federation_declining(tenant_id, &[node])
                 .await?
                 .is_empty(),
         };
-        Ok(WorkareaInfo {
+        Ok(WorkspaceInfo {
             in_progress_root,
             stale_versions,
             path: derived_path(&ancestry),
@@ -3656,14 +3679,14 @@ where
             federation,
             pending_transitions,
             brief,
-            workarea,
+            workspace,
             crew,
             children,
             // The field lists grant-role verbs, and an admin key holds none.
             my_effective_verbs: if structure {
                 Vec::new()
             } else {
-                effective_verbs(&effective, caller.key.held_by)
+                effective_verbs(&effective, caller.key.used_by)
             },
             permission_epoch: caller.permission_epoch,
         })
@@ -3680,9 +3703,9 @@ where
     /// footnote 6; ADR-0026 d15). A page holds at most `limit` nodes, after
     /// the path `cursor` resumes at, and the cursor of the next page, bound
     /// to the key and to `api.cursor_ttl` like every listing cursor; a stale
-    /// or foreign one is refused (http-api.md workareas and pagination). The
+    /// or foreign one is refused (http-api.md workspaces and pagination). The
     /// read is one store walk and one crew read per crew the page names.
-    pub async fn workarea_tree(
+    pub async fn workspace_tree(
         &self,
         bearer: impl Into<Bearer<'_>>,
         node: Reference,
@@ -3692,7 +3715,7 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let structure = caller.key.role == Role::Admin;
         if !structure {
-            require_admissible(&caller.key, Role::Reader, "workarea_tree")?;
+            require_admissible(&caller.key, Role::Reader, "workspace_tree")?;
         }
         let now = self.clock.now();
         let after = cursor
@@ -3700,13 +3723,13 @@ where
             .transpose()?;
         let tenant_id = caller.key.tenant_id;
         let node = self
-            .resolve(&caller.key, NamedKind::Workarea, &node)
+            .resolve(&caller.key, NamedKind::Workspace, &node)
             .await?;
-        self.observer.workarea(node);
+        self.observer.workspace(node);
         let readable: Option<BTreeSet<Uuid>> = if structure {
             None
         } else {
-            self.require_access(&caller, node, Role::Reader, "workarea_tree")
+            self.require_access(&caller, node, Role::Reader, "workspace_tree")
                 .await?;
             Some(
                 self.nodes_with(&caller, node, Role::Reader)
@@ -3715,7 +3738,7 @@ where
                     .collect(),
             )
         };
-        let Some(ancestry) = self.journal.workarea_ancestry(tenant_id, node).await? else {
+        let Some(ancestry) = self.journal.workspace_ancestry(tenant_id, node).await? else {
             return Err(AppError::NotFound);
         };
         // The subtree lists a parent before its children, so each node's
@@ -3724,11 +3747,11 @@ where
             node,
             ancestry.iter().rev().map(|w| w.name.clone()).collect(),
         )]);
-        let mut tree: Vec<(Vec<Name>, WorkareaRecord)> = Vec::new();
-        for workarea in self.journal.workarea_subtree(tenant_id, node).await? {
-            let id = workarea.workarea_id;
+        let mut tree: Vec<(Vec<Name>, WorkspaceRecord)> = Vec::new();
+        for workspace in self.journal.workspace_subtree(tenant_id, node).await? {
+            let id = workspace.workspace_id;
             if id != node {
-                let mut own = workarea
+                let mut own = workspace
                     .parent_id
                     .and_then(|p| names.get(&p))
                     .cloned()
@@ -3737,18 +3760,18 @@ where
                             "the subtree of {node} lists {id} before its parent"
                         ))
                     })?;
-                own.push(workarea.name.clone());
+                own.push(workspace.name.clone());
                 names.insert(id, own);
             }
             if readable.as_ref().is_none_or(|nodes| nodes.contains(&id)) {
-                tree.push((names[&id].clone(), workarea));
+                tree.push((names[&id].clone(), workspace));
             }
         }
         // A node's names are a prefix of its children's, and names are
         // unique in the tenant, so no two nodes tie.
         tree.sort_by(|(a, _), (b, _)| a.cmp(b));
         // One node past the page says whether another page exists.
-        let mut page: Vec<(Vec<Name>, WorkareaRecord)> = tree
+        let mut page: Vec<(Vec<Name>, WorkspaceRecord)> = tree
             .into_iter()
             .filter(|(names, _)| after.as_ref().is_none_or(|after| names > after))
             .take(limit.saturating_add(1))
@@ -3766,9 +3789,9 @@ where
         // Many nodes may name one crew, which is read once.
         let mut crews: BTreeMap<Uuid, Option<CrewRecord>> = BTreeMap::new();
         let mut items = Vec::with_capacity(page.len());
-        for (names, workarea) in page {
+        for (names, workspace) in page {
             let path = names.iter().map(Name::as_str).collect::<Vec<_>>().join(".");
-            let crew = match workarea.crew_id {
+            let crew = match workspace.crew_id {
                 None => None,
                 Some(crew_id) => match crews.entry(crew_id) {
                     Entry::Occupied(read) => read.get().clone(),
@@ -3778,7 +3801,7 @@ where
                 },
             };
             items.push(TreeNode {
-                workarea,
+                workspace,
                 path,
                 crew,
             });
@@ -3914,39 +3937,41 @@ where
                     access.issued_seq
                 ))
             })?;
-        let held_by = match payload_str(&issued.envelope.payload, "held_by").as_deref() {
+        // A key issued before v0.8.0 journals its holder and scope in the
+        // former names; it is read in the current ones (ADR-0091 d4).
+        let issued = read_as_current(&issued.envelope)?;
+        let used_by = match payload_str(&issued.payload, "used_by").as_deref() {
             None => None,
-            Some("agent") => Some(HeldBy::Agent),
-            Some("human") => Some(HeldBy::Human),
-            Some("service") => Some(HeldBy::Service),
+            Some("agent") => Some(UsedBy::Agent),
+            Some("person") => Some(UsedBy::Person),
+            Some("service") => Some(UsedBy::Service),
             Some(other) => {
                 return Err(StoreError::Backend(format!(
-                    "key {key_id}'s key.issued journals held_by {other:?}"
+                    "key {key_id}'s key.issued journals used_by {other:?}"
                 ))
                 .into());
             }
         };
         let user = self.user_ref(tenant_id, record.user).await?;
-        let guardrail_scope =
-            GuardrailScope::of_issuance(issued.envelope.payload.get("guardrail_scope"))
-                .ok_or_else(|| {
-                    StoreError::Backend(format!(
-                        "key {key_id}'s key.issued journals guardrail_scope {}",
-                        issued.envelope.payload["guardrail_scope"]
-                    ))
-                })?;
+        let guardrail_scope = GuardrailScope::of_issuance(issued.payload.get("guardrail_scope"))
+            .ok_or_else(|| {
+                StoreError::Backend(format!(
+                    "key {key_id}'s key.issued journals guardrail_scope {}",
+                    issued.payload["guardrail_scope"]
+                ))
+            })?;
         Ok(KeyDetail {
             key: record,
             user,
-            held_by,
+            used_by,
             guardrail_scope,
             access,
         })
     }
 
     /// The user root of `user`, admin by key role: the root's record when a
-    /// user root holds the name, `None` when no workarea of the shared
-    /// namespace does. A shared workarea holding the name is `name.taken`,
+    /// user root holds the name, `None` when no workspace of the shared
+    /// namespace does. A shared workspace holding the name is `name.taken`,
     /// as an issuance naming that user would be. It journals nothing; only
     /// the issuance of the first key naming a user creates its root
     /// (ADR-0044 d1, d2).
@@ -3954,27 +3979,27 @@ where
         &self,
         api_key: &str,
         user: &Name,
-    ) -> Result<Option<WorkareaRecord>, AppError> {
+    ) -> Result<Option<WorkspaceRecord>, AppError> {
         let admin = self.authenticate(api_key).await?.key;
         require_role(&admin, Role::Admin, "user_root")?;
         let Some(id) = self
             .journal
-            .resolve_name(admin.tenant_id, NamedKind::Workarea, user)
+            .resolve_name(admin.tenant_id, NamedKind::Workspace, user)
             .await?
         else {
             return Ok(None);
         };
-        match self.journal.workarea(admin.tenant_id, id).await? {
+        match self.journal.workspace(admin.tenant_id, id).await? {
             Some(root) if root.user_root => Ok(Some(root)),
             _ => Err(AppError::NameTaken {
-                kind: NamedKind::Workarea,
+                kind: NamedKind::Workspace,
                 name: user.clone(),
             }),
         }
     }
 
     /// The calling key's own record, which any live key reads, whatever its
-    /// role: its row, its tenant, its default workarea with its derived path
+    /// role: its row, its tenant, its default workspace with its derived path
     /// and its crew record, each by id and name, and its stored grants. It
     /// omits the key's denials, which name subtrees the key may not read,
     /// and journals nothing, since it reads no claim. The references are one
@@ -3993,7 +4018,7 @@ where
             return Ok(Whoami {
                 key,
                 tenant: None,
-                default_workarea: None,
+                default_workspace: None,
                 crew: None,
                 user: None,
                 grants: Vec::new(),
@@ -4014,7 +4039,7 @@ where
         Ok(Whoami {
             key,
             tenant: Some(references.tenant),
-            default_workarea: references.default_workarea,
+            default_workspace: references.default_workspace,
             crew: references.crew,
             user: references.user,
             grants: access.grants,
@@ -4068,35 +4093,35 @@ where
         Ok(updated)
     }
 
-    /// Set a workarea's mode (ADR-0030 d1, d6): a dreamer key a person holds,
-    /// with dreamer effective access on the node, and no other key, refused
+    /// Set a workspace's mode (ADR-0030 d1, d6): a reviewer key a person holds,
+    /// with reviewer effective access on the node, and no other key, refused
     /// before any lookup. `in_progress` is refused on `universe`, a node not
     /// `development`, or one with a marked ancestor or descendant;
     /// `standard` on an in-progress root is its commit, refused while any
     /// version in its subtree is held. The chain head is read before the
     /// held test, so a capture landing between the test and the commit moves
     /// the head and the commit conflicts. Setting the mode a node already
-    /// holds journals nothing. Journalled as `workarea.mode_set`.
-    pub async fn set_workarea_mode(
+    /// holds journals nothing. Journalled as `workspace.mode_set`.
+    pub async fn set_workspace_mode(
         &self,
         bearer: impl Into<Bearer<'_>>,
-        workarea: Reference,
-        mode: WorkareaMode,
-    ) -> Result<WorkareaRecord, AppError> {
+        workspace: Reference,
+        mode: WorkspaceMode,
+    ) -> Result<WorkspaceRecord, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
-        if !may_set_mode(key.role, key.held_by, key.profile) {
+        if !may_set_mode(key.role, key.used_by, key.profile) {
             return Err(AppError::ModeHumanOnly {
                 role: key.role,
-                held_by: key.held_by,
+                used_by: key.used_by,
             });
         }
         let tenant_id = key.tenant_id;
-        let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
-        self.observer.workarea(workarea_id);
+        let workspace_id = self.resolve(key, NamedKind::Workspace, &workspace).await?;
+        self.observer.workspace(workspace_id);
         let prev = self.head_event(tenant_id).await?;
         let (node, current, held_free) =
-            match self.mode_admitted(&caller, workarea_id, mode).await? {
+            match self.mode_admitted(&caller, workspace_id, mode).await? {
                 ModeAdmitted::Already(node) => return Ok(node),
                 ModeAdmitted::Change {
                     node,
@@ -4107,11 +4132,11 @@ where
         let event = self.seal(
             prev.as_ref(),
             tenant_id,
-            event_types::WORKAREA_MODE_SET,
+            event_types::WORKSPACE_MODE_SET,
             &key.principal,
             Some(key.key_id),
             json!({
-                "workarea_id": workarea_id.to_string(),
+                "workspace_id": workspace_id.to_string(),
                 "mode": mode.as_str(),
                 "from": current.as_str(),
             }),
@@ -4121,90 +4146,90 @@ where
         // past it (ADR-0030 d6).
         self.commit(
             event,
-            MetadataFold::WorkareaModeSet {
-                workarea_id,
-                in_progress: mode == WorkareaMode::InProgress,
+            MetadataFold::WorkspaceModeSet {
+                workspace_id,
+                in_progress: mode == WorkspaceMode::InProgress,
                 held_free,
             },
             None,
         )
         .await
         .map_err(|e| match e {
-            AppError::Store(StoreError::HeldRemaining) => AppError::HeldRemaining { workarea_id },
+            AppError::Store(StoreError::HeldRemaining) => AppError::HeldRemaining { workspace_id },
             other => other,
         })?;
         self.observer.mode_set(mode.as_str());
-        Ok(WorkareaRecord {
-            in_progress: mode == WorkareaMode::InProgress,
+        Ok(WorkspaceRecord {
+            in_progress: mode == WorkspaceMode::InProgress,
             ..node
         })
     }
 
-    /// Whether `set_workarea_mode` admits `mode` on the node for the
+    /// Whether `set_workspace_mode` admits `mode` on the node for the
     /// caller now, every check but the commit's, in its order: the key's
-    /// shape, dreamer access, then the mark's or the commit's test. The
+    /// shape, reviewer access, then the mark's or the commit's test. The
     /// verb and the pages' offer call this one function (ADR-0045 d28).
     pub(crate) async fn mode_admitted(
         &self,
         caller: &Caller,
-        workarea_id: Uuid,
-        mode: WorkareaMode,
+        workspace_id: Uuid,
+        mode: WorkspaceMode,
     ) -> Result<ModeAdmitted, AppError> {
-        const VERB: &str = "workarea_mode";
+        const VERB: &str = "workspace_mode";
         let key = &caller.key;
-        if !may_set_mode(key.role, key.held_by, key.profile) {
+        if !may_set_mode(key.role, key.used_by, key.profile) {
             return Err(AppError::ModeHumanOnly {
                 role: key.role,
-                held_by: key.held_by,
+                used_by: key.used_by,
             });
         }
         let tenant_id = key.tenant_id;
-        self.require_access(caller, workarea_id, Role::Dreamer, VERB)
+        self.require_access(caller, workspace_id, Role::Reviewer, VERB)
             .await?;
         let ancestry = self
             .journal
-            .workarea_ancestry(tenant_id, workarea_id)
+            .workspace_ancestry(tenant_id, workspace_id)
             .await?
             .unwrap_or_default();
         let node = ancestry.first().cloned().ok_or(AppError::NotFound)?;
         let current = if node.in_progress {
-            WorkareaMode::InProgress
+            WorkspaceMode::InProgress
         } else {
-            WorkareaMode::Standard
+            WorkspaceMode::Standard
         };
         if current == mode {
             return Ok(ModeAdmitted::Already(node));
         }
         let subtree = self
             .journal
-            .workarea_subtree(tenant_id, workarea_id)
+            .workspace_subtree(tenant_id, workspace_id)
             .await?;
         let mut held_free = Vec::new();
         match mode {
-            WorkareaMode::InProgress => {
+            WorkspaceMode::InProgress => {
                 let marks: Vec<(Uuid, bool)> = ancestry
                     .iter()
-                    .map(|w| (w.workarea_id, w.in_progress))
+                    .map(|w| (w.workspace_id, w.in_progress))
                     .collect();
                 let below = subtree
                     .iter()
-                    .any(|w| w.workarea_id != workarea_id && w.in_progress);
+                    .any(|w| w.workspace_id != workspace_id && w.in_progress);
                 let development = subtree
                     .iter()
-                    .all(|w| w.status == WorkareaStatus::Development);
+                    .all(|w| w.status == WorkspaceStatus::Development);
                 in_progress::check_mark(&marks, below, development).map_err(|reason| {
                     AppError::InProgressRefused {
-                        workarea_id,
+                        workspace_id,
                         reason,
                     }
                 })?;
             }
-            WorkareaMode::Standard => {
+            WorkspaceMode::Standard => {
                 // The commit: nothing in the subtree may still be held,
                 // dead-lettered versions included (ADR-0030 d6).
-                let nodes: Vec<Uuid> = subtree.iter().map(|w| w.workarea_id).collect();
+                let nodes: Vec<Uuid> = subtree.iter().map(|w| w.workspace_id).collect();
                 if self.journal.held_count(tenant_id, &nodes).await? > 0 {
-                    return Err(AppError::HeldRemaining { workarea_id });
+                    return Err(AppError::HeldRemaining { workspace_id });
                 }
                 held_free = nodes;
             }
@@ -4216,27 +4241,27 @@ where
         })
     }
 
-    /// Point a workarea at a crew record, each by id or name, admin by key
-    /// role: the journalled crew-metadata update `workarea.crew_updated`,
-    /// carrying the record's `crew_id`. A workarea the tenant does not hold
+    /// Point a workspace at a crew record, each by id or name, admin by key
+    /// role: the journalled crew-metadata update `workspace.crew_updated`,
+    /// carrying the record's `crew_id`. A workspace the tenant does not hold
     /// is absent, and so, checked after it, is a crew (http-api.md
-    /// workareas; ADR-0026 d8). A `validated` workarea admits it: the
+    /// workspaces; ADR-0026 d8). A `frozen` workspace admits it: the
     /// crew-metadata update is one of the three mutations freeze allows
-    /// (ADR-0009 d5; workareas.md refusal matrix).
-    pub async fn set_workarea_crew(
+    /// (ADR-0009 d5; workspaces.md refusal matrix).
+    pub async fn set_workspace_crew(
         &self,
         api_key: &str,
-        workarea: Reference,
+        workspace: Reference,
         crew: Reference,
-    ) -> Result<WorkareaRecord, AppError> {
+    ) -> Result<WorkspaceRecord, AppError> {
         let key = self.authenticate(api_key).await?.key;
-        require_role(&key, Role::Admin, "set_workarea_crew")?;
-        let workarea_id = self.resolve(&key, NamedKind::Workarea, &workarea).await?;
-        self.observer.workarea(workarea_id);
+        require_role(&key, Role::Admin, "set_workspace_crew")?;
+        let workspace_id = self.resolve(&key, NamedKind::Workspace, &workspace).await?;
+        self.observer.workspace(workspace_id);
         let crew_id = self.resolve(&key, NamedKind::Crew, &crew).await?;
-        let workarea = self
+        let workspace = self
             .journal
-            .workarea(key.tenant_id, workarea_id)
+            .workspace(key.tenant_id, workspace_id)
             .await?
             .ok_or(AppError::NotFound)?;
         if self.journal.crew(key.tenant_id, crew_id).await?.is_none() {
@@ -4246,26 +4271,26 @@ where
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
-            event_types::WORKAREA_CREW_UPDATED,
+            event_types::WORKSPACE_CREW_UPDATED,
             &key.principal,
             Some(key.key_id),
             json!({
-                "workarea_id": workarea_id.to_string(),
+                "workspace_id": workspace_id.to_string(),
                 "crew_id": crew_id.to_string(),
             }),
         )?;
         self.commit(
             event,
-            MetadataFold::WorkareaCrewUpdated {
-                workarea_id,
+            MetadataFold::WorkspaceCrewUpdated {
+                workspace_id,
                 crew_id,
             },
             None,
         )
         .await?;
-        Ok(WorkareaRecord {
+        Ok(WorkspaceRecord {
             crew_id: Some(crew_id),
-            ..workarea
+            ..workspace
         })
     }
 
@@ -4279,7 +4304,7 @@ where
         match key.user {
             Some(root) => Ok(self
                 .journal
-                .workarea(key.tenant_id, root)
+                .workspace(key.tenant_id, root)
                 .await?
                 .map(|w| w.name)),
             None => Ok(None),
@@ -4309,24 +4334,24 @@ where
     }
 
     /// A user key's edge with an endpoint in `universe` is refused
-    /// `access.grant_refused` naming that endpoint's workarea, before
+    /// `access.grant_refused` naming that endpoint's workspace, before
     /// anything is journalled: users neither write nor propose to
     /// `universe` (ADR-0046 d5; ADR-0044 Context, decision 3). A tenant key
     /// passes.
     async fn refuse_user_edge_into_universe(
         &self,
         key: &KeyRecord,
-        workareas: &[Uuid],
+        workspaces: &[Uuid],
     ) -> Result<(), AppError> {
         if key.user.is_none() {
             return Ok(());
         }
-        for workarea_id in workareas {
-            let node = self.journal.workarea(key.tenant_id, *workarea_id).await?;
+        for workspace_id in workspaces {
+            let node = self.journal.workspace(key.tenant_id, *workspace_id).await?;
             if node.is_some_and(|n| n.parent_id.is_none()) {
                 return Err(AppError::GrantRefused {
-                    workarea_id: *workarea_id,
-                    needed_role: Role::Dreamer,
+                    workspace_id: *workspace_id,
+                    needed_role: Role::Reviewer,
                 });
             }
         }
@@ -4335,16 +4360,16 @@ where
 
     /// The live proposals on `node` as `key` may see them: the pending rows
     /// whose `from` is the node's status, in proposal order, each naming its
-    /// proposing key only to that key (workareas.md, the status read lists
+    /// proposing key only to that key (workspaces.md, the status read lists
     /// only live proposals; ADR-0025 d15).
     async fn live_transitions(
         &self,
         key: &KeyRecord,
-        node: &WorkareaRecord,
+        node: &WorkspaceRecord,
     ) -> Result<Vec<TransitionView>, AppError> {
         Ok(self
             .journal
-            .pending_transitions(key.tenant_id, node.workarea_id)
+            .pending_transitions(key.tenant_id, node.workspace_id)
             .await?
             .into_iter()
             .filter(|t| t.from == node.status)
@@ -4354,7 +4379,7 @@ where
                 let own = t.proposer_key_id == key.key_id;
                 TransitionView {
                     transition_id: t.transition_id,
-                    workarea_id: t.workarea_id,
+                    workspace_id: t.workspace_id,
                     from: t.from,
                     to: t.to,
                     state: t.state,
@@ -4364,15 +4389,15 @@ where
             .collect())
     }
 
-    /// The brief of `workarea` as `caller` reads it: its ratified brief
+    /// The brief of `workspace` as `caller` reads it: its ratified brief
     /// edges, each claim once, in ratification order, kept only while the
     /// claim is a promoted served tip the caller reads, and cut by
     /// `brief.max_tokens` under recall's prefix rule (ADR-0046 d8, d9). A
     /// superseded or retired member drops out by itself.
-    async fn brief(&self, caller: &Caller, workarea: Uuid) -> Result<Brief, AppError> {
+    async fn brief(&self, caller: &Caller, workspace: Uuid) -> Result<Brief, AppError> {
         let mut ratified: Vec<(u64, Uuid)> = self
             .journal
-            .brief_edges(caller.key.tenant_id, workarea)
+            .brief_edges(caller.key.tenant_id, workspace)
             .await?
             .into_iter()
             .filter(|e| e.state == EdgeState::Ratified)
@@ -4398,9 +4423,9 @@ where
                 && memory.is_tip
                 && self.readable(caller, &memory).await?
                 && !crosses_into(
-                    self.in_progress_root(caller.key.tenant_id, workarea)
+                    self.in_progress_root(caller.key.tenant_id, workspace)
                         .await?,
-                    self.in_progress_root(caller.key.tenant_id, memory.workarea_id)
+                    self.in_progress_root(caller.key.tenant_id, memory.workspace_id)
                         .await?,
                 )
             {
@@ -4421,7 +4446,7 @@ where
 
     /// The status read of the node, by id or name: its stored rung, the
     /// review policy in force and its live proposals in proposal order, the
-    /// pending rows whose `from` is the node's status (workareas.md, the
+    /// pending rows whose `from` is the node's status (workspaces.md, the
     /// status read lists only live proposals; ADR-0009 d3), each naming its
     /// proposing key only to that key and never its principal (ADR-0025
     /// d15). The refusal
@@ -4431,31 +4456,31 @@ where
     /// it, `access.not_found` outside it. An admin key reads the pending
     /// transitions as structure, tenant-wide and with no grant
     /// (roles-and-keys.md permission matrix, footnote 6; ADR-0026 d15).
-    pub async fn workarea_status(
+    pub async fn workspace_status(
         &self,
         bearer: impl Into<Bearer<'_>>,
-        workarea: Reference,
-    ) -> Result<WorkareaStatusView, AppError> {
-        const VERB: &str = "workarea_status";
+        workspace: Reference,
+    ) -> Result<WorkspaceStatusView, AppError> {
+        const VERB: &str = "workspace_status";
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         let structure = key.role == Role::Admin;
         if !structure {
             require_admissible(key, Role::Reader, VERB)?;
         }
-        let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
+        let workspace_id = self.resolve(key, NamedKind::Workspace, &workspace).await?;
         if !structure {
-            self.require_access(&caller, workarea_id, Role::Reader, VERB)
+            self.require_access(&caller, workspace_id, Role::Reader, VERB)
                 .await?;
         }
         let node = self
             .journal
-            .workarea(key.tenant_id, workarea_id)
+            .workspace(key.tenant_id, workspace_id)
             .await?
             .ok_or(AppError::NotFound)?;
         let pending = self.live_transitions(key, &node).await?;
-        Ok(WorkareaStatusView {
-            workarea_id,
+        Ok(WorkspaceStatusView {
+            workspace_id,
             status: node.status,
             policy: review_policy(),
             pending,
@@ -4463,39 +4488,39 @@ where
     }
 
     /// Proposes a forward status transition of the node, by id or name, to
-    /// `to`: the proposal is a pending `workarea_transitions` row, and the
+    /// `to`: the proposal is a pending `workspace_transitions` row, and the
     /// node keeps its status until a second identity ratifies it (ADR-0009
     /// d3). The refusal order: (1) the key role, before any lookup, an admin
-    /// key passing on its role and any other key needing dreamer among its
+    /// key passing on its role and any other key needing reviewer among its
     /// admissible grant roles, so a reader, writer or operator key is
-    /// `access.verb_ceiling`; (2) the node resolves; (3) a dreamer key needs
-    /// dreamer effective access on it, `access.not_found` outside read access
+    /// `access.verb_ceiling`; (2) the node resolves; (3) a reviewer key needs
+    /// reviewer effective access on it, `access.not_found` outside read access
     /// and `access.grant_refused` within it; (4) the ladder, on the node and
-    /// its immediate children as read now: `workarea.transition_refused` with
+    /// its immediate children as read now: `workspace.transition_refused` with
     /// its reason, nothing journalled (ADR-0009 d1, d3, d4); (5) one
-    /// `workarea.status_proposed` is sealed and committed with the row. A
-    /// `held_by: service` key may propose: roles-and-keys.md bars it from
+    /// `workspace.status_proposed` is sealed and committed with the row. A
+    /// `used_by: service` key may propose: roles-and-keys.md bars it from
     /// ratification alone (ADR-0010). The ratifying transaction re-checks the
     /// node, so a proposal admitted here may still be refused there
-    /// (workareas.md, ratification re-checks).
+    /// (workspaces.md, ratification re-checks).
     pub async fn propose_transition(
         &self,
         bearer: impl Into<Bearer<'_>>,
-        workarea: Reference,
-        to: WorkareaStatus,
+        workspace: Reference,
+        to: WorkspaceStatus,
     ) -> Result<TransitionRecord, AppError> {
         const VERB: &str = "propose_transition";
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         if key.role != Role::Admin {
-            require_admissible(key, Role::Dreamer, VERB)?;
+            require_admissible(key, Role::Reviewer, VERB)?;
         }
-        let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
-        let node = self.propose_admitted(&caller, workarea_id, to).await?;
+        let workspace_id = self.resolve(key, NamedKind::Workspace, &workspace).await?;
+        let node = self.propose_admitted(&caller, workspace_id, to).await?;
         let proposal = TransitionRecord {
             transition_id: self.ids.new_id(),
             tenant_id: key.tenant_id,
-            workarea_id,
+            workspace_id,
             from: node.status,
             to,
             state: TransitionState::Pending,
@@ -4507,11 +4532,11 @@ where
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
-            event_types::WORKAREA_STATUS_PROPOSED,
+            event_types::WORKSPACE_STATUS_PROPOSED,
             &key.principal,
             Some(key.key_id),
             json!({
-                "workarea_id": workarea_id.to_string(),
+                "workspace_id": workspace_id.to_string(),
                 "from": proposal.from.as_str(),
                 "to": proposal.to.as_str(),
                 "transition_id": proposal.transition_id.to_string(),
@@ -4534,35 +4559,35 @@ where
     pub(crate) async fn propose_admitted(
         &self,
         caller: &Caller,
-        workarea_id: Uuid,
-        to: WorkareaStatus,
-    ) -> Result<WorkareaRecord, AppError> {
+        workspace_id: Uuid,
+        to: WorkspaceStatus,
+    ) -> Result<WorkspaceRecord, AppError> {
         const VERB: &str = "propose_transition";
         let key = &caller.key;
         if key.role != Role::Admin {
-            require_admissible(key, Role::Dreamer, VERB)?;
-            self.require_access(caller, workarea_id, Role::Dreamer, VERB)
+            require_admissible(key, Role::Reviewer, VERB)?;
+            self.require_access(caller, workspace_id, Role::Reviewer, VERB)
                 .await?;
         }
         let node = self
             .journal
-            .workarea(key.tenant_id, workarea_id)
+            .workspace(key.tenant_id, workspace_id)
             .await?
             .ok_or(AppError::NotFound)?;
-        self.refuse_inside(key.tenant_id, workarea_id).await?;
-        let children: Vec<WorkareaStatus> = self
+        self.refuse_inside(key.tenant_id, workspace_id).await?;
+        let children: Vec<WorkspaceStatus> = self
             .journal
-            .workarea_children(key.tenant_id, workarea_id)
+            .workspace_children(key.tenant_id, workspace_id)
             .await?
             .iter()
             .map(|child| child.status)
             .collect();
         // "No simulation is fenced on the subtree" holds vacuously while
         // simulations are unbuilt, and lands in the ladder's preconditions
-        // with them (workareas.md, readings the build takes).
+        // with them (workspaces.md, readings the build takes).
         propose_check(ladder_node(&node), node.status, to, &children).map_err(|reason| {
             AppError::TransitionRefused {
-                workarea_id,
+                workspace_id,
                 from: node.status,
                 to,
                 reason,
@@ -4573,56 +4598,56 @@ where
 
     /// Ratifies the pending proposal `transition_id` on the node, by id or
     /// name, as a second identity: the node's status becomes the proposal's
-    /// `to`, journalled as one `workarea.status_transition` signed by the
+    /// `to`, journalled as one `workspace.status_transition` signed by the
     /// ratifier's principal and key, with the policy snapshot (ADR-0009 d3,
     /// d4). The refusal order: (1) the key role, before any lookup, an admin
-    /// key passing on its role and any other key needing dreamer among its
-    /// admissible grant roles, `access.verb_ceiling`; (2) a `held_by:
+    /// key passing on its role and any other key needing reviewer among its
+    /// admissible grant roles, `access.verb_ceiling`; (2) a `used_by:
     /// service` key, also `access.verb_ceiling` before any lookup
-    /// (roles-and-keys.md; ADR-0010); (3) the node resolves; (4) a dreamer
-    /// key needs dreamer effective access on it; (5) the transition: one
-    /// this tenant does not hold, or one on another workarea, is
+    /// (roles-and-keys.md; ADR-0010); (3) the node resolves; (4) a reviewer
+    /// key needs reviewer effective access on it; (5) the transition: one
+    /// this tenant does not hold, or one on another workspace, is
     /// `access.not_found`; (6) R2, a ratifier holding the proposer's key or
     /// principal, `review.ratifier_is_proposer`; (7) the ladder against the
     /// node and its children as read now, a proposal already ratified or
     /// whose `from` is no longer the node's status being
-    /// `workarea.transition_refused` with reason `stale`. Every read happens
+    /// `workspace.transition_refused` with reason `stale`. Every read happens
     /// after the chain head is read and before a commit that compare-and-sets
     /// it, so a child created between the check and the commit fails the
     /// commit with `PrevHashConflict`, retryable, and is never journalled
     /// over a stale check; the store re-checks under the chain lock besides
-    /// (workareas.md, ratification re-checks).
+    /// (workspaces.md, ratification re-checks).
     pub async fn ratify_transition(
         &self,
         bearer: impl Into<Bearer<'_>>,
-        workarea: Reference,
+        workspace: Reference,
         transition_id: Uuid,
-    ) -> Result<WorkareaRecord, AppError> {
+    ) -> Result<WorkspaceRecord, AppError> {
         const VERB: &str = "ratify_transition";
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         if key.role != Role::Admin {
-            require_admissible(key, Role::Dreamer, VERB)?;
+            require_admissible(key, Role::Reviewer, VERB)?;
         }
         refuse_service(key, VERB)?;
-        let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
+        let workspace_id = self.resolve(key, NamedKind::Workspace, &workspace).await?;
         let prev = self.head_event(key.tenant_id).await?;
         let (proposal, node) = self
-            .ratify_admitted(&caller, workarea_id, transition_id)
+            .ratify_admitted(&caller, workspace_id, transition_id)
             .await?;
         let mut policy_snapshot = review_policy();
-        if proposal.to == WorkareaStatus::Validated {
+        if proposal.to == WorkspaceStatus::Frozen {
             // A false one was refused above and is never journalled.
-            policy_snapshot["children_all_validated"] = Value::Bool(true);
+            policy_snapshot["children_all_frozen"] = Value::Bool(true);
         }
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
-            event_types::WORKAREA_STATUS_TRANSITION,
+            event_types::WORKSPACE_STATUS_TRANSITION,
             &key.principal,
             Some(key.key_id),
             json!({
-                "workarea_id": workarea_id.to_string(),
+                "workspace_id": workspace_id.to_string(),
                 "from": proposal.from.as_str(),
                 "to": proposal.to.as_str(),
                 "transition_id": transition_id.to_string(),
@@ -4636,14 +4661,14 @@ where
             event,
             MetadataFold::TransitionRatified {
                 transition_id,
-                workarea_id,
+                workspace_id,
                 to: proposal.to,
                 ratifier_key_id: key.key_id,
             },
             None,
         )
         .await?;
-        Ok(WorkareaRecord {
+        Ok(WorkspaceRecord {
             status: proposal.to,
             ..node
         })
@@ -4657,25 +4682,25 @@ where
     pub(crate) async fn ratify_admitted(
         &self,
         caller: &Caller,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         transition_id: Uuid,
-    ) -> Result<(TransitionRecord, WorkareaRecord), AppError> {
+    ) -> Result<(TransitionRecord, WorkspaceRecord), AppError> {
         const VERB: &str = "ratify_transition";
         let key = &caller.key;
         if key.role != Role::Admin {
-            require_admissible(key, Role::Dreamer, VERB)?;
+            require_admissible(key, Role::Reviewer, VERB)?;
         }
         refuse_service(key, VERB)?;
         if key.role != Role::Admin {
-            self.require_access(caller, workarea_id, Role::Dreamer, VERB)
+            self.require_access(caller, workspace_id, Role::Reviewer, VERB)
                 .await?;
         }
-        self.refuse_inside(key.tenant_id, workarea_id).await?;
+        self.refuse_inside(key.tenant_id, workspace_id).await?;
         let proposal = self
             .journal
             .transition(key.tenant_id, transition_id)
             .await?
-            .filter(|t| t.workarea_id == workarea_id)
+            .filter(|t| t.workspace_id == workspace_id)
             .ok_or(AppError::NotFound)?;
         if ratifier_is_proposer(
             proposal.proposer_key_id,
@@ -4687,18 +4712,18 @@ where
         }
         let node = self
             .journal
-            .workarea(key.tenant_id, workarea_id)
+            .workspace(key.tenant_id, workspace_id)
             .await?
             .ok_or(AppError::NotFound)?;
-        let children: Vec<WorkareaStatus> = self
+        let children: Vec<WorkspaceStatus> = self
             .journal
-            .workarea_children(key.tenant_id, workarea_id)
+            .workspace_children(key.tenant_id, workspace_id)
             .await?
             .iter()
             .map(|child| child.status)
             .collect();
         let refused = |reason| AppError::TransitionRefused {
-            workarea_id,
+            workspace_id,
             from: proposal.from,
             to: proposal.to,
             reason,
@@ -4710,7 +4735,7 @@ where
         // unreviewed memory left in the subtree, to transition_preconditions
         // on the commit step, which ratify_check runs. "No simulation is
         // fenced on the subtree" would sit there too and holds vacuously
-        // while simulations are unbuilt (workareas.md, readings the build
+        // while simulations are unbuilt (workspaces.md, readings the build
         // takes).
         ratify_check(
             proposal.from,
@@ -4819,10 +4844,10 @@ where
     /// `own`, the own-work listing: every row the calling key authored, in
     /// every state, across every node minus the subtrees its global
     /// denials cover; any tenant role but operator, no grant needed, and a
-    /// `workarea_id` filter naming a node where the key holds some role.
+    /// `workspace_id` filter naming a node where the key holds some role.
     /// Without `own`, the scoped listing: reader on the scope node by the
     /// refusal order, and the promoted served tips of subtree(scope) ∩ the
-    /// nodes where reader is effective, narrowed to a `workarea_id` subtree
+    /// nodes where reader is effective, narrowed to a `workspace_id` subtree
     /// where reader is effective. Newest first; the cursor is bound to the
     /// key and to `api.cursor_ttl`, and every page re-applies the filter.
     pub async fn list_memories(
@@ -4847,10 +4872,10 @@ where
         let subtree_ids = |node: Uuid| async move {
             Ok::<BTreeSet<Uuid>, AppError>(
                 self.journal
-                    .workarea_subtree(tenant_id, node)
+                    .workspace_subtree(tenant_id, node)
                     .await?
                     .into_iter()
-                    .map(|w| w.workarea_id)
+                    .map(|w| w.workspace_id)
                     .collect(),
             )
         };
@@ -4862,11 +4887,11 @@ where
                     verb: "list",
                 });
             }
-            // The workarea narrows the key's rows to a subtree, and names
+            // The workspace narrows the key's rows to a subtree, and names
             // only a node the naming rule names to the key; omitted, every
-            // workarea the key wrote in (ADR-0039 d4).
+            // workspace the key wrote in (ADR-0039 d4).
             let filter = self
-                .resolve_opt(key, NamedKind::Workarea, req.workarea.as_ref())
+                .resolve_opt(key, NamedKind::Workspace, req.workspace.as_ref())
                 .await?;
             let subtree = match filter {
                 None => None,
@@ -4889,9 +4914,9 @@ where
             (scope, subtree)
         } else {
             require_admissible(key, Role::Reader, "list")?;
-            // One workarea, the scope, defaulting to the key's own
+            // One workspace, the scope, defaulting to the key's own
             // (ADR-0039 d4).
-            let scope = self.target_workarea(key, req.workarea.as_ref()).await?;
+            let scope = self.target_workspace(key, req.workspace.as_ref()).await?;
             self.require_access(&caller, scope, Role::Reader, "list")
                 .await?;
             // The served node set, and inside an in-progress scope every
@@ -4967,17 +4992,17 @@ where
             // leaves the application layer, whatever the store returned.
             let admitted = match &filter.scope {
                 ListingScope::Own { key_ids, masked } => {
-                    key_ids.contains(&m.author_key_id) && !masked.contains(&m.workarea_id)
+                    key_ids.contains(&m.author_key_id) && !masked.contains(&m.workspace_id)
                 }
                 ListingScope::Tips { nodes, held, .. } => {
-                    nodes.contains(&m.workarea_id)
+                    nodes.contains(&m.workspace_id)
                         && (match &filter.as_of {
                             None => m.status == MemoryStatus::Promoted && m.is_tip,
                             Some(_) => {
                                 m.status == MemoryStatus::Promoted
                                     && tips_then.contains(&m.memory_id)
                             }
-                        } || (held.contains(&m.workarea_id)
+                        } || (held.contains(&m.workspace_id)
                             && filter
                                 .as_of
                                 .as_ref()
@@ -5028,7 +5053,7 @@ where
     }
 
     /// The similar check (ADR-0050 d1, d17): the rows `caller` may read in
-    /// `workarea`'s recall scope — the served tips recall would read there,
+    /// `workspace`'s recall scope — the served tips recall would read there,
     /// `universe`'s included inside a user root, and its own held rows —
     /// that hold `body`'s words in the same order (`same_text`) or a word
     /// set at Jaccard 0.9 or more (`near_copy`), at most three, `same_text`
@@ -5040,7 +5065,7 @@ where
     async fn similar_to(
         &self,
         caller: &Caller,
-        workarea: Uuid,
+        workspace: Uuid,
         body: &str,
         exclude: Option<&str>,
     ) -> Result<Vec<SimilarItem>, AppError> {
@@ -5054,10 +5079,10 @@ where
         }
         let scope_ancestry = self
             .journal
-            .workarea_ancestry(key.tenant_id, workarea)
+            .workspace_ancestry(key.tenant_id, workspace)
             .await?
             .unwrap_or_default();
-        let readable = self.nodes_with(caller, workarea, Role::Reader).await?;
+        let readable = self.nodes_with(caller, workspace, Role::Reader).await?;
         let hit_nodes = with_universe(caller, &readable, &scope_ancestry);
         let scope = CandidateScope {
             reference: None,
@@ -5091,16 +5116,16 @@ where
             .into_iter()
             .filter(|m| {
                 let admitted = match m.status {
-                    MemoryStatus::Promoted => m.is_tip && hit_nodes.contains(&m.workarea_id),
+                    MemoryStatus::Promoted => m.is_tip && hit_nodes.contains(&m.workspace_id),
                     MemoryStatus::Held => {
-                        m.author_key_id == key.key_id && readable.contains(&m.workarea_id)
+                        m.author_key_id == key.key_id && readable.contains(&m.workspace_id)
                     }
                     _ => false,
                 };
                 admitted
                     && !m.retirement
                     && SIMILAR_KINDS.contains(&m.kind)
-                    && !(exclude == Some(m.claim_key.as_str()) && m.workarea_id == workarea)
+                    && !(exclude == Some(m.claim_key.as_str()) && m.workspace_id == workspace)
             })
             .filter_map(|m| {
                 relate(&written, &Fingerprint::of(m.searched())).map(|(r, j)| (r, j, m))
@@ -5119,7 +5144,7 @@ where
                 claim_key: m.claim_key,
                 version: m.version,
                 kind: m.kind.as_str().to_owned(),
-                workarea_id: m.workarea_id,
+                workspace_id: m.workspace_id,
                 state: m.status.as_str().to_owned(),
                 relation: relation.as_str().to_owned(),
                 // Hundredths, rounded down, so 0.899 never reads as 0.90.
@@ -5141,7 +5166,7 @@ where
     async fn similar_gate(
         &self,
         caller: &Caller,
-        workarea: Uuid,
+        workspace: Uuid,
         kind: MemoryKind,
         body: &str,
         exclude: Option<&str>,
@@ -5151,7 +5176,7 @@ where
             return Ok(Vec::new());
         }
         let started = std::time::Instant::now();
-        let similar = self.similar_to(caller, workarea, body, exclude).await?;
+        let similar = self.similar_to(caller, workspace, body, exclude).await?;
         let relation = similar.first().map_or("none", |s| {
             if s.relation == Relation::SameText.as_str() {
                 Relation::SameText.as_str()
@@ -5177,14 +5202,14 @@ where
     /// (ADR-0025 d3); the claim text normalized to NFC before the digest,
     /// the scan and the byte count (admission.md capture; ADR-0025 d6);
     /// same-call deterministic scan, whose veto is a refusal that journals
-    /// nothing; a new claim's `claim_key` free in the workarea (ADR-0025
+    /// nothing; a new claim's `claim_key` free in the workspace (ADR-0025
     /// d18), derived from the author and the text when omitted, and a
     /// verb defaulted from `derives_from` (ADR-0039 d3, d6); held on arrival
     /// as the claim's version 1, idempotency record honored (admission.md,
-    /// http-api.md). A `validated` workarea refuses the write as
-    /// `workarea.frozen` after effective access, so a key without access gets
+    /// http-api.md). A `frozen` workspace refuses the write as
+    /// `workspace.frozen` after effective access, so a key without access gets
     /// its access refusal first, and after the idempotency replay, before the
-    /// scan (ADR-0009 d5; workareas.md refusal matrix).
+    /// scan (ADR-0009 d5; workspaces.md refusal matrix).
     pub async fn submit_memory(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -5193,12 +5218,12 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_admissible(key, Role::Writer, "submit")?;
-        // The body's workarea, by id or name, resolves after step 1 and
+        // The body's workspace, by id or name, resolves after step 1 and
         // before the record is looked up, so either spelling is one request
         // (ADR-0026 d4).
-        let workarea_id = self.target_workarea(key, req.workarea.as_ref()).await?;
+        let workspace_id = self.target_workspace(key, req.workspace.as_ref()).await?;
         let access = self
-            .require_access(&caller, workarea_id, Role::Writer, "submit")
+            .require_access(&caller, workspace_id, Role::Writer, "submit")
             .await;
         // A memory is started in a user root by its own user's keys only.
         // The rule is answered where step 2 allows or step 3 would answer
@@ -5206,7 +5231,7 @@ where
         // key that reads nothing of it keeps step 4's `access.not_found`
         // (ADR-0044 d16).
         if matches!(access, Ok(()) | Err(AppError::GrantRefused { .. })) {
-            self.refuse_another_users_root(key, workarea_id).await?;
+            self.refuse_another_users_root(key, workspace_id).await?;
         }
         if let Err(refusal) = access {
             // A user key reads `universe` and never writes it: it is told
@@ -5214,7 +5239,7 @@ where
             // of step 3's `access.grant_refused` (ADR-0044 d7, d14).
             if matches!(refusal, AppError::GrantRefused { .. })
                 && key.user.is_some()
-                && workarea_id == self.universe(key.tenant_id).await?
+                && workspace_id == self.universe(key.tenant_id).await?
             {
                 return Err(AppError::UniverseRefused);
             }
@@ -5243,10 +5268,10 @@ where
         let scope = IdempotencyScope {
             tenant_id: key.tenant_id,
             key_id: key.key_id,
-            workarea_id,
+            workspace_id,
             idem_key: req.idempotency_key.clone(),
         };
-        let request_digest = submit_request_digest(req, &claim_key, verb, workarea_id);
+        let request_digest = submit_request_digest(req, &claim_key, verb, workspace_id);
         if let Some(record) = self.journal.idempotency_get(&scope).await? {
             if record.request_digest != request_digest {
                 return Err(AppError::IdempotencyDigestMismatch);
@@ -5274,7 +5299,7 @@ where
         // moves the head, so this commit conflicts and its retry reads them
         // all again (ADR-0001 d2; ADR-0009 d5; ADR-0025 d10, ordinals; d18).
         let prev = self.head_event(key.tenant_id).await?;
-        self.refuse_frozen(key.tenant_id, workarea_id, FrozenOp::Write)
+        self.refuse_frozen(key.tenant_id, workspace_id, FrozenOp::Write)
             .await?;
 
         // Capture normalizes first: the digest, the scan and the byte count
@@ -5336,9 +5361,9 @@ where
         // target inside an in-progress subtree the write is not inside is
         // unreadable at the write's node (ADR-0030 d7). A curator writes
         // inside an in-progress subtree only (d9).
-        self.curator_may_act(key, "submit", workarea_id, None)
+        self.curator_may_act(key, "submit", workspace_id, None)
             .await?;
-        let write_root = self.in_progress_root(key.tenant_id, workarea_id).await?;
+        let write_root = self.in_progress_root(key.tenant_id, workspace_id).await?;
         let mut principals = BTreeSet::from([key.principal.clone()]);
         let mut key_ids = BTreeSet::from([key.key_id]);
         for ancestor in &req.derives_from {
@@ -5350,7 +5375,7 @@ where
             if !self.readable(&caller, &m).await?
                 || crosses_into(
                     write_root,
-                    self.in_progress_root(key.tenant_id, m.workarea_id).await?,
+                    self.in_progress_root(key.tenant_id, m.workspace_id).await?,
                 )
             {
                 return Err(AppError::LineageUnknown(*ancestor));
@@ -5361,7 +5386,7 @@ where
 
         let claim_state = self
             .journal
-            .claim_key_state(key.tenant_id, workarea_id, &claim_key)
+            .claim_key_state(key.tenant_id, workspace_id, &claim_key)
             .await?;
         if claim_state.live {
             return Err(AppError::ClaimKeyConflict);
@@ -5392,7 +5417,7 @@ where
         let similar = self
             .similar_gate(
                 &caller,
-                workarea_id,
+                workspace_id,
                 req.kind,
                 format.search_text.as_deref().unwrap_or(&body),
                 None,
@@ -5406,7 +5431,7 @@ where
         let memory = MemoryRecord {
             memory_id,
             tenant_id: key.tenant_id,
-            workarea_id,
+            workspace_id,
             claim_key: claim_key.clone(),
             version: 1,
             kind: req.kind,
@@ -5442,7 +5467,7 @@ where
         // taken under, or none (admission.md rule-set registry; ADR-0065 d1).
         let mut payload = json!({
             "artifact_id": memory_id.to_string(),
-            "workarea_id": workarea_id.to_string(),
+            "workspace_id": workspace_id.to_string(),
             "claim_key": claim_key,
             "version": memory.version,
             "kind": req.kind.as_str(),
@@ -5483,7 +5508,7 @@ where
             memory_id,
             claim_key: claim_key.clone(),
             version: memory.version,
-            workarea_id,
+            workspace_id,
             state: MemoryStatus::Held.as_str().to_owned(),
             journal_seq: seq,
             body_digest,
@@ -5518,7 +5543,7 @@ where
         if let Some(telemetry) = &self.telemetry {
             telemetry.offer(TelemetryItem::Remembered(Remembered {
                 tenant_id: key.tenant_id,
-                workarea_id,
+                workspace_id,
                 memory_id,
                 body_digest: receipt.body_digest.clone(),
             }));
@@ -5535,21 +5560,21 @@ where
         })
     }
 
-    /// Serve the next reviewable held item to this dreamer, claiming it,
-    /// from the rows within its dreamer effective access only; a
-    /// `held_by: service` key is refused before any lookup (ADR-0025 d1).
+    /// Serve the next reviewable held item to this reviewer, claiming it,
+    /// from the rows within its reviewer effective access only; a
+    /// `used_by: service` key is refused before any lookup (ADR-0025 d1).
     pub async fn review_next(
         &self,
         bearer: impl Into<Bearer<'_>>,
     ) -> Result<Option<ServedMemory>, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
-        require_admissible(key, Role::Dreamer, "review")?;
+        require_admissible(key, Role::Reviewer, "review")?;
         refuse_service(key, "review")?;
-        let workareas = self.dreamer_nodes(&caller).await?;
+        let workspaces = self.reviewer_nodes(&caller).await?;
         match self
             .journal
-            .review_claim_next(key.tenant_id, &key.principal, key.key_id, &workareas)
+            .review_claim_next(key.tenant_id, &key.principal, key.key_id, &workspaces)
             .await?
         {
             None => Ok(None),
@@ -5562,8 +5587,8 @@ where
         }
     }
 
-    /// Record a verdict. Dreamer on the row's workarea by the refusal order,
-    /// with no exception for review, and never from a `held_by: service` key
+    /// Record a verdict. Reviewer on the row's workspace by the refusal order,
+    /// with no exception for review, and never from a `used_by: service` key
     /// (ADR-0025 d1); R2 runs here against the row's reviewer-exclusion set
     /// — its lineage closure plus, for a held successor, the authors of the
     /// held rivals of its target (`check_reviewer`; ADR-0025 d10). With the
@@ -5572,7 +5597,7 @@ where
     /// verdict's own transaction (admission.md review and
     /// ratification): `lifecycle.promote` for a first version, and for a
     /// successor `lifecycle.supersede`, which compare-and-sets that its
-    /// target is still the served tip of the successor's workarea and
+    /// target is still the served tip of the successor's workspace and
     /// `claim_key`. An approval whose target lost the tip is
     /// `submission.tip_conflict`, journals nothing and leaves the row held
     /// and queued (ADR-0025 d10).
@@ -5584,7 +5609,7 @@ where
         reason: Option<&str>,
     ) -> Result<VerdictOutcome, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
-        require_admissible(&caller.key, Role::Dreamer, "verdict")?;
+        require_admissible(&caller.key, Role::Reviewer, "verdict")?;
         refuse_service(&caller.key, "verdict")?;
         self.verdict_on(&caller, memory_id, verdict, reason, None)
             .await
@@ -5609,13 +5634,13 @@ where
     ) -> Result<VerdictOutcome, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
-        require_admissible(key, Role::Dreamer, "verdict")?;
+        require_admissible(key, Role::Reviewer, "verdict")?;
         refuse_service(key, "verdict")?;
         let recording = VerdictRecording {
             scope: IdempotencyScope {
                 tenant_id: key.tenant_id,
                 key_id: key.key_id,
-                workarea_id: Uuid::nil(),
+                workspace_id: Uuid::nil(),
                 idem_key: req.idempotency_key.clone(),
             },
             request_digest: verdict_request_digest(req)?,
@@ -5658,7 +5683,7 @@ where
     /// The held listing (ADR-0055 d2): the rows `review next` would serve
     /// this key, with their text, a page at a time, narrowed by a subtree,
     /// an authoring key and a `claim_key` prefix. It claims nothing and
-    /// journals nothing. Only a dreamer key a person holds is served it
+    /// journals nothing. Only a reviewer key a person holds is served it
     /// (d1).
     pub async fn review_held(
         &self,
@@ -5675,15 +5700,15 @@ where
             });
         }
         let tenant_id = key.tenant_id;
-        let (mut nodes, walked) = self.dreamer_nodes_walked(&caller).await?;
-        if let Some(workarea) = &req.workarea {
-            let root = self.resolve(key, NamedKind::Workarea, workarea).await?;
+        let (mut nodes, walked) = self.reviewer_nodes_walked(&caller).await?;
+        if let Some(workspace) = &req.workspace {
+            let root = self.resolve(key, NamedKind::Workspace, workspace).await?;
             let subtree: BTreeSet<Uuid> = self
                 .journal
-                .workarea_subtree(tenant_id, root)
+                .workspace_subtree(tenant_id, root)
                 .await?
                 .into_iter()
-                .map(|w| w.workarea_id)
+                .map(|w| w.workspace_id)
                 .collect();
             nodes.retain(|n| subtree.contains(n));
         }
@@ -5736,7 +5761,7 @@ where
             // leaves the application layer, whatever the store returned.
             let excluded = m.lineage_key_ids.contains(&key.key_id)
                 || m.lineage_principals.contains(&key.principal);
-            if m.status != MemoryStatus::Held || excluded || !filter.nodes.contains(&m.workarea_id)
+            if m.status != MemoryStatus::Held || excluded || !filter.nodes.contains(&m.workspace_id)
             {
                 continue;
             }
@@ -5748,8 +5773,8 @@ where
                     same
                 }
             };
-            if let Entry::Vacant(slot) = ancestries.entry(m.workarea_id)
-                && let Some(ancestry) = ancestry_of(&walked, m.workarea_id)
+            if let Entry::Vacant(slot) = ancestries.entry(m.workspace_id)
+                && let Some(ancestry) = ancestry_of(&walked, m.workspace_id)
             {
                 slot.insert(Some(ancestry));
             }
@@ -5766,7 +5791,7 @@ where
 
     /// The named held rows as the listing would show them to this key, for
     /// the admin page's confirmation (ADR-0055 d10): each id with its row
-    /// when it is still held, in the key's dreamer access and outside its
+    /// when it is still held, in the key's reviewer access and outside its
     /// exclusion, else `None`. It claims and journals nothing.
     pub async fn review_named(
         &self,
@@ -5776,7 +5801,7 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_person_reviewer(key)?;
-        let (nodes, walked) = self.dreamer_nodes_walked(&caller).await?;
+        let (nodes, walked) = self.reviewer_nodes_walked(&caller).await?;
         let nodes: BTreeSet<Uuid> = nodes.into_iter().collect();
         let mut rows: BTreeMap<Uuid, MemoryRecord> = self
             .journal
@@ -5785,7 +5810,7 @@ where
             .into_iter()
             .filter(|m| {
                 m.status == MemoryStatus::Held
-                    && nodes.contains(&m.workarea_id)
+                    && nodes.contains(&m.workspace_id)
                     && !m.lineage_key_ids.contains(&key.key_id)
                     && !m.lineage_principals.contains(&key.principal)
             })
@@ -5796,8 +5821,8 @@ where
         for id in ids {
             let served = match rows.remove(id) {
                 Some(m) => {
-                    if let Entry::Vacant(slot) = ancestries.entry(m.workarea_id)
-                        && let Some(ancestry) = ancestry_of(&walked, m.workarea_id)
+                    if let Entry::Vacant(slot) = ancestries.entry(m.workspace_id)
+                        && let Some(ancestry) = ancestry_of(&walked, m.workspace_id)
                     {
                         slot.insert(Some(ancestry));
                     }
@@ -5820,7 +5845,7 @@ where
     /// own transaction — and answered with its outcome or the refusal a
     /// single verdict naming it would have answered. Each item records under
     /// the request's idempotency key and its own id, so a retry replays what
-    /// was decided and judges the rest (d12). Only a dreamer key a person
+    /// was decided and judges the rest (d12). Only a reviewer key a person
     /// holds sends one (d1); the ids are 1 to [`BULK_VERDICT_MAX`] distinct
     /// ids, and a reject carries its reason (d3, d8).
     pub async fn review_bulk(
@@ -5888,7 +5913,7 @@ where
                 scope: IdempotencyScope {
                     tenant_id: key.tenant_id,
                     key_id: key.key_id,
-                    workarea_id: Uuid::nil(),
+                    workspace_id: Uuid::nil(),
                     idem_key: format!("{}/{memory_id}", req.idempotency_key),
                 },
                 request_digest: sha256_digest_string(&canonical_bytes(&doc)?),
@@ -5973,11 +5998,11 @@ where
             .memory(key.tenant_id, memory_id)
             .await?
             .ok_or(AppError::NotFound)?;
-        self.require_access(caller, memory.workarea_id, Role::Dreamer, "verdict")
+        self.require_access(caller, memory.workspace_id, Role::Reviewer, "verdict")
             .await?;
         // A curator rejects inside an in-progress subtree only (ADR-0030
         // d9); R2 below refuses it what it authored or derived from.
-        self.curator_may_act(key, "verdict", memory.workarea_id, None)
+        self.curator_may_act(key, "verdict", memory.workspace_id, None)
             .await?;
         let mut exclusion = memory.lineage_closure();
         if let Some(target) = memory.replaces
@@ -5985,7 +6010,7 @@ where
         {
             for rival in self.journal.held_successors(key.tenant_id, target).await? {
                 if rival.memory_id != memory.memory_id
-                    && rival.workarea_id == memory.workarea_id
+                    && rival.workspace_id == memory.workspace_id
                     && rival.claim_key == memory.claim_key
                 {
                     exclusion.add_principal(rival.author_principal);
@@ -6009,13 +6034,13 @@ where
         // row refuses here (admission.md lifecycle).
         let new_status = transition(memory.status, target_status)?;
 
-        // Nothing new promotes into a `validated` area: an approval is
+        // Nothing new promotes into a `frozen` area: an approval is
         // refused before its verdict is sealed, so nothing is journalled and
         // the row stays held (ADR-0009 d5). Whether a reject is refused too,
-        // and whether review_next serves such a row, is open in workareas.md
+        // and whether review_next serves such a row, is open in workspaces.md
         // and waits on the operator.
         if verdict == Verdict::Approve {
-            self.refuse_frozen(key.tenant_id, memory.workarea_id, FrozenOp::Promote)
+            self.refuse_frozen(key.tenant_id, memory.workspace_id, FrozenOp::Promote)
                 .await?;
         }
         let replaced = match (verdict, memory.replaces) {
@@ -6025,7 +6050,7 @@ where
                     Some(t)
                         if t.status == MemoryStatus::Promoted
                             && t.is_tip
-                            && t.workarea_id == memory.workarea_id
+                            && t.workspace_id == memory.workspace_id
                             && t.claim_key == memory.claim_key =>
                     {
                         Some(t)
@@ -6033,7 +6058,7 @@ where
                     _ => {
                         return Err(AppError::TipConflict {
                             current_tip: self
-                                .readable_tip(caller, memory.workarea_id, &memory.claim_key)
+                                .readable_tip(caller, memory.workspace_id, &memory.claim_key)
                                 .await?,
                         });
                     }
@@ -6093,7 +6118,7 @@ where
                 // key's attestation, the same-person mark and the verdict's
                 // own time, never the key (ADR-0077 d3, d6).
                 let approval = Some(Box::new(Approval {
-                    held_by: key.held_by,
+                    used_by: key.used_by,
                     same_user: Some(same_user),
                     at: verdict_event.envelope.at.clone(),
                 }));
@@ -6103,7 +6128,7 @@ where
                         json!({
                             "artifact_id": memory_id.to_string(),
                             "version": memory.version,
-                            "workarea_id": memory.workarea_id.to_string(),
+                            "workspace_id": memory.workspace_id.to_string(),
                             "claim_key": memory.claim_key,
                             "ratification_event_id": verdict_event_id.to_string(),
                             "previous_tip_version": Value::Null,
@@ -6120,7 +6145,7 @@ where
                         event_types::LIFECYCLE_SUPERSEDE,
                         json!({
                             "claim_key": memory.claim_key,
-                            "workarea_id": memory.workarea_id.to_string(),
+                            "workspace_id": memory.workspace_id.to_string(),
                             "new_artifact_id": memory_id.to_string(),
                             "new_version": memory.version,
                             "replaces_artifact_id": target.memory_id.to_string(),
@@ -6190,7 +6215,7 @@ where
                     Err(StoreError::TipMoved { .. }) => {
                         return Err(AppError::TipConflict {
                             current_tip: self
-                                .readable_tip(caller, memory.workarea_id, &memory.claim_key)
+                                .readable_tip(caller, memory.workspace_id, &memory.claim_key)
                                 .await?,
                         });
                     }
@@ -6344,8 +6369,8 @@ where
                 created_at: self.clock.now(),
                 key_id: caller.key.key_id,
                 principal: caller.key.principal.clone(),
-                scope_workarea_id: result.scope_workarea_id,
-                source_workarea_id: caller.key.default_workarea,
+                scope_workspace_id: result.scope_workspace_id,
+                source_workspace_id: caller.key.default_workspace,
                 pipeline: result.pipeline.as_str(),
                 access: result.access.as_str(),
                 query_digest: result.query_digest.clone(),
@@ -6378,7 +6403,7 @@ where
         }
         let mut timings = Timings::default();
         let lap = std::time::Instant::now();
-        let scope = self.target_workarea(key, req.workarea.as_ref()).await?;
+        let scope = self.target_workspace(key, req.workspace.as_ref()).await?;
         self.require_access(caller, scope, Role::Reader, "recall")
             .await?;
         // The query is its NFC text, searched and digested alike (ADR-0025
@@ -6413,10 +6438,10 @@ where
         // first, the order of their depth.
         let scope_ancestry = self
             .journal
-            .workarea_ancestry(key.tenant_id, scope)
+            .workspace_ancestry(key.tenant_id, scope)
             .await?
             .unwrap_or_default();
-        let ancestry: Vec<Uuid> = scope_ancestry.iter().map(|w| w.workarea_id).collect();
+        let ancestry: Vec<Uuid> = scope_ancestry.iter().map(|w| w.workspace_id).collect();
         let applicable: Vec<Uuid> = (0..ancestry.len())
             .rev()
             .filter(|&i| caller.effective(&ancestry[i..]).contains(&Role::Reader))
@@ -6460,7 +6485,7 @@ where
                         m.is_tip
                     })
                     && !m.retirement
-                    && applicable.contains(&m.workarea_id)
+                    && applicable.contains(&m.workspace_id)
             })
             .collect();
 
@@ -6627,15 +6652,15 @@ where
                         tips_then.contains(&m.memory_id)
                     } else {
                         m.is_tip
-                    }) && promoted.contains(&m.workarea_id)
+                    }) && promoted.contains(&m.workspace_id)
                 }
                 MemoryStatus::Held => {
                     include_unreviewed
                         && recorded(m)
-                        && ((own.contains(&m.author_key_id) && readable.contains(&m.workarea_id))
+                        && ((own.contains(&m.author_key_id) && readable.contains(&m.workspace_id))
                             || (any_author
                                 && served_unreviewed(m, self.scanner.version())
-                                && inside.contains(&m.workarea_id)))
+                                && inside.contains(&m.workspace_id)))
                 }
                 _ => false,
             };
@@ -6858,7 +6883,7 @@ where
             // ancestors the caller can read (ADR-0025 d3).
             if admits(&m) {
                 served_ids.push(m.memory_id);
-                let home = m.workarea_id;
+                let home = m.workspace_id;
                 hits.push(RecallHit {
                     served: self.served_in(caller, m, &mut ancestries).await?,
                     score: candidate.score,
@@ -6868,7 +6893,7 @@ where
                     rerank: candidate.rerank,
                     rank_before: candidate.rank_before,
                     // Each hit of a federated answer says whether its
-                    // workarea is the scope's or another team's (ADR-0072
+                    // workspace is the scope's or another team's (ADR-0072
                     // d8).
                     source: plan.report.as_ref().map(|_| {
                         if plan.federated.contains(&home) {
@@ -6883,7 +6908,7 @@ where
         timings.lap(Stage::Hydrate, lap);
         Ok(RecallResult {
             recall_id: self.ids.new_id(),
-            scope_workarea_id: scope,
+            scope_workspace_id: scope,
             steering: served_steering,
             hits,
             budget,
@@ -6909,11 +6934,11 @@ where
 
     /// The guardrail read (proposed ADR-0037 d3, d4, d5, d7): reader on the
     /// scope node by the refusal order, as recall is, the node the key's
-    /// default or the request's workarea within its grants. The set is
+    /// default or the request's workspace within its grants. The set is
     /// d4's: the promoted served guardrail tips, never a retirement version,
     /// on the scope node and, under the key's `guardrail_scope`
     /// `ancestors`, on each ancestor of it, each only where the key's
-    /// reader effective access covers that node; `workarea` keeps the scope
+    /// reader effective access covers that node; `workspace` keeps the scope
     /// node alone. The scope is the key's own, set at issuance; nothing in
     /// the request changes it. The set is ordered by severity, depth,
     /// `promoted_at` and `artifact_id`, never by a query; rows of one
@@ -6922,7 +6947,7 @@ where
     /// `over_cap`. Held guardrails are never served as rules: the caller's
     /// own held ones in the same chain are listed by `claim_key` and version
     /// alone, at most [`OWN_HELD_MAX_LINES`] (d3). Each served row carries
-    /// its approving verdicts' `held_by` and `at`, never a reviewer's key
+    /// its approving verdicts' `used_by` and `at`, never a reviewer's key
     /// name (d5); they are read from the journal, one pass over the tenant's
     /// chain per read whose cost is unmeasured. The result names the served
     /// ids, the read log's input as recall's does (ADR-0025 d9).
@@ -6934,7 +6959,7 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reader, "guardrails")?;
-        let scope_node = self.target_workarea(key, req.workarea.as_ref()).await?;
+        let scope_node = self.target_workspace(key, req.workspace.as_ref()).await?;
         self.require_access(&caller, scope_node, Role::Reader, "guardrails")
             .await?;
         let tenant_id = key.tenant_id;
@@ -6945,13 +6970,13 @@ where
         // one; the scope bounds it before access does.
         let chain = self
             .journal
-            .workarea_ancestry(tenant_id, scope_node)
+            .workspace_ancestry(tenant_id, scope_node)
             .await?
             .unwrap_or_default();
-        let ids: Vec<Uuid> = chain.iter().map(|w| w.workarea_id).collect();
+        let ids: Vec<Uuid> = chain.iter().map(|w| w.workspace_id).collect();
         let scope_path = derived_path(&chain);
         let bound = match guardrail_scope {
-            GuardrailScope::Workarea => ids.len().min(1),
+            GuardrailScope::Workspace => ids.len().min(1),
             GuardrailScope::Ancestors => ids.len(),
         };
         let mut nodes: BTreeMap<Uuid, (u32, bool, String)> = BTreeMap::new();
@@ -6970,7 +6995,7 @@ where
 
         // R3 defense in depth: a served rule is a readable promoted tip in
         // force with its fields; a held row is listed to its author alone
-        // and never served as a rule, inside an in-progress workarea too
+        // and never served as a rule, inside an in-progress workspace too
         // (d3).
         let mut in_force = Vec::new();
         let mut own_held = Vec::new();
@@ -6978,7 +7003,7 @@ where
             if m.kind != MemoryKind::Guardrail {
                 continue;
             }
-            let Some(&(depth, reads, _)) = nodes.get(&m.workarea_id) else {
+            let Some(&(depth, reads, _)) = nodes.get(&m.workspace_id) else {
                 continue;
             };
             match m.status {
@@ -7024,12 +7049,12 @@ where
             .map(
                 |((depth, fields, promoted_at, m), conflict)| ServedGuardrail {
                     artifact_id: m.memory_id,
-                    workarea_path: nodes.get(&m.workarea_id).map(|(_, _, path)| path.clone()),
+                    workspace_path: nodes.get(&m.workspace_id).map(|(_, _, path)| path.clone()),
                     verdicts: verdicts.get(&m.memory_id).cloned().unwrap_or_default(),
                     tokens: budget_tokens(m.body_bytes),
                     claim_key: m.claim_key,
                     version: m.version,
-                    workarea_id: m.workarea_id,
+                    workspace_id: m.workspace_id,
                     depth,
                     severity: fields.severity,
                     body: m.body,
@@ -7052,7 +7077,7 @@ where
     }
 
     /// The approving verdicts on each of `memory_ids`, in journal order: the
-    /// reviewing key's `held_by` and the verdict's `at` (proposed ADR-0037
+    /// reviewing key's `used_by` and the verdict's `at` (proposed ADR-0037
     /// d5). A verdict whose key the tenant does not hold fails closed.
     async fn approvals(
         &self,
@@ -7064,7 +7089,7 @@ where
         if wanted.is_empty() {
             return Ok(out);
         }
-        let mut held_by: BTreeMap<Uuid, HeldBy> = BTreeMap::new();
+        let mut used_by: BTreeMap<Uuid, UsedBy> = BTreeMap::new();
         for event in self.whole_chain(tenant_id).await? {
             let envelope = event.envelope;
             if envelope.event_type != event_types::REVIEW_APPROVE {
@@ -7082,7 +7107,7 @@ where
                     envelope.seq
                 ))
             })?;
-            let attested = match held_by.get(&reviewer) {
+            let attested = match used_by.get(&reviewer) {
                 Some(attested) => *attested,
                 None => {
                     let record = self.journal.key(tenant_id, reviewer).await?.ok_or_else(|| {
@@ -7091,12 +7116,12 @@ where
                             envelope.seq
                         ))
                     })?;
-                    held_by.insert(reviewer, record.held_by);
-                    record.held_by
+                    used_by.insert(reviewer, record.used_by);
+                    record.used_by
                 }
             };
             out.entry(memory_id).or_default().push(GuardrailVerdict {
-                held_by: attested,
+                used_by: attested,
                 at: envelope.at,
             });
         }
@@ -7297,7 +7322,7 @@ where
     /// Get one memory: the authoring key sees its own rows in every state,
     /// with no grant needed and global denials still masking them; everyone
     /// else sees promoted rows, replaced versions included, with reader
-    /// effective access on the row's workarea; anything else is absence,
+    /// effective access on the row's workspace; anything else is absence,
     /// indistinguishable from no row. `derives_from` names only the
     /// ancestors the caller can read (http-api.md; ADR-0025 d3). Get needs
     /// reader, so an admin or operator key, which no reader grant can be
@@ -7547,8 +7572,8 @@ where
     }
 
     /// Record a source check on a promoted, anchored served tip (ADR-0057
-    /// d5, d18): from its author key (writer), or a dreamer with dreamer
-    /// access on its workarea; a writer that can read it and did not author
+    /// d5, d18): from its author key (writer), or a reviewer with reviewer
+    /// access on its workspace; a writer that can read it and did not author
     /// it is `access.author_only`, and a key that cannot read it is told
     /// nothing. A held, unanchored or superseded version is
     /// `request.validation` naming `/artifact_id`. Journals `source.checked`
@@ -7563,8 +7588,8 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         let admissible = admissible_grant_roles(key.role);
-        let dreamer = admissible.contains(&Role::Dreamer);
-        if !dreamer && !admissible.contains(&Role::Writer) {
+        let reviewer = admissible.contains(&Role::Reviewer);
+        if !reviewer && !admissible.contains(&Role::Writer) {
             return Err(AppError::VerbCeiling {
                 role: key.role,
                 verb: "source_check",
@@ -7573,7 +7598,7 @@ where
         let scope = IdempotencyScope {
             tenant_id: key.tenant_id,
             key_id: key.key_id,
-            workarea_id: Uuid::nil(),
+            workspace_id: Uuid::nil(),
             idem_key: req.idempotency_key.clone(),
         };
         let request_digest = sha256_digest_string(&canonical_bytes(&json!({
@@ -7605,14 +7630,14 @@ where
         if !self.readable(&caller, &target).await? {
             return Err(AppError::NotFound);
         }
-        if dreamer {
-            self.require_access(&caller, target.workarea_id, Role::Dreamer, "source_check")
+        if reviewer {
+            self.require_access(&caller, target.workspace_id, Role::Reviewer, "source_check")
                 .await?;
         } else {
             if target.author_key_id != key.key_id {
                 return Err(AppError::AuthorOnly);
             }
-            self.require_access(&caller, target.workarea_id, Role::Writer, "source_check")
+            self.require_access(&caller, target.workspace_id, Role::Writer, "source_check")
                 .await?;
         }
         let invalid = |reason: &str| AppError::SourceCheckInvalid {
@@ -7655,7 +7680,7 @@ where
             .map_or((None, None), |(p, f)| (Some(p), f));
         let payload = json!({
             "artifact_id": target.memory_id.to_string(),
-            "workarea_id": target.workarea_id.to_string(),
+            "workspace_id": target.workspace_id.to_string(),
             "rev": body.rev,
             "result": body.result.as_str(),
             "hash": body.hash,
@@ -7709,17 +7734,17 @@ where
     /// target stays the served tip, and stays in everyone's recall, until a
     /// non-author ratifies the successor (ADR-0025 d10). With `retirement`
     /// the successor proposes retiring the claim (d11). The supersede rule
-    /// runs in its order: a key role admitting writer or dreamer (step 1);
-    /// the idempotency record, scoped to the key with a nil workarea, looked
+    /// runs in its order: a key role admitting writer or reviewer (step 1);
+    /// the idempotency record, scoped to the key with a nil workspace, looked
     /// up next and replayed whatever the target's state now; the target
     /// readable (step 2), and, where it is a ratified retirement in a user
     /// root, the key that user's own, else `submission.user_root_refused`
-    /// (ADR-0044 d16); a writer's own target and writer on its workarea
-    /// (step 3), or a dreamer's dreamer and reader there, whoever authored
+    /// (ADR-0044 d16); a writer's own target and writer on its workspace
+    /// (step 3), or a reviewer's reviewer and reader there, whoever authored
     /// it (step 4, edit-as-proposal); then the target-dependent refusals —
     /// `X-OML-Workarea`, the served tip, the kind and retirement checks,
     /// and from `oml_write` the vocabulary-kind check, and last the
-    /// workarea not `validated`, else `workarea.frozen` (step 5; ADR-0009
+    /// workspace not `frozen`, else `workspace.frozen` (step 5; ADR-0009
     /// d5); then the checks every submit runs. The successor takes the next
     /// ordinal of the claim_key and journals `submission.remember`
     /// (`submission.learn` for a `derived_fact`) naming what it replaces,
@@ -7736,28 +7761,28 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         let admissible = admissible_grant_roles(key.role);
-        let dreamer = admissible.contains(&Role::Dreamer);
-        if !dreamer && !admissible.contains(&Role::Writer) {
+        let reviewer = admissible.contains(&Role::Reviewer);
+        if !reviewer && !admissible.contains(&Role::Writer) {
             return Err(AppError::VerbCeiling {
                 role: key.role,
                 verb: "supersede",
             });
         }
-        // The body's workarea, by id or name, resolves after step 1
+        // The body's workspace, by id or name, resolves after step 1
         // (ADR-0026 d4).
         let header = self
-            .resolve_opt(key, NamedKind::Workarea, req.workarea.as_ref())
+            .resolve_opt(key, NamedKind::Workspace, req.workspace.as_ref())
             .await?;
 
         // The record is looked up between steps 1 and 2 and replays its
         // stored response whatever the target or the key's access now: the
         // response names only the caller's own successor (http-api.md
-        // idempotency). The scope's workarea is nil, so no target's
-        // workarea ever enters a record.
+        // idempotency). The scope's workspace is nil, so no target's
+        // workspace ever enters a record.
         let scope = IdempotencyScope {
             tenant_id: key.tenant_id,
             key_id: key.key_id,
-            workarea_id: Uuid::nil(),
+            workspace_id: Uuid::nil(),
             idem_key: req.idempotency_key.clone(),
         };
         let request_digest = supersede_request_digest(req)?;
@@ -7794,19 +7819,19 @@ where
         // successor there is governed by those steps, as before (ADR-0044
         // d16; ADR-0071 d2).
         if target.retirement && target.status == MemoryStatus::Promoted && target.is_tip {
-            self.refuse_another_users_root(key, target.workarea_id)
+            self.refuse_another_users_root(key, target.workspace_id)
                 .await?;
         }
         // A curator retires or rewrites inside an in-progress subtree only,
         // and never what it authored or derived from (ADR-0030 d9).
-        self.curator_may_act(key, "supersede", target.workarea_id, Some(&target))
+        self.curator_may_act(key, "supersede", target.workspace_id, Some(&target))
             .await?;
-        if dreamer {
-            // Step 4: edit-as-proposal needs dreamer and reader on the
-            // target's workarea, whoever authored it.
-            self.require_access(&caller, target.workarea_id, Role::Dreamer, "supersede")
+        if reviewer {
+            // Step 4: edit-as-proposal needs reviewer and reader on the
+            // target's workspace, whoever authored it.
+            self.require_access(&caller, target.workspace_id, Role::Reviewer, "supersede")
                 .await?;
-            self.require_access(&caller, target.workarea_id, Role::Reader, "supersede")
+            self.require_access(&caller, target.workspace_id, Role::Reader, "supersede")
                 .await?;
         } else {
             // Step 3: own is the target version's authoring key, never the
@@ -7814,18 +7839,18 @@ where
             if target.author_key_id != key.key_id {
                 return Err(AppError::AuthorOnly);
             }
-            self.require_access(&caller, target.workarea_id, Role::Writer, "supersede")
+            self.require_access(&caller, target.workspace_id, Role::Writer, "supersede")
                 .await?;
         }
-        // Step 5, in its order: the scope is the target's workarea, the
+        // Step 5, in its order: the scope is the target's workspace, the
         // target is the served tip, the kind stays in its class and a
         // retirement keeps the target's kind and never retires a term, and
         // on oml_write the target is of no vocabulary kind (ADR-0025 d12).
-        if let (Some(workarea_id), Some(sent)) = (header, &req.workarea)
-            && workarea_id != target.workarea_id
+        if let (Some(workspace_id), Some(sent)) = (header, &req.workspace)
+            && workspace_id != target.workspace_id
         {
-            return Err(AppError::WorkareaNotTarget {
-                workarea: sent.clone(),
+            return Err(AppError::WorkspaceNotTarget {
+                workspace: sent.clone(),
             });
         }
         // The claim's latest version the caller may read (promoted, or held
@@ -7836,17 +7861,17 @@ where
         // answer (ADR-0057 d19; R3).
         let claim_state = self
             .journal
-            .claim_key_state(key.tenant_id, target.workarea_id, &target.claim_key)
+            .claim_key_state(key.tenant_id, target.workspace_id, &target.claim_key)
             .await?;
         let reads_promoted = self
-            .require_access(&caller, target.workarea_id, Role::Reader, "supersede")
+            .require_access(&caller, target.workspace_id, Role::Reader, "supersede")
             .await
             .is_ok();
         let latest = self
             .journal
             .claim_latest_readable(
                 key.tenant_id,
-                target.workarea_id,
+                target.workspace_id,
                 &target.claim_key,
                 &caller.own_key_ids(),
                 reads_promoted,
@@ -7868,7 +7893,7 @@ where
         if target.status != MemoryStatus::Promoted || !target.is_tip {
             return Err(AppError::TipConflict {
                 current_tip: self
-                    .readable_tip(&caller, target.workarea_id, &target.claim_key)
+                    .readable_tip(&caller, target.workspace_id, &target.claim_key)
                     .await?,
             });
         }
@@ -7889,7 +7914,7 @@ where
         // Step 5's last check, after the head read above: a ratification
         // that validates the area in between moves the head and the commit
         // conflicts (roles-and-keys.md supersede; ADR-0009 d5).
-        self.refuse_frozen(key.tenant_id, target.workarea_id, FrozenOp::Write)
+        self.refuse_frozen(key.tenant_id, target.workspace_id, FrozenOp::Write)
             .await?;
 
         // The checks every submit runs: NFC first, then the scan, whose veto
@@ -7963,7 +7988,7 @@ where
         }
 
         // The head was read above, then the ordinal: 1 + the greatest
-        // version of the claim_key in the workarea, whatever its state; a
+        // version of the claim_key in the workspace, whatever its state; a
         // capture that commits in between moves the head, and the retry
         // reads both again (ADR-0025 d10, ordinals).
         let version = claim_state
@@ -8003,7 +8028,7 @@ where
         } else {
             self.similar_gate(
                 &caller,
-                target.workarea_id,
+                target.workspace_id,
                 kind,
                 format.search_text.as_deref().unwrap_or(&body),
                 Some(&target.claim_key),
@@ -8022,7 +8047,7 @@ where
         let successor = MemoryRecord {
             memory_id: successor_id,
             tenant_id: key.tenant_id,
-            workarea_id: target.workarea_id,
+            workspace_id: target.workspace_id,
             claim_key: target.claim_key.clone(),
             version,
             kind,
@@ -8061,7 +8086,7 @@ where
         };
         let mut payload = json!({
             "artifact_id": successor_id.to_string(),
-            "workarea_id": target.workarea_id.to_string(),
+            "workspace_id": target.workspace_id.to_string(),
             "claim_key": target.claim_key,
             "version": version,
             "kind": kind.as_str(),
@@ -8100,7 +8125,7 @@ where
             memory_id: successor_id,
             claim_key: target.claim_key.clone(),
             version,
-            workarea_id: target.workarea_id,
+            workspace_id: target.workspace_id,
             state: MemoryStatus::Held.as_str().to_owned(),
             retirement: req.retirement,
             replaces,
@@ -8175,8 +8200,8 @@ where
     /// so R2 counts the edge while it waits (ADR-0008 d5; ADR-0012;
     /// audit-and-lineage.md, pending and ratified alike). The refusal order:
     /// the verb ceiling, the idempotency record, each endpoint present and in
-    /// read scope, dreamer on at least one endpoint's workarea, then the
-    /// label (workareas.md, edge authority; ADR-0021 d5). A `held_by:
+    /// read scope, reviewer on at least one endpoint's workspace, then the
+    /// label (workspaces.md, edge authority; ADR-0021 d5). A `used_by:
     /// service` key may propose: only ratification is review-class
     /// (roles-and-keys.md).
     pub async fn propose_claim_edge(
@@ -8188,9 +8213,9 @@ where
         const VERB: &str = "claim_edge.propose";
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
-        require_admissible(key, Role::Dreamer, VERB)?;
+        require_admissible(key, Role::Reviewer, VERB)?;
 
-        // A claim-edge POST names no workarea, so the scope's workarea is
+        // A claim-edge POST names no workspace, so the scope's workspace is
         // nil (http-api.md idempotency); the record replays whatever the
         // endpoints or the key's access now, as it names only the caller's
         // own edge.
@@ -8198,7 +8223,7 @@ where
         let scope = idempotency_key.map(|idem_key| IdempotencyScope {
             tenant_id: key.tenant_id,
             key_id: key.key_id,
-            workarea_id: Uuid::nil(),
+            workspace_id: Uuid::nil(),
             idem_key: idem_key.to_owned(),
         });
         if let Some(scope) = &scope
@@ -8231,7 +8256,7 @@ where
         }
         let mut proposable = Vec::with_capacity(2);
         for memory in &endpoints {
-            let ancestry = self.ancestry(key.tenant_id, memory.workarea_id).await?;
+            let ancestry = self.ancestry(key.tenant_id, memory.workspace_id).await?;
             let access = effective_access(&grants, &caller.denials, &ancestry);
             // Edge authority asks reader on both ends, and a claim endpoint
             // is a row, so the row must also be in the key's read scope: its
@@ -8247,23 +8272,23 @@ where
         }
         if let [Err(refusal), Err(_)] = proposable.as_slice() {
             // Both ends are readable, so the first end's refusal is
-            // `access.grant_refused` naming its workarea.
+            // `access.grant_refused` naming its workspace.
             return Err(match refusal {
                 VerbRefusal::VerbCeiling { role, .. } => AppError::VerbCeiling {
                     role: *role,
                     verb: VERB,
                 },
                 VerbRefusal::GrantRefused { needed_role, .. } => AppError::GrantRefused {
-                    workarea_id: endpoints[0].workarea_id,
+                    workspace_id: endpoints[0].workspace_id,
                     needed_role: *needed_role,
                 },
                 VerbRefusal::NotFound => AppError::NotFound,
             });
         }
         let (src, dst) = (&endpoints[0], &endpoints[1]);
-        self.refuse_user_edge_into_universe(key, &[src.workarea_id, dst.workarea_id])
+        self.refuse_user_edge_into_universe(key, &[src.workspace_id, dst.workspace_id])
             .await?;
-        self.refuse_crossing_edge(key.tenant_id, src.workarea_id, dst.workarea_id)
+        self.refuse_crossing_edge(key.tenant_id, src.workspace_id, dst.workspace_id)
             .await?;
         // A curator flags a contradiction between two claims of one
         // in-progress subtree, neither its own (ADR-0030 d9).
@@ -8274,9 +8299,9 @@ where
                     refusal: CuratorRefusal::NarrowOnly,
                 });
             }
-            self.curator_may_act(key, VERB, src.workarea_id, Some(src))
+            self.curator_may_act(key, VERB, src.workspace_id, Some(src))
                 .await?;
-            self.curator_may_act(key, VERB, dst.workarea_id, Some(dst))
+            self.curator_may_act(key, VERB, dst.workspace_id, Some(dst))
                 .await?;
         }
         check_edge_label(&req.label, src, dst)?;
@@ -8349,14 +8374,14 @@ where
         })
     }
 
-    /// Propose that the promoted claim `artifact_id` join `workarea`'s
+    /// Propose that the promoted claim `artifact_id` join `workspace`'s
     /// brief: journalled `brief_edge.proposed` and stored pending (ADR-0046
     /// d7, d8). The refusal order: the verb ceiling, the idempotency record,
-    /// the workarea resolved and dreamer effective access on it
+    /// the workspace resolved and reviewer effective access on it
     /// (`access.not_found` outside read access, `access.grant_refused`
     /// within it), the claim present and readable (`access.not_found`
     /// otherwise), then the claim promoted and its claim's served tip
-    /// (`request.validation` naming `from_artifact_id`). A `held_by: service`
+    /// (`request.validation` naming `from_artifact_id`). A `used_by: service`
     /// key may propose; only ratification is review-class.
     pub async fn propose_brief_edge(
         &self,
@@ -8367,12 +8392,12 @@ where
         const VERB: &str = "brief_edge.propose";
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
-        require_admissible(key, Role::Dreamer, VERB)?;
+        require_admissible(key, Role::Reviewer, VERB)?;
         let request_digest = brief_edge_request_digest(req)?;
         let scope = idempotency_key.map(|idem_key| IdempotencyScope {
             tenant_id: key.tenant_id,
             key_id: key.key_id,
-            workarea_id: Uuid::nil(),
+            workspace_id: Uuid::nil(),
             idem_key: idem_key.to_owned(),
         });
         if let Some(scope) = &scope
@@ -8384,10 +8409,10 @@ where
             });
         }
         let prev = self.head_event(key.tenant_id).await?;
-        let workarea_id = self
-            .resolve(key, NamedKind::Workarea, &req.workarea)
+        let workspace_id = self
+            .resolve(key, NamedKind::Workspace, &req.workspace)
             .await?;
-        self.require_access(&caller, workarea_id, Role::Dreamer, VERB)
+        self.require_access(&caller, workspace_id, Role::Reviewer, VERB)
             .await?;
         let memory = self
             .journal
@@ -8397,9 +8422,9 @@ where
         if !self.readable(&caller, &memory).await? {
             return Err(AppError::NotFound);
         }
-        self.refuse_user_edge_into_universe(key, &[memory.workarea_id, workarea_id])
+        self.refuse_user_edge_into_universe(key, &[memory.workspace_id, workspace_id])
             .await?;
-        self.refuse_crossing_edge(key.tenant_id, memory.workarea_id, workarea_id)
+        self.refuse_crossing_edge(key.tenant_id, memory.workspace_id, workspace_id)
             .await?;
         if memory.status != MemoryStatus::Promoted || !memory.is_tip {
             return Err(AppError::BriefMemberNotServed {
@@ -8416,7 +8441,7 @@ where
             json!({
                 "edge_id": edge_id.to_string(),
                 "artifact_id": memory.memory_id.to_string(),
-                "workarea_id": workarea_id.to_string(),
+                "workspace_id": workspace_id.to_string(),
                 "proposer_key_id": key.key_id.to_string(),
             }),
         )?;
@@ -8424,7 +8449,7 @@ where
             edge_id,
             tenant_id: key.tenant_id,
             artifact_id: memory.memory_id,
-            workarea_id,
+            workspace_id,
             state: EdgeState::Pending,
             proposer_key_id: key.key_id,
             proposer_principal: key.principal.clone(),
@@ -8459,8 +8484,8 @@ where
     /// Ratify the pending brief edge `edge_id`: journalled `review.ratify`
     /// with `subject_kind: "brief_edge"` and stored ratified at that event's
     /// seq, the brief's order (ADR-0046 d8). The refusal order: the verb
-    /// ceiling, a `held_by: service` key, the idempotency record, the edge
-    /// present and its workarea within the key's dreamer effective access
+    /// ceiling, a `used_by: service` key, the idempotency record, the edge
+    /// present and its workspace within the key's reviewer effective access
     /// (`access.not_found` outside read access), R2 against the proposer's
     /// key and principal (`review.ratifier_is_proposer`), then the edge's
     /// state (`review.serve_invalid`, `consumed`).
@@ -8473,13 +8498,13 @@ where
         const VERB: &str = "brief_edge.ratify";
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
-        require_admissible(key, Role::Dreamer, VERB)?;
+        require_admissible(key, Role::Reviewer, VERB)?;
         refuse_service(key, VERB)?;
         let request_digest = claim_edge_ratify_request_digest(edge_id)?;
         let scope = idempotency_key.map(|idem_key| IdempotencyScope {
             tenant_id: key.tenant_id,
             key_id: key.key_id,
-            workarea_id: Uuid::nil(),
+            workspace_id: Uuid::nil(),
             idem_key: idem_key.to_owned(),
         });
         if let Some(scope) = &scope
@@ -8497,12 +8522,12 @@ where
             .brief_edge(key.tenant_id, edge_id)
             .await?
             .ok_or(AppError::NotFound)?;
-        self.require_access(&caller, edge.workarea_id, Role::Dreamer, VERB)
+        self.require_access(&caller, edge.workspace_id, Role::Reviewer, VERB)
             .await?;
         // A pending edge across the boundary is not ratified after a mark
         // (ADR-0030 d7).
         if let Some(claim) = self.journal.memory(key.tenant_id, edge.artifact_id).await? {
-            self.refuse_crossing_edge(key.tenant_id, claim.workarea_id, edge.workarea_id)
+            self.refuse_crossing_edge(key.tenant_id, claim.workspace_id, edge.workspace_id)
                 .await?;
         }
         if ratifier_is_proposer(
@@ -8527,7 +8552,7 @@ where
                 "artifact_id": edge.artifact_id.to_string(),
                 "version": Value::Null,
                 "edge_id": edge_id.to_string(),
-                "workarea_id": edge.workarea_id.to_string(),
+                "workspace_id": edge.workspace_id.to_string(),
                 "verdict_event_ids": [],
                 "ratifier_key_id": key.key_id.to_string(),
                 "same_user": self.same_person(key.tenant_id, edge.proposer_key_id, key).await?,
@@ -8605,15 +8630,15 @@ where
         }
     }
 
-    /// `GET /v2/edges?kind=brief`: one page of `workarea`'s brief edges,
+    /// `GET /v2/edges?kind=brief`: one page of `workspace`'s brief edges,
     /// pending and ratified, newest first, each served only when the key
-    /// reads its claim, at reader effective access on the workarea
+    /// reads its claim, at reader effective access on the workspace
     /// (`access.not_found` outside it) (ADR-0046 d7). The cursor is the
-    /// claim-edge listing's, bound to the key and the workarea.
+    /// claim-edge listing's, bound to the key and the workspace.
     pub async fn brief_edges(
         &self,
         api_key: &str,
-        workarea: Reference,
+        workspace: Reference,
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<BriefEdgePage, AppError> {
@@ -8621,21 +8646,25 @@ where
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reader, VERB)?;
-        let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
-        self.require_access(&caller, workarea_id, Role::Reader, VERB)
+        let workspace_id = self.resolve(key, NamedKind::Workspace, &workspace).await?;
+        self.require_access(&caller, workspace_id, Role::Reader, VERB)
             .await?;
         let filter = ClaimEdgeFilter {
             artifact_id: None,
-            workarea_id: Some(workarea_id),
+            workspace_id: Some(workspace_id),
         };
         let now = self.clock.now();
         let after = cursor
             .map(|cursor| ClaimEdgeCursor::resume(cursor, key.key_id, &filter, &now))
             .transpose()?;
         let position = |e: &BriefEdgeRecord| (e.created_at.as_str().to_owned(), e.edge_id);
-        let scope_root = self.in_progress_root(key.tenant_id, workarea_id).await?;
+        let scope_root = self.in_progress_root(key.tenant_id, workspace_id).await?;
         let mut served = Vec::new();
-        for edge in self.journal.brief_edges(key.tenant_id, workarea_id).await? {
+        for edge in self
+            .journal
+            .brief_edges(key.tenant_id, workspace_id)
+            .await?
+        {
             if let Some(after) = &after
                 && position(&edge) >= (after.created_at.as_str().to_owned(), after.edge_id)
             {
@@ -8649,7 +8678,7 @@ where
             if self.readable(&caller, &memory).await?
                 && !crosses_into(
                     scope_root,
-                    self.in_progress_root(key.tenant_id, memory.workarea_id)
+                    self.in_progress_root(key.tenant_id, memory.workspace_id)
                         .await?,
                 )
             {
@@ -8682,10 +8711,10 @@ where
     /// Ratify the pending claim edge `edge_id`: journalled `review.ratify`
     /// with `subject_kind: "claim_edge"`, the edge's one review act at k = 1,
     /// and stored ratified naming the ratifier (event-catalog.md; ADR-0008
-    /// d5). The refusal order: the verb ceiling, a `held_by: service` key
+    /// d5). The refusal order: the verb ceiling, a `used_by: service` key
     /// before any lookup, the idempotency record, the edge and both its
-    /// endpoints present and in read scope, dreamer on both endpoints'
-    /// workareas, the proposal's label check, R2 — the proposer's key or
+    /// endpoints present and in read scope, reviewer on both endpoints'
+    /// workspaces, the proposal's label check, R2 — the proposer's key or
     /// principal, then either endpoint's lineage closure — then the edge's
     /// state, then for `oml:is_a` the cycle invariant over that label's
     /// ratified edges (roles-and-keys.md; ADR-0012; ADR-0021 d5). The
@@ -8696,7 +8725,7 @@ where
     /// transport's head retry reads them again (ADR-0002).
     // reading: the docs state each refusal but not their order; this is
     // propose_claim_edge's order with review's service refusal after the
-    // ceiling, and edge authority's dreamer on both ends, which also reads
+    // ceiling, and edge authority's reviewer on both ends, which also reads
     // ADR-0021 d6's both-vocabularies rule for a term mapping.
     pub async fn ratify_claim_edge(
         &self,
@@ -8707,16 +8736,16 @@ where
         const VERB: &str = "claim_edge.ratify";
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
-        require_admissible(key, Role::Dreamer, VERB)?;
+        require_admissible(key, Role::Reviewer, VERB)?;
         refuse_service(key, VERB)?;
 
-        // The route names no workarea, so the scope's workarea is nil
+        // The route names no workspace, so the scope's workspace is nil
         // (http-api.md idempotency), as for the proposal.
         let request_digest = claim_edge_ratify_request_digest(edge_id)?;
         let scope = idempotency_key.map(|idem_key| IdempotencyScope {
             tenant_id: key.tenant_id,
             key_id: key.key_id,
-            workarea_id: Uuid::nil(),
+            workspace_id: Uuid::nil(),
             idem_key: idem_key.to_owned(),
         });
         if let Some(scope) = &scope
@@ -8745,7 +8774,7 @@ where
                 .ok_or(AppError::NotFound)?;
             // An endpoint outside read scope answers as an absent edge
             // (roles-and-keys.md footnote 5; `readable`).
-            let ancestry = self.ancestry(key.tenant_id, memory.workarea_id).await?;
+            let ancestry = self.ancestry(key.tenant_id, memory.workspace_id).await?;
             if !(caller.effective(&ancestry).contains(&Role::Reader)
                 && self.readable(&caller, &memory).await?)
             {
@@ -8754,13 +8783,13 @@ where
             endpoints.push(memory);
         }
         for memory in &endpoints {
-            self.require_access(&caller, memory.workarea_id, Role::Dreamer, VERB)
+            self.require_access(&caller, memory.workspace_id, Role::Reviewer, VERB)
                 .await?;
         }
         let (src, dst) = (&endpoints[0], &endpoints[1]);
         // A pending edge across the boundary is not ratified after a mark
         // (ADR-0030 d7).
-        self.refuse_crossing_edge(key.tenant_id, src.workarea_id, dst.workarea_id)
+        self.refuse_crossing_edge(key.tenant_id, src.workspace_id, dst.workspace_id)
             .await?;
         // The proposal's label check again: an `oml:replaced_by` or
         // `oml:consider` edge is ratified only inside its deprecation's
@@ -8796,7 +8825,7 @@ where
             &closure,
         )
         .map_err(|refusal| match refusal {
-            RatifyRefusal::NotDreamer(role) => AppError::VerbCeiling { role, verb: VERB },
+            RatifyRefusal::NotReviewer(role) => AppError::VerbCeiling { role, verb: VERB },
             RatifyRefusal::RatifierIsProposer => AppError::RatifierIsProposer,
             RatifyRefusal::AuthorInLineage => AppError::AuthorInLineage,
         })?;
@@ -8841,7 +8870,7 @@ where
             "same_user": self.same_person(key.tenant_id, edge.proposer_key_id, key).await?,
             "policy_snapshot": {
                 "k": 1,
-                "required_roles": ["dreamer"],
+                "required_roles": ["reviewer"],
                 "independence_axis": "principal",
                 "human_required": false,
             },
@@ -8914,19 +8943,19 @@ where
 
     /// `GET /v2/edges?kind=claim` (http-api.md edges and pagination;
     /// ADR-0008 d5): one page of the tenant's claim edges, pending and
-    /// ratified, newest first, narrowed to `query`'s workarea, by id or name
+    /// ratified, newest first, narrowed to `query`'s workspace, by id or name
     /// (ADR-0026), whose subtree holds either endpoint, and its version at
     /// either endpoint. A reader key is needed: an admin key answers
     /// `access.verb_ceiling`, since an edge joins content and an admin
-    /// structure read never includes it (ADR-0026 d15). A named workarea
+    /// structure read never includes it (ADR-0026 d15). A named workspace
     /// asks reader effective there by the refusal order. An edge is served
     /// only when both its endpoints are in the key's read scope, a row in a
     /// node where reader is effective that is promoted or the key's own
     /// (`readable`), so the read never names an unreadable version's id.
     /// The store selects by that scope, so one keyset page of at most
     /// `limit + 1` edges answers the call. The cursor is bound to the key,
-    /// to `api.cursor_ttl` and to the filter, its workarea resolved, so
-    /// either spelling of the workarea resumes it.
+    /// to `api.cursor_ttl` and to the filter, its workspace resolved, so
+    /// either spelling of the workspace resumes it.
     pub async fn claim_edges(
         &self,
         api_key: &str,
@@ -8939,16 +8968,16 @@ where
         let key = &caller.key;
         let tenant_id = key.tenant_id;
         require_admissible(key, Role::Reader, VERB)?;
-        let workarea_id = self
-            .resolve_opt(key, NamedKind::Workarea, query.workarea.as_ref())
+        let workspace_id = self
+            .resolve_opt(key, NamedKind::Workspace, query.workspace.as_ref())
             .await?;
-        if let Some(node) = workarea_id {
+        if let Some(node) = workspace_id {
             self.require_access(&caller, node, Role::Reader, VERB)
                 .await?;
         }
         let filter = ClaimEdgeFilter {
             artifact_id: query.artifact_id,
-            workarea_id,
+            workspace_id,
         };
         let now = self.clock.now();
         let after = cursor
@@ -8960,16 +8989,16 @@ where
         // and a page is one bounded store read whatever the tenant holds.
         // The cost left is the scope itself: every reader node of the key,
         // one subtree read per reader grant, bound into the query as an
-        // array that grows with the tenant's workareas, unmeasured (#99,
+        // array that grows with the tenant's workspaces, unmeasured (#99,
         // #150).
         let readable_nodes = self.nodes_holding(&caller, Role::Reader).await?;
-        // A scoped read: at `workarea`, else the key's default workarea, an
+        // A scoped read: at `workspace`, else the key's default workspace, an
         // edge with an endpoint inside an in-progress subtree the scope is
         // not inside is not served (ADR-0030 d2).
         // With neither, the scope has no root, so every in-progress subtree
         // is left out (fail closed). Inside the scope's root, an endpoint
         // held by any author is served, as recall serves it (d3).
-        let scope_root = match workarea_id.or(key.default_workarea) {
+        let scope_root = match workspace_id.or(key.default_workspace) {
             Some(scope) => self.in_progress_root(tenant_id, scope).await?,
             None => None,
         };
@@ -8986,15 +9015,15 @@ where
             kept.push(node);
         }
         let readable_nodes = kept;
-        let within = match workarea_id {
+        let within = match workspace_id {
             None => None,
             Some(node) => {
                 let subtree: BTreeSet<Uuid> = self
                     .journal
-                    .workarea_subtree(tenant_id, node)
+                    .workspace_subtree(tenant_id, node)
                     .await?
                     .into_iter()
-                    .map(|w| w.workarea_id)
+                    .map(|w| w.workspace_id)
                     .collect();
                 Some(
                     readable_nodes
@@ -9061,8 +9090,8 @@ where
 
     /// The events tail (http-api.md#events-tail, the single declaration
     /// site; ADR-0025 d15): reader on the scope by the refusal order — the
-    /// node the query's `workarea` names, else the key's default, else
-    /// `request.workarea_unresolved` — then one bounded scan of at most
+    /// node the query's `workspace` names, else the key's default, else
+    /// `request.workspace_unresolved` — then one bounded scan of at most
     /// `limit` raw events from `after_seq + 1`. An event stays only where
     /// the per-family rule ([`tail_visible`]) shows it to this key within
     /// subtree(scope), judged on the event's own payload and its subject's
@@ -9074,14 +9103,14 @@ where
     pub async fn tail_events(
         &self,
         bearer: impl Into<Bearer<'_>>,
-        workarea: Option<Reference>,
+        workspace: Option<Reference>,
         after_seq: u64,
         limit: usize,
     ) -> Result<TailPage, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reader, "events_tail")?;
-        let scope = self.target_workarea(key, workarea.as_ref()).await?;
+        let scope = self.target_workspace(key, workspace.as_ref()).await?;
         self.require_access(&caller, scope, Role::Reader, "events_tail")
             .await?;
         let scan = self
@@ -9116,7 +9145,10 @@ where
         let mut roots: BTreeMap<Uuid, Option<Uuid>> = BTreeMap::new();
         let mut events = Vec::new();
         for TailEvent { event, subject } in scan.events {
-            let envelope = &event.envelope;
+            // Judged in the current names; served as stored, so the served
+            // fields still verify against the stored signature (ADR-0091 d4).
+            let read = read_as_current(&event.envelope)?;
+            let envelope = &read;
             let Some(judged) = judged_subject(envelope, subject.as_ref()) else {
                 continue;
             };
@@ -9136,7 +9168,7 @@ where
                 Entry::Vacant(new) => new.insert(self.ancestry(key.tenant_id, judged.node).await?),
             };
             let tail_subject = TailSubject {
-                workareas: std::slice::from_ref(ancestry),
+                workspaces: std::slice::from_ref(ancestry),
                 author_key: judged.author_key,
                 promoted: judged.promoted,
                 self_signed: judged.self_signed,
@@ -9147,7 +9179,7 @@ where
             }
             let names_actor = envelope.api_key_id.is_some_and(|k| own_keys.contains(&k));
             let names_node = !caller.effective(ancestry).is_empty();
-            let payload = served_payload(envelope, judged.claim, names_actor, names_node);
+            let payload = served_payload(&event.envelope, judged.claim, names_actor, names_node);
             events.push(TailedEvent {
                 event,
                 names_actor,
@@ -9194,7 +9226,7 @@ where
     /// default, and `Some(seconds)` is one second to
     /// [`CONNECT_CODE_TTL_MAX_SECS`], outside which it is refused by name
     /// ([`AppError::ConnectCodeLifetime`]). A lifetime past the default is
-    /// minted only for a key confined to one workarea (`oauth.connect_refused`,
+    /// minted only for a key confined to one workspace (`oauth.connect_refused`,
     /// `not_confined`; ADR-0067 d3).
     pub async fn mint_connect_code_with_ttl(
         &self,
@@ -9289,7 +9321,7 @@ where
         Ok(shown)
     }
 
-    /// Whether `target` is confined to one workarea: no user root, and every
+    /// Whether `target` is confined to one workspace: no user root, and every
     /// grant on one node that is not the universe. A connect code that lives
     /// longer than ten minutes is a standing credential, so it is minted only
     /// for a key whose reach is that one node's subtree (ADR-0067 d3). The
@@ -9652,9 +9684,9 @@ where
 
     /// What the confirmation shows for `key` (http-api.md "The
     /// authorization page"; ADR-0031 d9 step 2): its tenant's name, its
-    /// name, principal and role, each granted workarea with the grant's
+    /// name, principal and role, each granted workspace with the grant's
     /// role, and for each the roles effective there, which name the
-    /// verb-kind sentences' workareas.
+    /// verb-kind sentences' workspaces.
     async fn confirmation_view(
         &self,
         tenant_id: Uuid,
@@ -9689,25 +9721,25 @@ where
         for grant in &grants {
             let ancestry = self
                 .journal
-                .workarea_ancestry(tenant_id, grant.node)
+                .workspace_ancestry(tenant_id, grant.node)
                 .await?
                 .filter(|ancestry| !ancestry.is_empty())
                 .ok_or_else(|| inconsistent(format!("granted node {} is not held", grant.node)))?;
-            let workarea = ancestry[0].name.clone();
-            let ids: Vec<Uuid> = ancestry.iter().map(|w| w.workarea_id).collect();
+            let workspace = ancestry[0].name.clone();
+            let ids: Vec<Uuid> = ancestry.iter().map(|w| w.workspace_id).collect();
             let effective = effective_roles(&grants, &denials, &ids);
             for (role, names) in [
                 (Role::Writer, &mut view.writes_in),
                 (Role::Reader, &mut view.reads_in),
-                (Role::Dreamer, &mut view.proposes_in),
+                (Role::Reviewer, &mut view.proposes_in),
             ] {
-                if effective.contains(&role) && !names.contains(&workarea) {
-                    names.push(workarea.clone());
+                if effective.contains(&role) && !names.contains(&workspace) {
+                    names.push(workspace.clone());
                 }
             }
             view.grants.push(ConfirmationGrant {
-                workarea_id: grant.node,
-                workarea,
+                workspace_id: grant.node,
+                workspace,
                 role: grant.role,
             });
         }
@@ -10375,9 +10407,9 @@ fn redirect_host(uri: &str) -> &str {
 /// own payload and its subject's authoring row (http-api.md#events-tail,
 /// the subject table; ADR-0025 d15).
 struct JudgedSubject {
-    /// Whether the subject is a claim version, not a workarea node.
+    /// Whether the subject is a claim version, not a workspace node.
     claim: bool,
-    /// The subject's workarea: the payload's `workarea_id`, else the
+    /// The subject's workspace: the payload's `workspace_id`, else the
     /// subject row's.
     node: Uuid,
     author_key: Option<Uuid>,
@@ -10397,19 +10429,19 @@ struct JudgedSubject {
 /// journals. A subject is `self_signed` unless the promoting payload says
 /// `false`, and outside every audience when its submission names a
 /// simulation, whose audience is unbuilt. `lifecycle.reassign` and
-/// `workarea.relate_*` name two workareas, are never journalled by this
+/// `workspace.relate_*` name two workspaces, are never journalled by this
 /// build, and are not placed: they stay hidden until they are.
 fn judged_subject(envelope: &Envelope, subject: Option<&SubjectRow>) -> Option<JudgedSubject> {
     let event_type = envelope.event_type.as_str();
     let payload = &envelope.payload;
-    if event_type == "lifecycle.reassign" || event_type.starts_with("workarea.relate_") {
+    if event_type == "lifecycle.reassign" || event_type.starts_with("workspace.relate_") {
         return None;
     }
     let named = payload
-        .get("workarea_id")
+        .get("workspace_id")
         .and_then(Value::as_str)
         .and_then(|id| Uuid::parse_str(id).ok());
-    if event_type.starts_with("workarea.") {
+    if event_type.starts_with("workspace.") {
         return Some(JudgedSubject {
             claim: false,
             node: named?,
@@ -10429,7 +10461,7 @@ fn judged_subject(envelope: &Envelope, subject: Option<&SubjectRow>) -> Option<J
     );
     Some(JudgedSubject {
         claim: true,
-        node: named.or(subject.map(|s| s.workarea_id))?,
+        node: named.or(subject.map(|s| s.workspace_id))?,
         author_key: if submission {
             envelope.api_key_id
         } else {
@@ -10445,7 +10477,7 @@ fn judged_subject(envelope: &Envelope, subject: Option<&SubjectRow>) -> Option<J
 /// The payload as the tail serves it (http-api.md#events-tail, what a
 /// served event names): to a key outside the actor's own key set every
 /// field naming a key — `proposer_key_id`, `ratifier_key_id` and each
-/// `*_by_key_id` — is null, and a claim subject's `workarea_id` on a node
+/// `*_by_key_id` — is null, and a claim subject's `workspace_id` on a node
 /// where the key holds no role is null (roles-and-keys.md#own, naming a
 /// node).
 fn served_payload(envelope: &Envelope, claim: bool, names_actor: bool, names_node: bool) -> Value {
@@ -10455,7 +10487,8 @@ fn served_payload(envelope: &Envelope, claim: bool, names_actor: bool, names_nod
             let names_key = field == "proposer_key_id"
                 || field == "ratifier_key_id"
                 || field.ends_with("_by_key_id");
-            let withheld_node = claim && field == "workarea_id" && !names_node;
+            let withheld_node =
+                claim && oml_domain::former_names::read_key(field) == "workspace_id" && !names_node;
             if (names_key && !names_actor) || withheld_node {
                 *value = Value::Null;
             }

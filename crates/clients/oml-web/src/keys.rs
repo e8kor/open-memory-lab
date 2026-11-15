@@ -276,7 +276,7 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: Option<&str>
         short(name),
         attr(&key.role),
         attr(&key.credential),
-        attr(&key.held_by),
+        attr(&key.used_by),
         access.join("<br>"),
         acts
     )
@@ -544,7 +544,7 @@ async fn user_view(
     };
     let _ = write!(
         body,
-        "<h2>Agent key</h2><p class=\"desc\">The user's workarea only. The value is shown once. {EXPIRES_NOTE}</p>{}<h2>Connector key</h2><p class=\"desc\">For Claude on the web or a phone; its connect code is shown once. {EXPIRES_NOTE}</p>{}",
+        "<h2>Agent key</h2><p class=\"desc\">The user's workspace only. The value is shown once. {EXPIRES_NOTE}</p>{}<h2>Connector key</h2><p class=\"desc\">For Claude on the web or a phone; its connect code is shown once. {EXPIRES_NOTE}</p>{}",
         issue("issue_key", "Issue key", true),
         issue("connect_key", "Issue connector key", false)
     );
@@ -633,7 +633,7 @@ fn cut_off_confirmation(session: &Session, side: Side, key: &str, user: Option<&
     let listed = user.map_or_else(String::new, |u| hidden("user", u));
     let back = user.map_or_else(|| page.to_owned(), |u| format!("{page}?user={}", encode(u)));
     let mut body = format!(
-        r#"<h1>Cut off {}?</h1><p class="oml-consequence">It stops working on every workarea at once. Its memories stay.</p>"#,
+        r#"<h1>Cut off {}?</h1><p class="oml-consequence">It stops working on every workspace at once. Its memories stay.</p>"#,
         short(key)
     );
     body.push_str(&form(

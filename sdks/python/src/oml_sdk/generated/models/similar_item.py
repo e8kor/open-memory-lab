@@ -23,7 +23,7 @@ class SimilarItem:
             claim_key (str):
             version (int):
             kind (SimilarItemKind):
-            workarea_id (str):
+            workspace_id (str):
             state (SimilarItemState): held only for the calling key's own rows.
             relation (SimilarItemRelation):
             jaccard (float): The two word sets' Jaccard similarity, rounded down to hundredths; 1 for same_text.
@@ -34,7 +34,7 @@ class SimilarItem:
     claim_key: str
     version: int
     kind: SimilarItemKind
-    workarea_id: str
+    workspace_id: str
     state: SimilarItemState
     relation: SimilarItemRelation
     jaccard: float
@@ -49,7 +49,7 @@ class SimilarItem:
 
         kind = self.kind.value
 
-        workarea_id = self.workarea_id
+        workspace_id = self.workspace_id
 
         state = self.state.value
 
@@ -67,7 +67,7 @@ class SimilarItem:
                 "claim_key": claim_key,
                 "version": version,
                 "kind": kind,
-                "workarea_id": workarea_id,
+                "workspace_id": workspace_id,
                 "state": state,
                 "relation": relation,
                 "jaccard": jaccard,
@@ -88,7 +88,7 @@ class SimilarItem:
 
         kind = SimilarItemKind(d.pop("kind"))
 
-        workarea_id = d.pop("workarea_id")
+        workspace_id = d.pop("workspace_id")
 
         state = SimilarItemState(d.pop("state"))
 
@@ -103,7 +103,7 @@ class SimilarItem:
             claim_key=claim_key,
             version=version,
             kind=kind,
-            workarea_id=workarea_id,
+            workspace_id=workspace_id,
             state=state,
             relation=relation,
             jaccard=jaccard,

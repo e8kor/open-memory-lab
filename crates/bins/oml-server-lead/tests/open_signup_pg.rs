@@ -652,20 +652,20 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
     assert!(hits.to_string().contains("Zanzibar"), "{hits}");
 
     // Ada's agent then writes two more memories that nobody approves: one
-    // held in her root, and one held in a workarea of her own that she
+    // held in her root, and one held in a workspace of her own that she
     // puts in progress, where she can recall what is unreviewed (ADR-0030).
     let held_text = "The Kilimanjaro budget is held for review and no other person may see it.";
     let (status, held) = remember(&rig, &ada_key, "kilimanjaro-budget", held_text).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{held}");
     let ada_user = rig_user(&rig, 21).await;
     let scratch = format!("{ada_user}.scratch");
-    // Creating the workarea and its mode are the Workareas view's acts,
+    // Creating the workspace and its mode are the Workspaces view's acts,
     // which oml-web runs as the person's web and reviewer keys through the
     // API (ADR-0070 d7 (b)).
     let web = capacity_credential(ada.split_once('=').expect("a cookie").1, "web");
     let mut request = api(
         "POST",
-        "/v2/workareas",
+        "/v2/workspaces",
         &web,
         Some(json!({"name": "scratch"})),
     );
@@ -678,7 +678,7 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
     let review = capacity_credential(ada.split_once('=').expect("a cookie").1, "review");
     let mut request = api(
         "POST",
-        &format!("/v2/workareas/{scratch}/mode"),
+        &format!("/v2/workspaces/{scratch}/mode"),
         &review,
         Some(json!({"mode": "in_progress"})),
     );
@@ -697,7 +697,7 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
                 "/v1/memories",
                 &ada_key,
                 Some(json!({"verb": "remember", "claim_key": "tanganyika-draft", "kind": "memory",
-                    "workarea": scratch,
+                    "workspace": scratch,
                     "body": "The Tanganyika draft stays in progress until Ada commits it."})),
             ),
         )
@@ -706,7 +706,7 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
         };
     assert_eq!(status, StatusCode::ACCEPTED, "{in_progress}");
     // Positive controls: Ada's reviewer key is served a held memory, and
-    // her agent recalls the in-progress one inside its workarea.
+    // her agent recalls the in-progress one inside its workspace.
     let (status, _, served) = json(
         &rig,
         as_web(&ada, "review", "POST", "/v2/review/next", Some(json!({}))),
@@ -720,7 +720,7 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
             "POST",
             "/v1/memories/recall",
             &ada_key,
-            Some(json!({"query": "Tanganyika draft", "workarea": scratch})),
+            Some(json!({"query": "Tanganyika draft", "workspace": scratch})),
         ),
     )
     .await;
@@ -751,7 +751,7 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
     // The tree shows Bob no node of Ada's root.
     let (_, _, tree) = json(
         &rig,
-        api("GET", "/v2/workareas/universe/tree", &bob_key, None),
+        api("GET", "/v2/workspaces/universe/tree", &bob_key, None),
     )
     .await;
     assert!(!tree.to_string().contains(&ada_user), "{tree}");
@@ -761,7 +761,7 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
             "POST",
             "/v1/memories/recall",
             &bob_key,
-            Some(json!({"query": "Zanzibar", "workarea": ada_user})),
+            Some(json!({"query": "Zanzibar", "workspace": ada_user})),
         ),
     )
     .await;
@@ -793,7 +793,7 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
         assert!(!html.contains("Zanzibar"), "{path}: {html}");
         assert!(!html.contains(&ada_user), "{path}: {html}");
     }
-    // The held rows of Ada's root and of her in-progress workarea are in no
+    // The held rows of Ada's root and of her in-progress workspace are in no
     // queue, listing, event tail or recall of Bob's (ADR-0068 d3).
     let (status, _, served) = json(
         &rig,
@@ -965,7 +965,7 @@ async fn at_the_memories_quota_a_replay_returns_its_receipt_and_a_new_version_is
 /// an agent key costs one request of the key's rate, not two (#253): at
 /// one request a minute, the first request of the key creates.
 #[tokio::test]
-async fn a_workarea_create_by_an_agent_key_costs_one_request_of_its_rate() {
+async fn a_workspace_create_by_an_agent_key_costs_one_request_of_its_rate() {
     let Some(rig) = rig(Some(|mut p| {
         p.quotas.requests_per_minute = 1;
         p
@@ -978,7 +978,12 @@ async fn a_workarea_create_by_an_agent_key_costs_one_request_of_its_rate() {
     let key = claude_code_key(&rig, &ada).await;
     let (status, _, body) = json(
         &rig,
-        api("POST", "/v2/workareas", &key, Some(json!({"name": "proj"}))),
+        api(
+            "POST",
+            "/v2/workspaces",
+            &key,
+            Some(json!({"name": "proj"})),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");

@@ -13,7 +13,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     kind: ListEdgesKind,
-    workarea_id: str | Unset = UNSET,
+    workspace_id: str | Unset = UNSET,
     artifact_id: str | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
@@ -24,12 +24,12 @@ def _get_kwargs(
     json_kind = kind.value
     params["kind"] = json_kind
 
-    json_workarea_id: str | Unset
-    if isinstance(workarea_id, Unset):
-        json_workarea_id = UNSET
+    json_workspace_id: str | Unset
+    if isinstance(workspace_id, Unset):
+        json_workspace_id = UNSET
     else:
-        json_workarea_id = workarea_id
-    params["workarea_id"] = json_workarea_id
+        json_workspace_id = workspace_id
+    params["workspace_id"] = json_workspace_id
 
     params["artifact_id"] = artifact_id
 
@@ -76,19 +76,19 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     kind: ListEdgesKind,
-    workarea_id: str | Unset = UNSET,
+    workspace_id: str | Unset = UNSET,
     artifact_id: str | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
 ) -> Response[EdgePage | ErrorEnvelope]:
     """Paginated edge read of one kind, pending and ratified, scoped to read access.
 
-     kind claim reads the claim graph and requires reader effective access; workarea_id is a subtree
+     kind claim reads the claim graph and requires reader effective access; workspace_id is a subtree
     filter and artifact_id narrows to the edges touching one claim. kind brief reads the brief edges
-    into the workarea workarea_id names, required then, at reader effective access on it, each served
-    only when the key reads its claim (ADR-0046 d7). kind workarea, designed and not served, reads the
-    labelled related edges touching the node workarea_id names, required then, and requires reader
-    effective access on it, or the admin key role, which reads the structure of every workarea in its
+    into the workspace workspace_id names, required then, at reader effective access on it, each served
+    only when the key reads its claim (ADR-0046 d7). kind workspace, designed and not served, reads the
+    labelled related edges touching the node workspace_id names, required then, and requires reader
+    effective access on it, or the admin key role, which reads the structure of every workspace in its
     tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission
     matrix footnote 6; ADR-0026 d15); artifact_id is refused with request.validation. Edges confer zero
     access. One family for both kinds, each keeping its authority, refusal codes and journal events
@@ -96,7 +96,7 @@ def sync_detailed(
 
     Args:
         kind (ListEdgesKind):
-        workarea_id (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace_id (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -116,7 +116,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         kind=kind,
-        workarea_id=workarea_id,
+        workspace_id=workspace_id,
         artifact_id=artifact_id,
         limit=limit,
         cursor=cursor,
@@ -133,19 +133,19 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     kind: ListEdgesKind,
-    workarea_id: str | Unset = UNSET,
+    workspace_id: str | Unset = UNSET,
     artifact_id: str | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
 ) -> EdgePage | ErrorEnvelope | None:
     """Paginated edge read of one kind, pending and ratified, scoped to read access.
 
-     kind claim reads the claim graph and requires reader effective access; workarea_id is a subtree
+     kind claim reads the claim graph and requires reader effective access; workspace_id is a subtree
     filter and artifact_id narrows to the edges touching one claim. kind brief reads the brief edges
-    into the workarea workarea_id names, required then, at reader effective access on it, each served
-    only when the key reads its claim (ADR-0046 d7). kind workarea, designed and not served, reads the
-    labelled related edges touching the node workarea_id names, required then, and requires reader
-    effective access on it, or the admin key role, which reads the structure of every workarea in its
+    into the workspace workspace_id names, required then, at reader effective access on it, each served
+    only when the key reads its claim (ADR-0046 d7). kind workspace, designed and not served, reads the
+    labelled related edges touching the node workspace_id names, required then, and requires reader
+    effective access on it, or the admin key role, which reads the structure of every workspace in its
     tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission
     matrix footnote 6; ADR-0026 d15); artifact_id is refused with request.validation. Edges confer zero
     access. One family for both kinds, each keeping its authority, refusal codes and journal events
@@ -153,7 +153,7 @@ def sync(
 
     Args:
         kind (ListEdgesKind):
-        workarea_id (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace_id (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -174,7 +174,7 @@ def sync(
     return sync_detailed(
         client=client,
         kind=kind,
-        workarea_id=workarea_id,
+        workspace_id=workspace_id,
         artifact_id=artifact_id,
         limit=limit,
         cursor=cursor,
@@ -185,19 +185,19 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     kind: ListEdgesKind,
-    workarea_id: str | Unset = UNSET,
+    workspace_id: str | Unset = UNSET,
     artifact_id: str | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
 ) -> Response[EdgePage | ErrorEnvelope]:
     """Paginated edge read of one kind, pending and ratified, scoped to read access.
 
-     kind claim reads the claim graph and requires reader effective access; workarea_id is a subtree
+     kind claim reads the claim graph and requires reader effective access; workspace_id is a subtree
     filter and artifact_id narrows to the edges touching one claim. kind brief reads the brief edges
-    into the workarea workarea_id names, required then, at reader effective access on it, each served
-    only when the key reads its claim (ADR-0046 d7). kind workarea, designed and not served, reads the
-    labelled related edges touching the node workarea_id names, required then, and requires reader
-    effective access on it, or the admin key role, which reads the structure of every workarea in its
+    into the workspace workspace_id names, required then, at reader effective access on it, each served
+    only when the key reads its claim (ADR-0046 d7). kind workspace, designed and not served, reads the
+    labelled related edges touching the node workspace_id names, required then, and requires reader
+    effective access on it, or the admin key role, which reads the structure of every workspace in its
     tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission
     matrix footnote 6; ADR-0026 d15); artifact_id is refused with request.validation. Edges confer zero
     access. One family for both kinds, each keeping its authority, refusal codes and journal events
@@ -205,7 +205,7 @@ async def asyncio_detailed(
 
     Args:
         kind (ListEdgesKind):
-        workarea_id (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace_id (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -225,7 +225,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         kind=kind,
-        workarea_id=workarea_id,
+        workspace_id=workspace_id,
         artifact_id=artifact_id,
         limit=limit,
         cursor=cursor,
@@ -240,19 +240,19 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     kind: ListEdgesKind,
-    workarea_id: str | Unset = UNSET,
+    workspace_id: str | Unset = UNSET,
     artifact_id: str | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
 ) -> EdgePage | ErrorEnvelope | None:
     """Paginated edge read of one kind, pending and ratified, scoped to read access.
 
-     kind claim reads the claim graph and requires reader effective access; workarea_id is a subtree
+     kind claim reads the claim graph and requires reader effective access; workspace_id is a subtree
     filter and artifact_id narrows to the edges touching one claim. kind brief reads the brief edges
-    into the workarea workarea_id names, required then, at reader effective access on it, each served
-    only when the key reads its claim (ADR-0046 d7). kind workarea, designed and not served, reads the
-    labelled related edges touching the node workarea_id names, required then, and requires reader
-    effective access on it, or the admin key role, which reads the structure of every workarea in its
+    into the workspace workspace_id names, required then, at reader effective access on it, each served
+    only when the key reads its claim (ADR-0046 d7). kind workspace, designed and not served, reads the
+    labelled related edges touching the node workspace_id names, required then, and requires reader
+    effective access on it, or the admin key role, which reads the structure of every workspace in its
     tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission
     matrix footnote 6; ADR-0026 d15); artifact_id is refused with request.validation. Edges confer zero
     access. One family for both kinds, each keeping its authority, refusal codes and journal events
@@ -260,7 +260,7 @@ async def asyncio(
 
     Args:
         kind (ListEdgesKind):
-        workarea_id (str | Unset): A workarea, by its node id, its name or its qualified name.
+        workspace_id (str | Unset): A workspace, by its node id, its name or its qualified name.
             Resolved server-side before any check that reads state; an unknown name answers exactly
             what an unknown id answers. A user key resolves a bare name in its own user root's
             namespace, plus universe and its root's name; every other key in the shared namespace
@@ -282,7 +282,7 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             kind=kind,
-            workarea_id=workarea_id,
+            workspace_id=workspace_id,
             artifact_id=artifact_id,
             limit=limit,
             cursor=cursor,

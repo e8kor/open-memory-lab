@@ -12,7 +12,7 @@ A server starts on the machine, a memory is written a memory as an agent and sta
 
 ## 1. Start a server and issue three keys
 
-The result is a server, a workarea `crew`, an agent key, a second agent key called `colleague` and a reviewer key.
+The result is a server, a workspace `crew`, an agent key, a second agent key called `colleague` and a reviewer key.
 
 === "Binaries, no Docker"
 
@@ -39,7 +39,7 @@ The result is a server, a workarea `crew`, an agent key, a second agent key call
     echo $! > ../server.pid; cd ../..
     ```
 
-    Claim the server with the token, create the workarea and issue the keys. The claim keeps the admin key in `oml/credentials`, apart from the user's own login file.
+    Claim the server with the token, create the workspace and issue the keys. The claim keeps the admin key in `oml/credentials`, apart from the user's own login file.
 
     ```sh
     until curl -fs http://127.0.0.1:8080/readyz >/dev/null; do sleep 1; done
@@ -47,11 +47,11 @@ The result is a server, a workarea `crew`, an agent key, a second agent key call
     export OML_CLI_CREDENTIALS=$PWD/oml/credentials
     printf '%s\n' "$TOKEN" | oml --url http://127.0.0.1:8080 bootstrap claim admin \
       --token-stdin --tenant-name demo --principal platform/admin
-    oml workareas create universe crew
-    oml keys issue-agent agent --principal crew/agent --workarea crew --out oml/keys/agent
-    oml keys issue-agent colleague --principal crew/colleague --workarea crew --out oml/keys/colleague
-    oml keys issue reviewer --role dreamer --held-by human --principal crew/reviewer \
-      --default-workarea crew --grant crew:dreamer --json | jq -r .value > oml/keys/reviewer
+    oml workspaces create universe crew
+    oml keys issue-agent agent --principal crew/agent --workspace crew --out oml/keys/agent
+    oml keys issue-agent colleague --principal crew/colleague --workspace crew --out oml/keys/colleague
+    oml keys issue reviewer --role reviewer --used-by person --principal crew/reviewer \
+      --default-workspace crew --grant crew:reviewer --json | jq -r .value > oml/keys/reviewer
     unset OML_CLI_CREDENTIALS
     ```
 
@@ -65,7 +65,7 @@ The result is a server, a workarea `crew`, an agent key, a second agent key call
 
     credentials stored in /…/oml/credentials (owner-only); the server keeps only the key hash.
     created crew (2e82c1a8-7505-44ec-97b1-1f4bde4dc2b2) universe.crew (status: development)
-    key agent (c773a866-0619-4a9a-9c94-58c67d6689a4) issued to crew/agent (writer, held by agent): …
+    key agent (c773a866-0619-4a9a-9c94-58c67d6689a4) issued to crew/agent (writer, used by agent): …
     ```
 
 === "Docker"
@@ -75,7 +75,7 @@ The result is a server, a workarea `crew`, an agent key, a second agent key call
     ```sh
     oml quickstart
     OML_CLI_CREDENTIALS=$PWD/oml/credentials \
-      oml keys issue-agent colleague --principal crew/colleague --workarea crew --out oml/keys/colleague
+      oml keys issue-agent colleague --principal crew/colleague --workspace crew --out oml/keys/colleague
     ```
 
     The key files are `oml/keys/agent`, `oml/keys/reviewer` and `oml/keys/colleague`.
@@ -105,7 +105,7 @@ OML_API_KEY=$A oml write "We deploy on Tuesdays; Friday deploys need two approva
 accepted — held (journal seq 13)
   artifact  : 80a08d01-11b8-483a-ba9c-cd6d9af2bac1
   claim_key : auto-fa13d72b8435838a
-  workarea  : 2e82c1a8-7505-44ec-97b1-1f4bde4dc2b2
+  workspace  : 2e82c1a8-7505-44ec-97b1-1f4bde4dc2b2
 ```
 
 The memory is `held`: stored and signed, readable by no one yet.
@@ -120,7 +120,7 @@ OML_API_KEY=$A oml read --query "deploy Friday"
 0 hit(s) — query digest sha256:8d376cdf…
 ```
 
-A plain recall does not return a held memory, even to its author. The author reads it by asking for unreviewed memories (step 4), and readers inside an in-progress workarea see it marked unreviewed. Also, an admin of the tenant reads it through the journaled [admin read](../architecture/roles-and-keys.md#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
+A plain recall does not return a held memory, even to its author. The author reads it by asking for unreviewed memories (step 4), and readers inside an in-progress workspace see it marked unreviewed. Also, an admin of the tenant reads it through the journaled [admin read](../architecture/roles-and-keys.md#the-admin-read) ([ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21).
 
 ## 4. Ask for the key's own unreviewed memories
 
@@ -155,7 +155,7 @@ OML_API_KEY=$A oml review approve --ids $ID
 ```
 
 ```text
-refused (403): access.verb_ceiling — bulk review needs a dreamer key held by a human, and this is a writer key held by agent
+refused (403): access.verb_ceiling — bulk review needs a reviewer key used by a person, and this is a writer key used by agent
   rule: R1: the surface an agent can call never promotes, signs, demotes or deletes; bulk review is a person's act.
 ```
 

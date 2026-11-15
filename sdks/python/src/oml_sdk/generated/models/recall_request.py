@@ -22,23 +22,23 @@ T = TypeVar("T", bound="RecallRequest")
 
 @_attrs_define
 class RecallRequest:
-    """The scope is workarea's subtree, else the key's default_workarea's (ADR-0039 d4). Unknown fields are refused
+    """The scope is workspace's subtree, else the key's default_workspace's (ADR-0039 d4). Unknown fields are refused
     (request.validation), and so are the designed vocabulary filter's terms and expand_terms, declared in openapi-
     designed.yaml (ADR-0039 d9); v0.3.0's include_bodies and include_own_held are request.validation naming include_text
     and include_unreviewed in details.renamed_to (ADR-0039 d7).
 
         Attributes:
             query (str):
-            workarea (str | Unset): A workarea, by its node id, its name or its qualified name. Resolved server-side before
-                any check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a
-                bare name in its own user root's namespace, plus universe and its root's name; every other key in the shared
-                namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
-                is neither, and is refused (request.validation).
+            workspace (str | Unset): A workspace, by its node id, its name or its qualified name. Resolved server-side
+                before any check that reads state; an unknown name answers exactly what an unknown id answers. A user key
+                resolves a bare name in its own user root's namespace, plus universe and its root's name; every other key in the
+                shared namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is
+                universe, is neither, and is refused (request.validation).
             k (int | Unset):  Default: 8.
             kinds (list[RecallRequestKindsItem] | Unset): Filters hits only; an empty array is refused (request.validation),
                 so only an absent kinds means no filter. Deliberately excludes steering (never ranked, always first) and the
                 vocabulary kinds (excluded from the shared recall indexes by default — ADR-0021 d9); where a vocabulary
-                workarea's journalled policy opts them in, they are hits only of a recall that omits kinds.
+                workspace's journalled policy opts them in, they are hits only of a recall that omits kinds.
             include_text (bool | Unset): Whether each served item carries its text (ADR-0039 d7). Default: True.
             anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped (github.com/e8kor/open-memory-
                 lab); no segment is . or .. (ADR-0057 d3). As a filter, rows whose anchor names it; unanchored rows are left out
@@ -50,7 +50,7 @@ class RecallRequest:
             include_unreviewed (bool | Unset): When true, the calling key's own held rows (kind memory or derived_fact,
                 never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds
                 filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held
-                and unreviewed true; they count against k and max_tokens. Inside a workarea a person put in progress, every
+                and unreviewed true; they count against k and max_tokens. Inside a workspace a person put in progress, every
                 author's held memories on the served nodes join too, and absent means true there; absent means false everywhere
                 else (ADR-0030 d3, d4). Rules: docs/architecture/retrieval.md.
             max_tokens (int | Unset): Recall budget in budget tokens (counter oml-tc/1), at most 2^53 - 1, the largest
@@ -85,22 +85,22 @@ class RecallRequest:
                 date-time; a date or an instant after the server's clock is request.validation naming /as_of. Digested with the
                 request when sent (ADR-0059 d14, d15, d17, d18).
             sources (list[str] | RecallRequestSourcesType0 | Unset): Where to search (ADR-0072 d5). scope, the default, is
-                the workarea's subtree as always. wide adds the committed and validated workareas the key already reads outside
+                the workspace's subtree as always. wide adds the protected and frozen workspaces the key already reads outside
                 it that accept federated reads: all of them up to the tenant's max_sources, above it those holding the largest
-                share of the query's matching rows. A list of 1 to max_sources distinct workarea names or ids searches exactly
+                share of the query's matching rows. A list of 1 to max_sources distinct workspace names or ids searches exactly
                 those, answered whole or refused. Every hit of wide or a list is scored with one set of statistics fixed before
                 any selection, so no hit's score depends on which sources were selected (d7). Absent, the tenant's
                 federation.default_sources. Refusals, in this order: an empty list, a name twice, more than max_sources names,
                 or a non-string element is request.validation at /sources; wide or a list with federation off is
                 request.validation at /sources; wide or a list on bm25-sparse is request.validation at /search; then each name
                 in order: one the key cannot read and one that does not exist are the same access.not_found with details.field
-                /sources/<i>, and a readable name that is not committed or validated, or lies outside the scope on a workarea
+                /sources/<i>, and a readable name that is not protected or frozen, or lies outside the scope on a workspace
                 declining federated reads, is request.validation at /sources/<i> with details.reason source_untrusted or
                 source_declines_federation. Since v0.7.0.
     """
 
     query: str
-    workarea: str | Unset = UNSET
+    workspace: str | Unset = UNSET
     k: int | Unset = 8
     kinds: list[RecallRequestKindsItem] | Unset = UNSET
     include_text: bool | Unset = True
@@ -121,11 +121,11 @@ class RecallRequest:
     def to_dict(self) -> dict[str, Any]:
         query = self.query
 
-        workarea: str | Unset
-        if isinstance(self.workarea, Unset):
-            workarea = UNSET
+        workspace: str | Unset
+        if isinstance(self.workspace, Unset):
+            workspace = UNSET
         else:
-            workarea = self.workarea
+            workspace = self.workspace
 
         k = self.k
 
@@ -192,8 +192,8 @@ class RecallRequest:
                 "query": query,
             }
         )
-        if workarea is not UNSET:
-            field_dict["workarea"] = workarea
+        if workspace is not UNSET:
+            field_dict["workspace"] = workspace
         if k is not UNSET:
             field_dict["k"] = k
         if kinds is not UNSET:
@@ -236,12 +236,12 @@ class RecallRequest:
         d = dict(src_dict)
         query = d.pop("query")
 
-        def _parse_workarea(data: object) -> str | Unset:
+        def _parse_workspace(data: object) -> str | Unset:
             if isinstance(data, Unset):
                 return data
             return cast(str | Unset, data)
 
-        workarea = _parse_workarea(d.pop("workarea", UNSET))
+        workspace = _parse_workspace(d.pop("workspace", UNSET))
 
         k = d.pop("k", UNSET)
 
@@ -332,7 +332,7 @@ class RecallRequest:
 
         recall_request = cls(
             query=query,
-            workarea=workarea,
+            workspace=workspace,
             k=k,
             kinds=kinds,
             include_text=include_text,

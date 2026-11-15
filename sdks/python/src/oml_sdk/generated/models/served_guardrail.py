@@ -22,8 +22,8 @@ class ServedGuardrail:
         artifact_id (str):
         claim_key (str):
         version (int):
-        workarea_id (str):
-        workarea_path (None | str):
+        workspace_id (str):
+        workspace_path (None | str):
         depth (int): The node's depth from the root, the root at 0.
         severity (Severity): A guardrail's severity: never and must bind, should is the reviewed default, and it orders
             the set first; required on kind guardrail except a retirement, refused on every other kind (request.validation,
@@ -41,8 +41,8 @@ class ServedGuardrail:
     artifact_id: str
     claim_key: str
     version: int
-    workarea_id: str
-    workarea_path: None | str
+    workspace_id: str
+    workspace_path: None | str
     depth: int
     severity: Severity
     text: str
@@ -59,10 +59,10 @@ class ServedGuardrail:
 
         version = self.version
 
-        workarea_id = self.workarea_id
+        workspace_id = self.workspace_id
 
-        workarea_path: None | str
-        workarea_path = self.workarea_path
+        workspace_path: None | str
+        workspace_path = self.workspace_path
 
         depth = self.depth
 
@@ -90,8 +90,8 @@ class ServedGuardrail:
                 "artifact_id": artifact_id,
                 "claim_key": claim_key,
                 "version": version,
-                "workarea_id": workarea_id,
-                "workarea_path": workarea_path,
+                "workspace_id": workspace_id,
+                "workspace_path": workspace_path,
                 "depth": depth,
                 "severity": severity,
                 "text": text,
@@ -116,14 +116,14 @@ class ServedGuardrail:
 
         version = d.pop("version")
 
-        workarea_id = d.pop("workarea_id")
+        workspace_id = d.pop("workspace_id")
 
-        def _parse_workarea_path(data: object) -> None | str:
+        def _parse_workspace_path(data: object) -> None | str:
             if data is None:
                 return data
             return cast(None | str, data)
 
-        workarea_path = _parse_workarea_path(d.pop("workarea_path"))
+        workspace_path = _parse_workspace_path(d.pop("workspace_path"))
 
         depth = d.pop("depth")
 
@@ -150,8 +150,8 @@ class ServedGuardrail:
             artifact_id=artifact_id,
             claim_key=claim_key,
             version=version,
-            workarea_id=workarea_id,
-            workarea_path=workarea_path,
+            workspace_id=workspace_id,
+            workspace_path=workspace_path,
             depth=depth,
             severity=severity,
             text=text,

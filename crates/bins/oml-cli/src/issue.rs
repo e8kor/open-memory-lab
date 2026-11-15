@@ -15,17 +15,17 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 /// The grants an issuing verb sends: each requested grant in order, and
-/// beside every writer grant a reader grant on the same workarea, unless
+/// beside every writer grant a reader grant on the same workspace, unless
 /// `write_only` or the request already names that reader grant (ADR-0028
 /// d2). A default of the CLI's alone; nothing here widens what the server
 /// would accept. No issuing verb takes a per-grant deny mask yet, so neither
 /// grant carries one; a verb that takes one copies the writer grant's masks
 /// onto its reader grant (ADR-0028 d2; cli/reference.md `oml keys`).
 ///
-/// Each workarea is the id or the name the operator typed, and the added
+/// Each workspace is the id or the name the operator typed, and the added
 /// reader grant spells it the same way. The CLI resolves no name (ADR-0026
 /// d4), so "already names that reader grant" compares spellings: a reader
-/// grant given by a workarea's id does not count for a writer grant given
+/// grant given by a workspace's id does not count for a writer grant given
 /// by its name.
 #[must_use]
 pub fn with_reader_beside_writers(
@@ -458,7 +458,7 @@ mod tests {
             "name": "claude-mobile",
             "role": "writer",
             "principal": "crew/claude-mobile",
-            "default_workarea_id": "metals",
+            "default_workspace_id": "metals",
             "grants": [],
             "connect_code": connect_code,
         })

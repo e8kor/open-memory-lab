@@ -440,7 +440,10 @@ def load_web():
             doc = json.loads(p.read_text())
             if doc.get("schema") == WEB_SCHEMA:
                 doc["_path"] = p.relative_to(ROOT).as_posix()
-                runs.setdefault(doc["workareas"], {})[doc["shape"]] = doc
+                # A run before v0.8.0 recorded `workareas`, one since then
+                # `workspaces` (ADR-0091 d11: results keep their day's words).
+                count = doc["workareas"] if "workareas" in doc else doc["workspaces"]
+                runs.setdefault(count, {})[doc["shape"]] = doc
     return runs
 
 

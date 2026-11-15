@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The recall benchmark harness: established benchmarks through OML's served recall.
 
-    bench.py workareas <dataset>...          the workareas boot.sh must create
+    bench.py workspaces <dataset>...          the workspaces boot.sh must create
     bench.py load --state S <dataset>         write the corpus, approve it
     bench.py run  --state S <dataset> [--search P]...
     bench.py report <results-dir>             REPORT tables from results/*.json
@@ -20,7 +20,7 @@ artifact_id map goes to <state>/idmap-<dataset>.json; a second load writes
 only what is missing (it lists the writer's own rows first).
 
 run: every query goes through oml_read in recall mode over POST /mcp, the tool
-the oml plugin calls, scoped to its group's workarea, with `search` naming the
+the oml plugin calls, scoped to its group's workspace, with `search` naming the
 pipeline, k 100 and no token budget, so nDCG@10 and Recall@100 come from one
 ranked list. Metrics are ir_measures' (pytrec_eval underneath): nDCG@10,
 R@10, R@100, RR@10, Success@1, Success@5; a query whose recall served nothing
@@ -42,7 +42,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "recall"))
 
-from adapters import ADAPTERS, PUBLISHED_BM25, safe, workarea  # noqa: E402
+from adapters import ADAPTERS, PUBLISHED_BM25, safe, workspace  # noqa: E402
 from run import Client  # noqa: E402  eval/recall/run.py's HTTP client
 
 PIPELINES = ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-postings", "bm25-rerank",
@@ -108,13 +108,13 @@ def own_rows(writer, prefix):
             return found
 
 
-def cmd_workareas(a):
+def cmd_workspaces(a):
     names = []
     for name in a.datasets:
         ad = adapter(name)
         if ad.groups is None:
             ad.load(a.cache, a.seed, None)
-        names += [workarea(name, g) for g in ad.groups]
+        names += [workspace(name, g) for g in ad.groups]
     print(" ".join(names))
 
 
@@ -131,7 +131,7 @@ def cmd_load(a):
 
     def write(d):
         body = {"body": d.text, "claim_key": claim_key(a.dataset, d.id), "kind": "memory",
-                "workarea": workarea(a.dataset, d.group)}
+                "workspace": workspace(a.dataset, d.group)}
         # The date the dataset states, declared as the memory's valid_from
         # (proposed ADR-0059 d10); BENCH_NO_VALID_TIME=1 loads without it.
         if d.valid_from and not os.environ.get("BENCH_NO_VALID_TIME"):
@@ -245,11 +245,11 @@ def cmd_run(a):
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     for pipeline in a.search or PIPELINES:
-        writer.recall("warm up", a.k, None, workarea(a.dataset, bench.queries[0].group), pipeline)
+        writer.recall("warm up", a.k, None, workspace(a.dataset, bench.queries[0].group), pipeline)
         runs, served_by = {}, set()
 
         def ask(q, pipeline=pipeline):
-            res, ms = writer.recall(q.text, a.k, None, workarea(a.dataset, q.group), pipeline,
+            res, ms = writer.recall(q.text, a.k, None, workspace(a.dataset, q.group), pipeline,
                                     now=q.now)
             hits = res.get("hits", [])
             ranked = [doc_of.get(back.get((h.get("memory", h))["artifact_id"])) for h in hits]
@@ -347,7 +347,7 @@ def main():
     ap.add_argument("--cache", default=DEFAULT_CACHE, help="where datasets are cached")
     ap.add_argument("--seed", type=int, default=20261104)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    w = sub.add_parser("workareas")
+    w = sub.add_parser("workspaces")
     w.add_argument("datasets", nargs="+")
     ld = sub.add_parser("load")
     ld.add_argument("--state", required=True)
@@ -369,7 +369,7 @@ def main():
     rp = sub.add_parser("report")
     rp.add_argument("results")
     a = ap.parse_args()
-    {"workareas": cmd_workareas, "load": cmd_load, "run": cmd_run, "report": cmd_report}[a.cmd](a)
+    {"workspaces": cmd_workspaces, "load": cmd_load, "run": cmd_run, "report": cmd_report}[a.cmd](a)
 
 
 if __name__ == "__main__":

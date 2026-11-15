@@ -15,8 +15,8 @@ class MintConnectCodeBody:
     """
     Attributes:
         ttl_seconds (int | Unset): How long the code lives, 1 second to 30 days; omitted, the ten-minute default. A
-            lifetime past ten minutes is minted only for a connector key whose grants all sit on one workarea other than the
-            universe and that names no user root; otherwise 422 oauth.connect_refused with details.reason not_confined.
+            lifetime past ten minutes is minted only for a connector key whose grants all sit on one workspace other than
+            the universe and that names no user root; otherwise 422 oauth.connect_refused with details.reason not_confined.
             Outside 1 to 2592000 is request.validation naming /ttl_seconds (ADR-0067 d3).
     """
 

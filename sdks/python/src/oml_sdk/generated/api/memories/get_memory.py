@@ -101,18 +101,18 @@ def sync_detailed(
     """One memory with its text (decrypted on the serving path) and attachment descriptors.
 
      The calling key may fetch its own rows in any state, with no grant needed (global denials still
-    mask). Anyone else needs reader effective access on the row's workarea and sees promoted versions
+    mask). Anyone else needs reader effective access on the row's workspace and sees promoted versions
     only — superseded versions and every version of a retired claim stay fetchable as history. Get takes
-    the row's own workarea as its implicit scope, so a non-own self_signed version is served to a key
+    the row's own workspace as its implicit scope, so a non-own self_signed version is served to a key
     with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased
     answers 410 lifecycle.erased only to a key that could read the version immediately before its
     erasure — its author's key set, or, when it was promoted then, a key with reader effective access on
-    its workarea; readability is checked first, and every other key gets access.not_found. Resolves no
-    workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from
-    lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced
-    version, and workarea_id is null on an own row whose node the key holds no role on. With as_of, a
-    version recorded after the instant is access.not_found and any other answers as get does today
-    (ADR-0059 d19); as_of is the only query parameter get takes.
+    its workspace; readability is checked first, and every other key gets access.not_found. Resolves no
+    workspace: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea.
+    derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read
+    the replaced version, and workspace_id is null on an own row whose node the key holds no role on.
+    With as_of, a version recorded after the instant is access.not_found and any other answers as get
+    does today (ADR-0059 d19); as_of is the only query parameter get takes.
 
     Args:
         artifact_id (str):
@@ -156,18 +156,18 @@ def sync(
     """One memory with its text (decrypted on the serving path) and attachment descriptors.
 
      The calling key may fetch its own rows in any state, with no grant needed (global denials still
-    mask). Anyone else needs reader effective access on the row's workarea and sees promoted versions
+    mask). Anyone else needs reader effective access on the row's workspace and sees promoted versions
     only — superseded versions and every version of a retired claim stay fetchable as history. Get takes
-    the row's own workarea as its implicit scope, so a non-own self_signed version is served to a key
+    the row's own workspace as its implicit scope, so a non-own self_signed version is served to a key
     with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased
     answers 410 lifecycle.erased only to a key that could read the version immediately before its
     erasure — its author's key set, or, when it was promoted then, a key with reader effective access on
-    its workarea; readability is checked first, and every other key gets access.not_found. Resolves no
-    workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from
-    lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced
-    version, and workarea_id is null on an own row whose node the key holds no role on. With as_of, a
-    version recorded after the instant is access.not_found and any other answers as get does today
-    (ADR-0059 d19); as_of is the only query parameter get takes.
+    its workspace; readability is checked first, and every other key gets access.not_found. Resolves no
+    workspace: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea.
+    derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read
+    the replaced version, and workspace_id is null on an own row whose node the key holds no role on.
+    With as_of, a version recorded after the instant is access.not_found and any other answers as get
+    does today (ADR-0059 d19); as_of is the only query parameter get takes.
 
     Args:
         artifact_id (str):
@@ -206,18 +206,18 @@ async def asyncio_detailed(
     """One memory with its text (decrypted on the serving path) and attachment descriptors.
 
      The calling key may fetch its own rows in any state, with no grant needed (global denials still
-    mask). Anyone else needs reader effective access on the row's workarea and sees promoted versions
+    mask). Anyone else needs reader effective access on the row's workspace and sees promoted versions
     only — superseded versions and every version of a retired claim stay fetchable as history. Get takes
-    the row's own workarea as its implicit scope, so a non-own self_signed version is served to a key
+    the row's own workspace as its implicit scope, so a non-own self_signed version is served to a key
     with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased
     answers 410 lifecycle.erased only to a key that could read the version immediately before its
     erasure — its author's key set, or, when it was promoted then, a key with reader effective access on
-    its workarea; readability is checked first, and every other key gets access.not_found. Resolves no
-    workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from
-    lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced
-    version, and workarea_id is null on an own row whose node the key holds no role on. With as_of, a
-    version recorded after the instant is access.not_found and any other answers as get does today
-    (ADR-0059 d19); as_of is the only query parameter get takes.
+    its workspace; readability is checked first, and every other key gets access.not_found. Resolves no
+    workspace: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea.
+    derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read
+    the replaced version, and workspace_id is null on an own row whose node the key holds no role on.
+    With as_of, a version recorded after the instant is access.not_found and any other answers as get
+    does today (ADR-0059 d19); as_of is the only query parameter get takes.
 
     Args:
         artifact_id (str):
@@ -259,18 +259,18 @@ async def asyncio(
     """One memory with its text (decrypted on the serving path) and attachment descriptors.
 
      The calling key may fetch its own rows in any state, with no grant needed (global denials still
-    mask). Anyone else needs reader effective access on the row's workarea and sees promoted versions
+    mask). Anyone else needs reader effective access on the row's workspace and sees promoted versions
     only — superseded versions and every version of a retired claim stay fetchable as history. Get takes
-    the row's own workarea as its implicit scope, so a non-own self_signed version is served to a key
+    the row's own workspace as its implicit scope, so a non-own self_signed version is served to a key
     with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased
     answers 410 lifecycle.erased only to a key that could read the version immediately before its
     erasure — its author's key set, or, when it was promoted then, a key with reader effective access on
-    its workarea; readability is checked first, and every other key gets access.not_found. Resolves no
-    workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from
-    lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced
-    version, and workarea_id is null on an own row whose node the key holds no role on. With as_of, a
-    version recorded after the instant is access.not_found and any other answers as get does today
-    (ADR-0059 d19); as_of is the only query parameter get takes.
+    its workspace; readability is checked first, and every other key gets access.not_found. Resolves no
+    workspace: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea.
+    derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read
+    the replaced version, and workspace_id is null on an own row whose node the key holds no role on.
+    With as_of, a version recorded after the instant is access.not_found and any other answers as get
+    does today (ADR-0059 d19); as_of is the only query parameter get takes.
 
     Args:
         artifact_id (str):

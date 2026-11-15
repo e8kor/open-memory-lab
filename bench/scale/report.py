@@ -116,7 +116,7 @@ def human_n(n):
 
 
 def trim_plan(text: str, max_lines: int = 40) -> str:
-    text = re.sub(r"'\{[0-9a-f,\-]{60,}\}'", "'{…readable workareas…}'", text)
+    text = re.sub(r"'\{[0-9a-f,\-]{60,}\}'", "'{…readable workspaces…}'", text)
     text = re.sub(r"'\[[-0-9.,e]{60,}\]'", "'[…384 floats…]'", text)
     text = re.sub(r"[0-9a-f]{32}", "<tenant>", text)
     text = re.sub(r"'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'", "'<uuid>'", text)
@@ -251,7 +251,7 @@ def main():
             md.append(f"| {LABEL[appr]} | " + " | ".join(f(bc.get(c, {}).get("p95_ms")) for c in cats) + " |")
 
     md.append("\n## Warm p50 / p95 (ms) by readable scope, under row security\n")
-    md.append("leaf: the leaf and universe; project: a project, its leaves and universe; universe: every workarea. "
+    md.append("leaf: the leaf and universe; project: a project, its leaves and universe; universe: every workspace. "
               "From the runs that recorded it (1M, and the 10k/100k supplement for a and c).\n")
     md.append("| approach | scale | leaf | project | universe |")
     md.append("|---|---|---:|---:|---:|")
@@ -286,7 +286,7 @@ def main():
         return (r["load"][0]["copy_s"], r["load"][0]["heap_bytes"]) if r else (None, None)
     idx_row("heap (COPY), today's columns", heap)
     for key, lab in [("claim_fts", "today's GIN to_tsvector('simple')"), ("pkey", "primary key"),
-                     ("workarea", "(tenant, workarea, status)"), ("served_tip", "served tip (partial unique)"),
+                     ("workspace", "(tenant, workspace, status)"), ("served_tip", "served tip (partial unique)"),
                      ("claim_version", "claim version (partial unique)"), ("author", "author")]:
         idx_row(lab, lambda s, key=key: load0(s, key))
     def stg(s, st, b, z):
@@ -306,7 +306,7 @@ def main():
     idx_row("f) vector(384) table (COPY)", lambda s: vec(s, "load_s", "heap_bytes"))
     idx_row("f) HNSW m 16, ef_construction 64", lambda s: vec(s, "hnsw_build_s", "hnsw_bytes"))
     dfrows = [str((runs.get(s) or {}).get("stages", {}).get("bm25", {}).get("df_rows", "–")) for s in ("10k", "100k", "1M")]
-    md.append(f"\nMaintained df rows (tenant, workarea, term): {', '.join(dfrows)} at 10k, 100k, 1M.")
+    md.append(f"\nMaintained df rows (tenant, workspace, term): {', '.join(dfrows)} at 10k, 100k, 1M.")
 
     # 5. write cost
     md.append("\n## Write cost per memory (ms), serving role, synchronous_commit off\n")
@@ -333,7 +333,7 @@ def main():
     # 6. ADR-0050
     md.append("\n## ADR-0050 d1 write-time similar check (ms added per write)\n")
     md.append("Served-tip recall plus own-held recall, any word (simple OR), k 3, the new text as the query, "
-              "at a leaf workarea's scope (leaf + universe), under row security.\n")
+              "at a leaf workspace's scope (leaf + universe), under row security.\n")
     md.append("| scale | p50 | p95 | p99 | mean candidates returned |")
     md.append("|---|---:|---:|---:|---:|")
     for s in ("10k", "100k", "1M"):
@@ -360,19 +360,19 @@ def main():
 
     # 8. data shape
     md.append("\n## Data shape\n")
-    md.append("| run | rows per tenant | tenants | workareas per tenant | served rows readable at universe | database size (MiB) |")
+    md.append("| run | rows per tenant | tenants | workspaces per tenant | served rows readable at universe | database size (MiB) |")
     md.append("|---|---:|---:|---:|---:|---:|")
     for lab, name in [*RUNS, ("1M (vector run)", "s1m_vector.json"), ("10 × 100k", MT)]:
         r = load(name)
         if r:
-            md.append(f"| {lab} | {r['scale']:,} | {r['tenants']} | {r.get('workareas')} | {r.get('served_rows'):,} | {mb(r.get('db_bytes'))} |")
+            md.append(f"| {lab} | {r['scale']:,} | {r['tenants']} | {r.get('workspaces')} | {r.get('served_rows'):,} | {mb(r.get('db_bytes'))} |")
 
     md += extra_tables()
     (RES / "tables.md").write_text("\n".join(md) + "\n")
 
     # EXPLAIN excerpts
     ex = ["# EXPLAIN (ANALYZE, BUFFERS) excerpts\n",
-          "Universe-scope queries (every workarea readable), as the serving role with oml.tenant_id set, "
+          "Universe-scope queries (every workspace readable), as the serving role with oml.tenant_id set, "
           "and the same statement as the superuser (`@no_rls`). Long literals are elided.\n"]
     for lab, name in [*RUNS, ("1M vector run", "s1m_vector.json"), ("10 × 100k", MT)]:
         r = load(name)

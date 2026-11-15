@@ -60,6 +60,13 @@ class Numbers(unittest.TestCase):
         self.assertEqual([], CN.check(c, "origin/main", "mine"))
 
 
+    def test_a_record_renamed_keeps_its_number_and_introduces_none(self):
+        c = repo()
+        sh(c, "git", "mv", "docs/adr/ADR-0001-first.md", "docs/adr/ADR-0001-renamed.md")
+        sh(c, "git", "commit", "-qm", "rename")
+        self.assertEqual({}, N.numbers_added(c, "origin/main", "HEAD"))
+        self.assertEqual([], CN.check(c, "origin/main", "mine", prs={}))
+
     def test_reserve_takes_the_number_after_every_branch_and_a_second_reserve_takes_the_next(self):
         c = repo()
         R.main(["adr", "--branch", "mine", "--title", "a", "--root", str(c)])

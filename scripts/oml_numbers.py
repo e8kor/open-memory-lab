@@ -45,15 +45,17 @@ def numbers_on(root: Path, ref: str) -> dict[tuple[str, int], str]:
 
 
 def numbers_added(root: Path, base: str, ref: str) -> dict[tuple[str, int], str]:
-    """Numbers a ref introduces beyond its merge base with `base`."""
+    """Numbers a ref introduces beyond its merge base with `base`. A file renamed under a number
+    the merge base already holds introduces nothing: the number is the record's key (ADR-0091 d10)."""
     mb = git(root, "merge-base", base, ref, check=False).strip()
     if not mb:
         return {}
+    held = numbers_on(root, mb)
     out: dict[tuple[str, int], str] = {}
     names = git(root, "diff", "--no-renames", "--diff-filter=A", "--name-only", mb, ref, "--", "docs/adr", "migrations")
     for p in names.splitlines():
         hit = _from_path(p)
-        if hit:
+        if hit and (hit[0], hit[1]) not in held:
             out[(hit[0], hit[1])] = hit[2]
     return out
 

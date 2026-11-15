@@ -47,7 +47,7 @@ service over the same one transport. The remaining question is which protocol is
   declares stateless operation: no server-assigned session id, each tool call independent and
   carrying its own bearer key; SSE resumability and server push are out of scope for v1. The tool
   list is exactly the verb ceiling R1 allows an agent: `remember`, `recall`, `learn`, attachment
-  upload, relate-propose, own-work status, workarea info, graph and lineage reads (scoped to the
+  upload, relate-propose, own-work status, workspace info, graph and lineage reads (scoped to the
   key's grants, serialized by the server — serialize-don't-compute), an events tail, and the
   vocabulary reads added under this rule by [ADR-0021](ADR-0021-ai-human-ontologies.md) d9. Never
   promote, sign, demote, delete, or any admin verb — not as hidden tools, not behind flags; the
@@ -57,7 +57,7 @@ service over the same one transport. The remaining question is which protocol is
   fetch date; OML ships bearer until the named trigger fires.
 
 - **d3 — Idempotency is a record, not a hope.** A mutating request may carry an idempotency key.
-  The server claims an idempotency **record** — `(key_id, workarea, idem_key)` → request digest +
+  The server claims an idempotency **record** — `(key_id, workspace, idem_key)` → request digest +
   state (`in_progress` | `committed`) + stored response — **in its own transaction, before any
   side effect**. A retry with the same key and the same request digest returns the stored
   response (or a typed in-progress answer while the first attempt runs); the same key with a
@@ -103,6 +103,6 @@ service over the same one transport. The remaining question is which protocol is
 |---|---|
 | **MCP-only (no plain HTTP API)** | Admin tooling, evidence export, upload sessions and probes need plain HTTP: a signed audit bundle download, a resumable chunked upload (ADR-0004), and a Kubernetes readiness probe are not tool calls, and forcing them through MCP framing adds encoding without adding meaning. The CLI (ADR-0015) would also inherit MCP's client stack for no benefit. The facade direction only works one way: HTTP can carry MCP; MCP cannot absorb HTTP's jobs. |
 | **gRPC as the primary contract** | Agent-ecosystem reach. The clients that matter speak HTTP/JSON and MCP today; a gRPC-first contract puts a transcoding layer in front of every real caller and buys streaming and schema rigor that d2's stateless subset and the OpenAPI document already cover well enough for v1. Nothing forbids a gRPC facade later under d1's rule — a client of `/v1`, saying no more than it says. |
-| **Server-session MCP (server-assigned sessions, SSE resumability, push)** | Contradicts N stateless replicas (ADR-0016): a server-held session pins a caller to a replica or drags in shared session state — a new store with new failure modes — to support features (push, resumable streams) v1's verbs do not need. Revisit trigger, named now: when a real client needs push (review-available notifications to dreamer crews is the likely first case), session state becomes a designed feature behind an issue, not a default. |
-| **Per-request tenant/workarea headers instead of key-derived scope** | A request that names its own tenant is a confused-deputy invitation; ADR-0007's rule — tenant derives from the key, server-side, always — would have to be re-proven for every route instead of holding by construction. |
+| **Server-session MCP (server-assigned sessions, SSE resumability, push)** | Contradicts N stateless replicas (ADR-0016): a server-held session pins a caller to a replica or drags in shared session state — a new store with new failure modes — to support features (push, resumable streams) v1's verbs do not need. Revisit trigger, named now: when a real client needs push (review-available notifications to reviewer crews is the likely first case), session state becomes a designed feature behind an issue, not a default. |
+| **Per-request tenant/workspace headers instead of key-derived scope** | A request that names its own tenant is a confused-deputy invitation; ADR-0007's rule — tenant derives from the key, server-side, always — would have to be re-proven for every route instead of holding by construction. |
 | **Idempotency by "the operation is naturally idempotent"** | `remember` is not: two identical submissions are two claims unless something says otherwise, and claim-key uniqueness alone cannot distinguish a retry from a genuine resubmission. The record (d3) makes the distinction explicit and auditable. |

@@ -110,10 +110,10 @@ def from_bench(r, a):
                 "success counts grade 2; k 100, no token budget; English only.")
     elif ds == "scifact-x10":
         note = ("SciFact's abstracts and nine copies with 10% of words replaced, 51,830 memories "
-                "written to one workarea, for latency at scale; qrels name the original copy only, "
+                "written to one workspace, for latency at scale; qrels name the original copy only, "
                 "so quality is not comparable to beir-scifact. k 100, no token budget.")
     elif ds == "locomo":
-        note = ("One dialogue turn per memory, each conversation its own workarea; metrics over "
+        note = ("One dialogue turn per memory, each conversation its own workspace; metrics over "
                 "categories 1-4, adversarial in per_category; English only.")
     else:
         note = ("One abstract per memory as '<title>. <text>' (BEIR indexes two fields); "

@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use oml_app::App;
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
-use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role};
+use oml_app::domain::{MemoryKind, MemoryStatus, Role, UsedBy};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::types::{
     AppError, BootstrapRequest, GrantRequest, IssueKeyRequest, OnSimilar, SimilarItem,
@@ -46,8 +46,8 @@ async fn issue(app: &TestApp, admin: &str, role: Role, grants: Vec<GrantRequest>
             role,
             name: name(&format!("similar-key-{n}")),
             principal: format!("principal-{n}"),
-            held_by: Some(HeldBy::Agent),
-            default_workarea: None,
+            used_by: Some(UsedBy::Agent),
+            default_workspace: None,
             crew: None,
             grants,
             connect_code: false,
@@ -62,7 +62,7 @@ async fn issue(app: &TestApp, admin: &str, role: Role, grants: Vec<GrantRequest>
     .value
 }
 
-/// Two sibling workareas: `alice` writes and reads both, `bob` writes and
+/// Two sibling workspaces: `alice` writes and reads both, `bob` writes and
 /// reads `crew` alone, and `judge` reviews both.
 struct World {
     app: TestApp,
@@ -100,11 +100,11 @@ async fn world_on(store: MemStore) -> World {
     let mut nodes = Vec::new();
     for n in ["crew", "other"] {
         nodes.push(
-            app.create_workarea(&admin, &name(n), Some(boot.root_workarea_id.into()), None)
+            app.create_workspace(&admin, &name(n), Some(boot.root_workspace_id.into()), None)
                 .await
-                .expect("workarea")
-                .workarea
-                .workarea_id,
+                .expect("workspace")
+                .workspace
+                .workspace_id,
         );
     }
     let (crew, other) = (nodes[0], nodes[1]);
@@ -119,7 +119,7 @@ async fn world_on(store: MemStore) -> World {
         vec![grant(crew, Role::Writer), grant(crew, Role::Reader)],
     )
     .await;
-    let judge = issue(&app, &admin, Role::Dreamer, both(Role::Dreamer)).await;
+    let judge = issue(&app, &admin, Role::Reviewer, both(Role::Reviewer)).await;
     World {
         app,
         store,
@@ -133,7 +133,7 @@ async fn world_on(store: MemStore) -> World {
     }
 }
 
-fn submit(idem: &str, body: &str, workarea: Uuid, on_similar: OnSimilar) -> SubmitRequest {
+fn submit(idem: &str, body: &str, workspace: Uuid, on_similar: OnSimilar) -> SubmitRequest {
     SubmitRequest {
         origin: None,
         on_similar,
@@ -142,7 +142,7 @@ fn submit(idem: &str, body: &str, workarea: Uuid, on_similar: OnSimilar) -> Subm
         verb: None,
         kind: MemoryKind::Memory,
         body: body.to_owned(),
-        workarea: Some(workarea.into()),
+        workspace: Some(workspace.into()),
         derives_from: Vec::new(),
         severity: None,
         rule: None,
@@ -160,19 +160,19 @@ impl World {
         key: &str,
         idem: &str,
         body: &str,
-        workarea: Uuid,
+        workspace: Uuid,
     ) -> (Uuid, Vec<SimilarItem>) {
         let receipt = self
             .app
-            .submit_memory(key, &submit(idem, body, workarea, OnSimilar::Hold))
+            .submit_memory(key, &submit(idem, body, workspace, OnSimilar::Hold))
             .await
             .expect("submit")
             .receipt;
         (receipt.memory_id, receipt.similar)
     }
 
-    async fn promoted(&self, key: &str, idem: &str, body: &str, workarea: Uuid) -> Uuid {
-        let (id, _) = self.write(key, idem, body, workarea).await;
+    async fn promoted(&self, key: &str, idem: &str, body: &str, workspace: Uuid) -> Uuid {
+        let (id, _) = self.write(key, idem, body, workspace).await;
         self.app
             .post_verdict(&self.judge, id, Verdict::Approve, None)
             .await
@@ -359,7 +359,7 @@ async fn a_supersession_never_lists_its_own_claim() {
                 retirement: false,
                 derives_from: Vec::new(),
                 reason: None,
-                workarea: None,
+                workspace: None,
                 refuse_vocabulary_target: false,
                 severity: None,
                 rule: None,

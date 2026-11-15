@@ -31,7 +31,7 @@ use oml_app::types::{
     KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord,
     PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair,
     TokenRecord, TransitionRecord, UnnamedRows, WebCredentialRows, WebEntry, WebSessionRecord,
-    WorkareaRecord,
+    WorkspaceRecord,
 };
 use oml_transport_http::traffic::store_call;
 
@@ -198,11 +198,11 @@ impl<J: JournalStore> JournalStore for Timed<J> {
     fn brief_edges(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
     ) -> impl Future<Output = Result<Vec<BriefEdgeRecord>, StoreError>> + Send {
         timed(
             "brief_edges",
-            self.inner.brief_edges(tenant_id, workarea_id),
+            self.inner.brief_edges(tenant_id, workspace_id),
         )
     }
 
@@ -252,11 +252,11 @@ impl<J: JournalStore> JournalStore for Timed<J> {
     fn pending_transitions(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
     ) -> impl Future<Output = Result<Vec<TransitionRecord>, StoreError>> + Send {
         timed(
             "pending_transitions",
-            self.inner.pending_transitions(tenant_id, workarea_id),
+            self.inner.pending_transitions(tenant_id, workspace_id),
         )
     }
 
@@ -479,13 +479,13 @@ impl<J: JournalStore> JournalStore for Timed<J> {
     fn claim_key_state(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         claim_key: &str,
     ) -> impl Future<Output = Result<ClaimKeyState, StoreError>> + Send {
         timed(
             "claim_key_state",
             self.inner
-                .claim_key_state(tenant_id, workarea_id, claim_key),
+                .claim_key_state(tenant_id, workspace_id, claim_key),
         )
     }
 
@@ -520,18 +520,18 @@ impl<J: JournalStore> JournalStore for Timed<J> {
     fn stale_count(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
     ) -> impl Future<Output = Result<u64, StoreError>> + Send {
         timed(
             "stale_count",
-            self.inner.stale_count(tenant_id, workarea_id),
+            self.inner.stale_count(tenant_id, workspace_id),
         )
     }
 
     fn claim_latest_readable(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         claim_key: &str,
         own_key_ids: &[Uuid],
         reads_promoted: bool,
@@ -540,7 +540,7 @@ impl<J: JournalStore> JournalStore for Timed<J> {
             "claim_latest_readable",
             self.inner.claim_latest_readable(
                 tenant_id,
-                workarea_id,
+                workspace_id,
                 claim_key,
                 own_key_ids,
                 reads_promoted,
@@ -551,12 +551,12 @@ impl<J: JournalStore> JournalStore for Timed<J> {
     fn claim_tip(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         claim_key: &str,
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send {
         timed(
             "claim_tip",
-            self.inner.claim_tip(tenant_id, workarea_id, claim_key),
+            self.inner.claim_tip(tenant_id, workspace_id, claim_key),
         )
     }
 
@@ -576,12 +576,16 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         tenant_id: Uuid,
         reviewer_principal: &str,
         reviewer_key_id: Uuid,
-        workareas: &[Uuid],
+        workspaces: &[Uuid],
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send {
         timed(
             "review_claim_next",
-            self.inner
-                .review_claim_next(tenant_id, reviewer_principal, reviewer_key_id, workareas),
+            self.inner.review_claim_next(
+                tenant_id,
+                reviewer_principal,
+                reviewer_key_id,
+                workspaces,
+            ),
         )
     }
 
@@ -645,15 +649,16 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
-    fn resolve_user_workarea(
+    fn resolve_user_workspace(
         &self,
         tenant_id: Uuid,
         user_root: Uuid,
         name: &Name,
     ) -> impl Future<Output = Result<Option<Uuid>, StoreError>> + Send {
         timed(
-            "resolve_user_workarea",
-            self.inner.resolve_user_workarea(tenant_id, user_root, name),
+            "resolve_user_workspace",
+            self.inner
+                .resolve_user_workspace(tenant_id, user_root, name),
         )
     }
 
@@ -698,44 +703,44 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         timed("unnamed_rows", self.inner.unnamed_rows(tenant_id))
     }
 
-    fn workarea(
+    fn workspace(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> impl Future<Output = Result<Option<WorkareaRecord>, StoreError>> + Send {
-        timed("workarea", self.inner.workarea(tenant_id, workarea_id))
+        workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Option<WorkspaceRecord>, StoreError>> + Send {
+        timed("workspace", self.inner.workspace(tenant_id, workspace_id))
     }
 
-    fn workarea_ancestry(
+    fn workspace_ancestry(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> impl Future<Output = Result<Option<Vec<WorkareaRecord>>, StoreError>> + Send {
+        workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Option<Vec<WorkspaceRecord>>, StoreError>> + Send {
         timed(
-            "workarea_ancestry",
-            self.inner.workarea_ancestry(tenant_id, workarea_id),
+            "workspace_ancestry",
+            self.inner.workspace_ancestry(tenant_id, workspace_id),
         )
     }
 
-    fn workarea_subtree(
+    fn workspace_subtree(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> impl Future<Output = Result<Vec<WorkareaRecord>, StoreError>> + Send {
+        workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkspaceRecord>, StoreError>> + Send {
         timed(
-            "workarea_subtree",
-            self.inner.workarea_subtree(tenant_id, workarea_id),
+            "workspace_subtree",
+            self.inner.workspace_subtree(tenant_id, workspace_id),
         )
     }
 
-    fn workarea_children(
+    fn workspace_children(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> impl Future<Output = Result<Vec<WorkareaRecord>, StoreError>> + Send {
+        workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkspaceRecord>, StoreError>> + Send {
         timed(
-            "workarea_children",
-            self.inner.workarea_children(tenant_id, workarea_id),
+            "workspace_children",
+            self.inner.workspace_children(tenant_id, workspace_id),
         )
     }
 

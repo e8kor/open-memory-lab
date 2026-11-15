@@ -1,7 +1,7 @@
 # Recall eval: the first measurement
 
 **Run:** 2026-11-04, branch `feat/recall-eval` from `babb004` (v0.5.0), release
-build, a throwaway PostgreSQL 18.6, one workarea, 200 promoted memories, 121
+build, a throwaway PostgreSQL 18.6, one workspace, 200 promoted memories, 121
 queries ([README](README.md) for the set and how to rerun it).
 
 **Headline.** Served recall answers 17% of the queries (success@5 0.17) and
@@ -23,7 +23,7 @@ SELECT m.id, m.body_bytes,
        ts_rank(to_tsvector('simple', m.claim), plainto_tsquery('simple', $3), 0) AS score
 FROM memories m
 WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip
-  AND NOT m.retirement AND m.kind = ANY($4) AND m.workarea_id = ANY($2)
+  AND NOT m.retirement AND m.kind = ANY($4) AND m.workspace_id = ANY($2)
   AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $3)
 ORDER BY score DESC, m.id ASC LIMIT $5
 ```
@@ -263,7 +263,7 @@ that never returns empty.
    reindex, and the multilingual risk `retrieval.md` chose `simple` to
    avoid. One way to keep that choice is to index both a `simple` and an
    `english` vector and OR the two queries, so non-English text still
-   matches exactly. The per-workarea configuration already on the roadmap
+   matches exactly. The per-workspace configuration already on the roadmap
    is the other way.
 4. **Trigram matching fused by RRF.** Gain over item 3: success@5 0.86 →
    0.93, nDCG@10 +0.04 to +0.12. It fixes partial (0.73 → 1.00), typo
@@ -287,8 +287,8 @@ that never returns empty.
    changed, so the old tip leaves recall, as the PoC demo shows. Recall
    could also take the `since`/`until` filters that the listing already
    has, or break ties by `promoted_at`. Structured filters by kind,
-   workarea, term or anchor are not measured here, because the set has one
-   workarea and one kind.
+   workspace, term or anchor are not measured here, because the set has one
+   workspace and one kind.
 7. **Until item 1 ships, keep the instruction honest.** The MCP
    instructions already say every word must match. `oml_keywords` shows
    that following them literally lifts success@5 only from 0.17 to 0.24. A
@@ -322,7 +322,7 @@ under `bm25-trigram`.
 
 ## Federated recall (ADR-0072), 2026-11-11
 
-`federated.sh` loads the corpus as one `committed` workarea per topic, eleven, and recalls with a
+`federated.sh` loads the corpus as one `protected` workspace per topic, eleven, and recalls with a
 key that reads them all, on `bm25-postings`, `k` 10 (`results/federated.json`). The **scoped**
 split scopes each answerable query at its first answering memory's topic; the **cross** split at
 the next topic holding none of its answers. `wide@8` is the default `max_sources` over ten
@@ -343,8 +343,8 @@ candidates, so the estimate chooses; the union searches all of them. The **skew*
 | skew / union | 0.926 | 0.853 | 0.100 | 1.000 | 46.3 |
 
 - **`wide` passes ADR-0049 d9's rule against `scope`.** On the cross split it finds an answer in the top 5 for 0.934 of the queries, where the scope holds none by construction; on the scoped split success@5 falls from 0.950 to 0.934, one query in `paraphrase` (9/11 to 8/11) and one in `temporal` (10/11 to 9/11), no category by more than one (`success@5_by_category` in `results/federated.json`), while nDCG@10 rises from 0.839 to 0.876. The default stays `scope` until a tenant admin sets `wide`.
-- **Selection costs nothing here.** `wide@8` scores the union's success@5 on both splits and its selection recall is 0.992 on the cross split. On the skew split, at 4 of 10 candidates, it keeps the union's success@5 (0.926) with selection recall 0.975, above phase 2's 0.90 trigger, and the estimate's four agree with the exact ReDDE analogue's (the union's top 100, counted per workarea) on 0.882 of them: phase 2's first trigger (#206) is not met.
-- **Unanswerable queries find more.** Answered with at least one hit: 0.682 under `scope`, 1.000 under `wide`: eleven workareas hold some word of every query. A relevance floor (ADR-0053) is the answer, not selection.
+- **Selection costs nothing here.** `wide@8` scores the union's success@5 on both splits and its selection recall is 0.992 on the cross split. On the skew split, at 4 of 10 candidates, it keeps the union's success@5 (0.926) with selection recall 0.975, above phase 2's 0.90 trigger, and the estimate's four agree with the exact ReDDE analogue's (the union's top 100, counted per workspace) on 0.882 of them: phase 2's first trigger (#206) is not met.
+- **Unanswerable queries find more.** Answered with at least one hit: 0.682 under `scope`, 1.000 under `wide`: eleven workspaces hold some word of every query. A relevance floor (ADR-0053) is the answer, not selection.
 - **The widen hint.** Rule 1, a candidate at twice the scope's rate per memory with a word on two of its memories, is silent on 0.917 of the scoped queries and, on the cross split, fires on 108 of 121 with precision 0.935 (a wide retry raised success@5). Both pass d11's gate. On the scoped split its 10 firings never helped, since the scope already held the answer; d11 gates only its silence there. Rule 2, a thin answer, fired on 101 of 102 hints when both ran, silent on 0.157 of the scoped queries: a topic of 12 to 25 memories rarely holds 10 matches. It is dropped by amendment (ADR-0072, Phase 1 as built). Rule 1 is measured here but not served: computing it costs every `scope` recall a candidate and statistics read, and the default path pays nothing for federation (ADR-0072 d12 as amended); the hint is deferred and returns on a precomputed signal (#244).
 - **Latency.** p95 stays within 47 ms in every mode on this host, which other builds shared; the reference set's statistics read is one more statement per recall.
 - **At 1,000 candidates** (`pg_store`'s `federation_overhead_at_1000_candidates`, release build, the same shared host): the statistics reads alone take 6.2 ms at p50 and 10.9 ms at p95, against d12's 10 ms. A whole `scope` recall with federation on takes 27.8 ms at p50 and 55.3 ms at p95, against 12.6 ms and 38.0 ms with it off; `wide` at `max_sources` 8 takes 47.0 ms and 113.1 ms. Working out the candidates, one ancestry and one subtree read per reader grant, costs more than the counts.
@@ -366,7 +366,7 @@ or vocabulary-mismatched data.
 - **The adversarial descriptor** fails its own clause on the skew split, and it fails there for
   a structural reason.
 
-`EVAL_PHASE2=1 federated.sh` (`fed2.py`) loads the same eleven `committed` topic workareas. The
+`EVAL_PHASE2=1 federated.sh` (`fed2.py`) loads the same eleven `protected` topic workspaces. The
 cross split runs at `max_sources` 8 of 10 candidates and the skew split at 4, with `database`
 padded with 2,400 SciFact abstracts. For each query it reads the union's ranking from the served
 lead at depth 100, with every candidate's E(s) (`results/fed2.json`), and it replays each selector
@@ -384,7 +384,7 @@ read `queries.json`, but one commit holds both files, so the order cannot be che
 questions echo query wording found in no corpus row (q073, q067). Neither touches q063, the one
 query gained. A descriptor is scored by
 BM25 over the candidates' descriptors alone, through a served `bm25` recall that lists their
-workareas. `descriptor_slots` is 2. α is 0.4, the largest value with the best selection recall on
+workspaces. `descriptor_slots` is 2. α is 0.4, the largest value with the best selection recall on
 a random half of the skew split; on the held-out half, selection recall is 0.984, the same as
 `content`'s.
 
@@ -442,7 +442,7 @@ Intervals are 95% percentile bootstraps over the paired queries (10,000 resample
 - **This run** used main at 4db2e6cc. Its `content` cross success@5 is 0.926; phase 1's run
   reported 0.934 for the same mode. Every comparison here is within this one run.
 - **Not measured.** Memory-kind-3 postings are not built, so the descriptor score comes from a
-  served `bm25` recall over descriptor workareas, with the same tokenizer and the same BM25, and
+  served `bm25` recall over descriptor workspaces, with the same tokenizer and the same BM25, and
   its latency is not measured. On a shared host, union recall p95 on the skew split was 126 ms.
 - **What a fair test would need**, the condition for reopening #206:
   - many more candidates than `max_sources`, ideally the live candidate-count distribution;
@@ -470,7 +470,7 @@ Intervals are 95% percentile bootstraps over the paired queries (10,000 resample
 - **The set is small.** With 11 queries per category, one query moves a
   category by 0.09. The overall intervals are above, and per-category
   differences under about 0.2 are noise.
-- **The corpus is small and flat.** 200 memories, one workarea, no steering
+- **The corpus is small and flat.** 200 memories, one workspace, no steering
   rows, no held rows, no supersession chains, all English. A larger corpus
   makes AND return something more often, and makes ranking and OR's
   precision harder. Neither effect is measured. Nothing here covers

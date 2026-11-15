@@ -1,5 +1,5 @@
 //! `oml demo seed` against the real lead over a migrated Postgres store
-//! (ADR-0067 d4): the workarea fills through the public API with thirty
+//! (ADR-0067 d4): the workspace fills through the public API with thirty
 //! memories, the reviewers are never the author, and no identity the seed
 //! issued can still reach the tree afterwards.
 
@@ -179,7 +179,7 @@ fn http(request: ureq::Request, body: Option<String>) -> (u16, Vec<(String, Stri
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_demo_seed_fills_a_workarea_with_approved_superseded_and_held_memories_and_fences_its_identities()
+async fn the_demo_seed_fills_a_workspace_with_approved_superseded_and_held_memories_and_fences_its_identities()
  {
     let Some(lead) = Lead::start().await else {
         return;
@@ -201,7 +201,7 @@ async fn the_demo_seed_fills_a_workarea_with_approved_superseded_and_held_memori
         .oml_json(&[
             "admin",
             "read",
-            "--workarea",
+            "--workspace",
             "reviewer-demo",
             "--state",
             "promoted",
@@ -226,7 +226,7 @@ async fn the_demo_seed_fills_a_workarea_with_approved_superseded_and_held_memori
         .oml_json(&[
             "admin",
             "read",
-            "--workarea",
+            "--workspace",
             "reviewer-demo",
             "--state",
             "superseded",
@@ -239,7 +239,7 @@ async fn the_demo_seed_fills_a_workarea_with_approved_superseded_and_held_memori
         .oml_json(&[
             "admin",
             "read",
-            "--workarea",
+            "--workspace",
             "reviewer-demo",
             "--state",
             "held",

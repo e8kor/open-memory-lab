@@ -24,8 +24,8 @@ use oml_domain::oauth::{
 };
 use oml_domain::vocab_edges::EdgeState;
 use oml_domain::{
-    ChainHead, EventTime, HeldBy, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
-    WorkareaStatus, event_types, ratifier_is_proposer,
+    ChainHead, EventTime, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope, UsedBy,
+    WorkspaceStatus, event_types, ratifier_is_proposer,
 };
 
 use crate::ports::Retriever;
@@ -48,7 +48,7 @@ use crate::types::{
     MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome, ProviderAnswer,
     ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, SIMILAR_KINDS, SourceCheck,
     SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
-    WebEntry, WebSessionRecord, WorkareaRecord, WorkareaRef,
+    WebEntry, WebSessionRecord, WorkspaceRecord, WorkspaceRef,
 };
 use oml_domain::web::Provider;
 
@@ -69,7 +69,7 @@ fn served_tip(m: &MemoryRecord) -> bool {
 
 /// Whether `m` was its claim's tip at `as_of` and is promoted today
 /// (ADR-0059 d15, d16): promoted at or before the instant, with no later
-/// version of its `workarea_id` and `claim_key`, in any state today,
+/// version of its `workspace_id` and `claim_key`, in any state today,
 /// promoted at or before it.
 fn tip_at(state: &TenantState, m: &MemoryRecord, as_of: &EventTime) -> bool {
     let promoted_by = |r: &MemoryRecord| {
@@ -84,8 +84,8 @@ fn tip_at(state: &TenantState, m: &MemoryRecord, as_of: &EventTime) -> bool {
         && promoted_by(m)
         && (m.is_tip
             || !state
-                .by_workarea
-                .get(&m.workarea_id)
+                .by_workspace
+                .get(&m.workspace_id)
                 .into_iter()
                 .flatten()
                 .filter_map(|id| state.memories.get(id))
@@ -274,15 +274,15 @@ struct QueueEntry {
     claimed_by: Option<Uuid>,
 }
 
-/// A workarea row migration 0006 left without a name: served to no one
+/// A workspace row migration 0006 left without a name: served to no one
 /// until the lead's naming names it (postgres-schema.md names and tenants;
 /// ADR-0026 d11).
 #[derive(Debug, Clone)]
-struct UnnamedWorkarea {
+struct UnnamedWorkspace {
     parent_id: Option<Uuid>,
-    /// The status the PoC stored: `committed` on the root, `development`
-    /// on every other node, the only statuses its `workarea.create` wrote.
-    status: WorkareaStatus,
+    /// The status the PoC stored: `protected` on the root, `development`
+    /// on every other node, the only statuses its `workspace.create` wrote.
+    status: WorkspaceStatus,
     crew: Option<Crew>,
 }
 
@@ -293,12 +293,12 @@ struct TenantState {
     /// The findings list, in the order recorded (ADR-0074 d23), as
     /// `scan_findings` holds it.
     findings: Vec<(Uuid, crate::types::VersionFinding)>,
-    /// Each workarea's memory ids, so a read names the rows of its nodes
+    /// Each workspace's memory ids, so a read names the rows of its nodes
     /// alone and its work never depends on another node's rows (ADR-0072
     /// d6's timing row).
-    by_workarea: BTreeMap<Uuid, BTreeSet<Uuid>>,
-    workareas: BTreeMap<Uuid, WorkareaRecord>,
-    unnamed_workareas: BTreeMap<Uuid, UnnamedWorkarea>,
+    by_workspace: BTreeMap<Uuid, BTreeSet<Uuid>>,
+    workspaces: BTreeMap<Uuid, WorkspaceRecord>,
+    unnamed_workspaces: BTreeMap<Uuid, UnnamedWorkspace>,
     crews: BTreeMap<Uuid, CrewRecord>,
     /// Every key the tenant was issued, by id, revoked ones included, so
     /// their names stay held (ADR-0026 d10); a key `key.revoked` folded
@@ -320,7 +320,7 @@ struct TenantState {
     access: BTreeMap<Uuid, KeyAccess>,
     queue: Vec<QueueEntry>,
     /// Each status-ladder proposal with the seq of the event that proposed
-    /// it, as `workarea_transitions.proposed_seq` holds it (ADR-0009 d3).
+    /// it, as `workspace_transitions.proposed_seq` holds it (ADR-0009 d3).
     transitions: BTreeMap<Uuid, (u64, TransitionRecord)>,
     outbox: Vec<OutboxRow>,
     idempotency: BTreeMap<(Uuid, Uuid, String), IdempotencyRecord>,
@@ -385,7 +385,7 @@ pub struct MemStore {
     /// The next commit parks once it has applied, until the park opens:
     /// an act whose commit landed and whose request is still in flight.
     park_after_commit: Arc<Mutex<Option<CommitPark>>>,
-    /// Armed, the next commit makes the `workarea_children` read after it
+    /// Armed, the next commit makes the `workspace_children` read after it
     /// fail once: a step after an act's commit that fails.
     fail_children_after_commit: Arc<AtomicBool>,
     fail_next_children: Arc<AtomicBool>,
@@ -397,7 +397,7 @@ pub struct MemStore {
     widen_similar: Arc<AtomicBool>,
     /// How many names `resolve_name` has looked up, across every handle.
     name_lookups: Arc<AtomicU64>,
-    /// How many ancestries `workarea_ancestry` has read, across every
+    /// How many ancestries `workspace_ancestry` has read, across every
     /// handle.
     ancestry_reads: Arc<AtomicU64>,
     /// The tenants whose partitions `create_tenant_partitions` created, in
@@ -492,9 +492,9 @@ impl MemStore {
         Self::default()
     }
 
-    /// `n` copies of the tenant's memory `memory_id` on its workarea, each a
+    /// `n` copies of the tenant's memory `memory_id` on its workspace, each a
     /// served tip of its own claim, inserted with no event: a large
-    /// workarea for a timing law, built in one step (ADR-0072 d13 test 7).
+    /// workspace for a timing law, built in one step (ADR-0072 d13 test 7).
     pub fn seed_copies(&self, tenant_id: Uuid, memory_id: Uuid, n: u32) {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return;
@@ -509,8 +509,8 @@ impl MemStore {
                 Uuid::from_u128(0x5eed_0000_0000_0000_0000_0000_0000_0000 | u128::from(i));
             copy.claim_key = format!("{}-copy-{i}", template.claim_key);
             state
-                .by_workarea
-                .entry(copy.workarea_id)
+                .by_workspace
+                .entry(copy.workspace_id)
                 .or_default()
                 .insert(copy.memory_id);
             state.memories.insert(copy.memory_id, copy);
@@ -524,7 +524,7 @@ impl MemStore {
         self.rows_read.load(Ordering::SeqCst)
     }
 
-    /// The rows on `nodes`, read by workarea and counted in
+    /// The rows on `nodes`, read by workspace and counted in
     /// [`Self::rows_read`]: the one way the recall path's reads reach a
     /// memory row, so no read of it can skip the count (#278).
     fn rows_on<'s, 'n>(
@@ -534,7 +534,7 @@ impl MemStore {
     ) -> impl Iterator<Item = &'s MemoryRecord> {
         let rows_read = Arc::clone(&self.rows_read);
         nodes
-            .filter_map(|n| state.by_workarea.get(n))
+            .filter_map(|n| state.by_workspace.get(n))
             .flatten()
             .filter_map(|id| state.memories.get(id))
             .inspect(move |_| {
@@ -686,10 +686,10 @@ impl MemStore {
         park
     }
 
-    /// Fails the first `workarea_children` read after the next commit, as
+    /// Fails the first `workspace_children` read after the next commit, as
     /// a lost connection would: a read an act makes after its commit fails
     /// (#233).
-    pub fn fail_workarea_children_after_next_commit(&self) {
+    pub fn fail_workspace_children_after_next_commit(&self) {
         self.fail_children_after_commit
             .store(true, Ordering::SeqCst);
     }
@@ -827,8 +827,8 @@ impl MemStore {
         self.name_lookups.load(Ordering::SeqCst)
     }
 
-    /// How many ancestries `workarea_ancestry` has read on any handle, so a
-    /// test can show a use case reads one per workarea, not one per row.
+    /// How many ancestries `workspace_ancestry` has read on any handle, so a
+    /// test can show a use case reads one per workspace, not one per row.
     #[must_use]
     pub fn ancestry_reads(&self) -> u64 {
         self.ancestry_reads.load(Ordering::SeqCst)
@@ -836,7 +836,7 @@ impl MemStore {
 
     /// Holds `events` as one tenant's chain in the state migration 0006
     /// leaves a PoC store in: every event as it was signed, and a row with
-    /// no name for each `tenant.genesis`, `workarea.create` and `key.issued`,
+    /// no name for each `tenant.genesis`, `workspace.create` and `key.issued`,
     /// with the crew objects, grants, denials and revocations the PoC folded
     /// (postgres-schema.md, "The migration that adds names"; ADR-0026 d11).
     /// A PoC `key.issued` never carried its value or its hash, so such a key
@@ -891,7 +891,7 @@ fn role_from_str(role: &str) -> Result<Role, StoreError> {
     [
         Role::Reader,
         Role::Writer,
-        Role::Dreamer,
+        Role::Reviewer,
         Role::Admin,
         Role::Operator,
     ]
@@ -907,24 +907,26 @@ fn fold_poc_event(
     tenant_id: Uuid,
     event: &SignedEnvelope,
 ) -> Result<(), StoreError> {
-    let env = &event.envelope;
+    // The PoC signed the former names; migrations 0006 and 0047 leave the
+    // rows they made in the current names (ADR-0091 d4, d6).
+    let env = &crate::app::read_as_current(&event.envelope)?;
     let payload = &env.payload;
     match env.event_type.as_str() {
-        event_types::WORKAREA_CREATE => {
+        event_types::WORKSPACE_CREATE => {
             let crew = payload
                 .get("crew")
                 .filter(|c| !c.is_null())
                 .map(|c| serde_json::from_value(c.clone()))
                 .transpose()
                 .map_err(|e| StoreError::Backend(e.to_string()))?;
-            state.unnamed_workareas.insert(
-                poc_required_id(payload, "workarea_id")?,
-                UnnamedWorkarea {
+            state.unnamed_workspaces.insert(
+                poc_required_id(payload, "workspace_id")?,
+                UnnamedWorkspace {
                     parent_id: poc_id(payload, "parent_id"),
                     status: if poc_id(payload, "parent_id").is_none() {
-                        WorkareaStatus::Committed
+                        WorkspaceStatus::Protected
                     } else {
-                        WorkareaStatus::Development
+                        WorkspaceStatus::Development
                     },
                     crew,
                 },
@@ -954,8 +956,8 @@ fn fold_poc_event(
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_owned(),
-                    held_by: HeldBy::Agent,
-                    default_workarea: poc_id(payload, "default_workarea_id"),
+                    used_by: UsedBy::Agent,
+                    default_workspace: poc_id(payload, "default_workspace_id"),
                     issued_by: poc_id(payload, "issued_by_key_id"),
                     credential: Credential::Bearer,
                     key_hash: None,
@@ -977,7 +979,7 @@ fn fold_poc_event(
             let key_id = poc_required_id(payload, "key_id")?;
             let grant = Grant {
                 grant_id: poc_required_id(payload, "grant_id")?,
-                node: poc_required_id(payload, "workarea_node_id")?,
+                node: poc_required_id(payload, "workspace_node_id")?,
                 role: role_from_str(payload.get("role").and_then(Value::as_str).unwrap_or(""))?,
                 deny: Vec::new(),
                 covers: Covers::Subtree,
@@ -993,7 +995,7 @@ fn fold_poc_event(
             let key_id = poc_required_id(payload, "key_id")?;
             let denial = KeyDenial {
                 denial_id: poc_required_id(payload, "denial_id")?,
-                node: poc_required_id(payload, "workarea_node_id")?,
+                node: poc_required_id(payload, "workspace_node_id")?,
             };
             if let Some(access) = state.access.get_mut(&key_id) {
                 access.denials.push(DenialRecord {
@@ -1023,9 +1025,9 @@ fn require_held(state: &TenantState, key_id: Uuid, node: Uuid) -> Result<(), Sto
             "key {key_id} is not held by this tenant"
         )));
     }
-    if !state.workareas.contains_key(&node) {
+    if !state.workspaces.contains_key(&node) {
         return Err(StoreError::Backend(format!(
-            "workarea {node} is not held by this tenant"
+            "workspace {node} is not held by this tenant"
         )));
     }
     Ok(())
@@ -1049,41 +1051,41 @@ fn require_free_name<'a>(
 }
 
 /// The root, and only the root, is named `universe`, as
-/// `workareas_universe_is_root` refuses otherwise: a non-root `universe` is
+/// `workspaces_universe_is_root` refuses otherwise: a non-root `universe` is
 /// refused with `NameTaken`, as errors.md answers it, and a root of another
-/// name as the backend's (postgres-schema.md `workareas`; ADR-0026 d6).
-/// The root is stored `committed` or refused as the backend's, as
-/// `workareas_universe_committed` refuses it (ADR-0009 d1).
-fn require_universe_root(workarea: &WorkareaRecord) -> Result<(), StoreError> {
-    match (workarea.parent_id, workarea.name.as_str() == UNIVERSE) {
+/// name as the backend's (postgres-schema.md `workspaces`; ADR-0026 d6).
+/// The root is stored `protected` or refused as the backend's, as
+/// `workspaces_universe_committed` refuses it (ADR-0009 d1).
+fn require_universe_root(workspace: &WorkspaceRecord) -> Result<(), StoreError> {
+    match (workspace.parent_id, workspace.name.as_str() == UNIVERSE) {
         (Some(_), true) => Err(StoreError::NameTaken {
-            kind: NamedKind::Workarea,
-            name: workarea.name.clone(),
+            kind: NamedKind::Workspace,
+            name: workspace.name.clone(),
         }),
         (None, false) => Err(StoreError::Backend(format!(
-            "the root workarea {} is named universe, not {:?}",
-            workarea.workarea_id,
-            workarea.name.as_str()
+            "the root workspace {} is named universe, not {:?}",
+            workspace.workspace_id,
+            workspace.name.as_str()
         ))),
-        // The root is permanently committed, as the schema's
-        // workareas_universe_committed CHECK holds (ADR-0009 d1).
-        (None, true) if workarea.status != WorkareaStatus::Committed => {
+        // The root is permanently protected, as the schema's
+        // workspaces_universe_committed CHECK holds (ADR-0009 d1).
+        (None, true) if workspace.status != WorkspaceStatus::Protected => {
             Err(StoreError::Backend(format!(
-                "the universe root {} is permanently committed, not {}",
-                workarea.workarea_id,
-                workarea.status.as_str()
+                "the universe root {} is permanently protected, not {}",
+                workspace.workspace_id,
+                workspace.status.as_str()
             )))
         }
         _ => Ok(()),
     }
 }
 
-/// A workarea that has no name yet is served to no one, as the Postgres
+/// A workspace that has no name yet is served to no one, as the Postgres
 /// store refuses it (postgres-schema.md names and tenants; ADR-0026 d11).
-fn require_named(state: &TenantState, workarea_id: Uuid) -> Result<(), StoreError> {
-    if state.unnamed_workareas.contains_key(&workarea_id) {
+fn require_named(state: &TenantState, workspace_id: Uuid) -> Result<(), StoreError> {
+    if state.unnamed_workspaces.contains_key(&workspace_id) {
         return Err(StoreError::Backend(format!(
-            "workarea {workarea_id} has no name: the lead names every row that predates names \
+            "workspace {workspace_id} has no name: the lead names every row that predates names \
              before it serves (ADR-0026 d11)"
         )));
     }
@@ -1094,7 +1096,7 @@ fn require_named(state: &TenantState, workarea_id: Uuid) -> Result<(), StoreErro
 /// [`require_named`] does for the child itself.
 fn require_no_unnamed_child(state: &TenantState, parents: &[Uuid]) -> Result<(), StoreError> {
     match state
-        .unnamed_workareas
+        .unnamed_workspaces
         .iter()
         .find(|(_, w)| w.parent_id.is_some_and(|p| parents.contains(&p)))
     {
@@ -1114,29 +1116,29 @@ fn require_crew(state: &TenantState, crew_id: Option<Uuid>) -> Result<(), StoreE
     }
 }
 
-/// A workarea's parent must be its own tenant's node, as the tenant-scoped
+/// A workspace's parent must be its own tenant's node, as the tenant-scoped
 /// foreign key `(tenant_id, parent_id)` requires: another tenant's node is
-/// refused as no node is (postgres-schema.md `workareas`; ADR-0034 d12).
+/// refused as no node is (postgres-schema.md `workspaces`; ADR-0034 d12).
 fn require_parent(state: &TenantState, parent_id: Option<Uuid>) -> Result<(), StoreError> {
     match parent_id {
-        Some(parent_id) if !state.workareas.contains_key(&parent_id) => Err(StoreError::Backend(
-            format!("parent workarea {parent_id} is not held by this tenant"),
+        Some(parent_id) if !state.workspaces.contains_key(&parent_id) => Err(StoreError::Backend(
+            format!("parent workspace {parent_id} is not held by this tenant"),
         )),
         _ => Ok(()),
     }
 }
 
-/// The one step forward from each rung, as `workarea_transitions_one_rung`
+/// The one step forward from each rung, as `workspace_transitions_one_rung`
 /// admits it (ADR-0009 d1).
-fn one_rung(from: WorkareaStatus, to: WorkareaStatus) -> bool {
+fn one_rung(from: WorkspaceStatus, to: WorkspaceStatus) -> bool {
     matches!(
         (from, to),
-        (WorkareaStatus::Development, WorkareaStatus::Committed)
-            | (WorkareaStatus::Committed, WorkareaStatus::Validated)
+        (WorkspaceStatus::Development, WorkspaceStatus::Protected)
+            | (WorkspaceStatus::Protected, WorkspaceStatus::Frozen)
     )
 }
 
-/// `workarea.status_proposed`'s fold: what the store refuses, the double
+/// `workspace.status_proposed`'s fold: what the store refuses, the double
 /// refuses — a node or proposing key the tenant does not hold, a proposer
 /// principal other than the one that key's row holds, a step other than
 /// one rung forward, a record that is not pending, and an id already held
@@ -1146,7 +1148,7 @@ fn propose_transition_fold(
     seq: u64,
     proposal: TransitionRecord,
 ) -> Result<(), StoreError> {
-    require_held(state, proposal.proposer_key_id, proposal.workarea_id)?;
+    require_held(state, proposal.proposer_key_id, proposal.workspace_id)?;
     if key_principal(state, proposal.proposer_key_id)? != proposal.proposer_principal {
         return Err(StoreError::Backend(format!(
             "transition {}'s proposer principal is not its proposing key's",
@@ -1178,48 +1180,48 @@ fn propose_transition_fold(
     Ok(())
 }
 
-/// `workarea.status_transition`'s fold, as the ratifying transaction
+/// `workspace.status_transition`'s fold, as the ratifying transaction
 /// applies it once the chain lock is held: a row that is not a proposal on
 /// this node with this `to`, a ratifier key the tenant does not hold, and a
-/// universe root moved off `committed` are defects; a row already ratified
+/// universe root moved off `protected` are defects; a row already ratified
 /// or whose `from` is no longer the node's status is
 /// [`StoreError::TransitionStale`]; a ratifier that is the proposing key or
 /// holds the proposer's principal is [`StoreError::RatifierIsProposer`];
-/// and a step to `validated` with a direct child not `validated` is
-/// [`StoreError::ChildrenNotValidated`]. Any refusal refuses the commit,
-/// which writes nothing (ADR-0009 d1, d3, d4; ADR-0010 R2; workareas.md,
+/// and a step to `frozen` with a direct child not `frozen` is
+/// [`StoreError::ChildrenNotFrozen`]. Any refusal refuses the commit,
+/// which writes nothing (ADR-0009 d1, d3, d4; ADR-0010 R2; workspaces.md,
 /// ratification re-checks).
 fn ratify_transition_fold(
     state: &mut TenantState,
     transition_id: Uuid,
-    workarea_id: Uuid,
-    to: WorkareaStatus,
+    workspace_id: Uuid,
+    to: WorkspaceStatus,
     ratifier_key_id: Uuid,
 ) -> Result<(), StoreError> {
     let defect = || {
         StoreError::Backend(format!(
-            "transition {transition_id} is not a proposal on workarea {workarea_id} to {}",
+            "transition {transition_id} is not a proposal on workspace {workspace_id} to {}",
             to.as_str()
         ))
     };
     let Some((_, row)) = state.transitions.get(&transition_id) else {
         return Err(defect());
     };
-    let Some(node) = state.workareas.get(&workarea_id) else {
+    let Some(node) = state.workspaces.get(&workspace_id) else {
         return Err(defect());
     };
-    if row.workarea_id != workarea_id || row.to != to {
+    if row.workspace_id != workspace_id || row.to != to {
         return Err(defect());
     }
     if row.state != TransitionState::Pending || node.status != row.from {
         return Err(StoreError::TransitionStale {
             transition_id,
-            workarea_id,
+            workspace_id,
             from: row.from,
             to: row.to,
         });
     }
-    require_held(state, ratifier_key_id, workarea_id)?;
+    require_held(state, ratifier_key_id, workspace_id)?;
     let ratifier_principal = key_principal(state, ratifier_key_id)?;
     if ratifier_is_proposer(
         row.proposer_key_id,
@@ -1229,18 +1231,18 @@ fn ratify_transition_fold(
     ) {
         return Err(StoreError::RatifierIsProposer { transition_id });
     }
-    if to == WorkareaStatus::Validated && child_not_validated(state, workarea_id) {
-        return Err(StoreError::ChildrenNotValidated {
+    if to == WorkspaceStatus::Frozen && child_not_frozen(state, workspace_id) {
+        return Err(StoreError::ChildrenNotFrozen {
             transition_id,
-            workarea_id,
+            workspace_id,
         });
     }
-    if node.parent_id.is_none() && to != WorkareaStatus::Committed {
+    if node.parent_id.is_none() && to != WorkspaceStatus::Protected {
         return Err(StoreError::Backend(
-            "the universe root is permanently committed".to_owned(),
+            "the universe root is permanently protected".to_owned(),
         ));
     }
-    if let Some(node) = state.workareas.get_mut(&workarea_id) {
+    if let Some(node) = state.workspaces.get_mut(&workspace_id) {
         node.status = to;
     }
     if let Some((_, row)) = state.transitions.get_mut(&transition_id) {
@@ -1259,22 +1261,22 @@ fn key_principal(state: &TenantState, key_id: Uuid) -> Result<&str, StoreError> 
         .ok_or_else(|| StoreError::Backend(format!("key {key_id} is not held by this tenant")))
 }
 
-/// Whether any direct child of `workarea_id`, named or not, stands on a
-/// rung other than `validated` (ADR-0009 d4).
-fn child_not_validated(state: &TenantState, workarea_id: Uuid) -> bool {
+/// Whether any direct child of `workspace_id`, named or not, stands on a
+/// rung other than `frozen` (ADR-0009 d4).
+fn child_not_frozen(state: &TenantState, workspace_id: Uuid) -> bool {
     state
-        .workareas
+        .workspaces
         .values()
-        .filter(|w| w.parent_id == Some(workarea_id))
+        .filter(|w| w.parent_id == Some(workspace_id))
         .map(|w| w.status)
         .chain(
             state
-                .unnamed_workareas
+                .unnamed_workspaces
                 .values()
-                .filter(|w| w.parent_id == Some(workarea_id))
+                .filter(|w| w.parent_id == Some(workspace_id))
                 .map(|w| w.status),
         )
-        .any(|status| status != WorkareaStatus::Validated)
+        .any(|status| status != WorkspaceStatus::Frozen)
 }
 
 /// Names the tenant at its genesis, as the `tenants` row does: a tenant
@@ -1312,16 +1314,16 @@ fn assign_tenant_name(
 }
 
 /// A second live version of `memory`'s ordinal under its `claim_key` in its
-/// workarea is refused, as `memories_claim_version` refuses it.
+/// workspace is refused, as `memories_claim_version` refuses it.
 fn require_free_ordinal(state: &TenantState, memory: &MemoryRecord) -> Result<(), StoreError> {
     if state.memories.values().any(|m| {
-        m.workarea_id == memory.workarea_id
+        m.workspace_id == memory.workspace_id
             && m.claim_key == memory.claim_key
             && m.version == memory.version
             && LIVE.contains(&m.status)
     }) {
         return Err(StoreError::Backend(format!(
-            "version {} of claim_key {:?} is already live in this workarea",
+            "version {} of claim_key {:?} is already live in this workspace",
             memory.version, memory.claim_key
         )));
     }
@@ -1406,48 +1408,48 @@ fn apply_fold(
         | MetadataFold::AdminRead => {}
         MetadataFold::SearchDefaultSet { pipeline } => state.search_default = pipeline,
         MetadataFold::FederationPolicySet(policy) => state.federation = policy,
-        MetadataFold::WorkareaFederationSet {
-            workarea_id,
+        MetadataFold::WorkspaceFederationSet {
+            workspace_id,
             accept_federated,
         } => {
-            if !state.workareas.contains_key(&workarea_id) {
+            if !state.workspaces.contains_key(&workspace_id) {
                 return Err(StoreError::Backend(format!(
-                    "workarea {workarea_id} is not held by this tenant"
+                    "workspace {workspace_id} is not held by this tenant"
                 )));
             }
             if accept_federated {
-                state.declining.remove(&workarea_id);
+                state.declining.remove(&workspace_id);
             } else {
-                state.declining.insert(workarea_id);
+                state.declining.insert(workspace_id);
             }
         }
         MetadataFold::TelemetrySettingsSet { query_text_since } => {
             state.query_text_since = query_text_since;
         }
-        MetadataFold::WorkareaCreated(workarea) => {
-            require_universe_root(&workarea)?;
+        MetadataFold::WorkspaceCreated(workspace) => {
+            require_universe_root(&workspace)?;
             // Unique in its namespace: the shared one, or its user root's,
             // as the two unique indexes hold (ADR-0044 d5).
             require_free_name(
                 state
-                    .workareas
+                    .workspaces
                     .values()
-                    .filter(|w| w.namespace == workarea.namespace)
+                    .filter(|w| w.namespace == workspace.namespace)
                     .map(|w| &w.name),
-                NamedKind::Workarea,
-                &workarea.name,
+                NamedKind::Workspace,
+                &workspace.name,
             )?;
-            if let Some(root) = workarea.namespace
-                && !state.workareas.get(&root).is_some_and(|w| w.user_root)
+            if let Some(root) = workspace.namespace
+                && !state.workspaces.get(&root).is_some_and(|w| w.user_root)
             {
                 return Err(StoreError::Backend(format!(
-                    "workarea {}'s namespace {root} is not a user root of this tenant",
-                    workarea.workarea_id
+                    "workspace {}'s namespace {root} is not a user root of this tenant",
+                    workspace.workspace_id
                 )));
             }
-            require_crew(state, workarea.crew_id)?;
-            require_parent(state, workarea.parent_id)?;
-            state.workareas.insert(workarea.workarea_id, workarea);
+            require_crew(state, workspace.crew_id)?;
+            require_parent(state, workspace.parent_id)?;
+            state.workspaces.insert(workspace.workspace_id, workspace);
         }
         MetadataFold::WebEmailAllowed(entry) => {
             let hash = entry.email.digest().0;
@@ -1567,36 +1569,36 @@ fn apply_fold(
             held.charter_uri = crew.charter_uri;
             held.external_manager = crew.external_manager;
         }
-        MetadataFold::WorkareaCrewUpdated {
-            workarea_id,
+        MetadataFold::WorkspaceCrewUpdated {
+            workspace_id,
             crew_id,
         } => {
             require_crew(state, Some(crew_id))?;
-            let Some(workarea) = state.workareas.get_mut(&workarea_id) else {
+            let Some(workspace) = state.workspaces.get_mut(&workspace_id) else {
                 return Err(StoreError::Backend(format!(
-                    "workarea {workarea_id} is not held by this tenant"
+                    "workspace {workspace_id} is not held by this tenant"
                 )));
             };
-            workarea.crew_id = Some(crew_id);
+            workspace.crew_id = Some(crew_id);
         }
-        MetadataFold::WorkareaModeSet {
-            workarea_id,
+        MetadataFold::WorkspaceModeSet {
+            workspace_id,
             in_progress,
             held_free,
         } => {
             if state
                 .memories
                 .values()
-                .any(|m| m.status == MemoryStatus::Held && held_free.contains(&m.workarea_id))
+                .any(|m| m.status == MemoryStatus::Held && held_free.contains(&m.workspace_id))
             {
                 return Err(StoreError::HeldRemaining);
             }
-            let Some(workarea) = state.workareas.get_mut(&workarea_id) else {
+            let Some(workspace) = state.workspaces.get_mut(&workspace_id) else {
                 return Err(StoreError::Backend(format!(
-                    "workarea {workarea_id} is not held by this tenant"
+                    "workspace {workspace_id} is not held by this tenant"
                 )));
             };
-            workarea.in_progress = in_progress;
+            workspace.in_progress = in_progress;
         }
         MetadataFold::NamesAssigned(naming) => {
             assign_names_fold(state, tenant_id, &naming)?;
@@ -1627,7 +1629,7 @@ fn apply_fold(
             }
             require_crew(state, key.crew_id)?;
             if let Some(root) = key.user
-                && !state.workareas.contains_key(&root)
+                && !state.workspaces.contains_key(&root)
             {
                 return Err(StoreError::Backend(format!(
                     "key {}'s user root {root} is not held by this tenant",
@@ -1667,9 +1669,9 @@ fn apply_fold(
         }
         MetadataFold::GrantIssued { key_id, grant } => {
             require_held(state, key_id, grant.node)?;
-            if !matches!(grant.role, Role::Reader | Role::Writer | Role::Dreamer) {
+            if !matches!(grant.role, Role::Reader | Role::Writer | Role::Reviewer) {
                 return Err(StoreError::Backend(format!(
-                    "a grant role is reader, writer or dreamer, never {}",
+                    "a grant role is reader, writer or reviewer, never {}",
                     grant.role.as_str()
                 )));
             }
@@ -1896,8 +1898,8 @@ fn apply_fold(
                 });
             }
             state
-                .by_workarea
-                .entry(memory.workarea_id)
+                .by_workspace
+                .entry(memory.workspace_id)
                 .or_default()
                 .insert(memory.memory_id);
             state.memories.insert(memory.memory_id, memory);
@@ -1916,13 +1918,13 @@ fn apply_fold(
                 // commit, as `memories_served_tip` does (ADR-0025 d10).
                 if state.memories.values().any(|m| {
                     m.memory_id != memory_id
-                        && m.workarea_id == promoted.workarea_id
+                        && m.workspace_id == promoted.workspace_id
                         && m.claim_key == promoted.claim_key
                         && m.is_tip
                         && m.status == MemoryStatus::Promoted
                 }) {
                     return Err(StoreError::Backend(format!(
-                        "claim_key {:?} already has a served tip in this workarea",
+                        "claim_key {:?} already has a served tip in this workspace",
                         promoted.claim_key
                     )));
                 }
@@ -2000,7 +2002,7 @@ fn apply_fold(
         } => {
             // The compare-and-set: the successor is held and replaces
             // `replaced`, which is still the promoted tip under the
-            // successor's own workarea and claim_key; anything else writes
+            // successor's own workspace and claim_key; anything else writes
             // nothing (ADR-0025 d10).
             let cas = match (
                 state.memories.get(&successor),
@@ -2009,7 +2011,7 @@ fn apply_fold(
                 (Some(s), Some(t)) => {
                     s.status == MemoryStatus::Held
                         && s.replaces == Some(replaced)
-                        && t.workarea_id == s.workarea_id
+                        && t.workspace_id == s.workspace_id
                         && t.claim_key == s.claim_key
                         && t.is_tip
                         && t.status == MemoryStatus::Promoted
@@ -2058,11 +2060,11 @@ fn apply_fold(
         }
         MetadataFold::TransitionRatified {
             transition_id,
-            workarea_id,
+            workspace_id,
             to,
             ratifier_key_id,
         } => {
-            ratify_transition_fold(state, transition_id, workarea_id, to, ratifier_key_id)?;
+            ratify_transition_fold(state, transition_id, workspace_id, to, ratifier_key_id)?;
         }
         MetadataFold::ClaimEdgeProposed(edge) => {
             require_proposable(state, tenant_id, &edge, at)?;
@@ -2110,7 +2112,7 @@ fn apply_fold(
                 ));
             }
             if !state.memories.contains_key(&edge.artifact_id)
-                || !state.workareas.contains_key(&edge.workarea_id)
+                || !state.workspaces.contains_key(&edge.workspace_id)
                 || !state.keys.contains_key(&edge.proposer_key_id)
             {
                 return refuse(format!(
@@ -2274,8 +2276,8 @@ fn widen_lineage(state: &mut TenantState, src: Uuid, dst: Uuid) {
 }
 
 /// The fold of `system.names_assigned` within the tenant: each crew record,
-/// then each listed workarea and key, which must hold no name yet, named as
-/// the event assigns, each workarea pointing at the crew it is listed under.
+/// then each listed workspace and key, which must hold no name yet, named as
+/// the event assigns, each workspace pointing at the crew it is listed under.
 /// The tenant's own name is the deployment's, applied by the commit
 /// (postgres-schema.md folds; ADR-0026 d11).
 fn assign_names_fold(
@@ -2300,23 +2302,23 @@ fn assign_names_fold(
                 external_manager: crew.external_manager.clone(),
             },
         );
-        for workarea_id in &crew.workarea_ids {
-            crew_of.insert(*workarea_id, crew.crew_id);
+        for workspace_id in &crew.workspace_ids {
+            crew_of.insert(*workspace_id, crew.crew_id);
         }
     }
     for assignment in &naming.names {
         let id = assignment.id;
         match assignment.kind {
             NamedKind::Tenant if id == tenant_id => {}
-            NamedKind::Workarea => {
-                let Some(unnamed) = state.unnamed_workareas.remove(&id) else {
+            NamedKind::Workspace => {
+                let Some(unnamed) = state.unnamed_workspaces.remove(&id) else {
                     return Err(StoreError::Backend(format!(
-                        "workarea {id} is not a row without a name"
+                        "workspace {id} is not a row without a name"
                     )));
                 };
-                let workarea = WorkareaRecord {
+                let workspace = WorkspaceRecord {
                     in_progress: false,
-                    workarea_id: id,
+                    workspace_id: id,
                     tenant_id,
                     parent_id: unnamed.parent_id,
                     name: assignment.name.clone(),
@@ -2326,17 +2328,17 @@ fn assign_names_fold(
                     user_root: false,
                     namespace: None,
                 };
-                require_universe_root(&workarea)?;
+                require_universe_root(&workspace)?;
                 require_free_name(
                     state
-                        .workareas
+                        .workspaces
                         .values()
                         .filter(|w| w.namespace.is_none())
                         .map(|w| &w.name),
-                    NamedKind::Workarea,
-                    &workarea.name,
+                    NamedKind::Workspace,
+                    &workspace.name,
                 )?;
-                state.workareas.insert(id, workarea);
+                state.workspaces.insert(id, workspace);
             }
             NamedKind::Key => {
                 require_free_name(
@@ -2359,9 +2361,9 @@ fn assign_names_fold(
             }
         }
     }
-    if let Some((workarea_id, _)) = crew_of.pop_first() {
+    if let Some((workspace_id, _)) = crew_of.pop_first() {
         return Err(StoreError::Backend(format!(
-            "a crew record names workarea {workarea_id}, which the event does not name"
+            "a crew record names workspace {workspace_id}, which the event does not name"
         )));
     }
     Ok(())
@@ -2381,7 +2383,7 @@ fn account_usage(
     let mut chains: BTreeMap<(Uuid, &str), Vec<&MemoryRecord>> = BTreeMap::new();
     for m in state.memories.values() {
         chains
-            .entry((m.workarea_id, m.claim_key.as_str()))
+            .entry((m.workspace_id, m.claim_key.as_str()))
             .or_default()
             .push(m);
     }
@@ -2489,7 +2491,7 @@ fn append(state: &mut TenantState, req: CommitRequest) -> Result<CommitReceipt, 
     if let Some(put) = req.idempotency {
         // One scope holds one record; the caller drops the staged state on
         // a refusal, so the fold above is undone with it.
-        let scope = (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key);
+        let scope = (put.scope.key_id, put.scope.workspace_id, put.scope.idem_key);
         if state.idempotency.contains_key(&scope) || state.idempotency_claims.contains_key(&scope) {
             return Err(StoreError::IdempotencyRecorded);
         }
@@ -2548,7 +2550,7 @@ impl Retriever for MemStore {
             });
         };
         let state = tenant.lock().expect("tenant lock");
-        // The rows of the scope's nodes alone, read by workarea, so the work
+        // The rows of the scope's nodes alone, read by workspace, so the work
         // never depends on a row elsewhere (ADR-0072 d6).
         let mut nodes: BTreeSet<Uuid> = scope.promoted_nodes.iter().copied().collect();
         if let Some(own) = &scope.own_held {
@@ -2583,7 +2585,7 @@ impl Retriever for MemStore {
                 None => served_tip(m),
                 Some(at) => tip_at(&state, m, at),
             };
-            if tip && scope.promoted_nodes.contains(&m.workarea_id) {
+            if tip && scope.promoted_nodes.contains(&m.workspace_id) {
                 return true;
             }
             if scope.as_of.as_ref().is_some_and(|at| !recorded_by(m, at)) {
@@ -2595,7 +2597,7 @@ impl Retriever for MemStore {
                         || (own.any_author
                             && m.scan_finding.is_none()
                             && m.scanned_under == own.current_scanner))
-                    && own.nodes.contains(&m.workarea_id)
+                    && own.nodes.contains(&m.workspace_id)
             })
         };
         if kind == RetrieverKind::Time {
@@ -2694,13 +2696,13 @@ impl Retriever for MemStore {
                 if m.retirement || !SIMILAR_KINDS.contains(&m.kind) {
                     return false;
                 }
-                if served_tip(m) && scope.promoted_nodes.contains(&m.workarea_id) {
+                if served_tip(m) && scope.promoted_nodes.contains(&m.workspace_id) {
                     return true;
                 }
                 scope.own_held.as_ref().is_some_and(|own| {
                     m.status == MemoryStatus::Held
                         && own.author_key_ids.contains(&m.author_key_id)
-                        && own.nodes.contains(&m.workarea_id)
+                        && own.nodes.contains(&m.workspace_id)
                 })
             })
             .filter_map(|m| {
@@ -3036,7 +3038,7 @@ impl JournalStore for MemStore {
                     .and_then(|id| state.memories.get(&id))
                     .map(|m| SubjectRow {
                         artifact_id: m.memory_id,
-                        workarea_id: m.workarea_id,
+                        workspace_id: m.workspace_id,
                         author_key_id: m.author_key_id,
                     }),
                 event: e.clone(),
@@ -3168,7 +3170,7 @@ impl JournalStore for MemStore {
                 if !reference_row(m, &scope.kinds, scope.expired_at) {
                     continue;
                 }
-                let Some(counts) = nodes.get_mut(&m.workarea_id) else {
+                let Some(counts) = nodes.get_mut(&m.workspace_id) else {
                     continue;
                 };
                 counts.rows += 1;
@@ -3211,12 +3213,12 @@ impl JournalStore for MemStore {
                 if !reference_row(m, &scope.kinds, scope.expired_at) {
                     continue;
                 }
-                let Some(n) = rows.get_mut(&m.workarea_id) else {
+                let Some(n) = rows.get_mut(&m.workspace_id) else {
                     continue;
                 };
                 *n += 1;
                 for w in words(&m.body) {
-                    *df.entry((m.workarea_id, form_key(&w))).or_default() += 1;
+                    *df.entry((m.workspace_id, form_key(&w))).or_default() += 1;
                 }
                 if df.len() > max_pairs {
                     return Ok(None);
@@ -3271,12 +3273,12 @@ impl JournalStore for MemStore {
         let state = tenant.lock().expect("tenant lock");
         // A promoted version always carries the `promoted_at` its fold
         // stamped, so no row in force is passed over here.
-        // The named nodes' rows alone, read by workarea.
+        // The named nodes' rows alone, read by workspace.
         let mut rows: Vec<(u32, EventTime, MemoryRecord)> = self
             .rows_on(&state, nodes.iter())
             .filter(|m| served_tip(m) && m.kind == MemoryKind::Steering)
             .filter_map(|m| {
-                let depth = nodes.iter().position(|n| *n == m.workarea_id)?;
+                let depth = nodes.iter().position(|n| *n == m.workspace_id)?;
                 Some((
                     u32::try_from(depth).unwrap_or(u32::MAX),
                     m.promoted_at.clone()?,
@@ -3302,7 +3304,7 @@ impl JournalStore for MemStore {
             .rows_on(&state, nodes.iter())
             .filter(|m| m.kind == MemoryKind::Steering && !m.retirement && tip_at(&state, m, as_of))
             .filter_map(|m| {
-                let depth = nodes.iter().position(|n| *n == m.workarea_id)?;
+                let depth = nodes.iter().position(|n| *n == m.workspace_id)?;
                 Some((
                     u32::try_from(depth).unwrap_or(u32::MAX),
                     m.promoted_at.clone()?,
@@ -3349,7 +3351,7 @@ impl JournalStore for MemStore {
         Ok(state
             .memories
             .values()
-            .filter(|m| m.kind == MemoryKind::Guardrail && nodes.contains(&m.workarea_id))
+            .filter(|m| m.kind == MemoryKind::Guardrail && nodes.contains(&m.workspace_id))
             .filter(|m| {
                 served_tip(m)
                     || (m.status == MemoryStatus::Held && m.author_key_id == author_key_id)
@@ -3371,18 +3373,18 @@ impl JournalStore for MemStore {
         let state = tenant.lock().expect("tenant lock");
         let in_scope = |m: &MemoryRecord| match &filter.scope {
             ListingScope::Own { key_ids, masked } => {
-                key_ids.contains(&m.author_key_id) && !masked.contains(&m.workarea_id)
+                key_ids.contains(&m.author_key_id) && !masked.contains(&m.workspace_id)
             }
             ListingScope::Tips {
                 nodes,
                 held,
                 current_scanner,
             } => {
-                nodes.contains(&m.workarea_id)
+                nodes.contains(&m.workspace_id)
                     && (match &filter.as_of {
                         None => m.status == MemoryStatus::Promoted && m.is_tip,
                         Some(at) => tip_at(&state, m, at),
-                    } || (held.contains(&m.workarea_id)
+                    } || (held.contains(&m.workspace_id)
                         && filter.as_of.as_ref().is_none_or(|at| recorded_by(m, at))
                         && m.status == MemoryStatus::Held
                         && !m.retirement
@@ -3400,7 +3402,7 @@ impl JournalStore for MemStore {
                 filter
                     .subtree
                     .as_ref()
-                    .is_none_or(|nodes| nodes.contains(&m.workarea_id))
+                    .is_none_or(|nodes| nodes.contains(&m.workspace_id))
             })
             .filter(|m| filter.state.is_none_or(|s| m.status == s))
             .filter(|m| filter.kind.is_none_or(|k| m.kind == k))
@@ -3435,7 +3437,7 @@ impl JournalStore for MemStore {
     async fn claim_key_state(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         claim_key: &str,
     ) -> Result<ClaimKeyState, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
@@ -3445,7 +3447,7 @@ impl JournalStore for MemStore {
         Ok(state
             .memories
             .values()
-            .filter(|m| m.workarea_id == workarea_id && m.claim_key == claim_key)
+            .filter(|m| m.workspace_id == workspace_id && m.claim_key == claim_key)
             .fold(ClaimKeyState::default(), |acc, m| ClaimKeyState {
                 greatest_version: acc.greatest_version.max(Some(m.version)),
                 live: acc.live || LIVE.contains(&m.status),
@@ -3522,11 +3524,11 @@ impl JournalStore for MemStore {
         Ok(state
             .memories
             .values()
-            .filter(|m| m.status == MemoryStatus::Held && nodes.contains(&m.workarea_id))
+            .filter(|m| m.status == MemoryStatus::Held && nodes.contains(&m.workspace_id))
             .count() as u64)
     }
 
-    async fn stale_count(&self, tenant_id: Uuid, workarea_id: Uuid) -> Result<u64, StoreError> {
+    async fn stale_count(&self, tenant_id: Uuid, workspace_id: Uuid) -> Result<u64, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(0);
         };
@@ -3534,7 +3536,7 @@ impl JournalStore for MemStore {
         Ok(state
             .memories
             .values()
-            .filter(|m| m.workarea_id == workarea_id && served_tip(m))
+            .filter(|m| m.workspace_id == workspace_id && served_tip(m))
             .filter(|m| {
                 m.source_check
                     .as_deref()
@@ -3547,7 +3549,7 @@ impl JournalStore for MemStore {
     async fn claim_latest_readable(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         claim_key: &str,
         own_key_ids: &[Uuid],
         reads_promoted: bool,
@@ -3559,7 +3561,7 @@ impl JournalStore for MemStore {
         Ok(state
             .memories
             .values()
-            .filter(|m| m.workarea_id == workarea_id && m.claim_key == claim_key)
+            .filter(|m| m.workspace_id == workspace_id && m.claim_key == claim_key)
             .filter(|m| {
                 let own = own_key_ids.contains(&m.author_key_id);
                 match m.status {
@@ -3575,7 +3577,7 @@ impl JournalStore for MemStore {
     async fn claim_tip(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         claim_key: &str,
     ) -> Result<Option<MemoryRecord>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
@@ -3586,7 +3588,7 @@ impl JournalStore for MemStore {
             .memories
             .values()
             .find(|m| {
-                m.workarea_id == workarea_id
+                m.workspace_id == workspace_id
                     && m.claim_key == claim_key
                     && m.is_tip
                     && m.status == MemoryStatus::Promoted
@@ -3620,7 +3622,7 @@ impl JournalStore for MemStore {
         tenant_id: Uuid,
         reviewer_principal: &str,
         reviewer_key_id: Uuid,
-        workareas: &[Uuid],
+        workspaces: &[Uuid],
     ) -> Result<Option<MemoryRecord>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
@@ -3636,7 +3638,7 @@ impl JournalStore for MemStore {
             let Some(memory) = memories.get(&entry.memory_id) else {
                 continue;
             };
-            if !workareas.contains(&memory.workarea_id) {
+            if !workspaces.contains(&memory.workspace_id) {
                 continue;
             }
             // Never serve a row the reviewer's lineage excludes
@@ -3657,7 +3659,7 @@ impl JournalStore for MemStore {
                     r.memory_id != memory.memory_id
                         && r.status == MemoryStatus::Held
                         && r.replaces == memory.replaces
-                        && r.workarea_id == memory.workarea_id
+                        && r.workspace_id == memory.workspace_id
                         && r.claim_key == memory.claim_key
                         && (r.author_key_id == reviewer_key_id
                             || r.author_principal == reviewer_principal)
@@ -3710,7 +3712,7 @@ impl JournalStore for MemStore {
             .iter()
             .filter(|e| e.claimed_by.is_none_or(|k| k == reviewer_key_id))
             .filter_map(|e| memories.get(&e.memory_id))
-            .filter(|m| filter.nodes.contains(&m.workarea_id))
+            .filter(|m| filter.nodes.contains(&m.workspace_id))
             .filter(|m| {
                 !m.lineage_principals.iter().any(|p| p == reviewer_principal)
                     && !m.lineage_key_ids.contains(&reviewer_key_id)
@@ -3721,7 +3723,7 @@ impl JournalStore for MemStore {
                         r.memory_id != m.memory_id
                             && r.status == MemoryStatus::Held
                             && r.replaces == m.replaces
-                            && r.workarea_id == m.workarea_id
+                            && r.workspace_id == m.workspace_id
                             && r.claim_key == m.claim_key
                             && (r.author_key_id == reviewer_key_id
                                 || r.author_principal == reviewer_principal)
@@ -3808,11 +3810,11 @@ impl JournalStore for MemStore {
         let state = tenant.lock().expect("tenant lock");
         Ok(match kind {
             // The shared namespace alone (ADR-0044 d5).
-            NamedKind::Workarea => state
-                .workareas
+            NamedKind::Workspace => state
+                .workspaces
                 .values()
                 .find(|w| w.namespace.is_none() && &w.name == name)
-                .map(|w| w.workarea_id),
+                .map(|w| w.workspace_id),
             NamedKind::Crew => state
                 .crews
                 .values()
@@ -3828,7 +3830,7 @@ impl JournalStore for MemStore {
         })
     }
 
-    async fn resolve_user_workarea(
+    async fn resolve_user_workspace(
         &self,
         tenant_id: Uuid,
         user_root: Uuid,
@@ -3840,10 +3842,10 @@ impl JournalStore for MemStore {
         };
         let state = tenant.lock().expect("tenant lock");
         Ok(state
-            .workareas
+            .workspaces
             .values()
             .find(|w| w.namespace == Some(user_root) && &w.name == name)
-            .map(|w| w.workarea_id))
+            .map(|w| w.workspace_id))
     }
 
     async fn crew(&self, tenant_id: Uuid, crew_id: Uuid) -> Result<Option<CrewRecord>, StoreError> {
@@ -3898,10 +3900,10 @@ impl JournalStore for MemStore {
             .ok_or_else(|| StoreError::Backend(format!("tenant {tenant_id} has no name")))?;
         // The walk and the crew read are the port's own: the double answers
         // what they answer, where the adapter reads all three in one query.
-        let default_workarea = match key.default_workarea {
-            Some(workarea_id) => {
+        let default_workspace = match key.default_workspace {
+            Some(workspace_id) => {
                 let ancestry = self
-                    .workarea_ancestry(tenant_id, workarea_id)
+                    .workspace_ancestry(tenant_id, workspace_id)
                     .await?
                     .unwrap_or_default();
                 let path = ancestry
@@ -3914,11 +3916,11 @@ impl JournalStore for MemStore {
                 // adapter's read does.
                 let node = ancestry.into_iter().next().ok_or_else(|| {
                     StoreError::Backend(format!(
-                        "key {key_id}'s default workarea {workarea_id} is not this tenant's"
+                        "key {key_id}'s default workspace {workspace_id} is not this tenant's"
                     ))
                 })?;
-                Some(WorkareaRef {
-                    id: node.workarea_id,
+                Some(WorkspaceRef {
+                    id: node.workspace_id,
                     name: node.name,
                     path,
                 })
@@ -3933,8 +3935,8 @@ impl JournalStore for MemStore {
             None => None,
         };
         let user = match key.user {
-            Some(root) => self.workarea(tenant_id, root).await?.map(|w| NamedRef {
-                id: w.workarea_id,
+            Some(root) => self.workspace(tenant_id, root).await?.map(|w| NamedRef {
+                id: w.workspace_id,
                 name: w.name,
             }),
             None => None,
@@ -3944,7 +3946,7 @@ impl JournalStore for MemStore {
                 id: tenant_id,
                 name: tenant_name,
             },
-            default_workarea,
+            default_workspace,
             crew,
             user,
         }))
@@ -3969,36 +3971,36 @@ impl JournalStore for MemStore {
                     .lock()
                     .expect("tenant names lock")
                     .contains_key(&tenant_id),
-            workareas: state.unnamed_workareas.keys().copied().collect(),
+            workspaces: state.unnamed_workspaces.keys().copied().collect(),
             keys,
         })
     }
 
-    async fn workarea(
+    async fn workspace(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> Result<Option<WorkareaRecord>, StoreError> {
+        workspace_id: Uuid,
+    ) -> Result<Option<WorkspaceRecord>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
         };
         let state = tenant.lock().expect("tenant lock");
-        require_named(&state, workarea_id)?;
-        Ok(state.workareas.get(&workarea_id).cloned())
+        require_named(&state, workspace_id)?;
+        Ok(state.workspaces.get(&workspace_id).cloned())
     }
 
-    async fn workarea_ancestry(
+    async fn workspace_ancestry(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> Result<Option<Vec<WorkareaRecord>>, StoreError> {
+        workspace_id: Uuid,
+    ) -> Result<Option<Vec<WorkspaceRecord>>, StoreError> {
         self.ancestry_reads.fetch_add(1, Ordering::SeqCst);
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
         };
         let state = tenant.lock().expect("tenant lock");
-        require_named(&state, workarea_id)?;
-        let Some(node) = state.workareas.get(&workarea_id) else {
+        require_named(&state, workspace_id)?;
+        let Some(node) = state.workspaces.get(&workspace_id) else {
             return Ok(None);
         };
         let mut ancestry = vec![node.clone()];
@@ -4007,9 +4009,9 @@ impl JournalStore for MemStore {
             require_named(&state, parent_id)?;
             // A walk that leaves the tenant before the root would drop
             // ancestors' grants and denials; refuse it instead.
-            let Some(next) = state.workareas.get(&parent_id) else {
+            let Some(next) = state.workspaces.get(&parent_id) else {
                 return Err(StoreError::Backend(format!(
-                    "the ancestry of {workarea_id} names parent {parent_id}, \
+                    "the ancestry of {workspace_id} names parent {parent_id}, \
                      which this tenant does not hold"
                 )));
             };
@@ -4019,42 +4021,42 @@ impl JournalStore for MemStore {
         Ok(Some(ancestry))
     }
 
-    async fn workarea_subtree(
+    async fn workspace_subtree(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> Result<Vec<WorkareaRecord>, StoreError> {
+        workspace_id: Uuid,
+    ) -> Result<Vec<WorkspaceRecord>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Vec::new());
         };
         let state = tenant.lock().expect("tenant lock");
-        require_named(&state, workarea_id)?;
-        let Some(node) = state.workareas.get(&workarea_id) else {
+        require_named(&state, workspace_id)?;
+        let Some(node) = state.workspaces.get(&workspace_id) else {
             return Ok(Vec::new());
         };
         let mut subtree = vec![node.clone()];
-        let mut depth = vec![workarea_id];
+        let mut depth = vec![workspace_id];
         while !depth.is_empty() {
             require_no_unnamed_child(&state, &depth)?;
             // The map iterates in id order, so each depth comes out in id
             // order.
-            let next: Vec<WorkareaRecord> = state
-                .workareas
+            let next: Vec<WorkspaceRecord> = state
+                .workspaces
                 .values()
                 .filter(|w| w.parent_id.is_some_and(|p| depth.contains(&p)))
                 .cloned()
                 .collect();
-            depth = next.iter().map(|w| w.workarea_id).collect();
+            depth = next.iter().map(|w| w.workspace_id).collect();
             subtree.extend(next);
         }
         Ok(subtree)
     }
 
-    async fn workarea_children(
+    async fn workspace_children(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> Result<Vec<WorkareaRecord>, StoreError> {
+        workspace_id: Uuid,
+    ) -> Result<Vec<WorkspaceRecord>, StoreError> {
         if self.fail_next_children.swap(false, Ordering::SeqCst) {
             return Err(StoreError::Backend(
                 "the connection was lost reading the children".to_owned(),
@@ -4064,16 +4066,16 @@ impl JournalStore for MemStore {
             return Ok(Vec::new());
         };
         let state = tenant.lock().expect("tenant lock");
-        require_no_unnamed_child(&state, &[workarea_id])?;
-        let mut children: Vec<WorkareaRecord> = state
-            .workareas
+        require_no_unnamed_child(&state, &[workspace_id])?;
+        let mut children: Vec<WorkspaceRecord> = state
+            .workspaces
             .values()
-            .filter(|w| w.parent_id == Some(workarea_id))
+            .filter(|w| w.parent_id == Some(workspace_id))
             .cloned()
             .collect();
         // `str` orders by its bytes.
         children.sort_by(|a, b| {
-            (a.name.as_str(), a.workarea_id).cmp(&(b.name.as_str(), b.workarea_id))
+            (a.name.as_str(), a.workspace_id).cmp(&(b.name.as_str(), b.workspace_id))
         });
         Ok(children)
     }
@@ -4096,7 +4098,7 @@ impl JournalStore for MemStore {
     async fn pending_transitions(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
     ) -> Result<Vec<TransitionRecord>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Vec::new());
@@ -4106,7 +4108,7 @@ impl JournalStore for MemStore {
             .transitions
             .values()
             .filter(|(_, row)| {
-                row.workarea_id == workarea_id && row.state == TransitionState::Pending
+                row.workspace_id == workspace_id && row.state == TransitionState::Pending
             })
             .collect();
         pending.sort_by_key(|(seq, _)| *seq);
@@ -4126,7 +4128,7 @@ impl JournalStore for MemStore {
         let state = tenant.lock().expect("tenant lock");
         Ok(state
             .idempotency
-            .get(&(scope.key_id, scope.workarea_id, scope.idem_key.clone()))
+            .get(&(scope.key_id, scope.workspace_id, scope.idem_key.clone()))
             .cloned())
     }
 
@@ -4138,7 +4140,7 @@ impl JournalStore for MemStore {
     ) -> Result<IdempotencyClaim, StoreError> {
         let state = self.tenant(scope.tenant_id);
         let mut state = state.lock().expect("tenant lock");
-        let key = (scope.key_id, scope.workarea_id, scope.idem_key.clone());
+        let key = (scope.key_id, scope.workspace_id, scope.idem_key.clone());
         if let Some(record) = state.idempotency.get(&key) {
             return Ok(IdempotencyClaim::Recorded(record.clone()));
         }
@@ -4165,7 +4167,7 @@ impl JournalStore for MemStore {
         }
         let state = self.tenant(put.scope.tenant_id);
         let mut state = state.lock().expect("tenant lock");
-        let key = (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key);
+        let key = (put.scope.key_id, put.scope.workspace_id, put.scope.idem_key);
         if state.idempotency_claims.get(&key)
             != Some(&(put.record.request_digest.clone(), claim_id))
         {
@@ -4183,7 +4185,7 @@ impl JournalStore for MemStore {
     ) -> Result<(), StoreError> {
         let state = self.tenant(scope.tenant_id);
         let mut state = state.lock().expect("tenant lock");
-        let key = (scope.key_id, scope.workarea_id, scope.idem_key.clone());
+        let key = (scope.key_id, scope.workspace_id, scope.idem_key.clone());
         if state
             .idempotency_claims
             .get(&key)
@@ -4209,7 +4211,7 @@ impl JournalStore for MemStore {
     async fn brief_edges(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
     ) -> Result<Vec<BriefEdgeRecord>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Vec::new());
@@ -4218,7 +4220,7 @@ impl JournalStore for MemStore {
         let mut edges: Vec<BriefEdgeRecord> = state
             .brief_edges
             .values()
-            .filter(|e| e.workarea_id == workarea_id)
+            .filter(|e| e.workspace_id == workspace_id)
             .cloned()
             .collect();
         edges.sort_by_key(|e| std::cmp::Reverse((e.created_at.as_str().to_owned(), e.edge_id)));
@@ -4248,10 +4250,10 @@ impl JournalStore for MemStore {
             return Ok(Vec::new());
         };
         let state = tenant.lock().expect("tenant lock");
-        let node_of = |id: Uuid| state.memories.get(&id).map(|m| m.workarea_id);
+        let node_of = |id: Uuid| state.memories.get(&id).map(|m| m.workspace_id);
         let in_scope = |id: Uuid| {
             state.memories.get(&id).is_some_and(|m| {
-                selection.readable_nodes.contains(&m.workarea_id)
+                selection.readable_nodes.contains(&m.workspace_id)
                     && (m.status == MemoryStatus::Promoted
                         || m.author_key_id == selection.reader_key_id
                         || (m.status == MemoryStatus::Held
@@ -4259,7 +4261,7 @@ impl JournalStore for MemStore {
                             && m.scan_finding.is_none()
                             && m.scanned_under == selection.current_scanner
                             && HIT_KINDS.contains(&m.kind)
-                            && selection.held_nodes.contains(&m.workarea_id)))
+                            && selection.held_nodes.contains(&m.workspace_id)))
             })
         };
         let position = |e: &ClaimEdgeRecord| (e.created_at.as_str().to_owned(), e.edge_id);
@@ -4485,8 +4487,8 @@ impl WebStore for MemStore {
             .values()
             .filter(|m| m.status == MemoryStatus::Held)
         {
-            let depth = depths.entry(m.workarea_id).or_insert_with(|| QueueDepth {
-                workarea_id: m.workarea_id,
+            let depth = depths.entry(m.workspace_id).or_insert_with(|| QueueDepth {
+                workspace_id: m.workspace_id,
                 held: 0,
                 oldest: m.created_at.clone(),
             });
@@ -4516,7 +4518,7 @@ impl WebStore for MemStore {
                 search
                     .nodes
                     .as_ref()
-                    .is_none_or(|n| n.contains(&m.workarea_id))
+                    .is_none_or(|n| n.contains(&m.workspace_id))
             })
             .filter(|m| search.state.is_none_or(|s| AdminState::of(m) == s))
             .filter(|m| {
@@ -5435,7 +5437,7 @@ impl Default for MarkerScanner {
     fn default() -> Self {
         Self {
             veto_marker: "-----BEGIN".to_owned(),
-            hold_marker: "[needs-human]".to_owned(),
+            hold_marker: "[needs-person]".to_owned(),
         }
     }
 }

@@ -5,13 +5,13 @@
 //! (errors.md "Implementation mapping").
 //!
 //! The PoC slice: submit / list / get / recall / supersede on `/v1`; review next,
-//! verdicts, key issuance, the key read, global per-key denials, workarea
-//! creation, the workarea read, a workarea's crew, the crew records, the
+//! verdicts, key issuance, the key read, global per-key denials, workspace
+//! creation, the workspace read, a workspace's crew, the crew records, the
 //! events tail and the bootstrap claim on `/v2`; `/healthz` and `/readyz`
 //! unversioned and unauthenticated (http-api.md "Health"); `/mcp`, the agent
 //! plugin's stateless facade over those rings ([`mcp`]).
 //!
-//! Every value that names a workarea, crew or key — a header, a path or
+//! Every value that names a workspace, crew or key — a header, a path or
 //! query parameter, a body field — is classified here, at parse, as an id or
 //! a name, and refused when it is neither; the app resolves a name after the
 //! verb ceiling (http-api.md "Names and ids"; ADR-0026 d3, d4).
@@ -56,13 +56,13 @@ use oml_app::domain::access::Covers;
 use oml_app::domain::anchor::{self as anchor_grammar, Anchor, CheckResult};
 use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
 use oml_app::domain::guardrail::{GuardrailScope, Severity};
-use oml_app::domain::in_progress::{KeyProfile, WorkareaMode};
+use oml_app::domain::in_progress::{KeyProfile, WorkspaceMode};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::oauth::ConnectionState;
 use oml_app::domain::origin::{self as origin_grammar, OriginKind};
 use oml_app::domain::valid_time::{ValidEnd, fixed_width};
-use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, WorkareaStatus, nfc};
+use oml_app::domain::{MemoryKind, MemoryStatus, Role, UsedBy, WorkspaceStatus, nfc};
 use oml_app::ports::{
     ClientDocumentFetcher, Clock, ConnectionStore, HandleSealer, IdGen, JournalStore, Scanner,
     Signer, StoreError, WebStore,
@@ -75,7 +75,7 @@ use oml_app::types::{
     IssuedKey, KeyDetail, KeyLimitsChange, ListRequest, MemoryRecord, NamedServe, OnSimilar,
     ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory, SimilarItem, SourceCheck,
     SourceCheckRequest, SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict,
-    VerdictRequest, Whoami, WorkareaInfo, WorkareaRecord,
+    VerdictRequest, Whoami, WorkspaceInfo, WorkspaceRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage,
@@ -122,17 +122,17 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v2/crews"),
     ("GET", "/v2/crews/{crew}"),
     ("POST", "/v2/crews/{crew}/update"),
-    ("POST", "/v2/workareas"),
-    ("GET", "/v2/workareas/{workarea}"),
-    ("GET", "/v2/workareas/{workarea}/tree"),
-    ("GET", "/v2/workareas/{workarea}/offers"),
-    ("POST", "/v2/workareas/{workarea}/crew"),
-    ("POST", "/v2/workareas/{workarea}/mode"),
-    ("POST", "/v2/workareas/{workarea}/federation"),
-    ("POST", "/v2/workareas/{workarea}/transitions"),
+    ("POST", "/v2/workspaces"),
+    ("GET", "/v2/workspaces/{workspace}"),
+    ("GET", "/v2/workspaces/{workspace}/tree"),
+    ("GET", "/v2/workspaces/{workspace}/offers"),
+    ("POST", "/v2/workspaces/{workspace}/crew"),
+    ("POST", "/v2/workspaces/{workspace}/mode"),
+    ("POST", "/v2/workspaces/{workspace}/federation"),
+    ("POST", "/v2/workspaces/{workspace}/transitions"),
     (
         "POST",
-        "/v2/workareas/{workarea}/transitions/{transition_id}/ratify",
+        "/v2/workspaces/{workspace}/transitions/{transition_id}/ratify",
     ),
     ("GET", "/v2/edges"),
     ("POST", "/v2/edges"),
@@ -249,6 +249,8 @@ pub struct ApiState<J, S, C, I, Sc> {
     db_ping: DbPing,
     fork_check_ok: Arc<AtomicBool>,
     names_assigned: bool,
+    /// Why the startup former-names check failed, or `None` (ADR-0091 d4).
+    former_names: Option<Arc<String>>,
     enrollment: Arc<Mutex<Option<String>>>,
     build: Arc<BuildInfo>,
     /// The authorization request's sealer: one key per process, held in
@@ -273,6 +275,7 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
             db_ping: Arc::clone(&self.db_ping),
             fork_check_ok: Arc::clone(&self.fork_check_ok),
             names_assigned: self.names_assigned,
+            former_names: self.former_names.clone(),
             enrollment: Arc::clone(&self.enrollment),
             build: Arc::clone(&self.build),
             sealer: Arc::clone(&self.sealer),
@@ -365,15 +368,17 @@ where
             ("GET", "/v2/crews") => get(Self::list_crews),
             ("GET", "/v2/crews/{crew}") => get(Self::get_crew),
             ("POST", "/v2/crews/{crew}/update") => post(Self::update_crew),
-            ("POST", "/v2/workareas") => post(Self::create_workarea),
-            ("GET", "/v2/workareas/{workarea}") => get(Self::get_workarea),
-            ("GET", "/v2/workareas/{workarea}/tree") => get(Self::workarea_tree),
-            ("GET", "/v2/workareas/{workarea}/offers") => get(Self::workarea_offers),
-            ("POST", "/v2/workareas/{workarea}/crew") => post(Self::set_workarea_crew),
-            ("POST", "/v2/workareas/{workarea}/mode") => post(Self::set_workarea_mode),
-            ("POST", "/v2/workareas/{workarea}/federation") => post(Self::set_workarea_federation),
-            ("POST", "/v2/workareas/{workarea}/transitions") => post(Self::propose_transition),
-            ("POST", "/v2/workareas/{workarea}/transitions/{transition_id}/ratify") => {
+            ("POST", "/v2/workspaces") => post(Self::create_workspace),
+            ("GET", "/v2/workspaces/{workspace}") => get(Self::get_workspace),
+            ("GET", "/v2/workspaces/{workspace}/tree") => get(Self::workspace_tree),
+            ("GET", "/v2/workspaces/{workspace}/offers") => get(Self::workspace_offers),
+            ("POST", "/v2/workspaces/{workspace}/crew") => post(Self::set_workspace_crew),
+            ("POST", "/v2/workspaces/{workspace}/mode") => post(Self::set_workspace_mode),
+            ("POST", "/v2/workspaces/{workspace}/federation") => {
+                post(Self::set_workspace_federation)
+            }
+            ("POST", "/v2/workspaces/{workspace}/transitions") => post(Self::propose_transition),
+            ("POST", "/v2/workspaces/{workspace}/transitions/{transition_id}/ratify") => {
                 post(Self::ratify_transition)
             }
             ("GET", "/v2/edges") => get(Self::list_edges),
@@ -441,6 +446,7 @@ where
             db_ping,
             fork_check_ok: Arc::new(AtomicBool::new(fork_check_ok)),
             names_assigned: true,
+            former_names: None,
             enrollment: Arc::new(Mutex::new(enrollment_token)),
             build: Arc::new(BuildInfo::unknown()),
             sealer: Arc::new(oauth::seal::AeadSealer::generate()),
@@ -494,6 +500,16 @@ where
         self
     }
 
+    /// The startup former-names check's failure, `None` when every stored
+    /// event reads in the current names: `/readyz` then reports
+    /// `former_names` not ready and names `journal_unmapped_former_name`
+    /// (ADR-0091 d4).
+    #[must_use]
+    pub fn with_former_names(mut self, failure: Option<String>) -> Self {
+        self.former_names = failure.map(Arc::new);
+        self
+    }
+
     /// The composition's startup names check. `false` means the lead's
     /// start, which names every row that predates names before it serves
     /// (ADR-0026 d11; http-api.md "Rows created before names"), left a row
@@ -522,13 +538,17 @@ where
     async fn readyz(State(st): State<Self>, rid: Rid) -> Response {
         let postgres_ok = (st.db_ping)().await;
         let fork_ok = st.fork_check_ok.load(Ordering::SeqCst);
-        let ready = postgres_ok && fork_ok && st.names_assigned;
+        let ready = postgres_ok && fork_ok && st.names_assigned && st.former_names.is_none();
         let body = json!({
             "status": if ready { "ok" } else { "unavailable" },
             "checks": {
                 "postgres": if postgres_ok { "ok" } else { "unreachable" },
                 "fork_check": if fork_ok { "ok" } else { "failed" },
                 "names_assigned": if st.names_assigned { "ok" } else { "unassigned" },
+                // Doctor's journal_unmapped_former_name line reads it; what
+                // the check found is the lead's start log's, never this
+                // answer's, which answers anyone (ADR-0091 d4).
+                "former_names": if st.former_names.is_none() { "ok" } else { "unmapped" },
             },
             // Ready or not, the probe names the build it belongs to.
             "build": st.build.to_json(),
@@ -607,7 +627,7 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, connection)?;
-        refuse_workarea_header(headers, "/workarea")?;
+        refuse_workarea_header(headers, "/workspace")?;
         let idem_key = idempotency_key(headers)?;
         let req: SubmitBody = parse_json(headers, body)?;
         // kind defaults to memory, and an omitted verb is the app's to
@@ -641,7 +661,7 @@ where
         }
         refuse_attachments(&req.attachments)?;
         refuse_simulation(req.simulation_id.as_ref())?;
-        let workarea = optional_reference("/workarea", req.workarea.as_deref())?;
+        let workspace = optional_reference("/workspace", req.workspace.as_deref())?;
 
         let app_req = SubmitRequest {
             on_similar: parse_on_similar(req.on_similar.as_deref())?,
@@ -650,7 +670,7 @@ where
             verb,
             kind,
             body: text,
-            workarea,
+            workspace,
             derives_from: req.derives_from,
             severity: parse_severity(req.severity.as_deref())?,
             rule: req.rule,
@@ -676,7 +696,7 @@ where
                 "state": r.state,
                 "plaintext_digest": r.body_digest,
                 "journal_seq": r.journal_seq,
-                "workarea_id": r.workarea_id,
+                "workspace_id": r.workspace_id,
                 "retirement": false,
                 "replaces": Value::Null,
                 "similar": similar_json(&r.similar),
@@ -710,7 +730,7 @@ where
 
     /// `GET /v1/memories`: the own-work listing with `own=true`, else the
     /// scoped listing, as memory summaries without text, newest first
-    /// (http-api.md search; ADR-0025 d13). The query's `workarea` is the
+    /// (http-api.md search; ADR-0025 d13). The query's `workspace` is the
     /// subtree either reads (ADR-0039 d4, d7). The `include_text` argument
     /// is the agent plugin's: `oml_read`'s listing mode returns each item
     /// with its text, as every `oml_read` mode does, from the same rows
@@ -726,7 +746,7 @@ where
         connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, connection)?;
-        refuse_workarea_header(headers, "workarea")?;
+        refuse_workarea_header(headers, "workspace")?;
         if params
             .iter()
             .any(|(n, v)| (n == "with_own" && v == "true") || n == "author")
@@ -756,7 +776,7 @@ where
     }
 
     /// `GET /v1/memories` with `with_own=true` or `author`: the scoped
-    /// listing at `universe` (or at `workarea`) and the caller's own rows,
+    /// listing at `universe` (or at `workspace`) and the caller's own rows,
     /// every key naming its user's for a person's web session key, merged
     /// newest first under one cursor, a row in both once; `author`, one of
     /// those keys by name, drops the scoped part, and a key that is not the
@@ -795,7 +815,7 @@ where
                             .with_details(json!({ "field": "author" }))
                     })?);
                 }
-                "workarea" => req.workarea = Some(reference("workarea", value)?),
+                "workspace" => req.workspace = Some(reference("workspace", value)?),
                 "state" => {
                     req.state =
                         Some(oml_app::types::AdminState::parse(value).ok_or_else(|| {
@@ -868,7 +888,7 @@ where
     }
 
     /// `GET /v1/memories/{artifact_id}` (http-api.md get). Get resolves no
-    /// workarea, so an `X-OML-Workarea` sent with it is refused, not
+    /// workspace, so an `X-OML-Workarea` sent with it is refused, not
     /// ignored, and names no successor (ADR-0025 d13, ADR-0039 d7).
     /// A read's `feedback` member, checked and queued (ADR-0054 d6); the
     /// read it rides on runs only when this answers.
@@ -897,7 +917,7 @@ where
         let acting = acting(headers, connection)?;
         if headers.contains_key(WORKAREA_HEADER) {
             return Err(ApiError::validation(
-                "X-OML-Workarea is refused on get: get resolves no workarea",
+                "X-OML-Workarea is refused on get: get resolves no workspace",
             )
             .with_details(json!({ "field": "X-OML-Workarea" })));
         }
@@ -923,7 +943,7 @@ where
     ) -> Result<Response, ApiError> {
         // Read-shaped POST: no Idempotency-Key (http-api.md idempotency).
         let acting = acting(headers, connection)?;
-        refuse_workarea_header(headers, "/workarea")?;
+        refuse_workarea_header(headers, "/workspace")?;
         // The body is closed: a field the server does not serve is refused,
         // never dropped (ADR-0025 d16), and a v0.3.0 spelling names its
         // successor (ADR-0039 d7).
@@ -976,7 +996,7 @@ where
                 .with_details(json!({ "field": "/match" })));
             }
         };
-        let workarea = optional_reference("/workarea", req.workarea.as_deref())?;
+        let workspace = optional_reference("/workspace", req.workspace.as_deref())?;
         let sources = parse_sources(req.sources.as_ref())?;
         // Feedback on the key's last recall rides this one: refused by its
         // field before the recall runs, never changing what it answers
@@ -992,7 +1012,7 @@ where
                     timings: req.timings.unwrap_or(false),
                     query: req.query.clone(),
                     k,
-                    workarea,
+                    workspace,
                     kinds,
                     include_text,
                     // Absent, the scope decides: true inside an in-progress
@@ -1048,7 +1068,7 @@ where
                         "expanded": hit.tokens.iter().filter(|t| t.expanded).map(|t| t.token.as_str()).collect::<Vec<_>>(),
                     },
                 });
-                // A federated answer's hit says whether its workarea is the
+                // A federated answer's hit says whether its workspace is the
                 // scope's or another team's (ADR-0072 d8).
                 if let (Some(via), Some(obj)) = (hit.source, value.as_object_mut()) {
                     obj.insert("via".to_owned(), Value::from(via.as_str()));
@@ -1134,9 +1154,9 @@ where
     }
 
     /// `GET /v1/guardrails`: the applicable guardrail set at the scope node,
-    /// the query's `workarea` or the key's default, under the key's reader
+    /// the query's `workspace` or the key's default, under the key's reader
     /// access and the `guardrail_scope` its issuance set (proposed ADR-0037
-    /// d4, d5, d7). The query takes `workarea` alone: a scope, or any other
+    /// d4, d5, d7). The query takes `workspace` alone: a scope, or any other
     /// parameter, is refused naming it, so nothing the client sends changes
     /// the scope (d4, "never on the client").
     async fn guardrails(
@@ -1161,19 +1181,21 @@ where
         connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, connection)?;
-        refuse_workarea_header(headers, "workarea")?;
-        let mut workarea = None;
+        refuse_workarea_header(headers, "workspace")?;
+        let mut workspace = None;
         for (name, value) in params {
             match name.as_str() {
-                "workarea" if workarea.is_none() => workarea = Some(reference("workarea", value)?),
-                "workarea" => {
+                "workspace" if workspace.is_none() => {
+                    workspace = Some(reference("workspace", value)?)
+                }
+                "workspace" => {
                     return Err(ApiError::validation(
-                        "the query parameter workarea is given more than once",
+                        "the query parameter workspace is given more than once",
                     ));
                 }
                 other => {
                     return Err(ApiError::validation(format!(
-                        "{other} is not a parameter of this read: it takes workarea alone, and the guardrail scope is the key's, set at issuance"
+                        "{other} is not a parameter of this read: it takes workspace alone, and the guardrail scope is the key's, set at issuance"
                     ))
                     .with_details(json!({ "field": other })));
                 }
@@ -1181,7 +1203,7 @@ where
         }
         let set = st
             .app
-            .guardrails(acting.bearer(), &GuardrailRequest { workarea })
+            .guardrails(acting.bearer(), &GuardrailRequest { workspace })
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::OK, &guardrail_set_json(&set)))
@@ -1291,7 +1313,7 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, connection)?;
-        refuse_workarea_header(headers, "/workarea")?;
+        refuse_workarea_header(headers, "/workspace")?;
         let idem_key = idempotency_key(headers)?;
         let target_id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
         let req: SupersedeBody = parse_json(headers, body)?;
@@ -1325,7 +1347,7 @@ where
             retirement: req.retirement,
             derives_from: req.derives_from,
             reason: req.reason,
-            workarea: optional_reference("/workarea", req.workarea.as_deref())?,
+            workspace: optional_reference("/workspace", req.workspace.as_deref())?,
             refuse_vocabulary_target,
             severity: parse_severity(req.severity.as_deref())?,
             rule: req.rule,
@@ -1350,7 +1372,7 @@ where
                 "claim_key": r.claim_key,
                 "version": r.version,
                 "state": r.state,
-                "workarea_id": r.workarea_id,
+                "workspace_id": r.workspace_id,
                 "retirement": r.retirement,
                 "replaces": {
                     "artifact_id": r.replaces.artifact_id,
@@ -1388,16 +1410,16 @@ where
         let _idem = idempotency_key(headers)?;
         if !body.is_empty() {
             // The subtree filter is not built: the PoC serves the whole
-            // tenant queue, so a `workarea` is refused by name, never
+            // tenant queue, so a `workspace` is refused by name, never
             // ignored, however it is spelled (errors.md `request.validation`;
             // ADR-0026 d4).
             let filter: ReviewNextBody = parse_json(headers, body)?;
-            if filter.workarea.is_some() {
+            if filter.workspace.is_some() {
                 return Err(ApiError::validation(
-                    "workarea on POST /v2/review/next is not built: the queue is served whole, \
+                    "workspace on POST /v2/review/next is not built: the queue is served whole, \
                      so the filter is refused, never ignored",
                 )
-                .with_details(json!({ "field": "/workarea" })));
+                .with_details(json!({ "field": "/workspace" })));
             }
         }
         let served = st
@@ -1565,7 +1587,7 @@ where
                 )));
             }
             match name.as_str() {
-                "workarea" => req.workarea = Some(reference("workarea", value)?),
+                "workspace" => req.workspace = Some(reference("workspace", value)?),
                 "author_key" => req.author_key = Some(reference("author_key", value)?),
                 "claim_key_prefix" => req.claim_key_prefix = Some(value.clone()),
                 "limit" => req.limit = page_limit(value)?,
@@ -1722,18 +1744,18 @@ where
             ));
         }
         let role = parse_role(&req.role)?;
-        let held_by = match req.held_by.as_deref() {
+        let used_by = match req.used_by.as_deref() {
             None => None,
-            Some("agent") => Some(HeldBy::Agent),
-            Some("human") => Some(HeldBy::Human),
-            Some("service") => Some(HeldBy::Service),
+            Some("agent") => Some(UsedBy::Agent),
+            Some("person") => Some(UsedBy::Person),
+            Some("service") => Some(UsedBy::Service),
             Some(other) => {
                 return Err(ApiError::validation(format!(
-                    "held_by must be agent, human or service, not {other:?}"
+                    "used_by must be agent, person or service, not {other:?}"
                 )));
             }
         };
-        // Every workarea and crew reference is an id or a name, each
+        // Every workspace and crew reference is an id or a name, each
         // refusal naming its JSON Pointer (errors.md; ADR-0026 d3).
         let grants = req
             .grants
@@ -1741,7 +1763,7 @@ where
             .enumerate()
             .map(|(i, g)| {
                 Ok(GrantRequest {
-                    node: reference(&format!("/grants/{i}/workarea"), &g.workarea)?,
+                    node: reference(&format!("/grants/{i}/workspace"), &g.workspace)?,
                     role: parse_grant_role(&g.role)?,
                     covers: parse_covers(i, g.covers.as_deref())?,
                     deny: g
@@ -1749,14 +1771,14 @@ where
                         .iter()
                         .enumerate()
                         .map(|(j, d)| {
-                            reference(&format!("/grants/{i}/deny/{j}/workarea"), &d.workarea)
+                            reference(&format!("/grants/{i}/deny/{j}/workspace"), &d.workspace)
                         })
                         .collect::<Result<_, _>>()?,
                 })
             })
             .collect::<Result<Vec<_>, ApiError>>()?;
-        let default_workarea =
-            optional_reference("/default_workarea", req.default_workarea.as_deref())?;
+        let default_workspace =
+            optional_reference("/default_workspace", req.default_workspace.as_deref())?;
         let crew = optional_reference("/crew", req.crew.as_deref())?;
         // A user's name, under the creation grammar (ADR-0044 d2).
         let user = req
@@ -1773,8 +1795,8 @@ where
             role,
             name,
             principal,
-            held_by,
-            default_workarea,
+            used_by,
+            default_workspace,
             crew,
             grants,
             connect_code: req.connect_code,
@@ -1845,9 +1867,9 @@ where
         let idem = idempotency_key(headers)?;
         let key = reference("key", key_id)?;
         let req: DenialBody = parse_json_renamed(headers, body, |body| {
-            refuse_renamed(body, "", &[("workarea_node_id", "workarea")])
+            refuse_renamed(body, "", &[("workarea_node_id", "workspace")])
         })?;
-        let node = reference("/workarea", &req.workarea)?;
+        let node = reference("/workspace", &req.workspace)?;
         // A session key cuts off one key on universe, as the pages do
         // (ADR-0070 d5; ADR-0045 d9, d13).
         if let Some(caller) = session::session_caller() {
@@ -1912,7 +1934,7 @@ where
         ))
     }
 
-    async fn create_workarea(
+    async fn create_workspace(
         State(st): State<Self>,
         rid: Rid,
         headers: HeaderMap,
@@ -1920,11 +1942,11 @@ where
     ) -> Response {
         finish(
             &rid,
-            Self::create_workarea_inner(&st, &headers, &body).await,
+            Self::create_workspace_inner(&st, &headers, &body).await,
         )
     }
 
-    async fn create_workarea_inner(
+    async fn create_workspace_inner(
         st: &Self,
         headers: &HeaderMap,
         body: &Bytes,
@@ -1932,7 +1954,7 @@ where
         st.require_writes_open()?;
         acting(headers, None)?;
         let idem = idempotency_key(headers)?;
-        let req: WorkareaCreateBody = parse_json_renamed(headers, body, |body| {
+        let req: WorkspaceCreateBody = parse_json_renamed(headers, body, |body| {
             refuse_renamed(body, "", &[("parent_id", "parent")])
         })?;
         // A resubmission under the same key answers the recorded creation
@@ -1942,13 +1964,16 @@ where
         let caller = Arc::new(st.console_caller(headers).await?);
         let acting: Acting<'static> = Acting::Session(caller.clone());
         let digest = console::act_digest("", body);
-        let claim = match st.claim(&caller, "workarea.create", &idem, &digest).await? {
+        let claim = match st
+            .claim(&caller, "workspace.create", &idem, &digest)
+            .await?
+        {
             console::Claimed::Replayed(replayed) => return Ok(replayed),
             console::Claimed::Act(claim) => claim,
         };
         if req.prefix.is_some() {
             return Err(ApiError::validation(
-                "prefix (vocabulary workareas, ADR-0021) is outside the PoC slice",
+                "prefix (vocabulary workspaces, ADR-0021) is outside the PoC slice",
             ));
         }
         let parent = optional_reference("/parent", req.parent.as_deref())?;
@@ -1960,15 +1985,15 @@ where
             .run(async move {
                 let created = retry_chain(|| {
                     st.app
-                        .create_workarea(acting.bearer(), &name, parent.clone(), crew.clone())
+                        .create_workspace(acting.bearer(), &name, parent.clone(), crew.clone())
                 })
                 .await
                 .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
                 // The path derived from the parent names and the crew record
-                // as stored, as the workarea read serves them (ADR-0025 d14;
+                // as stored, as the workspace read serves them (ADR-0025 d14;
                 // ADR-0026 d8).
                 let mut response =
-                    workarea_json(&created.workarea, &created.path, created.crew.as_ref());
+                    workspace_json(&created.workspace, &created.path, created.crew.as_ref());
                 if let Some(obj) = response.as_object_mut() {
                     obj.insert("created_at".to_owned(), json!(system_event_time().as_str()));
                 }
@@ -1977,68 +2002,68 @@ where
             .await
     }
 
-    async fn get_workarea(
+    async fn get_workspace(
         State(st): State<Self>,
         rid: Rid,
-        Path(workarea_id): Path<String>,
+        Path(workspace_id): Path<String>,
         headers: HeaderMap,
     ) -> Response {
         finish(
             &rid,
-            Self::get_workarea_inner(&st, Some(&workarea_id), &headers, None).await,
+            Self::get_workspace_inner(&st, Some(&workspace_id), &headers, None).await,
         )
     }
 
-    /// `GET /v2/workareas/{workarea}`: the node and the calling key's
+    /// `GET /v2/workspaces/{workspace}`: the node and the calling key's
     /// view of it in one call, at reader effective access, or for an admin
     /// key its structure by its key role, and otherwise `access.not_found`
-    /// (http-api.md workareas; ADR-0025 d14; ADR-0026 d15). `None` is
-    /// the MCP facade's omitted workarea: the key's default, which the app
+    /// (http-api.md workspaces; ADR-0025 d14; ADR-0026 d15). `None` is
+    /// the MCP facade's omitted workspace: the key's default, which the app
     /// resolves after step 1 of the refusal order (mcp-plugin.md
-    /// `oml_workarea`).
-    async fn get_workarea_inner(
+    /// `oml_workspace`).
+    async fn get_workspace_inner(
         st: &Self,
-        workarea_id: Option<&str>,
+        workspace_id: Option<&str>,
         headers: &HeaderMap,
         connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, connection)?;
-        let node = optional_reference("workarea", workarea_id)?;
+        let node = optional_reference("workspace", workspace_id)?;
         let info = st
             .app
-            .workarea_info(acting.bearer(), node)
+            .workspace_info(acting.bearer(), node)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(StatusCode::OK, &workarea_view_json(&info)))
+        Ok(json_response(StatusCode::OK, &workspace_view_json(&info)))
     }
 
     async fn propose_transition(
         State(st): State<Self>,
         rid: Rid,
-        Path(workarea): Path<String>,
+        Path(workspace): Path<String>,
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
         finish(
             &rid,
-            Self::propose_transition_inner(&st, &workarea, &headers, &body).await,
+            Self::propose_transition_inner(&st, &workspace, &headers, &body).await,
         )
     }
 
-    /// `POST /v2/workareas/{workarea}/transitions`: a forward step proposed,
+    /// `POST /v2/workspaces/{workspace}/transitions`: a forward step proposed,
     /// `202` and pending until a second identity ratifies it; `to` is
-    /// `committed` or `validated`, anything else `request.validation`
-    /// naming `/to` (http-api.md workareas; ADR-0009 d3; ADR-0046 d3).
+    /// `protected` or `frozen`, anything else `request.validation`
+    /// naming `/to` (http-api.md workspaces; ADR-0009 d3; ADR-0046 d3).
     async fn propose_transition_inner(
         st: &Self,
-        workarea: &str,
+        workspace: &str,
         headers: &HeaderMap,
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         acting(headers, None)?;
         let idem = idempotency_key(headers)?;
-        let node = reference("workarea", workarea)?;
+        let node = reference("workspace", workspace)?;
         let req: TransitionBody = parse_json(headers, body)?;
         // A resubmission under the same key answers the recorded proposal
         // and proposes nothing again (ADR-0070 d3 layer 4).
@@ -2046,20 +2071,20 @@ where
         // request costs one of its key's rate, not two (#253).
         let caller = Arc::new(st.console_caller(headers).await?);
         let acting: Acting<'static> = Acting::Session(caller.clone());
-        let digest = console::act_digest(workarea, body);
+        let digest = console::act_digest(workspace, body);
         let claim = match st
-            .claim(&caller, "workarea.transition", &idem, &digest)
+            .claim(&caller, "workspace.transition", &idem, &digest)
             .await?
         {
             console::Claimed::Replayed(replayed) => return Ok(replayed),
             console::Claimed::Act(claim) => claim,
         };
         let to = match req.to.as_str() {
-            "committed" => WorkareaStatus::Committed,
-            "validated" => WorkareaStatus::Validated,
+            "protected" => WorkspaceStatus::Protected,
+            "frozen" => WorkspaceStatus::Frozen,
             other => {
                 return Err(ApiError::validation(format!(
-                    "to must be committed or validated, not {other:?}: the ladder moves forward only"
+                    "to must be protected or frozen, not {other:?}: the ladder moves forward only"
                 ))
                 .with_details(json!({ "field": "/to" })));
             }
@@ -2077,7 +2102,7 @@ where
                     StatusCode::ACCEPTED,
                     json!({
                         "transition_id": proposal.transition_id,
-                        "workarea_id": proposal.workarea_id,
+                        "workspace_id": proposal.workspace_id,
                         "from": proposal.from.as_str(),
                         "to": proposal.to.as_str(),
                         "state": proposal.state.as_str(),
@@ -2092,28 +2117,28 @@ where
     async fn ratify_transition(
         State(st): State<Self>,
         rid: Rid,
-        Path((workarea, transition_id)): Path<(String, String)>,
+        Path((workspace, transition_id)): Path<(String, String)>,
         headers: HeaderMap,
     ) -> Response {
         finish(
             &rid,
-            Self::ratify_transition_inner(&st, &workarea, &transition_id, &headers).await,
+            Self::ratify_transition_inner(&st, &workspace, &transition_id, &headers).await,
         )
     }
 
-    /// `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify`: a
-    /// second, non-proposing dreamer or admin ratifies, and the node takes
-    /// the proposal's `to` (http-api.md workareas; ADR-0009 d3).
+    /// `POST /v2/workspaces/{workspace}/transitions/{transition_id}/ratify`: a
+    /// second, non-proposing reviewer or admin ratifies, and the node takes
+    /// the proposal's `to` (http-api.md workspaces; ADR-0009 d3).
     async fn ratify_transition_inner(
         st: &Self,
-        workarea: &str,
+        workspace: &str,
         transition_id: &str,
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         acting(headers, None)?;
         let idem = idempotency_key(headers)?;
-        let node = reference("workarea", workarea)?;
+        let node = reference("workspace", workspace)?;
         let transition_id = Uuid::parse_str(transition_id).map_err(|_| {
             ApiError::validation(format!("transition_id {transition_id:?} is not an id"))
                 .with_details(json!({ "field": "transition_id" }))
@@ -2122,8 +2147,11 @@ where
         // request costs one of its key's rate, not two (#253).
         let caller = Arc::new(st.console_caller(headers).await?);
         let acting: Acting<'static> = Acting::Session(caller.clone());
-        let digest = console::act_digest(workarea, &Bytes::from(transition_id.to_string()));
-        let claim = match st.claim(&caller, "workarea.ratify", &idem, &digest).await? {
+        let digest = console::act_digest(workspace, &Bytes::from(transition_id.to_string()));
+        let claim = match st
+            .claim(&caller, "workspace.ratify", &idem, &digest)
+            .await?
+        {
             console::Claimed::Replayed(replayed) => return Ok(replayed),
             console::Claimed::Act(claim) => claim,
         };
@@ -2137,14 +2165,14 @@ where
                 .await
                 .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Review)))?;
                 let from = match ratified.status {
-                    WorkareaStatus::Validated => WorkareaStatus::Committed,
-                    _ => WorkareaStatus::Development,
+                    WorkspaceStatus::Frozen => WorkspaceStatus::Protected,
+                    _ => WorkspaceStatus::Development,
                 };
                 Ok(console::Acted::new(
                     StatusCode::OK,
                     json!({
                         "transition_id": transition_id,
-                        "workarea_id": ratified.workarea_id,
+                        "workspace_id": ratified.workspace_id,
                         "from": from.as_str(),
                         "to": ratified.status.as_str(),
                         "state": "ratified",
@@ -2172,10 +2200,10 @@ where
     }
 
     /// `GET /v2/edges?kind=…`: one page of one kind's edges, pending and
-    /// ratified, newest first. `kind=claim` takes `workarea_id` as a subtree
-    /// filter and `artifact_id`; `kind=brief` takes `workarea_id`, required,
-    /// the workarea whose brief edges are read (http-api.md edges; ADR-0046
-    /// d4, d7). `kind=workarea` is designed and refused.
+    /// ratified, newest first. `kind=claim` takes `workspace_id` as a subtree
+    /// filter and `artifact_id`; `kind=brief` takes `workspace_id`, required,
+    /// the workspace whose brief edges are read (http-api.md edges; ADR-0046
+    /// d4, d7). `kind=workspace` is designed and refused.
     async fn list_edges_inner(
         st: &Self,
         params: &[(String, String)],
@@ -2183,7 +2211,7 @@ where
     ) -> Result<Response, ApiError> {
         let token = bearer(headers)?;
         let mut seen = HashSet::new();
-        let (mut kind, mut workarea, mut artifact, mut cursor) = (None, None, None, None);
+        let (mut kind, mut workspace, mut artifact, mut cursor) = (None, None, None, None);
         let mut limit = PAGE_LIMIT_DEFAULT;
         for (name, value) in params {
             if !seen.insert(name.as_str()) {
@@ -2193,7 +2221,7 @@ where
             }
             match name.as_str() {
                 "kind" => kind = Some(value.as_str()),
-                "workarea_id" => workarea = Some(reference("workarea_id", value)?),
+                "workspace_id" => workspace = Some(reference("workspace_id", value)?),
                 "artifact_id" => {
                     artifact = Some(Uuid::parse_str(value).map_err(|_| {
                         ApiError::validation(format!("artifact_id {value:?} is not an id"))
@@ -2216,7 +2244,7 @@ where
                     .claim_edges(
                         &token,
                         ClaimEdgeQuery {
-                            workarea,
+                            workspace,
                             artifact_id: artifact,
                         },
                         cursor,
@@ -2232,17 +2260,17 @@ where
             Some("brief") => {
                 if artifact.is_some() {
                     return Err(ApiError::validation(
-                        "artifact_id narrows claim edges only; kind=brief reads one workarea",
+                        "artifact_id narrows claim edges only; kind=brief reads one workspace",
                     )
                     .with_details(json!({ "field": "artifact_id" })));
                 }
-                let workarea = workarea.ok_or_else(|| {
-                    ApiError::validation("kind=brief reads one workarea: workarea_id is required")
-                        .with_details(json!({ "field": "workarea_id" }))
+                let workspace = workspace.ok_or_else(|| {
+                    ApiError::validation("kind=brief reads one workspace: workspace_id is required")
+                        .with_details(json!({ "field": "workspace_id" }))
                 })?;
                 let page = st
                     .app
-                    .brief_edges(&token, workarea, cursor, limit)
+                    .brief_edges(&token, workspace, cursor, limit)
                     .await
                     .map_err(|e| map_app_error(e, ErrorContext::Write))?;
                 json!({
@@ -2265,7 +2293,7 @@ where
     }
 
     /// `POST /v2/edges`: `kind: claim` `{from_artifact_id, to_artifact_id,
-    /// label}` or `kind: brief` `{from_artifact_id, to_workarea_id}`, each
+    /// label}` or `kind: brief` `{from_artifact_id, to_workspace_id}`, each
     /// `202` and pending (http-api.md edges; ADR-0046 d4, d7).
     async fn propose_edge_inner(
         st: &Self,
@@ -2297,9 +2325,11 @@ where
                     ApiError::validation("label is required on a claim edge")
                         .with_details(json!({ "field": "/label" }))
                 })?;
-                if req.to_workarea_id.is_some() {
-                    return Err(ApiError::validation("to_workarea_id belongs to kind brief")
-                        .with_details(json!({ "field": "/to_workarea_id" })));
+                if req.to_workspace_id.is_some() {
+                    return Err(
+                        ApiError::validation("to_workspace_id belongs to kind brief")
+                            .with_details(json!({ "field": "/to_workspace_id" })),
+                    );
                 }
                 let request = ProposeClaimEdge {
                     from_artifact_id: from,
@@ -2315,19 +2345,19 @@ where
             "brief" => {
                 if req.to_artifact_id.is_some() || req.label.is_some() {
                     return Err(ApiError::validation(
-                        "a brief edge takes from_artifact_id and to_workarea_id alone; its label is brief",
+                        "a brief edge takes from_artifact_id and to_workspace_id alone; its label is brief",
                     )
                     .with_details(json!({
                         "field": if req.label.is_some() { "/label" } else { "/to_artifact_id" }
                     })));
                 }
-                let workarea = req.to_workarea_id.as_deref().ok_or_else(|| {
-                    ApiError::validation("to_workarea_id is required on a brief edge")
-                        .with_details(json!({ "field": "/to_workarea_id" }))
+                let workspace = req.to_workspace_id.as_deref().ok_or_else(|| {
+                    ApiError::validation("to_workspace_id is required on a brief edge")
+                        .with_details(json!({ "field": "/to_workspace_id" }))
                 })?;
                 let request = ProposeBriefEdge {
                     artifact_id: from,
-                    workarea: reference("/to_workarea_id", workarea)?,
+                    workspace: reference("/to_workspace_id", workspace)?,
                 };
                 let outcome =
                     retry_chain(|| st.app.propose_brief_edge(&token, &request, Some(&idem)))
@@ -2373,16 +2403,16 @@ where
         Ok(json_response(StatusCode::OK, &body))
     }
 
-    async fn workarea_tree(
+    async fn workspace_tree(
         State(st): State<Self>,
         rid: Rid,
-        Path(workarea_id): Path<String>,
+        Path(workspace_id): Path<String>,
         query: Result<Query<Vec<(String, String)>>, QueryRejection>,
         headers: HeaderMap,
     ) -> Response {
         let result = match query {
             Ok(Query(params)) => {
-                Self::workarea_tree_inner(&st, &workarea_id, &params, &headers).await
+                Self::workspace_tree_inner(&st, &workspace_id, &params, &headers).await
             }
             Err(e) => Err(ApiError::validation(format!(
                 "the query string is not this operation's shape: {e}"
@@ -2391,22 +2421,22 @@ where
         finish(&rid, result)
     }
 
-    /// `GET /v2/workareas/{workarea}/tree`: one page of the subtree at a
-    /// workarea, by id or name, in path order, each node with the `Workarea`
-    /// fields the workarea read serves, under a cursor bound to the key: at
+    /// `GET /v2/workspaces/{workspace}/tree`: one page of the subtree at a
+    /// workspace, by id or name, in path order, each node with the `Workspace`
+    /// fields the workspace read serves, under a cursor bound to the key: at
     /// reader effective access with every node outside it omitted, or for an
     /// admin key by its key role, structure only, and otherwise
-    /// `access.not_found` (http-api.md workareas and pagination; ADR-0026
+    /// `access.not_found` (http-api.md workspaces and pagination; ADR-0026
     /// d4, d15). Each query parameter at most once, and an unknown one
     /// refused rather than ignored.
-    async fn workarea_tree_inner(
+    async fn workspace_tree_inner(
         st: &Self,
-        workarea_id: &str,
+        workspace_id: &str,
         params: &[(String, String)],
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, None)?;
-        let node = reference("workarea", workarea_id)?;
+        let node = reference("workspace", workspace_id)?;
         // `offers=true` serves the scope's offers beside the counts, so the
         // Atlas reads both in one call (#286); only beside `counts=true`,
         // whose answer has one scope and no page after it.
@@ -2447,13 +2477,13 @@ where
         let (limit, cursor) = page_params(&params)?;
         let page = st
             .app
-            .workarea_tree(acting.bearer(), node, cursor, limit)
+            .workspace_tree(acting.bearer(), node, cursor, limit)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let items: Vec<Value> = page
             .items
             .iter()
-            .map(|n| workarea_json(&n.workarea, &n.path, n.crew.as_ref()))
+            .map(|n| workspace_json(&n.workspace, &n.path, n.crew.as_ref()))
             .collect();
         Ok(json_response(
             StatusCode::OK,
@@ -2461,14 +2491,14 @@ where
         ))
     }
 
-    /// `GET /v2/workareas/{workarea}/tree?counts=true`: the subtree, up to
+    /// `GET /v2/workspaces/{workspace}/tree?counts=true`: the subtree, up to
     /// `REGION_COUNT_MAX` nodes, each with its rows by state as the
     /// caller's merged listing would show them (`with_own`), counted up to
     /// `REGION_COUNT_MAX` rows, and `truncated` when either stopped there;
     /// for the admin key role every row is counted as structure, and no
     /// content is served (ADR-0045 d30; ADR-0070 d5).
     /// With `offers`, the scope's offers too, as `GET
-    /// /v2/workareas/{workarea}/offers` serves them to the caller the tree
+    /// /v2/workspaces/{workspace}/offers` serves them to the caller the tree
     /// resolved, read beside the counts: the offers operation's own reads
     /// and checks, under the request rate this request was charged once
     /// (#286).
@@ -2508,9 +2538,9 @@ where
             .regions
             .iter()
             .map(|r| {
-                let w = &r.workarea;
+                let w = &r.workspace;
                 json!({
-                    "id": w.workarea_id,
+                    "id": w.workspace_id,
                     "name": w.name.as_str(),
                     "parent_id": w.parent_id,
                     "path": r.path,
@@ -2548,9 +2578,11 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, None)?;
-        refuse_workarea_header(headers, "workarea")?;
+        refuse_workarea_header(headers, "workspace")?;
+        // v0.3.0's spelling keeps its refusal under its real name (ADR-0039
+        // d7; ADR-0091 implementation notes).
         if params.contains_key("workarea_id") {
-            return Err(ApiError::renamed("workarea_id", "workarea"));
+            return Err(ApiError::renamed("workarea_id", "workspace"));
         }
         let after_seq: u64 = match params.get("after_seq") {
             None => 0,
@@ -2568,10 +2600,11 @@ where
                     ApiError::validation(format!("limit must be between 1 and {PAGE_LIMIT_MAX}"))
                 })?,
         };
-        let workarea = optional_reference("workarea", params.get("workarea").map(String::as_str))?;
+        let workspace =
+            optional_reference("workspace", params.get("workspace").map(String::as_str))?;
         let page = st
             .app
-            .tail_events(acting.bearer(), workarea, after_seq, limit)
+            .tail_events(acting.bearer(), workspace, after_seq, limit)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         // head_seq for measuring lag, next_after_seq to resume from, both
@@ -2654,8 +2687,8 @@ where
                 if let Some(obj) = body.as_object_mut() {
                     obj.insert("tenant_id".to_owned(), json!(result.tenant_id));
                     obj.insert(
-                        "root_workarea_id".to_owned(),
-                        json!(result.root_workarea_id),
+                        "root_workspace_id".to_owned(),
+                        json!(result.root_workspace_id),
                     );
                 }
                 Ok(json_response(StatusCode::CREATED, &body))
@@ -2728,7 +2761,7 @@ where
     /// connector key, by id or name, shown once; its commit voids the key's
     /// earlier codes (http-api.md keys; ADR-0031 d7, d8). An optional body
     /// `{"ttl_seconds": n}` asks for a lifetime past the ten-minute default,
-    /// for a key confined to one workarea (ADR-0067 d3).
+    /// for a key confined to one workspace (ADR-0067 d3).
     async fn mint_connect_code_inner(
         st: &Self,
         key_id: &str,
@@ -3026,36 +3059,36 @@ where
         Ok(json_response(StatusCode::OK, &crew_json(&updated)))
     }
 
-    async fn set_workarea_mode(
+    async fn set_workspace_mode(
         State(st): State<Self>,
         rid: Rid,
-        Path(workarea_id): Path<String>,
+        Path(workspace_id): Path<String>,
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
         finish(
             &rid,
-            Self::set_workarea_mode_inner(&st, &workarea_id, &headers, &body).await,
+            Self::set_workspace_mode_inner(&st, &workspace_id, &headers, &body).await,
         )
     }
 
-    /// `POST /v2/workareas/{workarea}/mode`: a person's dreamer key sets the
-    /// workarea's mode, `in_progress` or `standard`; `standard` on an
+    /// `POST /v2/workspaces/{workspace}/mode`: a person's reviewer key sets the
+    /// workspace's mode, `in_progress` or `standard`; `standard` on an
     /// in-progress root is its commit, refused while anything in its subtree
-    /// is held; journalled `workarea.mode_set` (ADR-0030 d1, d6, d13). The
+    /// is held; journalled `workspace.mode_set` (ADR-0030 d1, d6, d13). The
     /// answer is the node as the key's read serves it.
-    async fn set_workarea_mode_inner(
+    async fn set_workspace_mode_inner(
         st: &Self,
-        workarea_id: &str,
+        workspace_id: &str,
         headers: &HeaderMap,
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         acting(headers, None)?;
         let idem = idempotency_key(headers)?;
-        let workarea = reference("workarea", workarea_id)?;
-        let req: WorkareaModeBody = parse_json(headers, body)?;
-        let mode = WorkareaMode::parse(&req.mode).ok_or_else(|| {
+        let workspace = reference("workspace", workspace_id)?;
+        let req: WorkspaceModeBody = parse_json(headers, body)?;
+        let mode = WorkspaceMode::parse(&req.mode).ok_or_else(|| {
             ApiError::validation(format!(
                 "mode must be in_progress or standard, not {:?}",
                 req.mode
@@ -3066,8 +3099,8 @@ where
         // request costs one of its key's rate, not two (#253).
         let caller = Arc::new(st.console_caller(headers).await?);
         let acting: Acting<'static> = Acting::Session(caller.clone());
-        let digest = console::act_digest(workarea_id, body);
-        let claim = match st.claim(&caller, "workarea.mode", &idem, &digest).await? {
+        let digest = console::act_digest(workspace_id, body);
+        let claim = match st.claim(&caller, "workspace.mode", &idem, &digest).await? {
             console::Claimed::Replayed(replayed) => return Ok(replayed),
             console::Claimed::Act(claim) => claim,
         };
@@ -3076,70 +3109,70 @@ where
             .run(async move {
                 let updated = retry_chain(|| {
                     st.app
-                        .set_workarea_mode(acting.bearer(), workarea.clone(), mode)
+                        .set_workspace_mode(acting.bearer(), workspace.clone(), mode)
                 })
                 .await
                 .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
                 let info = st
                     .app
-                    .workarea_info(acting.bearer(), Some(Reference::Id(updated.workarea_id)))
+                    .workspace_info(acting.bearer(), Some(Reference::Id(updated.workspace_id)))
                     .await
                     .map_err(|e| {
                         console::ActFailure::after(map_app_error(e, ErrorContext::Write))
                     })?;
                 Ok(console::Acted::new(
                     StatusCode::OK,
-                    workarea_view_json(&info),
+                    workspace_view_json(&info),
                 ))
             })
             .await
     }
 
-    async fn set_workarea_crew(
+    async fn set_workspace_crew(
         State(st): State<Self>,
         rid: Rid,
-        Path(workarea_id): Path<String>,
+        Path(workspace_id): Path<String>,
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
         finish(
             &rid,
-            Self::set_workarea_crew_inner(&st, &workarea_id, &headers, &body).await,
+            Self::set_workspace_crew_inner(&st, &workspace_id, &headers, &body).await,
         )
     }
 
-    /// `POST /v2/workareas/{workarea}/crew`: points the workarea at a
+    /// `POST /v2/workspaces/{workspace}/crew`: points the workspace at a
     /// crew record, each by id or name, admin by key role, journalled
-    /// `workarea.crew_updated`; a workarea the tenant does not hold is
-    /// absent, and so, checked after it, is a crew (http-api.md workareas;
+    /// `workspace.crew_updated`; a workspace the tenant does not hold is
+    /// absent, and so, checked after it, is a crew (http-api.md workspaces;
     /// ADR-0026 d8). The answer is the node as the admin key's structure read
     /// serves it once the update has committed (ADR-0026 d15).
-    async fn set_workarea_crew_inner(
+    async fn set_workspace_crew_inner(
         st: &Self,
-        workarea_id: &str,
+        workspace_id: &str,
         headers: &HeaderMap,
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let token = bearer(headers)?;
         let _idem = idempotency_key(headers)?;
-        let workarea = reference("workarea", workarea_id)?;
-        let req: WorkareaCrewBody = parse_json(headers, body)?;
+        let workspace = reference("workspace", workspace_id)?;
+        let req: WorkspaceCrewBody = parse_json(headers, body)?;
         let crew = reference("/crew", &req.crew)?;
         let updated = retry_chain(|| {
             st.app
-                .set_workarea_crew(&token, workarea.clone(), crew.clone())
+                .set_workspace_crew(&token, workspace.clone(), crew.clone())
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let info = st
             .app
-            .workarea_info(&token, Some(Reference::Id(updated.workarea_id)))
+            .workspace_info(&token, Some(Reference::Id(updated.workspace_id)))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::OK,
-            &workarea_json(&info.workarea, &info.path, info.crew.as_ref()),
+            &workspace_json(&info.workspace, &info.path, info.crew.as_ref()),
         ))
     }
 }
@@ -3181,7 +3214,7 @@ pub(crate) fn similar_json(similar: &[SimilarItem]) -> Value {
                     "claim_key": s.claim_key,
                     "version": s.version,
                     "kind": s.kind,
-                    "workarea_id": s.workarea_id,
+                    "workspace_id": s.workspace_id,
                     "state": s.state,
                     "relation": s.relation,
                     "jaccard": f64::from(s.jaccard_percent) / 100.0,
@@ -3205,10 +3238,10 @@ struct SubmitBody {
     #[serde(default)]
     kind: Option<String>,
     body: String,
-    /// The workarea written in, by id or name; omitted, the key's default
+    /// The workspace written in, by id or name; omitted, the key's default
     /// (ADR-0039 d4, d7).
     #[serde(default)]
-    workarea: Option<String>,
+    workspace: Option<String>,
     #[serde(default)]
     attachments: Vec<String>,
     #[serde(default)]
@@ -3257,8 +3290,8 @@ struct SubmitBody {
 struct RecallBody {
     query: String,
     /// The subtree recalled, by id or name; omitted, the key's default
-    /// workarea (ADR-0039 d4).
-    workarea: Option<String>,
+    /// workspace (ADR-0039 d4).
+    workspace: Option<String>,
     k: Option<usize>,
     kinds: Option<Vec<String>>,
     include_text: Option<bool>,
@@ -3289,7 +3322,7 @@ struct RecallBody {
     anchor_repo: Option<String>,
     anchor_path_prefix: Option<String>,
     origin_kinds: Option<Vec<String>>,
-    /// Where to search: `scope`, `wide` or a list of workareas (ADR-0072
+    /// Where to search: `scope`, `wide` or a list of workspaces (ADR-0072
     /// d5); parsed by [`parse_sources`].
     sources: Option<Value>,
     /// The transaction-time instant to read at (ADR-0059 d14).
@@ -3297,7 +3330,7 @@ struct RecallBody {
 }
 
 /// `sources` on recall (ADR-0072 d5): a string is a mode, `scope` or
-/// `wide`, and an array a fixed set of workarea names or ids; any other
+/// `wide`, and an array a fixed set of workspace names or ids; any other
 /// shape, and a non-string element, is `request.validation` at `/sources`.
 fn parse_sources(value: Option<&Value>) -> Result<Option<oml_app::federation::Sources>, ApiError> {
     use oml_app::federation::Sources;
@@ -3310,19 +3343,19 @@ fn parse_sources(value: Option<&Value>) -> Result<Option<oml_app::federation::So
             "scope" => Ok(Some(Sources::Scope)),
             "wide" => Ok(Some(Sources::Wide)),
             other => Err(refused(&format!(
-                "sources is scope, wide or a list of workareas, not {other:?}"
+                "sources is scope, wide or a list of workspaces, not {other:?}"
             ))),
         },
         Some(Value::Array(items)) => items
             .iter()
             .map(|item| {
                 item.as_str().map(str::to_owned).ok_or_else(|| {
-                    refused("every element of a sources list is a workarea name or id")
+                    refused("every element of a sources list is a workspace name or id")
                 })
             })
             .collect::<Result<Vec<_>, _>>()
             .map(|names| Some(Sources::List(names))),
-        Some(_) => Err(refused("sources is scope, wide or a list of workareas")),
+        Some(_) => Err(refused("sources is scope, wide or a list of workspaces")),
     }
 }
 
@@ -3333,8 +3366,8 @@ fn sources_json(report: &oml_app::federation::SourcesReport) -> Value {
         "mode": report.mode,
         "considered": report.considered,
         "searched": report.searched.iter().map(|s| json!({
-            "workarea_id": s.workarea_id,
-            "workarea_path": s.workarea_path,
+            "workspace_id": s.workspace_id,
+            "workspace_path": s.workspace_path,
             "via": s.via.as_str(),
             "estimate": s.estimate,
             "matched": { "words": s.matched_words },
@@ -3373,8 +3406,8 @@ struct SupersedeBody {
     /// The successor's own `origin` (ADR-0063 d2).
     #[serde(default)]
     origin: Option<Value>,
-    /// When sent, the target's workarea, by id or name (ADR-0039 d7).
-    workarea: Option<String>,
+    /// When sent, the target's workspace, by id or name (ADR-0039 d7).
+    workspace: Option<String>,
     #[serde(default)]
     retirement: bool,
     kind: Option<String>,
@@ -3427,7 +3460,7 @@ struct ReviewNextBody {
     /// The subtree filter, by id or name; parsed only to be refused while
     /// the filter is unbuilt. Any JSON value is the field's presence.
     #[serde(default)]
-    workarea: Option<Value>,
+    workspace: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -3444,7 +3477,7 @@ struct EdgeBody {
     kind: String,
     from_artifact_id: Option<String>,
     to_artifact_id: Option<String>,
-    to_workarea_id: Option<String>,
+    to_workspace_id: Option<String>,
     label: Option<String>,
 }
 
@@ -3552,18 +3585,18 @@ struct VerdictBody {
     reason: Option<String>,
 }
 
-/// A workarea or crew reference is a string, classified after the body
+/// A workspace or crew reference is a string, classified after the body
 /// parses so that a refusal names its JSON Pointer (errors.md; ADR-0026 d3).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DenyBody {
-    workarea: String,
+    workspace: String,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GrantBody {
-    workarea: String,
+    workspace: String,
     role: String,
     #[serde(default)]
     deny: Vec<DenyBody>,
@@ -3590,8 +3623,8 @@ struct KeyIssueBody {
     /// The key's own requests per minute (ADR-0079 d4).
     #[serde(default)]
     requests_per_minute: Option<u32>,
-    held_by: Option<String>,
-    default_workarea: Option<String>,
+    used_by: Option<String>,
+    default_workspace: Option<String>,
     /// The key's crew record, by id or name (ADR-0026 d8).
     crew: Option<String>,
     /// The person the key acts for, by the user's name; the first key
@@ -3667,7 +3700,7 @@ fn expiry_instant(sent: &str) -> Result<EventTime, ApiError> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DenialBody {
-    workarea: String,
+    workspace: String,
     #[serde(default)]
     #[allow(
         dead_code,
@@ -3676,11 +3709,11 @@ struct DenialBody {
     reason: Option<String>,
 }
 
-/// openapi.yaml `WorkareaCreate`, closed, so a v0.3.0 spelling is refused
+/// openapi.yaml `WorkspaceCreate`, closed, so a v0.3.0 spelling is refused
 /// naming its successor rather than dropped (ADR-0039 d7).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WorkareaCreateBody {
+struct WorkspaceCreateBody {
     /// Omitted, a user key's own root (ADR-0044 d6).
     #[serde(default)]
     parent: Option<String>,
@@ -3692,17 +3725,17 @@ struct WorkareaCreateBody {
     prefix: Option<String>,
 }
 
-/// openapi.yaml `WorkareaCrewUpdate`, closed.
+/// openapi.yaml `WorkspaceCrewUpdate`, closed.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WorkareaCrewBody {
+struct WorkspaceCrewBody {
     crew: String,
 }
 
-/// openapi.yaml `WorkareaModeSet`, closed (ADR-0030 d1).
+/// openapi.yaml `WorkspaceModeSet`, closed (ADR-0030 d1).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WorkareaModeBody {
+struct WorkspaceModeBody {
     mode: String,
 }
 
@@ -3743,7 +3776,7 @@ struct BootstrapClaimBody {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// A value that names a workarea, crew, key or tenant, classified at parse
+/// A value that names a workspace, crew, key or tenant, classified at parse
 /// as an id or a name, before any check that consults state. One that is
 /// neither — a derived path, an uppercase spelling, hex-and-dash text of
 /// version 8 — is `request.validation` with `details.field` naming its place
@@ -3841,7 +3874,7 @@ pub(crate) fn new_request_id() -> String {
 /// Every response carries `X-Request-Id`; error bodies already repeat it as
 /// `request_id` (http-api.md conventions).
 /// The response carries what the handler resolved, its key, target
-/// workarea and refusal code, for the request line (ADR-0042 d2).
+/// workspace and refusal code, for the request line (ADR-0042 d2).
 fn finish(request_id: &str, result: Result<Response, ApiError>) -> Response {
     let (response, code) = match result {
         Ok(response) => (response, None),
@@ -3954,8 +3987,8 @@ fn idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
 const WORKAREA_HEADER: &str = "x-oml-workarea";
 
 /// v0.3.0's `X-OML-Workarea` is refused, whatever it holds, naming the
-/// `workarea` field that replaces it on this route: `/workarea` in a body,
-/// `workarea` in a query (ADR-0039 d7, d11).
+/// `workspace` field that replaces it on this route: `/workspace` in a body,
+/// `workspace` in a query (ADR-0039 d7, d11).
 fn refuse_workarea_header(headers: &HeaderMap, renamed_to: &str) -> Result<(), ApiError> {
     if headers.contains_key(WORKAREA_HEADER) {
         return Err(ApiError::renamed("X-OML-Workarea", renamed_to));
@@ -4014,26 +4047,27 @@ fn refuse_renamed(body: &Value, pointer: &str, renames: &[(&str, &str)]) -> Resu
 }
 
 /// `POST /v2/keys`'s v0.3.0 spellings, at the top, in each grant and in
-/// each grant's deny entries (ADR-0039 d7).
+/// each grant's deny entries, refused under their real names and naming
+/// their v0.8.0 successors (ADR-0039 d7; ADR-0091 implementation notes).
 fn key_issue_renamed(body: &Value) -> Result<(), ApiError> {
     refuse_renamed(
         body,
         "",
         &[
-            ("default_workarea_id", "default_workarea"),
+            ("default_workarea_id", "default_workspace"),
             ("tenant_id", "tenant"),
         ],
     )?;
     let grants = body.get("grants").and_then(Value::as_array);
     for (i, grant) in grants.into_iter().flatten().enumerate() {
         let at = format!("/grants/{i}");
-        refuse_renamed(grant, &at, &[("workarea_node_id", "workarea")])?;
+        refuse_renamed(grant, &at, &[("workarea_node_id", "workspace")])?;
         let deny = grant.get("deny").and_then(Value::as_array);
         for (j, entry) in deny.into_iter().flatten().enumerate() {
             refuse_renamed(
                 entry,
                 &format!("{at}/deny/{j}"),
-                &[("subtree_node_id", "workarea")],
+                &[("subtree_node_id", "workspace")],
             )?;
         }
     }
@@ -4083,25 +4117,25 @@ fn parse_role(role: &str) -> Result<Role, ApiError> {
     match role {
         "reader" => Ok(Role::Reader),
         "writer" => Ok(Role::Writer),
-        "dreamer" => Ok(Role::Dreamer),
+        "reviewer" => Ok(Role::Reviewer),
         "admin" => Ok(Role::Admin),
         "operator" => Ok(Role::Operator),
         other => Err(ApiError::validation(format!(
-            "role must be one of reader, writer, dreamer, admin, operator — not {other:?}"
+            "role must be one of reader, writer, reviewer, admin, operator — not {other:?}"
         ))),
     }
 }
 
-/// A grant role is reader, writer or dreamer, never admin or operator
+/// A grant role is reader, writer or reviewer, never admin or operator
 /// (openapi.yaml `GrantRequest.role`); whether the key role admits it is the
 /// app's issuance check.
 fn parse_grant_role(role: &str) -> Result<Role, ApiError> {
     match role {
         "reader" => Ok(Role::Reader),
         "writer" => Ok(Role::Writer),
-        "dreamer" => Ok(Role::Dreamer),
+        "reviewer" => Ok(Role::Reviewer),
         other => Err(ApiError::validation(format!(
-            "a grant role is one of reader, writer, dreamer — not {other:?}"
+            "a grant role is one of reader, writer, reviewer — not {other:?}"
         ))),
     }
 }
@@ -4118,8 +4152,8 @@ fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
         "principal": issued.principal,
         "crew_id": issued.crew_id,
         "user": issued.user.as_ref().map(named_ref_json),
-        "default_workarea_id": issued.default_workarea,
-        "held_by": issued.held_by.map(HeldBy::as_str),
+        "default_workspace_id": issued.default_workspace,
+        "used_by": issued.used_by.map(UsedBy::as_str),
         "guardrail_scope": issued.guardrail_scope.as_str(),
         "label": label,
         "expiry": issued.expiry.as_ref().map(|at| at.as_str()),
@@ -4145,7 +4179,7 @@ fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
 fn denial_json(denial: &oml_app::types::DenialRecord) -> Value {
     json!({
         "denial_id": denial.denial.denial_id,
-        "workarea_node_id": denial.denial.node,
+        "workspace_node_id": denial.denial.node,
         "epoch": denial.epoch,
         // Lifting is not built (ADR-0025 d2).
         "lifted": false,
@@ -4185,7 +4219,7 @@ fn connection_json(c: &ConnectionRecord) -> Value {
 fn grant_json(g: &GrantRecord) -> Value {
     json!({
         "grant_id": g.grant.grant_id,
-        "workarea_node_id": g.grant.node,
+        "workspace_node_id": g.grant.node,
         "role": g.grant.role.as_str(),
         "covers": g.grant.covers.as_str(),
         "deny": g
@@ -4219,8 +4253,8 @@ fn key_json(detail: &KeyDetail, connections: &[ConnectionRecord], expired: bool)
         "principal": key.principal,
         "crew_id": key.crew_id,
         "user": detail.user.as_ref().map(named_ref_json),
-        "default_workarea_id": key.default_workarea,
-        "held_by": detail.held_by.map(HeldBy::as_str),
+        "default_workspace_id": key.default_workspace,
+        "used_by": detail.used_by.map(UsedBy::as_str),
         "guardrail_scope": detail.guardrail_scope.as_str(),
         "profile": key.profile.map(KeyProfile::as_str),
         "expiry": key.expiry.as_ref().map(|at| at.as_str()),
@@ -4235,7 +4269,7 @@ fn key_json(detail: &KeyDetail, connections: &[ConnectionRecord], expired: bool)
             .iter()
             .map(|d| json!({
                 "denial_id": d.denial.denial_id,
-                "workarea_node_id": d.denial.node,
+                "workspace_node_id": d.denial.node,
                 "epoch": d.epoch,
                 // Only the denials in force are listed (ADR-0025 d2).
                 "lifted": false,
@@ -4273,7 +4307,7 @@ fn whoami_person_ask(pairs: &[(String, String)]) -> Result<PersonAsk, ApiError> 
 }
 
 /// openapi.yaml `Whoami`: the calling key's own record, each reference
-/// `{id, name}` and the default workarea with its `path`, its stored grants
+/// `{id, name}` and the default workspace with its `path`, its stored grants
 /// without their deny masks, and never its denials (ADR-0039 d15); the
 /// record of a person's `<user>-web` session key alone carries `denied`,
 /// whether it holds any (#343).
@@ -4285,9 +4319,9 @@ fn whoami_json(whoami: &Whoami) -> Value {
         "name": key.name.as_ref().map(Name::as_str),
         "role": key.role.as_str(),
         "principal": key.principal,
-        "held_by": key.held_by.as_str(),
+        "used_by": key.used_by.as_str(),
         "tenant": whoami.tenant.as_ref().map(named),
-        "default_workarea": whoami.default_workarea.as_ref().map(|w| json!({
+        "default_workspace": whoami.default_workspace.as_ref().map(|w| json!({
             "id": w.id,
             "name": w.name.as_str(),
             "path": w.path,
@@ -4357,7 +4391,7 @@ fn person_json(person: &oml_app::app::Person) -> Value {
 fn whoami_grant_json(g: &GrantRecord) -> Value {
     json!({
         "grant_id": g.grant.grant_id,
-        "workarea_node_id": g.grant.node,
+        "workspace_node_id": g.grant.node,
         "role": g.grant.role.as_str(),
         "covers": g.grant.covers.as_str(),
         "epoch": g.epoch,
@@ -4401,11 +4435,11 @@ fn get_as_of(params: &[(String, String)]) -> Result<Option<EventTime>, ApiError>
 /// The listing's query parameters (openapi.yaml `searchMemories`): each
 /// at most once, and an unknown one refused rather than ignored, so a
 /// mistyped filter never widens a listing; v0.3.0's `workarea_id` names
-/// its successor, `workarea` (ADR-0039 d7).
+/// its successor, `workspace` (ADR-0039 d7).
 fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
     let mut req = ListRequest {
         own: false,
-        workarea: None,
+        workspace: None,
         state: None,
         kind: None,
         claim_key: None,
@@ -4451,8 +4485,9 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
                     _ => return Err(ApiError::validation("own must be true or false")),
                 };
             }
-            "workarea" => req.workarea = Some(reference("workarea", value)?),
-            "workarea_id" => return Err(ApiError::renamed("workarea_id", "workarea")),
+            "workspace" => req.workspace = Some(reference("workspace", value)?),
+            // v0.3.0's spelling, refused under its real name (ADR-0039 d7).
+            "workarea_id" => return Err(ApiError::renamed("workarea_id", "workspace")),
             "claim_key" => req.claim_key = Some(value.clone()),
             "state" => req.state = Some(parse_state(value)?),
             "kind" => req.kind = Some(parse_kind(value)?),
@@ -4604,7 +4639,7 @@ fn parse_severity(severity: Option<&str>) -> Result<Option<Severity>, ApiError> 
         .transpose()
 }
 
-/// A key's `guardrail_scope`, `workarea` or `ancestors`; any other word,
+/// A key's `guardrail_scope`, `workspace` or `ancestors`; any other word,
 /// `off` included, is refused naming the field (proposed ADR-0037 d4).
 /// A key's `profile`: `curator` or omitted (ADR-0030 d8).
 fn parse_profile(profile: Option<&str>) -> Result<Option<KeyProfile>, ApiError> {
@@ -4623,7 +4658,7 @@ fn parse_guardrail_scope(scope: Option<&str>) -> Result<Option<GuardrailScope>, 
         .map(|word| {
             GuardrailScope::parse(word).ok_or_else(|| {
                 ApiError::validation(format!(
-                    "guardrail_scope must be workarea or ancestors, not {word:?}: no off value exists, and an admin who wants none issues the key where none applies"
+                    "guardrail_scope must be workspace or ancestors, not {word:?}: no off value exists, and an admin who wants none issues the key where none applies"
                 ))
                 .with_details(json!({ "field": "/guardrail_scope" }))
             })
@@ -4765,8 +4800,8 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         "claim_key": m.claim_key,
         "version": m.version,
         "tip": m.is_tip,
-        "workarea_id": m.workarea_id,
-        "workarea_path": served.workarea_path,
+        "workspace_id": m.workspace_id,
+        "workspace_path": served.workspace_path,
         "kind": m.kind.as_str(),
         "state": m.status.as_str(),
         // Exactly when the served version is held (ADR-0030 d4).
@@ -4818,7 +4853,7 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         // author's person; no key, name, principal or crew (ADR-0025 d15;
         // ADR-0037 d5; ADR-0055 d7).
         "approver": approval.map(|a| json!({
-            "held_by": a.held_by.as_str(),
+            "used_by": a.used_by.as_str(),
             "same_user": a.same_user,
         })),
         // When the version says it holds, as signed (proposed ADR-0059 d2).
@@ -4891,8 +4926,8 @@ pub(crate) fn guardrail_set_json(set: &GuardrailSet) -> Value {
             "artifact_id": g.artifact_id,
             "claim_key": g.claim_key,
             "version": g.version,
-            "workarea_id": g.workarea_id,
-            "workarea_path": g.workarea_path,
+            "workspace_id": g.workspace_id,
+            "workspace_path": g.workspace_path,
             "depth": g.depth,
             "severity": g.severity.as_str(),
             "text": g.body,
@@ -4900,7 +4935,7 @@ pub(crate) fn guardrail_set_json(set: &GuardrailSet) -> Value {
             "tokens": g.tokens,
             "promoted_at": g.promoted_at.as_str(),
             "verdicts": g.verdicts.iter().map(|v| json!({
-                "held_by": v.held_by.as_str(),
+                "used_by": v.used_by.as_str(),
                 "at": v.at.as_str(),
             })).collect::<Vec<_>>(),
             "conflict": g.conflict,
@@ -4946,7 +4981,7 @@ fn brief_edge_json(e: &BriefEdgeView) -> Value {
         "kind": "brief",
         "edge_id": e.edge_id,
         "from_artifact_id": e.from_artifact_id,
-        "to_workarea_id": e.to_workarea_id,
+        "to_workspace_id": e.to_workspace_id,
         "label": e.label,
         "state": e.state,
         "proposer_key_id": e.proposer_key_id,
@@ -4954,12 +4989,12 @@ fn brief_edge_json(e: &BriefEdgeView) -> Value {
     })
 }
 
-/// A `kind` the served edge family does not take: `workarea` is designed,
+/// A `kind` the served edge family does not take: `workspace` is designed,
 /// anything else unknown; either is `request.validation` naming `/kind`.
 fn edge_kind_refused(kind: Option<&str>) -> ApiError {
     let message = match kind {
-        Some("workarea") => {
-            "kind workarea is designed and not served: claim and brief are".to_owned()
+        Some("workspace") => {
+            "kind workspace is designed and not served: claim and brief are".to_owned()
         }
         Some(other) => format!("kind must be claim or brief, not {other:?}"),
         None => "kind is required: claim or brief".to_owned(),
@@ -4978,29 +5013,29 @@ fn crew_json(crew: &CrewRecord) -> Value {
     })
 }
 
-/// openapi.yaml `Workarea`: the node, its name, its derived path, its
+/// openapi.yaml `Workspace`: the node, its name, its derived path, its
 /// status and the crew record it names, or null when it names none
 /// (ADR-0025 d14; ADR-0026 d1, d8).
-fn workarea_json(workarea: &WorkareaRecord, path: &str, crew: Option<&CrewRecord>) -> Value {
+fn workspace_json(workspace: &WorkspaceRecord, path: &str, crew: Option<&CrewRecord>) -> Value {
     json!({
-        "id": workarea.workarea_id,
-        "name": workarea.name.as_str(),
-        "parent_id": workarea.parent_id,
+        "id": workspace.workspace_id,
+        "name": workspace.name.as_str(),
+        "parent_id": workspace.parent_id,
         "path": path,
-        "status": workarea.status.as_str(),
+        "status": workspace.status.as_str(),
         "crew": crew.map(crew_json),
-        "user_root": workarea.user_root,
-        // A person's key puts a workarea in progress (ADR-0030 d1, d13).
-        "mode": if workarea.in_progress { "in_progress" } else { "standard" },
+        "user_root": workspace.user_root,
+        // A person's key puts a workspace in progress (ADR-0030 d1, d13).
+        "mode": if workspace.in_progress { "in_progress" } else { "standard" },
     })
 }
 
-/// openapi.yaml `WorkareaView`: the `Workarea` fields and the calling key's
+/// openapi.yaml `WorkspaceView`: the `Workspace` fields and the calling key's
 /// children, edges, effective verbs and permission epoch (ADR-0025 d14;
 /// ADR-0026 d8).
 #[must_use]
-pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
-    let mut value = workarea_json(&info.workarea, &info.path, info.crew.as_ref());
+pub fn workspace_view_json(info: &WorkspaceInfo) -> Value {
+    let mut value = workspace_json(&info.workspace, &info.path, info.crew.as_ref());
     if let Some(obj) = value.as_object_mut() {
         obj.insert(
             "children".to_owned(),
@@ -5008,14 +5043,14 @@ pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
                 .iter()
                 .map(|c| {
                     json!({
-                        "id": c.workarea_id,
+                        "id": c.workspace_id,
                         "path_leaf": c.name.as_str(),
                         "status": c.status.as_str(),
                     })
                 })
                 .collect(),
         );
-        // No workarea edge can exist in this build (ADR-0025 d14).
+        // No workspace edge can exist in this build (ADR-0025 d14).
         obj.insert("edges".to_owned(), json!([]));
         obj.insert(
             "my_effective_verbs".to_owned(),
@@ -5029,7 +5064,7 @@ pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
             "in_progress_root".to_owned(),
             info.in_progress_root.as_ref().map_or(
                 Value::Null,
-                |r| json!({ "id": r.workarea_id, "name": r.name.as_str() }),
+                |r| json!({ "id": r.workspace_id, "name": r.name.as_str() }),
             ),
         );
         obj.insert("policy".to_owned(), info.policy.clone());
@@ -5063,12 +5098,12 @@ pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
 
 /// One transition in the openapi `Transition` shape: the proposing key only
 /// where the read names it, and a ratified row's ratifier
-/// (ADR-0046 d3; workareas.md, the status read).
+/// (ADR-0046 d3; workspaces.md, the status read).
 #[must_use]
 pub fn transition_json(t: &oml_app::types::TransitionView) -> Value {
     json!({
         "transition_id": t.transition_id,
-        "workarea_id": t.workarea_id,
+        "workspace_id": t.workspace_id,
         "from": t.from.as_str(),
         "to": t.to.as_str(),
         "state": t.state.as_str(),
@@ -5135,7 +5170,7 @@ mod tests {
             whoami_grant_json(&record),
             json!({
                 "grant_id": Uuid::from_u128(1),
-                "workarea_node_id": Uuid::from_u128(2),
+                "workspace_node_id": Uuid::from_u128(2),
                 "role": "writer",
                 "covers": "subtree",
                 "epoch": 41,

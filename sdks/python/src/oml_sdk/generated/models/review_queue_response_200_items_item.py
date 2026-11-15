@@ -15,20 +15,20 @@ T = TypeVar("T", bound="ReviewQueueResponse200ItemsItem")
 class ReviewQueueResponse200ItemsItem:
     """
     Attributes:
-        workarea_id (UUID):
+        workspace_id (UUID):
         path (str):
         held (int):
         oldest_at (datetime.datetime):
     """
 
-    workarea_id: UUID
+    workspace_id: UUID
     path: str
     held: int
     oldest_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        workarea_id = str(self.workarea_id)
+        workspace_id = str(self.workspace_id)
 
         path = self.path
 
@@ -40,7 +40,7 @@ class ReviewQueueResponse200ItemsItem:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "workarea_id": workarea_id,
+                "workspace_id": workspace_id,
                 "path": path,
                 "held": held,
                 "oldest_at": oldest_at,
@@ -52,7 +52,7 @@ class ReviewQueueResponse200ItemsItem:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        workarea_id = UUID(d.pop("workarea_id"))
+        workspace_id = UUID(d.pop("workspace_id"))
 
         path = d.pop("path")
 
@@ -61,7 +61,7 @@ class ReviewQueueResponse200ItemsItem:
         oldest_at = datetime.datetime.fromisoformat(d.pop("oldest_at"))
 
         review_queue_response_200_items_item = cls(
-            workarea_id=workarea_id,
+            workspace_id=workspace_id,
             path=path,
             held=held,
             oldest_at=oldest_at,

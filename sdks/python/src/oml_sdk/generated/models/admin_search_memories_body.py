@@ -19,7 +19,7 @@ class AdminSearchMemoriesBody:
     """
     Attributes:
         query (str | Unset):
-        workarea (str | Unset):
+        workspace (str | Unset):
         state (AdminSearchMemoriesBodyState | Unset):
         origin_kind (AdminSearchMemoriesBodyOriginKind | Unset): One origin.kind (ADR-0045 d22, d24; ADR-0070 d5). Since
             v0.6.4.
@@ -29,7 +29,7 @@ class AdminSearchMemoriesBody:
     """
 
     query: str | Unset = UNSET
-    workarea: str | Unset = UNSET
+    workspace: str | Unset = UNSET
     state: AdminSearchMemoriesBodyState | Unset = UNSET
     origin_kind: AdminSearchMemoriesBodyOriginKind | Unset = UNSET
     author: str | Unset = UNSET
@@ -39,7 +39,7 @@ class AdminSearchMemoriesBody:
     def to_dict(self) -> dict[str, Any]:
         query = self.query
 
-        workarea = self.workarea
+        workspace = self.workspace
 
         state: str | Unset = UNSET
         if not isinstance(self.state, Unset):
@@ -60,8 +60,8 @@ class AdminSearchMemoriesBody:
         field_dict.update({})
         if query is not UNSET:
             field_dict["query"] = query
-        if workarea is not UNSET:
-            field_dict["workarea"] = workarea
+        if workspace is not UNSET:
+            field_dict["workspace"] = workspace
         if state is not UNSET:
             field_dict["state"] = state
         if origin_kind is not UNSET:
@@ -80,7 +80,7 @@ class AdminSearchMemoriesBody:
         d = dict(src_dict)
         query = d.pop("query", UNSET)
 
-        workarea = d.pop("workarea", UNSET)
+        workspace = d.pop("workspace", UNSET)
 
         _state = d.pop("state", UNSET)
         state: AdminSearchMemoriesBodyState | Unset
@@ -104,7 +104,7 @@ class AdminSearchMemoriesBody:
 
         admin_search_memories_body = cls(
             query=query,
-            workarea=workarea,
+            workspace=workspace,
             state=state,
             origin_kind=origin_kind,
             author=author,

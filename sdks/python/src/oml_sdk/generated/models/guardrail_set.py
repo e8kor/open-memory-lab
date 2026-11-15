@@ -23,7 +23,7 @@ class GuardrailSet:
         Attributes:
             scope_node (str):
             scope_path (str): The scope node's derived path, root first; the hook's header names it.
-            guardrail_scope (GuardrailScope): Which applicable guardrails the key loads: workarea, the scope node's alone;
+            guardrail_scope (GuardrailScope): Which applicable guardrails the key loads: workspace, the scope node's alone;
                 ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted, journalled in
                 key.issued; no request changes it, and any other value is request.validation, details.field /guardrail_scope
                 (ADR-0037 d4; since v0.5.1).

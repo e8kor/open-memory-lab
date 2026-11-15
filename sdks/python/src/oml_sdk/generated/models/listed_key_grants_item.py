@@ -17,19 +17,19 @@ class ListedKeyGrantsItem:
     """
     Attributes:
         role (Role):
-        workarea_id (UUID):
+        workspace_id (UUID):
         path (str):
     """
 
     role: Role
-    workarea_id: UUID
+    workspace_id: UUID
     path: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         role = self.role.value
 
-        workarea_id = str(self.workarea_id)
+        workspace_id = str(self.workspace_id)
 
         path = self.path
 
@@ -38,7 +38,7 @@ class ListedKeyGrantsItem:
         field_dict.update(
             {
                 "role": role,
-                "workarea_id": workarea_id,
+                "workspace_id": workspace_id,
                 "path": path,
             }
         )
@@ -50,13 +50,13 @@ class ListedKeyGrantsItem:
         d = dict(src_dict)
         role = Role(d.pop("role"))
 
-        workarea_id = UUID(d.pop("workarea_id"))
+        workspace_id = UUID(d.pop("workspace_id"))
 
         path = d.pop("path")
 
         listed_key_grants_item = cls(
             role=role,
-            workarea_id=workarea_id,
+            workspace_id=workspace_id,
             path=path,
         )
 

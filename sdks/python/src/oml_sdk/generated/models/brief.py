@@ -15,7 +15,7 @@ T = TypeVar("T", bound="Brief")
 
 @_attrs_define
 class Brief:
-    """The workarea's ratified brief as this key reads it, in ratification order, cut by brief.max_tokens; empty for an
+    """The workspace's ratified brief as this key reads it, in ratification order, cut by brief.max_tokens; empty for an
     admin key (ADR-0046 d8, d9).
 
         Attributes:

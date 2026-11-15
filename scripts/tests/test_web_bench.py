@@ -32,7 +32,7 @@ class WebPage(unittest.TestCase):
         page = {"page_ms": {"p50": p95 - 1, "p95": p95},
                 "api_calls": {"min": 2, "max": 2}, "sequential_rounds": {"min": 1, "max": 1},
                 "outside_lead_ms": {"p95": 1.0}}
-        return {"shape": shape, "workareas": 6, "date": "2026-11-11", "commit": "c",
+        return {"shape": shape, "workspaces": 6, "date": "2026-11-11", "commit": "c",
                 "_path": f"{shape}.json", "seeded": {"memories": 10},
                 "healthz_ms": {"p50": 0.4, "p95": 0.5},
                 "method": {"iterations": 1, "warmup": 0},

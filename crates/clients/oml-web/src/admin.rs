@@ -6,7 +6,7 @@
 //!   changing an entry and its admin flag (`allowWebEmail`), removing one
 //!   (`removeWebEmail`), both refusing to leave the organisation without an
 //!   admin entry (`keep_an_admin`), and a person's review or curation
-//!   capacity on a workarea (`grantWebCapacities`);
+//!   capacity on a workspace (`grantWebCapacities`);
 //! - `/web/admin/users`: each person's quotas (`listWebUsers`,
 //!   `setWebUserQuota`), disabling a person (`disableWebUser`) and closing
 //!   a deletion request (`closeWebDeletion`).
@@ -202,10 +202,14 @@ pub async fn people_page(
         "Add",
         true,
     ));
-    body.push_str("<h2>Review and curation</h2><details class=\"help\"><summary>?</summary>Each person reviews their own workarea from their first sign-in. Grant review elsewhere, or make someone a curator of the shared area. A curator designation takes effect at the person's next sign-in.</details>");
+    body.push_str("<h2>Review and curation</h2><details class=\"help\"><summary>?</summary>Each person reviews their own workspace from their first sign-in. Grant review elsewhere, or make someone a curator of the shared area. A curator designation takes effect at the person's next sign-in.</details>");
     for (action, label, button) in [
-        ("grant_review", "workarea", "Grant review"),
-        ("grant_curation", "reads from workarea", "Designate curator"),
+        ("grant_review", "workspace", "Grant review"),
+        (
+            "grant_curation",
+            "reads from workspace",
+            "Designate curator",
+        ),
     ] {
         body.push_str(&form(
             PEOPLE_PATH,
@@ -214,7 +218,7 @@ pub async fn people_page(
             &format!(
                 "{}{}{}",
                 input("user", "user", "", true),
-                input("workarea", label, "", true),
+                input("workspace", label, "", true),
                 acts::nonce_field()
             ),
             button,
@@ -289,7 +293,7 @@ fn people_defined(action: &str, name: &str) -> bool {
         "allow_email" => matches!(name, "email" | "user" | "admin"),
         "set_admin" => matches!(name, "email" | "admin"),
         "remove_email" => matches!(name, "email" | "confirm"),
-        _ => matches!(name, "user" | "workarea"),
+        _ => matches!(name, "user" | "workspace"),
     }
 }
 
@@ -310,7 +314,7 @@ pub async fn people_act(
     let required: &[&str] = match action {
         "allow_email" => &["email", "user"],
         "set_admin" | "remove_email" => &["email"],
-        _ => &["user", "workarea"],
+        _ => &["user", "workspace"],
     };
     if let Some(missing) = required.iter().find(|n| fields.given(n).is_none()) {
         return acts::invalid(&format!("{missing} is required"), &calls);
@@ -407,7 +411,7 @@ pub async fn people_act(
                     &key,
                     fields.given("user").unwrap_or_default().trim(),
                     capacity,
-                    fields.given("workarea").unwrap_or_default().trim(),
+                    fields.given("workspace").unwrap_or_default().trim(),
                 )
                 .await
                 .map(|_| "granted")

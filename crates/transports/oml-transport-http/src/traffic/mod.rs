@@ -56,7 +56,7 @@ tokio::task_local! {
 }
 
 /// What a request resolved and spent, filled while it runs: the app's
-/// observer writes the key and the workarea, the store port's timing its
+/// observer writes the key and the workspace, the store port's timing its
 /// calls (ADR-0042 d2, d14). Work spawned onto another task is not seen.
 #[derive(Debug)]
 pub struct Scope {
@@ -70,7 +70,7 @@ pub struct Scope {
 struct Observed {
     auth: Option<Duration>,
     identity: Option<Identity>,
-    workarea_id: Option<Uuid>,
+    workspace_id: Option<Uuid>,
     store: Duration,
     store_calls: u64,
     /// What a recall's reranking stage did, and why when it was skipped
@@ -191,9 +191,9 @@ pub fn credential(key: Option<&KeyRecord>, connection_id: Option<Uuid>) {
     });
 }
 
-/// The request's verb targets `workarea_id`; the first one set is logged.
-pub fn workarea(workarea_id: Uuid) {
-    in_scope(|scope| scope.update(|o, _| _ = o.workarea_id.get_or_insert(workarea_id)));
+/// The request's verb targets `workspace_id`; the first one set is logged.
+pub fn workspace(workspace_id: Uuid) {
+    in_scope(|scope| scope.update(|o, _| _ = o.workspace_id.get_or_insert(workspace_id)));
 }
 
 /// The request's recall ran `pipeline`; `fallback` when `match: all` fell
@@ -258,8 +258,8 @@ impl RequestObserver for ScopeObserver {
         credential(key, connection);
     }
 
-    fn workarea(&self, workarea_id: Uuid) {
-        workarea(workarea_id);
+    fn workspace(&self, workspace_id: Uuid) {
+        workspace(workspace_id);
     }
 
     fn search(&self, pipeline: &'static str, fallback: bool, access: &'static str) {
@@ -314,13 +314,13 @@ impl RequestObserver for ScopeObserver {
 }
 
 /// What a handler resolved, attached to its response as an extension for
-/// the layer to read: the key, the target workarea and the refusal's code.
+/// the layer to read: the key, the target workspace and the refusal's code.
 /// A handler that attaches nothing leaves those fields out of the line,
 /// which a reader sees as missing, never as wrong (ADR-0042 d2).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Resolved {
     pub identity: Option<Identity>,
-    pub workarea_id: Option<Uuid>,
+    pub workspace_id: Option<Uuid>,
     /// The envelope's `error.code`, or the RFC `error` on an OAuth endpoint.
     pub error_code: Option<String>,
     /// `POST /oauth/token`'s `grant_type`, as the token metric labels it.
@@ -347,7 +347,7 @@ impl Resolved {
         let observed = SCOPE.try_with(|s| s.observed()).unwrap_or_default();
         Self {
             identity: observed.identity,
-            workarea_id: observed.workarea_id,
+            workspace_id: observed.workspace_id,
             error_code: error_code.map(ToOwned::to_owned),
             grant_type: None,
             web: None,
@@ -782,7 +782,7 @@ macro_rules! write_line {
             connection_id = identity
                 .and_then(|i| i.connection_id)
                 .map(tracing::field::display),
-            workarea_id = line.resolved.workarea_id.map(tracing::field::display),
+            workspace_id = line.resolved.workspace_id.map(tracing::field::display),
             idempotency_replay = line.idempotency_replay,
             client_ip = line.client.map(|(ip, _)| tracing::field::display(ip)),
             client_ip_source = line.client.map(|(_, source)| source.as_str()),

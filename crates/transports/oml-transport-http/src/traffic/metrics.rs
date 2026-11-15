@@ -279,7 +279,7 @@ impl Quality {
         );
         registry.register(
             "oml_remember_duplicates",
-            "memories written whose text a served memory of the same workarea already holds (same_text) or not (none)",
+            "memories written whose text a served memory of the same workspace already holds (same_text) or not (none)",
             q.duplicates.clone(),
         );
         registry.register(
@@ -422,15 +422,15 @@ impl Default for Metrics {
         );
         // The mode is a closed set: in_progress or standard (ADR-0030 d5).
         registry.register(
-            "oml_workarea_mode_changes",
-            "workarea modes set by a person's key, by the mode set; standard on an in-progress root is its commit",
+            "oml_workspace_mode_changes",
+            "workspace modes set by a person's key, by the mode set; standard on an in-progress root is its commit",
             mode_changes.clone(),
         );
         // The act is a closed set: reject, retire, flag or write (ADR-0030
         // d5, d9).
         registry.register(
             "oml_curation_acts",
-            "acts committed by curator keys inside in-progress workareas, by act",
+            "acts committed by curator keys inside in-progress workspaces, by act",
             curation_acts.clone(),
         );
         // The outcome is a closed set: fresh, equivalent, moved, changed or
@@ -602,7 +602,7 @@ impl Metrics {
         self.federated_hits.inc_by(n);
     }
 
-    /// One workarea mode set by a person's key (ADR-0030 d5).
+    /// One workspace mode set by a person's key (ADR-0030 d5).
     pub(crate) fn mode_set(&self, mode: &'static str) {
         self.mode_changes
             .get_or_create(&ModeLabels {

@@ -171,7 +171,7 @@ fn keyring() -> Keyring {
     Keyring::single(kek())
 }
 
-/// A tenant with one workarea, a writer and a dreamer key, and `n`
+/// A tenant with one workspace, a writer and a reviewer key, and `n`
 /// promoted memories whose bodies carry `canary` and their index; every
 /// third derives from the first. Returns (tenant, promoted ids).
 async fn tenant(app: &TestApp, name: &str, canary: &str, n: usize) -> (Uuid, Vec<Uuid>) {
@@ -185,23 +185,23 @@ async fn tenant(app: &TestApp, name: &str, canary: &str, n: usize) -> (Uuid, Vec
         .expect("bootstrap");
     let admin = &boot.admin_key.value;
     let crew = app
-        .create_workarea(
+        .create_workspace(
             admin,
             &Name::parse("crew").expect("name"),
-            Some(boot.root_workarea_id.into()),
+            Some(boot.root_workspace_id.into()),
             None,
         )
         .await
-        .expect("workarea")
-        .workarea
-        .workarea_id;
+        .expect("workspace")
+        .workspace
+        .workspace_id;
     let issue = |role: Role, principal: &str, key: &str| IssueKeyRequest {
         profile: None,
         role,
         name: Name::parse(key).expect("name"),
         principal: principal.to_owned(),
-        held_by: None,
-        default_workarea: None,
+        used_by: None,
+        default_workspace: None,
         crew: None,
         grants: vec![GrantRequest {
             node: crew.into(),
@@ -222,13 +222,17 @@ async fn tenant(app: &TestApp, name: &str, canary: &str, n: usize) -> (Uuid, Vec
         )
         .await
         .expect("writer");
-    let dreamer = app
+    let reviewer = app
         .issue_key(
             admin,
-            &issue(Role::Dreamer, &format!("{name}-dana"), &format!("{name}-d")),
+            &issue(
+                Role::Reviewer,
+                &format!("{name}-dana"),
+                &format!("{name}-d"),
+            ),
         )
         .await
-        .expect("dreamer");
+        .expect("reviewer");
     let mut ids = Vec::new();
     for i in 0..n {
         let req = SubmitRequest {
@@ -241,7 +245,7 @@ async fn tenant(app: &TestApp, name: &str, canary: &str, n: usize) -> (Uuid, Vec
             verb: None,
             kind: MemoryKind::Memory,
             body: format!("{canary} number {i}"),
-            workarea: None,
+            workspace: None,
             derives_from: if i % 3 == 2 { vec![ids[0]] } else { Vec::new() },
             severity: None,
             rule: None,
@@ -255,7 +259,7 @@ async fn tenant(app: &TestApp, name: &str, canary: &str, n: usize) -> (Uuid, Vec
             .expect("submit")
             .receipt
             .memory_id;
-        app.post_verdict(&dreamer.value, id, Verdict::Approve, None)
+        app.post_verdict(&reviewer.value, id, Verdict::Approve, None)
             .await
             .expect("approve");
         ids.push(id);
@@ -779,9 +783,9 @@ async fn recall_counts_reach_the_lake_without_query_text_for_the_30_days_postgre
         let scores: Vec<f32> = hit_ids.iter().map(|_| 1.0).collect();
         sqlx::query(
             "INSERT INTO recall_events (tenant_id, recall_id, created_at, key_id, principal, \
-             scope_workarea_id, pipeline, access, query_digest, query_text, hit_ids, hit_scores) \
+             scope_workspace_id, pipeline, access, query_digest, query_text, hit_ids, hit_scores) \
              SELECT $1, gen_random_uuid(), now() - make_interval(days => $2), id, 'p', \
-                    (SELECT id FROM workareas WHERE tenant_id = $1 LIMIT 1), $3, 'postings', \
+                    (SELECT id FROM workspaces WHERE tenant_id = $1 LIMIT 1), $3, 'postings', \
                     sha256('q'::bytea), $4, $5, $6 FROM api_keys WHERE tenant_id = $1 LIMIT 1",
         )
         .bind(t)

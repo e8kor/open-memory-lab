@@ -15,7 +15,7 @@ use axum::extract::{Query, State};
 use axum::response::Response;
 use http::{StatusCode, Uri};
 use oml_page::web::{shell, text};
-use oml_sdk::WorkareaNode;
+use oml_sdk::WorkspaceNode;
 
 use crate::picker::{self, Browse, Chosen, Field, Names};
 use crate::session::{PageCalls, Session, call};
@@ -113,7 +113,7 @@ pub async fn guardrails_page(
 }
 
 /// The most tree pages the selector reads: 50 pages of 200, so 10,000
-/// workareas. A constant of the build, unmeasured (#170).
+/// workspaces. A constant of the build, unmeasured (#170).
 pub const TREE_PAGES_MAX: usize = 50;
 
 /// Why a cursor walk read no whole list.
@@ -151,21 +151,21 @@ where
     Err(WalkEnd::TooLong)
 }
 
-/// Every workarea under `root`, a page of the tree at a time, or the
+/// Every workspace under `root`, a page of the tree at a time, or the
 /// request id of the call that ended the listing, with the API's error
 /// where a call failed: a failed call, a cursor the API repeats, or a
 /// listing past [`TREE_PAGES_MAX`] pages.
-pub(crate) async fn workareas(
+pub(crate) async fn workspaces(
     web: &Web,
     credential: &str,
     calls: &PageCalls,
     root: &str,
-) -> Result<Vec<WorkareaNode>, (String, Option<oml_sdk::Error>)> {
+) -> Result<Vec<WorkspaceNode>, (String, Option<oml_sdk::Error>)> {
     walk(TREE_PAGES_MAX, |cursor| async move {
         let ids = calls.next_ids();
         let page = web
             .api
-            .workarea_tree(&call(credential, &ids), root, TREE_PAGE, cursor.as_deref())
+            .workspace_tree(&call(credential, &ids), root, TREE_PAGE, cursor.as_deref())
             .await?;
         Ok((page.items, page.next_cursor))
     })
@@ -180,9 +180,9 @@ pub(crate) async fn workareas(
     })
 }
 
-/// The guardrails in force at the selected workarea, read-only: the scope,
+/// The guardrails in force at the selected workspace, read-only: the scope,
 /// each rule with its source path, and a selector over the person's
-/// workareas. The page writes, supersedes and retires none (ADR-0037 d17).
+/// workspaces. The page writes, supersedes and retires none (ADR-0037 d17).
 /// The set is the page's primary call and the tree its secondary one, made
 /// together after the session's check (ADR-0070 d8): a failed set is the
 /// error page, a failed tree the page without its selector.
@@ -205,7 +205,7 @@ async fn guardrails(
     let credential = session.credential(Capacity::Web);
     // The field's value, checked before any call: a path is refused here,
     // and the set is not read for it.
-    let chosen = Chosen::of(fields.get("workarea"));
+    let chosen = Chosen::of(fields.get("workspace"));
     let browse_asked = picker::browse_asked(fields.get(picker::BROWSE));
     let set_ids = calls.next_ids();
     let set_call = call(&credential, &set_ids);
@@ -255,7 +255,7 @@ async fn guardrails(
         },
         Some(Err(e)) => return outcome::page(&e, calls, next),
     };
-    // The field names the workarea in force by its reference, the scope the
+    // The field names the workspace in force by its reference, the scope the
     // set was read at when the field was empty.
     let chosen = match (&chosen, &set) {
         (Chosen::Every, Some(set)) => names
@@ -280,12 +280,12 @@ async fn guardrails(
     let mut body = match &set {
         Some(set) => {
             let scope = match set.guardrail_scope.as_str() {
-                "workarea" => "This workarea only.".to_owned(),
-                "ancestors" => "This workarea and its readable parent workareas.".to_owned(),
+                "workspace" => "This workspace only.".to_owned(),
+                "ancestors" => "This workspace and its readable parent workspaces.".to_owned(),
                 other => text(other),
             };
             format!(
-                r#"<h1>Guardrails</h1><p class="desc">Read-only here; change them with the API or the CLI.</p><p>Rules in force at <code>{}</code>.</p><p><strong>Scope:</strong> {} Each rule names its source workarea.</p>"#,
+                r#"<h1>Guardrails</h1><p class="desc">Read-only here; change them with the API or the CLI.</p><p>Rules in force at <code>{}</code>.</p><p><strong>Scope:</strong> {} Each rule names its source workspace.</p>"#,
                 text(&names.reference(&set.scope_path)),
                 scope,
             )
@@ -303,8 +303,8 @@ async fn guardrails(
     // (design notes row 20); the lines are otherwise the frame's.
     let mut set = set;
     for g in &mut set.guardrails {
-        if let Some(path) = &g.workarea_path {
-            g.workarea_path = Some(names.reference(path));
+        if let Some(path) = &g.workspace_path {
+            g.workspace_path = Some(names.reference(path));
         }
     }
     body.push_str("<ul>");

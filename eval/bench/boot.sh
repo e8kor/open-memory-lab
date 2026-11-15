@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # Boots a lead built from this tree against a throwaway database for the
-# benchmark harness, provisions one workarea per benchmark under a parent
+# benchmark harness, provisions one workspace per benchmark under a parent
 # `bench`, issues the two keys the harness needs, and stays up until it is
 # stopped (SIGINT or SIGTERM), when it drops the database and its role pair.
 #
 #   PGHOST=127.0.0.1 PGPORT=55440 PGUSER=postgres \
-#       eval/bench/boot.sh <state-dir> <workarea>...
+#       eval/bench/boot.sh <state-dir> <workspace>...
 #
-# The workareas are the names bench.py derives (bench-<dataset>, and for a
+# The workspaces are the names bench.py derives (bench-<dataset>, and for a
 # dataset of several haystacks bench-<dataset>-<group>); `bench.py
-# workareas <dataset>...` prints them. Keys: <state-dir>/writer.key, an agent
+# workspaces <dataset>...` prints them. Keys: <state-dir>/writer.key, an agent
 # key with writer and reader grants on the `bench` subtree, and
 # <state-dir>/reviewer-<i>.key for i in 1..BENCH_REVIEWERS (default 4), human
-# keys of other principals with the dreamer grant, so the reviewer is never
+# keys of other principals with the reviewer grant, so the reviewer is never
 # the author (R2). Several reviewers because review next serves one key its
 # own claimed row until it is judged, so one key reviews one row at a time;
 # a crew of reviewers judges in parallel, as one would. Values go to owner-only
@@ -24,9 +24,9 @@
 set -u -o pipefail
 cd "$(dirname "$0")/../.."
 
-STATE="${1:?usage: boot.sh <state-dir> <workarea>...}"
+STATE="${1:?usage: boot.sh <state-dir> <workspace>...}"
 shift
-[ "$#" -ge 1 ] || { echo "boot.sh: name at least one workarea" >&2; exit 2; }
+[ "$#" -ge 1 ] || { echo "boot.sh: name at least one workspace" >&2; exit 2; }
 mkdir -p "$STATE"
 chmod 700 "$STATE"
 BIN="${OML_BIN_DIR:-target/release}"
@@ -107,23 +107,23 @@ done
 OML="$BIN/oml"
 "$OML" --url "$URL" --json bootstrap claim bench-admin --token-stdin \
     --tenant-name bench --principal bench/admin <<<"$TOKEN" >/dev/null || fail "bootstrap claim"
-"$OML" --json workareas create universe bench >/dev/null || fail "workarea bench"
+"$OML" --json workspaces create universe bench >/dev/null || fail "workspace bench"
 for wa in "$@"; do
-    "$OML" --json workareas create bench "$wa" >/dev/null || fail "workarea $wa"
+    "$OML" --json workspaces create bench "$wa" >/dev/null || fail "workspace $wa"
 done
 (umask 077
- "$OML" --json keys issue bench-writer --role writer --held-by agent --principal bench/writer \
-     --default-workarea bench --grant bench:writer --grant bench:reader \
+ "$OML" --json keys issue bench-writer --role writer --used-by agent --principal bench/writer \
+     --default-workspace bench --grant bench:writer --grant bench:reader \
      | jq -r .value >"$STATE/writer.key"
  for i in $(seq 1 "$REVIEWERS"); do
-     "$OML" --json keys issue "bench-reviewer-$i" --role dreamer --held-by human \
-         --principal "bench/reviewer-$i" --default-workarea bench --grant bench:dreamer \
+     "$OML" --json keys issue "bench-reviewer-$i" --role reviewer --used-by person \
+         --principal "bench/reviewer-$i" --default-workspace bench --grant bench:reviewer \
          | jq -r .value >"$STATE/reviewer-$i.key" || exit 1
  done) || fail "keys"
 [ -s "$STATE/writer.key" ] && [ -s "$STATE/reviewer-1.key" ] || fail "empty key file"
 
 echo "http://127.0.0.1:$METRICS_PORT" >"$STATE/metrics_url"
 echo "$URL" >"$STATE/url"
-echo "bench boot: serving $URL, database $DB, workareas $*" >&2
+echo "bench boot: serving $URL, database $DB, workspaces $*" >&2
 wait "$SERVER_PID"
 fail "the lead exited"

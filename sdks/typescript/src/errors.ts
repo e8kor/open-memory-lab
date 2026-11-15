@@ -89,13 +89,13 @@ export class IdempotencyError extends ApiError {
 export class SubmissionError extends ApiError {
   override name = "SubmissionError";
 }
-/** `name`: workarea, crew, key and tenant names (named as the Python client names it). */
+/** `name`: workspace, crew, key and tenant names (named as the Python client names it). */
 export class NamingError extends ApiError {
   override name = "NamingError";
 }
-/** `workarea`: structure and status refusals. */
-export class WorkareaError extends ApiError {
-  override name = "WorkareaError";
+/** `workspace`: structure and status refusals. */
+export class WorkspaceError extends ApiError {
+  override name = "WorkspaceError";
 }
 /** `review`: independence and the serve binding. */
 export class ReviewError extends ApiError {
@@ -142,7 +142,7 @@ export const FAMILIES: Readonly<Record<string, typeof ApiError>> = Object.freeze
   idempotency: IdempotencyError,
   submission: SubmissionError,
   name: NamingError,
-  workarea: WorkareaError,
+  workspace: WorkspaceError,
   review: ReviewError,
   simulation: SimulationError,
   vocab: VocabError,

@@ -21,14 +21,14 @@ recall finds what an agent asks for, and where it fails. The findings are in
 | `served.sh` | boots a lead against a throwaway database, loads the set and runs `run.py` once per served search pipeline, then `gate.py` (job `recall-eval`) |
 | `selfhost.sh` | the one command: builds the lead and the CLI, fetches the pinned model files the pipelines need, then runs `served.sh` with every pipeline CI measures (job `recall-eval` runs it) |
 | `gate.py` | each pipeline's gate (ADR-0049 d9; `bm25-rerank`'s from ADR-0053 d9); fails when the default misses its gate or a category falls by more than one query, or when `keyword-all` does not reproduce v0.5.0 |
-| `federated.sh`, `federated.py` | the federated recall eval (ADR-0072 d11): one committed workarea per topic, `sources` scope, wide and the union on a scoped and a cross split, the widen hint, and a skew split padded with SciFact abstracts |
+| `federated.sh`, `federated.py` | the federated recall eval (ADR-0072 d11): one protected workspace per topic, `sources` scope, wide and the union on a scoped and a cross split, the widen hint, and a skew split padded with SciFact abstracts |
 | `fed2.py`, `descriptors.json` | the phase 2 gate (ADR-0072 d4.5, d11; #206), run as `EVAL_PHASE2=1 federated.sh`: the union's ranking per query from the served lead, then `content`, `described`, oracle and ReDDE selection replayed offline on `bm25-postings` and `bm25-sparse`; `descriptors.json` holds one author-written descriptor per topic |
-| `mapreduce.py`, [`MAPREDUCE.md`](MAPREDUCE.md) | research, offline (2026-11-12): can each workarea rank its own rows and a reducer merge them? `sparse`, `bm25` and `bm25-sparse` over the corpus by topic, the skew split and SciFact in 5, 50 and 500 workareas, the exact merge against per-workarea statistics, per-workarea fusion, RRF and CORI; results in `results/mapreduce.json`; no served path |
+| `mapreduce.py`, [`MAPREDUCE.md`](MAPREDUCE.md) | research, offline (2026-11-12): can each workspace rank its own rows and a reducer merge them? `sparse`, `bm25` and `bm25-sparse` over the corpus by topic, the skew split and SciFact in 5, 50 and 500 workspaces, the exact merge against per-workspace statistics, per-workspace fusion, RRF and CORI; results in `results/mapreduce.json`; no served path |
 | `results/` | one JSON per method (summary per category, and per query the ranked ids and latency), and `tables.md` |
 
 ### `corpus.json`
 
-`{"version": 1, "workarea": "eval-crew", "memories": [{id, type, topic, text}]}`.
+`{"version": 1, "workspace": "eval-crew", "memories": [{id, type, topic, text}]}`.
 `type` is one of finding, decision, convention, gotcha, fact, steering;
 `topic` is one of deploy, database, api, auth, frontend, ci, data, billing,
 observability, incident, process. Both are labels for reading the results; the
@@ -176,15 +176,15 @@ such as a release's. The steps below are what the script does, by hand.
    against it, booted and claimed the way `scripts/poc-demo.sh` does: an
    owner/serving role pair, `OML_POSTGRES__URL`, `OML_POSTGRES__OWNER_URL`,
    `OML_SERVER__LISTEN`, `OML_KMS__KEYRING_PATH`, then `oml bootstrap claim`.
-2. A workarea and two keys of different principals, values written to
+2. A workspace and two keys of different principals, values written to
    owner-only files:
 
    ```sh
-   oml workareas create universe eval-crew
-   oml --json keys issue eval-writer --role writer --held-by agent --principal crew/writer \
-       --default-workarea eval-crew --grant eval-crew:writer --grant eval-crew:reader | jq -r .value > writer.key
-   oml --json keys issue eval-reviewer --role dreamer --held-by human --principal crew/reviewer \
-       --default-workarea eval-crew --grant eval-crew:dreamer | jq -r .value > reviewer.key
+   oml workspaces create universe eval-crew
+   oml --json keys issue eval-writer --role writer --used-by agent --principal crew/writer \
+       --default-workspace eval-crew --grant eval-crew:writer --grant eval-crew:reader | jq -r .value > writer.key
+   oml --json keys issue eval-reviewer --role reviewer --used-by person --principal crew/reviewer \
+       --default-workspace eval-crew --grant eval-crew:reviewer | jq -r .value > reviewer.key
    ```
 
 3. The served recall, then the same queries minus stop words:
@@ -260,7 +260,7 @@ such as a release's. The steps below are what the script does, by hand.
      questions. `about` is empty, since no ontology terms are on main. A future run should commit
      its descriptors before it reads the queries.
    - **The descriptor score** is BM25 over the candidates' descriptors alone. It comes from a
-     served `bm25` recall whose `sources` lists one workarea per candidate descriptor, because
+     served `bm25` recall whose `sources` lists one workspace per candidate descriptor, because
      memory-kind-3 postings are not built.
    - **The replay.** A searched set's answer is the union's ranking restricted to it (d7.2).
      `analyze` checks this against the served `wide` answer, which is served for `content` alone.

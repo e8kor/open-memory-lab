@@ -33,7 +33,7 @@ on 2026-11-14); it takes the design system from here at a tagged revision.
 Technical, plain, present tense, active voice, neutral. UI copy is impersonal: no first or second
 person ("you", "your", "my", "me", "we") in a heading, label, hint, button, notice, refusal, empty
 state, caption, chip, header or footer. A sentence names the thing, not the reader: "Waiting for
-review · 6", "Empty: every readable workarea", "Held writes by this account's keys". Where an actor
+review · 6", "Empty: every readable workspace", "Held writes by this account's keys". Where an actor
 must be named it is "the user" on the personal side and "the admin" on the administration side, or
 the person or key as the data shows it (`alice`, `alice-laptop`); never "client", which is an MCP
 client or the CLI. The scope words are **Personal** and **Administration**. Neutral tone: no
@@ -75,7 +75,7 @@ means "needs a second look"; red means refusal or failure; grey recedes but stay
 | `superseded` | half disc | on record, no longer the tip |
 | `retired` | slashed ring, dashed border | the claim's tip is an approved retirement |
 | `rejected` | square, the only square | a reviewer refused it; the text is kept |
-| `unreviewed` | held ring with a centre dot | a held memory served inside an in-progress workarea |
+| `unreviewed` | held ring with a centre dot | a held memory served inside an in-progress workspace |
 | `stale` | triangle | the latest source check found it changed or removed |
 | `self-signed` | loop arrow | approved by its own author where policy permits; never a review |
 

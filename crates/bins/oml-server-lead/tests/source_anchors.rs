@@ -4,7 +4,7 @@
 //! refused by name; the origin filters run under row security and never
 //! under-return; `stale` comes from source checks of the served version
 //! alone, never from a held one; a source check admits only a promoted,
-//! anchored tip from its author or a dreamer; and a supersession that names
+//! anchored tip from its author or a reviewer; and a supersession that names
 //! anything but the claim's latest version is refused (d19).
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -219,7 +219,7 @@ fn error_code(body: &Value) -> &str {
     body["error"]["code"].as_str().unwrap_or("<no code>")
 }
 
-/// The bootstrap ceremony; returns (admin token, root workarea id).
+/// The bootstrap ceremony; returns (admin token, root workspace id).
 async fn bootstrap(router: &Router) -> (String, Uuid) {
     let (status, body) = send(
         router,
@@ -237,7 +237,7 @@ async fn bootstrap(router: &Router) -> (String, Uuid) {
     .await;
     assert_eq!(status, StatusCode::CREATED, "bootstrap claim: {body}");
     let token = body["value"].as_str().expect("show-once value").to_owned();
-    let root = Uuid::parse_str(body["root_workarea_id"].as_str().expect("root id")).expect("uuid");
+    let root = Uuid::parse_str(body["root_workspace_id"].as_str().expect("root id")).expect("uuid");
     (token, root)
 }
 
@@ -248,7 +248,7 @@ async fn issue(
     name: &str,
     role: &str,
     principal: &str,
-    held_by: &str,
+    used_by: &str,
     grants: Value,
 ) -> Value {
     let (status, body) = send(
@@ -259,7 +259,7 @@ async fn issue(
         Some(&format!("issue-{name}")),
         Some(json!({
             "role": role, "name": name, "principal": principal,
-            "held_by": held_by, "grants": grants,
+            "used_by": used_by, "grants": grants,
         })),
     )
     .await;
@@ -274,18 +274,18 @@ fn value_of(issued: &Value) -> String {
         .to_owned()
 }
 
-async fn create_workarea(router: &Router, admin: &str, parent: Uuid, name: &str) -> Uuid {
+async fn create_workspace(router: &Router, admin: &str, parent: Uuid, name: &str) -> Uuid {
     let (status, body) = send(
         router,
         "POST",
-        "/v2/workareas",
+        "/v2/workspaces",
         Some(admin),
         Some(&format!("wa-{name}")),
         Some(json!({ "parent": parent, "name": name })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
-    Uuid::parse_str(body["id"].as_str().expect("workarea id")).expect("uuid")
+    Uuid::parse_str(body["id"].as_str().expect("workspace id")).expect("uuid")
 }
 
 /// A fresh Idempotency-Key per request a test means as new.
@@ -304,7 +304,7 @@ fn anchor(path: &str, fragment: &str) -> Value {
     })
 }
 
-/// A world: an admin; two sibling workareas; a writer and a reader on the
+/// A world: an admin; two sibling workspaces; a writer and a reader on the
 /// first; a writer on the second only; a person's reviewer on both.
 struct World {
     rig: Rig,
@@ -324,13 +324,13 @@ async fn world() -> Option<World> {
 async fn world_with(anchor_first_max: Option<usize>) -> Option<World> {
     let rig = fresh_rig_with(anchor_first_max).await?;
     let (admin, root) = bootstrap(&rig.router).await;
-    let node = create_workarea(&rig.router, &admin, root, "docs").await;
-    let other = create_workarea(&rig.router, &admin, root, "elsewhere").await;
+    let node = create_workspace(&rig.router, &admin, root, "docs").await;
+    let other = create_workspace(&rig.router, &admin, root, "elsewhere").await;
     let on = |node: Uuid, roles: &[&str]| {
         Value::from(
             roles
                 .iter()
-                .map(|r| json!({ "workarea": node, "role": r }))
+                .map(|r| json!({ "workspace": node, "role": r }))
                 .collect::<Vec<_>>(),
         )
     };
@@ -382,9 +382,9 @@ async fn world_with(anchor_first_max: Option<usize>) -> Option<World> {
         )
         .await,
     );
-    let mut grants = on(node, &["dreamer", "reader"]);
+    let mut grants = on(node, &["reviewer", "reader"]);
     grants.as_array_mut().expect("array").extend(
-        on(other, &["dreamer", "reader"])
+        on(other, &["reviewer", "reader"])
             .as_array()
             .expect("array")
             .clone(),
@@ -394,9 +394,9 @@ async fn world_with(anchor_first_max: Option<usize>) -> Option<World> {
             &rig.router,
             &admin,
             "person-review",
-            "dreamer",
+            "reviewer",
             "person-review",
-            "human",
+            "person",
             grants,
         )
         .await,
@@ -417,13 +417,13 @@ impl World {
     async fn write(
         &self,
         token: &str,
-        workarea: Uuid,
+        workspace: Uuid,
         key: &str,
         text: &str,
         anchor: Option<Value>,
     ) -> (StatusCode, Value) {
         let mut body = json!({
-            "claim_key": key, "kind": "memory", "body": text, "workarea": workarea,
+            "claim_key": key, "kind": "memory", "body": text, "workspace": workspace,
         });
         if let Some(anchor) = anchor {
             body["anchor"] = anchor;
@@ -442,12 +442,12 @@ impl World {
     async fn written(
         &self,
         token: &str,
-        workarea: Uuid,
+        workspace: Uuid,
         key: &str,
         text: &str,
         anchor: Option<Value>,
     ) -> String {
-        let (status, body) = self.write(token, workarea, key, text, anchor).await;
+        let (status, body) = self.write(token, workspace, key, text, anchor).await;
         assert_eq!(status, StatusCode::ACCEPTED, "write {key}: {body}");
         body["artifact_id"].as_str().expect("id").to_owned()
     }
@@ -592,7 +592,7 @@ async fn an_anchor_is_optional_on_every_kind_and_journalled_in_the_submission_ev
             Some(&w.writer),
             Some("w-steer"),
             Some(
-                json!({"kind": "steering", "body": "always cite the record", "workarea": w.node,
+                json!({"kind": "steering", "body": "always cite the record", "workspace": w.node,
                         "anchor": anchor("docs/adr/ADR-0001-the-constitution.md", "d2")}),
             ),
         )
@@ -861,7 +861,7 @@ async fn the_rule_set_vetoes_credential_files_and_secrets_and_holds_injections_n
 #[tokio::test]
 async fn anchor_filters_respect_row_security_and_never_serve_anothers_held_rows() {
     let Some(w) = world().await else { return };
-    // Promoted, anchored in the reader's workarea.
+    // Promoted, anchored in the reader's workspace.
     let ours = w
         .written(
             &w.writer,
@@ -871,7 +871,7 @@ async fn anchor_filters_respect_row_security_and_never_serve_anothers_held_rows(
             Some(anchor("docs/ops/canary.md", "drain")),
         )
         .await;
-    // Promoted, the same anchor, in a workarea the reader cannot read.
+    // Promoted, the same anchor, in a workspace the reader cannot read.
     let theirs = w
         .written(
             &w.outsider,
@@ -882,7 +882,7 @@ async fn anchor_filters_respect_row_security_and_never_serve_anothers_held_rows(
         )
         .await;
     w.approve(&[ours.clone(), theirs.clone()]).await;
-    // Held, the same anchor, by another key in the reader's workarea.
+    // Held, the same anchor, by another key in the reader's workspace.
     let held = w
         .written(
             &w.writer2,
@@ -892,7 +892,7 @@ async fn anchor_filters_respect_row_security_and_never_serve_anothers_held_rows(
             Some(anchor("docs/ops/canary.md", "twice")),
         )
         .await;
-    let filter = json!({"query": "canary rollout", "workarea": w.node, "anchor_repo": REPO, "anchor_path_prefix": "docs/ops/"});
+    let filter = json!({"query": "canary rollout", "workspace": w.node, "anchor_repo": REPO, "anchor_path_prefix": "docs/ops/"});
     let (status, recall) = w.recall(&w.reader, filter.clone()).await;
     assert_eq!(status, StatusCode::OK, "{recall}");
     assert_eq!(ids(&recall["hits"]), vec![ours.clone()]);
@@ -906,7 +906,7 @@ async fn anchor_filters_respect_row_security_and_never_serve_anothers_held_rows(
         .list(
             &w.reader,
             &format!(
-                "own=false&workarea={}&anchor_repo={REPO}&anchor_path_prefix=docs/ops/",
+                "own=false&workspace={}&anchor_repo={REPO}&anchor_path_prefix=docs/ops/",
                 w.node
             ),
         )
@@ -915,13 +915,13 @@ async fn anchor_filters_respect_row_security_and_never_serve_anothers_held_rows(
     let (_, outside) = w
         .list(
             &w.reader,
-            &format!("own=false&workarea={}&anchor_repo={REPO}", w.other),
+            &format!("own=false&workspace={}&anchor_repo={REPO}", w.other),
         )
         .await;
     assert_eq!(
         error_code(&outside),
         "access.not_found",
-        "an unreadable workarea serves nothing, {theirs} included: {outside}"
+        "an unreadable workspace serves nothing, {theirs} included: {outside}"
     );
     // The own listing by origin lists the key's own rows in every state.
     let (_, own_rows) = w
@@ -992,7 +992,7 @@ async fn an_anchor_filtered_recall_never_under_returns() {
     let (status, recall) = w
         .recall(
             &w.reader,
-            json!({"query": "rollback", "workarea": w.node, "k": 3, "anchor_path_prefix": "docs/"}),
+            json!({"query": "rollback", "workspace": w.node, "k": 3, "anchor_path_prefix": "docs/"}),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{recall}");
@@ -1004,7 +1004,7 @@ async fn an_anchor_filtered_recall_never_under_returns() {
 }
 
 #[tokio::test]
-async fn a_source_check_admits_only_a_promoted_anchored_tip_from_its_author_or_a_dreamer() {
+async fn a_source_check_admits_only_a_promoted_anchored_tip_from_its_author_or_a_reviewer() {
     let Some(w) = world().await else { return };
     let fresh = json!({"rev": REV2, "result": "fresh", "hash": HASH});
     let held = w
@@ -1045,7 +1045,7 @@ async fn a_source_check_admits_only_a_promoted_anchored_tip_from_its_author_or_a
     // A reader's role is below the verb.
     let (status, _) = w.check(&w.reader, &held, fresh.clone()).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    // The author and a dreamer on its workarea may.
+    // The author and a reviewer on its workspace may.
     let (status, body) = w.check(&w.writer, &held, fresh.clone()).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["stale"], Value::Null);
@@ -1104,15 +1104,15 @@ async fn stale_is_the_latest_source_check_of_the_served_version() {
     assert_eq!(stale_of(&got), "changed");
     assert_eq!(got["source_checked"]["rev"], REV2);
     let (_, recall) = w
-        .recall(&w.reader, json!({"query": "rollback", "workarea": w.node}))
+        .recall(&w.reader, json!({"query": "rollback", "workspace": w.node}))
         .await;
     assert_eq!(recall["hits"][0]["memory"]["stale"], "changed", "{recall}");
-    // The workarea read counts its stale served versions, the doctor's
+    // The workspace read counts its stale served versions, the doctor's
     // line (ADR-0057 d17).
     let (status, node) = send(
         &w.rig.router,
         "GET",
-        &format!("/v2/workareas/{}", w.node),
+        &format!("/v2/workspaces/{}", w.node),
         Some(&w.reader),
         None,
         None,
@@ -1179,7 +1179,7 @@ async fn a_held_successor_never_marks_its_served_version_stale() {
         );
     }
     let (_, recall) = w
-        .recall(&w.reader, json!({"query": "rollback", "workarea": w.node}))
+        .recall(&w.reader, json!({"query": "rollback", "workspace": w.node}))
         .await;
     assert_eq!(ids(&recall["hits"]), vec![v1.clone()]);
     assert_eq!(recall["hits"][0]["memory"]["stale"], Value::Null);
@@ -1255,7 +1255,7 @@ async fn mcp_oml_write_and_oml_read_carry_the_anchor_with_no_new_tool() {
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "oml_write", "arguments": {
                 "text": "rollback is reviewed", "idempotency_key": "mcp-1",
-                "claim_key": "adr-0003-d4", "workarea": w.node.to_string(), "anchor": a.clone()}},
+                "claim_key": "adr-0003-d4", "workspace": w.node.to_string(), "anchor": a.clone()}},
         })),
     )
     .await;
@@ -1274,7 +1274,7 @@ async fn mcp_oml_write_and_oml_read_carry_the_anchor_with_no_new_tool() {
         Some(json!({
             "jsonrpc": "2.0", "id": 2, "method": "tools/call",
             "params": {"name": "oml_read", "arguments": {
-                "query": "rollback", "workarea": w.node.to_string(),
+                "query": "rollback", "workspace": w.node.to_string(),
                 "anchor_repo": REPO, "anchor_path_prefix": "docs/adr/"}},
         })),
     )
@@ -1484,7 +1484,7 @@ async fn filtered_equals_filter_then_cut(anchor_first_max: Option<usize>) {
         let (_, page) = w
             .list(
                 &w.reader,
-                &format!("own=false&workarea={}&limit=200", w.node),
+                &format!("own=false&workspace={}&limit=200", w.node),
             )
             .await;
         page["items"]
@@ -1518,14 +1518,14 @@ async fn filtered_equals_filter_then_cut(anchor_first_max: Option<usize>) {
             let (status, all) = w
                 .recall(
                     &w.reader,
-                    json!({"query": query, "workarea": w.node, "k": 100, "search": search}),
+                    json!({"query": query, "workspace": w.node, "k": 100, "search": search}),
                 )
                 .await;
             assert_eq!(status, StatusCode::OK, "{all}");
             for (repo, prefix) in filters {
                 for k in [1, 3, 8] {
                     let mut body =
-                        json!({"query": query, "workarea": w.node, "k": k, "search": search});
+                        json!({"query": query, "workspace": w.node, "k": k, "search": search});
                     if let Some(repo) = repo {
                         body["anchor_repo"] = json!(repo);
                     }
@@ -1884,7 +1884,7 @@ impl World {
         origin: Option<Value>,
     ) -> (StatusCode, Value) {
         let mut body = json!({
-            "claim_key": key, "kind": "memory", "body": text, "workarea": self.node,
+            "claim_key": key, "kind": "memory", "body": text, "workspace": self.node,
         });
         if let Some(anchor) = anchor {
             body["anchor"] = anchor;
@@ -2206,7 +2206,7 @@ async fn recall_filtered_by_origin_kind_leaves_out_other_kinds_and_rows_without_
         .expect("legacy row");
     drop(admin);
     assert_eq!(w.get(&w.reader, &legacy).await["origin"], Value::Null);
-    let recall = |kinds: Value| json!({"query": "ultramarine colour", "k": 10, "workarea": w.node, "origin_kinds": kinds});
+    let recall = |kinds: Value| json!({"query": "ultramarine colour", "k": 10, "workspace": w.node, "origin_kinds": kinds});
     let (status, body) = w.recall(&w.reader, recall(json!(["chat"]))).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(ids(&body["hits"]), vec![chat.clone()]);
@@ -2218,7 +2218,7 @@ async fn recall_filtered_by_origin_kind_leaves_out_other_kinds_and_rows_without_
     want.sort();
     assert_eq!(got, want, "rows without a kind are left out");
     let (status, body) = w
-        .list(&w.reader, &format!("workarea={}&origin_kinds=doc", w.node))
+        .list(&w.reader, &format!("workspace={}&origin_kinds=doc", w.node))
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(ids(&body["items"]), vec![doc.clone()]);
@@ -2230,7 +2230,7 @@ async fn recall_filtered_by_origin_kind_leaves_out_other_kinds_and_rows_without_
     let (status, body) = w
         .list(
             &w.reader,
-            &format!("workarea={}&origin_kinds=email", w.node),
+            &format!("workspace={}&origin_kinds=email", w.node),
         )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -2239,13 +2239,13 @@ async fn recall_filtered_by_origin_kind_leaves_out_other_kinds_and_rows_without_
 }
 
 #[tokio::test]
-async fn an_agent_key_cannot_open_a_persons_chat_workarea_and_the_persons_key_can() {
+async fn an_agent_key_cannot_open_a_persons_chat_workspace_and_the_persons_key_can() {
     let Some(rig) = fresh_rig_with(None).await else {
         return;
     };
     let r = &rig.router;
     let (admin, _) = bootstrap(r).await;
-    let user_key = |name: &'static str, held_by: &'static str| {
+    let user_key = |name: &'static str, used_by: &'static str| {
         let admin = admin.clone();
         async move {
             let (status, body) = send(
@@ -2256,8 +2256,8 @@ async fn an_agent_key_cannot_open_a_persons_chat_workarea_and_the_persons_key_ca
                 Some(&format!("issue-{name}")),
                 Some(json!({
                     "role": "writer", "name": name, "principal": format!("eugene/{name}"),
-                    "user": "eugene", "held_by": held_by,
-                    "grants": [{ "workarea": "eugene", "role": "writer" }, { "workarea": "eugene", "role": "reader" }],
+                    "user": "eugene", "used_by": used_by,
+                    "grants": [{ "workspace": "eugene", "role": "writer" }, { "workspace": "eugene", "role": "reader" }],
                 })),
             )
             .await;
@@ -2266,12 +2266,12 @@ async fn an_agent_key_cannot_open_a_persons_chat_workarea_and_the_persons_key_ca
         }
     };
     let agent = user_key("eugene-agent", "agent").await;
-    let person = user_key("eugene-cli", "human").await;
+    let person = user_key("eugene-cli", "person").await;
     let open = |token: String, name: &'static str| async move {
         send(
             r,
             "POST",
-            "/v2/workareas",
+            "/v2/workspaces",
             Some(&token),
             Some(&format!(
                 "open-{name}-{}",
@@ -2286,13 +2286,13 @@ async fn an_agent_key_cannot_open_a_persons_chat_workarea_and_the_persons_key_ca
     assert_eq!(error_code(&body), "access.verb_ceiling");
     assert_eq!(
         body["error"]["details"]["reason"],
-        "chat_scope_is_human_only"
+        "chat_scope_is_person_only"
     );
     // Nothing was journalled: the person's key opens it next.
     let (status, body) = open(person, "chat").await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(body["path"], "universe.eugene.chat");
-    // The agent's other workareas are unaffected.
+    // The agent's other workspaces are unaffected.
     let (status, body) = open(agent, "notes").await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     drop(rig.store);
@@ -2301,7 +2301,7 @@ async fn an_agent_key_cannot_open_a_persons_chat_workarea_and_the_persons_key_ca
 
 /// The law of d8: `chat` is reserved in each user root's namespace for a
 /// key a person holds, at any depth, so an agent cannot take the name first
-/// and leave the person's `chat init` a workarea the agent made (H1).
+/// and leave the person's `chat init` a workspace the agent made (H1).
 #[tokio::test]
 async fn an_agent_key_cannot_take_the_name_chat_anywhere_under_a_user_root() {
     let Some(rig) = fresh_rig_with(None).await else {
@@ -2309,7 +2309,7 @@ async fn an_agent_key_cannot_take_the_name_chat_anywhere_under_a_user_root() {
     };
     let r = &rig.router;
     let (admin, _) = bootstrap(r).await;
-    let user_key = |name: &'static str, held_by: &'static str| {
+    let user_key = |name: &'static str, used_by: &'static str| {
         let admin = admin.clone();
         async move {
             let (status, body) = send(
@@ -2320,8 +2320,8 @@ async fn an_agent_key_cannot_take_the_name_chat_anywhere_under_a_user_root() {
                 Some(&format!("issue-{name}")),
                 Some(json!({
                     "role": "writer", "name": name, "principal": format!("eugene/{name}"),
-                    "user": "eugene", "held_by": held_by,
-                    "grants": [{ "workarea": "eugene", "role": "writer" }, { "workarea": "eugene", "role": "reader" }],
+                    "user": "eugene", "used_by": used_by,
+                    "grants": [{ "workspace": "eugene", "role": "writer" }, { "workspace": "eugene", "role": "reader" }],
                 })),
             )
             .await;
@@ -2330,7 +2330,7 @@ async fn an_agent_key_cannot_take_the_name_chat_anywhere_under_a_user_root() {
         }
     };
     let agent = user_key("eugene-agent", "agent").await;
-    let person = user_key("eugene-cli", "human").await;
+    let person = user_key("eugene-cli", "person").await;
     let create = |token: String, parent: Option<&'static str>, name: &'static str| async move {
         let mut body = json!({ "name": name });
         if let Some(parent) = parent {
@@ -2339,7 +2339,7 @@ async fn an_agent_key_cannot_take_the_name_chat_anywhere_under_a_user_root() {
         send(
             r,
             "POST",
-            "/v2/workareas",
+            "/v2/workspaces",
             Some(&token),
             Some(&format!(
                 "mk-{name}-{}",
@@ -2355,7 +2355,7 @@ async fn an_agent_key_cannot_take_the_name_chat_anywhere_under_a_user_root() {
     assert_eq!(status, StatusCode::FORBIDDEN, "a nested squat: {body}");
     assert_eq!(
         body["error"]["details"]["reason"],
-        "chat_scope_is_human_only"
+        "chat_scope_is_person_only"
     );
     let (status, body) = create(person, None, "chat").await;
     assert_eq!(status, StatusCode::CREATED, "{body}");

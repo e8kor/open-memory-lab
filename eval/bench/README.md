@@ -18,9 +18,9 @@ data through [ir_datasets](https://ir-datasets.com/) (MIT), rather than from cod
 | file | what it is |
 |---|---|
 | `adapters.py` | one adapter per dataset: `load(cache, seed, limit)` returns memories, queries and qrels; also the published BM25 numbers used as a sanity check |
-| `bench.py` | `workareas`, `load`, `run` and `report`; reuses `eval/recall/run.py`'s HTTP client |
+| `bench.py` | `workspaces`, `load`, `run` and `report`; reuses `eval/recall/run.py`'s HTTP client |
 | `chat.py` | chat memory end to end (ADR-0063 d12): LongMemEval (S) and LoCoMo turns written as held chat memories with chat anchors, then `run`, a retrieval proxy with no model (turn recall@5/10/50 of the evidence turns, session recall@k for LongMemEval), and `qa`, answers from a fixed answering model graded by a fixed judge with LongMemEval's published judge prompts, which needs `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` and exits 2 naming it otherwise |
-| `boot.sh` | boots a lead against a throwaway database, creates the workareas and the keys, and serves until stopped |
+| `boot.sh` | boots a lead against a throwaway database, creates the workspaces and the keys, and serves until stopped |
 | `run.sh` | boot, load, run every pipeline and print the tables, in one command; the nightly workflow runs it |
 | `reference.py` | ranks the same memories offline with [bm25s](https://github.com/xhluca/bm25s) (MIT), to split a gap to a published number between the mapping and the served implementation |
 | `export.py` | writes every result in the common schema below, and converts `eval/recall`'s served results too |
@@ -54,7 +54,7 @@ directory:
 
 ```sh
 S=/srv/build/bench-state
-eval/bench/boot.sh $S $(python eval/bench/bench.py workareas scifact locomo) &
+eval/bench/boot.sh $S $(python eval/bench/bench.py workspaces scifact locomo) &
 python eval/bench/bench.py load --state $S scifact
 python eval/bench/bench.py run  --state $S --out .tmp/bench scifact [--search bm25] [--limit 100]
 python eval/bench/reference.py .tmp/bench scifact
@@ -143,14 +143,14 @@ unit, so each mapping is stated with what it costs.
 | `scifact` (BEIR test) | CC BY-NC 2.0 | 5,183 | 300 | one abstract is one memory: `<title>. <abstract>` |
 | `nfcorpus` (BEIR test) | "free to use for academic purposes" | 3,633 | 323 | as SciFact |
 | `arguana` (BEIR) | CC BY 4.0 | 8,674 | 1,406 | as SciFact; adapter only, not run (the queries are whole arguments) |
-| `scifact-x10` | as SciFact | 51,830 | 300 | SciFact and nine copies with 10% of words replaced (seeds 20261105 to 20261113), one workarea, for latency at scale; qrels name the original copy |
-| `locomo` (`locomo10.json`) | CC BY-NC 4.0 | 5,882 | 1,981 | one dialogue turn is one memory, `[<session date>] <speaker>: <text>`, with a shared photo's caption; one workarea per conversation |
+| `scifact-x10` | as SciFact | 51,830 | 300 | SciFact and nine copies with 10% of words replaced (seeds 20261105 to 20261113), one workspace, for latency at scale; qrels name the original copy |
+| `locomo` (`locomo10.json`) | CC BY-NC 4.0 | 5,882 | 1,981 | one dialogue turn is one memory, `[<session date>] <speaker>: <text>`, with a shared photo's caption; one workspace per conversation |
 
 - **BEIR.** A memory is an abstract, a median of about 1,400 characters, several claims long.
   BEIR's own BM25 indexes the title and the text as two fields with Anserini (k1 0.9, b 0.4);
   here both are one body. Relevance is BEIR's test qrels as published (NFCorpus has grades 1
   and 2).
-- **LoCoMo.** Each of the ten conversations is its own haystack: its turns go in a workarea of
+- **LoCoMo.** Each of the ten conversations is its own haystack: its turns go in a workspace of
   their own and its questions are asked only there, so a question never sees another
   conversation. The qrels are each question's `evidence` dialogue ids; the five questions
   whose evidence names no turn are dropped (four name none, one names `D30:05`). Category 5 (adversarial: the question presumes
@@ -160,7 +160,7 @@ unit, so each mapping is stated with what it costs.
 - **Not run.** LongMemEval (MIT, 500 questions) gives every question its own haystack of
   about 40 sessions (`_s`, about 115k tokens) with per-turn `has_answer` labels; mapped one
   turn per memory that is roughly 500 memories per question, 250,000 for the set, and a
-  workarea per question. It is the next adapter, on a fixed subset. MemoryAgentBench (MIT
+  workspace per question. It is the next adapter, on a fixed subset. MemoryAgentBench (MIT
   code) scores answers, not retrieval, so it gives no qrels to score recall against. MTEB's
   retrieval tasks are BEIR's datasets again behind another loader.
 

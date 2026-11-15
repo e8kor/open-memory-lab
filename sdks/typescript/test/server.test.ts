@@ -27,7 +27,7 @@ before(async () => {
   if (live.skip) return;
   server = await startServer();
   agent = new OmlClient({ url: server.url, apiKey: server.agentKey });
-  reviewer = new OmlClient({ url: server.url, apiKey: server.dreamerKey });
+  reviewer = new OmlClient({ url: server.url, apiKey: server.reviewerKey });
 });
 
 after(async () => {
@@ -71,24 +71,24 @@ function countSubmits() {
 describe("the agent loop", live, () => {
   test("a written memory is held, recalled by its author alone, and promoted by a reviewer", async () => {
     const word = marker();
-    const workarea = server.reviewWorkarea;
+    const workspace = server.reviewWorkspace;
     const written = await agent.write({
       text: `The SDK agent loop wrote this memory, ${word}.`,
       claim_key: `loop-${word}`,
-      workarea,
+      workspace,
     });
     const held = written.value;
     assert.equal(held.state, "held");
     assert.equal(written.replayed, false);
 
-    const own = await agent.read({ query: word, include_unreviewed: true, workarea });
+    const own = await agent.read({ query: word, include_unreviewed: true, workspace });
     assert.deepEqual(
       own.hits.map((hit) => [hit.memory.artifact_id, hit.memory.state]),
       [[held.artifact_id, "held"]],
     );
     // Nobody has approved a held memory (ADR-0077 d5).
     assert.deepEqual([own.hits[0]?.memory.approver, own.hits[0]?.memory.approved_at], [null, null]);
-    assert.deepEqual((await agent.read({ query: word, workarea })).hits, []);
+    assert.deepEqual((await agent.read({ query: word, workspace })).hits, []);
 
     const serve = await reviewer.reviewNext();
     assert.ok(serve);
@@ -96,16 +96,16 @@ describe("the agent loop", live, () => {
     const verdict = await reviewer.approve(); // the one item this key claimed (ADR-0039 d10)
     assert.equal(verdict.value.state, "promoted");
 
-    const recalled = await agent.read({ query: word, workarea });
+    const recalled = await agent.read({ query: word, workspace });
     assert.deepEqual(
       recalled.hits.map((hit) => [hit.memory.artifact_id, hit.memory.state]),
       [[held.artifact_id, "promoted"]],
     );
     // The hit says a person approved it, and when; the read by id says the
-    // same (ADR-0077 d1, d2). The fixture's reviewer key is held by a human
+    // same (ADR-0077 d1, d2). The fixture's reviewer key is used by a person
     // and acts for no user.
     const approved = recalled.hits[0]?.memory;
-    assert.deepEqual(approved?.approver, { held_by: "human", same_user: false });
+    assert.deepEqual(approved?.approver, { used_by: "person", same_user: false });
     assert.ok(approved?.approved_at && approved.promoted_at);
     assert.ok(approved.approved_at <= approved.promoted_at);
     const fetched = await agent.read({ artifact_id: held.artifact_id });
@@ -116,9 +116,9 @@ describe("the agent loop", live, () => {
 
   test("a held version cannot be superseded and the promoted one can", async () => {
     const word = marker();
-    const workarea = server.reviewWorkarea;
+    const workspace = server.reviewWorkspace;
     const held = (
-      await agent.write({ text: `The SDK README's canary rule, ${word}.`, claim_key: `tip-${word}`, workarea })
+      await agent.write({ text: `The SDK README's canary rule, ${word}.`, claim_key: `tip-${word}`, workspace })
     ).value;
     const supersede = { text: "Drain, then wait five minutes.", replaces: held.artifact_id, expected_version: 1 };
     await assert.rejects(agent.write(supersede), (error: unknown) => {
@@ -303,23 +303,23 @@ describe("the URL and key", live, () => {
   });
 });
 
-describe("workareas and events", live, () => {
-  test("workarea without a name reads the key's default workarea", async () => {
-    const view = await agent.workarea();
-    assert.equal(view.id, server.workarea);
+describe("workspaces and events", live, () => {
+  test("workspace without a name reads the key's default workspace", async () => {
+    const view = await agent.workspace();
+    assert.equal(view.id, server.workspace);
     assert.ok(view.my_effective_verbs.includes("remember"));
-    assert.equal((await agent.workarea(server.reviewWorkarea)).id, server.reviewWorkarea);
+    assert.equal((await agent.workspace(server.reviewWorkspace)).id, server.reviewWorkspace);
   });
 
-  test("events tails the named workarea from after_seq", async () => {
-    // The key's own workarea, never the review queue's, which the agent loop reads whole.
+  test("events tails the named workspace from after_seq", async () => {
+    // The key's own workspace, never the review queue's, which the agent loop reads whole.
     const written = await agent.write({
       text: `An event to tail, ${marker()}.`,
-      workarea: server.workarea,
+      workspace: server.workspace,
     });
-    const page = await agent.events({ workarea: server.workarea });
+    const page = await agent.events({ workspace: server.workspace });
     assert.ok(page.head_seq >= (written.value.journal_seq ?? Number.POSITIVE_INFINITY));
-    const later = await agent.events({ workarea: server.workarea, after_seq: page.head_seq });
+    const later = await agent.events({ workspace: server.workspace, after_seq: page.head_seq });
     assert.deepEqual(later.items, []);
   });
 });

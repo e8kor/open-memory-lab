@@ -1,5 +1,5 @@
 //! Bulk review over the lead composition against a throwaway database
-//! (ADR-0055): the listing a human reviewer key is served, the bulk verdict
+//! (ADR-0055): the listing a person reviewer key is served, the bulk verdict
 //! and its per-item outcomes, the laws the record names — an agent key
 //! never reaches it on any transport, an item the reviewer's own key or
 //! principal is in the lineage of is skipped and never approved, a stale id
@@ -130,7 +130,7 @@ fn error_code(body: &Value) -> &str {
     body["error"]["code"].as_str().unwrap_or("<no code>")
 }
 
-/// The bootstrap ceremony; returns (admin token, root workarea id).
+/// The bootstrap ceremony; returns (admin token, root workspace id).
 async fn bootstrap(router: &Router) -> (String, Uuid) {
     let (status, body) = send(
         router,
@@ -148,7 +148,7 @@ async fn bootstrap(router: &Router) -> (String, Uuid) {
     .await;
     assert_eq!(status, StatusCode::CREATED, "bootstrap claim: {body}");
     let token = body["value"].as_str().expect("show-once value").to_owned();
-    let root = Uuid::parse_str(body["root_workarea_id"].as_str().expect("root id")).expect("uuid");
+    let root = Uuid::parse_str(body["root_workspace_id"].as_str().expect("root id")).expect("uuid");
     (token, root)
 }
 
@@ -159,7 +159,7 @@ async fn issue(
     name: &str,
     role: &str,
     principal: &str,
-    held_by: &str,
+    used_by: &str,
     grants: Value,
 ) -> Value {
     let (status, body) = send(
@@ -170,7 +170,7 @@ async fn issue(
         Some(&format!("issue-{name}")),
         Some(json!({
             "role": role, "name": name, "principal": principal,
-            "held_by": held_by, "grants": grants,
+            "used_by": used_by, "grants": grants,
         })),
     )
     .await;
@@ -189,25 +189,25 @@ fn id_of(issued: &Value) -> String {
     issued["key_id"].as_str().expect("key id").to_owned()
 }
 
-async fn create_workarea(router: &Router, admin: &str, parent: Uuid, name: &str) -> Uuid {
+async fn create_workspace(router: &Router, admin: &str, parent: Uuid, name: &str) -> Uuid {
     let (status, body) = send(
         router,
         "POST",
-        "/v2/workareas",
+        "/v2/workspaces",
         Some(admin),
         Some(&format!("wa-{name}")),
         Some(json!({ "parent": parent, "name": name })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
-    Uuid::parse_str(body["id"].as_str().expect("workarea id")).expect("uuid")
+    Uuid::parse_str(body["id"].as_str().expect("workspace id")).expect("uuid")
 }
 
 /// One held write of `claim_key` under `token`; returns its artifact id.
 async fn write(
     router: &Router,
     token: &str,
-    workarea: Uuid,
+    workspace: Uuid,
     claim_key: &str,
     derives_from: &[&str],
 ) -> String {
@@ -215,7 +215,7 @@ async fn write(
         "claim_key": claim_key,
         "kind": "memory",
         "body": format!("Decision {claim_key}: the record states it."),
-        "workarea": workarea.to_string(),
+        "workspace": workspace.to_string(),
     });
     if !derives_from.is_empty() {
         body["derives_from"] = json!(derives_from);
@@ -240,8 +240,8 @@ async fn write(
         .to_owned()
 }
 
-/// The workarea, an admin, a writer key held by an agent, a reviewer key
-/// held by a person, a dreamer key held by an agent, all on one node.
+/// The workspace, an admin, a writer key used by an agent, a reviewer key
+/// used by a person, a reviewer key used by an agent, all on one node.
 struct World {
     rig: Rig,
     admin: String,
@@ -250,20 +250,20 @@ struct World {
     agent_issued: Value,
     reviewer: String,
     reviewer_issued: Value,
-    agent_dreamer: String,
+    agent_reviewer: String,
 }
 
 async fn world() -> Option<World> {
     let rig = fresh_rig().await?;
     let (admin, root) = bootstrap(&rig.router).await;
-    let node = create_workarea(&rig.router, &admin, root, "adr-import").await;
+    let node = create_workspace(&rig.router, &admin, root, "adr-import").await;
     let writer_grants = json!([
-        { "workarea": node, "role": "writer" },
-        { "workarea": node, "role": "reader" },
+        { "workspace": node, "role": "writer" },
+        { "workspace": node, "role": "reader" },
     ]);
-    let dreamer_grants = json!([
-        { "workarea": node, "role": "dreamer" },
-        { "workarea": node, "role": "reader" },
+    let reviewer_grants = json!([
+        { "workspace": node, "role": "reviewer" },
+        { "workspace": node, "role": "reader" },
     ]);
     let agent_issued = issue(
         &rig.router,
@@ -279,21 +279,21 @@ async fn world() -> Option<World> {
         &rig.router,
         &admin,
         "eugene-review",
-        "dreamer",
+        "reviewer",
         "eugene-review",
-        "human",
-        dreamer_grants.clone(),
+        "person",
+        reviewer_grants.clone(),
     )
     .await;
-    let agent_dreamer = value_of(
+    let agent_reviewer = value_of(
         &issue(
             &rig.router,
             &admin,
             "crew-reviewer",
-            "dreamer",
+            "reviewer",
             "crew/reviewer",
             "agent",
-            dreamer_grants,
+            reviewer_grants,
         )
         .await,
     );
@@ -304,7 +304,7 @@ async fn world() -> Option<World> {
         agent_issued,
         reviewer: value_of(&reviewer_issued),
         reviewer_issued,
-        agent_dreamer,
+        agent_reviewer,
         rig,
     })
 }
@@ -374,12 +374,12 @@ async fn journal_of(rig: &Rig, artifact_id: &str) -> Vec<(String, String, Option
 
 /// One approval the single way: the crew's reviewer is served `artifact`
 /// next and approves it.
-async fn approve_single(router: &Router, dreamer: &str, artifact: &str, tag: &str) -> Value {
+async fn approve_single(router: &Router, reviewer: &str, artifact: &str, tag: &str) -> Value {
     let (status, serve) = send(
         router,
         "POST",
         "/v2/review/next",
-        Some(dreamer),
+        Some(reviewer),
         Some(&format!("next-{tag}")),
         Some(json!({})),
     )
@@ -390,7 +390,7 @@ async fn approve_single(router: &Router, dreamer: &str, artifact: &str, tag: &st
         router,
         "POST",
         "/v2/review/verdicts",
-        Some(dreamer),
+        Some(reviewer),
         Some(&format!("verdict-{tag}")),
         Some(json!({"serve_id": serve["serve_id"], "verdict": "approve"})),
     )
@@ -457,13 +457,13 @@ async fn an_agent_key_cannot_list_or_bulk_approve_on_any_transport() {
         .map(|t| t["name"].as_str().expect("name"))
         .collect();
     names.sort_unstable();
-    assert_eq!(names, ["oml_read", "oml_workarea", "oml_write"]);
-    // Every key an agent may hold, the writer and the crew's dreamer, and
+    assert_eq!(names, ["oml_read", "oml_workspace", "oml_write"]);
+    // Every key an agent may hold, the writer and the crew's reviewer, and
     // the person's own reviewer key too: /mcp names no review tool for any
     // of them, and a call naming one is an unknown tool.
     for (who, token) in [
         ("writer", &w.agent),
-        ("crew dreamer", &w.agent_dreamer),
+        ("crew reviewer", &w.agent_reviewer),
         ("person's reviewer", &w.reviewer),
     ] {
         let listed = mcp(r, token, "tools/list", json!({})).await;
@@ -499,17 +499,17 @@ async fn an_agent_key_cannot_list_or_bulk_approve_on_any_transport() {
 }
 
 #[tokio::test]
-async fn a_dreamer_key_held_by_an_agent_is_refused_bulk_review() {
+async fn a_reviewer_key_used_by_an_agent_is_refused_bulk_review() {
     let Some(w) = world().await else {
         return;
     };
     let r = &w.rig.router;
     let a = write(r, &w.agent, w.node, "adr-0001-d1", &[]).await;
     for (status, body) in [
-        held_listing(r, &w.agent_dreamer, "").await,
+        held_listing(r, &w.agent_reviewer, "").await,
         bulk(
             r,
-            &w.agent_dreamer,
+            &w.agent_reviewer,
             "crew-bulk",
             "approve",
             std::slice::from_ref(&a),
@@ -520,12 +520,12 @@ async fn a_dreamer_key_held_by_an_agent_is_refused_bulk_review() {
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
         assert_eq!(error_code(&body), "access.verb_ceiling", "{body}");
         assert_eq!(
-            body["error"]["details"]["reason"], "bulk_review_is_human_only",
+            body["error"]["details"]["reason"], "bulk_review_is_person_only",
             "{body}"
         );
     }
     // It still reviews one item per serve.
-    approve_single(r, &w.agent_dreamer, &a, "crew").await;
+    approve_single(r, &w.agent_reviewer, &a, "crew").await;
     drop_db(&w.rig.db_name).await;
 }
 
@@ -545,17 +545,17 @@ async fn an_item_the_reviewer_authored_or_derives_from_is_skipped_not_approved()
             "eugene-review",
             "agent",
             json!([
-                { "workarea": w.node, "role": "writer" },
-                { "workarea": w.node, "role": "reader" },
+                { "workspace": w.node, "role": "writer" },
+                { "workspace": w.node, "role": "reader" },
             ]),
         )
         .await,
     );
     // Two promoted rows first, so the crew's reviewer is served each.
     let base = write(r, &w.agent, w.node, "adr-0003-d1", &[]).await;
-    approve_single(r, &w.agent_dreamer, &base, "base").await;
+    approve_single(r, &w.agent_reviewer, &base, "base").await;
     let twin_base = write(r, &twin, w.node, "adr-0004-d1", &[]).await;
-    approve_single(r, &w.agent_dreamer, &twin_base, "twin-base").await;
+    approve_single(r, &w.agent_reviewer, &twin_base, "twin-base").await;
     // Held: a row by the reviewer's principal, the reviewer key's own
     // supersession, a row deriving from the principal's promoted row.
     let by_principal = write(r, &twin, w.node, "adr-0002-d1", &[]).await;
@@ -612,12 +612,12 @@ async fn a_stale_id_is_reported_not_approved() {
     };
     let r = &w.rig.router;
     let decided = write(r, &w.agent, w.node, "adr-0001-d1", &[]).await;
-    approve_single(r, &w.agent_dreamer, &decided, "decided").await;
+    approve_single(r, &w.agent_reviewer, &decided, "decided").await;
     // Two rival successors of one promoted tip; the first approved takes
     // the tip and the second has lost its target.
     let mut successors = Vec::new();
-    // A writer supersedes its own claims and a dreamer proposes for any.
-    for (token, tag, expected) in [(&w.agent, "one", 1), (&w.agent_dreamer, "two", 1)] {
+    // A writer supersedes its own claims and a reviewer proposes for any.
+    for (token, tag, expected) in [(&w.agent, "one", 1), (&w.agent_reviewer, "two", 1)] {
         let (status, s) = send(
             r,
             "POST",
@@ -808,8 +808,8 @@ async fn the_listing_serves_only_what_review_next_would_and_claims_nothing() {
         "crew/notes",
         "agent",
         json!([
-            { "workarea": w.node, "role": "writer" },
-            { "workarea": w.node, "role": "reader" },
+            { "workspace": w.node, "role": "writer" },
+            { "workspace": w.node, "role": "reader" },
         ]),
     )
     .await;
@@ -844,7 +844,7 @@ async fn the_listing_serves_only_what_review_next_would_and_claims_nothing() {
     )
     .await;
     assert_eq!(listed_ids(&page), vec![a.clone(), b.clone(), c.clone()]);
-    let (_, page) = held_listing(r, &w.reviewer, "?workarea=adr-import&limit=2").await;
+    let (_, page) = held_listing(r, &w.reviewer, "?workspace=adr-import&limit=2").await;
     assert_eq!(listed_ids(&page), vec![a.clone(), b.clone()]);
     let cursor = page["next_cursor"]
         .as_str()
@@ -859,7 +859,7 @@ async fn the_listing_serves_only_what_review_next_would_and_claims_nothing() {
         r,
         "POST",
         "/v2/review/next",
-        Some(&w.agent_dreamer),
+        Some(&w.agent_reviewer),
         Some("crew-next"),
         Some(json!({})),
     )
@@ -963,7 +963,7 @@ async fn a_bulk_approval_of_the_persons_own_agents_writes_is_marked_same_user() 
     // The issuance body's `user` is set by a second call shape: issue()
     // sends none, so issue the user keys directly.
     let user_key =
-        |name: &'static str, role: &'static str, held_by: &'static str, grants: Value| {
+        |name: &'static str, role: &'static str, used_by: &'static str, grants: Value| {
             let admin = admin.clone();
             async move {
                 let (status, body) = send(
@@ -974,7 +974,7 @@ async fn a_bulk_approval_of_the_persons_own_agents_writes_is_marked_same_user() 
                     Some(&format!("issue-{name}")),
                     Some(json!({
                         "role": role, "name": name, "principal": format!("eugene/{name}"),
-                        "user": "eugene", "held_by": held_by, "grants": grants,
+                        "user": "eugene", "used_by": used_by, "grants": grants,
                     })),
                 )
                 .await;
@@ -986,14 +986,14 @@ async fn a_bulk_approval_of_the_persons_own_agents_writes_is_marked_same_user() 
         "eugene-agent",
         "writer",
         "agent",
-        json!([{ "workarea": "eugene", "role": "writer" }, { "workarea": "eugene", "role": "reader" }]),
+        json!([{ "workspace": "eugene", "role": "writer" }, { "workspace": "eugene", "role": "reader" }]),
     )
     .await;
     let reviewer = user_key(
         "eugene-reviewer",
-        "dreamer",
-        "human",
-        json!([{ "workarea": "eugene", "role": "dreamer" }, { "workarea": "eugene", "role": "reader" }]),
+        "reviewer",
+        "person",
+        json!([{ "workspace": "eugene", "role": "reviewer" }, { "workspace": "eugene", "role": "reader" }]),
     )
     .await;
     let mut ids = Vec::new();
@@ -1081,7 +1081,7 @@ async fn review_scale_measurement() {
                         Some(json!({
                             "claim_key": key, "kind": "memory",
                             "body": format!("Decision {key}: the record states it."),
-                            "workarea": node.to_string(),
+                            "workspace": node.to_string(),
                         })),
                     )
                     .await;

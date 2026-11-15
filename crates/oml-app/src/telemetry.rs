@@ -136,8 +136,8 @@ pub struct RecallEvent {
     pub created_at: EventTime,
     pub key_id: Uuid,
     pub principal: String,
-    pub scope_workarea_id: Uuid,
-    pub source_workarea_id: Option<Uuid>,
+    pub scope_workspace_id: Uuid,
+    pub source_workspace_id: Option<Uuid>,
     pub pipeline: &'static str,
     pub access: &'static str,
     /// The request's `query_digest`, `sha256:` and 64 hex characters.
@@ -175,12 +175,12 @@ pub struct FeedbackLabels {
 }
 
 /// A memory written, for the remember side's duplicate count: its body
-/// digest compared with the workarea's served memories (ADR-0054 d12, as
+/// digest compared with the workspace's served memories (ADR-0054 d12, as
 /// accepted).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Remembered {
     pub tenant_id: Uuid,
-    pub workarea_id: Uuid,
+    pub workspace_id: Uuid,
     pub memory_id: Uuid,
     pub body_digest: String,
 }
@@ -226,7 +226,7 @@ pub struct StoredEvent {
     pub created_at: EventTime,
     pub key_id: Uuid,
     pub principal: String,
-    pub scope_workarea_id: Uuid,
+    pub scope_workspace_id: Uuid,
     pub pipeline: String,
     pub access: String,
     pub query_digest: String,
@@ -240,7 +240,7 @@ pub struct StoredEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LabelledQuery {
     pub key_id: Uuid,
-    pub scope_workarea_id: Uuid,
+    pub scope_workspace_id: Uuid,
     pub query_text: String,
     pub grades: Vec<(Uuid, u8)>,
 }

@@ -9,6 +9,7 @@ description = "Pure domain core: signed envelope, per-tenant hash chain, constit
 [dependencies]
 ed25519-dalek.workspace = true
 hex.workspace = true
+oml-former-names.workspace = true
 oml-guardrail.workspace = true
 oml-scan.workspace = true
 oml-web-credential.workspace = true

@@ -1,26 +1,26 @@
-# Map-reduce recall: each workarea ranks its own rows, a reducer merges them
+# Map-reduce recall: each workspace ranks its own rows, a reducer merges them
 
-**Asked** 2026-11-11 by the operator: can `bm25-sparse` run per workarea, in parallel, and the
+**Asked** 2026-11-11 by the operator: can `bm25-sparse` run per workspace, in parallel, and the
 lists be merged like a map-reduce? **Run** 2026-11-12, branch `research/sparse-mapreduce` from
 `e5217966`, offline. Research only: no served path changes, no ADR changes status.
 
 **Answer.** Yes, exactly, and ADR-0073 d9 already designs it. The sparse leg needs nothing
 global: its score is the model's document weight times `idf.json`'s query weight, so a
-workarea's scores are the union's scores, and a merge by score returns the global answer
+workspace's scores are the union's scores, and a merge by score returns the global answer
 byte for byte. The BM25 leg needs the union's `n`, `avgdl`, per-form document frequencies and
-pruned words, which are sums of the per-workarea counts OML already keeps. The fusion needs
+pruned words, which are sums of the per-workspace counts OML already keeps. The fusion needs
 each leg's minimum and maximum over its merged top 100, so the reducer must fuse, never the
-workarea. With those three rules, each workarea scoring only its own rows from the summed
+workspace. With those three rules, each workspace scoring only its own rows from the summed
 counts, the merged answer equalled the global one on every query of six partitions, scores
-included, with pruning active on 75% of the SciFact queries. Every shortcut lost quality: merging per-workarea fused
-answers by score or by reciprocal rank lost up to 0.79 of success@5 at 500 workareas.
+included, with pruning active on 75% of the SciFact queries. Every shortcut lost quality: merging per-workspace fused
+answers by score or by reciprocal rank lost up to 0.79 of success@5 at 500 workspaces.
 
 On one PostgreSQL a split buys latency and throughput from idle cores, and costs throughput
-once the cores are busy. At 100,000 memories and 50 workareas, with 1 to 4 clients on 8 vCPUs,
+once the cores are busy. At 100,000 memories and 50 workspaces, with 1 to 4 clients on 8 vCPUs,
 grouping the scope into 2 to 8 statements cut the sparse leg's p95 from about 95 ms to 19 to
 56 ms and served 1.6 to 4.3 times the recalls a second; with 8 clients it served 7 to 14% fewer
-(five rounds, ranges not overlapping). One statement per workarea cost 220 to 330 ms at 500
-workareas at every size. So a split is a latency tool for a lightly loaded server, and the shape
+(five rounds, ranges not overlapping). One statement per workspace cost 220 to 330 ms at 500
+workspaces at every size. So a split is a latency tool for a lightly loaded server, and the shape
 ADR-0073's nodes need, where each shard reads on its own cores; it does not reduce the postings a
 query reads, which is #104's lever.
 
@@ -29,22 +29,22 @@ The prototype: [`mapreduce.py`](mapreduce.py) (quality, standard library) and
 [`results/mapreduce.json`](results/mapreduce.json),
 [`../../bench/scale/results/fanout.json`](../../bench/scale/results/fanout.json) and
 [`../../bench/scale/results/fanout-throughput.json`](../../bench/scale/results/fanout-throughput.json).
-Revised 2026-11-12 after review: each workarea now scores itself from its own rows and the summed
+Revised 2026-11-12 after review: each workspace now scores itself from its own rows and the summed
 counts, pruning included, and the throughput run is repeated and interleaved.
 
-## 1. Map: what a workarea can compute alone
+## 1. Map: what a workspace can compute alone
 
 What each served pipeline's score reads, from the code:
 
-| leg | score of a row | statistic it reads | can a workarea compute it alone? |
+| leg | score of a row | statistic it reads | can a workspace compute it alone? |
 |---|---|---|---|
 | `sparse` | `sum(q.w × p.weight)`: `p.weight` the model's document weight, written once per version; `q.w` the query token's weight from the model's `idf.json` (`oml-rerank` `sparse.rs`, `encode_query`) | none: "no corpus statistic is read" (`oml-pg` `sparse_sql`) | **yes**, and its score is the union's |
-| `bm25-postings` | BM25, k1 1.2, b 0.75, `idf = ln(1 + (n − df + 0.5) / (df + 0.5))`, best form per word (`bm25_postings_sql`) | `n`, `avgdl`, `df` per form, passed as `$7`–`$9`; the pruned words, decided from `df` against `FREQUENT_SHARE` and `POSTING_BUDGET` | **only with the union's statistics**: `n`, the summed lengths and each `df` are sums of `search_workarea_rows` and `search_term_rows` over the workareas; pruning is a function of those sums |
+| `bm25-postings` | BM25, k1 1.2, b 0.75, `idf = ln(1 + (n − df + 0.5) / (df + 0.5))`, best form per word (`bm25_postings_sql`) | `n`, `avgdl`, `df` per form, passed as `$7`–`$9`; the pruned words, decided from `df` against `FREQUENT_SHARE` and `POSTING_BUDGET` | **only with the union's statistics**: `n`, the summed lengths and each `df` are sums of `search_workspace_rows` and `search_term_rows` over the workspaces; pruning is a function of those sums |
 | `bm25-sparse` | `0.3 × norm(bm25) + 0.7 × norm(sparse)`, each list min-max normalised over its own top 100 (`Fusion::Cc`, `CC_DEPTH`) | each leg's maximum and its 100th score | **no**: the bounds belong to the merged lists. The reducer fuses |
 
-So the map step is: round 1 sums the per-workarea counts for the query's forms (ADR-0072 d4.2
-already does this for `wide`, 10.9 ms p95 at 1,000 candidate workareas, d12) and fixes the
-pruned words; round 2 has each workarea return each leg's list with raw scores. That is
+So the map step is: round 1 sums the per-workspace counts for the query's forms (ADR-0072 d4.2
+already does this for `wide`, 10.9 ms p95 at 1,000 candidate workspaces, d12) and fixes the
+pruned words; round 2 has each workspace return each leg's list with raw scores. That is
 ADR-0073 d9's two rounds as written.
 
 The learned sparse leg has no IDF over the corpus; its `idf.json` is a constant shipped with the
@@ -52,13 +52,13 @@ model. A sparse score is therefore stable under any partition, including a parti
 nodes, and the measurement agrees: `sparse` `exact` equals `global` with identical scores on all
 six partitions.
 
-## 2. Reduce: how to merge, and how deep each workarea must return
+## 2. Reduce: how to merge, and how deep each workspace must return
 
-**When scores are comparable, merge by score.** In the prototype each workarea is its own
-index over its own rows (`Shard` in `mapreduce.py`). Round 1 asks every workarea for its row
+**When scores are comparable, merge by score.** In the prototype each workspace is its own
+index over its own rows (`Shard` in `mapreduce.py`). Round 1 asks every workspace for its row
 count, summed length and each query form's document frequency over its rows alone; the reducer
 sums them and decides the pruned words from the sums with `oml-pg`'s rule (`PruneRule::pruned`,
-`FREQUENT_SHARE` 0.1, `POSTING_BUDGET` 10,000). Round 2 hands every workarea those numbers; it
+`FREQUENT_SHARE` 0.1, `POSTING_BUDGET` 10,000). Round 2 hands every workspace those numbers; it
 scores its own rows from its own postings and returns each leg's top 100. The global run is a
 separate index over the union that counts its own statistics. Measured on all six partitions:
 
@@ -68,19 +68,19 @@ separate index over the union that counts its own statistics. Measured on all si
 - the fused top 10 equalled the global top 10 with its scores on 100% of queries.
 
 Pruning took part: on SciFact 75.3% of queries pruned at least one word (5.8% on the skew split,
-none on the topics split), and in every one of them a workarea deciding pruning from its own
+none on the topics split), and in every one of them a workspace deciding pruning from its own
 counts would have pruned differently from the union. Round 1 fixes it, so the exact merge never
 sees that difference.
 
-**How deep.** A single-list pipeline needs `k` per workarea: the global top `k` is inside the
-union of the workareas' top `k`. A CC pipeline needs 100 per leg per workarea, because the
+**How deep.** A single-list pipeline needs `k` per workspace: the global top `k` is inside the
+union of the workspaces' top `k`. A CC pipeline needs 100 per leg per workspace, because the
 bounds are the merged 100th score. That fixed depth ships `N × 200` rows at most. A threshold
 round (Fagin's idea; ADR-0073 d9 does not have it yet) cuts it while staying exact: each
-workarea returns `d0 = max(10, ⌈200 / N⌉)` per leg, the reducer takes the 100th best score it
-holds as a threshold, and only a workarea whose `d0`-th score is at or above it is asked for the
+workspace returns `d0 = max(10, ⌈200 / N⌉)` per leg, the reducer takes the 100th best score it
+holds as a threshold, and only a workspace whose `d0`-th score is at or above it is asked for the
 rest. Rows shipped per `bm25-sparse` query, mean:
 
-| partition | workareas | fixed depth (100 per leg) | threshold round | queries needing a second round | depth one workarea needed, mean / p95 / max |
+| partition | workspaces | fixed depth (100 per leg) | threshold round | queries needing a second round | depth one workspace needed, mean / p95 / max |
 |---|---:|---:|---:|---:|---|
 | topics | 11 | 133 | 131 | 8.3% | 11.8 / 20 / 21 |
 | skew | 11 | 279 | 278 | 96.7% | 79.0 / 97 / 99 |
@@ -89,17 +89,17 @@ rest. Rows shipped per `bm25-sparse` query, mean:
 | scifact-zipf-50 | 50 | 3,063 | 1,253 | 100% | 24.3 / 30 / 36 |
 | scifact-500 | 500 | 4,631 | 4,608 | 0% | 2.6 / 3 / 4 |
 
-The threshold round matters when workareas are many and remote: at 50 workareas it ships 4.8
+The threshold round matters when workspaces are many and remote: at 50 workspaces it ships 4.8
 times fewer rows for the same answer. At 500 the floor of 10 per leg dominates. Under skew (one
-workarea holding 93% of the rows) the large workarea needs nearly the full 100 every time, so no
-protocol saves it work. (Fewer rows ship than `N × 200` because a workarea returns only the rows
+workspace holding 93% of the rows) the large workspace needs nearly the full 100 every time, so no
+protocol saves it work. (Fewer rows ship than `N × 200` because a workspace returns only the rows
 its kept words generate.)
 
 **When scores are not comparable, nothing recovers the global answer.** Three ways a reducer
-could merge per-workarea answers that each workarea fused on its own statistics, against the
+could merge per-workspace answers that each workspace fused on its own statistics, against the
 global answer, `bm25-sparse`, success@5 (global, then each):
 
-| partition | global | local statistics, legs merged, fused at the reducer | fused per workarea, merged by score | merged by reciprocal rank (k 60) | merged by CORI |
+| partition | global | local statistics, legs merged, fused at the reducer | fused per workspace, merged by score | merged by reciprocal rank (k 60) | merged by CORI |
 |---|---:|---:|---:|---:|---:|
 | topics, 11 | 0.975 | 0.975 | 0.793 | 0.545 | 0.917 |
 | skew, 11 | 0.967 | 0.950 | 0.802 | 0.595 | 0.884 |
@@ -108,19 +108,19 @@ global answer, `bm25-sparse`, success@5 (global, then each):
 | scifact-zipf-50 | 0.803 | 0.803 | 0.317 | 0.140 | 0.653 |
 | scifact-500 | 0.803 | 0.783 | 0.040 | 0.013 | 0.597 |
 
-- **Per-workarea fusion is the error.** A workarea's CC maps its own best row to 1.0, so every
-  workarea's best looks equally good. At 500 workareas the merged top 10 is ten workareas'
+- **Per-workspace fusion is the error.** A workspace's CC maps its own best row to 1.0, so every
+  workspace's best looks equally good. At 500 workspaces the merged top 10 is ten workspaces'
   firsts, whatever they hold: success@5 0.04.
-- **Reciprocal rank across workareas is interleaving.** It ranks each workarea's first above
-  every workarea's second. It is the right tool across legs over one collection (`bm25-sparse-rrf`
-  fuses after the exact merge), not across workareas.
-- **CORI** (Callan, Lu and Croft, SIGIR 1995) reweights by a workarea's belief for the query and
+- **Reciprocal rank across workspaces is interleaving.** It ranks each workspace's first above
+  every workspace's second. It is the right tool across legs over one collection (`bm25-sparse-rrf`
+  fuses after the exact merge), not across workspaces.
+- **CORI** (Callan, Lu and Croft, SIGIR 1995) reweights by a workspace's belief for the query and
   recovers part of the loss, never all of it, and it adds a second score that ADR-0072 d7 would
   have to explain.
 - **Local BM25 statistics alone** cost little once the reducer fuses: 0.000 to 0.020 of success@5
   on `bm25-sparse`, because the 0.7 sparse weight carries the order. On `bm25` alone they cost
   more: under skew success@5 falls from 0.926 to 0.479 (a rare word in a small crew outranks the
-  same word in `universe`), and at 500 workareas from 0.730 to 0.613. The round that fixes the
+  same word in `universe`), and at 500 workspaces from 0.730 to 0.613. The round that fixes the
   statistics is cheap (section 1), so there is no reason to skip it.
 
 Full tables, `nDCG@10`, top-10 overlap and agreement for `sparse` and `bm25` too:
@@ -129,7 +129,7 @@ Full tables, `nDCG@10`, top-10 overlap and agreement for `sparse` and `bm25` too
 
 ### The partitions and the checks
 
-- **topics**: the 200-memory corpus, one workarea per topic (11), its 121 answerable queries.
+- **topics**: the 200-memory corpus, one workspace per topic (11), its 121 answerable queries.
   The offline `sparse` scores 0.967 success@5 and 0.891 nDCG@10, exactly the served `sparse`
   (`results/served_sparse.json`), so the offline sparse leg is the served one. The offline BM25
   uses a light suffix stemmer in place of Snowball (0.926 / 0.833 against the served
@@ -138,7 +138,7 @@ Full tables, `nDCG@10`, top-10 overlap and agreement for `sparse` and `bm25` too
   absolute BM25 numbers are not the served ones.
 - **skew**: the same plus 2,400 SciFact abstracts in `database`, as `fed2.py` pads it.
 - **scifact-N**: BEIR SciFact, 5,183 abstracts and 300 test queries, cut uniformly at random into
-  5, 50 and 500 workareas (seed 20261111), and **scifact-zipf-50**, 50 workareas sized 1/rank
+  5, 50 and 500 workspaces (seed 20261111), and **scifact-zipf-50**, 50 workspaces sized 1/rank
   (1,150 to 23 rows). The sparse model encoded all 5,383 texts through `sparse_encode` at the
   pinned revision (digests checked), 2.3 to 9.4 texts a second on 6 threads on a shared host.
 - Pruning is `oml-pg`'s rule over the offline analyzer's counts. The candidates are the rows the
@@ -155,7 +155,7 @@ memories (118,588 to 12,259,847 postings; 580 MiB of covering index at 100,000).
 on each query in turn, the order rotated per query, and each timed run is the second. p50 / p95
 ms per recall, one client; every mode returned the same top 100 as `single` on every query:
 
-| memories | workareas | `single` | `single-parallel` | `fanout-each` | `fanout-groups-2` | `fanout-groups-4` | `fanout-groups-8` |
+| memories | workspaces | `single` | `single-parallel` | `fanout-each` | `fanout-groups-2` | `fanout-groups-4` | `fanout-groups-8` |
 |---:|---:|---:|---:|---:|---:|---:|---:|
 | 1,000 | 5 | 1.6 / 2.7 | 12.0 / 13.6 | 2.7 / 4.2 | 1.8 / 2.6 | 2.4 / 3.4 | – |
 | 1,000 | 50 | 1.8 / 3.5 | 12.3 / 14.1 | 23.4 / 30.7 | 1.9 / 3.7 | 2.6 / 3.9 | 4.6 / 6.5 |
@@ -168,11 +168,11 @@ ms per recall, one client; every mode returned the same top 100 as `single` on e
 | 100,000 | 500 | 43.5 / 108.9 | 43.7 / 110.7 | 239.8 / 328.6 | 31.6 / 60.8 | 29.8 / 56.4 | 24.2 / 37.5 |
 
 `single` is today's shape; `single-parallel` lets PostgreSQL's parallel query take the statement
-(4 workers per gather, its costs zeroed); `fanout-each` is one statement per workarea on a pool
-of 8 connections; `fanout-groups-P` cuts the workareas into P groups, one statement per group,
+(4 workers per gather, its costs zeroed); `fanout-each` is one statement per workspace on a pool
+of 8 connections; `fanout-groups-P` cuts the workspaces into P groups, one statement per group,
 each merged by score.
 
-Under concurrent clients, at 100,000 memories and 50 workareas (`results/fanout-throughput.json`,
+Under concurrent clients, at 100,000 memories and 50 workspaces (`results/fanout-throughput.json`,
 re-run 2026-11-12 on a quiet host: load average 1.47 before the run, every other lane idle; the
 load rose to 14.7 from the bench's own backends). Each client runs all 100 queries once per
 cell; every round runs every cell, client counts in turn and the mode order rotated per round;
@@ -205,7 +205,7 @@ What the numbers say:
 
 - **Below 10,000 memories nothing gains.** The statement takes 2 to 5 ms; the split adds a
   round trip and a plan per statement.
-- **One statement per workarea is never worth it past a handful.** At 500 workareas it takes
+- **One statement per workspace is never worth it past a handful.** At 500 workspaces it takes
   220 to 330 ms whatever the size: 500 round trips on 8 connections.
 - **While cores are idle, a split wins in latency and in throughput.** With 1 to 4 clients on 8
   vCPUs, splitting a 100,000-memory scope cut p50 from about 41 ms to 10 to 25 ms and p95 from
@@ -223,7 +223,7 @@ What the numbers say:
   and it did not help, or cost about 10 ms of worker start at the small sizes.
 
 **Two harnesses, two numbers for the same split.** The single-client table gives
-`fanout-groups-8` at 100,000 memories and 50 workareas 18.1 / 31.8 ms (p50 / p95); the
+`fanout-groups-8` at 100,000 memories and 50 workspaces 18.1 / 31.8 ms (p50 / p95); the
 throughput table gives 9.7 / 18.6 for one client. `single` agrees in both (41.5 / 100.7 against
 41.1 / 94.2), so the split's gain is 2.1 to 4.3 times at p50 whichever is right. Re-run on the
 quiet host, the first harness gave 16.7 / 27.3 with only `single` and the split interleaved,
@@ -250,16 +250,16 @@ two network rounds, which d9 bounds with hedging. The threshold round in section
 
 ## 4. How it composes
 
-- **R3, visibility per shard.** Each shard's statement filters `workarea_id = ANY(readable)` and
+- **R3, visibility per shard.** Each shard's statement filters `workspace_id = ANY(readable)` and
   `state = 1` under row security, as today; a shard never returns a row its caller cannot read,
   and round 1's counts are over R, which is a subset of what the key reads (ADR-0072 d4.2, d6).
   The exact merge adds no new surface: a row's score depends on the row, the query and R's
   statistics, so no unreadable row moves a readable one. The shortcuts in section 2 break that
-  property in a different way: a workarea's own statistics or bounds would make a hit's score
-  depend on which workarea it lives in and what else that workarea holds.
+  property in a different way: a workspace's own statistics or bounds would make a hit's score
+  depend on which workspace it lives in and what else that workspace holds.
 - **The caller's own held rows go to one shard.** Both statements read a second branch beside the
-  workarea filter: the postings of the caller's own held rows by id (`$4`, `p.memory_id =
-  ANY($4::uuid[])`, `oml-pg` `sparse_sql` and `bm25_postings_sql`), with no `workarea_id`
+  workspace filter: the postings of the caller's own held rows by id (`$4`, `p.memory_id =
+  ANY($4::uuid[])`, `oml-pg` `sparse_sql` and `bm25_postings_sql`), with no `workspace_id`
   predicate. Handed to every shard, each would return the same held rows, and under BM25 the
   summed round 1 would count them once per shard. So exactly one shard carries `$4`: the one
   serving the scope's own nodes, where ADR-0072 d7 keeps own held rows (and ADR-0030 d3, d4 an
@@ -283,8 +283,8 @@ two network rounds, which d9 bounds with hedging. The threshold round in section
 
 ## 5. Recommendation
 
-**Never one statement per workarea; a grouped split on one database is worth building later,
-gated on load.** One statement per workarea is slower at every size measured. A grouped split
+**Never one statement per workspace; a grouped split on one database is worth building later,
+gated on load.** One statement per workspace is slower at every size measured. A grouped split
 (the scope cut into P statements on P connections, each leg merged by score) gives the global
 answer exactly, and at 100,000 memories it cut p95 from about 95 ms to 19 to 56 ms and added
 throughput while the server had idle cores; it served 7 to 14% fewer recalls once 8 clients

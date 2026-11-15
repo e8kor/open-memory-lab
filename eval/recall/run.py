@@ -74,14 +74,14 @@ class Client:
             except ValueError:
                 return e.code, raw
 
-    def recall(self, query, k, max_tokens, workarea, search=None, match=None, now=None):
+    def recall(self, query, k, max_tokens, workspace, search=None, match=None, now=None):
         args = {"query": query, "k": k, "max_tokens": max_tokens}
         # The recall's now (proposed ADR-0059 d5): a benchmark asks at the
         # time its question was asked.
         if now:
             args["now"] = now
-        if workarea:
-            args["workarea"] = workarea
+        if workspace:
+            args["workspace"] = workspace
         if search:
             args["search"] = search
         if match:
@@ -112,15 +112,15 @@ def own_rows(writer):
             return found
 
 
-def load(writer, reviewer, memories, workarea):
+def load(writer, reviewer, memories, workspace):
     idmap = own_rows(writer)
     have = set(idmap.values())
     for m in memories:
         if m["id"] in have:
             continue
         body = {"body": m["text"], "claim_key": CLAIM_PREFIX + m["id"], "kind": "memory"}
-        if workarea:
-            body["workarea"] = workarea
+        if workspace:
+            body["workspace"] = workspace
         status, resp = writer.call("POST", "/v1/memories", body, idempotent=True)
         if status != 202:
             raise SystemExit(f"write {m['id']} refused: {status} {resp}")
@@ -153,7 +153,7 @@ def main():
     ap.add_argument("--url", required=True)
     ap.add_argument("--writer-key-file", required=True)
     ap.add_argument("--reviewer-key-file", required=True)
-    ap.add_argument("--workarea", default=None, help="default: the writer key's default workarea")
+    ap.add_argument("--workspace", default=None, help="default: the writer key's default workspace")
     ap.add_argument("--k", type=int, default=10)
     ap.add_argument("--max-tokens", type=int, default=2000)
     ap.add_argument("--out", required=True)
@@ -176,15 +176,15 @@ def main():
     if idmap_path.exists():
         idmap = json.loads(idmap_path.read_text())
     else:
-        idmap = load(writer, reviewer, memories, a.workarea)
+        idmap = load(writer, reviewer, memories, a.workspace)
         idmap_path.write_text(json.dumps(idmap, indent=1))
 
-    writer.recall("warm up", a.k, a.max_tokens, a.workarea, a.search, a.match)
+    writer.recall("warm up", a.k, a.max_tokens, a.workspace, a.search, a.match)
     per_query = {}
     served_by = set()
     for q in queries:
         sent = keywords(q["query"]) if a.keywords else q["query"]
-        res, ms = writer.recall(sent, a.k, a.max_tokens, a.workarea, a.search, a.match)
+        res, ms = writer.recall(sent, a.k, a.max_tokens, a.workspace, a.search, a.match)
         served_by.add(res.get("search", {}).get("pipeline"))
         ranked = [idmap.get(hit_id(h), "?") for h in res.get("hits", [])]
         per_query[q["id"]] = {

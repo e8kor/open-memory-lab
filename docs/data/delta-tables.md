@@ -68,7 +68,7 @@ Partitioned by `event_date`.
 | `tenant_id` | STRING | no | Owning tenant |
 | `journal_seq` | LONG | no | Per-tenant chain sequence |
 | `event_id` | STRING | no | Journal event UUID |
-| `event_type` | STRING | no | From the [event catalog](event-catalog.md) |
+| `event_type` | STRING | no | From the [event catalog](event-catalog.md), as stored: a row signed before v0.8.0 keeps its former type, such as `workarea.create`, so a lake query names both the former and the current type ([event catalog, former names](event-catalog.md#former-names)) |
 | `at` | TIMESTAMP | no | Chain timestamp |
 | `event_date` | DATE | no | `at` as a UTC date. The partition column. |
 | `prev_hash` | BINARY | no | Chain predecessor hash |
@@ -80,7 +80,7 @@ Partitioned by `event_date`.
 | `api_key_id` | STRING | yes | Key that performed the act |
 | `artifact_id` | STRING | yes | The memory version, when the event concerns one |
 | `version` | LONG | yes | Version, when applicable |
-| `workarea_id` | STRING | yes | Workarea, when applicable |
+| `workspace_id` | STRING | yes | Workspace, when applicable. Physical name `workarea_id`: the column keeps the name its data files were written under ([ADR-0091](../adr/ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) d7) |
 | `kind` | STRING | yes | Memory kind, when applicable |
 | `subject_name` | STRING | yes | Name of the subject the event names, when applicable |
 | `same_user` | BOOLEAN | yes | The event's `same_user` flag, when it carries one |
@@ -100,7 +100,7 @@ under a key of their own. The merge key is `artifact_id`, which names the versio
 | `claim_key` | STRING | no | Groups the versions of one memory |
 | `kind` | STRING | no | The memory's kind |
 | `state` | STRING | no | `promoted`, `superseded`, `demoted`, `held` or `erased` |
-| `workarea_id` | STRING | no | The workarea |
+| `workspace_id` | STRING | no | The workspace. Physical name `workarea_id` (ADR-0091 d7) |
 | `writer_identity` | STRING | no | The writing key |
 | `principal` | STRING | no | Acting principal |
 | `same_user` | BOOLEAN | yes | The `same_user` flag of the promotion event, when it carries one |
@@ -130,7 +130,7 @@ gate changes visibility, and an unratified edge is visible nowhere, the lake inc
 | `graph` | STRING | no | `claim` or `brief` |
 | `edge_label` | STRING | no | `derives_from`, `supersedes`, another edge label, or `brief` |
 | `src_id` | STRING | no | Source memory version |
-| `dst_id` | STRING | no | Destination memory version, or the workarea for a `brief` edge |
+| `dst_id` | STRING | no | Destination memory version, or the workspace for a `brief` edge |
 | `state` | STRING | no | `ratified` |
 | `proposer` | STRING | yes | Proposing key |
 | `ratifier` | STRING | yes | Ratifying key. Never the proposer. |

@@ -199,7 +199,7 @@ fn as_web(token: &str, path: &str, idem: &str, body: &Value) -> Request<Body> {
 }
 
 fn create(admin: &str, idem: &str, body: &Value) -> Request<Body> {
-    Request::post("/v2/workareas")
+    Request::post("/v2/workspaces")
         .header(header::AUTHORIZATION, format!("Bearer {admin}"))
         .header(header::CONTENT_TYPE, "application/json")
         .header("idempotency-key", idem)
@@ -362,8 +362,8 @@ async fn a_send_whose_key_a_stopped_attempt_holds_answers_in_progress_and_acts_n
             &IdempotencyScope {
                 tenant_id: boot.tenant_id,
                 key_id,
-                workarea_id: Uuid::nil(),
-                idem_key: "workarea.create:c-2".to_owned(),
+                workspace_id: Uuid::nil(),
+                idem_key: "workspace.create:c-2".to_owned(),
             },
             &Sha256Hash::digest(&bytes).to_prefixed(),
             Uuid::from_u128(0xC5),
@@ -378,14 +378,14 @@ async fn a_send_whose_key_a_stopped_attempt_holds_answers_in_progress_and_acts_n
     let root = store
         .resolve_name(
             boot.tenant_id,
-            NamedKind::Workarea,
+            NamedKind::Workspace,
             &Name::parse("universe").expect("a name"),
         )
         .await
         .expect("a lookup")
         .expect("the root");
     let children = store
-        .workarea_children(boot.tenant_id, root)
+        .workspace_children(boot.tenant_id, root)
         .await
         .expect("children");
     assert!(

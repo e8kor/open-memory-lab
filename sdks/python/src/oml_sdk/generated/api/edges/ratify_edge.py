@@ -83,12 +83,12 @@ def sync_detailed(
 ) -> Response[BriefEdge | ClaimEdge | ErrorEnvelope]:
     """Ratify a proposed edge of either kind.
 
-     The edge's kind follows from edge_id. kind brief requires dreamer effective access on the workarea
+     The edge's kind follows from edge_id. kind brief requires reviewer effective access on the workspace
     and refuses the proposer (review.ratifier_is_proposer); a decided edge is review.serve_invalid
-    consumed (ADR-0046 d8). kind claim requires dreamer(review), and refuses the proposer
-    (review.ratifier_is_proposer) and a lineage collision (review.author_in_lineage) — R2. kind workarea
-    requires dreamer(review) effective access on BOTH endpoints and refuses the proposer
-    (review.ratifier_is_proposer — R2 extends to edges). A held_by: service key is refused with
+    consumed (ADR-0046 d8). kind claim requires reviewer(review), and refuses the proposer
+    (review.ratifier_is_proposer) and a lineage collision (review.author_in_lineage) — R2. kind
+    workspace requires reviewer(review) effective access on BOTH endpoints and refuses the proposer
+    (review.ratifier_is_proposer — R2 extends to edges). A used_by: service key is refused with
     access.verb_ceiling before any lookup (ADR-0025 d1). Each kind journals its own ratification event
     (ADR-0039 d9).
 
@@ -124,12 +124,12 @@ def sync(
 ) -> BriefEdge | ClaimEdge | ErrorEnvelope | None:
     """Ratify a proposed edge of either kind.
 
-     The edge's kind follows from edge_id. kind brief requires dreamer effective access on the workarea
+     The edge's kind follows from edge_id. kind brief requires reviewer effective access on the workspace
     and refuses the proposer (review.ratifier_is_proposer); a decided edge is review.serve_invalid
-    consumed (ADR-0046 d8). kind claim requires dreamer(review), and refuses the proposer
-    (review.ratifier_is_proposer) and a lineage collision (review.author_in_lineage) — R2. kind workarea
-    requires dreamer(review) effective access on BOTH endpoints and refuses the proposer
-    (review.ratifier_is_proposer — R2 extends to edges). A held_by: service key is refused with
+    consumed (ADR-0046 d8). kind claim requires reviewer(review), and refuses the proposer
+    (review.ratifier_is_proposer) and a lineage collision (review.author_in_lineage) — R2. kind
+    workspace requires reviewer(review) effective access on BOTH endpoints and refuses the proposer
+    (review.ratifier_is_proposer — R2 extends to edges). A used_by: service key is refused with
     access.verb_ceiling before any lookup (ADR-0025 d1). Each kind journals its own ratification event
     (ADR-0039 d9).
 
@@ -160,12 +160,12 @@ async def asyncio_detailed(
 ) -> Response[BriefEdge | ClaimEdge | ErrorEnvelope]:
     """Ratify a proposed edge of either kind.
 
-     The edge's kind follows from edge_id. kind brief requires dreamer effective access on the workarea
+     The edge's kind follows from edge_id. kind brief requires reviewer effective access on the workspace
     and refuses the proposer (review.ratifier_is_proposer); a decided edge is review.serve_invalid
-    consumed (ADR-0046 d8). kind claim requires dreamer(review), and refuses the proposer
-    (review.ratifier_is_proposer) and a lineage collision (review.author_in_lineage) — R2. kind workarea
-    requires dreamer(review) effective access on BOTH endpoints and refuses the proposer
-    (review.ratifier_is_proposer — R2 extends to edges). A held_by: service key is refused with
+    consumed (ADR-0046 d8). kind claim requires reviewer(review), and refuses the proposer
+    (review.ratifier_is_proposer) and a lineage collision (review.author_in_lineage) — R2. kind
+    workspace requires reviewer(review) effective access on BOTH endpoints and refuses the proposer
+    (review.ratifier_is_proposer — R2 extends to edges). A used_by: service key is refused with
     access.verb_ceiling before any lookup (ADR-0025 d1). Each kind journals its own ratification event
     (ADR-0039 d9).
 
@@ -199,12 +199,12 @@ async def asyncio(
 ) -> BriefEdge | ClaimEdge | ErrorEnvelope | None:
     """Ratify a proposed edge of either kind.
 
-     The edge's kind follows from edge_id. kind brief requires dreamer effective access on the workarea
+     The edge's kind follows from edge_id. kind brief requires reviewer effective access on the workspace
     and refuses the proposer (review.ratifier_is_proposer); a decided edge is review.serve_invalid
-    consumed (ADR-0046 d8). kind claim requires dreamer(review), and refuses the proposer
-    (review.ratifier_is_proposer) and a lineage collision (review.author_in_lineage) — R2. kind workarea
-    requires dreamer(review) effective access on BOTH endpoints and refuses the proposer
-    (review.ratifier_is_proposer — R2 extends to edges). A held_by: service key is refused with
+    consumed (ADR-0046 d8). kind claim requires reviewer(review), and refuses the proposer
+    (review.ratifier_is_proposer) and a lineage collision (review.author_in_lineage) — R2. kind
+    workspace requires reviewer(review) effective access on BOTH endpoints and refuses the proposer
+    (review.ratifier_is_proposer — R2 extends to edges). A used_by: service key is refused with
     access.verb_ceiling before any lookup (ADR-0025 d1). Each kind journals its own ratification event
     (ADR-0039 d9).
 

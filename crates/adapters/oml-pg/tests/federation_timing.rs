@@ -1,5 +1,5 @@
 //! Tests 7 and 4 of federated recall's phase 1 (ADR-0072 d6, d13) on PostgreSQL,
-//! in a binary of its own: an unreadable workarea of many rows matching
+//! in a binary of its own: an unreadable workspace of many rows matching
 //! every query changes no wide answer (gating), and moves neither p50 nor
 //! p95 of a wide recall (a measurement, `--ignored`: wall-clock quantiles
 //! move with the host's load, #278).
@@ -36,25 +36,25 @@ async fn fresh_store() -> Option<(String, PgStore)> {
 }
 
 /// Test 7 on PostgreSQL at CI's size, its deterministic half: an
-/// unreadable workarea of 5,000 rows matching every query, analyzed,
+/// unreadable workspace of 5,000 rows matching every query, analyzed,
 /// changes no `wide` answer on `bm25-postings` or `bm25`, byte for byte,
 /// the read's access path included, and no recall's work: the tuples its
 /// statements read from the memories and search tables, by the
 /// statistics collector, are the same count with 2,500 copies as with
 /// 5,000 (ADR-0072 d6, d13; #278).
 #[tokio::test]
-async fn federated_recall_answers_and_tuples_read_do_not_depend_on_an_unreadable_workarea() {
+async fn federated_recall_answers_and_tuples_read_do_not_depend_on_an_unreadable_workspace() {
     unreadable_rows_move_no_answer(5_000).await;
 }
 
 /// Test 7 on PostgreSQL at CI's size, its timing half, a measurement run
-/// by hand or by the weekly bench (`--ignored`): an unreadable workarea of
+/// by hand or by the weekly bench (`--ignored`): an unreadable workspace of
 /// 5,000 rows matching every query moves neither p50 nor p95 of a wide
 /// recall (ADR-0072 d6, d13). Wall-clock quantiles move with the host's
 /// load, so it gates no change (#278).
 #[tokio::test]
 #[ignore = "a measurement: wall-clock quantiles, run by the weekly bench"]
-async fn federated_recall_timing_does_not_depend_on_an_unreadable_workarea() {
+async fn federated_recall_timing_does_not_depend_on_an_unreadable_workspace() {
     unreadable_rows_move_no_timing(5_000).await;
 }
 
@@ -67,7 +67,7 @@ async fn federated_recall_timing_does_not_depend_on_100k_unreadable_rows() {
     unreadable_rows_move_no_timing(100_000).await;
 }
 
-/// An unreadable workarea of `copies` rows matching every query, copied in
+/// An unreadable workspace of `copies` rows matching every query, copied in
 /// by SQL as the owner, moves neither p50 nor p95 of a wide recall, on
 /// `bm25-postings` and on `bm25`.
 async fn unreadable_rows_move_no_timing(copies: u32) {
@@ -90,7 +90,7 @@ async fn unreadable_rows_move_no_timing(copies: u32) {
 
 /// The same copies change no `wide` answer on `bm25-postings` or `bm25`,
 /// and a recall's work does not grow with them: the tuples its statements
-/// read are the same with `copies / 2` rows in each unreadable workarea as
+/// read are the same with `copies / 2` rows in each unreadable workspace as
 /// with `copies`. Both samples are taken over a large W, each after a
 /// `VACUUM ANALYZE`, so the planner's choice for a table of a few rows
 /// against one of thousands (a seq scan against an index) is not counted
@@ -125,7 +125,7 @@ async fn unreadable_rows_move_no_answer(copies: u32) {
             if let Some(before) = work.insert(search, spent) {
                 assert_eq!(
                     spent, before,
-                    "{search}: a wide recall's tuples read grew with an unreadable workarea"
+                    "{search}: a wide recall's tuples read grew with an unreadable workspace"
                 );
             }
         }
@@ -135,7 +135,7 @@ async fn unreadable_rows_move_no_answer(copies: u32) {
 }
 
 /// Test 4 on PostgreSQL, its deterministic half: a list naming an
-/// unreadable workarea that holds 5,000 matching rows, analyzed, is refused
+/// unreadable workspace that holds 5,000 matching rows, analyzed, is refused
 /// with the same bytes and the same work as one naming an absent name: the
 /// tuples the statements read from the memories and search tables are the
 /// same count. A recall that does read is counted by the same meter, so
@@ -168,7 +168,7 @@ async fn a_lists_unreadable_name_refusal_reads_the_tuples_an_absent_names_refusa
         "an unreadable name's refusal read tuples an absent name's did not"
     );
     // The meter counts a recall that reads: a list naming a readable
-    // workarea reads its rows.
+    // workspace reads its rows.
     let read = tuples_read(&pool).await;
     t.world
         .recall(
@@ -189,7 +189,7 @@ async fn a_lists_unreadable_name_refusal_reads_the_tuples_an_absent_names_refusa
 /// Test 4 on PostgreSQL, its timing half, a measurement run by hand or by
 /// the weekly bench (`--ignored`): an unreadable name's refusal and an
 /// absent one's take the same median time within noise, with 5,000 rows in
-/// the unreadable workarea. Wall-clock times move with the host's load, so
+/// the unreadable workspace. Wall-clock times move with the host's load, so
 /// it gates no change (#295).
 #[tokio::test]
 #[ignore = "a measurement: wall-clock times, run by the weekly bench"]
@@ -262,7 +262,7 @@ async fn tuples_read(pool: &sqlx::PgPool) -> i64 {
 /// The pipelines test 7 reads under.
 const SEARCHES: [&str; 2] = ["bm25-postings", "bm25"];
 
-/// Copies each of `templates` `copies` times into its own workarea, by SQL
+/// Copies each of `templates` `copies` times into its own workspace, by SQL
 /// as the owner through the postings and similar-key triggers, then analyzes
 /// the tables a recall reads.
 async fn copy_into_w(
@@ -317,7 +317,7 @@ async fn copy_into_w(
             .await
             .expect("copy the template into W");
     }
-    println!("copied rows {copies:?} into each unreadable workarea");
+    println!("copied rows {copies:?} into each unreadable workspace");
     drop(owner);
     settle(db).await;
 }
@@ -343,7 +343,7 @@ const TABLES_READ: [&str; 4] = [
     "memories",
     "search_postings",
     "search_term_rows",
-    "search_workarea_rows",
+    "search_workspace_rows",
 ];
 
 /// The lead's resident set in bytes, and its peak, from `/proc/self/status`.
@@ -363,7 +363,7 @@ fn rss() -> (u64, u64) {
 
 /// The widen signal's build on a realistic tenant (#244, review F9), by
 /// hand (`--ignored --nocapture`, release): `OML_WIDEN_ROWS` promoted rows
-/// (100,000 by default) over 50 committed workareas a key reads, each row
+/// (100,000 by default) over 50 protected workspaces a key reads, each row
 /// 30 words drawn from a 50,000-word vocabulary with a Zipf-like skew
 /// (word `floor(50,000 · u³)`), copied by SQL as the owner through the
 /// postings triggers. Prints the build's time, the signal's counts and
@@ -455,7 +455,7 @@ async fn the_widen_signal_on_a_tenant_of_100k_rows() {
     }
     drop(owner);
     println!(
-        "loaded {rows} rows over 50 workareas in {:?}",
+        "loaded {rows} rows over 50 workspaces in {:?}",
         started.elapsed()
     );
     // The build, as the lead runs it after the recall that asks for it.
@@ -477,11 +477,11 @@ async fn the_widen_signal_on_a_tenant_of_100k_rows() {
     // The same vocabulary read alone, for its size.
     let nodes: Vec<uuid::Uuid> = w
         .store
-        .workarea_subtree(w.tenant, w.node("corpus"))
+        .workspace_subtree(w.tenant, w.node("corpus"))
         .await
         .expect("the corpus")
         .into_iter()
-        .map(|n| n.workarea_id)
+        .map(|n| n.workspace_id)
         .collect();
     let vocabulary = w
         .store

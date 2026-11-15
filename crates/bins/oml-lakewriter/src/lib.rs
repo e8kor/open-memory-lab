@@ -38,6 +38,10 @@ pub enum WriterError {
     Lake(#[from] LakeError),
     #[error("bench file {0}: {1}")]
     Bench(String, String),
+    /// A journal row names a former name the former-name map does not list
+    /// (ADR-0091 d4): nothing of the batch is written.
+    #[error(transparent)]
+    FormerName(#[from] oml_former_names::UnmappedFormerName),
 }
 
 impl WriterError {
@@ -50,6 +54,7 @@ impl WriterError {
             Self::Lake(LakeError::Delta(_)) => "delta_commit",
             Self::Lake(_) => "lake",
             Self::Bench(..) => "bench_file",
+            Self::FormerName(_) => "journal_unmapped_former_name",
         }
     }
 }
@@ -453,7 +458,7 @@ impl Writer {
             .iter()
             .filter(|e| e.outbox_seq > applied)
             .map(|e| bronze_row(tenant, e))
-            .collect();
+            .collect::<Result<_, _>>()?;
         let n = self
             .commit(p, &BRONZE_EVENTS, &rows, end, false, applied)
             .await?;
@@ -676,7 +681,7 @@ impl Writer {
             V::Str(Some(m.claim_key.clone())),
             V::Str(Some(m.kind.clone())),
             V::Str(Some(state.to_owned())),
-            V::Str(Some(m.workarea_id.to_string())),
+            V::Str(Some(m.workspace_id.to_string())),
             V::Str(Some(m.author_key_id.to_string())),
             V::Str(Some(m.author_principal.clone())),
             V::Bool(same_user),
@@ -813,19 +818,28 @@ impl Writer {
     }
 }
 
-fn bronze_row(tenant: Uuid, e: &Event) -> Vec<V> {
+/// One `bronze.events` row: the event as stored, with the projected
+/// columns read through the former-name map, so a row signed before v0.8.0
+/// projects its former key into `workspace_id` (ADR-0091 d4).
+fn bronze_row(tenant: Uuid, e: &Event) -> Result<Vec<V>, oml_former_names::UnmappedFormerName> {
     let at = e.at.timestamp_micros();
-    let s = |k: &str| e.payload.get(k).and_then(Value::as_str).map(str::to_owned);
+    let read = oml_former_names::read_event(&e.event_type, &e.payload)?;
+    let s = |k: &str| {
+        read.payload
+            .get(k)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
     let artifact = s("artifact_id").or_else(|| s("new_artifact_id"));
     let version = e
         .payload
         .get("version")
         .or_else(|| e.payload.get("new_version"))
         .and_then(Value::as_i64);
-    let name = (e.event_type == "workarea.create")
+    let name = (read.event_type == "workspace.create")
         .then(|| s("name"))
         .flatten();
-    vec![
+    Ok(vec![
         V::Str(Some(tenant.to_string())),
         V::Long(Some(e.journal_seq)),
         V::Str(Some(e.event_id.to_string())),
@@ -841,12 +855,12 @@ fn bronze_row(tenant: Uuid, e: &Event) -> Vec<V> {
         V::Str(e.api_key_id.map(|k| k.to_string())),
         V::Str(artifact),
         V::Long(version),
-        V::Str(s("workarea_id")),
+        V::Str(s("workspace_id")),
         V::Str(s("kind")),
         V::Str(name),
         V::Bool(e.payload.get("same_user").and_then(Value::as_bool)),
         V::Long(Some(e.outbox_seq)),
-    ]
+    ])
 }
 
 fn uuid_at(v: &Value, key: &str) -> Option<Uuid> {

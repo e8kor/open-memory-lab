@@ -1438,7 +1438,7 @@ fn every_refusal_names_one_code_of_the_closed_taxonomy() {
     assert_eq!(
         [
             ConnectRefused::Role,
-            ConnectRefused::HeldByService,
+            ConnectRefused::UsedByService,
             ConnectRefused::BearerKey,
             ConnectRefused::Revoked,
             ConnectRefused::Expired,
@@ -1449,7 +1449,7 @@ fn every_refusal_names_one_code_of_the_closed_taxonomy() {
         .map(ConnectRefused::as_str),
         [
             "role",
-            "held_by_service",
+            "used_by_service",
             "bearer_key",
             "revoked",
             "expired",

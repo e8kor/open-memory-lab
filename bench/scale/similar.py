@@ -66,14 +66,14 @@ def load(db: str, owner: str, rows: int, seed: int):
     keys = [uuid.UUID(int=r.getrandbits(128), version=4) for _ in range(20)]
     with su(db) as c:
         c.execute("INSERT INTO tenants (id, name) VALUES (%s, 'scale')", (t,))
-        c.execute("INSERT INTO workareas (id, tenant_id, parent_id, status, name) "
-                  "VALUES (%s, %s, NULL, 'committed', 'universe')", (tree.universe, t))
+        c.execute("INSERT INTO workspaces (id, tenant_id, parent_id, status, name) "
+                  "VALUES (%s, %s, NULL, 'protected', 'universe')", (tree.universe, t))
         for i, p in enumerate(tree.projects):
-            c.execute("INSERT INTO workareas (id, tenant_id, parent_id, status, name) "
-                      "VALUES (%s, %s, %s, 'committed', %s)", (p, t, tree.universe, f"p{i}"))
+            c.execute("INSERT INTO workspaces (id, tenant_id, parent_id, status, name) "
+                      "VALUES (%s, %s, %s, 'protected', %s)", (p, t, tree.universe, f"p{i}"))
             for j, leaf in enumerate(tree.leaves[p]):
-                c.execute("INSERT INTO workareas (id, tenant_id, parent_id, status, name) "
-                          "VALUES (%s, %s, %s, 'committed', %s)", (leaf, t, p, f"p{i}-l{j}"))
+                c.execute("INSERT INTO workspaces (id, tenant_id, parent_id, status, name) "
+                          "VALUES (%s, %s, %s, 'protected', %s)", (leaf, t, p, f"p{i}-l{j}"))
     p = "memories_t_" + t.hex
     sp = "search_postings_t_" + t.hex
     policy = ("USING (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid) "
@@ -105,10 +105,10 @@ def load(db: str, owner: str, rows: int, seed: int):
         load_s = time.perf_counter() - t0
         for ddl in [
             f"ALTER TABLE {p} ADD CONSTRAINT {p}_pkey PRIMARY KEY (tenant_id, id)",
-            f"CREATE INDEX {p}_workarea ON {p} (tenant_id, workarea_id, status)",
-            f"CREATE UNIQUE INDEX {p}_claim_version ON {p} (tenant_id, workarea_id, claim_key, "
+            f"CREATE INDEX {p}_workspace ON {p} (tenant_id, workspace_id, status)",
+            f"CREATE UNIQUE INDEX {p}_claim_version ON {p} (tenant_id, workspace_id, claim_key, "
             "version) WHERE status IN ('held', 'promoted', 'demoted')",
-            f"CREATE UNIQUE INDEX {p}_served_tip ON {p} (tenant_id, workarea_id, claim_key) "
+            f"CREATE UNIQUE INDEX {p}_served_tip ON {p} (tenant_id, workspace_id, claim_key) "
             "WHERE is_tip AND status = 'promoted'",
             f"ALTER TABLE {p} ENABLE ROW LEVEL SECURITY",
             f"ALTER TABLE {p} FORCE ROW LEVEL SECURITY",
@@ -156,7 +156,7 @@ def probes(db: str, t, tree, seed: int):
             if i % 2 == 0:
                 text = c.execute(
                     "SELECT claim FROM memories WHERE tenant_id = %s AND status = 'promoted' "
-                    "AND is_tip AND workarea_id = ANY(%s::uuid[]) ORDER BY random() LIMIT 1",
+                    "AND is_tip AND workspace_id = ANY(%s::uuid[]) ORDER BY random() LIMIT 1",
                     (t, nodes)).fetchone()
                 text, label = ((text[0] + " Confirmed.", "near_copy") if text
                                else (news[i], "new"))
@@ -227,7 +227,7 @@ def write_cost(db: str, serving: str, t, tree, keys, count: int = 200) -> dict:
             for i, text in enumerate(texts):
                 wa, key, a = leaves[i % len(leaves)], keys[i % len(keys)], uuid.uuid4()
                 for step, (q, params) in [
-                    ("insert", ("INSERT INTO memories (id, tenant_id, workarea_id, claim, "
+                    ("insert", ("INSERT INTO memories (id, tenant_id, workspace_id, claim, "
                                 "claim_digest, status, created_event_id, claim_key, "
                                 "author_principal, author_key_id, version, kind, body_bytes) "
                                 "VALUES (%s, %s, %s, %s, '\\x00', 'held', %s, %s, 'agent', %s, "
@@ -267,7 +267,7 @@ def main() -> None:
         migrate(db, owner, serving, 24)
         t, tree, keys, load_s = load(db, owner, a.rows, a.seed)
         result["load_s"] = round(load_s, 1)
-        result["workareas"] = len(tree.all())
+        result["workspaces"] = len(tree.all())
         result["fill_0025_s"] = round(apply_0025(db, owner, serving), 2)
         result["space"] = space(db, owner, t)
         items = probes(db, t, tree, a.seed)

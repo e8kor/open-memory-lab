@@ -48,7 +48,7 @@ pub const MEMORY_ACTIONS: &[&str] = &["supersede"];
 /// The Curate view's one act.
 pub const CURATE_ACTIONS: &[&str] = &["curate"];
 
-/// The workarea a curated copy is written in: the shared area.
+/// The workspace a curated copy is written in: the shared area.
 const UNIVERSE: &str = "universe";
 
 /// The notice a view's own act names, from a closed set of words only, so a
@@ -126,7 +126,7 @@ pub async fn user_page(
     // row 20).
     let roots = Roots::default()
         .with_own(session.whoami.user.as_ref().map(|u| u.name.as_str()))
-        .learn(&web, &credential, &calls, [card.workarea()])
+        .learn(&web, &credential, &calls, [card.workspace()])
         .await;
     // The change against the version it replaces: one more read, as the
     // same key (MemoryCard, page density; design notes row 4).
@@ -209,7 +209,7 @@ fn attribution(
     for (field, value) in [
         ("Key id", short(m.key_id.as_deref().unwrap_or("—"))),
         ("Principal", short(m.principal.as_deref().unwrap_or("—"))),
-        ("Held by", short(m.held_by.as_deref().unwrap_or("—"))),
+        ("Held by", short(m.used_by.as_deref().unwrap_or("—"))),
     ] {
         let _ = write!(
             out,
@@ -221,7 +221,7 @@ fn attribution(
         let approvals = m.verdicts.iter().filter(|v| v.verdict == "approve").count();
         let _ = write!(
             out,
-            r#"<p class="desc">{approvals} of the {k} {} this workarea's review policy asks for.</p>"#,
+            r#"<p class="desc">{approvals} of the {k} {} this workspace's review policy asks for.</p>"#,
             if k == 1 { "approval" } else { "approvals" }
         );
     }
@@ -320,18 +320,18 @@ pub async fn admin_page(
             None => (String::new(), None),
         }
     };
-    // The kinds of the workarea's top label: the author's own root, and
+    // The kinds of the workspace's top label: the author's own root, and
     // one read of any other (design notes row 20); the policy is read by
     // the reference they give.
     let admin = session.credential(Capacity::Admin);
     let roots = Roots::default()
         .with_own(read.user.as_deref())
-        .learn(&web, &admin, &calls, [read.workarea_path.as_str()])
+        .learn(&web, &admin, &calls, [read.workspace_path.as_str()])
         .await;
     let policy = async {
         let ids = calls.next_ids();
         web.api
-            .workarea(&call(&admin, &ids), &roots.reference(&read.workarea_path))
+            .workspace(&call(&admin, &ids), &roots.reference(&read.workspace_path))
             .await
             .ok()
             .and_then(|w| w.policy)
@@ -606,7 +606,7 @@ pub async fn curate_act(
             &key,
             &oml_sdk::Learn {
                 body,
-                workarea: UNIVERSE,
+                workspace: UNIVERSE,
                 derives_from: &derives_from,
                 claim_key: fields.given("claim_key"),
             },
@@ -636,7 +636,7 @@ mod tests {
     fn the_attribution_names_a_nameless_authoring_key_by_its_id() {
         let read: AdminRead = serde_json::from_value(serde_json::json!({
             "artifact_id": "m1", "claim_key": "c", "version": 1, "state": "promoted",
-            "workarea_path": "universe.alice", "text": "t", "key": null,
+            "workspace_path": "universe.alice", "text": "t", "key": null,
             "key_id": "6f1c2d4e-0000-4000-8000-0000000000aa",
             "principal": "alice", "user": "alice", "created_at": "2026-11-11T10:00:00Z",
         }))
@@ -656,7 +656,7 @@ mod tests {
         );
         let named: AdminRead = serde_json::from_value(serde_json::json!({
             "artifact_id": "m1", "claim_key": "c", "version": 1, "state": "promoted",
-            "workarea_path": "universe.alice", "text": "t", "key": "alice-laptop",
+            "workspace_path": "universe.alice", "text": "t", "key": "alice-laptop",
             "key_id": "6f1c2d4e-0000-4000-8000-0000000000aa",
             "principal": "alice", "user": null, "created_at": "2026-11-11T10:00:00Z",
         }))

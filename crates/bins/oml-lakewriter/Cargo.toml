@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 oml-lake.workspace = true
+oml-former-names.workspace = true
 chrono.workspace = true
 clap.workspace = true
 hex.workspace = true

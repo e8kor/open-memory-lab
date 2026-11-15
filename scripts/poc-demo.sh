@@ -3,8 +3,8 @@
 #
 # Boots ./target/release/oml-server-lead on a fresh, uniquely named database
 # and drives every ceremony through ./target/release/oml (the lab client speaks
-# only the public HTTP API, ADR-0015), naming the workarea by its name
-# wherever an id would go (ADR-0026 d4): bootstrap claim → workarea → keys →
+# only the public HTTP API, ADR-0015), naming the workspace by its name
+# wherever an id would go (ADR-0026 d4): bootstrap claim → workspace → keys →
 # write → (recall withholds the held row) → review + approve → recall hit →
 # the R2 reviewer-is-author refusal → write --replaces → verify-chain → doctor →
 # graceful shutdown.
@@ -157,33 +157,33 @@ TENANT="$(jqf .tenant_id)"
 step "a second claim is refused — the token is consumed (typed refusal, exit 1)" 1 \
     "$OML" --url "$SERVER_URL" --json bootstrap claim second-admin --token-stdin <<<"$TOKEN"
 
-# --- workarea and the crew's keys (admin credentials from the stored file) ---
-# Every workarea below goes by its name, the root as `universe` (ADR-0026 d6),
+# --- workspace and the crew's keys (admin credentials from the stored file) ---
+# Every workspace below goes by its name, the root as `universe` (ADR-0026 d6),
 # and the server resolves each one to the id the grants bind to.
-step "create a child workarea under the root, both by name" 0 \
-    "$OML" --json workareas create universe poc-metals
+step "create a child workspace under the root, both by name" 0 \
+    "$OML" --json workspaces create universe poc-metals
 WA="$(jqf .id)"
-[ "$(jqf .path)" = "universe.poc-metals" ] || fail "the workarea's derived path is not universe.poc-metals"
+[ "$(jqf .path)" = "universe.poc-metals" ] || fail "the workspace's derived path is not universe.poc-metals"
 
 # Each key carries only grant roles its key role admits (the admissibility
-# table, ADR-0025 d1): writer admits reader and writer, dreamer admits reader
-# and dreamer, reader admits reader.
+# table, ADR-0025 d1): writer admits reader and writer, reviewer admits reader
+# and reviewer, reader admits reader.
 step "issue the agent's writer key with a writer and a reader grant (one key writes and recalls)" 0 \
-    "$OML" --json keys issue agent-blue --role writer --held-by agent --principal crew/agent-blue \
-    --default-workarea poc-metals --grant poc-metals:writer --grant poc-metals:reader
+    "$OML" --json keys issue agent-blue --role writer --used-by agent --principal crew/agent-blue \
+    --default-workspace poc-metals --grant poc-metals:writer --grant poc-metals:reader
 WRITER="$(jqf .value)"
-[ "$(jqf .default_workarea_id)" = "$WA" ] || fail "the name poc-metals did not resolve to the workarea's id"
-[ "$(jqf '[.grants[].workarea_node_id] | unique | join(",")')" = "$WA" ] \
-    || fail "the grants named poc-metals do not bind to the workarea's id"
+[ "$(jqf .default_workspace_id)" = "$WA" ] || fail "the name poc-metals did not resolve to the workspace's id"
+[ "$(jqf '[.grants[].workspace_node_id] | unique | join(",")')" = "$WA" ] \
+    || fail "the grants named poc-metals do not bind to the workspace's id"
 
-step "issue a dreamer key (held by a human reviewer)" 0 \
-    "$OML" --json keys issue maya --role dreamer --held-by human \
-    --principal crew/maya --default-workarea poc-metals --grant poc-metals:dreamer
-DREAMER="$(jqf .value)"
+step "issue a reviewer key (used by a person reviewer)" 0 \
+    "$OML" --json keys issue maya --role reviewer --used-by person \
+    --principal crew/maya --default-workspace poc-metals --grant poc-metals:reviewer
+REVIEWER="$(jqf .value)"
 
 step "issue a reader key for a second identity that only reads (a reader key admits reader grants only)" 0 \
-    "$OML" --json keys issue recall-bot --role reader --held-by service \
-    --principal crew/recall-bot --default-workarea poc-metals --grant poc-metals:reader
+    "$OML" --json keys issue recall-bot --role reader --used-by service \
+    --principal crew/recall-bot --default-workspace poc-metals --grant poc-metals:reader
 READER="$(jqf .value)"
 
 # --- write: held on arrival, invisible to recall -----------------------------
@@ -199,12 +199,12 @@ step "recall while held: the claim is NOT served (held rows never leave the gate
 [ "$(jqf '.hits | length')" = "0" ] || fail "a held row leaked into recall"
 
 # --- review: serve, approve, and only then recall hits -----------------------
-step "review next with the dreamer key (claims the one held item)" 0 \
-    "$OML" --url "$SERVER_URL" --api-key "$DREAMER" --json review next
+step "review next with the reviewer key (claims the one held item)" 0 \
+    "$OML" --url "$SERVER_URL" --api-key "$REVIEWER" --json review next
 [ "$(jqf .item.artifact_id)" = "$ARTIFACT" ] || fail "review served a different artifact"
 
-step "approve with the dreamer key (k=1 ratifies; the row promotes)" 0 \
-    "$OML" --url "$SERVER_URL" --api-key "$DREAMER" --json review approve
+step "approve with the reviewer key (k=1 ratifies; the row promotes)" 0 \
+    "$OML" --url "$SERVER_URL" --api-key "$REVIEWER" --json review approve
 [ "$(jqf .state)" = "promoted" ] || fail "approval did not promote"
 
 step "recall after promotion: the claim is served" 0 \
@@ -217,15 +217,15 @@ step "recall after promotion with the agent's own writer key (its reader grant s
 jqf '.hits[].memory.artifact_id' | grep -q "$ARTIFACT" || fail "the writer key's reader grant did not serve recall"
 
 # --- R2: the reviewer is never the author ------------------------------------
-step "issue a dreamer key to the AUTHOR's principal (crew/agent-blue also reviews?)" 0 \
-    "$OML" --json keys issue agent-blue-reviewer --role dreamer --held-by agent \
-    --principal crew/agent-blue --default-workarea poc-metals --grant poc-metals:dreamer
-AUTHOR_DREAMER="$(jqf .value)"
+step "issue a reviewer key to the AUTHOR's principal (crew/agent-blue also reviews?)" 0 \
+    "$OML" --json keys issue agent-blue-reviewer --role reviewer --used-by agent \
+    --principal crew/agent-blue --default-workspace poc-metals --grant poc-metals:reviewer
+AUTHOR_REVIEWER="$(jqf .value)"
 
 # The author's key names the memory's serve as the PoC binding spells it,
 # srv_ and the artifact id's 32 hex digits, since no serve exists to claim.
 step "verdict with the author's key is refused — R2 against the lineage closure (exit 1)" 1 \
-    "$OML" --url "$SERVER_URL" --api-key "$AUTHOR_DREAMER" --json review reject "srv_${ARTIFACT//-/}" --reason "self-review attempt"
+    "$OML" --url "$SERVER_URL" --api-key "$AUTHOR_REVIEWER" --json review reject "srv_${ARTIFACT//-/}" --reason "self-review attempt"
 [ "$(jqf .error.code)" = "review.author_in_lineage" ] || fail "expected review.author_in_lineage, got $(jqf .error.code)"
 
 # --- supersede: the author replaces the promoted tip -------------------------
@@ -241,12 +241,12 @@ step "recall before ratification still serves the old tip (the tip moves only at
 jq -r '.hits[].memory.text' "$OUT" | grep -q "412 USD/t" || fail "the old tip left recall before ratification"
 jq -r '.hits[].memory.text' "$OUT" | grep -q "399 USD/t" && fail "the held successor reached recall unreviewed"
 
-step "the successor rides the same review gate: the dreamer is served it" 0 \
-    "$OML" --url "$SERVER_URL" --api-key "$DREAMER" --json review next
+step "the successor rides the same review gate: the reviewer is served it" 0 \
+    "$OML" --url "$SERVER_URL" --api-key "$REVIEWER" --json review next
 [ "$(jqf .item.artifact_id)" = "$SUCCESSOR" ] || fail "review served a different artifact"
 
-step "the dreamer approves the successor it was served" 0 \
-    "$OML" --url "$SERVER_URL" --api-key "$DREAMER" --json review approve "$(jqf .serve_id)"
+step "the reviewer approves the successor it was served" 0 \
+    "$OML" --url "$SERVER_URL" --api-key "$REVIEWER" --json review approve "$(jqf .serve_id)"
 [ "$(jqf .state)" = "promoted" ] || fail "successor did not promote"
 
 step "recall now serves the ratified successor (the replaced version is history)" 0 \

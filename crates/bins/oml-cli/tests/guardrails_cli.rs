@@ -40,9 +40,9 @@ async fn fixture() -> (String, Seen) {
                 "name": body["name"],
                 "role": body["role"],
                 "principal": body["principal"],
-                "held_by": "agent",
+                "used_by": "agent",
                 "guardrail_scope": body.get("guardrail_scope").cloned().unwrap_or(json!("ancestors")),
-                "default_workarea_id": "00000000-0000-4000-8000-000000000007",
+                "default_workspace_id": "00000000-0000-4000-8000-000000000007",
                 "grants": [],
                 "denials": [],
                 "epoch": 1,
@@ -65,7 +65,7 @@ async fn fixture() -> (String, Seen) {
                 "version": 1,
                 "state": "held",
                 "plaintext_digest": "sha256:00",
-                "workarea_id": "00000000-0000-4000-8000-000000000007",
+                "workspace_id": "00000000-0000-4000-8000-000000000007",
                 "journal_seq": 9,
             })),
         )
@@ -121,7 +121,7 @@ async fn keys_issue_and_issue_agent_send_the_guardrail_scope_they_are_given() {
             "--grant",
             "metals:reader",
             "--guardrail-scope",
-            "workarea",
+            "workspace",
         ],
     );
     assert!(
@@ -138,7 +138,7 @@ async fn keys_issue_and_issue_agent_send_the_guardrail_scope_they_are_given() {
             "agent-7",
             "--principal",
             "crew/agent-7",
-            "--workarea",
+            "--workspace",
             "metals",
             "--guardrail-scope",
             "ancestors",
@@ -151,7 +151,7 @@ async fn keys_issue_and_issue_agent_send_the_guardrail_scope_they_are_given() {
     );
     let sent = bodies(&seen, "/v2/keys");
     assert_eq!(sent.len(), 2, "{sent:?}");
-    assert_eq!(sent[0]["guardrail_scope"], "workarea", "{}", sent[0]);
+    assert_eq!(sent[0]["guardrail_scope"], "workspace", "{}", sent[0]);
     assert_eq!(sent[1]["guardrail_scope"], "ancestors", "{}", sent[1]);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -186,7 +186,7 @@ async fn keys_issue_sends_no_guardrail_scope_when_none_is_given() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_guardrail_scope_other_than_workarea_or_ancestors_is_refused_before_anything_is_sent() {
+async fn a_guardrail_scope_other_than_workspace_or_ancestors_is_refused_before_anything_is_sent() {
     let (url, seen) = fixture().await;
     let dir = scratch("off");
     let out = oml(

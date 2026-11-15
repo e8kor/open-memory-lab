@@ -33,7 +33,7 @@ class ErrorCode(StrEnum):
     REQUEST_PAYLOAD_TOO_LARGE = "request.payload_too_large"
     REQUEST_UNSUPPORTED_MEDIA = "request.unsupported_media"
     REQUEST_VALIDATION = "request.validation"
-    REQUEST_WORKAREA_UNRESOLVED = "request.workarea_unresolved"
+    REQUEST_WORKSPACE_UNRESOLVED = "request.workspace_unresolved"
     REVIEW_AUTHOR_IN_LINEAGE = "review.author_in_lineage"
     REVIEW_RATIFIER_IS_PROPOSER = "review.ratifier_is_proposer"
     REVIEW_SERVE_INVALID = "review.serve_invalid"
@@ -62,11 +62,11 @@ class ErrorCode(StrEnum):
     VOCAB_INACTIVE_CURIE = "vocab.inactive_curie"
     VOCAB_PREFIX_CONFLICT = "vocab.prefix_conflict"
     VOCAB_UNKNOWN_CURIE = "vocab.unknown_curie"
-    WORKAREA_ADMIN_KEY_UNDER_ROOT = "workarea.admin_key_under_root"
-    WORKAREA_FROZEN = "workarea.frozen"
-    WORKAREA_HELD_REMAINING = "workarea.held_remaining"
-    WORKAREA_IN_PROGRESS_REFUSED = "workarea.in_progress_refused"
-    WORKAREA_TRANSITION_REFUSED = "workarea.transition_refused"
+    WORKSPACE_ADMIN_KEY_UNDER_ROOT = "workspace.admin_key_under_root"
+    WORKSPACE_FROZEN = "workspace.frozen"
+    WORKSPACE_HELD_REMAINING = "workspace.held_remaining"
+    WORKSPACE_IN_PROGRESS_REFUSED = "workspace.in_progress_refused"
+    WORKSPACE_TRANSITION_REFUSED = "workspace.transition_refused"
 
     def __str__(self) -> str:
         return str(self.value)

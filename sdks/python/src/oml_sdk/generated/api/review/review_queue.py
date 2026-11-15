@@ -70,10 +70,10 @@ def sync_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ReviewQueueResponse200]:
-    """The review queue's depth and oldest held row per workarea, tenant-wide; no content.
+    """The review queue's depth and oldest held row per workspace, tenant-wide; no content.
 
      Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending
-    ADR-0026 d15). One item per workarea holding a held row: its id, path, held count and the oldest
+    ADR-0026 d15). One item per workspace holding a held row: its id, path, held count and the oldest
     held row's time, by path. No memory id, text or author. Journals nothing. Since v0.6.4.
 
     Args:
@@ -109,10 +109,10 @@ def sync(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | ReviewQueueResponse200 | None:
-    """The review queue's depth and oldest held row per workarea, tenant-wide; no content.
+    """The review queue's depth and oldest held row per workspace, tenant-wide; no content.
 
      Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending
-    ADR-0026 d15). One item per workarea holding a held row: its id, path, held count and the oldest
+    ADR-0026 d15). One item per workspace holding a held row: its id, path, held count and the oldest
     held row's time, by path. No memory id, text or author. Journals nothing. Since v0.6.4.
 
     Args:
@@ -143,10 +143,10 @@ async def asyncio_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | ReviewQueueResponse200]:
-    """The review queue's depth and oldest held row per workarea, tenant-wide; no content.
+    """The review queue's depth and oldest held row per workspace, tenant-wide; no content.
 
      Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending
-    ADR-0026 d15). One item per workarea holding a held row: its id, path, held count and the oldest
+    ADR-0026 d15). One item per workspace holding a held row: its id, path, held count and the oldest
     held row's time, by path. No memory id, text or author. Journals nothing. Since v0.6.4.
 
     Args:
@@ -180,10 +180,10 @@ async def asyncio(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | ReviewQueueResponse200 | None:
-    """The review queue's depth and oldest held row per workarea, tenant-wide; no content.
+    """The review queue's depth and oldest held row per workspace, tenant-wide; no content.
 
      Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending
-    ADR-0026 d15). One item per workarea holding a held row: its id, path, held count and the oldest
+    ADR-0026 d15). One item per workspace holding a held row: its id, path, held count and the oldest
     held row's time, by path. No memory id, text or author. Journals nothing. Since v0.6.4.
 
     Args:

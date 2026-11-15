@@ -45,7 +45,7 @@ fn out_with_connect_code_is_refused_with_exit_2_before_anything_is_sent() {
             "claude-mobile",
             "--principal",
             "crew/claude-mobile",
-            "--workarea",
+            "--workspace",
             "metals",
             "--connect-code",
             "--out",
@@ -107,7 +107,7 @@ fn issued(code: Option<&str>) -> Value {
         "name": "claude-mobile",
         "role": "writer",
         "principal": "crew/claude-mobile",
-        "default_workarea_id": "metals",
+        "default_workspace_id": "metals",
         "grants": [],
         "connect_code": connect_code,
     })
@@ -147,7 +147,7 @@ fn issue_against_fixture(test: &str, answer: Value, replay: bool) -> (Output, Ve
             "claude-mobile",
             "--principal",
             "crew/claude-mobile",
-            "--workarea",
+            "--workspace",
             "metals",
             "--connect-code",
         ])

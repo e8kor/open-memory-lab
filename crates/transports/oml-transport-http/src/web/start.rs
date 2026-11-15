@@ -19,7 +19,7 @@ use oml_app::types::AppError;
 
 use super::page::{STYLESHEET, attr, bare, short};
 use super::{
-    Answer, append_cookie, clear_cookie, cookie, human_only, origin_refused, set_cookie,
+    Answer, append_cookie, clear_cookie, cookie, origin_refused, person_only, set_cookie,
     unique_fields, unix_now,
 };
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -251,7 +251,7 @@ where
         addr: Option<IpAddr>,
     ) -> Answer {
         let line = WebLine::default();
-        if let Some(refused) = human_only(headers) {
+        if let Some(refused) = person_only(headers) {
             return Self::start_refused(&refused, line);
         }
         let issuer = self.app.oauth_issuer().expect("routed only with an issuer");

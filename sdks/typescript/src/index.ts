@@ -23,7 +23,7 @@ export {
   type SubmitRequest,
   type SupersedeRequest,
   type VerdictResult,
-  type WorkareaView,
+  type WorkspaceView,
   type WriteInput,
   type WriteOptions,
   type Written,
@@ -52,7 +52,7 @@ export {
   TransportError,
   UploadError,
   VocabError,
-  WorkareaError,
+  WorkspaceError,
   errorFromResponse,
 } from "./errors.ts";
 export type { components, operations, paths } from "./generated/schema.ts";

@@ -28,7 +28,7 @@ class WebUser:
         usage (WebUserUsage):
         quotas (WebUserQuotas):
         admin_keys (list[str] | Unset): Each live admin key whose row names the person's user root, by name: a row no
-            verb makes, which refuses the person's disable with workarea.admin_key_under_root and which oml doctor warns
+            verb makes, which refuses the person's disable with workspace.admin_key_under_root and which oml doctor warns
             about (ADR-0068 d8, d11). Since v0.7.1.
     """
 

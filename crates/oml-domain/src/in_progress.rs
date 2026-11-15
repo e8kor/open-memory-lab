@@ -1,5 +1,5 @@
-//! In-progress workareas and the curator profile: pure rules over the
-//! workarea marks the tree read already returns (ADR-0030 r2; ADR-0019 d1).
+//! In-progress workspaces and the curator profile: pure rules over the
+//! workspace marks the tree read already returns (ADR-0030 r2; ADR-0019 d1).
 //!
 //! A node is *inside* while it has an in-progress root, its nearest
 //! ancestor-or-self whose `mode` is `in_progress` (d1). Subtrees never nest,
@@ -10,37 +10,37 @@ use std::fmt;
 
 use uuid::Uuid;
 
-use crate::model::{HeldBy, Role};
+use crate::model::{Role, UsedBy};
 
-/// A workarea's mode (ADR-0030 d1): `standard`, every workarea's default, or
+/// A workspace's mode (ADR-0030 d1): `standard`, every workspace's default, or
 /// `in_progress`, set and cleared only by a person's key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum WorkareaMode {
+pub enum WorkspaceMode {
     #[default]
     Standard,
     InProgress,
 }
 
-impl WorkareaMode {
+impl WorkspaceMode {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            WorkareaMode::Standard => "standard",
-            WorkareaMode::InProgress => "in_progress",
+            WorkspaceMode::Standard => "standard",
+            WorkspaceMode::InProgress => "in_progress",
         }
     }
 
     #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "standard" => Some(WorkareaMode::Standard),
-            "in_progress" => Some(WorkareaMode::InProgress),
+            "standard" => Some(WorkspaceMode::Standard),
+            "in_progress" => Some(WorkspaceMode::InProgress),
             _ => None,
         }
     }
 }
 
-/// A key's profile (ADR-0030 d8): `curator` is a dreamer key held by an
+/// A key's profile (ADR-0030 d8): `curator` is a reviewer key used by an
 /// agent that may narrow inside an in-progress scope and never widen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyProfile {
@@ -75,8 +75,8 @@ pub fn in_progress_root(ancestry: &[(Uuid, bool)]) -> Option<Uuid> {
         .map(|(id, _)| *id)
 }
 
-/// The node's in-progress root under R3's rule that `committed` and
-/// `validated` workareas keep it without exception (d1, d3): walking from
+/// The node's in-progress root under R3's rule that `protected` and
+/// `frozen` workspaces keep it without exception (d1, d3): walking from
 /// the node up, each entry `(id, marked, development)`, the first marked
 /// node, provided every node from the row's up to and including the mark is
 /// `development`; otherwise `None`.
@@ -102,7 +102,7 @@ pub fn crosses_into(scope_root: Option<Uuid>, node_root: Option<Uuid>) -> bool {
 }
 
 /// Why setting `in_progress` was refused (d1) or a crossing act was refused
-/// (d6, d7): `workarea.in_progress_refused` with `details.reason`.
+/// (d6, d7): `workspace.in_progress_refused` with `details.reason`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InProgressReason {
     /// The node is not `development`.
@@ -133,7 +133,7 @@ impl InProgressReason {
 impl fmt::Display for InProgressReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            InProgressReason::Status => "only a development workarea may be put in progress",
+            InProgressReason::Status => "only a development workspace may be put in progress",
             InProgressReason::Universe => "universe is never in progress",
             InProgressReason::Nested => "in-progress subtrees never nest",
             InProgressReason::CommitFirst => {
@@ -149,7 +149,7 @@ impl fmt::Display for InProgressReason {
 /// Setting `in_progress` on a node (d1): `ancestry` runs node to `universe`
 /// with each node's mark, `subtree_marked` is whether any strict descendant
 /// is marked, `development` whether the node and every node of its subtree
-/// are `development`, so no `committed` or `validated` node is ever inside
+/// are `development`, so no `protected` or `frozen` node is ever inside
 /// (d3). Universe first, then status, then nesting.
 pub fn check_mark(
     ancestry: &[(Uuid, bool)],
@@ -168,28 +168,28 @@ pub fn check_mark(
     Ok(())
 }
 
-/// Who may set the mode (d1): a dreamer key a person holds. Every other key
+/// Who may set the mode (d1): a reviewer key a person holds. Every other key
 /// is refused before any lookup.
 #[must_use]
-pub fn may_set_mode(role: Role, held_by: HeldBy, profile: Option<KeyProfile>) -> bool {
-    role == Role::Dreamer && held_by == HeldBy::Human && profile.is_none()
+pub fn may_set_mode(role: Role, used_by: UsedBy, profile: Option<KeyProfile>) -> bool {
+    role == Role::Reviewer && used_by == UsedBy::Person && profile.is_none()
 }
 
-/// The issuance shape of a profile (d8): a curator is a dreamer key held by
+/// The issuance shape of a profile (d8): a curator is a reviewer key used by
 /// an agent.
 #[must_use]
-pub fn profile_admits(profile: KeyProfile, role: Role, held_by: HeldBy) -> bool {
+pub fn profile_admits(profile: KeyProfile, role: Role, used_by: UsedBy) -> bool {
     match profile {
-        KeyProfile::Curator => role == Role::Dreamer && held_by == HeldBy::Agent,
+        KeyProfile::Curator => role == Role::Reviewer && used_by == UsedBy::Agent,
     }
 }
 
 /// The grant roles a key may carry, profile included (d8): a curator's are
-/// reader, writer and dreamer; otherwise the role's own admissible set.
+/// reader, writer and reviewer; otherwise the role's own admissible set.
 #[must_use]
 pub fn admissible_roles(role: Role, profile: Option<KeyProfile>) -> &'static [Role] {
     match profile {
-        Some(KeyProfile::Curator) => &[Role::Reader, Role::Writer, Role::Dreamer],
+        Some(KeyProfile::Curator) => &[Role::Reader, Role::Writer, Role::Reviewer],
         None => crate::access::admissible_grant_roles(role),
     }
 }
@@ -234,21 +234,21 @@ impl CuratorRefusal {
     }
 }
 
-/// The verbs a curator key may call at all (d9); everything else a dreamer
+/// The verbs a curator key may call at all (d9); everything else a reviewer
 /// holds is [`CuratorRefusal::NarrowOnly`]. Reads are not acts.
 pub fn curator_verb(verb: &str) -> Result<(), CuratorRefusal> {
     const ALLOWED: &[&str] = &[
         "recall",
         "get",
         "list",
-        "workarea_info",
-        "workarea_tree",
+        "workspace_info",
+        "workspace_tree",
         "guardrails",
         "events_tail",
         "feedback",
         "claim_edge.list",
         "brief_edge.list",
-        "workarea_status",
+        "workspace_status",
         "submit",
         "supersede",
         "verdict",
@@ -342,7 +342,7 @@ mod tests {
                 (id(1), false, false)
             ]),
             None,
-            "a committed node under a mark"
+            "a protected node under a mark"
         );
         assert_eq!(
             in_progress_root_of(&[
@@ -351,7 +351,7 @@ mod tests {
                 (id(2), true, true)
             ]),
             None,
-            "a development node under a committed one under a mark"
+            "a development node under a protected one under a mark"
         );
         assert_eq!(
             in_progress_root_of(&[
@@ -364,40 +364,40 @@ mod tests {
     }
 
     #[test]
-    fn only_a_dreamer_key_a_person_holds_sets_the_mode() {
-        assert!(may_set_mode(Role::Dreamer, HeldBy::Human, None));
-        for (role, held_by) in [
-            (Role::Dreamer, HeldBy::Agent),
-            (Role::Dreamer, HeldBy::Service),
-            (Role::Admin, HeldBy::Human),
-            (Role::Writer, HeldBy::Human),
-            (Role::Reader, HeldBy::Human),
+    fn only_a_reviewer_key_a_person_holds_sets_the_mode() {
+        assert!(may_set_mode(Role::Reviewer, UsedBy::Person, None));
+        for (role, used_by) in [
+            (Role::Reviewer, UsedBy::Agent),
+            (Role::Reviewer, UsedBy::Service),
+            (Role::Admin, UsedBy::Person),
+            (Role::Writer, UsedBy::Person),
+            (Role::Reader, UsedBy::Person),
         ] {
-            assert!(!may_set_mode(role, held_by, None), "{role:?} {held_by:?}");
+            assert!(!may_set_mode(role, used_by, None), "{role:?} {used_by:?}");
         }
         assert!(!may_set_mode(
-            Role::Dreamer,
-            HeldBy::Human,
+            Role::Reviewer,
+            UsedBy::Person,
             Some(KeyProfile::Curator)
         ));
     }
 
     #[test]
-    fn a_curator_is_a_dreamer_key_held_by_an_agent() {
+    fn a_curator_is_a_reviewer_key_used_by_an_agent() {
         assert!(profile_admits(
             KeyProfile::Curator,
-            Role::Dreamer,
-            HeldBy::Agent
+            Role::Reviewer,
+            UsedBy::Agent
         ));
         assert!(!profile_admits(
             KeyProfile::Curator,
-            Role::Dreamer,
-            HeldBy::Human
+            Role::Reviewer,
+            UsedBy::Person
         ));
         assert!(!profile_admits(
             KeyProfile::Curator,
             Role::Writer,
-            HeldBy::Agent
+            UsedBy::Agent
         ));
     }
 
@@ -406,7 +406,7 @@ mod tests {
         for verb in [
             "review",
             "bulk_review",
-            "workarea_mode",
+            "workspace_mode",
             "propose_transition",
             "claim_edge.ratify",
             "brief_edge.propose",

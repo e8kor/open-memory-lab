@@ -22,7 +22,7 @@ from .allow_web_email_body import AllowWebEmailBody
 from .anchor import Anchor
 from .anchor_hasher import AnchorHasher
 from .approver import Approver
-from .approver_held_by import ApproverHeldBy
+from .approver_used_by import ApproverUsedBy
 from .attachment_descriptor import AttachmentDescriptor
 from .authorization_server_metadata import AuthorizationServerMetadata
 from .authorization_server_metadata_code_challenge_methods_supported_item import (
@@ -139,12 +139,9 @@ from .journal_event import JournalEvent
 from .journal_event_payload import JournalEventPayload
 from .key import Key
 from .key_credential import KeyCredential
-from .key_held_by_type_1 import KeyHeldByType1
-from .key_held_by_type_2_type_1 import KeyHeldByType2Type1
-from .key_held_by_type_3_type_1 import KeyHeldByType3Type1
 from .key_issue_request import KeyIssueRequest
-from .key_issue_request_held_by import KeyIssueRequestHeldBy
 from .key_issue_request_profile import KeyIssueRequestProfile
+from .key_issue_request_used_by import KeyIssueRequestUsedBy
 from .key_issued import KeyIssued
 from .key_limits import KeyLimits
 from .key_limits_request import KeyLimitsRequest
@@ -152,6 +149,9 @@ from .key_live_connect_code_type_1 import KeyLiveConnectCodeType1
 from .key_profile_type_1 import KeyProfileType1
 from .key_profile_type_2_type_1 import KeyProfileType2Type1
 from .key_profile_type_3_type_1 import KeyProfileType3Type1
+from .key_used_by_type_1 import KeyUsedByType1
+from .key_used_by_type_2_type_1 import KeyUsedByType2Type1
+from .key_used_by_type_3_type_1 import KeyUsedByType3Type1
 from .list_edges_kind import ListEdgesKind
 from .list_keys_response_200 import ListKeysResponse200
 from .list_memories_kind import ListMemoriesKind
@@ -165,7 +165,7 @@ from .list_web_users_response_200_mode import ListWebUsersResponse200Mode
 from .listed_key import ListedKey
 from .listed_key_credential import ListedKeyCredential
 from .listed_key_grants_item import ListedKeyGrantsItem
-from .listed_key_held_by import ListedKeyHeldBy
+from .listed_key_used_by import ListedKeyUsedBy
 from .memory import Memory
 from .memory_page import MemoryPage
 from .memory_summary import MemorySummary
@@ -254,7 +254,7 @@ from .serve import Serve
 from .served_digests import ServedDigests
 from .served_guardrail import ServedGuardrail
 from .served_guardrail_verdicts_item import ServedGuardrailVerdictsItem
-from .served_guardrail_verdicts_item_held_by import ServedGuardrailVerdictsItemHeldBy
+from .served_guardrail_verdicts_item_used_by import ServedGuardrailVerdictsItemUsedBy
 from .set_federation_policy_body import SetFederationPolicyBody
 from .set_federation_policy_body_default_sources import (
     SetFederationPolicyBodyDefaultSources,
@@ -262,8 +262,8 @@ from .set_federation_policy_body_default_sources import (
 from .set_search_default_body import SetSearchDefaultBody
 from .set_usage_settings_body import SetUsageSettingsBody
 from .set_web_user_quota_body import SetWebUserQuotaBody
-from .set_workarea_federation_body import SetWorkareaFederationBody
-from .set_workarea_federation_response_200 import SetWorkareaFederationResponse200
+from .set_workspace_federation_body import SetWorkspaceFederationBody
+from .set_workspace_federation_response_200 import SetWorkspaceFederationResponse200
 from .severity import Severity
 from .similar_item import SimilarItem
 from .similar_item_kind import SimilarItemKind
@@ -327,7 +327,6 @@ from .whoami import Whoami
 from .whoami_grant import WhoamiGrant
 from .whoami_grant_covers import WhoamiGrantCovers
 from .whoami_grant_role import WhoamiGrantRole
-from .whoami_held_by import WhoamiHeldBy
 from .whoami_person import WhoamiPerson
 from .whoami_person_quotas_type_0 import WhoamiPersonQuotasType0
 from .whoami_person_start_type_0 import WhoamiPersonStartType0
@@ -345,37 +344,38 @@ from .whoami_profile_type_1 import WhoamiProfileType1
 from .whoami_profile_type_2_type_1 import WhoamiProfileType2Type1
 from .whoami_profile_type_3_type_1 import WhoamiProfileType3Type1
 from .whoami_ref import WhoamiRef
-from .whoami_workarea import WhoamiWorkarea
-from .workarea import Workarea
-from .workarea_counts import WorkareaCounts
-from .workarea_counts_items_item import WorkareaCountsItemsItem
-from .workarea_counts_items_item_counts import WorkareaCountsItemsItemCounts
-from .workarea_counts_items_item_mode import WorkareaCountsItemsItemMode
-from .workarea_create import WorkareaCreate
-from .workarea_crew_update import WorkareaCrewUpdate
-from .workarea_mode import WorkareaMode
-from .workarea_mode_set import WorkareaModeSet
-from .workarea_mode_set_mode import WorkareaModeSetMode
-from .workarea_offers import WorkareaOffers
-from .workarea_offers_commit import WorkareaOffersCommit
-from .workarea_offers_mode import WorkareaOffersMode
-from .workarea_offers_mode_change_type_0 import WorkareaOffersModeChangeType0
-from .workarea_offers_mode_change_type_0_to import WorkareaOffersModeChangeType0To
-from .workarea_offers_refused_item import WorkareaOffersRefusedItem
-from .workarea_offers_refused_item_op import WorkareaOffersRefusedItemOp
-from .workarea_offers_refused_item_to import WorkareaOffersRefusedItemTo
-from .workarea_offers_transitions_item import WorkareaOffersTransitionsItem
-from .workarea_offers_transitions_item_op import WorkareaOffersTransitionsItemOp
-from .workarea_page import WorkareaPage
-from .workarea_status import WorkareaStatus
-from .workarea_view import WorkareaView
-from .workarea_view_children_item import WorkareaViewChildrenItem
-from .workarea_view_children_item_status import WorkareaViewChildrenItemStatus
-from .workarea_view_edges_item import WorkareaViewEdgesItem
-from .workarea_view_edges_item_label import WorkareaViewEdgesItemLabel
-from .workarea_view_edges_item_state import WorkareaViewEdgesItemState
-from .workarea_view_federation import WorkareaViewFederation
-from .workarea_view_my_effective_verbs_item import WorkareaViewMyEffectiveVerbsItem
+from .whoami_used_by import WhoamiUsedBy
+from .whoami_workspace import WhoamiWorkspace
+from .workspace import Workspace
+from .workspace_counts import WorkspaceCounts
+from .workspace_counts_items_item import WorkspaceCountsItemsItem
+from .workspace_counts_items_item_counts import WorkspaceCountsItemsItemCounts
+from .workspace_counts_items_item_mode import WorkspaceCountsItemsItemMode
+from .workspace_create import WorkspaceCreate
+from .workspace_crew_update import WorkspaceCrewUpdate
+from .workspace_mode import WorkspaceMode
+from .workspace_mode_set import WorkspaceModeSet
+from .workspace_mode_set_mode import WorkspaceModeSetMode
+from .workspace_offers import WorkspaceOffers
+from .workspace_offers_commit import WorkspaceOffersCommit
+from .workspace_offers_mode import WorkspaceOffersMode
+from .workspace_offers_mode_change_type_0 import WorkspaceOffersModeChangeType0
+from .workspace_offers_mode_change_type_0_to import WorkspaceOffersModeChangeType0To
+from .workspace_offers_refused_item import WorkspaceOffersRefusedItem
+from .workspace_offers_refused_item_op import WorkspaceOffersRefusedItemOp
+from .workspace_offers_refused_item_to import WorkspaceOffersRefusedItemTo
+from .workspace_offers_transitions_item import WorkspaceOffersTransitionsItem
+from .workspace_offers_transitions_item_op import WorkspaceOffersTransitionsItemOp
+from .workspace_page import WorkspacePage
+from .workspace_status import WorkspaceStatus
+from .workspace_view import WorkspaceView
+from .workspace_view_children_item import WorkspaceViewChildrenItem
+from .workspace_view_children_item_status import WorkspaceViewChildrenItemStatus
+from .workspace_view_edges_item import WorkspaceViewEdgesItem
+from .workspace_view_edges_item_label import WorkspaceViewEdgesItemLabel
+from .workspace_view_edges_item_state import WorkspaceViewEdgesItemState
+from .workspace_view_federation import WorkspaceViewFederation
+from .workspace_view_my_effective_verbs_item import WorkspaceViewMyEffectiveVerbsItem
 
 __all__ = (
     "AccountProfileRequest",
@@ -398,7 +398,7 @@ __all__ = (
     "Anchor",
     "AnchorHasher",
     "Approver",
-    "ApproverHeldBy",
+    "ApproverUsedBy",
     "AttachmentDescriptor",
     "AuthorizationServerMetadata",
     "AuthorizationServerMetadataCodeChallengeMethodsSupportedItem",
@@ -495,12 +495,9 @@ __all__ = (
     "JournalEventPayload",
     "Key",
     "KeyCredential",
-    "KeyHeldByType1",
-    "KeyHeldByType2Type1",
-    "KeyHeldByType3Type1",
     "KeyIssueRequest",
-    "KeyIssueRequestHeldBy",
     "KeyIssueRequestProfile",
+    "KeyIssueRequestUsedBy",
     "KeyIssued",
     "KeyLimits",
     "KeyLimitsRequest",
@@ -508,6 +505,9 @@ __all__ = (
     "KeyProfileType1",
     "KeyProfileType2Type1",
     "KeyProfileType3Type1",
+    "KeyUsedByType1",
+    "KeyUsedByType2Type1",
+    "KeyUsedByType3Type1",
     "ListEdgesKind",
     "ListKeysResponse200",
     "ListMemoriesKind",
@@ -519,7 +519,7 @@ __all__ = (
     "ListedKey",
     "ListedKeyCredential",
     "ListedKeyGrantsItem",
-    "ListedKeyHeldBy",
+    "ListedKeyUsedBy",
     "Memory",
     "MemoryPage",
     "MemorySummary",
@@ -604,14 +604,14 @@ __all__ = (
     "ServedDigests",
     "ServedGuardrail",
     "ServedGuardrailVerdictsItem",
-    "ServedGuardrailVerdictsItemHeldBy",
+    "ServedGuardrailVerdictsItemUsedBy",
     "SetFederationPolicyBody",
     "SetFederationPolicyBodyDefaultSources",
     "SetSearchDefaultBody",
     "SetUsageSettingsBody",
     "SetWebUserQuotaBody",
-    "SetWorkareaFederationBody",
-    "SetWorkareaFederationResponse200",
+    "SetWorkspaceFederationBody",
+    "SetWorkspaceFederationResponse200",
     "Severity",
     "SimilarItem",
     "SimilarItemKind",
@@ -675,7 +675,6 @@ __all__ = (
     "WhoamiGrant",
     "WhoamiGrantCovers",
     "WhoamiGrantRole",
-    "WhoamiHeldBy",
     "WhoamiPerson",
     "WhoamiPersonQuotasType0",
     "WhoamiPersonStartType0",
@@ -687,35 +686,36 @@ __all__ = (
     "WhoamiProfileType2Type1",
     "WhoamiProfileType3Type1",
     "WhoamiRef",
-    "WhoamiWorkarea",
-    "Workarea",
-    "WorkareaCounts",
-    "WorkareaCountsItemsItem",
-    "WorkareaCountsItemsItemCounts",
-    "WorkareaCountsItemsItemMode",
-    "WorkareaCreate",
-    "WorkareaCrewUpdate",
-    "WorkareaMode",
-    "WorkareaModeSet",
-    "WorkareaModeSetMode",
-    "WorkareaOffers",
-    "WorkareaOffersCommit",
-    "WorkareaOffersMode",
-    "WorkareaOffersModeChangeType0",
-    "WorkareaOffersModeChangeType0To",
-    "WorkareaOffersRefusedItem",
-    "WorkareaOffersRefusedItemOp",
-    "WorkareaOffersRefusedItemTo",
-    "WorkareaOffersTransitionsItem",
-    "WorkareaOffersTransitionsItemOp",
-    "WorkareaPage",
-    "WorkareaStatus",
-    "WorkareaView",
-    "WorkareaViewChildrenItem",
-    "WorkareaViewChildrenItemStatus",
-    "WorkareaViewEdgesItem",
-    "WorkareaViewEdgesItemLabel",
-    "WorkareaViewEdgesItemState",
-    "WorkareaViewFederation",
-    "WorkareaViewMyEffectiveVerbsItem",
+    "WhoamiUsedBy",
+    "WhoamiWorkspace",
+    "Workspace",
+    "WorkspaceCounts",
+    "WorkspaceCountsItemsItem",
+    "WorkspaceCountsItemsItemCounts",
+    "WorkspaceCountsItemsItemMode",
+    "WorkspaceCreate",
+    "WorkspaceCrewUpdate",
+    "WorkspaceMode",
+    "WorkspaceModeSet",
+    "WorkspaceModeSetMode",
+    "WorkspaceOffers",
+    "WorkspaceOffersCommit",
+    "WorkspaceOffersMode",
+    "WorkspaceOffersModeChangeType0",
+    "WorkspaceOffersModeChangeType0To",
+    "WorkspaceOffersRefusedItem",
+    "WorkspaceOffersRefusedItemOp",
+    "WorkspaceOffersRefusedItemTo",
+    "WorkspaceOffersTransitionsItem",
+    "WorkspaceOffersTransitionsItemOp",
+    "WorkspacePage",
+    "WorkspaceStatus",
+    "WorkspaceView",
+    "WorkspaceViewChildrenItem",
+    "WorkspaceViewChildrenItemStatus",
+    "WorkspaceViewEdgesItem",
+    "WorkspaceViewEdgesItemLabel",
+    "WorkspaceViewEdgesItemState",
+    "WorkspaceViewFederation",
+    "WorkspaceViewMyEffectiveVerbsItem",
 )

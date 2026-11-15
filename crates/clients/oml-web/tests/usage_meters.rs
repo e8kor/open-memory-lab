@@ -31,8 +31,8 @@ struct Double {
 fn whoami() -> Value {
     json!({
         "key_id": "k1", "name": "alice-web", "role": "user", "principal": "alice",
-        "held_by": "human", "tenant": {"id": "t1", "name": "oml"},
-        "default_workarea": null, "crew": null,
+        "used_by": "person", "tenant": {"id": "t1", "name": "oml"},
+        "default_workspace": null, "crew": null,
         "user": {"id": ROOT, "name": "alice"}, "grants": [],
     })
 }
@@ -167,7 +167,7 @@ fn keys_script(person: Result<Value, ()>) -> Script {
             }
         } else if path.starts_with("/v2/keys") {
             let key = json!({
-                "id": "k-agent", "name": "alice-agent", "role": "writer", "held_by": "agent",
+                "id": "k-agent", "name": "alice-agent", "role": "writer", "used_by": "agent",
                 "credential": "bearer", "revoked": false, "cut_off": false, "grants": [],
             });
             (200, json!({"items": [key], "next_cursor": null}))

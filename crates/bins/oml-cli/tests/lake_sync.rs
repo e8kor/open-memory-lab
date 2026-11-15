@@ -382,8 +382,8 @@ impl SyncApi for Fake {
             name: "lake-sync".into(),
         })
     }
-    fn workarea_id(&self, workarea: &str) -> Result<String, CliError> {
-        Ok(format!("wa-{workarea}"))
+    fn workspace_id(&self, workspace: &str) -> Result<String, CliError> {
+        Ok(format!("wa-{workspace}"))
     }
     fn list(&self, q: &ListQuery) -> Result<Vec<Listed>, CliError> {
         let tip_of = |k: &str| self.tip(k);
@@ -397,7 +397,7 @@ impl SyncApi for Fake {
                     "artifact_id": v.artifact_id, "claim_key": v.claim_key, "version": v.version,
                     "tip": v.state == "promoted" && v.version == tip_of(&v.claim_key),
                     "state": v.state, "retirement": v.retirement,
-                    "workarea_id": format!("wa-{}", q.workarea),
+                    "workspace_id": format!("wa-{}", q.workspace),
                     "plaintext_digest": v.digest, "anchor": v.anchor,
                     "source_checked": v.checks.last().map(|c| json!({
                         "rev": c["rev"], "at": "2026-11-06T00:00:00Z", "result": c["result"],
@@ -455,7 +455,7 @@ fn opts(at: Option<u64>) -> Options {
     Options {
         root: fixture(),
         uri_base: Some(BASE.into()),
-        workarea: "lake".into(),
+        workspace: "lake".into(),
         max_writes: 200,
         depth: 3,
         at_version: at,
@@ -467,7 +467,7 @@ fn run(fake: &Fake, o: &Options) -> oml_cli::sync::run::Report {
     let mut sink = Vec::new();
     let report = execute(fake, o, &mut sink).unwrap();
     let printed = String::from_utf8(sink).unwrap();
-    assert!(printed.contains("workarea  lake"), "{printed}");
+    assert!(printed.contains("workspace  lake"), "{printed}");
     report
 }
 
@@ -498,7 +498,7 @@ fn a_first_run_writes_every_claim_with_a_uri_anchor_at_the_delta_version() {
         .iter()
         .find(|(_, b)| b["claim_key"] == "delta/sales/orders/table")
         .unwrap();
-    assert_eq!(table["workarea"], "lake");
+    assert_eq!(table["workspace"], "lake");
     assert_eq!(
         table["anchor"],
         json!({

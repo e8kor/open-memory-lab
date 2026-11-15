@@ -1,0 +1,17 @@
+[package]
+name = "oml-former-names"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The one map from a journal event as stored to the event as read: the former names of ADR-0091 d4 (workarea, dreamer, committed, validated, held_by, human) read as their successors."
+
+# A leaf: the domain core (oml-domain re-exports it as `former_names`) and the
+# CLI (`oml events`, `oml audit verify-chain`'s report) both link it, so the
+# readers cannot disagree on a former name, and the CLI still links no domain
+# crate (ADR-0006 d6, ADR-0015). Pure: no I/O, no clock.
+[dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

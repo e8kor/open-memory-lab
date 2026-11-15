@@ -92,12 +92,12 @@ class SubmissionError(ApiError):
 
 
 class NamingError(ApiError):
-    """`name`: the unique names of workareas, crews, keys and tenants (named so
+    """`name`: the unique names of workspaces, crews, keys and tenants (named so
     beside Python's NameError)."""
 
 
-class WorkareaError(ApiError):
-    """`workarea`: structure and status refusals."""
+class WorkspaceError(ApiError):
+    """`workspace`: structure and status refusals."""
 
 
 class ReviewError(ApiError):
@@ -144,7 +144,7 @@ FAMILIES: dict[str, type[ApiError]] = {
     "idempotency": IdempotencyError,
     "submission": SubmissionError,
     "name": NamingError,
-    "workarea": WorkareaError,
+    "workspace": WorkspaceError,
     "review": ReviewError,
     "simulation": SimulationError,
     "vocab": VocabError,

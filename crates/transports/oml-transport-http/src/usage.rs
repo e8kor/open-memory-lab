@@ -82,7 +82,7 @@ fn event_json(e: &StoredEvent) -> Value {
         "created_at": e.created_at.as_str(),
         "key_id": e.key_id,
         "principal": e.principal,
-        "workarea_id": e.scope_workarea_id,
+        "workspace_id": e.scope_workspace_id,
         "pipeline": e.pipeline,
         "access": e.access,
         "query_digest": e.query_digest,

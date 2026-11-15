@@ -15,7 +15,7 @@ use tower::ServiceExt as _;
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
 use oml_app::domain::oauth::Issuer;
-use oml_app::domain::{HeldBy, Role};
+use oml_app::domain::{Role, UsedBy};
 use oml_app::doubles::MemStore;
 use oml_app::types::{BootstrapRequest, GrantRequest, IssueKeyRequest};
 use oml_transport_http::traffic::{ScopeObserver, Traffic, TrustedProxies, metrics};
@@ -69,11 +69,11 @@ async fn the_metrics_listener_serves_the_four_families_with_closed_labels_and_no
                 role: Role::Writer,
                 name: Name::parse("agent-7").expect("a name"),
                 principal: "crew/agent-7".to_owned(),
-                held_by: Some(HeldBy::Agent),
-                default_workarea: Some(boot.root_workarea_id.into()),
+                used_by: Some(UsedBy::Agent),
+                default_workspace: Some(boot.root_workspace_id.into()),
                 crew: None,
                 grants: vec![GrantRequest {
-                    node: boot.root_workarea_id.into(),
+                    node: boot.root_workspace_id.into(),
                     role: Role::Writer,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
@@ -203,7 +203,7 @@ async fn an_act_whose_outcome_is_not_recorded_is_counted_unsettled() {
     let response = router
         .clone()
         .oneshot(
-            Request::post("/v2/workareas")
+            Request::post("/v2/workspaces")
                 .header(
                     header::AUTHORIZATION,
                     format!("Bearer {}", boot.admin_key.value),
@@ -227,11 +227,11 @@ async fn an_act_whose_outcome_is_not_recorded_is_counted_unsettled() {
 }
 
 /// A mode change made over HTTP, which the console's act runs in a task of
-/// its own, is counted in `oml_workarea_mode_changes_total`, and its request
-/// line names the workarea the act resolved (ADR-0042 d2; ADR-0030 d13;
+/// its own, is counted in `oml_workspace_mode_changes_total`, and its request
+/// line names the workspace the act resolved (ADR-0042 d2; ADR-0030 d13;
 /// #233).
 #[tokio::test]
-async fn a_mode_change_over_http_is_counted_and_its_request_line_names_the_workarea() {
+async fn a_mode_change_over_http_is_counted_and_its_request_line_names_the_workspace() {
     let store = MemStore::new();
     let app = app(&store).with_observer(Arc::new(ScopeObserver));
     let boot = app
@@ -243,28 +243,28 @@ async fn a_mode_change_over_http_is_counted_and_its_request_line_names_the_worka
         .await
         .expect("bootstrap");
     let draft = app
-        .create_workarea(
+        .create_workspace(
             &boot.admin_key.value,
             &Name::parse("draft").expect("a name"),
-            Some(boot.root_workarea_id.into()),
+            Some(boot.root_workspace_id.into()),
             None,
         )
         .await
-        .expect("a workarea")
-        .workarea
-        .workarea_id;
+        .expect("a workspace")
+        .workspace
+        .workspace_id;
     let ann = app
         .issue_key(
             &boot.admin_key.value,
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Dreamer,
+                role: Role::Reviewer,
                 name: Name::parse("ann-review").expect("a name"),
                 principal: "ann".to_owned(),
-                held_by: Some(HeldBy::Human),
-                default_workarea: None,
+                used_by: Some(UsedBy::Person),
+                default_workspace: None,
                 crew: None,
-                grants: [Role::Dreamer, Role::Reader]
+                grants: [Role::Reviewer, Role::Reader]
                     .map(|role| GrantRequest {
                         node: draft.into(),
                         role,
@@ -289,7 +289,7 @@ async fn a_mode_change_over_http_is_counted_and_its_request_line_names_the_worka
     let response = router
         .clone()
         .oneshot(
-            Request::post(format!("/v2/workareas/{draft}/mode"))
+            Request::post(format!("/v2/workspaces/{draft}/mode"))
                 .header(header::AUTHORIZATION, format!("Bearer {ann}"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .header("idempotency-key", "m-1")
@@ -305,10 +305,10 @@ async fn a_mode_change_over_http_is_counted_and_its_request_line_names_the_worka
     drop(guard);
     let (_, text) = get(&scrape, "/metrics").await;
     assert!(
-        text.contains(r#"oml_workarea_mode_changes_total{mode="in_progress"} 1"#),
+        text.contains(r#"oml_workspace_mode_changes_total{mode="in_progress"} 1"#),
         "{text}"
     );
     let lines = captured.events("http_request");
     assert_eq!(lines.len(), 1, "{lines:?}");
-    assert_eq!(lines[0]["workarea_id"], draft.to_string(), "{lines:?}");
+    assert_eq!(lines[0]["workspace_id"], draft.to_string(), "{lines:?}");
 }

@@ -26,7 +26,7 @@ use crate::{ApiState, acting, finish, json_response, parse_json, retry_chain};
 #[serde(deny_unknown_fields)]
 struct SearchBody {
     query: Option<String>,
-    workarea: Option<String>,
+    workspace: Option<String>,
     state: Option<String>,
     /// One `origin.kind` (ADR-0045 d22, d24; ADR-0070 d5).
     origin_kind: Option<String>,
@@ -63,7 +63,7 @@ pub(crate) fn admin_memory_json(m: &AdminMemory, full: bool) -> Value {
         "claim_key": m.memory.claim_key,
         "version": m.memory.version,
         "state": m.state.as_str(),
-        "workarea_path": m.workarea_path,
+        "workspace_path": m.workspace_path,
         "text": m.memory.body,
         "kind": m.memory.kind.as_str(),
         "format": m.memory.format.media_type,
@@ -78,7 +78,7 @@ pub(crate) fn admin_memory_json(m: &AdminMemory, full: bool) -> Value {
         // The authoring key's holder, the version's served date, its valid
         // time and admission's finding, as the console's list shows them
         // (ADR-0045 d32; ADR-0070 d5).
-        "held_by": m.author.as_ref().map(|k| k.held_by.as_str()),
+        "used_by": m.author.as_ref().map(|k| k.used_by.as_str()),
         "promoted_at": m.memory.promoted_at.as_ref().map(|at| at.as_str()),
         "valid_from": m.memory.valid.from.as_ref().map(|v| v.as_str()),
         "valid_until": m.memory.valid.until.as_ref().map(|v| v.as_str()),
@@ -157,13 +157,13 @@ where
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
         let req: SearchBody = parse_json(headers, body)?;
-        let workarea = req
-            .workarea
+        let workspace = req
+            .workspace
             .as_deref()
             .map(|w| {
                 Reference::parse(w).map_err(|e| {
                     ApiError::validation(e.to_string())
-                        .with_details(json!({ "field": "/workarea" }))
+                        .with_details(json!({ "field": "/workspace" }))
                 })
             })
             .transpose()?;
@@ -206,7 +206,7 @@ where
             .transpose()?;
         let search = AdminSearchRequest {
             query: req.query.as_deref(),
-            workarea,
+            workspace,
             state,
             origin,
             author,

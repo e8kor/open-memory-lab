@@ -16,7 +16,7 @@ ACCEPTED = {
     "state": "held",
     "plaintext_digest": "sha256:" + "0" * 64,
     "journal_seq": 1,
-    "workarea_id": "wa_1",
+    "workspace_id": "wa_1",
     "retirement": False,
     "replaces": None,
 }
@@ -96,7 +96,7 @@ def test_read_with_artifact_id_and_query_raises_before_sending():
 @pytest.mark.parametrize(
     ("arguments", "field"),
     [
-        ({"artifact_id": "art_1", "workarea": "w"}, "/workarea"),
+        ({"artifact_id": "art_1", "workspace": "w"}, "/workspace"),
         ({"query": "q", "own": True}, "/own"),
         ({"k": 3}, "/k"),
     ],
@@ -190,19 +190,19 @@ def test_a_refusal_raises_the_envelopes_code_and_details():
     assert error.retryable is False
 
 
-def test_workarea_without_a_name_reads_the_keys_default_workarea(oml_server, agent):
-    view = agent.workarea()
-    assert view.id == oml_server.workarea
+def test_workspace_without_a_name_reads_the_keys_default_workspace(oml_server, agent):
+    view = agent.workspace()
+    assert view.id == oml_server.workspace
     assert "remember" in view.my_effective_verbs
-    assert agent.workarea(oml_server.review_workarea).id == oml_server.review_workarea
+    assert agent.workspace(oml_server.review_workspace).id == oml_server.review_workspace
 
 
-def test_events_tails_the_named_workarea_from_after_seq(oml_server, agent, marker):
-    # The key's own workarea, never the review queue's, which the agent loop reads whole.
-    written = agent.write(f"An event to tail, {marker}.", workarea=oml_server.workarea)
-    page = agent.events(workarea=oml_server.workarea)
+def test_events_tails_the_named_workspace_from_after_seq(oml_server, agent, marker):
+    # The key's own workspace, never the review queue's, which the agent loop reads whole.
+    written = agent.write(f"An event to tail, {marker}.", workspace=oml_server.workspace)
+    page = agent.events(workspace=oml_server.workspace)
     assert page.head_seq >= written.value.journal_seq
-    later = agent.events(workarea=oml_server.workarea, after_seq=page.head_seq)
+    later = agent.events(workspace=oml_server.workspace, after_seq=page.head_seq)
     assert later.items == []
 
 

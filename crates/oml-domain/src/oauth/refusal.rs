@@ -251,7 +251,7 @@ pub enum RefreshInvalid {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectRefused {
     Role,
-    HeldByService,
+    UsedByService,
     BearerKey,
     Revoked,
     Expired,
@@ -261,7 +261,7 @@ pub enum ConnectRefused {
     /// (ADR-0045 d6).
     SessionKey,
     /// A connect code asked to outlive the default, for a key whose grants
-    /// reach more than one workarea, the universe, or a user root
+    /// reach more than one workspace, the universe, or a user root
     /// (ADR-0067 d3).
     NotConfined,
 }
@@ -272,7 +272,7 @@ impl ConnectRefused {
     pub fn as_str(self) -> &'static str {
         match self {
             ConnectRefused::Role => "role",
-            ConnectRefused::HeldByService => "held_by_service",
+            ConnectRefused::UsedByService => "used_by_service",
             ConnectRefused::BearerKey => "bearer_key",
             ConnectRefused::Revoked => "revoked",
             ConnectRefused::Expired => "expired",

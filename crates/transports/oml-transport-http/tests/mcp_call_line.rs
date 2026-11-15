@@ -15,7 +15,7 @@ use tower::ServiceExt as _;
 
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
-use oml_app::domain::{HeldBy, Role};
+use oml_app::domain::{Role, UsedBy};
 use oml_app::doubles::MemStore;
 use oml_app::types::{BootstrapRequest, GrantRequest, IssueKeyRequest};
 use oml_transport_http::traffic::ScopeObserver;
@@ -34,7 +34,7 @@ async fn agent() -> (Router, String) {
         .await
         .expect("bootstrap");
     let grants = [Role::Writer, Role::Reader].map(|role| GrantRequest {
-        node: boot.root_workarea_id.into(),
+        node: boot.root_workspace_id.into(),
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
@@ -47,8 +47,8 @@ async fn agent() -> (Router, String) {
                 role: Role::Writer,
                 name: Name::parse("agent-7").expect("a name"),
                 principal: "crew/agent-7".to_owned(),
-                held_by: Some(HeldBy::Agent),
-                default_workarea: Some(boot.root_workarea_id.into()),
+                used_by: Some(UsedBy::Agent),
+                default_workspace: Some(boot.root_workspace_id.into()),
                 crew: None,
                 grants: grants.to_vec(),
                 connect_code: false,

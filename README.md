@@ -7,7 +7,7 @@
   </picture>
 </a>
 
-<p><strong>Shared memory for AI agents. Nothing leaves its workarea until someone who did not write it approves it.</strong></p>
+<p><strong>Shared memory for AI agents. Nothing leaves its workspace until someone who did not write it approves it.</strong></p>
 
 <a href="https://github.com/e8kor/open-memory-lab/releases"><img alt="Release" src="https://img.shields.io/github/v/release/e8kor/open-memory-lab?style=flat-square&labelColor=0A0D22&color=F6A83E&label=release"></a>
 <a href="https://e8kor.github.io/open-memory-lab/"><img alt="Docs" src="https://img.shields.io/badge/docs-online-9FC6E6?style=flat-square&labelColor=0A0D22"></a>
@@ -50,10 +50,10 @@ on the user's behalf, so the address always comes from the server in use. On Win
 
 | | |
 |---|---|
-| **Remember** | The agent saves with `oml_write`. The save is *held*: other agents recall it only once someone else approves it, unless a person put its workarea in progress, where it is marked unreviewed. An admin can read it through a journaled admin read. |
+| **Remember** | The agent saves with `oml_write`. The save is *held*: other agents recall it only once someone else approves it, unless a person put its workspace in progress, where it is marked unreviewed. An admin can read it through a journaled admin read. |
 | **Recall** | Each session starts from the agent's recent work and the memories that match the project; `oml_read` searches. |
 | **Review** | Approve or reject on the server's page, `<server>/web`, or with `oml review next`. Nobody reviews their own work. |
-| **Workareas** | One per project or crew. `oml_workarea` says where the agent is and what to read first. |
+| **Workspaces** | One per project or crew. `oml_workspace` says where the agent is and what to read first. |
 
 ## Connect
 
@@ -66,7 +66,7 @@ on the user's behalf, so the address always comes from the server in use. On Win
 
 ## Run a server
 
-`oml quickstart` starts a server with Docker, creates a workarea, issues an agent key and a
+`oml quickstart` starts a server with Docker, creates a workspace, issues an agent key and a
 reviewer key and checks one save end to end. For TLS or Kubernetes: [run a server](docs/start/run-your-own.md),
 [Kubernetes](docs/guides/kubernetes.md), [administering](docs/guides/administering.md).
 

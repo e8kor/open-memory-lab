@@ -8,7 +8,7 @@ scores, and a convex combination needs the scores. This script loads each
 dataset's memories into a scratch table of a throwaway cluster, computes
 `search_vector`/`search_len` with migration 0020's own functions, and runs
 `oml-pg`'s `bm25_sql()` statement with the scope reduced to the query's group
-(the served scope is a workarea: one dataset, or one LoCoMo conversation).
+(the served scope is a workspace: one dataset, or one LoCoMo conversation).
 No server, no row security, no review flow: the statement and the stored
 lexemes are the served ones, so the ranking matches the served run up to ties
 broken by a fresh uuid. Writes DIR/<dataset>_bm25.json: {qid: [[doc_id, score], ...]}

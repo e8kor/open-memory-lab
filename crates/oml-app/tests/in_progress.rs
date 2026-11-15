@@ -1,4 +1,4 @@
-//! The laws of in-progress workareas and the curator profile (ADR-0030 r2
+//! The laws of in-progress workspaces and the curator profile (ADR-0030 r2
 //! d15), over the in-memory doubles: unreviewed rows are served inside an
 //! in-progress scope, labelled, and nowhere else; only a person's key sets
 //! the mode; the commit needs zero held; no ranking reads a verdict; R3
@@ -7,10 +7,10 @@
 use oml_app::App;
 use oml_app::domain::access::Covers;
 use oml_app::domain::access::Grant;
-use oml_app::domain::in_progress::{CuratorRefusal, InProgressReason, KeyProfile, WorkareaMode};
+use oml_app::domain::in_progress::{CuratorRefusal, InProgressReason, KeyProfile, WorkspaceMode};
 use oml_app::domain::name::{Name, Reference};
-use oml_app::domain::{EventDraft, HeldBy, MemoryKind, MemoryStatus, Role, event_types};
-use oml_app::domain::{WorkareaStatus, next_envelope, sign};
+use oml_app::domain::{EventDraft, MemoryKind, MemoryStatus, Role, UsedBy, event_types};
+use oml_app::domain::{WorkspaceStatus, next_envelope, sign};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::ed25519_dalek::SigningKey;
 use oml_app::ports::{CommitRequest, JournalStore as _, MetadataFold, OutboxRow};
@@ -58,19 +58,19 @@ async fn bootstrap(app: &TestApp, tenant: &str) -> BootstrapResult {
     .expect("bootstrap")
 }
 
-async fn workarea(app: &TestApp, admin: &str, name_: &str, parent: Uuid) -> Uuid {
-    app.create_workarea(admin, &name(name_), Some(parent.into()), None)
+async fn workspace(app: &TestApp, admin: &str, name_: &str, parent: Uuid) -> Uuid {
+    app.create_workspace(admin, &name(name_), Some(parent.into()), None)
         .await
-        .expect("create workarea")
-        .workarea
-        .workarea_id
+        .expect("create workspace")
+        .workspace
+        .workspace_id
 }
 
 async fn key(
     app: &TestApp,
     admin: &str,
     role: Role,
-    held_by: HeldBy,
+    used_by: UsedBy,
     profile: Option<KeyProfile>,
     principal: &str,
     grants: Vec<GrantRequest>,
@@ -82,8 +82,8 @@ async fn key(
             role,
             name: fresh_key_name(),
             principal: principal.to_owned(),
-            held_by: Some(held_by),
-            default_workarea: None,
+            used_by: Some(used_by),
+            default_workspace: None,
             crew: None,
             grants,
             connect_code: false,
@@ -122,15 +122,15 @@ async fn world() -> World {
     );
     let boot = bootstrap(&app, "acme").await;
     let admin = boot.admin_key.value.clone();
-    let crew = workarea(&app, &admin, "crew", boot.root_workarea_id).await;
-    let proj = workarea(&app, &admin, "proj", crew).await;
-    let side = workarea(&app, &admin, "side", crew).await;
+    let crew = workspace(&app, &admin, "crew", boot.root_workspace_id).await;
+    let proj = workspace(&app, &admin, "proj", crew).await;
+    let side = workspace(&app, &admin, "side", crew).await;
     let agent = |p: &'static str| {
         key(
             &app,
             &admin,
             Role::Writer,
-            HeldBy::Agent,
+            UsedBy::Agent,
             None,
             p,
             vec![grant(crew, Role::Writer), grant(crew, Role::Reader)],
@@ -141,25 +141,25 @@ async fn world() -> World {
     let person = key(
         &app,
         &admin,
-        Role::Dreamer,
-        HeldBy::Human,
+        Role::Reviewer,
+        UsedBy::Person,
         None,
         "pat",
-        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+        vec![grant(crew, Role::Reviewer), grant(crew, Role::Reader)],
     )
     .await
     .expect("person");
     let curator = key(
         &app,
         &admin,
-        Role::Dreamer,
-        HeldBy::Agent,
+        Role::Reviewer,
+        UsedBy::Agent,
         Some(KeyProfile::Curator),
         "cora",
         vec![
             grant(crew, Role::Reader),
             grant(crew, Role::Writer),
-            grant(crew, Role::Dreamer),
+            grant(crew, Role::Reviewer),
         ],
     )
     .await
@@ -181,10 +181,10 @@ async fn world() -> World {
 impl World {
     async fn mark(&self, node: Uuid) {
         self.app
-            .set_workarea_mode(
+            .set_workspace_mode(
                 self.person.value.as_str(),
                 Reference::Id(node),
-                WorkareaMode::InProgress,
+                WorkspaceMode::InProgress,
             )
             .await
             .expect("mark in progress");
@@ -205,7 +205,7 @@ impl World {
                     verb: None,
                     kind: MemoryKind::Memory,
                     body: body.to_owned(),
-                    workarea: Some(node.into()),
+                    workspace: Some(node.into()),
                     derives_from: Vec::new(),
                     severity: None,
                     rule: None,
@@ -246,7 +246,7 @@ impl World {
                     anchor: oml_app::types::AnchorFilter::default(),
                     query: query.to_owned(),
                     k: 10,
-                    workarea: Some(scope.into()),
+                    workspace: Some(scope.into()),
                     kinds: Vec::new(),
                     include_text: true,
                     include_unreviewed,
@@ -270,7 +270,7 @@ impl World {
                 key.value.as_str(),
                 &ListRequest {
                     own: false,
-                    workarea: Some(scope.into()),
+                    workspace: Some(scope.into()),
                     claim_key: None,
                     state: None,
                     kind: None,
@@ -348,10 +348,10 @@ async fn unreviewed_rows_are_served_inside_an_in_progress_scope_and_invisible_fr
         &w.app,
         &other.admin_key.value,
         Role::Reader,
-        HeldBy::Agent,
+        UsedBy::Agent,
         None,
         "sam",
-        vec![grant(other.root_workarea_id, Role::Reader)],
+        vec![grant(other.root_workspace_id, Role::Reader)],
     )
     .await
     .expect("stranger");
@@ -371,7 +371,7 @@ async fn unreviewed_rows_are_served_inside_an_in_progress_scope_and_invisible_fr
                     anchor: oml_app::types::AnchorFilter::default(),
                     query: "canary".to_owned(),
                     k: 10,
-                    workarea: None,
+                    workspace: None,
                     kinds: Vec::new(),
                     include_text: true,
                     include_unreviewed: Some(true),
@@ -401,7 +401,7 @@ async fn a_held_version_with_a_hold_finding_is_never_served_unreviewed_in_progre
         .write(
             &w.ann,
             "f1",
-            "the canary drains first [needs-human]",
+            "the canary drains first [needs-person]",
             w.proj,
         )
         .await;
@@ -439,7 +439,7 @@ async fn a_held_version_with_a_hold_finding_is_never_served_unreviewed_in_progre
             w.ann.value.as_str(),
             &ListRequest {
                 own: true,
-                workarea: Some(w.proj.into()),
+                workspace: Some(w.proj.into()),
                 claim_key: None,
                 state: None,
                 kind: None,
@@ -468,31 +468,31 @@ async fn a_held_version_with_a_hold_finding_is_never_served_unreviewed_in_progre
     assert_eq!(got.memory.status, MemoryStatus::Held);
 }
 
-/// Law 2: only a dreamer key a person holds sets the mode.
+/// Law 2: only a reviewer key a person holds sets the mode.
 #[tokio::test]
 async fn only_a_persons_key_sets_the_mode() {
     let w = world().await;
     let admin = w.boot.admin_key.value.clone();
-    let agent_dreamer = key(
+    let agent_reviewer = key(
         &w.app,
         &admin,
-        Role::Dreamer,
-        HeldBy::Agent,
+        Role::Reviewer,
+        UsedBy::Agent,
         None,
         "dax",
-        vec![grant(w.crew, Role::Dreamer)],
+        vec![grant(w.crew, Role::Reviewer)],
     )
     .await
-    .expect("agent dreamer");
+    .expect("agent reviewer");
     for refused in [
-        agent_dreamer.value.as_str(),
+        agent_reviewer.value.as_str(),
         w.ann.value.as_str(),
         w.curator.value.as_str(),
         admin.as_str(),
     ] {
         let err = w
             .app
-            .set_workarea_mode(refused, Reference::Id(w.proj), WorkareaMode::InProgress)
+            .set_workspace_mode(refused, Reference::Id(w.proj), WorkspaceMode::InProgress)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::ModeHumanOnly { .. }), "{err:?}");
@@ -501,10 +501,10 @@ async fn only_a_persons_key_sets_the_mode() {
     // Nesting is refused, both ways.
     let err = w
         .app
-        .set_workarea_mode(
+        .set_workspace_mode(
             w.person.value.as_str(),
             Reference::Id(w.crew),
-            WorkareaMode::InProgress,
+            WorkspaceMode::InProgress,
         )
         .await
         .unwrap_err();
@@ -522,7 +522,7 @@ async fn only_a_persons_key_sets_the_mode() {
     assert_eq!(
         journal
             .iter()
-            .filter(|e| e.envelope.event_type == event_types::WORKAREA_MODE_SET)
+            .filter(|e| e.envelope.event_type == event_types::WORKSPACE_MODE_SET)
             .count(),
         1,
         "the one mark is journalled"
@@ -550,10 +550,10 @@ async fn the_commit_is_refused_while_unreviewed_rows_remain_and_then_releases_th
         .await;
     let held = w
         .app
-        .set_workarea_mode(
+        .set_workspace_mode(
             w.person.value.as_str(),
             Reference::Id(w.proj),
-            WorkareaMode::Standard,
+            WorkspaceMode::Standard,
         )
         .await
         .unwrap_err();
@@ -575,7 +575,7 @@ async fn the_commit_is_refused_while_unreviewed_rows_remain_and_then_releases_th
         .propose_transition(
             w.person.value.as_str(),
             Reference::Id(w.proj),
-            oml_app::domain::WorkareaStatus::Committed,
+            oml_app::domain::WorkspaceStatus::Protected,
         )
         .await
         .unwrap_err();
@@ -591,10 +591,10 @@ async fn the_commit_is_refused_while_unreviewed_rows_remain_and_then_releases_th
     );
 
     w.app
-        .set_workarea_mode(
+        .set_workspace_mode(
             w.person.value.as_str(),
             Reference::Id(w.proj),
-            WorkareaMode::Standard,
+            WorkspaceMode::Standard,
         )
         .await
         .expect("commit at zero held");
@@ -677,10 +677,10 @@ async fn a_curator_key_cannot_promote_out() {
     );
     for refused in [
         w.app
-            .set_workarea_mode(
+            .set_workspace_mode(
                 w.curator.value.as_str(),
                 Reference::Id(w.proj),
-                WorkareaMode::Standard,
+                WorkspaceMode::Standard,
             )
             .await
             .unwrap_err(),
@@ -741,7 +741,7 @@ async fn a_curator_cannot_act_outside_an_in_progress_scope() {
                 verb: None,
                 kind: MemoryKind::Memory,
                 body: "summary".to_owned(),
-                workarea: Some(w.side.into()),
+                workspace: Some(w.side.into()),
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
@@ -866,7 +866,7 @@ async fn every_curator_act_is_journalled_under_its_key_and_reversible() {
                 retirement: true,
                 derives_from: Vec::new(),
                 reason: None,
-                workarea: None,
+                workspace: None,
                 refuse_vocabulary_target: false,
                 severity: None,
                 rule: None,
@@ -891,20 +891,20 @@ async fn every_curator_act_is_journalled_under_its_key_and_reversible() {
     assert!(World::ids(&w.recall(&w.bob, "weights", w.proj).await).contains(&tip));
 }
 
-/// A curator is a dreamer key held by an agent, and nothing else.
+/// A curator is a reviewer key used by an agent, and nothing else.
 #[tokio::test]
-async fn the_curator_profile_needs_a_dreamer_key_held_by_an_agent() {
+async fn the_curator_profile_needs_a_reviewer_key_used_by_an_agent() {
     let w = world().await;
     let admin = w.boot.admin_key.value.clone();
-    for (role, held_by) in [
-        (Role::Dreamer, HeldBy::Human),
-        (Role::Writer, HeldBy::Agent),
+    for (role, used_by) in [
+        (Role::Reviewer, UsedBy::Person),
+        (Role::Writer, UsedBy::Agent),
     ] {
         let err = key(
             &w.app,
             &admin,
             role,
-            held_by,
+            used_by,
             Some(KeyProfile::Curator),
             "x",
             vec![grant(w.crew, Role::Reader)],
@@ -964,12 +964,12 @@ impl World {
         key(
             &self.app,
             &self.boot.admin_key.value,
-            Role::Dreamer,
-            HeldBy::Human,
+            Role::Reviewer,
+            UsedBy::Person,
             None,
             "quinn",
             vec![
-                grant(self.crew, Role::Dreamer),
+                grant(self.crew, Role::Reviewer),
                 grant(self.crew, Role::Reader),
             ],
         )
@@ -989,14 +989,14 @@ impl World {
     async fn edges(
         &self,
         key: &IssuedKey,
-        workarea: Option<Uuid>,
+        workspace: Option<Uuid>,
         artifact: Option<Uuid>,
     ) -> usize {
         self.app
             .claim_edges(
                 key.value.as_str(),
                 ClaimEdgeQuery {
-                    workarea: workarea.map(Into::into),
+                    workspace: workspace.map(Into::into),
                     artifact_id: artifact,
                 },
                 None,
@@ -1025,19 +1025,19 @@ impl World {
 }
 
 /// H1: a mark is refused while any node beneath it is not `development`, so
-/// R3 holds in every `committed` and `validated` workarea: another author's
+/// R3 holds in every `protected` and `frozen` workspace: another author's
 /// held row there is served neither by get nor by recall.
 #[tokio::test]
 async fn marking_is_refused_over_a_committed_node_and_r3_holds_there() {
     let w = world().await;
-    let kid = workarea(&w.app, &w.boot.admin_key.value, "kid", w.proj).await;
+    let kid = workspace(&w.app, &w.boot.admin_key.value, "kid", w.proj).await;
     let quinn = w.second_person().await;
     let proposal = w
         .app
         .propose_transition(
             w.person.value.as_str(),
             Reference::Id(kid),
-            WorkareaStatus::Committed,
+            WorkspaceStatus::Protected,
         )
         .await
         .expect("propose");
@@ -1052,10 +1052,10 @@ async fn marking_is_refused_over_a_committed_node_and_r3_holds_there() {
     let id = w.write(&w.ann, "k1", "the canary drains in kid", kid).await;
     let err = w
         .app
-        .set_workarea_mode(
+        .set_workspace_mode(
             w.person.value.as_str(),
             Reference::Id(w.proj),
-            WorkareaMode::InProgress,
+            WorkspaceMode::InProgress,
         )
         .await
         .unwrap_err();
@@ -1080,21 +1080,21 @@ async fn marking_is_refused_over_a_committed_node_and_r3_holds_there() {
     );
 }
 
-/// H1, defence in depth: a mark over a committed node, forced through the
+/// H1, defence in depth: a mark over a protected node, forced through the
 /// store, still relaxes R3 on `development` nodes only, every node from the
 /// row's up to the mark included.
 #[tokio::test]
 async fn a_committed_node_under_a_mark_forced_through_the_store_keeps_r3() {
     let w = world().await;
-    let kid = workarea(&w.app, &w.boot.admin_key.value, "kid", w.proj).await;
-    let grandkid = workarea(&w.app, &w.boot.admin_key.value, "grandkid", kid).await;
+    let kid = workspace(&w.app, &w.boot.admin_key.value, "kid", w.proj).await;
+    let grandkid = workspace(&w.app, &w.boot.admin_key.value, "grandkid", kid).await;
     let quinn = w.second_person().await;
     let proposal = w
         .app
         .propose_transition(
             w.person.value.as_str(),
             Reference::Id(kid),
-            WorkareaStatus::Committed,
+            WorkspaceStatus::Protected,
         )
         .await
         .expect("propose");
@@ -1115,10 +1115,10 @@ async fn a_committed_node_under_a_mark_forced_through_the_store_keeps_r3() {
         .await;
     seal_onto(
         &w,
-        event_types::WORKAREA_MODE_SET,
-        json!({ "workarea_id": w.proj.to_string(), "mode": "in_progress", "from": "standard" }),
-        MetadataFold::WorkareaModeSet {
-            workarea_id: w.proj,
+        event_types::WORKSPACE_MODE_SET,
+        json!({ "workspace_id": w.proj.to_string(), "mode": "in_progress", "from": "standard" }),
+        MetadataFold::WorkspaceModeSet {
+            workspace_id: w.proj,
             in_progress: true,
             held_free: Vec::new(),
         },
@@ -1138,7 +1138,7 @@ async fn a_committed_node_under_a_mark_forced_through_the_store_keeps_r3() {
 }
 
 /// M1: a brief edge ratified before a mark serves no claim from inside the
-/// subtree at a node outside it, in the brief read or the workarea read.
+/// subtree at a node outside it, in the brief read or the workspace read.
 #[tokio::test]
 async fn a_brief_edge_made_before_a_mark_serves_no_inside_claim_outside() {
     let w = world().await;
@@ -1152,7 +1152,7 @@ async fn a_brief_edge_made_before_a_mark_serves_no_inside_claim_outside() {
             w.person.value.as_str(),
             &ProposeBriefEdge {
                 artifact_id: claim,
-                workarea: w.side.into(),
+                workspace: w.side.into(),
             },
             None,
         )
@@ -1173,9 +1173,9 @@ async fn a_brief_edge_made_before_a_mark_serves_no_inside_claim_outside() {
     assert!(page.items.is_empty(), "{:?}", page.items);
     let info = w
         .app
-        .workarea_info(w.bob.value.as_str(), Some(Reference::Id(w.side)))
+        .workspace_info(w.bob.value.as_str(), Some(Reference::Id(w.side)))
         .await
-        .expect("workarea read");
+        .expect("workspace read");
     assert!(info.brief.items.is_empty());
 }
 
@@ -1201,7 +1201,7 @@ async fn an_edge_across_the_boundary_is_neither_proposed_nor_ratified_after_a_ma
             w.person.value.as_str(),
             &ProposeBriefEdge {
                 artifact_id: inside,
-                workarea: w.side.into(),
+                workspace: w.side.into(),
             },
             None,
         )
@@ -1268,7 +1268,7 @@ async fn a_curator_flag_between_held_claims_is_served_to_readers_inside() {
     );
 }
 
-/// M4: an edge read with no scope and no default workarea leaves every
+/// M4: an edge read with no scope and no default workspace leaves every
 /// in-progress subtree out; the key is built through the store, since
 /// issuance always gives a granted key a default.
 #[tokio::test]
@@ -1291,13 +1291,13 @@ async fn an_unscoped_edge_read_without_a_default_leaves_every_in_progress_subtre
         &w.app,
         &w.boot.admin_key.value,
         Role::Reader,
-        HeldBy::Agent,
+        UsedBy::Agent,
         None,
         "nemo",
         Vec::new(),
     )
     .await
-    .expect("a zero-grant key, no default workarea");
+    .expect("a zero-grant key, no default workspace");
     let grant_id = Uuid::from_u128(0x6A47_0001);
     seal_onto(
         &w,
@@ -1333,7 +1333,7 @@ async fn a_curator_never_flags_a_row_its_principal_wrote_through_another_key() {
         &w.app,
         &w.boot.admin_key.value,
         Role::Writer,
-        HeldBy::Agent,
+        UsedBy::Agent,
         None,
         "cora",
         vec![grant(w.crew, Role::Writer), grant(w.crew, Role::Reader)],
@@ -1374,7 +1374,7 @@ async fn a_curator_never_flags_a_row_derived_from_its_own_write() {
                 verb: None,
                 kind: MemoryKind::Memory,
                 body: "the canary drains, per the summary".to_owned(),
-                workarea: Some(w.proj.into()),
+                workspace: Some(w.proj.into()),
                 derives_from: vec![own],
                 severity: None,
                 rule: None,
@@ -1406,11 +1406,11 @@ async fn the_store_refuses_a_commit_while_its_subtree_holds_a_held_version() {
     let draft = EventDraft {
         tenant_id: w.boot.tenant_id,
         event_id: Uuid::from_u128(0xF1C5_9999),
-        event_type: event_types::WORKAREA_MODE_SET.to_owned(),
+        event_type: event_types::WORKSPACE_MODE_SET.to_owned(),
         principal: "fixture".to_owned(),
         api_key_id: None,
         at: last.envelope.at.clone(),
-        payload: json!({ "workarea_id": w.proj.to_string(), "mode": "standard" }),
+        payload: json!({ "workspace_id": w.proj.to_string(), "mode": "standard" }),
     };
     let envelope = next_envelope(Some(last), draft).expect("a lawful draft");
     let event = sign(envelope, &SigningKey::from_bytes(&TEST_SEED)).expect("signing");
@@ -1419,12 +1419,12 @@ async fn the_store_refuses_a_commit_while_its_subtree_holds_a_held_version() {
         .commit(CommitRequest {
             outbox: OutboxRow {
                 event_id: event.envelope.event_id,
-                topic: event_types::WORKAREA_MODE_SET.to_owned(),
+                topic: event_types::WORKSPACE_MODE_SET.to_owned(),
                 payload: json!({}),
             },
             event,
-            fold: MetadataFold::WorkareaModeSet {
-                workarea_id: w.proj,
+            fold: MetadataFold::WorkspaceModeSet {
+                workspace_id: w.proj,
                 in_progress: false,
                 held_free: vec![w.proj],
             },

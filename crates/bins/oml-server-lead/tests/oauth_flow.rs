@@ -22,7 +22,7 @@ use uuid::Uuid;
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
 use oml_app::domain::oauth::{ConnectionState, Issuer, RevokedCause};
-use oml_app::domain::{HeldBy, Role};
+use oml_app::domain::{Role, UsedBy};
 use oml_app::ed25519_dalek::SigningKey;
 use oml_app::ports::{ConnectionStore as _, IdGen as _, JournalStore as _};
 use oml_app::types::{BootstrapRequest, GrantRequest, IssueKeyRequest};
@@ -216,11 +216,11 @@ async fn run_flow(db: &str) -> Option<Flow> {
                 role: Role::Writer,
                 name: Name::parse("claude-mobile").expect("a name"),
                 principal: "crew/claude-mobile".to_owned(),
-                held_by: Some(HeldBy::Agent),
-                default_workarea: None,
+                used_by: Some(UsedBy::Agent),
+                default_workspace: None,
                 crew: None,
                 grants: vec![GrantRequest {
-                    node: boot.root_workarea_id.into(),
+                    node: boot.root_workspace_id.into(),
                     role: Role::Writer,
                     deny: Vec::new(),
                     covers: Covers::Subtree,

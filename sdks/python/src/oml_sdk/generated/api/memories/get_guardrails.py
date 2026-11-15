@@ -11,7 +11,7 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -28,7 +28,7 @@ def _get_kwargs(
 
     params: dict[str, Any] = {}
 
-    params["workarea"] = workarea
+    params["workspace"] = workspace
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -74,7 +74,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -84,11 +84,11 @@ def sync_detailed(
 
      Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under
     guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance,
-    and any parameter other than workarea, guardrail_scope included, is request.validation naming it
+    and any parameter other than workspace, guardrail_scope included, is request.validation naming it
     (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
 
     Args:
-        workarea (str | Unset):
+        workspace (str | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -102,7 +102,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -118,7 +118,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -128,11 +128,11 @@ def sync(
 
      Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under
     guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance,
-    and any parameter other than workarea, guardrail_scope included, is request.validation naming it
+    and any parameter other than workspace, guardrail_scope included, is request.validation naming it
     (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
 
     Args:
-        workarea (str | Unset):
+        workspace (str | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -147,7 +147,7 @@ def sync(
 
     return sync_detailed(
         client=client,
-        workarea=workarea,
+        workspace=workspace,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -157,7 +157,7 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -167,11 +167,11 @@ async def asyncio_detailed(
 
      Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under
     guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance,
-    and any parameter other than workarea, guardrail_scope included, is request.validation naming it
+    and any parameter other than workspace, guardrail_scope included, is request.validation naming it
     (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
 
     Args:
-        workarea (str | Unset):
+        workspace (str | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -185,7 +185,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
-        workarea=workarea,
+        workspace=workspace,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -199,7 +199,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    workarea: str | Unset = UNSET,
+    workspace: str | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -209,11 +209,11 @@ async def asyncio(
 
      Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under
     guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance,
-    and any parameter other than workarea, guardrail_scope included, is request.validation naming it
+    and any parameter other than workspace, guardrail_scope included, is request.validation naming it
     (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
 
     Args:
-        workarea (str | Unset):
+        workspace (str | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -229,7 +229,7 @@ async def asyncio(
     return (
         await asyncio_detailed(
             client=client,
-            workarea=workarea,
+            workspace=workspace,
             x_request_id=x_request_id,
             x_correlation_id=x_correlation_id,
             traceparent=traceparent,

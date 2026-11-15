@@ -33,9 +33,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-WORKAREAS="$("$PY" eval/bench/bench.py --cache "$CACHE" workareas "$@")" || exit 1
-# shellcheck disable=SC2086 # one workarea per word
-eval/bench/boot.sh "$STATE" $WORKAREAS 2>"$OUT/boot.stderr" &
+WORKSPACES="$("$PY" eval/bench/bench.py --cache "$CACHE" workspaces "$@")" || exit 1
+# shellcheck disable=SC2086 # one workspace per word
+eval/bench/boot.sh "$STATE" $WORKSPACES 2>"$OUT/boot.stderr" &
 BOOT_PID=$!
 for _ in $(seq 1 600); do
     [ -s "$STATE/url" ] && break

@@ -15,7 +15,7 @@ T = TypeVar("T", bound="Crew")
 @_attrs_define
 class Crew:
     """A named crew record — recorded, not operated; OML never contacts the external manager
-    (docs/architecture/workareas.md, Crews; ADR-0026 d8).
+    (docs/architecture/workspaces.md, Crews; ADR-0026 d8).
 
         Attributes:
             crew_id (str):

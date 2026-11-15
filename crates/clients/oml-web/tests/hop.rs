@@ -79,8 +79,8 @@ impl Transport for Double {
 fn whoami() -> Value {
     json!({
         "key_id": "k1", "name": "alice-web", "role": "user", "principal": "alice",
-        "held_by": "human", "tenant": {"id": "t1", "name": "oml"},
-        "default_workarea": null, "crew": null,
+        "used_by": "person", "tenant": {"id": "t1", "name": "oml"},
+        "default_workspace": null, "crew": null,
         "user": {"id": ROOT, "name": "alice"}, "grants": [],
     })
 }
@@ -201,9 +201,9 @@ async fn a_failed_tree_renders_the_guardrails_without_the_selector_naming_the_ca
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(page.contains("No guardrail applies here."), "{page}");
-    assert!(!page.contains("<select name=\"workarea\">"), "{page}");
+    assert!(!page.contains("<select name=\"workspace\">"), "{page}");
     assert!(
-        page.contains("The workarea list is unavailable (request <code>page-42."),
+        page.contains("The workspace list is unavailable (request <code>page-42."),
         "{page}"
     );
 }
@@ -250,8 +250,8 @@ async fn a_tree_cursor_the_api_repeats_ends_the_listing_instead_of_looping() {
     })
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(!page.contains("<select name=\"workarea\">"), "{page}");
-    assert!(page.contains("The workarea list is unavailable"), "{page}");
+    assert!(!page.contains("<select name=\"workspace\">"), "{page}");
+    assert!(page.contains("The workspace list is unavailable"), "{page}");
     let tree_calls = calls.iter().filter(|(p, _)| p.contains("/tree")).count();
     assert_eq!(
         tree_calls, 2,

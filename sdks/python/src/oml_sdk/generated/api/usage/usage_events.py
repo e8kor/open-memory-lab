@@ -85,7 +85,7 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | UsageEventsResponse200]:
     """The tenant's recalls of the last 30 days, with what their readers did next, newest first.
 
-     Requires: admin key role (ADR-0054 d2). No agent, writer, reader or dreamer key reads an event, on
+     Requires: admin key role (ADR-0054 d2). No agent, writer, reader or reviewer key reads an event, on
     any transport. query_text is present only for a recall made while the tenant kept text. A row past
     the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with
     counts and the page's bounds. system.unavailable with reason telemetry_off where the server records
@@ -132,7 +132,7 @@ def sync(
 ) -> ErrorEnvelope | UsageEventsResponse200 | None:
     """The tenant's recalls of the last 30 days, with what their readers did next, newest first.
 
-     Requires: admin key role (ADR-0054 d2). No agent, writer, reader or dreamer key reads an event, on
+     Requires: admin key role (ADR-0054 d2). No agent, writer, reader or reviewer key reads an event, on
     any transport. query_text is present only for a recall made while the tenant kept text. A row past
     the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with
     counts and the page's bounds. system.unavailable with reason telemetry_off where the server records
@@ -174,7 +174,7 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | UsageEventsResponse200]:
     """The tenant's recalls of the last 30 days, with what their readers did next, newest first.
 
-     Requires: admin key role (ADR-0054 d2). No agent, writer, reader or dreamer key reads an event, on
+     Requires: admin key role (ADR-0054 d2). No agent, writer, reader or reviewer key reads an event, on
     any transport. query_text is present only for a recall made while the tenant kept text. A row past
     the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with
     counts and the page's bounds. system.unavailable with reason telemetry_off where the server records
@@ -219,7 +219,7 @@ async def asyncio(
 ) -> ErrorEnvelope | UsageEventsResponse200 | None:
     """The tenant's recalls of the last 30 days, with what their readers did next, newest first.
 
-     Requires: admin key role (ADR-0054 d2). No agent, writer, reader or dreamer key reads an event, on
+     Requires: admin key role (ADR-0054 d2). No agent, writer, reader or reviewer key reads an event, on
     any transport. query_text is present only for a recall made while the tenant kept text. A row past
     the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with
     counts and the page's bounds. system.unavailable with reason telemetry_off where the server records

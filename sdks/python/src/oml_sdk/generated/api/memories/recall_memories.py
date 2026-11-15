@@ -85,10 +85,10 @@ def sync_detailed(
     """Ranked retrieval over promoted rows by a named search pipeline; steering rows precede hits,
     unranked.
 
-     Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea,
-    by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers
-    request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
-    request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
+     Requires: reader effective access on the subtree. The scope is the subtree of the body's workspace,
+    by id or name, else of the key's default_workspace (ADR-0039 d4); neither answers
+    request.workspace_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
+    request.validation naming /workspace in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
     truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search
@@ -101,7 +101,7 @@ def sync_detailed(
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
-        body (RecallRequest): The scope is workarea's subtree, else the key's default_workarea's
+        body (RecallRequest): The scope is workspace's subtree, else the key's default_workspace's
             (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed
             vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039
             d9); v0.3.0's include_bodies and include_own_held are request.validation naming
@@ -140,10 +140,10 @@ def sync(
     """Ranked retrieval over promoted rows by a named search pipeline; steering rows precede hits,
     unranked.
 
-     Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea,
-    by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers
-    request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
-    request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
+     Requires: reader effective access on the subtree. The scope is the subtree of the body's workspace,
+    by id or name, else of the key's default_workspace (ADR-0039 d4); neither answers
+    request.workspace_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
+    request.validation naming /workspace in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
     truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search
@@ -156,7 +156,7 @@ def sync(
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
-        body (RecallRequest): The scope is workarea's subtree, else the key's default_workarea's
+        body (RecallRequest): The scope is workspace's subtree, else the key's default_workspace's
             (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed
             vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039
             d9); v0.3.0's include_bodies and include_own_held are request.validation naming
@@ -190,10 +190,10 @@ async def asyncio_detailed(
     """Ranked retrieval over promoted rows by a named search pipeline; steering rows precede hits,
     unranked.
 
-     Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea,
-    by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers
-    request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
-    request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
+     Requires: reader effective access on the subtree. The scope is the subtree of the body's workspace,
+    by id or name, else of the key's default_workspace (ADR-0039 d4); neither answers
+    request.workspace_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
+    request.validation naming /workspace in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
     truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search
@@ -206,7 +206,7 @@ async def asyncio_detailed(
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
-        body (RecallRequest): The scope is workarea's subtree, else the key's default_workarea's
+        body (RecallRequest): The scope is workspace's subtree, else the key's default_workspace's
             (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed
             vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039
             d9); v0.3.0's include_bodies and include_own_held are request.validation naming
@@ -243,10 +243,10 @@ async def asyncio(
     """Ranked retrieval over promoted rows by a named search pipeline; steering rows precede hits,
     unranked.
 
-     Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea,
-    by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers
-    request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
-    request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
+     Requires: reader effective access on the subtree. The scope is the subtree of the body's workspace,
+    by id or name, else of the key's default_workspace (ADR-0039 d4); neither answers
+    request.workspace_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
+    request.validation naming /workspace in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
     truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search
@@ -259,7 +259,7 @@ async def asyncio(
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
-        body (RecallRequest): The scope is workarea's subtree, else the key's default_workarea's
+        body (RecallRequest): The scope is workspace's subtree, else the key's default_workspace's
             (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed
             vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039
             d9); v0.3.0's include_bodies and include_own_held are request.validation naming

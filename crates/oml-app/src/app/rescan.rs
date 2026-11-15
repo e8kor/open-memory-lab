@@ -31,7 +31,7 @@ pub const RESCAN_MAX_EVENTS: usize = 1000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RescanHit {
     pub artifact_id: Uuid,
-    pub workarea_id: Uuid,
+    pub workspace_id: Uuid,
     pub version: u32,
     pub state: MemoryStatus,
     /// The version's origin kind (`chat`, `sync`, `web`, `agent`), or
@@ -266,7 +266,7 @@ where
             }
             hits.extend(found.into_iter().map(|(field, finding)| RescanHit {
                 artifact_id: row.memory_id,
-                workarea_id: row.workarea_id,
+                workspace_id: row.workspace_id,
                 version: row.version,
                 state: row.status,
                 origin,

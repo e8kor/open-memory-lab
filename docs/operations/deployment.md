@@ -134,10 +134,10 @@ private network.
   the server, unchanged: the API, `/mcp`, `/oauth/*`, `/.well-known/*`, `/readyz` and sign-in
   (`/web/sign-in`, `/web/callback/*`, `/web/sign-up`). Do not rewrite paths or cache responses.
   The pages `oml-web` serves are `PAGES` in `crates/clients/oml-web/src/lib.rs`, each at a path
-  of its own, today `/web/guardrails`, `/web/workareas`, `/web/admin/workareas`, `/web/memories`,
+  of its own, today `/web/guardrails`, `/web/workspaces`, `/web/admin/workspaces`, `/web/memories`,
   `/web/atlas`, `/web/admin/memories`, `/web/admin/atlas`, `/web/data/memories`,
   `/web/admin/data/memories`, `/web/review`, `/web/admin/review`, `/web/keys` and
-  `/web/admin/keys`, each for `GET` and, for the Workareas, Review and Keys views, `POST`. Since
+  `/web/admin/keys`, each for `GET` and, for the Workspaces, Review and Keys views, `POST`. Since
   v0.7.1 the old `?view=` addresses and `/web/admin` answer not found.
   `deploy/caddy/Caddyfile` is a Caddy configuration that routes them; a page that moves in a
   later release adds a route there.
@@ -163,7 +163,7 @@ The proxy must pass these paths through: `/mcp`, `/.well-known/oauth-protected-r
 
 `oml doctor` checks the route. It reports `oauth: failing` with the failing URL when the proxy drops a
 path or a node serves another issuer. It reports `off` when the server names no issuer. Then issue the connection
-with `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea> --connect-code`
+with `oml keys issue-agent <key-name> --principal <principal> --workspace <workspace> --connect-code`
 ([claude.ai and mobile](../guides/claude-ai-and-mobile.md)).
 
 ## Check that it is healthy

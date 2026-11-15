@@ -10,7 +10,7 @@
 //! | Refusal | Code |
 //! |---|---|
 //! | [`LabelRefusal`] | `request.validation`, `details.field` [`LabelRefusal::field`] |
-//! | [`RatifyRefusal::NotDreamer`] | `access.verb_ceiling` |
+//! | [`RatifyRefusal::NotReviewer`] | `access.verb_ceiling` |
 //! | [`RatifyRefusal::RatifierIsProposer`] | `review.ratifier_is_proposer` |
 //! | [`RatifyRefusal::AuthorInLineage`] | `review.author_in_lineage` |
 //!
@@ -204,10 +204,10 @@ pub struct Ratifier<'a> {
 /// A refused claim-edge ratification.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RatifyRefusal {
-    /// `access.verb_ceiling`: ratification is dreamer(review); no other
+    /// `access.verb_ceiling`: ratification is reviewer(review); no other
     /// role reaches it (errors.md).
     #[error("a {0:?} key cannot ratify a claim edge (access.verb_ceiling)")]
-    NotDreamer(Role),
+    NotReviewer(Role),
     /// `review.ratifier_is_proposer`: the ratifying key is the proposer's
     /// key, or another key of the proposer's principal (errors.md; ADR-0008
     /// d5).
@@ -225,7 +225,7 @@ impl RatifyRefusal {
     #[must_use]
     pub fn code(&self) -> &'static str {
         match self {
-            RatifyRefusal::NotDreamer(_) => "access.verb_ceiling",
+            RatifyRefusal::NotReviewer(_) => "access.verb_ceiling",
             RatifyRefusal::RatifierIsProposer => "review.ratifier_is_proposer",
             RatifyRefusal::AuthorInLineage => "review.author_in_lineage",
         }
@@ -246,8 +246,8 @@ pub fn check_ratifier(
     proposer_principal: &str,
     closure: &LineageClosure,
 ) -> Result<(), RatifyRefusal> {
-    if ratifier.role != Role::Dreamer {
-        return Err(RatifyRefusal::NotDreamer(ratifier.role));
+    if ratifier.role != Role::Reviewer {
+        return Err(RatifyRefusal::NotReviewer(ratifier.role));
     }
     if ratifier.key_id == proposer_key_id || ratifier.principal == proposer_principal {
         return Err(RatifyRefusal::RatifierIsProposer);

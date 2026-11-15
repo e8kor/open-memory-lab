@@ -1,6 +1,6 @@
 //! The as-of recall's cost on PostgreSQL (ADR-0059 d18, d20, d21), in a
 //! binary of its own so no other test shares the host while it times. Over
-//! a workarea where every row matches every query and every claim is a
+//! a workspace where every row matches every query and every claim is a
 //! chain of `k` versions, a recall at an instant reads all `k` versions of
 //! each claim where today's reads the tip alone, and each replaced version
 //! probes `memories_tip_moves` once in each of `bm25`'s two scope reads, so

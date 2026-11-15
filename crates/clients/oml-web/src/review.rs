@@ -8,7 +8,7 @@
 //! verdict from a key in the item's lineage, which the page shows by name
 //! (`review.author_in_lineage`). The view holds:
 //!
-//! - on the admin page, the tenant's queue: held rows per workarea, read
+//! - on the admin page, the tenant's queue: held rows per workspace, read
 //!   as the admin key (`reviewQueue`);
 //! - review next: `POST` claims the next item (`reviewNext`) and redirects
 //!   to the view with its serve id and the served memory's id; the view
@@ -17,7 +17,7 @@
 //!   never reads the serve id, which the contract leaves opaque; the
 //!   verdict (`postVerdict`) redirects to the next item;
 //! - on both pages, the held listing as cards (`MemoryCard` and
-//!   `ReviewCard`, `card.rs`): on the user page grouped by workarea
+//!   `ReviewCard`, `card.rs`): on the user page grouped by workspace
 //!   from one read, each row with "Open to judge", which draws the item's
 //!   card with a verdict form whose act, `judge`, records a one-id
 //!   listed-set verdict (`postBulkVerdict`; ADR-0055 d4, as the operator
@@ -116,7 +116,9 @@ fn notice(fields: &Fields) -> Option<String> {
     match fields.get("done")? {
         "verdict" => {
             let state = match fields.get("state")? {
-                s @ ("promoted" | "held" | "rejected") => s,
+                // The stored state `promoted` reads as approved (ADR-0091 d16).
+                "promoted" => "approved",
+                s @ ("held" | "rejected") => s,
                 _ => return None,
             };
             Some(format!(
@@ -366,11 +368,11 @@ async fn item(
     };
     let mut card = Card::of_held(&item, false);
     // The person's keys, the replaced version and the kinds of the
-    // workarea's top label, in one round (design notes rows 4, 15, 20).
+    // workspace's top label, in one round (design notes rows 4, 15, 20).
     let (same_user, changed, roots) = tokio::join!(
         own_author(view, &item),
         replaced_change(view, &card),
-        view.roots(Capacity::Review, [card.workarea()]),
+        view.roots(Capacity::Review, [card.workspace()]),
     );
     if same_user == Some(true) {
         card = Card::of_held(&item, true);
@@ -443,7 +445,7 @@ enum Act<'a> {
     Judge,
 }
 
-/// The tenant's queue, as the admin key reads it; each workarea links to
+/// The tenant's queue, as the admin key reads it; each workspace links to
 /// its held rows in the list below, by reference. Beside it, the queue's
 /// references, the bulk filter's hints.
 async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
@@ -478,7 +480,7 @@ async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
         )
         .await;
     let mut body = String::from(
-        r#"<h2>Queue</h2><p class="desc">Held memories per workarea, every one of the tenant's; the list below shows only what this reviewer key may judge.</p><table><tr><th>Workarea</th><th>Held</th><th>Oldest since</th></tr>"#,
+        r#"<h2>Queue</h2><p class="desc">Held memories per workspace, every one of the tenant's; the list below shows only what this reviewer key may judge.</p><table><tr><th>Workspace</th><th>Held</th><th>Oldest since</th></tr>"#,
     );
     if rows.items.is_empty() {
         body.push_str(r#"<tr><td colspan="3" class="dim">Nothing is held.</td></tr>"#);
@@ -487,7 +489,7 @@ async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
         let reference = roots.reference(&row.path);
         let _ = write!(
             body,
-            r#"<tr><td class="mono"><a href="{page}?held=1&amp;workarea={}">{}</a></td><td>{}</td><td class="mono">{}</td></tr>"#,
+            r#"<tr><td class="mono"><a href="{page}?held=1&amp;workspace={}">{}</a></td><td>{}</td><td class="mono">{}</td></tr>"#,
             attr(&encode(&reference)),
             short(&reference),
             row.held,
@@ -498,14 +500,14 @@ async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
     let names = Names::of_places(
         rows.items
             .iter()
-            .map(|r| (r.workarea_id.clone(), r.path.clone())),
+            .map(|r| (r.workspace_id.clone(), r.path.clone())),
         roots,
     );
     Ok((body, names))
 }
 
-/// The filters, in the order both pages draw them: the workarea first, as
-/// the picker's `WorkareaField`, whose hints are the workareas the page's
+/// The filters, in the order both pages draw them: the workspace first, as
+/// the picker's `WorkspaceField`, whose hints are the workspaces the page's
 /// own read names (the held listing on the user page, the queue on the
 /// admin page), so the field costs no read (design notes row 21); then the
 /// author key and the claim key prefix.
@@ -525,7 +527,7 @@ fn filters(
         }
     }
     let field = Field {
-        id: "review-workarea",
+        id: "review-workspace",
         action: page,
         keep: &keep,
         chosen,
@@ -533,7 +535,7 @@ fn filters(
         browse,
         admin: view.side == Side::Admin,
         standalone: false,
-        empty: "Empty: every workarea with something waiting.",
+        empty: "Empty: every workspace with something waiting.",
     }
     .html();
     format!(
@@ -549,13 +551,13 @@ fn filters(
     )
 }
 
-/// The filters the listing is read with: the chosen workarea as the
+/// The filters the listing is read with: the chosen workspace as the
 /// picker sends it (its id where the page's names hold it), and the
 /// others as typed.
 fn listing_filters<'a>(fields: &'a Fields, chosen: &'a Chosen) -> Vec<(&'a str, &'a str)> {
     let mut out: Vec<(&str, &str)> = chosen
         .value()
-        .map(|w| ("workarea", w))
+        .map(|w| ("workspace", w))
         .into_iter()
         .collect();
     out.extend(
@@ -568,7 +570,7 @@ fn listing_filters<'a>(fields: &'a Fields, chosen: &'a Chosen) -> Vec<(&'a str, 
 
 /// The filters a link keeps, as typed.
 fn kept_filters(fields: &Fields) -> String {
-    ["workarea", "author_key", "claim_key_prefix"]
+    ["workspace", "author_key", "claim_key_prefix"]
         .into_iter()
         .filter_map(|name| fields.given(name).map(|v| (name, v)))
         .map(|(k, v)| format!("&amp;{k}={}", attr(&encode(v))))
@@ -576,7 +578,7 @@ fn kept_filters(fields: &Fields) -> String {
 }
 
 /// The held listing as the person's reviewer key reads it; `None` where
-/// the picker refused the workarea before any call.
+/// the picker refused the workspace before any call.
 async fn listing(
     view: &ViewCtx<'_>,
     fields: &Fields,
@@ -605,12 +607,12 @@ async fn listing(
     }
 }
 
-/// The workareas of a listing, each with its count and the instant its
+/// The workspaces of a listing, each with its count and the instant its
 /// oldest row was held, in the listing's order (oldest first).
 fn waiting(page: &HeldPage, roots: &Roots) -> Vec<(String, usize, String)> {
     let mut groups: Vec<(String, usize, String)> = Vec::new();
     for item in &page.items {
-        let reference = roots.reference(item.memory().workarea_path.as_deref().unwrap_or(""));
+        let reference = roots.reference(item.memory().workspace_path.as_deref().unwrap_or(""));
         match groups.iter_mut().find(|(r, _, _)| *r == reference) {
             Some(group) => group.1 += 1,
             None => groups.push((reference, 1, item.held_since.clone())),
@@ -620,7 +622,7 @@ fn waiting(page: &HeldPage, roots: &Roots) -> Vec<(String, usize, String)> {
 }
 
 /// The picker's answer to the listing: the rows, or the field's refusal
-/// where the picker refused the workarea before any call or the API
+/// where the picker refused the workspace before any call or the API
 /// answered `access.not_found` for it.
 fn settled(listing: Option<HeldPage>, chosen: Chosen, names: &Names) -> (HeldPage, Chosen) {
     match listing {
@@ -642,7 +644,7 @@ fn settled(listing: Option<HeldPage>, chosen: Chosen, names: &Names) -> (HeldPag
     }
 }
 
-/// The user page's list (ReviewScreen): "Waiting for review" by workarea,
+/// The user page's list (ReviewScreen): "Waiting for review" by workspace,
 /// the filters, and every row the person's reviewer key may judge, as
 /// review cards, from one read of the held listing (design notes rows 1,
 /// 6, 15), `read`, which the view makes beside Browse's.
@@ -660,7 +662,7 @@ async fn person_list(
             Capacity::Review,
             read.iter()
                 .flat_map(|p| p.items.iter())
-                .filter_map(|i| i.memory().workarea_path.as_deref()),
+                .filter_map(|i| i.memory().workspace_path.as_deref()),
         )
         .await;
     let groups = read
@@ -670,7 +672,7 @@ async fn person_list(
     let names = Names::of_places(
         read.iter().flat_map(|p| p.items.iter()).filter_map(|i| {
             let m = i.memory();
-            Some((m.workarea_id.clone()?, m.workarea_path.clone()?))
+            Some((m.workspace_id.clone()?, m.workspace_path.clone()?))
         }),
         roots.clone(),
     );
@@ -681,7 +683,7 @@ async fn person_list(
         listing.items.len().to_string()
     };
     let mut body = format!(
-        r#"<h2>Waiting for review · {total}</h2><table><tr><th>Workarea</th><th>Waiting</th><th>Oldest since</th></tr>"#
+        r#"<h2>Waiting for review · {total}</h2><table><tr><th>Workspace</th><th>Waiting</th><th>Oldest since</th></tr>"#
     );
     if groups.is_empty() {
         body.push_str(r#"<tr><td colspan="3" class="dim">Nothing waits for review.</td></tr>"#);
@@ -689,7 +691,7 @@ async fn person_list(
     for (reference, n, oldest) in &groups {
         let _ = write!(
             body,
-            r#"<tr><td class="mono"><a href="{page}?workarea={}">{}</a></td><td>{n}</td><td class="mono">{}</td></tr>"#,
+            r#"<tr><td class="mono"><a href="{page}?workspace={}">{}</a></td><td>{n}</td><td class="mono">{}</td></tr>"#,
             attr(&encode(reference)),
             short(reference),
             instant(oldest)
@@ -730,7 +732,7 @@ async fn person_list(
 /// The bulk listing (AdminReviewScreen): the rows the reviewer key may
 /// judge, filtered, each a review card with a box to pick it; "select all"
 /// draws the page with every box checked, since the page carries no
-/// script. The picker's names are the queue's workareas.
+/// script. The picker's names are the queue's workspaces.
 async fn held(
     view: &ViewCtx<'_>,
     fields: &Fields,
@@ -738,7 +740,7 @@ async fn held(
     browse: Option<&Browse>,
 ) -> Result<String, Refusal> {
     let page = view.side.path();
-    let chosen = names.resolve(Chosen::of(fields.get("workarea")));
+    let chosen = names.resolve(Chosen::of(fields.get("workspace")));
     let read = listing(view, fields, &chosen, HELD_PAGE).await?;
     let (listing, chosen) = settled(read, chosen, names);
     // The queue's kinds, and a read of any top label the listing names
@@ -753,7 +755,7 @@ async fn held(
             listing
                 .items
                 .iter()
-                .filter_map(|i| i.memory().workarea_path.as_deref()),
+                .filter_map(|i| i.memory().workspace_path.as_deref()),
         )
         .await;
     let all = fields.get("select") == Some("all");
@@ -830,9 +832,9 @@ fn review_next(view: &ViewCtx<'_>, fields: &Fields, primary: bool) -> String {
         "Review next",
         primary,
     );
-    // The serve takes no workarea yet (design notes row 7).
-    out.push_str(if fields.given("workarea").is_some() {
-        r#"<p class="desc">Oldest first, in every workarea.</p>"#
+    // The serve takes no workspace yet (design notes row 7).
+    out.push_str(if fields.given("workspace").is_some() {
+        r#"<p class="desc">Oldest first, in every workspace.</p>"#
     } else {
         r#"<p class="desc">Oldest first.</p>"#
     });
@@ -887,7 +889,7 @@ async fn view(
         if let (Act::Serve(_), Some(at)) = (act, expiry(&fields)) {
             let _ = write!(
                 body,
-                r#"<p class="desc">Served for review until {}. Held text is read by its author, the reviewer it is served to, an admin through the journalled admin read, and readers inside an in-progress workarea.</p>"#,
+                r#"<p class="desc">Served for review until {}. Held text is read by its author, the reviewer it is served to, an admin through the journalled admin read, and readers inside an in-progress workspace.</p>"#,
                 instant(at)
             );
         }
@@ -918,7 +920,7 @@ async fn view(
         };
         let listed = match side {
             Side::User => {
-                let chosen = Chosen::of(fields.get("workarea"));
+                let chosen = Chosen::of(fields.get("workspace"));
                 let (browse, read) =
                     tokio::join!(browse, listing(&ctx, &fields, &chosen, WAITING_PAGE));
                 person_list(&ctx, &fields, chosen, read, browse.as_ref()).await
@@ -1428,7 +1430,7 @@ mod tests {
         let fields = |q: &str| Fields::of(&format!("/web/review?{q}").parse().unwrap()).unwrap();
         assert_eq!(
             notice(&fields("done=verdict&version=3&state=promoted")).as_deref(),
-            Some("Recorded: version 3 is now promoted.")
+            Some("Recorded: version 3 is now approved.")
         );
         assert_eq!(
             notice(&fields("done=verdict&version=3&state=%3Cb%3E")),
@@ -1447,7 +1449,7 @@ mod tests {
     fn unreadable_successor(retirement: bool) -> Card {
         let m: Memory = serde_json::from_value(serde_json::json!({
             "artifact_id": "m2", "claim_key": "c", "version": 2, "tip": false,
-            "workarea_path": "universe.alice", "state": "held", "principal": "helper",
+            "workspace_path": "universe.alice", "state": "held", "principal": "helper",
             "created_at": "2026-11-09T08:00:00.000000Z", "text": "t",
             "retirement": retirement, "replaces": null,
         }))

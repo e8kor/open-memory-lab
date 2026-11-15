@@ -91,7 +91,7 @@ pub struct Config {
     /// capacity credential; unset, every capacity credential is refused
     /// and the doctor warns (ADR-0070 d2). Never logged.
     pub web_client: WebClient,
-    /// `brief.max_tokens`: the budget a workarea's brief is cut to, in
+    /// `brief.max_tokens`: the budget a workspace's brief is cut to, in
     /// budget tokens; 400 when unset, unmeasured (ADR-0046 d8; #145).
     pub brief_max_tokens: u64,
     /// `signup.*` and `quota.*`: open sign-up, its tenant, issuer and
@@ -1239,7 +1239,7 @@ async fn split_boot_on(store: &PgStore, owner: &PgPool) -> Result<SplitRoles, Sp
     if aligned > 0 {
         tracing::info!(
             aligned,
-            "stored the status v0.5.1 served on workareas whose column disagreed, before 0017"
+            "stored the status v0.5.1 served on workspaces whose column disagreed, before 0017"
         );
     }
     role_split_postflight(owner, store.pool()).await?;
@@ -1603,22 +1603,101 @@ pub async fn startup_fork_check(
     verifying_key: VerifyingKey,
     tenants: &[Uuid],
 ) -> Result<(), String> {
+    startup_journal_checks(store, verifying_key, tenants)
+        .await
+        .0
+}
+
+/// The startup former-names check (ADR-0091 d4), as [`startup_journal_checks`]
+/// runs it beside the fork check.
+pub async fn startup_former_names_check(
+    store: &PgStore,
+    verifying_key: VerifyingKey,
+    tenants: &[Uuid],
+) -> Result<(), String> {
+    startup_journal_checks(store, verifying_key, tenants)
+        .await
+        .1
+}
+
+/// The most former names the start names one by one; past it the failure
+/// gives their count.
+pub const FORMER_NAMES_LISTED: usize = 20;
+
+/// The journal checks of the lead's start, in one read of every stored
+/// event: the ADR-0002 d7 fork check, then the former-names check of
+/// ADR-0091 d4, which reads each event the fork check pages through the
+/// former-name map. The second fails naming `journal_unmapped_former_name`,
+/// how many former names the map does not cover, and the first
+/// [`FORMER_NAMES_LISTED`] by tenant, seq, event type and name; a lead that
+/// fails it is not ready (`/readyz` reports `former_names`), and every
+/// reader that meets such an event fails closed naming it. A chain the fork
+/// check could not read fails both.
+pub async fn startup_journal_checks(
+    store: &PgStore,
+    verifying_key: VerifyingKey,
+    tenants: &[Uuid],
+) -> (Result<(), String>, Result<(), String>) {
     let keys = KeySet::new(vec![verifying_key]);
     let mut failures = Vec::new();
+    let mut found: Vec<String> = Vec::new();
+    let mut count = 0_usize;
+    let mut unread = Vec::new();
     for tenant_id in tenants {
-        match store.verify_stored_chain(*tenant_id, &keys).await {
+        let verified = store
+            .verify_stored_chain_reading(*tenant_id, &keys, |event| {
+                let envelope = &event.envelope;
+                for name in oml_app::domain::former_names::unmapped_former_names(
+                    &envelope.event_type,
+                    &envelope.payload,
+                ) {
+                    count += 1;
+                    if found.len() < FORMER_NAMES_LISTED {
+                        found.push(format!(
+                            "tenant {tenant_id} seq {} {} names {name:?}",
+                            envelope.seq, envelope.event_type
+                        ));
+                    }
+                }
+            })
+            .await;
+        match verified {
             Ok(_) => {}
             Err(ForkCheckError::EmptyChain) => {
                 failures.push(format!("tenant {tenant_id}: tenants row with no chain"));
             }
+            Err(ForkCheckError::Store(e)) => {
+                unread.push(format!("tenant {tenant_id}: {e}"));
+                failures.push(format!("tenant {tenant_id}: {e}"));
+            }
             Err(e) => failures.push(format!("tenant {tenant_id}: {e}")),
         }
     }
-    if failures.is_empty() {
+    let fork = if failures.is_empty() {
         Ok(())
     } else {
         Err(failures.join("; "))
-    }
+    };
+    let former = if !unread.is_empty() {
+        Err(format!(
+            "journal_unmapped_former_name: the journal could not be read ({})",
+            unread.join("; ")
+        ))
+    } else if count == 0 {
+        Ok(())
+    } else {
+        let more = count.saturating_sub(found.len());
+        Err(format!(
+            "journal_unmapped_former_name: {count} former names the former-name map does not cover ({}{}) (ADR-0091 d4)",
+            found.join("; "),
+            if more > 0 {
+                format!("; and {more} more")
+            } else {
+                String::new()
+            }
+        ))
+    };
+    (fork, former)
 }
 
 /// The startup names check: the store holds no row that predates names, or
@@ -1972,6 +2051,9 @@ pub struct LeadStart {
     /// a row is left with no name, in which case the router serves no
     /// request (ADR-0026 d11).
     pub names: Result<Vec<AssignedNames>, String>,
+    /// The startup former-names check: on a failure `/readyz` answers 503
+    /// naming `former_names` (ADR-0091 d4).
+    pub former_names: Result<(), String>,
     /// The single-use enrollment token, minted against an empty deployment
     /// whose fork check passed (deployment.md bootstrap).
     pub enrollment_token: Option<String>,
@@ -2117,7 +2199,8 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     let tenants = enumerate_tenants(store.pool())
         .await
         .map_err(|e| format!("tenant enumeration: {e}"))?;
-    let fork_check = startup_fork_check(store, signing_key.verifying_key(), &tenants).await;
+    let (fork_check, former_names) =
+        startup_journal_checks(store, signing_key.verifying_key(), &tenants).await;
     // A tenant whose default this lead does not serve gets the deployment's
     // default, marked in each answer; the start names it for the operator,
     // who alone can serve it again (ADR-0049 d15).
@@ -2221,11 +2304,13 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     let router = state
         .with_web_client(web_client)
         .with_names_assigned(names.is_ok())
+        .with_former_names(former_names.as_ref().err().cloned())
         .into_router();
     Ok(LeadStart {
         tenants,
         fork_check,
         names,
+        former_names,
         enrollment_token,
         router,
         recall_meter,

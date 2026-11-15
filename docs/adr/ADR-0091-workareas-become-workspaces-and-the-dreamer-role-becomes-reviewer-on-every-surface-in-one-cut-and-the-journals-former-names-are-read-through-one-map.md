@@ -21,7 +21,7 @@ into v0.8.0", so that clients take one breaking upgrade): the statuses `committe
 `validated` become `protected` and `frozen` (d14), and the key field `held_by` becomes `used_by`,
 its value `human` becoming `person` (d15); and accepted decision 3 of the lifecycle review, its display names (d16).
 
-**Release:** planned for v0.8.0; not built
+**Release:** planned for v0.8.0; built in PR #431, not released, except the law of d5, which waits for ADR-0090's compare (implementation notes)
 
 **Twin parts** (ADR-0090 d18): this record adds no state. It changes the names the twin's parts
 carry from the release on and adds the former-name map (d4) to `fold_of`; d5 shows the twin's
@@ -43,9 +43,9 @@ equality survives the cut.
 
 ## Context
 
-**The word.** Since [ADR-0008](ADR-0008-workarea-algebra.md) the governed node of a tenant's tree
+**The word.** Since [ADR-0008](ADR-0008-workspace-algebra.md) the governed node of a tenant's tree
 is a *workarea*: grants bind to its node id, it moves up the status ladder, and memory is written
-into it ([workareas](../architecture/workareas.md)). ADR-0018 d4 fixed the word and listed
+into it ([workareas](../architecture/workspaces.md)). ADR-0018 d4 fixed the word and listed
 "workspace" among the words never used for it. The operator reversed that on 2026-11-14 and asked
 for the rename on every surface: source, documents, the console, the landing site and operations.
 
@@ -77,7 +77,7 @@ migrations 0001, 0004 and 0028, grants such as `dev:dreamer`, the CLI's `--role`
 error details, the OpenAPI descriptions, the SDKs and the docs. Signed `key.issued` and
 `grant.issued` payloads carry `role: "dreamer"`, and a status transition's `policy_snapshot`
 carries `required_roles`. "Curator" already has three meanings, none of them a role: the
-in-progress curator key profile ([ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)),
+in-progress curator key profile ([ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)),
 the ontology crew's curator grant profile, and a universe curator with its `<user>-curate` key
 ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)).
 
@@ -113,10 +113,11 @@ Decided, not built.
   stops working in the same release. A retired name answers exactly as any unknown input answers
   today, with no rule of its own: a retired path is 404; a retired JSON field or enum value is
   `request.validation` as an unknown field or value, with no `details.renamed_to` entry
-  ([errors](../api/errors.md)); a retired header (`X-OML-Workarea`), query parameter or
+  ([errors](../api/errors.md)); a retired query parameter or
   environment variable (`OML_CHAT_WORKAREA`, `OML_WORKAREA_NAME`) is ignored, as an unknown one
-  is today. The cost is stated openly: a v0.7 client that names its target only by the retired
-  header or query parameter is not refused, so its write can land silently in its key's default
+  is today; the header `X-OML-Workarea`, retired in v0.4.0, stays refused by its real name, as
+  before the cut (ADR-0039 d7; amended with the build). The cost is stated openly: a v0.7 client
+  that names its target only by a retired query parameter is not refused, so its write can land silently in its key's default
   workspace instead of the one it meant, held there under review like any write. The guard is
   the order of the upgrade: the v0.8.0 upgrade note (d12) tells every client to upgrade its CLI,
   plugins and SDKs before the server is upgraded, and a v0.8.0 client already speaks only the new
@@ -125,7 +126,7 @@ Decided, not built.
     | Surface | Former | From v0.8.0 |
     |---|---|---|
     | HTTP paths | `/v2/workareas`, `/v2/workareas/{workarea}` and its `tree`, `offers`, `crew`, `mode`, `federation`, `transitions` and `transitions/{transition_id}/ratify` | `/v2/workspaces`, `/v2/workspaces/{workspace}/…` |
-    | HTTP header | `X-OML-Workarea` | `X-OML-Workspace` |
+    | HTTP header | `X-OML-Workarea` (retired in v0.4.0) | refused by its real name, as before the cut (ADR-0039 d7) |
     | Query and JSON fields | every field whose name holds the token: `workarea`, `workarea_id`, `default_workarea_id`, `workarea_path`, `root_workarea_id`, `to_workarea_id`, `scope_workarea_id`, `workarea_ids`, … | the same name with `workspace` |
     | Error codes | the family `workarea` (`workarea.frozen`, `workarea.transition_refused`, `workarea.in_progress_refused`, `workarea.held_remaining`, `workarea.admin_key_under_root`, and the designed ones of ADR-0080 to ADR-0089); `request.workarea_unresolved` | the family `workspace`; `request.workspace_unresolved` |
     | Error details | `details.kind: "workarea"` of `name.taken`; `details.workarea_id` | `"workspace"`; `details.workspace_id` |
@@ -164,7 +165,10 @@ Decided, not built.
      that records it;
   4. a closed list of (event type, field) values that hold a role has the value `dreamer`
      replaced by `reviewer`: `role` of `key.issued` and `grant.issued`, `required_roles` inside
-     a `policy_snapshot`; the catalog types no other event field as a role (d13);
+     a `policy_snapshot`, and `required_roles` inside the `policy` that `lifecycle.promote` and
+     `lifecycle.supersede` record; the catalog types no other event field as a role (d13;
+     the `policy` case amended with the build, 2026-11-15, after review found every promotion
+     carries it);
   5. a status value `committed` or `validated`, in `status` of `workarea.create` and `from` and
      `to` of `workarea.status_proposed` and `workarea.status_transition`, becomes `protected` or
      `frozen`, and inside the `policy_snapshot` of `workarea.status_transition` the key
@@ -181,7 +185,9 @@ Decided, not built.
   catalog lists each former name beside its successor in a table of its own, the only place the
   catalog spells `workarea`. A reader that meets a `workarea`-spelled name outside the map's
   lists fails closed naming the event and the name, and `oml doctor` gains the line
-  `journal_unmapped_former_name`.
+  `journal_unmapped_former_name`. So does an object that holds both a former key and its
+  successor, such as `workarea_id` beside `workspace_id`: the map never collapses two values into
+  one (amended with the build, 2026-11-15).
 
 - **d5 — The twin's equality holds across the cut.** ADR-0090 d12's law is that each use case's
   fold equals `fold_of` of its event and its staged parts; d14 proves it as an equality of two
@@ -264,8 +270,8 @@ Decided, not built.
   decides it, and the register gains a list, "Renamed records", of former file name beside current
   file name, one row per rename, never pruned. It is a list for readers, not a redirect.
   The twelve records whose file names say `workarea` (ADR-0008, 0030, 0057, 0067, 0072, 0073,
-  0082, 0084, 0085, 0086, 0087 and 0089) are renamed by this record, and so are the pages `architecture/workareas.md`
-  and `use/workareas.md`, the design note `design/workarea-lifecycle.md` and every other tracked
+  0082, 0084, 0085, 0086, 0087 and 0089) are renamed by this record, and so are the pages `architecture/workspaces.md`
+  and `use/workspaces.md`, the design note `design/workspace-lifecycle.md` and every other tracked
   file whose path holds the word. How each link resolves:
   - Relative links inside the docs are rewritten in the same change. `hooks/adr_links.py` turns a
     relative link to a record into its GitHub blob URL; it gains a check that the target file
@@ -276,8 +282,8 @@ Decided, not built.
     every `ADR-*.md` as a record. The register's list is where a reader holding an old link finds
     the new one, and `gen_design_records.py` prints it on the design records page.
   - The site gains no redirect plugin (`requirements.txt` pins only `mkdocs-material`, and stays
-    so): a bookmarked URL of a renamed page, such as `use/workareas/`, answers 404 from the
-    release. The landing site, which links `use/workareas/`, moves to the new paths in the same
+    so): a bookmarked URL of a renamed page, such as `use/workspaces/`, answers 404 from the
+    release. The landing site, which links `use/workspaces/`, moves to the new paths in the same
     release window.
   - `oml sync` anchors a record's claims to its path and keeps each claim's key once written
     (ADR-0057 d18): a span whose text is unchanged while its file moved is `moved` and needs no
@@ -327,8 +333,9 @@ Decided, not built.
      upgrade note in `docs/operations/upgrades.md`, and ask them to upgrade their clients before
      the server;
   2. take a backup and verify it restores (the backup runbook);
-  3. stop `oml-web` and the lead; the deployer installs v0.8.0 of both from one tag, its Caddy
-     route read from `deploy/caddy/Caddyfile` at that tag, which names `/web/workspaces`;
+  3. stop `oml-web`, the lead and the lake writer, which reads the renamed tables too; the
+     deployer installs v0.8.0 of all three from one tag, its Caddy route read from
+     `deploy/caddy/Caddyfile` at that tag, which names `/web/workspaces`;
   4. start the lead, which applies d6's migration; check `oml doctor` (no
      `journal_unmapped_former_name`), `oml verify` over every tenant, and the schema law of d6;
   5. drain the lake and run ADR-0090's compare when the twin is built;
@@ -340,7 +347,7 @@ Decided, not built.
   console bookmark stops working against a v0.8.0 server: paths, fields, the MCP tool
   `oml_workarea` (now `oml_workspace`), the CLI noun, `OML_CHAT_WORKAREA` and the plugin setting
   `chat_workarea` all change. Upgrade the CLI, plugins and SDKs before the server is upgraded:
-  v0.8.0 ignores an old client's workarea header or query parameter, so a write it sends can
+  v0.8.0 ignores an old client's workarea query parameter, so a write it sends can
   land in the key's default workspace. Set `chat_workspace`, and update saved
   permission rules that name `oml_workarea`. Memories, keys, grants and workspace names are
   unchanged. The role `dreamer` is now `reviewer`: `--role reviewer` and grants such as
@@ -427,6 +434,57 @@ Decided, not built.
   The lifecycle review's decisions 1, 2, 4, 5 and 6 are not decided here. Its decision 3 also
   named reviewer, protected, frozen and used by as display names; this record makes those four
   stored renames instead (d13, d14, d15).
+
+## Implementation notes
+
+Recorded with the build (PR #431, 2026-11-14), each as the operator decided it the same day.
+
+- **The map is a leaf crate both sides link.** d4's one function lives in `oml-former-names`,
+  which `oml-domain` re-exports as `oml_domain::former_names`. The CLI links the leaf, not the
+  domain crate: it holds no domain logic and depends on `serde_json` alone, so `oml events` reads
+  a former name with the same function the server's readers use, and ADR-0006 d6 holds, under
+  which the CLI composes no port trait and no domain crate.
+- **`oml verify` maps nothing it checks.** The events tail serves each event as stored, and
+  verification reconstructs and checks the stored bytes; `oml events` maps the type it prints.
+- **The retired header keeps its refusal.** `X-OML-Workarea` was retired in v0.4.0, and since
+  then a request that sends it is refused naming its successor (ADR-0039 d7). The cut keeps that
+  refusal under the header's real name, and d2's table row and text say so (the build,
+  2026-11-15).
+- **The holder's reasons.** The reasons `bulk_review_is_human_only`, `chat_scope_is_human_only`,
+  `mode_is_human_only`, `federation_is_human_only` and `web_is_human_only` are now
+  `*_is_person_only`, and the scanner's hold marker `[needs-human]` is `[needs-person]`, under
+  d15's rule that `human` becomes `person`. A claim's `provenance` `human` and `human_required` in a
+  review policy are other senses and keep their spelling.
+- **The doctor line.** The lead's start reads every stored event through the map, in the fork
+  check's one pass over the journal, and names each
+  former name the map does not cover: a `workarea.*` type outside the list, a `held_by` key
+  outside `key.issued`, or a former value in a kind, role, scope, holder or status field the
+  lists do not reach. A lead that finds one is not ready, and `/readyz` reports `former_names`
+  as `unmapped`; `oml doctor` prints `journal_unmapped_former_name`, and the start log names
+  the count and the first 20 by tenant, seq, event and name. The tenant, seq and event stay out
+  of `/readyz`'s answer, because `/readyz` answers anyone.
+- **The lake kept its physical column (d7).** The spike found that the pinned deltalake refuses
+  to put an existing table into column mapping mode, so the fallback is built:
+  `bronze.events` and `silver.claims` keep the physical column `workarea_id`, and
+  [Delta tables](../data/delta-tables.md) names it `workspace_id`.
+- **The idempotency rewrite matches a pattern.** Migration 0047 renames an act's claim key of the
+  form `<key id>:<nil id>:workarea.<act>:<client key>`. A client key that itself began with
+  `workarea.create:` under the nil scope would be rewritten too; the migration names this risk,
+  and the operator accepted it.
+- **Partition index names keep apart.** A name PostgreSQL derived can already fill 63 bytes, and
+  `workspace` is one byte longer. The migration, and the lead when it creates a partition, cut
+  the byte before the name's suffix, and keep two names that then meet apart by a number. The
+  index columns PostgreSQL stores keep the column names they were built with; no query reads
+  them by name.
+- **The law of d5 waits for ADR-0090's compare.** Until the twin's drain, rebuild and compare are
+  built, `a_database_migrated_across_the_rename_equals_its_rebuild` cannot be written. Two laws
+  stand in its place: `the_schema_names_no_workarea_after_the_rename_migration`, and
+  `a_database_migrated_across_the_rename_holds_its_rows_in_the_new_names`, which reads rows
+  seeded at 0046 in the former names after 0047. The d5 law joins ADR-0090's comparison laws
+  when that ADR is built.
+- **Test function names.** Test functions named in the status sense, such as
+  `validated_is_refused_while_any_child_is_not_validated`, keep their names. The allow list
+  names each one.
 
 ## Consequences
 

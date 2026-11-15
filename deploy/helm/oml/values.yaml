@@ -91,9 +91,9 @@ web:
   ingressPaths:
     - path: /web/guardrails
       pathType: Exact
-    - path: /web/workareas
+    - path: /web/workspaces
       pathType: Exact
-    - path: /web/admin/workareas
+    - path: /web/admin/workspaces
       pathType: Exact
     - path: /web/memories
       pathType: Exact

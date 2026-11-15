@@ -117,8 +117,8 @@ fn the_unresolved_value_is_the_version_8_sha_256_uuid_of_its_namespace_kind_and_
     for (namespace, kind, expected) in [
         (
             Namespace::Tenant(tenant),
-            NamedKind::Workarea,
-            "201a2910-ec3b-8ea0-a0be-0502c22ed358",
+            NamedKind::Workspace,
+            "de89ee4d-8841-8885-863b-cc233ca2c1ee",
         ),
         (
             Namespace::Tenant(tenant),
@@ -272,7 +272,7 @@ fn a_derived_name_is_the_kind_prefix_and_the_32_hex_digits_of_the_id() {
     let id = Uuid::from_u128(0x0190_f2a4_7c3e_4b1d_9a6f_e2d8_c51b_3a07);
     for (kind, expected) in [
         (NamedKind::Tenant, "tenant-0190f2a47c3e4b1d9a6fe2d8c51b3a07"),
-        (NamedKind::Workarea, "wa-0190f2a47c3e4b1d9a6fe2d8c51b3a07"),
+        (NamedKind::Workspace, "wa-0190f2a47c3e4b1d9a6fe2d8c51b3a07"),
         (NamedKind::Crew, "crew-0190f2a47c3e4b1d9a6fe2d8c51b3a07"),
         (NamedKind::Key, "key-0190f2a47c3e4b1d9a6fe2d8c51b3a07"),
     ] {
@@ -290,7 +290,7 @@ fn a_derived_name_is_a_name_in_a_reference_and_refused_at_creation() {
     let id = Uuid::from_u128(0x0190_f2a4_7c3e_4b1d_9a6f_e2d8_c51b_3a07);
     for kind in [
         NamedKind::Tenant,
-        NamedKind::Workarea,
+        NamedKind::Workspace,
         NamedKind::Crew,
         NamedKind::Key,
     ] {
@@ -317,7 +317,7 @@ fn each_kind_is_spelled_as_the_word_details_kind_carries() {
     // `system.names_assigned` names[].kind.
     for (kind, word) in [
         (NamedKind::Tenant, "tenant"),
-        (NamedKind::Workarea, "workarea"),
+        (NamedKind::Workspace, "workspace"),
         (NamedKind::Crew, "crew"),
         (NamedKind::Key, "key"),
     ] {
@@ -359,22 +359,22 @@ fn assigned(naming: &Naming) -> Vec<(NamedKind, Uuid, &str, Option<&str>)> {
 
 #[test]
 fn the_root_is_named_universe_whatever_its_creation_event_says() {
-    use NamedKind::Workarea;
+    use NamedKind::Workspace;
     // The PoC's root was created as `root`; another tenant's as `universe`;
     // one with no name at all, or with a name the grammar refuses.
     for prior in [Some("root"), Some("universe"), None, Some("Root Node")] {
-        let naming = assign_names(Some(ROOT), &[row(Workarea, ROOT, prior)], &[], crew_ids());
-        assert_eq!(assigned(&naming), [(Workarea, ROOT, "universe", prior)]);
+        let naming = assign_names(Some(ROOT), &[row(Workspace, ROOT, prior)], &[], crew_ids());
+        assert_eq!(assigned(&naming), [(Workspace, ROOT, "universe", prior)]);
         assert!(naming.crews.is_empty());
     }
     // The root keeps `universe` wherever it stands in journal order, and no
-    // other workarea may hold it, before or after the root.
+    // other workspace may hold it, before or after the root.
     let naming = assign_names(
         Some(ROOT),
         &[
-            row(Workarea, PROCUREMENT, Some("universe")),
-            row(Workarea, ROOT, Some("procurement")),
-            row(Workarea, METALS, Some("universe")),
+            row(Workspace, PROCUREMENT, Some("universe")),
+            row(Workspace, ROOT, Some("procurement")),
+            row(Workspace, METALS, Some("universe")),
         ],
         &[],
         crew_ids(),
@@ -383,14 +383,14 @@ fn the_root_is_named_universe_whatever_its_creation_event_says() {
         assigned(&naming),
         [
             (
-                Workarea,
+                Workspace,
                 PROCUREMENT,
                 "wa-000000000000000000000000000000a1",
                 Some("universe")
             ),
-            (Workarea, ROOT, "universe", Some("procurement")),
+            (Workspace, ROOT, "universe", Some("procurement")),
             (
-                Workarea,
+                Workspace,
                 METALS,
                 "wa-000000000000000000000000000000a2",
                 Some("universe")
@@ -401,23 +401,23 @@ fn the_root_is_named_universe_whatever_its_creation_event_says() {
 
 #[test]
 fn the_first_conforming_use_of_a_name_keeps_it_and_later_ones_are_derived() {
-    use NamedKind::{Key, Tenant, Workarea};
+    use NamedKind::{Key, Tenant, Workspace};
     let naming = assign_names(
         Some(ROOT),
         &[
-            row(Workarea, ROOT, Some("root")),
+            row(Workspace, ROOT, Some("root")),
             // A name the grammar refuses does not hold it for a later row.
-            row(Workarea, Uuid::from_u128(0xA9), Some("Metals")),
-            row(Workarea, METALS, Some("metals")),
-            row(Workarea, LATER_METALS, Some("metals")),
-            row(Workarea, PROCUREMENT, Some("procurement")),
+            row(Workspace, Uuid::from_u128(0xA9), Some("Metals")),
+            row(Workspace, METALS, Some("metals")),
+            row(Workspace, LATER_METALS, Some("metals")),
+            row(Workspace, PROCUREMENT, Some("procurement")),
             // Keys before names carry none; a key is its own namespace, so a
-            // key may hold a name a workarea holds.
+            // key may hold a name a workspace holds.
             row(Key, Uuid::from_u128(0xB1), None),
             row(Key, Uuid::from_u128(0xB2), Some("metals")),
             // A row in the derived form is named from its own id.
             row(
-                Workarea,
+                Workspace,
                 Uuid::from_u128(0xAB),
                 Some("wa-000000000000000000000000000000a2"),
             ),
@@ -428,21 +428,21 @@ fn the_first_conforming_use_of_a_name_keeps_it_and_later_ones_are_derived() {
     assert_eq!(
         assigned(&naming),
         [
-            (Workarea, ROOT, "universe", Some("root")),
+            (Workspace, ROOT, "universe", Some("root")),
             (
-                Workarea,
+                Workspace,
                 Uuid::from_u128(0xA9),
                 "wa-000000000000000000000000000000a9",
                 Some("Metals")
             ),
-            (Workarea, METALS, "metals", Some("metals")),
+            (Workspace, METALS, "metals", Some("metals")),
             (
-                Workarea,
+                Workspace,
                 LATER_METALS,
                 "wa-000000000000000000000000000000a3",
                 Some("metals")
             ),
-            (Workarea, PROCUREMENT, "procurement", Some("procurement")),
+            (Workspace, PROCUREMENT, "procurement", Some("procurement")),
             (
                 Key,
                 Uuid::from_u128(0xB1),
@@ -451,7 +451,7 @@ fn the_first_conforming_use_of_a_name_keeps_it_and_later_ones_are_derived() {
             ),
             (Key, Uuid::from_u128(0xB2), "metals", Some("metals")),
             (
-                Workarea,
+                Workspace,
                 Uuid::from_u128(0xAB),
                 "wa-000000000000000000000000000000ab",
                 Some("wa-000000000000000000000000000000a2")
@@ -495,7 +495,7 @@ fn crew(name: Option<&str>, charter_uri: Option<&str>, manager: Option<&str>) ->
 
 #[test]
 fn identical_crew_objects_become_one_crew_record_distinct_ones_distinct_records() {
-    use NamedKind::Workarea;
+    use NamedKind::Workspace;
     let redline = crew(
         Some("redline"),
         Some("https://example.com/redline"),
@@ -518,12 +518,12 @@ fn identical_crew_objects_become_one_crew_record_distinct_ones_distinct_records(
     let naming = assign_names(
         Some(ROOT),
         &[
-            row(Workarea, ROOT, Some("root")),
-            row(Workarea, a, Some("a")),
-            row(Workarea, b, Some("b")),
-            row(Workarea, c, Some("c")),
-            row(Workarea, d, Some("d")),
-            row(Workarea, e, Some("e")),
+            row(Workspace, ROOT, Some("root")),
+            row(Workspace, a, Some("a")),
+            row(Workspace, b, Some("b")),
+            row(Workspace, c, Some("c")),
+            row(Workspace, d, Some("d")),
+            row(Workspace, e, Some("e")),
         ],
         &[
             (a, redline.clone()),
@@ -542,21 +542,21 @@ fn identical_crew_objects_become_one_crew_record_distinct_ones_distinct_records(
                 name: Name::parse("redline").expect("a name"),
                 charter_uri: redline.charter_uri,
                 external_manager: redline.external_manager,
-                workarea_ids: vec![a, c],
+                workspace_ids: vec![a, c],
             },
             CrewRecord {
                 crew_id: Uuid::from_u128(0xC1),
                 name: Name::derived(NamedKind::Crew, Uuid::from_u128(0xC1)),
                 charter_uri: other_redline.charter_uri,
                 external_manager: other_redline.external_manager,
-                workarea_ids: vec![b],
+                workspace_ids: vec![b],
             },
             CrewRecord {
                 crew_id: Uuid::from_u128(0xC2),
                 name: Name::derived(NamedKind::Crew, Uuid::from_u128(0xC2)),
                 charter_uri: None,
                 external_manager: unnamed.external_manager,
-                workarea_ids: vec![d, e],
+                workspace_ids: vec![d, e],
             },
         ]
     );
@@ -565,7 +565,7 @@ fn identical_crew_objects_become_one_crew_record_distinct_ones_distinct_records(
         "crew-000000000000000000000000000000c1"
     );
     // Crew records are listed with the crews, never among the row names.
-    assert!(naming.names.iter().all(|a| a.kind == Workarea));
+    assert!(naming.names.iter().all(|a| a.kind == Workspace));
 }
 
 fn key_crew(crew: u128, manager: Option<&str>) -> KeyCrew {

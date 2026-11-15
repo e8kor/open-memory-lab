@@ -118,12 +118,12 @@ enum Command {
         #[command(subcommand)]
         command: ChatCommand,
     },
-    /// Manage workareas.
-    Workareas {
+    /// Manage workspaces.
+    Workspaces {
         #[command(subcommand)]
-        command: WorkareasCommand,
+        command: WorkspacesCommand,
     },
-    /// Manage claim links and workarea brief entries, proposed and ratified by different keys.
+    /// Manage claim links and workspace brief entries, proposed and ratified by different keys.
     Edges {
         #[command(subcommand)]
         command: EdgesCommand,
@@ -159,7 +159,7 @@ enum Command {
     Read(ReadArgs),
     /// Tail journal event digests within the key's reader access.
     Events(EventsArgs),
-    /// Sync a workarea with committed repository documents: extract, diff, write,
+    /// Sync a workspace with committed repository documents: extract, diff, write,
     /// check, or link claims.
     Sync(SyncArgs),
     /// Print a JSON source anchor for a committed file or fragment at --rev, for
@@ -209,10 +209,10 @@ enum DemoCommand {
     /// Create 30 fictional-team memories (20 approved, 4 superseded, 6 held),
     /// then fence their author and reviewer identities. Admin key; no keys are printed.
     Seed {
-        /// New workarea name; it must not exist.
-        #[arg(value_name = "WORKAREA")]
-        workarea: String,
-        /// Parent workarea.
+        /// New workspace name; it must not exist.
+        #[arg(value_name = "WORKSPACE")]
+        workspace: String,
+        /// Parent workspace.
         #[arg(long, default_value = "universe")]
         parent: String,
     },
@@ -252,9 +252,9 @@ struct SetupClaudeCodeArgs {
 enum GuardrailsCommand {
     /// Print all guardrails as the hook frames them; exit 1 if there are more than twelve.
     Show {
-        /// Scope workarea by id or name; omitted, the key's default.
+        /// Scope workspace by id or name; omitted, the key's default.
         #[arg(long)]
-        workarea: Option<String>,
+        workspace: Option<String>,
     },
     /// Export promoted guardrail text for a harness without plugin hooks.
     /// claude-md writes a whole .claude/rules/ file; agents-md updates text
@@ -269,15 +269,15 @@ enum GuardrailsCommand {
         /// Write nothing; exit 1 if the file differs from the live set.
         #[arg(long)]
         check: bool,
-        /// Scope workarea by id or name; omitted, the key's default.
+        /// Scope workspace by id or name; omitted, the key's default.
         #[arg(long)]
-        workarea: Option<String>,
+        workspace: Option<String>,
     },
 }
 
 #[derive(Subcommand)]
 enum ChatCommand {
-    /// Open the key's `chat` workarea under its user root and print OML_CHAT_WORKAREA
+    /// Open the key's `chat` workspace under its user root and print OML_CHAT_WORKSPACE
     /// for plugin capture and recall. Requires a person's key.
     Init {
         /// Parent by id or name; omitted, the key's user root.
@@ -364,7 +364,7 @@ enum KeysCommand {
         key_ref: String,
         /// Code lifetime, such as 90s, 45m, 12h, or 7d, up to 30d; defaults to
         /// 10m. Longer than 10m requires a key granted on exactly one non-universe
-        /// workarea.
+        /// workspace.
         #[arg(long, value_name = "DURATION")]
         ttl: Option<String>,
     },
@@ -406,17 +406,17 @@ enum KeysCommand {
 struct KeysIssueArgs {
     /// Key name, unique in the tenant and never released; distinct from principal and label.
     key_name: String,
-    /// reader | writer | dreamer | admin
+    /// reader | writer | reviewer | admin
     #[arg(long)]
     role: String,
-    /// agent | human | service
+    /// agent | person | service
     #[arg(long, default_value = "agent")]
-    held_by: String,
-    /// Default workarea (id or name) for provider requests without one; must be
-    /// covered by a grant. Defaults to the first grant's workarea.
+    used_by: String,
+    /// Default workspace (id or name) for provider requests without one; must be
+    /// covered by a grant. Defaults to the first grant's workspace.
     #[arg(long)]
-    default_workarea: Option<String>,
-    /// Grant <workarea>:<role>, or <workarea>:<role>:node for one node; workarea
+    default_workspace: Option<String>,
+    /// Grant <workspace>:<role>, or <workspace>:<role>:node for one node; workspace
     /// may be id or name. Repeatable. Writer grants include reader access unless
     /// --write-only.
     #[arg(long = "grant", value_parser = parse_grant)]
@@ -425,7 +425,7 @@ struct KeysIssueArgs {
     #[arg(long)]
     crew: Option<String>,
     /// User the key acts for. Grants must be under `universe.<user>`, where
-    /// workarea names resolve; the first key creates that root.
+    /// workspace names resolve; the first key creates that root.
     #[arg(long)]
     user: Option<String>,
     /// Send writer grants without matching reader grants.
@@ -436,12 +436,12 @@ struct KeysIssueArgs {
     principal: Option<String>,
     #[arg(long)]
     label: Option<String>,
-    /// Guardrail scope: workarea loads only the default workarea's guardrails;
+    /// Guardrail scope: workspace loads only the default workspace's guardrails;
     /// ancestors also loads every readable ancestor. Defaults to ancestors.
-    #[arg(long, value_parser = ["workarea", "ancestors"])]
+    #[arg(long, value_parser = ["workspace", "ancestors"])]
     guardrail_scope: Option<String>,
-    /// Key profile: curator is an agent-held dreamer that narrows within an
-    /// in-progress workarea and never promotes.
+    /// Key profile: curator is an agent-held reviewer that narrows within an
+    /// in-progress workspace and never promotes.
     #[arg(long, value_parser = ["curator"])]
     profile: Option<String>,
     #[command(flatten)]
@@ -481,10 +481,10 @@ struct IssueAgentArgs {
     /// Principal the key acts as; give each agent its own.
     #[arg(long)]
     principal: String,
-    /// Workarea (id or name) to write and recall, and its default. With --user,
+    /// Workspace (id or name) to write and recall, and its default. With --user,
     /// optional and resolved in that user's namespace; defaults to the user's root.
     #[arg(long)]
-    workarea: Option<String>,
+    workspace: Option<String>,
     /// User the key acts for, under `universe.<user>`; the first key for a user
     /// creates that root.
     #[arg(long)]
@@ -493,8 +493,8 @@ struct IssueAgentArgs {
     #[arg(long)]
     crew: Option<String>,
     /// Who holds the key.
-    #[arg(long, default_value = "agent", value_parser = ["agent", "human"])]
-    held_by: String,
+    #[arg(long, default_value = "agent", value_parser = ["agent", "person"])]
+    used_by: String,
     /// Send the writer grant without a matching reader grant.
     #[arg(long)]
     write_only: bool,
@@ -506,9 +506,9 @@ struct IssueAgentArgs {
     /// instead of a key value.
     #[arg(long)]
     connect_code: bool,
-    /// Guardrail scope: workarea loads only the default workarea's guardrails;
+    /// Guardrail scope: workspace loads only the default workspace's guardrails;
     /// ancestors also loads every readable ancestor. Defaults to ancestors.
-    #[arg(long, value_parser = ["workarea", "ancestors"])]
+    #[arg(long, value_parser = ["workspace", "ancestors"])]
     guardrail_scope: Option<String>,
     #[command(flatten)]
     limits: KeyLimitArgs,
@@ -523,7 +523,7 @@ enum DenyCommand {
         // Not `key`: clap would merge that id with the global --key.
         #[arg(value_name = "KEY")]
         key_ref: String,
-        /// Workarea (id or name) whose subtree the key can no longer access.
+        /// Workspace (id or name) whose subtree the key can no longer access.
         subtree: String,
         /// Reason for denial; accepted by the server but not journalled.
         #[arg(long)]
@@ -532,85 +532,86 @@ enum DenyCommand {
 }
 
 #[derive(Subcommand)]
-enum WorkareasCommand {
-    /// Create a child workarea in development status.
+enum WorkspacesCommand {
+    /// Create a child workspace in development status.
     Create {
-        /// Parent workarea, by id or name.
+        /// Parent workspace, by id or name.
         parent: String,
-        /// New workarea name, unique in the tenant and immutable.
+        /// New workspace name, unique in the tenant and immutable.
         name: String,
         /// Crew record to assign, by id or name.
         #[arg(long)]
         crew: Option<String>,
     },
-    /// List a workarea tree with each node's path, id, status, and crew.
+    /// List a workspace tree with each node's path, id, status, and crew.
     Tree {
-        /// Root workarea, by id or name.
+        /// Root workspace, by id or name.
         #[arg(value_name = "ROOT", conflicts_with = "root")]
         positional_root: Option<String>,
-        /// Root workarea, by id or name.
+        /// Root workspace, by id or name.
         #[arg(long, conflicts_with = "positional_root")]
         root: Option<String>,
     },
-    /// Show a workarea's path, status, crew, and children.
+    /// Show a workspace's path, status, crew, and children.
     Show {
-        /// Workarea id or name.
-        workarea: String,
+        /// Workspace id or name.
+        workspace: String,
     },
-    /// Set in_progress to recall labelled unreviewed memories within the workarea,
-    /// or standard to commit. Person-held dreamer keys only; commit is refused
-    /// while items are held.
+    /// Set who sees the drafts: in_progress makes them visible to everyone
+    /// working here, labelled unreviewed, and standard to the writing key alone,
+    /// which is refused while items are held. Reviewer keys used by a person only.
     Mode {
-        /// Workarea id or name.
-        workarea: String,
-        /// `in_progress`, or `standard` to commit.
+        /// Workspace id or name.
+        workspace: String,
+        /// `in_progress` (drafts visible to everyone working here) or `standard`
+        /// (drafts visible to the writing key).
         #[arg(value_parser = ["in_progress", "standard"])]
         mode: String,
     },
-    /// Set whether recalls scoped elsewhere may search this workarea when
-    /// they ask for wider sources; grants nothing. Person-held dreamer keys or
-    /// an admin key; journals workarea.federation_set.
+    /// Set whether recalls scoped elsewhere may search this workspace when
+    /// they ask for wider sources; grants nothing. Person-held reviewer keys or
+    /// an admin key; journals workspace.federation_set.
     Federation {
-        /// Workarea id or name.
-        workarea: String,
+        /// Workspace id or name.
+        workspace: String,
         /// `on` lets federated recalls search it (the default); `off` declines.
         #[arg(value_parser = ["on", "off"])]
         accept: String,
     },
-    /// Set a workarea's crew record (admin key).
+    /// Set a workspace's crew record (admin key).
     Crew {
         #[command(subcommand)]
-        command: WorkareaCrewCommand,
+        command: WorkspaceCrewCommand,
     },
-    /// Move through development, committed, and validated; each step needs
+    /// Move through development, protected and frozen; each step needs
     /// proposal and ratification by different keys.
     Status {
         #[command(subcommand)]
-        command: WorkareaStatusCommand,
+        command: WorkspaceStatusCommand,
     },
 }
 
 #[derive(Subcommand)]
-enum WorkareaStatusCommand {
+enum WorkspaceStatusCommand {
     /// Propose the next forward rung; it waits for a second identity.
     Propose {
-        /// The workarea, by id or name.
-        workarea: String,
-        /// The rung proposed: committed or validated.
+        /// The workspace, by id or name.
+        workspace: String,
+        /// The rung proposed: protected or frozen.
         #[arg(long)]
         to: String,
     },
     /// Ratify a pending proposal under a key that did not propose it.
     Ratify {
-        /// The workarea, by id or name.
-        workarea: String,
+        /// The workspace, by id or name.
+        workspace: String,
         /// The proposal's transition id.
         transition_id: String,
     },
-    /// The workarea's live proposals and the review policy in force.
+    /// The workspace's live proposals and the review policy in force.
     Pending {
-        /// The workarea, by id or name.
-        workarea: String,
+        /// The workspace, by id or name.
+        workspace: String,
     },
 }
 
@@ -631,9 +632,9 @@ enum EdgesCommand {
         /// claim or brief.
         #[arg(long)]
         kind: String,
-        /// For claim, filter by subtree; for brief, required workarea.
+        /// For claim, filter by subtree; for brief, required workspace.
         #[arg(long)]
-        workarea: Option<String>,
+        workspace: Option<String>,
         /// For claim, only edges touching this artifact.
         #[arg(long)]
         artifact: Option<String>,
@@ -657,22 +658,22 @@ enum EdgeProposeCommand {
         #[arg(long)]
         label: String,
     },
-    /// Propose a promoted claim for a workarea's brief.
+    /// Propose a promoted claim for a workspace's brief.
     Brief {
         /// Claim artifact id.
         artifact: String,
-        /// Workarea id or name.
-        workarea: String,
+        /// Workspace id or name.
+        workspace: String,
     },
 }
 
 #[derive(Subcommand)]
-enum WorkareaCrewCommand {
-    /// Set the workarea's crew record, including on validated workareas;
-    /// journals workarea.crew_updated.
+enum WorkspaceCrewCommand {
+    /// Set the workspace's crew record, including on frozen workspaces;
+    /// journals workspace.crew_updated.
     Set {
-        /// Workarea id or name.
-        workarea: String,
+        /// Workspace id or name.
+        workspace: String,
         /// Crew record id or name.
         #[arg(long)]
         crew: String,
@@ -682,16 +683,16 @@ enum WorkareaCrewCommand {
 #[derive(Subcommand)]
 enum AdminCommand {
     /// Read one memory with text and attribution, or search all organisation
-    /// memories with --query, --workarea, or --state; journals memory.admin_read.
+    /// memories with --query, --workspace, or --state; journals memory.admin_read.
     Read {
         /// Memory artifact id; omit to search.
         memory: Option<String>,
         /// Full-text search using recall matching.
         #[arg(long)]
         query: Option<String>,
-        /// Limit to this workarea subtree (id, name, or qualified name).
+        /// Limit to this workspace subtree (id, name, or qualified name).
         #[arg(long)]
-        workarea: Option<String>,
+        workspace: Option<String>,
         /// held, promoted, rejected, superseded or demoted.
         #[arg(long)]
         state: Option<String>,
@@ -701,7 +702,7 @@ enum AdminCommand {
     Rescan {
         /// Also record each held version's findings under current rules, so
         /// a held version written before an upgrade is served inside an
-        /// in-progress workarea again when nothing is found; journals
+        /// in-progress workspace again when nothing is found; journals
         /// scan.findings_recorded.
         #[arg(long)]
         record_held: bool,
@@ -734,7 +735,7 @@ enum SearchCommand {
         /// The sources an absent `sources` reads: `scope` or `wide`.
         #[arg(long, value_parser = ["scope", "wide"])]
         default_sources: Option<String>,
-        /// The most workareas a wide recall searches beside its scope, and
+        /// The most workspaces a wide recall searches beside its scope, and
         /// the most a sources list names, 0 to 64.
         #[arg(long)]
         max_sources: Option<u32>,
@@ -838,9 +839,9 @@ struct CrewsUpdateArgs {
 struct SyncArgs {
     /// File or directory inside a git clone, read at --rev.
     source: String,
-    /// Workarea (id or name) to sync; with --pr, the parent of `<workarea>-pr-<n>`.
+    /// Workspace (id or name) to sync; with --pr, the parent of `<workspace>-pr-<n>`.
     #[arg(long)]
-    workarea: String,
+    workspace: String,
     /// Adapter: adr, headings, lines, rust, or delta. Defaults to adr for
     /// decision-record Markdown files and headings otherwise; rust (one claim per
     /// crate and module doc) is never inferred. delta reads Delta Lake tables and
@@ -873,7 +874,7 @@ struct SyncArgs {
     /// draft pull request closes.
     #[arg(long, requires = "pr", conflicts_with_all = ["check", "edges"])]
     retire_all: bool,
-    /// Propose source-stated edges between promoted tips (dreamer key).
+    /// Propose source-stated edges between promoted tips (reviewer key).
     #[arg(long, conflicts_with = "check")]
     edges: bool,
     /// With --edges, ratify matching pending edges proposed by another key.
@@ -892,7 +893,7 @@ struct SyncArgs {
     #[arg(long, requires = "adapter")]
     change_adapter: bool,
     /// Draft pull request <n>: sync records changed between --base and --rev
-    /// into `<workarea>-pr-<n>`.
+    /// into `<workspace>-pr-<n>`.
     #[arg(long)]
     pr: Option<u64>,
     /// Glob of source paths to exclude; repeatable, for example `docs/adr/**`.
@@ -949,10 +950,10 @@ struct WriteArgs {
     /// Lineage artifact id; repeatable. Journals submissions with lineage as learn.
     #[arg(long = "derives-from")]
     derives_from: Vec<String>,
-    /// Workarea (id or name); defaults to the key's default, or the target's
+    /// Workspace (id or name); defaults to the key's default, or the target's
     /// with --replaces, which it may not change.
     #[arg(long)]
-    workarea: Option<String>,
+    workspace: Option<String>,
     /// Promoted tip artifact id to replace with a new held version.
     #[arg(long, requires = "expected_version")]
     replaces: Option<String>,
@@ -1013,19 +1014,19 @@ struct ReadArgs {
     /// them all, any-word hits are returned and marked fallback.
     #[arg(long = "match", requires = "query")]
     match_mode: Option<String>,
-    /// Where to search: scope (default), wide (also the committed workareas
-    /// this key reads elsewhere), or comma-separated workarea names searched
+    /// Where to search: scope (default), wide (also the protected workspaces
+    /// this key reads elsewhere), or comma-separated workspace names searched
     /// alone. Needs federation on (`oml search federation`).
     #[arg(long, requires = "query")]
     sources: Option<String>,
-    /// Subtree (id or name) to read; defaults to the key's workarea, or all
-    /// workareas this key wrote in for --own.
+    /// Subtree (id or name) to read; defaults to the key's workspace, or all
+    /// workspaces this key wrote in for --own.
     #[arg(long, conflicts_with = "artifact_id")]
-    workarea: Option<String>,
+    workspace: Option<String>,
     /// List this key's own rows in every state (default listing).
     #[arg(long, conflicts_with_all = ["artifact_id", "query", "all"])]
     own: bool,
-    /// List promoted tips in the workarea subtree instead.
+    /// List promoted tips in the workspace subtree instead.
     #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
     all: bool,
     /// Filter by state: held, promoted, demoted, rejected, or erased.
@@ -1066,9 +1067,9 @@ struct EventsArgs {
     /// Resume after this sequence number, using the previous page's next_after_seq.
     #[arg(long)]
     after_seq: Option<u64>,
-    /// Subtree to tail (id or name); defaults to the key's workarea.
+    /// Subtree to tail (id or name); defaults to the key's workspace.
     #[arg(long)]
-    workarea: Option<String>,
+    workspace: Option<String>,
     /// Journal events scanned per call.
     #[arg(long)]
     limit: Option<u32>,
@@ -1076,12 +1077,12 @@ struct EventsArgs {
 
 #[derive(Subcommand)]
 enum ReviewCommand {
-    /// Claim and serve one held item for this key.
+    /// Take one held item for this key and serve it.
     Next,
     /// List held items this key may judge, with text, oldest first, without
-    /// claiming them. Person-held dreamer keys only.
+    /// taking them. Reviewer keys used by a person only.
     List(ReviewListArgs),
-    /// Promote one claimed serve (default) or each artifact in --ids.
+    /// Approve the one item this key took (default), or each artifact in --ids.
     Approve {
         /// serve_id printed by `oml review next`.
         #[arg(conflicts_with = "ids")]
@@ -1110,9 +1111,9 @@ enum ReviewCommand {
 
 #[derive(Args)]
 struct ReviewListArgs {
-    /// Only this workarea's subtree, by id or name.
+    /// Only this workspace's subtree, by id or name.
     #[arg(long)]
-    workarea: Option<String>,
+    workspace: Option<String>,
     /// Only rows written by this author key (id or name).
     #[arg(long)]
     author_key: Option<String>,
@@ -1151,8 +1152,8 @@ struct VerifyChainArgs {
     tenant: Option<String>,
 }
 
-/// `<workarea>:<role>`, or `<workarea>:<role>:node` for a grant on the node
-/// alone (ADR-0044 d4), the workarea by id or name, sent as typed: the
+/// `<workspace>:<role>`, or `<workspace>:<role>:node` for a grant on the node
+/// alone (ADR-0044 d4), the workspace by id or name, sent as typed: the
 /// server classifies and resolves it, the CLI neither (cli/reference.md
 /// conventions; ADR-0026 d4). Neither an id nor a name holds a `:`, so the
 /// first one splits the two; the role keeps its `:node` suffix until
@@ -1160,11 +1161,11 @@ struct VerifyChainArgs {
 fn parse_grant(s: &str) -> Result<(String, String), String> {
     let (node, role) = s
         .split_once(':')
-        .ok_or_else(|| format!("{s:?} is not <workarea>:<role>"))?;
+        .ok_or_else(|| format!("{s:?} is not <workspace>:<role>"))?;
     match role.split_once(':') {
         None | Some((_, "node")) => Ok((node.to_owned(), role.to_owned())),
         Some(_) => Err(format!(
-            "{s:?} is not <workarea>:<role> or <workarea>:<role>:node"
+            "{s:?} is not <workspace>:<role> or <workspace>:<role>:node"
         )),
     }
 }
@@ -1499,7 +1500,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 println!("    key id  : {}", field(&response, "key_id"));
                 println!("    key     : {}", field(&response, "value"));
                 println!("    tenant  : {}", field(&response, "tenant_id"));
-                println!("    root wa : {}", field(&response, "root_workarea_id"));
+                println!("    root wa : {}", field(&response, "root_workspace_id"));
                 println!();
                 println!(
                     "credentials stored in {} (owner-only); the server keeps only the key hash.",
@@ -1537,11 +1538,11 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             let mut body = json!({
                 "role": args.role,
                 "name": args.key_name,
-                "held_by": args.held_by,
+                "used_by": args.used_by,
                 "grants": grants_json(&grants),
             });
-            if let Some(wa) = &args.default_workarea {
-                body["default_workarea"] = json!(wa);
+            if let Some(wa) = &args.default_workspace {
+                body["default_workspace"] = json!(wa);
             }
             if let Some(crew) = &args.crew {
                 body["crew"] = json!(crew);
@@ -1572,7 +1573,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 println!("    key id : {}", field(&response, "key_id"));
                 println!("    key    : {}", field(&response, "value"));
                 println!("    role   : {}", field(&response, "role"));
-                println!("    default: {}", field(&response, "default_workarea_id"));
+                println!("    default: {}", field(&response, "default_workspace_id"));
                 if response["user"].is_object() {
                     println!("    user   : {}", field(&response["user"], "name"));
                 }
@@ -1583,7 +1584,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     for g in grants {
                         println!(
                             "    grant  : {} : {}{}",
-                            field(g, "workarea_node_id"),
+                            field(g, "workspace_node_id"),
                             field(g, "role"),
                             node_suffix(g)
                         );
@@ -1614,14 +1615,17 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 );
                 println!("    role     : {}", field(&response, "role"));
                 println!("    principal: {}", field(&response, "principal"));
-                println!("    held by  : {}", field(&response, "held_by"));
+                println!("    used by  : {}", field(&response, "used_by"));
                 println!("    crew     : {}", field(&response, "crew_id"));
                 println!("    user     : {}", field(&response["user"], "name"));
-                println!("    default  : {}", field(&response, "default_workarea_id"));
+                println!(
+                    "    default  : {}",
+                    field(&response, "default_workspace_id")
+                );
                 for g in response["grants"].as_array().into_iter().flatten() {
                     println!(
                         "    grant    : {} : {}{}",
-                        field(g, "workarea_node_id"),
+                        field(g, "workspace_node_id"),
                         field(g, "role"),
                         node_suffix(g)
                     );
@@ -1629,7 +1633,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 for d in response["denials"].as_array().into_iter().flatten() {
                     println!(
                         "    denial   : {} ({})",
-                        field(d, "workarea_node_id"),
+                        field(d, "workspace_node_id"),
                         field(d, "denial_id")
                     );
                 }
@@ -1786,7 +1790,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 },
         } => {
             let client = resolve(cli, &stored)?;
-            let mut body = json!({ "workarea": subtree });
+            let mut body = json!({ "workspace": subtree });
             if let Some(reason) = reason {
                 body["reason"] = json!(reason);
             }
@@ -1800,7 +1804,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             } else {
                 println!(
                     "denial journalled — key {key_ref} no longer reaches {} (epoch {})",
-                    field(&response, "workarea_node_id"),
+                    field(&response, "workspace_node_id"),
                     response["epoch"]
                 );
                 println!("  denial id : {}", field(&response, "denial_id"));
@@ -1808,15 +1812,15 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
 
-        Command::Workareas {
-            command: WorkareasCommand::Create { parent, name, crew },
+        Command::Workspaces {
+            command: WorkspacesCommand::Create { parent, name, crew },
         } => {
             let client = resolve(cli, &stored)?;
             let mut body = json!({ "parent": parent, "name": name });
             if let Some(crew) = crew {
                 body["crew"] = json!(crew);
             }
-            let (_, response) = client.post("/v2/workareas", &body, &write_opts())?;
+            let (_, response) = client.post("/v2/workspaces", &body, &write_opts())?;
             if cli.json {
                 print_json(&response);
             } else {
@@ -1835,19 +1839,19 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: ChatCommand::Init { parent },
         } => run_chat_init(cli, &stored, parent.as_deref()),
 
-        Command::Workareas {
-            command: WorkareasCommand::Status { command },
-        } => run_workarea_status(cli, &stored, command),
+        Command::Workspaces {
+            command: WorkspacesCommand::Status { command },
+        } => run_workspace_status(cli, &stored, command),
 
         Command::Edges { command } => run_edges(cli, &stored, command),
 
-        Command::Workareas {
+        Command::Workspaces {
             command:
-                WorkareasCommand::Tree {
+                WorkspacesCommand::Tree {
                     positional_root,
                     root,
                 },
-        } => run_workareas_tree(
+        } => run_workspaces_tree(
             cli,
             &stored,
             positional_root
@@ -1856,16 +1860,16 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 .unwrap_or("universe"),
         ),
 
-        Command::Workareas {
-            command: WorkareasCommand::Show { workarea },
+        Command::Workspaces {
+            command: WorkspacesCommand::Show { workspace },
         } => {
             let client = resolve(cli, &stored)?;
-            let (_, response) = client.get(&format!("/v2/workareas/{}", segment(workarea)?))?;
+            let (_, response) = client.get(&format!("/v2/workspaces/{}", segment(workspace)?))?;
             if cli.json {
                 print_json(&response);
             } else {
                 println!(
-                    "workarea {} ({})",
+                    "workspace {} ({})",
                     field(&response, "name"),
                     field(&response, "id")
                 );
@@ -1907,12 +1911,12 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
 
-        Command::Workareas {
-            command: WorkareasCommand::Federation { workarea, accept },
+        Command::Workspaces {
+            command: WorkspacesCommand::Federation { workspace, accept },
         } => {
             let client = resolve(cli, &stored)?;
             let (_, response) = client.post(
-                &format!("/v2/workareas/{}/federation", segment(workarea)?),
+                &format!("/v2/workspaces/{}/federation", segment(workspace)?),
                 &json!({ "accept_federated": accept == "on" }),
                 &write_opts(),
             )?;
@@ -1920,7 +1924,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 print_json(&response);
             } else {
                 println!(
-                    "workarea {workarea} {} federated reads",
+                    "workspace {workspace} {} federated reads",
                     if response["accept_federated"] == true {
                         "accepts"
                     } else {
@@ -1931,12 +1935,12 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
 
-        Command::Workareas {
-            command: WorkareasCommand::Mode { workarea, mode },
+        Command::Workspaces {
+            command: WorkspacesCommand::Mode { workspace, mode },
         } => {
             let client = resolve(cli, &stored)?;
             let (_, response) = client.post(
-                &format!("/v2/workareas/{}/mode", segment(workarea)?),
+                &format!("/v2/workspaces/{}/mode", segment(workspace)?),
                 &json!({ "mode": mode }),
                 &write_opts(),
             )?;
@@ -1944,14 +1948,14 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 print_json(&response);
             } else {
                 println!(
-                    "workarea {} ({}) is {}",
+                    "workspace {} ({}) is {}",
                     field(&response, "name"),
                     field(&response, "id"),
                     field(&response, "mode"),
                 );
                 if mode == "in_progress" {
                     println!(
-                        "readers inside now recall unreviewed memories; commit with: oml workareas mode {} standard",
+                        "readers inside now recall unreviewed memories; commit with: oml workspaces mode {} standard",
                         field(&response, "name")
                     );
                 }
@@ -1959,15 +1963,15 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
 
-        Command::Workareas {
+        Command::Workspaces {
             command:
-                WorkareasCommand::Crew {
-                    command: WorkareaCrewCommand::Set { workarea, crew },
+                WorkspacesCommand::Crew {
+                    command: WorkspaceCrewCommand::Set { workspace, crew },
                 },
         } => {
             let client = resolve(cli, &stored)?;
             let (_, response) = client.post(
-                &format!("/v2/workareas/{}/crew", segment(workarea)?),
+                &format!("/v2/workspaces/{}/crew", segment(workspace)?),
                 &json!({ "crew": crew }),
                 &write_opts(),
             )?;
@@ -1975,7 +1979,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 print_json(&response);
             } else {
                 println!(
-                    "workarea {} ({}) names crew {}",
+                    "workspace {} ({}) names crew {}",
                     field(&response, "name"),
                     field(&response, "id"),
                     crew_line(&response["crew"])
@@ -2026,13 +2030,13 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         Command::Quickstart(args) => run_quickstart(args),
 
         Command::Demo {
-            command: DemoCommand::Seed { workarea, parent },
+            command: DemoCommand::Seed { workspace, parent },
         } => {
             let client = resolve(cli, &stored)?;
-            let report = oml_cli::demo::seed(&client, workarea, parent)?;
+            let report = oml_cli::demo::seed(&client, workspace, parent)?;
             if cli.json {
                 print_json(&json!({
-                    "workarea": report.workarea,
+                    "workspace": report.workspace,
                     "approved": report.approved,
                     "superseded": report.superseded,
                     "held": report.held,
@@ -2041,15 +2045,15 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             } else {
                 println!(
                     "seeded {}: {} approved ({} of them replaced by an approved newer version), {} held",
-                    report.workarea, report.approved, report.superseded, report.held
+                    report.workspace, report.approved, report.superseded, report.held
                 );
                 println!(
                     "fenced from the whole tree: {} (their journal entries stay)",
                     report.identities.join(", ")
                 );
                 println!(
-                    "next: oml keys issue-agent <name> --principal crew/<name> --workarea {} --connect-code",
-                    report.workarea
+                    "next: oml keys issue-agent <name> --principal crew/<name> --workspace {} --connect-code",
+                    report.workspace
                 );
             }
             Ok(ExitCode::SUCCESS)
@@ -2070,13 +2074,13 @@ fn run_guardrails(
     command: &GuardrailsCommand,
 ) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
-    let workarea = match command {
-        GuardrailsCommand::Show { workarea } | GuardrailsCommand::Export { workarea, .. } => {
-            workarea
+    let workspace = match command {
+        GuardrailsCommand::Show { workspace } | GuardrailsCommand::Export { workspace, .. } => {
+            workspace
         }
     };
-    let path = match workarea {
-        Some(w) => format!("/v1/guardrails?workarea={}", encode(w)),
+    let path = match workspace {
+        Some(w) => format!("/v1/guardrails?workspace={}", encode(w)),
         None => "/v1/guardrails".to_owned(),
     };
     let (_, set) = client.get(&path)?;
@@ -2163,19 +2167,19 @@ fn run_chat_init(
     parent: Option<&str>,
 ) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
-    let mut body = json!({ "name": oml_cli::chat::CHAT_WORKAREA });
+    let mut body = json!({ "name": oml_cli::chat::CHAT_WORKSPACE });
     if let Some(parent) = parent {
         body["parent"] = json!(parent);
     }
-    let created = match client.post("/v2/workareas", &body, &write_opts()) {
+    let created = match client.post("/v2/workspaces", &body, &write_opts()) {
         Ok((_, response)) => response,
         Err(CliError::Refused { code, .. }) if code == "name.taken" => {
             // The name is reserved for a person's key (d8), but an existing
-            // `chat` is adopted only where a person's chat workarea sits:
+            // `chat` is adopted only where a person's chat workspace sits:
             // directly under this key's user root, never elsewhere.
             let (_, existing) = client.get(&format!(
-                "/v2/workareas/{}",
-                segment(oml_cli::chat::CHAT_WORKAREA)?
+                "/v2/workspaces/{}",
+                segment(oml_cli::chat::CHAT_WORKSPACE)?
             ))?;
             let me = client.whoami()?;
             let user = me["user"]["name"].as_str().unwrap_or_default();
@@ -2184,7 +2188,7 @@ fn run_chat_init(
                 return Err(CliError::local(format!("oml chat init: {why}")));
             }
             println!(
-                "the chat workarea {path} already exists; set OML_CHAT_WORKAREA={}",
+                "the chat workspace {path} already exists; set OML_CHAT_WORKSPACE={}",
                 field(&existing, "id")
             );
             return Ok(ExitCode::SUCCESS);
@@ -2193,11 +2197,11 @@ fn run_chat_init(
     };
     let id = field(&created, "id").to_owned();
     let mode = client.put(
-        &format!("/v2/workareas/{id}/mode"),
+        &format!("/v2/workspaces/{id}/mode"),
         &json!({ "mode": "in_progress" }),
     );
     if cli.json {
-        print_json(&json!({ "workarea": created, "in_progress": mode.is_ok() }));
+        print_json(&json!({ "workspace": created, "in_progress": mode.is_ok() }));
         return Ok(ExitCode::SUCCESS);
     }
     println!(
@@ -2207,24 +2211,26 @@ fn run_chat_init(
     );
     match mode {
         Ok(_) => {
-            println!("in progress: your agents read each other's chat facts, labelled unreviewed")
+            println!(
+                "drafts visible to: everyone working here; your agents read each other's chat facts, labelled unreviewed"
+            )
         }
         Err(e) => println!(
             "not in progress ({}): each agent key reads only its own chat facts; retry with \
-             `oml workareas mode {id} in_progress`",
+             `oml workspaces mode {id} in_progress`",
             one_line_error(&e)
         ),
     }
     println!();
-    println!("Set these where the plugin runs (or the plugin's chat_workarea option):");
-    println!("  OML_CHAT_WORKAREA={id}");
+    println!("Set these where the plugin runs (or the plugin's chat_workspace option):");
+    println!("  OML_CHAT_WORKSPACE={id}");
     println!("  OML_CHAT_CAPTURE=1      # ask the agent to write chat facts at Stop");
     println!("  OML_TURN_RECALL=1       # optional: recall on every prompt");
     Ok(ExitCode::SUCCESS)
 }
 
 /// The chat lines only the server answers (ADR-0063 d13): whether it takes
-/// `origin_kinds`, and whether the named chat workarea resolves and is the
+/// `origin_kinds`, and whether the named chat workspace resolves and is the
 /// key's user's own.
 fn chat_doctor(client: &Client, me: Option<&Value>) -> Vec<String> {
     let mut out = Vec::new();
@@ -2235,13 +2241,13 @@ fn chat_doctor(client: &Client, me: Option<&Value>) -> Vec<String> {
         out.extend(oml_cli::chat::origin_probe_line(status, &envelope));
     }
     let var = |name: &str| std::env::var(name).ok();
-    if let Some(named) = oml_cli::chat::chat_workarea(&var) {
+    if let Some(named) = oml_cli::chat::chat_workspace(&var) {
         let user = me.and_then(|m| m["user"]["name"].as_str());
-        match segment(&named).and_then(|s| client.get(&format!("/v2/workareas/{s}"))) {
+        match segment(&named).and_then(|s| client.get(&format!("/v2/workspaces/{s}"))) {
             Ok((_, node)) => out.extend(oml_cli::chat::chat_scope_line(node["path"].as_str(), user)),
             Err(_) => out.push(format!(
                 "warn chat: {} names {named}, which this key cannot resolve; run oml chat init and use the id it prints",
-                oml_cli::chat::WORKAREA_VAR
+                oml_cli::chat::WORKSPACE_VAR
             )),
         }
     }
@@ -2288,14 +2294,14 @@ fn crew_line(crew: &Value) -> String {
 }
 
 /// The issuance body's `grants` (openapi.yaml `GrantRequest`), each
-/// workarea as the operator spelled it.
+/// workspace as the operator spelled it.
 fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
     grants
         .iter()
         .map(|(node, role)| match role.split_once(':') {
             // A `:node` suffix is a grant on the node alone (ADR-0044 d4).
-            Some((role, covers)) => json!({ "workarea": node, "role": role, "covers": covers }),
-            None => json!({ "workarea": node, "role": role }),
+            Some((role, covers)) => json!({ "workspace": node, "role": role, "covers": covers }),
+            None => json!({ "workspace": node, "role": role }),
         })
         .collect()
 }
@@ -2344,7 +2350,7 @@ fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode
         .map_err(|e| CliError::local(format!("the current directory: {e}")))?;
     let opts = run::Options {
         source: args.source.clone(),
-        workarea: args.workarea.clone(),
+        workspace: args.workspace.clone(),
         adapter: args
             .adapter
             .as_deref()
@@ -2422,7 +2428,7 @@ fn run_lake_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<Exi
     let opts = Options {
         root,
         uri_base: args.uri_base.clone(),
-        workarea: args.workarea.clone(),
+        workspace: args.workspace.clone(),
         dry_run: args.dry_run,
         check: args.check,
         record: args.record,
@@ -2449,7 +2455,7 @@ struct Write<'a> {
     claim_key: Option<&'a str>,
     kind: Option<&'a str>,
     derives_from: &'a [String],
-    workarea: Option<&'a str>,
+    workspace: Option<&'a str>,
     replaces: Option<&'a str>,
     expected_version: Option<u32>,
     retirement: bool,
@@ -2470,7 +2476,7 @@ impl<'a> Write<'a> {
             claim_key: args.claim_key.as_deref(),
             kind: args.kind.as_deref(),
             derives_from: &args.derives_from,
-            workarea: args.workarea.as_deref(),
+            workspace: args.workspace.as_deref(),
             replaces: args.replaces.as_deref(),
             expected_version: args.expected_version,
             retirement: args.retirement,
@@ -2538,7 +2544,7 @@ fn run_write(cli: &Cli, stored: &Credentials, write: &Write<'_>) -> Result<ExitC
     for (name, value) in [
         ("claim_key", write.claim_key),
         ("kind", write.kind),
-        ("workarea", write.workarea),
+        ("workspace", write.workspace),
         ("reason", write.reason),
         ("severity", write.severity),
         ("format", write.format),
@@ -2585,7 +2591,7 @@ fn run_write(cli: &Cli, stored: &Credentials, write: &Write<'_>) -> Result<ExitC
         println!("  artifact  : {}", field(&response, "artifact_id"));
         println!("  claim_key : {}", field(&response, "claim_key"));
         println!("  digest    : {}", field(&response, "plaintext_digest"));
-        println!("  workarea  : {}", field(&response, "workarea_id"));
+        println!("  workspace  : {}", field(&response, "workspace_id"));
         if response["replaces"].is_object() {
             println!(
                 "  replaces  : {} @ v{}",
@@ -2615,8 +2621,8 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
         if let Some(k) = args.k {
             body["k"] = json!(k);
         }
-        if let Some(workarea) = &args.workarea {
-            body["workarea"] = json!(workarea);
+        if let Some(workspace) = &args.workspace {
+            body["workspace"] = json!(workspace);
         }
         if !args.kinds.is_empty() {
             body["kinds"] = json!(args.kinds);
@@ -2655,7 +2661,7 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
         let limit = args.limit.map(|l| l.to_string());
         let mut params = vec![("own", (!args.all).to_string())];
         for (name, value) in [
-            ("workarea", args.workarea.as_ref()),
+            ("workspace", args.workspace.as_ref()),
             ("state", args.state.as_ref()),
             ("kind", args.kind.as_ref()),
             ("since", args.since.as_ref()),
@@ -2685,7 +2691,7 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
             response["version"],
             field(&response, "kind"),
             field(&response, "state"),
-            field(&response, "workarea_path")
+            field(&response, "workspace_path")
         );
         println!("  claim_key {}", field(&response, "claim_key"));
         println!("  | {}", field(&response, "text").replace('\n', "\n  | "));
@@ -2725,7 +2731,7 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
                 item["version"],
                 field(item, "state"),
                 field(item, "kind"),
-                field(item, "workarea_path"),
+                field(item, "workspace_path"),
                 field(item, "created_at")
             );
         }
@@ -2744,8 +2750,8 @@ fn run_events(cli: &Cli, stored: &Credentials, args: &EventsArgs) -> Result<Exit
     if let Some(after) = args.after_seq {
         params.push(("after_seq", after.to_string()));
     }
-    if let Some(workarea) = &args.workarea {
-        params.push(("workarea", workarea.clone()));
+    if let Some(workspace) = &args.workspace {
+        params.push(("workspace", workspace.clone()));
     }
     if let Some(limit) = args.limit {
         params.push(("limit", limit.to_string()));
@@ -2759,11 +2765,15 @@ fn run_events(cli: &Cli, stored: &Credentials, args: &EventsArgs) -> Result<Exit
     if cli.json {
         print_json(&page);
     } else {
+        // Served as stored, so `--json` stays verifiable; the lines read a
+        // former event name as its successor (ADR-0091 d4).
         for event in page["items"].as_array().into_iter().flatten() {
+            let event_type = oml_former_names::read_event_type(field(event, "event_type"))
+                .map_err(|e| CliError::Local(e.to_string()))?;
             println!(
                 "{}  {}  {}  {}",
                 event["seq"],
-                field(event, "event_type"),
+                event_type,
                 field(event, "at"),
                 field(&event["payload"], "artifact_id")
             );
@@ -2776,18 +2786,18 @@ fn run_events(cli: &Cli, stored: &Credentials, args: &EventsArgs) -> Result<Exit
     Ok(ExitCode::SUCCESS)
 }
 
-/// `oml workareas status`: propose, ratify and the pending list over the
-/// transition routes and the workarea read (ADR-0046 d3).
-fn run_workarea_status(
+/// `oml workspaces status`: propose, ratify and the pending list over the
+/// transition routes and the workspace read (ADR-0046 d3).
+fn run_workspace_status(
     cli: &Cli,
     stored: &Credentials,
-    command: &WorkareaStatusCommand,
+    command: &WorkspaceStatusCommand,
 ) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
     match command {
-        WorkareaStatusCommand::Propose { workarea, to } => {
+        WorkspaceStatusCommand::Propose { workspace, to } => {
             let (_, response) = client.post(
-                &format!("/v2/workareas/{}/transitions", segment(workarea)?),
+                &format!("/v2/workspaces/{}/transitions", segment(workspace)?),
                 &json!({ "to": to }),
                 &write_opts(),
             )?;
@@ -2795,21 +2805,21 @@ fn run_workarea_status(
                 print_json(&response);
             } else {
                 println!(
-                    "proposed {} -> {} on {workarea}: transition {} waits for a second identity",
+                    "proposed {} -> {} on {workspace}: transition {} waits for a second identity",
                     field(&response, "from"),
                     field(&response, "to"),
                     field(&response, "transition_id")
                 );
             }
         }
-        WorkareaStatusCommand::Ratify {
-            workarea,
+        WorkspaceStatusCommand::Ratify {
+            workspace,
             transition_id,
         } => {
             let (_, response) = client.post(
                 &format!(
-                    "/v2/workareas/{}/transitions/{}/ratify",
-                    segment(workarea)?,
+                    "/v2/workspaces/{}/transitions/{}/ratify",
+                    segment(workspace)?,
                     segment(transition_id)?
                 ),
                 &json!({}),
@@ -2818,13 +2828,13 @@ fn run_workarea_status(
             if cli.json {
                 print_json(&response);
             } else {
-                println!("ratified: {workarea} is now {}", field(&response, "to"));
+                println!("ratified: {workspace} is now {}", field(&response, "to"));
             }
         }
-        WorkareaStatusCommand::Pending { workarea } => {
-            let (_, node) = client.get(&format!("/v2/workareas/{}", segment(workarea)?))?;
+        WorkspaceStatusCommand::Pending { workspace } => {
+            let (_, node) = client.get(&format!("/v2/workspaces/{}", segment(workspace)?))?;
             let pending = json!({
-                "workarea_id": node["id"],
+                "workspace_id": node["id"],
                 "status": node["status"],
                 "policy": node["policy"],
                 "pending_transitions": node["pending_transitions"],
@@ -2832,7 +2842,7 @@ fn run_workarea_status(
             if cli.json {
                 print_json(&pending);
             } else {
-                println!("{workarea} is {}", field(&node, "status"));
+                println!("{workspace} is {}", field(&node, "status"));
                 let rows = node["pending_transitions"]
                     .as_array()
                     .cloned()
@@ -2868,8 +2878,11 @@ fn run_edges(
                 EdgeProposeCommand::Claim { from, to, label } => json!({
                     "kind": "claim", "from_artifact_id": from, "to_artifact_id": to, "label": label,
                 }),
-                EdgeProposeCommand::Brief { artifact, workarea } => json!({
-                    "kind": "brief", "from_artifact_id": artifact, "to_workarea_id": workarea,
+                EdgeProposeCommand::Brief {
+                    artifact,
+                    workspace,
+                } => json!({
+                    "kind": "brief", "from_artifact_id": artifact, "to_workspace_id": workspace,
                 }),
             };
             client.post("/v2/edges", &body, &write_opts())?.1
@@ -2885,14 +2898,14 @@ fn run_edges(
         }
         EdgesCommand::List {
             kind,
-            workarea,
+            workspace,
             artifact,
             limit,
             cursor,
         } => {
             let mut params = vec![("kind", kind.clone())];
-            if let Some(workarea) = workarea {
-                params.push(("workarea_id", workarea.clone()));
+            if let Some(workspace) = workspace {
+                params.push(("workspace_id", workspace.clone()));
             }
             if let Some(artifact) = artifact {
                 params.push(("artifact_id", artifact.clone()));
@@ -2918,7 +2931,7 @@ fn run_edges(
         for e in &rows {
             let to = e["to_artifact_id"]
                 .as_str()
-                .or_else(|| e["to_workarea_id"].as_str())
+                .or_else(|| e["to_workspace_id"].as_str())
                 .unwrap_or("?");
             println!(
                 "{}  {}  {} -[{}]-> {}  {}",
@@ -3028,7 +3041,7 @@ fn run_review_list(
     let client = resolve(cli, stored)?;
     let mut query = vec![format!("limit={}", args.limit)];
     for (name, value) in [
-        ("workarea", &args.workarea),
+        ("workspace", &args.workspace),
         ("author_key", &args.author_key),
         ("claim_key_prefix", &args.claim_key_prefix),
     ] {
@@ -3064,7 +3077,7 @@ fn run_review_list(
                 "  {}  {}  {}  from {}{}",
                 field(item, "artifact_id"),
                 field(item, "claim_key"),
-                field(item, "workarea_path"),
+                field(item, "workspace_path"),
                 field(item, "principal"),
                 if item["same_user"] == true {
                     " (you)"
@@ -3272,7 +3285,7 @@ fn run_verdict(
 // ---------------------------------------------------------------------------
 
 /// One `POST /v2/keys` for a writer key named `<key-name>`, with writer and
-/// reader grants on the workarea, that workarea as its default and the
+/// reader grants on the workspace, that workspace as its default and the
 /// `--crew` when one is given, each reference as the operator spelled it,
 /// then two lines on stdout: `export OML_URL=…` and `export
 /// OML_API_KEY=…`, the second reading the value back from the `--out` file
@@ -3299,14 +3312,14 @@ fn run_issue_agent(
              key value; omit one flag. Nothing was sent",
         ));
     }
-    // With --user the workarea defaults to the user's root, which the
+    // With --user the workspace defaults to the user's root, which the
     // server resolves in that user's namespace (ADR-0044 d11).
-    let workarea = match (&args.workarea, &args.user) {
-        (Some(workarea), _) => workarea.clone(),
+    let workspace = match (&args.workspace, &args.user) {
+        (Some(workspace), _) => workspace.clone(),
         (None, Some(user)) => user.clone(),
         (None, None) => {
             return Err(CliError::local(
-                "refused: --workarea is required without --user; nothing was sent",
+                "refused: --workspace is required without --user; nothing was sent",
             ));
         }
     };
@@ -3316,13 +3329,13 @@ fn run_issue_agent(
         None => None,
     };
     let grants =
-        with_reader_beside_writers(&[(workarea.clone(), "writer".to_owned())], args.write_only);
+        with_reader_beside_writers(&[(workspace.clone(), "writer".to_owned())], args.write_only);
     let mut body = json!({
         "role": "writer",
         "name": args.key_name,
-        "held_by": args.held_by,
+        "used_by": args.used_by,
         "principal": args.principal,
-        "default_workarea": workarea,
+        "default_workspace": workspace,
         "grants": grants_json(&grants),
     });
     if let Some(crew) = &args.crew {
@@ -3422,7 +3435,7 @@ fn run_issue_agent(
                 .map(|g| {
                     format!(
                         "{}:{}{}",
-                        field(g, "workarea_node_id"),
+                        field(g, "workspace_node_id"),
                         field(g, "role"),
                         if g["covers"] == "node" { ":node" } else { "" }
                     )
@@ -3431,11 +3444,11 @@ fn run_issue_agent(
         })
         .unwrap_or_default();
     eprintln!(
-        "key {key_name} ({key_id}) issued to {} (writer, held by {}): {}; default workarea {}",
+        "key {key_name} ({key_id}) issued to {} (writer, used by {}): {}; default workspace {}",
         field(&response, "principal"),
-        args.held_by,
+        args.used_by,
         granted.join(", "),
-        field(&response, "default_workarea_id"),
+        field(&response, "default_workspace_id"),
     );
     // The limits the key was issued with (ADR-0079 d7); stdout stays the
     // lines a shell evaluates.
@@ -3457,19 +3470,19 @@ fn print_json(v: &Value) {
 }
 
 // ---------------------------------------------------------------------------
-// oml workareas tree (ADR-0026 d15)
+// oml workspaces tree (ADR-0026 d15)
 // ---------------------------------------------------------------------------
 
 /// The tree from `root` down, by id or name, the default `universe`
-/// (ADR-0026 d6): every page of `GET /v2/workareas/{workarea_id}/tree`, in
+/// (ADR-0026 d6): every page of `GET /v2/workspaces/{workspace_id}/tree`, in
 /// the server's path order. Under an admin key the read answers by the key
-/// role, for every workarea of the tenant and structure only; under a reader
+/// role, for every workspace of the tenant and structure only; under a reader
 /// key it answers within reader effective access, every node outside it
-/// absent (http-api.md workareas; ADR-0026 d15). `--json` prints the pages'
-/// items as one page (cli/reference.md `oml workareas`).
-fn run_workareas_tree(cli: &Cli, stored: &Credentials, root: &str) -> Result<ExitCode, CliError> {
+/// absent (http-api.md workspaces; ADR-0026 d15). `--json` prints the pages'
+/// items as one page (cli/reference.md `oml workspaces`).
+fn run_workspaces_tree(cli: &Cli, stored: &Credentials, root: &str) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
-    let tree = format!("/v2/workareas/{}/tree", segment(root)?);
+    let tree = format!("/v2/workspaces/{}/tree", segment(root)?);
     let mut nodes: Vec<Value> = Vec::new();
     let mut path = tree.clone();
     loop {
@@ -3829,23 +3842,23 @@ fn run_admin(
     command: &AdminCommand,
 ) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
-    let (memory, query, workarea, state) = match command {
+    let (memory, query, workspace, state) = match command {
         AdminCommand::Rescan { record_held, rates } => {
             return run_rescan(cli, &client, *record_held, *rates);
         }
         AdminCommand::Read {
             memory,
             query,
-            workarea,
+            workspace,
             state,
-        } => (memory, query, workarea, state),
+        } => (memory, query, workspace, state),
     };
     let line = |m: &Value| {
         format!(
             "{}  {}  {}  {}  {}",
             field(m, "artifact_id"),
             field(m, "state"),
-            field(m, "workarea_path"),
+            field(m, "workspace_path"),
             field(m, "key"),
             field(m, "text").replace('\n', " ")
         )
@@ -3876,8 +3889,8 @@ fn run_admin(
     if let Some(q) = query {
         body["query"] = json!(q);
     }
-    if let Some(w) = workarea {
-        body["workarea"] = json!(w);
+    if let Some(w) = workspace {
+        body["workspace"] = json!(w);
     }
     if let Some(s) = state {
         body["state"] = json!(s);
@@ -4226,14 +4239,14 @@ fn run_login(cli: &Cli, target: &str) -> Result<ExitCode, CliError> {
         print_json(&me);
     } else {
         println!(
-            "logged in to {} as key {} ({}): role {}, tenant {}, user root {}, default workarea {}",
+            "logged in to {} as key {} ({}): role {}, tenant {}, user root {}, default workspace {}",
             client.server(),
             field(&me, "name"),
             field(&me, "key_id"),
             field(&me, "role"),
             field(&me["tenant"], "name"),
             user_root_line(&me),
-            field(&me["default_workarea"], "path"),
+            field(&me["default_workspace"], "path"),
         );
         println!(
             "url and api_key stored in {} (owner-only); the flags and OML_URL with \
@@ -4306,7 +4319,7 @@ fn shell_word(value: &str) -> String {
 /// `oml quickstart` (ADR-0041 d9): refuse a directory a quickstart wrote
 /// into and a machine without `docker compose`, before anything is written;
 /// then the compose file and its `.env`, `docker compose up --detach
-/// --wait`, the claim of the token the lead logged, the crew workarea, an
+/// --wait`, the claim of the token the lead logged, the crew workspace, an
 /// agent key and a reviewer key in owner-only files, a write held, approved
 /// and recalled, and the lines that hand the agent key on. No key value is
 /// printed.
@@ -4408,7 +4421,7 @@ fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
         ],
         Some(token),
     )?;
-    admin.json(&["workareas", "create", "universe", "crew"], None)?;
+    admin.json(&["workspaces", "create", "universe", "crew"], None)?;
     let agent_file = keys.join("agent");
     let agent_shown = agent_file.display().to_string();
     admin.text(&[
@@ -4417,7 +4430,7 @@ fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
         "quickstart-agent",
         "--principal",
         "crew/agent",
-        "--workarea",
+        "--workspace",
         "crew",
         "--out",
         &agent_shown,
@@ -4432,15 +4445,15 @@ fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
                 "issue",
                 "quickstart-reviewer",
                 "--role",
-                "dreamer",
-                "--held-by",
-                "human",
+                "reviewer",
+                "--used-by",
+                "person",
                 "--principal",
                 "crew/reviewer",
-                "--default-workarea",
+                "--default-workspace",
                 "crew",
                 "--grant",
-                "crew:dreamer",
+                "crew:reviewer",
             ],
             None,
         )
@@ -4937,11 +4950,11 @@ fn run_claude(args: &[String], stdin: Option<&str>) -> Result<(), CliError> {
 // oml doctor
 // ---------------------------------------------------------------------------
 
-/// The user whose root holds `node`, a workarea read: the node's own name
+/// The user whose root holds `node`, a workspace read: the node's own name
 /// when it is a user root, else the first label under `universe` when the
 /// qualified name `<user>.<name>` reads back as the same node, which it
 /// does only inside a user root and which a tenant key resolves (ADR-0044
-/// d5). `None` for a shared workarea.
+/// d5). `None` for a shared workspace.
 fn user_root_holding(client: &Client, node: &Value) -> Option<String> {
     let name = node["name"].as_str()?;
     if node["user_root"] == true {
@@ -4951,12 +4964,12 @@ fn user_root_holding(client: &Client, node: &Value) -> Option<String> {
     let (Some(_), Some(user), Some(_)) = (labels.next(), labels.next(), labels.next()) else {
         return None;
     };
-    let (_, qualified) = client.get(&format!("/v2/workareas/{user}.{name}")).ok()?;
+    let (_, qualified) = client.get(&format!("/v2/workspaces/{user}.{name}")).ok()?;
     (qualified["id"] == node["id"]).then(|| user.to_owned())
 }
 
 /// A memory is started in a user's root by that user's keys only (ADR-0044
-/// d16): a tenant writer key whose default workarea lies in `user`'s root
+/// d16): a tenant writer key whose default workspace lies in `user`'s root
 /// is refused every new memory it does not address elsewhere, so the line
 /// warns and names the fix. Nothing for a user key, whose default lies in
 /// its own root, or for a key that writes nothing.
@@ -4968,7 +4981,7 @@ fn user_root_writes_doctor(
     let (me, node, user) = (me?, default_node?, user?);
     (me["user"].is_null() && me["role"] == "writer").then(|| {
         format!(
-            "warn: the default workarea {} lies in the root of user {user}, where only \
+            "warn: the default workspace {} lies in the root of user {user}, where only \
              {user}'s keys start memories; this tenant key's new memories there are refused \
              (submission.user_root_refused); issue the agent a key with --user {user}",
             node["path"].as_str().unwrap_or("of this key"),
@@ -5058,29 +5071,29 @@ fn key_doctor(me: Option<&Result<Value, CliError>>) -> Vec<String> {
     lines
 }
 
-/// Whether this key may review in bulk, for a dreamer key only (ADR-0055
-/// d1, d13): a key a person holds may; one held by an agent or a service is
+/// Whether this key may review in bulk, for a reviewer key only (ADR-0055
+/// d1, d13): a key a person holds may; one used by an agent or a service is
 /// refused, which a person holding such a key otherwise learns mid-import,
 /// so the line warns and names the fix.
 fn review_doctor(me: Option<&Value>) -> Option<String> {
     let me = me?;
-    if me["role"] != "dreamer" {
+    if me["role"] != "reviewer" {
         return None;
     }
-    Some(match me["held_by"].as_str() {
-        Some("human") => "ok bulk review: this key lists and judges held items in bulk (oml review list, oml review approve --ids)".to_owned(),
-        held_by => format!(
-            "warn bulk review: this key is held by {}, so it cannot review in bulk \
-             (access.verb_ceiling, bulk_review_is_human_only); use a dreamer key issued \
-             --held-by human or the admin page",
-            held_by.unwrap_or("unknown")
+    Some(match me["used_by"].as_str() {
+        Some("person") => "ok bulk review: this key lists and judges held items in bulk (oml review list, oml review approve --ids)".to_owned(),
+        used_by => format!(
+            "warn bulk review: this key is used by {}, so it cannot review in bulk \
+             (access.verb_ceiling, bulk_review_is_person_only); use a reviewer key issued \
+             --used-by person or the admin page",
+            used_by.unwrap_or("unknown")
         ),
     })
 }
 
-/// The in-progress lines (ADR-0030 d14): whether the default workarea lies
-/// inside an in-progress workarea, so recall serves unreviewed memories
-/// there; for a person's dreamer key, that it may set the mode and how many
+/// The in-progress lines (ADR-0030 d14): whether the default workspace lies
+/// inside an in-progress workspace, so recall serves unreviewed memories
+/// there; for a person's reviewer key, that it may set the mode and how many
 /// held items it can see blocking the commit; for a curator key, that it
 /// acts only inside one.
 fn in_progress_doctor(
@@ -5095,19 +5108,20 @@ fn in_progress_doctor(
     let root = default_node.and_then(|n| n["in_progress_root"]["name"].as_str());
     match root {
         Some(root) => lines.push(format!(
-            "ok in progress: the default workarea is inside {root}; recall includes labelled \
-             unreviewed memories, which stay inside until a person commits them"
+            "ok in progress: the default workspace is inside {root}, whose drafts are visible to \
+             everyone working here; recall includes labelled unreviewed memories, which stay \
+             inside until a person makes the drafts visible to the writing key again"
         )),
         None if me["profile"] == "curator" => lines.push(
-            "warn curator: the default workarea is not in progress; curator keys act only \
-             inside in-progress workareas (access.verb_ceiling, curator_outside_in_progress)"
+            "warn curator: the default workspace is not in progress; curator keys act only \
+             inside in-progress workspaces (access.verb_ceiling, curator_outside_in_progress)"
                 .to_owned(),
         ),
         None => {}
     }
-    if me["role"] == "dreamer" && me["held_by"] == "human" && me["profile"].is_null() {
+    if me["role"] == "reviewer" && me["used_by"] == "person" && me["profile"].is_null() {
         lines.push(
-            "ok mode: set workarea mode with `oml workareas mode <workarea> \
+            "ok mode: set workspace mode with `oml workspaces mode <workspace> \
              in_progress|standard`"
                 .to_owned(),
         );
@@ -5116,7 +5130,7 @@ fn in_progress_doctor(
         {
             lines.push(format!(
                 "warn commit: {n} held item(s) block committing {root}; review them with \
-                 `oml review list --workarea {root}` (workarea.held_remaining)"
+                 `oml review list --workspace {root}` (workspace.held_remaining)"
             ));
         }
     }
@@ -5158,14 +5172,14 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     // the reason where an admin's read failed.
     let mut rescan_read: Option<Result<Value, String>> = None;
     let mut default_node: Option<Value> = None;
-    // The user whose root holds a tenant writer key's default workarea
+    // The user whose root holds a tenant writer key's default workspace
     // (ADR-0044 d16).
     let mut default_in_root_of: Option<String> = None;
     let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
     let mut federation_settings: Option<Value> = None;
     let mut usage_drift: Option<Result<Value, String>> = None;
-    // The chat workarea's path and whether the server takes origin_kinds
+    // The chat workspace's path and whether the server takes origin_kinds
     // (ADR-0063 d13).
     let mut chat_server: Vec<String> = Vec::new();
     let mut held_blocking: Option<usize> = None;
@@ -5180,20 +5194,20 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             if let Some(Ok(v)) = &me
                 && v["user"].is_object()
             {
-                reads_universe = Some(match client.get("/v2/workareas/universe") {
+                reads_universe = Some(match client.get("/v2/workspaces/universe") {
                     Ok(_) => true,
                     Err(CliError::Refused { .. }) => false,
                     Err(other) => return Err(other),
                 });
             }
-            // The default workarea's brief and waiting transitions, which a
+            // The default workspace's brief and waiting transitions, which a
             // session start and a ratifier depend on (ADR-0046 d9).
             if let Some(Ok(v)) = &me
-                && let Some(id) = v["default_workarea"]["id"].as_str()
+                && let Some(id) = v["default_workspace"]["id"].as_str()
                 && let Ok(segment) = segment(id)
             {
                 default_node = client
-                    .get(&format!("/v2/workareas/{segment}"))
+                    .get(&format!("/v2/workspaces/{segment}"))
                     .ok()
                     .map(|(_, n)| n);
                 if v["user"].is_null()
@@ -5204,14 +5218,14 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                 }
                 // What a person's reviewer key sees held under the
                 // in-progress root, one page (ADR-0030 d14).
-                if v["role"] == "dreamer"
-                    && v["held_by"] == "human"
+                if v["role"] == "reviewer"
+                    && v["used_by"] == "person"
                     && let Some(root) = default_node
                         .as_ref()
                         .and_then(|n| n["in_progress_root"]["id"].as_str())
                 {
                     held_blocking = client
-                        .get(&format!("/v2/review/held?workarea={root}&limit=200"))
+                        .get(&format!("/v2/review/held?workspace={root}&limit=200"))
                         .ok()
                         .and_then(|(_, page)| page["items"].as_array().map(Vec::len));
                 }
@@ -5219,7 +5233,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                 // (ADR-0057 d17; ADR-0046 d4).
                 waiting_edges = client
                     .get(&format!(
-                        "/v2/edges?kind=claim&workarea_id={segment}&limit=200"
+                        "/v2/edges?kind=claim&workspace_id={segment}&limit=200"
                     ))
                     .ok()
                     .map(|(_, page)| {
@@ -5297,6 +5311,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     );
     let in_progress_warn = in_progress.iter().any(|line| line.starts_with("warn"));
     let telemetry = telemetry_doctor(scrape.as_ref());
+    let journal = former_names_doctor(ready.as_ref());
     let mut scan = scan_doctor(ready.as_ref(), scrape.as_ref());
     scan.extend(scan_backlog_doctor(rescan_read.as_ref()));
     let scan_warn = scan.iter().any(|line| line.starts_with("warn"));
@@ -5379,7 +5394,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "role": v["role"],
             "tenant": v["tenant"]["name"],
             "user": v["user"]["name"],
-            "default_workarea": v["default_workarea"]["path"],
+            "default_workspace": v["default_workspace"]["path"],
         }),
         Some(Err(e)) => json!({ "error": refusal(e) }),
         None => Value::Null,
@@ -5401,7 +5416,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "chain_head_seq": head_seq,
             "reads_universe": reads_universe,
             "user_root_writes": user_root_writes,
-            "default_workarea": default_node.as_ref().map(|n| json!({
+            "default_workspace": default_node.as_ref().map(|n| json!({
                 "path": n["path"],
                 "brief_items": n["brief"]["items"].as_array().map_or(0, Vec::len),
                 "brief_truncated": n["brief"]["budget"]["truncated"],
@@ -5416,6 +5431,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "sync": sync,
             "chat": chat,
             "telemetry": telemetry,
+            "journal": journal,
             "handlers": handlers,
             "scan": scan,
             "usage": usage,
@@ -5452,12 +5468,15 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                 }
             }
         }
+        if let Some(line) = &journal {
+            println!("journal     : {line}");
+        }
         match &me {
             Some(Ok(_)) => println!(
-                "whoami      : role {}, tenant {}, default workarea {}",
+                "whoami      : role {}, tenant {}, default workspace {}",
                 whoami["role"].as_str().unwrap_or("—"),
                 whoami["tenant"].as_str().unwrap_or("—"),
-                whoami["default_workarea"].as_str().unwrap_or("—"),
+                whoami["default_workspace"].as_str().unwrap_or("—"),
             ),
             Some(Err(e)) => println!("whoami      : fail ({})", refusal(e)),
             None => println!("whoami      : not called (no key with this URL)"),
@@ -5483,7 +5502,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             let items = n["brief"]["items"].as_array().map_or(0, Vec::len);
             if items == 0 {
                 println!(
-                    "brief       : empty: no ratified brief edge on {}; a dreamer proposes one with oml edges propose brief",
+                    "brief       : empty: no ratified brief edge on {}; a reviewer proposes one with oml edges propose brief",
                     field(n, "path")
                 );
             } else {
@@ -5500,7 +5519,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             let waiting = n["pending_transitions"].as_array().map_or(0, Vec::len);
             if waiting > 0 {
                 println!(
-                    "transitions : {waiting} waiting for a second identity; oml workareas status pending {}",
+                    "transitions : {waiting} waiting for a second identity; oml workspaces status pending {}",
                     field(n, "path")
                 );
             }
@@ -5666,7 +5685,7 @@ fn federation_doctor(settings: Option<&Value>) -> Vec<String> {
     }
     for key in settings["wide_keys"].as_array().into_iter().flatten() {
         lines.push(format!(
-            "warn key {} reads {} trusted workareas outside its scopes, above 1,000: each recall of a federated tenant reads their counts, so its statistics read grows with them",
+            "warn key {} reads {} trusted workspaces outside its scopes, above 1,000: each recall of a federated tenant reads their counts, so its statistics read grows with them",
             key["key_id"].as_str().unwrap_or("?"),
             key["candidates"]
         ));
@@ -5886,7 +5905,7 @@ fn telemetry_doctor(scrape: Option<&Scrape>) -> Vec<String> {
 
 /// The rescan backlog lines (ADR-0074 d28), from an admin key's one-event
 /// rescan window: held versions an older rule set scanned, which stay their
-/// authors' alone in in-progress workareas until `--record-held` reads
+/// authors' alone in in-progress workspaces until `--record-held` reads
 /// them, and every stored version an older rule set scanned. A key that is
 /// no admin's is told an admin key reads them; an admin key whose read
 /// failed is told the reason, as the usage and approval lines are.
@@ -5914,7 +5933,7 @@ fn scan_backlog_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
     let mut lines = vec![
         if held > 0 {
             format!(
-                "warn scan_held_unrescanned: {held} held version(s) were scanned under an older rule set than {version}, and stay their authors' alone in in-progress workareas; run oml admin rescan --record-held"
+                "warn scan_held_unrescanned: {held} held version(s) were scanned under an older rule set than {version}, and stay their authors' alone in in-progress workspaces; run oml admin rescan --record-held"
             )
         } else {
             "scan_held_unrescanned: 0".to_owned()
@@ -6267,11 +6286,11 @@ fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) 
             n("served_behind")
         ));
     }
-    if n("workarea_drift") > 0 || n("term_drift") > 0 {
+    if n("workspace_drift") > 0 || n("term_drift") > 0 {
         lines.push(format!(
-            "warn search: the postings counts disagree: {} workarea count{}, {} of {} sampled word counts; a defect, which ranks by wrong frequencies: {refill}, and report it",
-            n("workarea_drift"),
-            if n("workarea_drift") == 1 { "" } else { "s" },
+            "warn search: the postings counts disagree: {} workspace count{}, {} of {} sampled word counts; a defect, which ranks by wrong frequencies: {refill}, and report it",
+            n("workspace_drift"),
+            if n("workspace_drift") == 1 { "" } else { "s" },
             n("term_drift"),
             n("terms_checked")
         ));
@@ -6299,7 +6318,7 @@ fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) 
         || n("similar_drift") > 0
         || n("unfilled") > 0
         || n("served_behind") > 0
-        || n("workarea_drift") > 0
+        || n("workspace_drift") > 0
         || n("term_drift") > 0;
     if !faulty {
         lines.push(format!(
@@ -6381,6 +6400,26 @@ fn web_doctor(
 /// configuration does not declare; nothing when neither holds, and
 /// nothing for a key that is no admin's, which does not read it. A read
 /// that fails is a line of its own: the counters are then unchecked.
+/// The journal's former names, as `/readyz`'s `former_names` check reports
+/// the lead's startup scan (ADR-0091 d4): `fail` names
+/// `journal_unmapped_former_name` and where the lead's log lists each event;
+/// nothing from a lead that does not report the check.
+fn former_names_doctor(ready: Option<&(u16, Value)>) -> Option<String> {
+    let (_, body) = ready?;
+    match body["checks"]["former_names"].as_str()? {
+        "ok" => Some(
+            "ok journal_unmapped_former_name: every stored event reads in the current names"
+                .to_owned(),
+        ),
+        _ => Some(
+            "fail journal_unmapped_former_name: the journal holds a former name the former-name \
+             map does not cover; the lead's start log names each tenant, seq and event \
+             (ADR-0091 d4)"
+                .to_owned(),
+        ),
+    }
+}
+
 fn usage_doctor(report: Option<&Result<Value, String>>) -> Vec<String> {
     let r = match report {
         None => return Vec::new(),
@@ -6498,7 +6537,7 @@ fn signup_doctor(overview: Option<&Value>) -> Vec<String> {
 }
 
 /// Source anchors (ADR-0057 d17): a server before v0.5.8, which accepts no
-/// anchor; the served versions of the key's default workarea that read
+/// anchor; the served versions of the key's default workspace that read
 /// stale, as the server counts them; and the claim edges there waiting for
 /// a second key.
 fn sources_doctor(
@@ -6523,7 +6562,7 @@ fn sources_doctor(
     if let Some(node) = default_node
         && let Some(stale) = node["stale_versions"].as_u64()
     {
-        let path = node["path"].as_str().unwrap_or("the default workarea");
+        let path = node["path"].as_str().unwrap_or("the default workspace");
         if stale > 0 {
             lines.push(format!(
                 "warn sources_stale: {stale} served version(s) in {path} read stale: their source changed or went away since they were reviewed, until a successor is reviewed"
@@ -6536,7 +6575,7 @@ fn sources_doctor(
         && waiting > 0
     {
         lines.push(format!(
-            "{waiting} claim edge(s) in the default workarea wait for a second key to ratify them"
+            "{waiting} claim edge(s) in the default workspace wait for a second key to ratify them"
         ));
     }
     lines
@@ -6919,7 +6958,7 @@ mod tests {
         assert_eq!(
             scan_backlog_doctor(Some(&Ok(due))),
             vec![
-                "warn scan_held_unrescanned: 4 held version(s) were scanned under an older rule set than oml-scan/1.2, and stay their authors' alone in in-progress workareas; run oml admin rescan --record-held".to_owned(),
+                "warn scan_held_unrescanned: 4 held version(s) were scanned under an older rule set than oml-scan/1.2, and stay their authors' alone in in-progress workspaces; run oml admin rescan --record-held".to_owned(),
                 "warn scan_rescan_due: 9 stored version(s) were scanned under an older rule set than oml-scan/1.2; oml admin rescan reports what it finds in them".to_owned(),
             ]
         );
@@ -7055,6 +7094,24 @@ mod tests {
     }
 
     #[test]
+    fn doctor_names_journal_unmapped_former_name_when_the_lead_reports_one() {
+        let unmapped = (503, json!({"checks": {"former_names": "unmapped"}}));
+        let line = former_names_doctor(Some(&unmapped)).expect("a line");
+        assert!(
+            line.starts_with("fail journal_unmapped_former_name:"),
+            "{line}"
+        );
+        let ok = (200, json!({"checks": {"former_names": "ok"}}));
+        assert!(
+            former_names_doctor(Some(&ok))
+                .expect("a line")
+                .starts_with("ok journal_unmapped_former_name:")
+        );
+        let older = (200, json!({"checks": {"postgres": "ok"}}));
+        assert_eq!(former_names_doctor(Some(&older)), None);
+    }
+
+    #[test]
     fn doctor_names_people_near_a_quota_pending_deletions_and_a_shared_address_limit() {
         let overview = serde_json::json!({
             "mode": "open",
@@ -7087,13 +7144,13 @@ mod tests {
     }
 
     #[test]
-    fn doctor_warns_when_a_tenant_writer_keys_default_workarea_lies_in_a_users_root() {
+    fn doctor_warns_when_a_tenant_writer_keys_default_workspace_lies_in_a_users_root() {
         let node = serde_json::json!({ "path": "universe.alice.project" });
         let tenant_writer = serde_json::json!({ "role": "writer", "user": null });
         assert_eq!(
             user_root_writes_doctor(Some(&tenant_writer), Some(&node), Some("alice")).as_deref(),
             Some(
-                "warn: the default workarea universe.alice.project lies in the root of user alice, where only alice's keys start memories; this tenant key's new memories there are refused (submission.user_root_refused); issue the agent a key with --user alice"
+                "warn: the default workspace universe.alice.project lies in the root of user alice, where only alice's keys start memories; this tenant key's new memories there are refused (submission.user_root_refused); issue the agent a key with --user alice"
             )
         );
         // A shared default, a user key in its own root and a key that
@@ -7107,7 +7164,7 @@ mod tests {
             user_root_writes_doctor(Some(&alices), Some(&node), Some("alice")),
             None
         );
-        let reviewer = serde_json::json!({ "role": "dreamer", "user": null });
+        let reviewer = serde_json::json!({ "role": "reviewer", "user": null });
         assert_eq!(
             user_root_writes_doctor(Some(&reviewer), Some(&node), Some("alice")),
             None

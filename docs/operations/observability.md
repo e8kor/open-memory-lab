@@ -48,7 +48,7 @@ The server writes one `http_request` line per request, except probes answered `2
 | `error_code` | The envelope's `error.code`, or `null`. |
 | `duration_ms` | Time from request to response head. |
 | `tenant_id`, `key_id`, `key_name`, `role` | The resolved key's, or `null` when none resolved. |
-| `workarea_id` | The target workarea, by id. |
+| `workspace_id` | The target workspace, by id. |
 | `client_ip`, `client_ip_source` | The socket peer, or the first address from the right of `X-Forwarded-For` outside `server.trusted_proxies`. |
 | `trace_id` | Present only while trace export is on. |
 
@@ -94,8 +94,8 @@ oml doctor --json
 It checks, among other things:
 
 - the key, the URL and the server's readiness;
-- whether each workarea has enough reviewer keys to approve what authors write;
-- held memories that cannot be reviewed, and in-progress workareas with unreviewed memories;
+- whether each workspace has enough reviewer keys to approve what authors write;
+- held memories that cannot be reviewed, and in-progress workspaces with unreviewed memories;
 - search: the pipeline, reranker skips, and postings completeness;
 - the scan rule set and findings since start;
 - usage, with an admin key: accounts whose counters differ from their rows, and accounts on a profile the configuration does not declare;

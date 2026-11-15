@@ -13,13 +13,13 @@ export interface paths {
         };
         /**
          * Structured, paginated listing of memory summaries.
-         * @description Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true and no workarea it lists every workarea the key wrote in. Without own, the listing returns promoted served tips within reader effective access in the workarea's subtree, defaulting to the key's default_workarea (ADR-0039 d4) — a self_signed version only when the scope node is its own workarea; a retired claim's tip, its retirement version, among them, flagged retirement true; others' held rows are never returned (R3). workarea is the subtree read (see the parameter); v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.
+         * @description Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workspaces minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true and no workspace it lists every workspace the key wrote in. Without own, the listing returns promoted served tips within reader effective access in the workspace's subtree, defaulting to the key's default_workspace (ADR-0039 d4) — a self_signed version only when the scope node is its own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true; others' held rows are never returned (R3). workspace is the subtree read (see the parameter); v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.
          */
         get: operations["listMemories"];
         put?: never;
         /**
          * Submit a memory (remember or learn); held on arrival, scanned same-call.
-         * @description Requires: writer effective access on the resolved workarea; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workarea is the body's workarea, by id or name, honoured only within the key's grants, else the key's default_workarea; request.workarea_unresolved with neither, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). A workarea in a user's root takes a new memory from that user's keys alone: from any other key that reads the workarea it is 409 submission.user_root_refused, answered in place of access.grant_refused, and a key that reads nothing of it gets 404 access.not_found (ADR-0044 d16). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).
+         * @description Requires: writer effective access on the resolved workspace; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workspace is the body's workspace, by id or name, honoured only within the key's grants, else the key's default_workspace; request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new memory from that user's keys alone: from any other key that reads the workspace it is 409 submission.user_root_refused, answered in place of access.grant_refused, and a key that reads nothing of it gets 404 access.not_found (ADR-0044 d16). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).
          */
         post: operations["submitMemory"];
         delete?: never;
@@ -39,7 +39,7 @@ export interface paths {
         put?: never;
         /**
          * Ranked retrieval over promoted rows by a named search pipeline; steering rows precede hits, unranked.
-         * @description Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea, by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4); a body naming no search under a tenant default the deployment does not serve is ranked by the deployment's default and answers search.fallback tenant_default_unserved (ADR-0049 d15); recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
+         * @description Requires: reader effective access on the subtree. The scope is the subtree of the body's workspace, by id or name, else of the key's default_workspace (ADR-0039 d4); neither answers request.workspace_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7). Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4); a body naming no search under a tenant default the deployment does not serve is ranked by the deployment's default and answers search.fallback tenant_default_unserved (ADR-0049 d15); recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
          */
         post: operations["recallMemories"];
         delete?: never;
@@ -57,7 +57,7 @@ export interface paths {
         };
         /**
          * One memory with its text (decrypted on the serving path) and attachment descriptors.
-         * @description The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row's workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row's own workarea as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author's key set, or, when it was promoted then, a key with reader effective access on its workarea; readability is checked first, and every other key gets access.not_found. Resolves no workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id is null on an own row whose node the key holds no role on. With as_of, a version recorded after the instant is access.not_found and any other answers as get does today (ADR-0059 d19); as_of is the only query parameter get takes.
+         * @description The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row's workspace and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row's own workspace as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author's key set, or, when it was promoted then, a key with reader effective access on its workspace; readability is checked first, and every other key gets access.not_found. Resolves no workspace: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workspace_id is null on an own row whose node the key holds no role on. With as_of, a version recorded after the instant is access.not_found and any other answers as get does today (ADR-0059 d19); as_of is the only query parameter get takes.
          */
         get: operations["getMemory"];
         put?: never;
@@ -79,7 +79,7 @@ export interface paths {
         put?: never;
         /**
          * Propose a replacement version, or with retirement true propose retiring the claim; a new attributed submission, held like any write.
-         * @description Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. A target that is a ratified retirement in a user's root takes a successor, which would put the claim back in service, from that user's keys alone: any other key that reads the target is 409 submission.user_root_refused, answered after step 2 of that rule and ahead of access.author_only and access.grant_refused; every other successor there is under the supersede rule (ADR-0044 d16). The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and workarea.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target's state or the key's access now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor declares its own anchor or has none (ADR-0057 d2). expected_version is required: the claim's latest version the caller can read (its promoted versions where the caller reads the workarea, and the versions its own keys wrote; never another author's held version) as the caller last read it; any other is 409 submission.version_conflict with details.current_version, answered after the target is known readable and before the tip check, with nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).
+         * @description Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a reviewer through edit-as-proposal. A target that is a ratified retirement in a user's root takes a successor, which would put the claim back in service, from that user's keys alone: any other key that reads the target is 409 submission.user_root_refused, answered after step 2 of that rule and ahead of access.author_only and access.grant_refused; every other successor there is under the supersede rule (ADR-0044 d16). The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workspace, if sent, must equal the target's workspace (request.validation, details.field /workspace, otherwise), and an X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and workspace.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workspace; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target's state or the key's access now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor declares its own anchor or has none (ADR-0057 d2). expected_version is required: the claim's latest version the caller can read (its promoted versions where the caller reads the workspace, and the versions its own keys wrote; never another author's held version) as the caller last read it; any other is 409 submission.version_conflict with details.current_version, answered after the target is known readable and before the tip check, with nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).
          */
         post: operations["supersedeMemory"];
         delete?: never;
@@ -99,7 +99,7 @@ export interface paths {
         put?: never;
         /**
          * Record that a promoted version's anchored span was compared with its source at a commit (ADR-0057 d5, d18).
-         * @description Requires: the version's author key (writer), or a dreamer with dreamer effective access on its workarea; any other writer that can read the version is 403 access.author_only, and a key that cannot read it is 404 access.not_found. The version must be a promoted, anchored served tip: a held, unanchored or superseded one is request.validation, details.field /artifact_id. Journals source.checked {artifact_id, rev, result, hash, path, fragment}; changes no text and no anchor and moves nothing through review. The answer is the version's new stale and source_checked: stale is changed or removed from the latest check, else null, and it is computed from checks of served versions alone, never from a held one (R3). result moved names the span's new path (required) and fragment, and reads not stale; path and fragment are refused with any other result. Idempotency-Key required, scoped to the key with a nil workarea.
+         * @description Requires: the version's author key (writer), or a reviewer with reviewer effective access on its workspace; any other writer that can read the version is 403 access.author_only, and a key that cannot read it is 404 access.not_found. The version must be a promoted, anchored served tip: a held, unanchored or superseded one is request.validation, details.field /artifact_id. Journals source.checked {artifact_id, rev, result, hash, path, fragment}; changes no text and no anchor and moves nothing through review. The answer is the version's new stale and source_checked: stale is changed or removed from the latest check, else null, and it is computed from checks of served versions alone, never from a held one (R3). result moved names the span's new path (required) and fragment, and reads not stale; path and fragment are refused with any other result. Idempotency-Key required, scoped to the key with a nil workspace.
          */
         post: operations["sourceCheckMemory"];
         delete?: never;
@@ -117,7 +117,7 @@ export interface paths {
         };
         /**
          * The guardrails in force at the scope node, under the key's reader access and guardrail scope; never in recall.
-         * @description Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance, and any parameter other than workarea, guardrail_scope included, is request.validation naming it (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
+         * @description Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance, and any parameter other than workspace, guardrail_scope included, is request.validation naming it (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
          */
         get: operations["getGuardrails"];
         put?: never;
@@ -148,7 +148,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas": {
+    "/v2/workspaces": {
         parameters: {
             query?: never;
             header?: never;
@@ -158,17 +158,17 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Create a child workarea in development.
-         * @description Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key (<user>-web, through its capacity credential) creates under its own root, as the web console's Workareas view does (ADR-0070 d5).
+         * Create a child workspace in development.
+         * @description Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a frozen parent (workspace.frozen); universe cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key (<user>-web, through its capacity credential) creates under its own root, as the web console's Workspaces view does (ADR-0070 d5).
          */
-        post: operations["createWorkarea"];
+        post: operations["createWorkspace"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas/{workarea}": {
+    "/v2/workspaces/{workspace}": {
         parameters: {
             query?: never;
             header?: never;
@@ -177,9 +177,9 @@ export interface paths {
         };
         /**
          * One node — id, parent, derived path, status, crew record — with the calling key's view of it.
-         * @description Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15). children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md); permission_epoch is the calling key's permission epoch as declared in docs/architecture/workareas.md (ADR-0025 d14). One call carries all of it.
+         * @description Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15). children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md); permission_epoch is the calling key's permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.
          */
-        get: operations["getWorkarea"];
+        get: operations["getWorkspace"];
         put?: never;
         post?: never;
         delete?: never;
@@ -188,7 +188,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas/{workarea}/tree": {
+    "/v2/workspaces/{workspace}/tree": {
         parameters: {
             query?: never;
             header?: never;
@@ -197,9 +197,9 @@ export interface paths {
         };
         /**
          * The subtree, paginated; nodes outside read scope are omitted.
-         * @description Requires: reader effective access, or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
+         * @description Requires: reader effective access, or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
          */
-        get: operations["getWorkareaTree"];
+        get: operations["getWorkspaceTree"];
         put?: never;
         post?: never;
         delete?: never;
@@ -208,7 +208,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas/{workarea}/offers": {
+    "/v2/workspaces/{workspace}/offers": {
         parameters: {
             query?: never;
             header?: never;
@@ -216,10 +216,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The transitions, the mode change and the commit the caller's verbs admit on a workarea now.
-         * @description Requires: reader effective access on the workarea, or the admin key role; one the caller cannot read is access.not_found (R3). Each act is offered only where the verb's own check admits the caller now: propose the next rung, ratify a live proposal another key made, put the workarea in progress, or commit an in-progress root; a commit the held rows refuse is not offered and names their count. refused names each of proposing committed, proposing validated, mode in_progress and mode standard that is not offered, with the code and message its verb would refuse it with now, so a confirmation names the refusal without acting. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
+         * The transitions, the mode change and the commit the caller's verbs admit on a workspace now.
+         * @description Requires: reader effective access on the workspace, or the admin key role; one the caller cannot read is access.not_found (R3). Each act is offered only where the verb's own check admits the caller now: propose the next rung, ratify a live proposal another key made, put the workspace in progress, or commit an in-progress root; a commit the held rows refuse is not offered and names their count. refused names each of proposing protected, proposing frozen, mode in_progress and mode standard that is not offered, with the code and message its verb would refuse it with now, so a confirmation names the refusal without acting. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
          */
-        get: operations["getWorkareaOffers"];
+        get: operations["getWorkspaceOffers"];
         put?: never;
         post?: never;
         delete?: never;
@@ -228,7 +228,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas/{workarea}/crew": {
+    "/v2/workspaces/{workspace}/crew": {
         parameters: {
             query?: never;
             header?: never;
@@ -238,17 +238,17 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Journalled crew-metadata update — points the workarea at a crew record, by id or name; allowed on validated areas (freeze covers claims, not metadata).
-         * @description Requires: admin key role. Journals workarea.crew_updated with the crew's id (ADR-0026 d8); a crew that names no crew record of the tenant answers access.not_found, checked after the workarea. The crew record itself is updated at POST /v2/crews/{crew}/update.
+         * Journalled crew-metadata update — points the workspace at a crew record, by id or name; allowed on frozen areas (freeze covers claims, not metadata).
+         * @description Requires: admin key role. Journals workspace.crew_updated with the crew's id (ADR-0026 d8); a crew that names no crew record of the tenant answers access.not_found, checked after the workspace. The crew record itself is updated at POST /v2/crews/{crew}/update.
          */
-        post: operations["setWorkareaCrew"];
+        post: operations["setWorkspaceCrew"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas/{workarea}/mode": {
+    "/v2/workspaces/{workspace}/mode": {
         parameters: {
             query?: never;
             header?: never;
@@ -258,17 +258,17 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
-         * @description Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node as the key reads it. A resubmission under the same Idempotency-Key and body answers the recorded node with Idempotency-Replay: true and sets nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4). No MCP tool reaches it.
+         * A person's key puts a workspace in progress, or commits it back to standard (ADR-0030).
+         * @description Requires: a reviewer key used_by person with reviewer effective access on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason mode_is_person_only (ADR-0030 d1). in_progress is refused with 409 workspace.in_progress_refused, details.reason universe, status (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress root is its commit, refused with 409 workspace.held_remaining while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing; otherwise journals workspace.mode_set. The answer is the node as the key reads it. A resubmission under the same Idempotency-Key and body answers the recorded node with Idempotency-Replay: true and sets nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4). No MCP tool reaches it.
          */
-        post: operations["setWorkareaMode"];
+        post: operations["setWorkspaceMode"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas/{workarea}/federation": {
+    "/v2/workspaces/{workspace}/federation": {
         parameters: {
             query?: never;
             header?: never;
@@ -278,10 +278,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Whether recalls scoped elsewhere may search this workarea when they ask for wider sources (ADR-0072).
-         * @description Requires: a dreamer key held_by human with dreamer effective access on the node, or an admin key; every other key is refused before any lookup with access.verb_ceiling, details.reason federation_is_human_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still recalls there by naming it as the scope. Setting the value the node holds journals nothing; otherwise journals workarea.federation_set. Since v0.7.0.
+         * Whether recalls scoped elsewhere may search this workspace when they ask for wider sources (ADR-0072).
+         * @description Requires: a reviewer key used_by person with reviewer effective access on the node, or an admin key; every other key is refused before any lookup with access.verb_ceiling, details.reason federation_is_person_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still recalls there by naming it as the scope. Setting the value the node holds journals nothing; otherwise journals workspace.federation_set. Since v0.7.0.
          */
-        post: operations["setWorkareaFederation"];
+        post: operations["setWorkspaceFederation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -297,7 +297,7 @@ export interface paths {
         };
         /**
          * The tenant's crew records, paginated.
-         * @description Requires: admin key role. A crew is recorded, not operated (docs/architecture/workareas.md, Crews); an agent key reads a workarea's crew only in the workarea read.
+         * @description Requires: admin key role. A crew is recorded, not operated (docs/architecture/workspaces.md, Crews); an agent key reads a workspace's crew only in the workspace read.
          */
         get: operations["listCrews"];
         put?: never;
@@ -343,7 +343,7 @@ export interface paths {
         put?: never;
         /**
          * Journalled crew-record update (crew.updated) — charter URI and external manager; the name never changes.
-         * @description Requires: admin key role. A crew record has no status, so the update is admitted whatever the status of the workareas that name it (ADR-0026 d8).
+         * @description Requires: admin key role. A crew record has no status, so the update is admitted whatever the status of the workspaces that name it (ADR-0026 d8).
          */
         post: operations["updateCrew"];
         delete?: never;
@@ -352,7 +352,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas/{workarea}/transitions": {
+    "/v2/workspaces/{workspace}/transitions": {
         parameters: {
             query?: never;
             header?: never;
@@ -363,7 +363,7 @@ export interface paths {
         put?: never;
         /**
          * Propose a forward status transition; pending until a second party ratifies.
-         * @description Requires: dreamer or admin. Forward only; validated refused while any child is not validated (workarea.transition_refused). A resubmission under the same Idempotency-Key and body answers the recorded proposal with Idempotency-Replay: true and proposes nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
+         * @description Requires: reviewer or admin. Forward only; frozen refused while any child is not frozen (workspace.transition_refused). A resubmission under the same Idempotency-Key and body answers the recorded proposal with Idempotency-Replay: true and proposes nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
          */
         post: operations["proposeTransition"];
         delete?: never;
@@ -372,7 +372,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas/{workarea}/transitions/{transition_id}/ratify": {
+    "/v2/workspaces/{workspace}/transitions/{transition_id}/ratify": {
         parameters: {
             query?: never;
             header?: never;
@@ -383,7 +383,7 @@ export interface paths {
         put?: never;
         /**
          * Ratify a pending transition; journalled with the policy snapshot.
-         * @description Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2 extends to transitions). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1). A resubmission under the same Idempotency-Key answers the recorded ratification with Idempotency-Replay: true and ratifies nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
+         * @description Requires: a second, non-proposing reviewer or admin (review.ratifier_is_proposer otherwise — R2 extends to transitions). A used_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1). A resubmission under the same Idempotency-Key answers the recorded ratification with Idempotency-Replay: true and ratifies nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
          */
         post: operations["ratifyTransition"];
         delete?: never;
@@ -401,13 +401,13 @@ export interface paths {
         };
         /**
          * Paginated edge read of one kind, pending and ratified, scoped to read access.
-         * @description kind claim reads the claim graph and requires reader effective access; workarea_id is a subtree filter and artifact_id narrows to the edges touching one claim. kind brief reads the brief edges into the workarea workarea_id names, required then, at reader effective access on it, each served only when the key reads its claim (ADR-0046 d7). kind workarea, designed and not served, reads the labelled related edges touching the node workarea_id names, required then, and requires reader effective access on it, or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15); artifact_id is refused with request.validation. Edges confer zero access. One family for both kinds, each keeping its authority, refusal codes and journal events (ADR-0039 d9).
+         * @description kind claim reads the claim graph and requires reader effective access; workspace_id is a subtree filter and artifact_id narrows to the edges touching one claim. kind brief reads the brief edges into the workspace workspace_id names, required then, at reader effective access on it, each served only when the key reads its claim (ADR-0046 d7). kind workspace, designed and not served, reads the labelled related edges touching the node workspace_id names, required then, and requires reader effective access on it, or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15); artifact_id is refused with request.validation. Edges confer zero access. One family for both kinds, each keeping its authority, refusal codes and journal events (ADR-0039 d9).
          */
         get: operations["listEdges"];
         put?: never;
         /**
-         * Propose a claim-to-claim edge or a claim's place in a workarea's brief; pending until ratified.
-         * @description kind claim requires dreamer(propose); its label is open, with supports, contradicts, relates_to and continues recommended and oml: reserved (ADR-0046 d6). kind brief requires dreamer effective access on the workarea and a promoted served tip the key reads; its label is brief and is not sent (ADR-0046 d7, d8). kind workarea, designed and not served, requires dreamer(propose) effective access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act here holds a separate dreamer key, since a key never combines admin with dreamer grants (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).
+         * Propose a claim-to-claim edge or a claim's place in a workspace's brief; pending until ratified.
+         * @description kind claim requires reviewer(propose); its label is open, with supports, contradicts, relates_to and continues recommended and oml: reserved (ADR-0046 d6). kind brief requires reviewer effective access on the workspace and a promoted served tip the key reads; its label is brief and is not sent (ADR-0046 d7, d8). kind workspace, designed and not served, requires reviewer(propose) effective access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act here holds a separate reviewer key, since a key never combines admin with reviewer grants (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).
          */
         post: operations["proposeEdge"];
         delete?: never;
@@ -427,7 +427,7 @@ export interface paths {
         put?: never;
         /**
          * Ratify a proposed edge of either kind.
-         * @description The edge's kind follows from edge_id. kind brief requires dreamer effective access on the workarea and refuses the proposer (review.ratifier_is_proposer); a decided edge is review.serve_invalid consumed (ADR-0046 d8). kind claim requires dreamer(review), and refuses the proposer (review.ratifier_is_proposer) and a lineage collision (review.author_in_lineage) — R2. kind workarea requires dreamer(review) effective access on BOTH endpoints and refuses the proposer (review.ratifier_is_proposer — R2 extends to edges). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1). Each kind journals its own ratification event (ADR-0039 d9).
+         * @description The edge's kind follows from edge_id. kind brief requires reviewer effective access on the workspace and refuses the proposer (review.ratifier_is_proposer); a decided edge is review.serve_invalid consumed (ADR-0046 d8). kind claim requires reviewer(review), and refuses the proposer (review.ratifier_is_proposer) and a lineage collision (review.author_in_lineage) — R2. kind workspace requires reviewer(review) effective access on BOTH endpoints and refuses the proposer (review.ratifier_is_proposer — R2 extends to edges). A used_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1). Each kind journals its own ratification event (ADR-0039 d9).
          */
         post: operations["ratifyEdge"];
         delete?: never;
@@ -445,7 +445,7 @@ export interface paths {
         };
         /**
          * The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a verification surface).
-         * @description Requires: reader effective access on workarea (access.not_found otherwise); omitted, the key's default workarea, and request.workarea_unresolved for a key with none. v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in details.renamed_to (ADR-0039 d7). Which events a key sees, what a served event names, and how next_after_seq is computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key outside its actor's own key set carries principal, api_key_id and every key-naming payload field as null, as the example shows for a reader seeing another key's ratification. One call scans at most limit raw events from after_seq + 1; after_seq greater than head_seq answers 400 request.validation. Full-chain verification is served by the chain export.
+         * @description Requires: reader effective access on workspace (access.not_found otherwise); omitted, the key's default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in details.renamed_to (ADR-0039 d7). Which events a key sees, what a served event names, and how next_after_seq is computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key outside its actor's own key set carries principal, api_key_id and every key-naming payload field as null, as the example shows for a reader seeing another key's ratification. One call scans at most limit raw events from after_seq + 1; after_seq greater than head_seq answers 400 request.validation. Full-chain verification is served by the chain export.
          */
         get: operations["tailEvents"];
         put?: never;
@@ -467,7 +467,7 @@ export interface paths {
         put?: never;
         /**
          * Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under an expiring serve_id.
-         * @description Requires: dreamer(review). Serves only rows within the key's dreamer effective access on the row's workarea; 204 when nothing in scope waits. A held_by: service key is refused with access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on lineage collision (review.author_in_lineage).
+         * @description Requires: reviewer(review). Serves only rows within the key's reviewer effective access on the row's workspace; 204 when nothing in scope waits. A used_by: service key is refused with access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on lineage collision (review.author_in_lineage).
          */
         post: operations["reviewNext"];
         delete?: never;
@@ -487,7 +487,7 @@ export interface paths {
         put?: never;
         /**
          * Verdict against a valid serve; the journalled verdict records the served digests.
-         * @description Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row's workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a held_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workarea and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict applies to the one review item this key has claimed through review next, and with none or several it is refused with request.validation, details.field /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record (#130; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workarea, is looked up before the default resolves: a retry of a committed verdict replays its stored response with Idempotency-Replay: true and never applies to another item.
+         * @description Requires: reviewer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and reviewer effective access on the row's workspace, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role reviewer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a used_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workspace and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict applies to the one review item this key has claimed through review next, and with none or several it is refused with request.validation, details.field /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record (#130; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workspace, is looked up before the default resolves: a retry of a committed verdict replays its stored response with Idempotency-Replay: true and never applies to another item.
          */
         post: operations["postVerdict"];
         delete?: never;
@@ -505,7 +505,7 @@ export interface paths {
         };
         /**
          * The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
-         * @description Requires: a dreamer key held_by human; any other key, a dreamer key held by an agent or a service included, is refused with access.verb_ceiling, details.reason bulk_review_is_human_only, before any lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its dreamer effective access, not claimed by another key, whose lineage closure holds neither the key nor its principal, and no held successor whose rival the key authored, ordered held_since then artifact_id. workarea narrows to that node's subtree, author_key to one authoring key by id or name, claim_key_prefix to claim keys that start with the text, taken literally. Claims nothing and journals nothing (ADR-0055 d2).
+         * @description Requires: a reviewer key used_by person; any other key, a reviewer key used by an agent or a service included, is refused with access.verb_ceiling, details.reason bulk_review_is_person_only, before any lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its reviewer effective access, not claimed by another key, whose lineage closure holds neither the key nor its principal, and no held successor whose rival the key authored, ordered held_since then artifact_id. workspace narrows to that node's subtree, author_key to one authoring key by id or name, claim_key_prefix to claim keys that start with the text, taken literally. Claims nothing and journals nothing (ADR-0055 d2).
          */
         get: operations["reviewHeld"];
         put?: never;
@@ -524,8 +524,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The review queue's depth and oldest held row per workarea, tenant-wide; no content.
-         * @description Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending ADR-0026 d15). One item per workarea holding a held row: its id, path, held count and the oldest held row's time, by path. No memory id, text or author. Journals nothing. Since v0.6.4.
+         * The review queue's depth and oldest held row per workspace, tenant-wide; no content.
+         * @description Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending ADR-0026 d15). One item per workspace holding a held row: its id, path, held count and the oldest held row's time, by path. No memory id, text or author. Journals nothing. Since v0.6.4.
          */
         get: operations["reviewQueue"];
         put?: never;
@@ -547,7 +547,7 @@ export interface paths {
         put?: never;
         /**
          * One verdict per named held item, each judged, journalled and signed as a single verdict; outcomes per item.
-         * @description Requires: a dreamer key held_by human (access.verb_ceiling, details.reason bulk_review_is_human_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct ids the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal's code: review.author_in_lineage (R2), review.serve_invalid (no longer held), submission.tip_conflict, access.not_found, access.grant_refused, workarea.frozen; nothing already committed is undone (d5, d6). Each item records under the Idempotency-Key and its own id: a retry replays decided items with replayed true and judges the rest; another verdict or reason for a decided item is idempotency.digest_mismatch on that item (d12). reason is required to reject and journalled on each item (d8).
+         * @description Requires: a reviewer key used_by person (access.verb_ceiling, details.reason bulk_review_is_person_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct ids the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal's code: review.author_in_lineage (R2), review.serve_invalid (no longer held), submission.tip_conflict, access.not_found, access.grant_refused, workspace.frozen; nothing already committed is undone (d5, d6). Each item records under the Idempotency-Key and its own id: a retry replays decided items with replayed true and judges the rest; another verdict or reason for a decided item is idempotency.digest_mismatch on that item (d12). reason is required to reject and journalled on each item (d8).
          */
         post: operations["postBulkVerdict"];
         delete?: never;
@@ -565,13 +565,13 @@ export interface paths {
         };
         /**
          * A person's own keys to their web session key; the keys naming a user to the admin key role.
-         * @description Requires: a person's web session key (<user>-web, through its capacity credential), which lists every key naming its user, session keys among them; or the admin key role with user, which lists the keys naming that user, session keys aside (ADR-0045 d9, d13; ADR-0070 d5). Any other key answers access.verb_ceiling with details.reason session_key_only, so an agent's key never lists its person's keys; the admin key role without user answers request.validation naming user; a person's key naming another user answers access.not_found. In name order; next_cursor is opaque. Each key's grants carry the workarea's path; cut_off is a denial on universe. Journals nothing. Since v0.6.4.
+         * @description Requires: a person's web session key (<user>-web, through its capacity credential), which lists every key naming its user, session keys among them; or the admin key role with user, which lists the keys naming that user, session keys aside (ADR-0045 d9, d13; ADR-0070 d5). Any other key answers access.verb_ceiling with details.reason session_key_only, so an agent's key never lists its person's keys; the admin key role without user answers request.validation naming user; a person's key naming another user answers access.not_found. In name order; next_cursor is opaque. Each key's grants carry the workspace's path; cut_off is a denial on universe. Journals nothing. Since v0.6.4.
          */
         get: operations["listKeys"];
         put?: never;
         /**
          * Issue a key under the issuer ceiling; the value appears exactly once, here.
-         * @description A person's web session key (<user>-web, through its capacity credential) issues their own key: send name (<user>-<name>), role (reader or writer) and connect_code, and expiry to end the key on a date, under the rule for expiry below; the key names their user and holds writer or reader on their root alone, any other field, requests_per_minute included, is request.validation naming it, the date is changed or cleared afterwards only by the admin key role (POST /v2/keys/{key}/limits; ADR-0079 d1, d5; since v0.7.3), and any other capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access is read when the issuance runs, and a session key that carries a denial, on any workarea, issues nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order). tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). expiry is the instant from which the key authenticates nothing, later than the server's clock, and requests_per_minute the key's own rate, from 1 to 1000000; either outside that is request.validation naming it in details.field, and nothing is journalled. An admin key carries neither: role admin with expiry or requests_per_minute is request.validation naming the member in details.field, with details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator role, held_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again, without value and without connect_code.code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
+         * @description A person's web session key (<user>-web, through its capacity credential) issues their own key: send name (<user>-<name>), role (reader or writer) and connect_code, and expiry to end the key on a date, under the rule for expiry below; the key names their user and holds writer or reader on their root alone, any other field, requests_per_minute included, is request.validation naming it, the date is changed or cleared afterwards only by the admin key role (POST /v2/keys/{key}/limits; ADR-0079 d1, d5; since v0.7.3), and any other capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access is read when the issuance runs, and a session key that carries a denial, on any workspace, issues nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order). tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). expiry is the instant from which the key authenticates nothing, later than the server's clock, and requests_per_minute the key's own rate, from 1 to 1000000; either outside that is request.validation naming it in details.field, and nothing is journalled. An admin key carries neither: role admin with expiry or requests_per_minute is request.validation naming the member in details.field, with details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workspace, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workspace, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator role, used_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again, without value and without connect_code.code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
          */
         post: operations["issueKey"];
         delete?: never;
@@ -588,8 +588,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its denials or deny masks; a person's web session key alone is told whether it carries a denial.
-         * @description Requires: any live key; it reads only its own record. Each reference is {id, name} and the default workarea carries its derived path. person names the user a key names, with its sign-up usage and limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6, d10); with person=false it is absent and unread. The credential is resolved once, so a key value or a connection spends one request of its rate (#286). The key's denials and its grants' per-grant deny masks, which name subtrees it may not read, are omitted, except that the record of a person's <user>-web session key carries denied, a boolean: whether the key holds a denial in force on any workarea, which refuses it issuing a key, minting a connect code and cutting off a key for good. It names no workarea, count, author or time, and no other key's record has the member: not <user>-review, <user>-curate or <user>-admin, and no key with a value or a connection (ADR-0039 d15 as amended by ADR-0070 d5; since v0.7.3). The read journals nothing, since it reads no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
+         * The calling key's own record — role, name, tenant, default workspace, crew and grants. Never its denials or deny masks; a person's web session key alone is told whether it carries a denial.
+         * @description Requires: any live key; it reads only its own record. Each reference is {id, name} and the default workspace carries its derived path. person names the user a key names, with its sign-up usage and limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6, d10); with person=false it is absent and unread. The credential is resolved once, so a key value or a connection spends one request of its rate (#286). The key's denials and its grants' per-grant deny masks, which name subtrees it may not read, are omitted, except that the record of a person's <user>-web session key carries denied, a boolean: whether the key holds a denial in force on any workspace, which refuses it issuing a key, minting a connect code and cutting off a key for good. It names no workspace, count, author or time, and no other key's record has the member: not <user>-review, <user>-curate or <user>-admin, and no key with a value or a connection (ADR-0039 d15 as amended by ADR-0070 d5; since v0.7.3). The read journals nothing, since it reads no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
          */
         get: operations["whoami"];
         put?: never;
@@ -631,7 +631,7 @@ export interface paths {
         put?: never;
         /**
          * Create or extend the key's global deny object — deny-wins across all its grants.
-         * @description A person's session key cuts a key off on universe alone, workarea universe, the key by name: <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). The session key's access is read when the cut-off runs, and a session key that itself carries a denial, on any workarea, cuts nothing off: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). As a session key, a resubmission under the same Idempotency-Key and body answers the recorded denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin key role, and the Idempotency-Key is required but no outcome is recorded under it: only a session key claims it, so a resubmission by any other key denies again. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
+         * @description A person's session key cuts a key off on universe alone, workspace universe, the key by name: <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). The session key's access is read when the cut-off runs, and a session key that itself carries a denial, on any workspace, cuts nothing off: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). As a session key, a resubmission under the same Idempotency-Key and body answers the recorded denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin key role, and the Idempotency-Key is required but no outcome is recorded under it: only a session key claims it, so a resubmission by any other key denies again. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq. workspace takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workspace (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
          */
         post: operations["addDenial"];
         delete?: never;
@@ -671,7 +671,7 @@ export interface paths {
         put?: never;
         /**
          * Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
-         * @description A person's web session key mints a code for one of their own connector keys, by name, at the default lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). The session key's access is read when the code is minted, and a session key that carries a denial, on any workarea, mints none: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. The Idempotency-Key is claimed for the calling key before the code is minted: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and mints nothing, without code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0). Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
+         * @description A person's web session key mints a code for one of their own connector keys, by name, at the default lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). The session key's access is read when the code is minted, and a session key that carries a denial, on any workspace, mints none: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. The Idempotency-Key is claimed for the calling key before the code is minted: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and mints nothing, without code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0). Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workspace (ADR-0067 d3).
          */
         post: operations["mintConnectCode"];
         delete?: never;
@@ -873,7 +873,7 @@ export interface paths {
         put?: never;
         /**
          * Add an email to the allowlist, or change the user or admin flag of one already there.
-         * @description Requires: admin key role (ADR-0045 d2). The email is unique in the deployment and compared ASCII case-insensitively (409 name.taken, details.kind email); user is a name under the creation grammar of at most 56 characters, refused 409 name.taken when a shared workarea holds it or when a key holds one of the names <user>-web, <user>-review, <user>-curate, <user>-admin. Journalled as web.email_allowed or web.email_changed with an email digest, never the address. A change ends the entry's sessions. Since v0.5.0.
+         * @description Requires: admin key role (ADR-0045 d2). The email is unique in the deployment and compared ASCII case-insensitively (409 name.taken, details.kind email); user is a name under the creation grammar of at most 56 characters, refused 409 name.taken when a shared workspace holds it or when a key holds one of the names <user>-web, <user>-review, <user>-curate, <user>-admin. Journalled as web.email_allowed or web.email_changed with an email digest, never the address. A change ends the entry's sessions. Since v0.5.0.
          */
         post: operations["allowWebEmail"];
         delete?: never;
@@ -932,8 +932,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Give a person's session key a capacity on workareas, review or curation.
-         * @description Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains dreamer and reader on each workarea; curate: <user>-curate, a tenant writer key with writer on the universe node alone, is created at the first designation, and gains reader on each workarea. Each grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none and journal_seq is null. A user with no session key of that capacity answers access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act's last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+         * Give a person's session key a capacity on workspaces, review or curation.
+         * @description Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains reviewer and reader on each workspace; curate: <user>-curate, a tenant writer key with writer on the universe node alone, is created at the first designation, and gains reader on each workspace. Each grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none and journal_seq is null. A user with no session key of that capacity answers access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act's last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
          */
         post: operations["grantWebCapacities"];
         delete?: never;
@@ -973,7 +973,7 @@ export interface paths {
         put?: never;
         /**
          * Disable a person, ending their sessions and cutting off their agent keys.
-         * @description Requires: admin key role (ADR-0068 d8; ADR-0070 d5). For a person the tenant holds who is not an admin: web.user_disabled, which disables every entry of the user and ends their sessions, then one key.denied on universe for each live bearer and connector key of their root. A user no entry holds, or an admin's, answers access.not_found and journals nothing. A live admin key whose row names the person's root, which no verb makes and no denial cuts off, answers 409 workarea.admin_key_under_root naming it and journals nothing (since v0.7.1). A key gone between the listing and its denial is skipped and left out of keys_cut_off. The body is empty: no reason is journalled in this build, so a reason is refused rather than dropped. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act's last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+         * @description Requires: admin key role (ADR-0068 d8; ADR-0070 d5). For a person the tenant holds who is not an admin: web.user_disabled, which disables every entry of the user and ends their sessions, then one key.denied on universe for each live bearer and connector key of their root. A user no entry holds, or an admin's, answers access.not_found and journals nothing. A live admin key whose row names the person's root, which no verb makes and no denial cuts off, answers 409 workspace.admin_key_under_root naming it and journals nothing (since v0.7.1). A key gone between the listing and its denial is skipped and left out of keys_cut_off. The body is empty: no reason is journalled in this build, so a reason is refused rather than dropped. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act's last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
          */
         post: operations["disableWebUser"];
         delete?: never;
@@ -1159,7 +1159,7 @@ export interface paths {
         };
         /**
          * The tenant's recalls of the last 30 days, with what their readers did next, newest first.
-         * @description Requires: admin key role (ADR-0054 d2). No agent, writer, reader or dreamer key reads an event, on any transport. query_text is present only for a recall made while the tenant kept text. A row past the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with counts and the page's bounds. system.unavailable with reason telemetry_off where the server records no recall. Since v0.5.7.
+         * @description Requires: admin key role (ADR-0054 d2). No agent, writer, reader or reviewer key reads an event, on any transport. query_text is present only for a recall made while the tenant kept text. A row past the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with counts and the page's bounds. system.unavailable with reason telemetry_off where the server records no recall. Since v0.5.7.
          */
         get: operations["usageEvents"];
         put?: never;
@@ -1199,7 +1199,7 @@ export interface paths {
         };
         /**
          * The sign-in page without a session; a signed-in browser goes on to the Keys view.
-         * @description Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Every view of the user page is oml-web's at a path of its own (ADR-0070 d7 (b)); a signed-in request naming a view is access.not_found, the old ?view= URLs' 303s having been deleted in v0.7.1 (ADR-0070, "The old URLs deleted"). Served with the connect page's headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.
+         * @description Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_person_only (ADR-0045 d7). Every view of the user page is oml-web's at a path of its own (ADR-0070 d7 (b)); a signed-in request naming a view is access.not_found, the old ?view= URLs' 303s having been deleted in v0.7.1 (ADR-0070, "The old URLs deleted"). Served with the connect page's headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.
          */
         get: operations["userPage"];
         put?: never;
@@ -1288,8 +1288,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Search every memory of the tenant, in every state, workarea and user root, with its text and attribution.
-         * @description Requires: admin key role (ADR-0045 d21); the operator and every other role answer access.verb_ceiling. query is the recall full-text search without the visibility filter; state and workarea narrow it. A POST so that the query travels in a body, never a path or query string. Each answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no serve binding. Since v0.5.0.
+         * Search every memory of the tenant, in every state, workspace and user root, with its text and attribution.
+         * @description Requires: admin key role (ADR-0045 d21); the operator and every other role answer access.verb_ceiling. query is the recall full-text search without the visibility filter; state and workspace narrow it. A POST so that the query travels in a body, never a path or query string. Each answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no serve binding. Since v0.5.0.
          */
         post: operations["adminSearchMemories"];
         delete?: never;
@@ -1333,7 +1333,7 @@ export interface paths {
         put?: never;
         /**
          * Rescan one window as the read does, and record each held version's findings under the server's rule set.
-         * @description Requires: admin key role (ADR-0065 d13, d15; ADR-0074 d28); every other role answers access.verb_ceiling. Answers what the read answers. Each held version of the window takes the server's rule set as its scanned_under, and a finding the rescan made becomes its scan finding unless it has one; journalled once per window as scan.findings_recorded {scanned_under, versions: [{artifact_id, findings: [{class, rule, action, at}]}]}, an empty findings list when there are none, when the window holds any held version, else nothing. Inside an in-progress workarea another author's held version is served only when scanned under the server's rule set and without a finding. Promotes, rejects and deletes nothing. Takes no Idempotency-Key: a repeat reads the window again and journals what it read again, and the stored state it leaves is the same. Since v0.6.3.
+         * @description Requires: admin key role (ADR-0065 d13, d15; ADR-0074 d28); every other role answers access.verb_ceiling. Answers what the read answers. Each held version of the window takes the server's rule set as its scanned_under, and a finding the rescan made becomes its scan finding unless it has one; journalled once per window as scan.findings_recorded {scanned_under, versions: [{artifact_id, findings: [{class, rule, action, at}]}]}, an empty findings list when there are none, when the window holds any held version, else nothing. Inside an in-progress workspace another author's held version is served only when scanned under the server's rule set and without a finding. Promotes, rejects and deletes nothing. Takes no Idempotency-Key: a repeat reads the window again and journals what it read again, and the stored state it leaves is the same. Since v0.6.3.
          */
         post: operations["adminRescanRecordHeld"];
         delete?: never;
@@ -1351,7 +1351,7 @@ export interface paths {
         };
         /**
          * One account's meters against its limits this UTC month.
-         * @description Requires: admin key role (ADR-0071 d6); every other role answers access.verb_ceiling. account is the root workarea's id or the user's name, in the admin's tenant; anything else answers access.not_found. The same shape as GET /v1/account/usage. Journals nothing.
+         * @description Requires: admin key role (ADR-0071 d6); every other role answers access.verb_ceiling. account is the root workspace's id or the user's name, in the admin's tenant; anything else answers access.not_found. The same shape as GET /v1/account/usage. Journals nothing.
          */
         get: operations["adminAccountUsage"];
         put?: never;
@@ -1437,7 +1437,7 @@ export interface components {
             version: number;
             /** @enum {string} */
             state: "held" | "promoted" | "rejected" | "superseded" | "demoted";
-            workarea_path: string;
+            workspace_path: string;
             text: string;
             /**
              * @description The kind the version was written as; the admin page refuses to supersede or retire a guardrail by it (ADR-0037 d17; ADR-0070 d5). Since v0.7.0.
@@ -1456,8 +1456,8 @@ export interface components {
             format?: string;
             /** @description The title signed with the version, or null (ADR-0056 d10). */
             title?: string | null;
-            /** @description The authoring key's holder, agent, human or service (ADR-0045 d32; ADR-0070 d5). Since v0.7.0. */
-            held_by?: string | null;
+            /** @description The authoring key's holder, agent, person or service (ADR-0045 d32; ADR-0070 d5). Since v0.7.0. */
+            used_by?: string | null;
             /**
              * Format: date-time
              * @description When the version was promoted, or null. Since v0.7.0.
@@ -1497,7 +1497,7 @@ export interface components {
                 connections?: number;
                 requests_per_minute?: number;
             };
-            /** @description Each live admin key whose row names the person's user root, by name: a row no verb makes, which refuses the person's disable with workarea.admin_key_under_root and which oml doctor warns about (ADR-0068 d8, d11). Since v0.7.1. */
+            /** @description Each live admin key whose row names the person's user root, by name: a row no verb makes, which refuses the person's disable with workspace.admin_key_under_root and which oml doctor warns about (ADR-0068 d8, d11). Since v0.7.1. */
             admin_keys?: string[];
         };
         /** @description An allowlist entry (ADR-0045 d2): an email a person may sign in with, the ADR-0044 user it signs in as, and whether it opens the admin page. */
@@ -1509,15 +1509,15 @@ export interface components {
         };
         /** @description SHA-256 of plaintext unless a field says ciphertext. */
         Digest: string;
-        /** @description The id of a workarea, crew, key or tenant: RFC 9562 section 4 hex-and-dash UUID text, either case accepted, lowercase served, whose version digit (the first of the third group) is not 8. The server mints these ids as version 4; version 8 is reserved for the unresolved value of a name that names no row, so a hex-and-dash value of version 8 is neither an id nor a name and is refused (request.validation). A value in this form is always an id (docs/api/http-api.md, Names and ids; ADR-0026 d3, d4). */
+        /** @description The id of a workspace, crew, key or tenant: RFC 9562 section 4 hex-and-dash UUID text, either case accepted, lowercase served, whose version digit (the first of the third group) is not 8. The server mints these ids as version 4; version 8 is reserved for the unresolved value of a name that names no row, so a hex-and-dash value of version 8 is neither an id nor a name and is refused (request.validation). A value in this form is always an id (docs/api/http-api.md, Names and ids; ADR-0026 d3, d4). */
         Id: string;
         /** @description A new name, in a creation body: the creation grammar. A lowercase RFC 1035 label, 1-63 characters, that is not in the id form, not 32 hexadecimal digits and not the derived form, which only rows that predate names hold; a creation that sends that form is request.validation. Unique in its namespace, immutable, never released; compared byte for byte, never lowercased (docs/api/http-api.md, Names and ids; ADR-0026 d1, d2). References use NameRef. */
         Name: string;
         /** @description A name in a reference: the reference grammar. A lowercase RFC 1035 label, 1-63 characters, that is not in the id form and not 32 hexadecimal digits. The derived form (tenant-, wa-, crew- or key- followed by 32 hexadecimal digits) is a name here: it addresses the row ADR-0026 d11 named (docs/api/http-api.md, Names and ids; ADR-0026 d2, d3). */
         NameRef: string;
-        /** @description A workarea, by its node id, its name or its qualified name. Resolved server-side before any check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a bare name in its own user root's namespace, plus universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe, is neither, and is refused (request.validation). */
-        WorkareaRef: components["schemas"]["Id"] | components["schemas"]["NameRef"] | components["schemas"]["QualifiedName"];
-        /** @description <user>.<name>: the workarea named name in the namespace of the user root named user, unique in the tenant and never changed, since nothing crosses a user root's boundary; exactly two reference-grammar labels joined by one '.', the first not universe (docs/api/http-api.md, Names and ids; ADR-0044 d5). */
+        /** @description A workspace, by its node id, its name or its qualified name. Resolved server-side before any check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a bare name in its own user root's namespace, plus universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe, is neither, and is refused (request.validation). */
+        WorkspaceRef: components["schemas"]["Id"] | components["schemas"]["NameRef"] | components["schemas"]["QualifiedName"];
+        /** @description <user>.<name>: the workspace named name in the namespace of the user root named user, unique in the tenant and never changed, since nothing crosses a user root's boundary; exactly two reference-grammar labels joined by one '.', the first not universe (docs/api/http-api.md, Names and ids; ADR-0044 d5). */
         QualifiedName: string;
         /** @description A crew record, by its id or its name, resolved server-side like every reference (ADR-0026 d4). */
         CrewRef: components["schemas"]["Id"] | components["schemas"]["NameRef"];
@@ -1526,12 +1526,12 @@ export interface components {
         /** @description A tenant, by its id or its name, resolved in the deployment's namespace (ADR-0026 d4). */
         TenantRef: components["schemas"]["Id"] | components["schemas"]["NameRef"];
         /** @enum {string} */
-        Role: "reader" | "writer" | "dreamer" | "admin" | "operator";
+        Role: "reader" | "writer" | "reviewer" | "admin" | "operator";
         /**
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workarea.frozen" | "workarea.in_progress_refused" | "workarea.held_remaining" | "workarea.admin_key_under_root" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ErrorEnvelope: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -1548,14 +1548,14 @@ export interface components {
             /** @description Mirrors the X-Request-Id response header. */
             request_id: string;
         };
-        /** @description The target is workarea, else the key's default_workarea; neither present is refused with request.workarea_unresolved (ADR-0039 d4, d7). This body, and its nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and grant bodies only. The designed attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9). */
+        /** @description The target is workspace, else the key's default_workspace; neither present is refused with request.workspace_unresolved (ADR-0039 d4, d7). This body, and its nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and grant bodies only. The designed attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9). */
         SubmitRequest: {
             /**
              * @description Omitted, learn when derives_from is non-empty and remember otherwise (ADR-0039 d3); a sent verb is honoured. learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact.
              * @enum {string}
              */
             verb?: "remember" | "learn";
-            /** @description Groups versions of one claim; one live claim per (tenant, workarea): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with request.validation, details.field /claim_key (ADR-0039 d6). */
+            /** @description Groups versions of one claim; one live claim per (tenant, workspace): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with request.validation, details.field /claim_key (ADR-0039 d6). */
             claim_key?: string;
             /**
              * @description guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1).
@@ -1571,8 +1571,8 @@ export interface components {
             rule?: components["schemas"]["GuardrailRule"];
             /** @description Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through the designed attachments (openapi-designed.yaml). */
             body: string;
-            /** @description The workarea written in, by id or name, honoured only within the key's grants; omitted, the key's default_workarea (ADR-0039 d4, d7). */
-            workarea?: components["schemas"]["WorkareaRef"];
+            /** @description The workspace written in, by id or name, honoured only within the key's grants; omitted, the key's default_workspace (ADR-0039 d4, d7). */
+            workspace?: components["schemas"]["WorkspaceRef"];
             /** @description Artifact ids; the declared lineage (omission is undetectable — honesty rule). */
             derives_from?: string[];
             /**
@@ -1594,8 +1594,8 @@ export interface components {
             version: number;
             /** @constant */
             state: "held";
-            /** @description The workarea the submission was captured in — the resolved target, or a supersession target's workarea. */
-            workarea_id: string;
+            /** @description The workspace the submission was captured in — the resolved target, or a supersession target's workspace. */
+            workspace_id: string;
             /**
              * @description True when the submission is a retirement version.
              * @default false
@@ -1622,7 +1622,7 @@ export interface components {
             version: number;
             /** @enum {string} */
             kind: "memory" | "derived_fact" | "steering";
-            workarea_id: string;
+            workspace_id: string;
             /**
              * @description held only for the calling key's own rows.
              * @enum {string}
@@ -1655,14 +1655,14 @@ export interface components {
             /** @description Whether this version is the served tip of its claim for the calling key, audience-scoped: for a key in a simulation's audience an overlay tip that shadows the default tip, which then reads tip false; for every other key the default tip (docs/architecture/audit-and-lineage.md). A superseded version is state promoted, tip false. */
             tip: boolean;
             /** @description Null when the calling key holds no role on the node (naming a node, docs/architecture/roles-and-keys.md, Own) — possible only on an own row an admin moved there (ADR-0025 d3). */
-            workarea_id: string | null;
-            /** @description Derived at read time; grants bind to node ids. Null wherever workarea_id is. */
-            workarea_path: string | null;
+            workspace_id: string | null;
+            /** @description Derived at read time; grants bind to node ids. Null wherever workspace_id is. */
+            workspace_path: string | null;
             /** @enum {string} */
             kind: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
             /** @enum {string} */
             state: "held" | "promoted" | "demoted" | "rejected" | "erased";
-            /** @description True exactly when the served version is held: the caller's own held version, or, inside a workarea a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4). */
+            /** @description True exactly when the served version is held: the caller's own held version, or, inside a workspace a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4). */
             unreviewed: boolean;
             /**
              * @description On kind guardrail alone, except a retirement version (ADR-0037 d2).
@@ -1671,11 +1671,11 @@ export interface components {
             severity?: "never" | "must" | "should";
             /** @description On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8). */
             rule?: unknown;
-            /** @description On a held guardrail alone: every reader of it is told that every key reading its workarea will load the rule once it binds (ADR-0037 d10). */
+            /** @description On a held guardrail alone: every reader of it is told that every key reading its workspace will load the rule once it binds (ADR-0037 d10). */
             load_warning?: string;
             /** @description Every finding stored on the version, in the order recorded, on the review serve, the held listing and the named read alone; absent elsewhere, so an empty list means the scan found nothing (ADR-0074 d17, d23). */
             scan_findings?: components["schemas"]["ScanFinding"][];
-            /** @description The authoring principal; null on a version in universe served to a key outside its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its source (ADR-0044 d9). */
+            /** @description The authoring principal; null on a version in universe served to a key outside its authoring key set, which is served with derives_from empty and workspace_path universe, so no field names its source (ADR-0044 d9). */
             principal?: string | null;
             /** @description The authoring key's id; null wherever principal is (ADR-0044 d9). The web console names the kind of its person's own keys by it and narrows a search to one of them (ADR-0070 d5). Since v0.7.0. */
             author_key_id?: string | null;
@@ -1684,7 +1684,7 @@ export interface components {
             /** @enum {string} */
             provenance?: "agent" | "human" | "connector" | "simulation";
             simulation_id?: string | null;
-            /** @description Marked rows under the bounded development exception; never promote beyond their workarea. */
+            /** @description Marked rows under the bounded development exception; never promote beyond their workspace. */
             self_signed?: boolean;
             plaintext_digest?: components["schemas"]["Digest"];
             /** @description On get, recall and every listing, only the ancestors the caller can read — its own rows in any state, promoted rows within its reader effective access (ADR-0025 d3); the lineage read shows the full closure, elided where unreadable. */
@@ -1697,14 +1697,14 @@ export interface components {
              * @default false
              */
             retirement: boolean;
-            /** @description For a supersession, the version it replaces; null for a version 1. It obeys the same readability test as derives_from on every read, so it is also null when the caller cannot read the replaced version — after an admin moved that version into another workarea or back into held, say (ADR-0025 d3). */
+            /** @description For a supersession, the version it replaces; null for a version 1. It obeys the same readability test as derives_from on every read, so it is also null when the caller cannot read the replaced version — after an admin moved that version into another workspace or back into held, say (ADR-0025 d3). */
             replaces: {
                 artifact_id?: string;
                 version?: number;
             } | null;
             /**
              * Format: date-time
-             * @description For a held row, when held-item expiry dead-letters it under the workarea's review policy; null on every other row, and on every row while held-item expiry is unbuilt (ADR-0025 d13).
+             * @description For a held row, when held-item expiry dead-letters it under the workspace's review policy; null on every other row, and on every row while held-item expiry is unbuilt (ADR-0025 d13).
              */
             held_expires_at: string | null;
             /** Format: date-time */
@@ -1739,13 +1739,13 @@ export interface components {
             /** @description On a held successor alone: the instant approving it ends the version it replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when approving ends nothing (ADR-0059 d4). */
             replaces_valid_until?: string;
         };
-        /** @description The reviewer behind a version's approving verdict, by kind (ADR-0077 d2). It carries no key id, key name, principal or crew: who reviewed is in the journal's review events, which no reader of a memory is served (ADR-0025 d15; ADR-0037 d5). A crew's reviewer reads held_by agent; a person reads held_by human; a person approving their own agents' writes reads same_user true. */
+        /** @description The reviewer behind a version's approving verdict, by kind (ADR-0077 d2). It carries no key id, key name, principal or crew: who reviewed is in the journal's review events, which no reader of a memory is served (ADR-0025 d15; ADR-0037 d5). A crew's reviewer reads used_by agent; a person reads used_by person; a person approving their own agents' writes reads same_user true. */
         Approver: {
             /**
              * @description The reviewing key's attestation, who holds it, when it gave the verdict (docs/architecture/roles-and-keys.md), as a served guardrail's verdicts carry it (ADR-0037 d5).
              * @enum {string}
              */
-            held_by: "agent" | "human" | "service";
+            used_by: "agent" | "person" | "service";
             /** @description True when the reviewing key and the authoring key act for one person, as the promotion's event marks it (ADR-0055 d7); the reviewing key and principal still differ from the author's (ADR-0044 d8). Null on a version ratified before the mark. */
             same_user: boolean | null;
         };
@@ -1759,14 +1759,14 @@ export interface components {
             items: components["schemas"]["Memory"][];
             next_cursor: string | null;
         };
-        /** @description The scope is workarea's subtree, else the key's default_workarea's (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039 d9); v0.3.0's include_bodies and include_own_held are request.validation naming include_text and include_unreviewed in details.renamed_to (ADR-0039 d7). */
+        /** @description The scope is workspace's subtree, else the key's default_workspace's (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039 d9); v0.3.0's include_bodies and include_own_held are request.validation naming include_text and include_unreviewed in details.renamed_to (ADR-0039 d7). */
         RecallRequest: {
             query: string;
-            /** @description The subtree recalled, by id or name; omitted, the key's default_workarea (ADR-0039 d4). */
-            workarea?: components["schemas"]["WorkareaRef"];
+            /** @description The subtree recalled, by id or name; omitted, the key's default_workspace (ADR-0039 d4). */
+            workspace?: components["schemas"]["WorkspaceRef"];
             /** @default 8 */
             k?: number;
-            /** @description Filters hits only; an empty array is refused (request.validation), so only an absent kinds means no filter. Deliberately excludes steering (never ranked, always first) and the vocabulary kinds (excluded from the shared recall indexes by default — ADR-0021 d9); where a vocabulary workarea's journalled policy opts them in, they are hits only of a recall that omits kinds. */
+            /** @description Filters hits only; an empty array is refused (request.validation), so only an absent kinds means no filter. Deliberately excludes steering (never ranked, always first) and the vocabulary kinds (excluded from the shared recall indexes by default — ADR-0021 d9); where a vocabulary workspace's journalled policy opts them in, they are hits only of a recall that omits kinds. */
             kinds?: ("memory" | "derived_fact")[];
             /**
              * @description Whether each served item carries its text (ADR-0039 d7).
@@ -1776,7 +1776,7 @@ export interface components {
             anchor_repo?: components["schemas"]["AnchorRepo"];
             anchor_path_prefix?: components["schemas"]["AnchorPathPrefix"];
             origin_kinds?: components["schemas"]["OriginKinds"];
-            /** @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held and unreviewed true; they count against k and max_tokens. Inside a workarea a person put in progress, every author's held memories on the served nodes join too, and absent means true there; absent means false everywhere else (ADR-0030 d3, d4). Rules: docs/architecture/retrieval.md. */
+            /** @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held and unreviewed true; they count against k and max_tokens. Inside a workspace a person put in progress, every author's held memories on the served nodes join too, and absent means true there; absent means false everywhere else (ADR-0030 d3, d4). Rules: docs/architecture/retrieval.md. */
             include_unreviewed?: boolean;
             /**
              * Format: int64
@@ -1809,7 +1809,7 @@ export interface components {
              * @description Recall memory as it was at this past instant, under today's grants: each claim's tip then, the caller's held rows recorded by then, and the steering in force then; scores are today's. A pipeline that reads postings is answered by bm25's scan over the scope at the instant, keyword-all by keyword-any with every word, and search.pipeline names the one asked. Only sources scope combines with it. An RFC 3339 date-time; a date or an instant after the server's clock is request.validation naming /as_of. Digested with the request when sent (ADR-0059 d14, d15, d17, d18).
              */
             as_of?: string;
-            /** @description Where to search (ADR-0072 d5). scope, the default, is the workarea's subtree as always. wide adds the committed and validated workareas the key already reads outside it that accept federated reads: all of them up to the tenant's max_sources, above it those holding the largest share of the query's matching rows. A list of 1 to max_sources distinct workarea names or ids searches exactly those, answered whole or refused. Every hit of wide or a list is scored with one set of statistics fixed before any selection, so no hit's score depends on which sources were selected (d7). Absent, the tenant's federation.default_sources. Refusals, in this order: an empty list, a name twice, more than max_sources names, or a non-string element is request.validation at /sources; wide or a list with federation off is request.validation at /sources; wide or a list on bm25-sparse is request.validation at /search; then each name in order: one the key cannot read and one that does not exist are the same access.not_found with details.field /sources/<i>, and a readable name that is not committed or validated, or lies outside the scope on a workarea declining federated reads, is request.validation at /sources/<i> with details.reason source_untrusted or source_declines_federation. Since v0.7.0. */
+            /** @description Where to search (ADR-0072 d5). scope, the default, is the workspace's subtree as always. wide adds the protected and frozen workspaces the key already reads outside it that accept federated reads: all of them up to the tenant's max_sources, above it those holding the largest share of the query's matching rows. A list of 1 to max_sources distinct workspace names or ids searches exactly those, answered whole or refused. Every hit of wide or a list is scored with one set of statistics fixed before any selection, so no hit's score depends on which sources were selected (d7). Absent, the tenant's federation.default_sources. Refusals, in this order: an empty list, a name twice, more than max_sources names, or a non-string element is request.validation at /sources; wide or a list with federation off is request.validation at /sources; wide or a list on bm25-sparse is request.validation at /search; then each name in order: one the key cannot read and one that does not exist are the same access.not_found with details.field /sources/<i>, and a readable name that is not protected or frozen, or lies outside the scope on a workspace declining federated reads, is request.validation at /sources/<i> with details.reason source_untrusted or source_declines_federation. Since v0.7.0. */
             sources?: ("scope" | "wide") | string[];
         };
         /** @description Which hits of this key's earlier recall answered its question and which did not (ADR-0054 d6). Checked before the read runs: at most 20 ids, each named once, a recall_id this key received in the last 24 hours, and only ids that recall served it; anything else is request.validation naming the field (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC day answer limit.rate. A valid member changes nothing the read answers. */
@@ -1834,7 +1834,7 @@ export interface components {
                 score: number;
                 matched: components["schemas"]["RecallMatched"];
                 /**
-                 * @description Under sources wide or a list only: scope when the hit's workarea is the recall's scope or under it, federated when it is another workarea the key reads; memory.workarea_path names it (ADR-0072 d8).
+                 * @description Under sources wide or a list only: scope when the hit's workspace is the recall's scope or under it, federated when it is another workspace the key reads; memory.workspace_path names it (ADR-0072 d8).
                  * @enum {string}
                  */
                 via?: "scope" | "federated";
@@ -1910,27 +1910,27 @@ export interface components {
             /** @description How many of the first k candidates the floor withheld; hits empty with below_floor above 0 means nothing scored above the floor (ADR-0053 d6). */
             below_floor: number;
             sources?: components["schemas"]["RecallSources"];
-            /** @description On a sources scope answer, when a workarea the key reads outside the scope holds the query's words at least twice as often per row as the scope, on at least two of its rows: a retry with sources wide would search it. Read off a signal the server builds in the background, at most 300 seconds old and under the key's grants as they are now; a scope answer without such a signal carries no widen. It names no workarea (ADR-0072 d8). */
+            /** @description On a sources scope answer, when a workspace the key reads outside the scope holds the query's words at least twice as often per row as the scope, on at least two of its rows: a retry with sources wide would search it. Read off a signal the server builds in the background, at most 300 seconds old and under the key's grants as they are now; a scope answer without such a signal carries no widen. It names no workspace (ADR-0072 d8). */
             widen?: {
                 /** @enum {string} */
                 sources: "wide";
-                /** @description The workareas outside the scope that hold a query word. */
+                /** @description The workspaces outside the scope that hold a query word. */
                 candidates: number;
                 /** @description A lower bound on their rows holding a query word: the largest count of one word, summed over them. */
                 matches_at_least: number;
             };
         };
-        /** @description Under sources wide or a list: what was searched and why (ADR-0072 d8). Every name and number is of a workarea the key reads (d6). */
+        /** @description Under sources wide or a list: what was searched and why (ADR-0072 d8). Every name and number is of a workspace the key reads (d6). */
         RecallSources: {
             /** @enum {string} */
             mode: "wide" | "list";
-            /** @description Under wide, the trusted workareas the key reads outside the scope that accept federated reads; for a list, the names listed. */
+            /** @description Under wide, the trusted workspaces the key reads outside the scope that accept federated reads; for a list, the names listed. */
             considered: number;
             /** @description The scope's nodes first, then the federated sources in selection order; for a list, the listed nodes in the order sent. */
             searched: {
                 /** Format: uuid */
-                workarea_id: string;
-                workarea_path: string;
+                workspace_id: string;
+                workspace_path: string;
                 /** @enum {string} */
                 via: "scope" | "federated";
                 /** @description The share of the matching rows it holds, weighted by each word's rarity over every source searched or considered: the order selection reads above max_sources (d4.4). */
@@ -1940,7 +1940,7 @@ export interface components {
                     words: string[];
                 };
             }[];
-            /** @description The workareas holding a query word that wide did not search because max_sources was reached; their statistics still scored every hit. */
+            /** @description The workspaces holding a query word that wide did not search because max_sources was reached; their statistics still scored every hit. */
             cut: {
                 count: number;
                 matches_at_least: number;
@@ -1955,7 +1955,7 @@ export interface components {
              * @enum {string}
              */
             default_sources: "scope" | "wide";
-            /** @description The most workareas a wide recall searches beside its scope, and the most a list names; 8 by default. */
+            /** @description The most workspaces a wide recall searches beside its scope, and the most a list names; 8 by default. */
             max_sources: number;
             wide_keys: {
                 /** Format: uuid */
@@ -2026,9 +2026,9 @@ export interface components {
             principal: string;
             /**
              * Format: uuid
-             * @description The workarea the recall read.
+             * @description The workspace the recall read.
              */
-            workarea_id: string;
+            workspace_id: string;
             pipeline: string;
             /** @enum {string} */
             access: "postings" | "scan" | "none";
@@ -2077,8 +2077,8 @@ export interface components {
             unfilled: number;
             /** @description Served memories with no served posting, which bm25-postings cannot find. */
             served_behind: number;
-            /** @description Per-workarea counts that disagree with the served memories. */
-            workarea_drift: number;
+            /** @description Per-workspace counts that disagree with the served memories. */
+            workspace_drift: number;
             /** @description Sampled word counts that disagree with the served postings, or are missing. */
             term_drift: number;
             /** @description How many word counts were sampled. */
@@ -2120,12 +2120,12 @@ export interface components {
         SupersedeRequest: {
             /** @description Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired. */
             body: string;
-            /** @description The claim's latest version the caller can read, as it last read it: its promoted versions where it reads the workarea and its own keys' versions; never another author's held version. Any other is 409 submission.version_conflict, details.current_version (ADR-0057 d19). */
+            /** @description The claim's latest version the caller can read, as it last read it: its promoted versions where it reads the workspace and its own keys' versions; never another author's held version. Any other is 409 submission.version_conflict, details.current_version (ADR-0057 d19). */
             expected_version: number;
             anchor?: components["schemas"]["Anchor"];
             origin?: components["schemas"]["Origin"];
-            /** @description When sent, the target's workarea, by id or name; any other is request.validation, details.field /workarea (ADR-0039 d7). */
-            workarea?: components["schemas"]["WorkareaRef"];
+            /** @description When sent, the target's workspace, by id or name; any other is request.validation, details.field /workspace (ADR-0039 d7). */
+            workspace?: components["schemas"]["WorkspaceRef"];
             /**
              * @description true proposes retiring the claim, and body states why. Refused with request.validation when the target's kind is term (terms deprecate), or when a kind is sent that differs from the target's.
              * @default false
@@ -2253,7 +2253,7 @@ export interface components {
             source_checked: components["schemas"]["SourceChecked"];
             journal_seq: number;
         };
-        /** @description A named crew record — recorded, not operated; OML never contacts the external manager (docs/architecture/workareas.md, Crews; ADR-0026 d8). */
+        /** @description A named crew record — recorded, not operated; OML never contacts the external manager (docs/architecture/workspaces.md, Crews; ADR-0026 d8). */
         Crew: {
             crew_id: string;
             /** @description Unique in the tenant and never changed. */
@@ -2277,17 +2277,17 @@ export interface components {
             items: components["schemas"]["Crew"][];
             next_cursor: string | null;
         };
-        WorkareaCrewUpdate: {
+        WorkspaceCrewUpdate: {
             crew: components["schemas"]["CrewRef"];
         };
-        WorkareaModeSet: {
+        WorkspaceModeSet: {
             /**
              * @description in_progress puts the node in progress; standard on an in-progress root is its commit (ADR-0030 d1, d6).
              * @enum {string}
              */
             mode: "in_progress" | "standard";
         };
-        Workarea: {
+        Workspace: {
             id: string;
             /** @description Unique in the tenant and never changed; universe for the root (ADR-0026 d1, d6). */
             name: string;
@@ -2296,8 +2296,8 @@ export interface components {
             /** @description Derived ltree path, the names from universe joined with "."; never the grant target, and never accepted as a reference. */
             path: string;
             /** @enum {string} */
-            status: "development" | "committed" | "validated";
-            /** @description The crew record the workarea names, or null. */
+            status: "development" | "protected" | "frozen";
+            /** @description The crew record the workspace names, or null. */
             crew?: components["schemas"]["Crew"] | null;
             /** @description Whether the node is a user root, universe.<user>, which only the issuance of the first key naming its user creates (ADR-0044 d1, d11). */
             user_root?: boolean;
@@ -2310,19 +2310,19 @@ export interface components {
             created_at?: string;
         };
         /** @description One node with the calling key's view of it; every value below is relative to that key, and children outside read access are absent (ADR-0025 d14). */
-        WorkareaView: components["schemas"]["Workarea"] & {
-            /** @description The in-progress workarea this node lies inside, itself for a root, by id and name; null outside every in-progress subtree (ADR-0030 d13). */
+        WorkspaceView: components["schemas"]["Workspace"] & {
+            /** @description The in-progress workspace this node lies inside, itself for a root, by id and name; null outside every in-progress subtree (ADR-0030 d13). */
             in_progress_root?: components["schemas"]["WhoamiRef"] | null;
-            /** @description The promoted served tips on this node whose latest source check found the source changed or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's default workarea. */
+            /** @description The promoted served tips on this node whose latest source check found the source changed or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's default workspace. */
             stale_versions: number;
             /** @description The readable immediate children, ordered by path_leaf ascending in byte order, then id; a child's path_leaf is its name. */
             children: {
                 id: string;
                 path_leaf: string;
                 /** @enum {string} */
-                status: "development" | "committed" | "validated";
+                status: "development" | "protected" | "frozen";
             }[];
-            /** @description The workarea edges touching the node whose other endpoint the key can read, in either direction, ordered by edge_id ascending; edge_id is the id the events tail reports. */
+            /** @description The workspace edges touching the node whose other endpoint the key can read, in either direction, ordered by edge_id ascending; edge_id is the id the events tail reports. */
             edges: {
                 edge_id: string;
                 from: string;
@@ -2332,9 +2332,9 @@ export interface components {
                 /** @enum {string} */
                 state: "pending" | "ratified";
             }[];
-            /** @description The effective-verbs table of docs/architecture/roles-and-keys.md, unioned over the grant roles effective on the node and listed in table order (the reader, writer and dreamer rows, each left to right) without duplicates; the access conferred, not what this server build serves. */
+            /** @description The effective-verbs table of docs/architecture/roles-and-keys.md, unioned over the grant roles effective on the node and listed in table order (the reader, writer and reviewer rows, each left to right) without duplicates; the access conferred, not what this server build serves. */
             my_effective_verbs: ("recall" | "read" | "graph_read" | "events_tail" | "remember" | "learn" | "attach" | "supersede" | "propose" | "review")[];
-            /** @description The calling key's permission epoch as declared in docs/architecture/workareas.md (ADR-0025 d14). */
+            /** @description The calling key's permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14). */
             permission_epoch: number;
             policy: components["schemas"]["ReviewPolicy"];
             /** @description The node's federation field (ADR-0072 d5). */
@@ -2348,23 +2348,23 @@ export interface components {
         };
         TransitionProposal: {
             /**
-             * @description Forward only; backward transitions do not exist, and a user root climbs to committed at most (ADR-0046 d1).
+             * @description Forward only; backward transitions do not exist, and a user root climbs to protected at most (ADR-0046 d1).
              * @enum {string}
              */
-            to: "committed" | "validated";
+            to: "protected" | "frozen";
         };
         Transition: {
             transition_id: string;
-            workarea_id: string;
+            workspace_id: string;
             /** @enum {string} */
-            from: "development" | "committed";
+            from: "development" | "protected";
             /** @enum {string} */
-            to: "committed" | "validated";
+            to: "protected" | "frozen";
             /** @enum {string} */
             state: "pending" | "ratified";
             /** @description The proposing key, served only to that key; null to every other reader, an admin key included (ADR-0025 d15). */
             proposed_by_key_id: string | null;
-            /** @description Null on this build's answers; the journal's workarea.status_transition names the ratifier. */
+            /** @description Null on this build's answers; the journal's workspace.status_transition names the ratifier. */
             ratified_by_key_id: string | null;
         };
         /** @description The review policy in force, the one a transition's policy_snapshot records (ADR-0009 d3). */
@@ -2372,7 +2372,7 @@ export interface components {
             k?: number;
             required_roles?: string[];
         };
-        /** @description The workarea's ratified brief as this key reads it, in ratification order, cut by brief.max_tokens; empty for an admin key (ADR-0046 d8, d9). */
+        /** @description The workspace's ratified brief as this key reads it, in ratification order, cut by brief.max_tokens; empty for an admin key (ADR-0046 d8, d9). */
         Brief: {
             items: components["schemas"]["Memory"][];
             budget: components["schemas"]["RecallBudget"];
@@ -2395,7 +2395,7 @@ export interface components {
              */
             kind: "brief";
             from_artifact_id: string;
-            to_workarea_id: components["schemas"]["WorkareaRef"];
+            to_workspace_id: components["schemas"]["WorkspaceRef"];
         };
         /** @description One proposal body for the served edge kinds, chosen by kind (ADR-0039 d9; ADR-0046 d7). */
         EdgeProposal: components["schemas"]["ClaimEdgeProposal"] | components["schemas"]["BriefEdgeProposal"];
@@ -2422,7 +2422,7 @@ export interface components {
             kind: "brief";
             edge_id: string;
             from_artifact_id: string;
-            to_workarea_id: string;
+            to_workspace_id: string;
             /** @constant */
             label: "brief";
             /** @enum {string} */
@@ -2437,14 +2437,14 @@ export interface components {
             items: components["schemas"]["Edge"][];
             next_cursor: string | null;
         };
-        WorkareaCreate: {
-            /** @description The parent. Omitted, a user key's own root; every other key sends it (request.workarea_unresolved otherwise). A writer user key creates under a parent inside its root where its effective access confers writer (ADR-0044 d6). */
-            parent?: components["schemas"]["WorkareaRef"];
+        WorkspaceCreate: {
+            /** @description The parent. Omitted, a user key's own root; every other key sends it (request.workspace_unresolved otherwise). A writer user key creates under a parent inside its root where its effective access confers writer (ADR-0044 d6). */
+            parent?: components["schemas"]["WorkspaceRef"];
             name: components["schemas"]["Name"];
             crew?: components["schemas"]["CrewRef"];
         };
-        WorkareaPage: {
-            items: components["schemas"]["Workarea"][];
+        WorkspacePage: {
+            items: components["schemas"]["Workspace"][];
             next_cursor: string | null;
         };
         /** @description The event-catalog envelope; payloads are digest-only, never body plaintext (D1). */
@@ -2557,15 +2557,15 @@ export interface components {
         };
         GrantRequest: {
             /** @description The node, by id or name, never a path; stored as the id. */
-            workarea: components["schemas"]["WorkareaRef"];
+            workspace: components["schemas"]["WorkspaceRef"];
             /**
              * @description A grant role, admissible under the key's role (the admissibility table in docs/architecture/roles-and-keys.md); never admin or operator.
              * @enum {string}
              */
-            role: "reader" | "writer" | "dreamer";
+            role: "reader" | "writer" | "reviewer";
             /** @description Per-grant masks; each masks a subtree within this grant only and must lie inside it (request.validation otherwise). A node grant takes none (request.validation, details.field /grants/<i>/deny). */
             deny?: {
-                workarea: components["schemas"]["WorkareaRef"];
+                workspace: components["schemas"]["WorkspaceRef"];
             }[];
             /**
              * @description subtree covers the node and every descendant; node covers the node alone (ADR-0044 d4).
@@ -2578,9 +2578,9 @@ export interface components {
         Grant: {
             grant_id: string;
             /** @description Node id, never a path. */
-            workarea_node_id: string;
+            workspace_node_id: string;
             /** @enum {string} */
-            role: "reader" | "writer" | "dreamer";
+            role: "reader" | "writer" | "reviewer";
             deny?: {
                 subtree_node_id?: string;
             }[];
@@ -2593,12 +2593,12 @@ export interface components {
             epoch: number;
         };
         DenialRequest: {
-            workarea: components["schemas"]["WorkareaRef"];
+            workspace: components["schemas"]["WorkspaceRef"];
             reason?: string;
         };
         Denial: {
             denial_id: string;
-            workarea_node_id: string;
+            workspace_node_id: string;
             epoch: number;
             lifted?: boolean;
         };
@@ -2608,15 +2608,15 @@ export interface components {
             name: components["schemas"]["Name"];
             /** @description Taken exactly as sent, except that a user key also gets a reader grant on the universe node alone (ADR-0025 d2; ADR-0044 d3). The CLI's reader grant beside a writer grant is sent here like any other (ADR-0028 d2). */
             grants?: components["schemas"]["GrantRequest"][];
-            /** @description The person the key acts for, by the user's name: a user key, whose every grant must lie in its user root universe.<user> (403 access.issuer_ceiling, details user) and whose workarea references resolve in that root's namespace. The first key naming a user creates the root; a name a shared workarea holds is 409 name.taken. Refused on admin and operator keys, on held_by service and for universe (request.validation, details.field /user) (ADR-0044 d2, d3). */
+            /** @description The person the key acts for, by the user's name: a user key, whose every grant must lie in its user root universe.<user> (403 access.issuer_ceiling, details user) and whose workspace references resolve in that root's namespace. The first key naming a user creates the root; a name a shared workspace holds is 409 name.taken. Refused on admin and operator keys, on used_by service and for universe (request.validation, details.field /user) (ADR-0044 d2, d3). */
             user?: components["schemas"]["Name"];
             /** @description The provider-ring target (ADR-0022 d4), by id or name; its validation and its default when omitted are declared in the issuance order of docs/architecture/roles-and-keys.md. */
-            default_workarea?: components["schemas"]["WorkareaRef"];
+            default_workspace?: components["schemas"]["WorkspaceRef"];
             /**
              * @description The issuing admin's journalled attestation (ADR-0021); never verified as fact.
              * @enum {string}
              */
-            held_by?: "agent" | "human" | "service";
+            used_by?: "agent" | "person" | "service";
             /** @description The key's crew record, by id or name, journalled as crew_id and fixed for the key's life; one that names no crew record of the tenant answers access.not_found at step 4 of the issuance order (ADR-0026 d8). */
             crew?: components["schemas"]["CrewRef"];
             /** @description A free-text note; unique nowhere. */
@@ -2625,12 +2625,12 @@ export interface components {
             principal?: string;
             guardrail_scope?: components["schemas"]["GuardrailScope"];
             /**
-             * @description curator: a dreamer key held by an agent that may reject, propose retirements and summaries, and flag contradictions inside an in-progress workarea only, and never approves; any other role or held_by is request.validation, details.field /profile (ADR-0030 d8, d9).
+             * @description curator: a reviewer key used by an agent that may reject, propose retirements and summaries, and flag contradictions inside an in-progress workspace only, and never approves; any other role or used_by is request.validation, details.field /profile (ADR-0030 d8, d9).
              * @enum {string}
              */
             profile?: "curator";
             /**
-             * @description Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role), held_by service (held_by_service), or a deployment without oauth.issuer (not_configured).
+             * @description Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role), used_by service (used_by_service), or a deployment without oauth.issuer (not_configured).
              * @default false
              */
             connect_code?: boolean;
@@ -2672,13 +2672,13 @@ export interface components {
             crew_id?: string | null;
             /** @description The key's user root, by id and name; null for a tenant key (ADR-0044 d11). */
             user?: components["schemas"]["WhoamiRef"] | null;
-            /** @description The key's default workarea; for an issued key, as key.issued journals it — the one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance order; ADR-0025 d2). The provider-ring target when a request names no workarea (ADR-0039 d4). */
-            default_workarea_id: string | null;
+            /** @description The key's default workspace; for an issued key, as key.issued journals it — the one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance order; ADR-0025 d2). The provider-ring target when a request names no workspace (ADR-0039 d4). */
+            default_workspace_id: string | null;
             /**
              * @description The issuing admin's attestation; for an issued key, as key.issued journals it, null when none was sent (ADR-0025 d2).
              * @enum {string|null}
              */
-            held_by: "agent" | "human" | "service" | null;
+            used_by: "agent" | "person" | "service" | null;
             label?: string;
             /**
              * Format: date-time
@@ -2740,10 +2740,10 @@ export interface components {
             effect: "deny" | "ask";
         };
         /**
-         * @description Which applicable guardrails the key loads: workarea, the scope node's alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted, journalled in key.issued; no request changes it, and any other value is request.validation, details.field /guardrail_scope (ADR-0037 d4; since v0.5.1).
+         * @description Which applicable guardrails the key loads: workspace, the scope node's alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted, journalled in key.issued; no request changes it, and any other value is request.validation, details.field /guardrail_scope (ADR-0037 d4; since v0.5.1).
          * @enum {string}
          */
-        GuardrailScope: "workarea" | "ancestors";
+        GuardrailScope: "workspace" | "ancestors";
         /** @description The guardrails in force at the scope node under the key's reader access and guardrail scope (ADR-0037 d3, d4, d5, d7). */
         GuardrailSet: {
             scope_node: string;
@@ -2766,8 +2766,8 @@ export interface components {
             artifact_id: string;
             claim_key: string;
             version: number;
-            workarea_id: string;
-            workarea_path: string | null;
+            workspace_id: string;
+            workspace_path: string | null;
             /** @description The node's depth from the root, the root at 0. */
             depth: number;
             severity: components["schemas"]["Severity"];
@@ -2780,7 +2780,7 @@ export interface components {
             /** @description Each approving verdict's reviewer attestation and time, never the reviewer's key (ADR-0025 d15). */
             verdicts: {
                 /** @enum {string} */
-                held_by: "agent" | "human" | "service";
+                used_by: "agent" | "person" | "service";
                 /** Format: date-time */
                 at: string;
             }[];
@@ -2792,8 +2792,8 @@ export interface components {
             id: string;
             name: string;
         };
-        /** @description The calling key's default workarea, by its id and its name, with the path derived from its ancestry, root first (ADR-0039 d15). */
-        WhoamiWorkarea: {
+        /** @description The calling key's default workspace, by its id and its name, with the path derived from its ancestry, root first (ADR-0039 d15). */
+        WhoamiWorkspace: {
             id: string;
             name: string;
             /** @description The names from the root to the node, joined by '.'; derived, never stored. */
@@ -2803,9 +2803,9 @@ export interface components {
         WhoamiGrant: {
             grant_id: string;
             /** @description Node id, never a path. */
-            workarea_node_id: string;
+            workspace_node_id: string;
             /** @enum {string} */
-            role: "reader" | "writer" | "dreamer";
+            role: "reader" | "writer" | "reviewer";
             /**
              * @description The node's subtree, or the node alone (ADR-0044 d4).
              * @enum {string}
@@ -2825,11 +2825,11 @@ export interface components {
              * @description As the key's row stores it: the issuing admin's attestation, agent when none was sent.
              * @enum {string}
              */
-            held_by: "agent" | "human" | "service";
+            used_by: "agent" | "person" | "service";
             /** @description The key's tenant; null for an operator key, which no tenant holds. */
             tenant: components["schemas"]["WhoamiRef"] | null;
-            /** @description The key's journalled default workarea; null when it has none. */
-            default_workarea: components["schemas"]["WhoamiWorkarea"] | null;
+            /** @description The key's journalled default workspace; null when it has none. */
+            default_workspace: components["schemas"]["WhoamiWorkspace"] | null;
             /** @description The key's crew record, fixed for its life; null when none was named. */
             crew: components["schemas"]["WhoamiRef"] | null;
             /** @description The key's user root, from which a client learns its root; null for a tenant key (ADR-0044 d11). */
@@ -2849,7 +2849,7 @@ export interface components {
             expiry?: string | null;
             /** @description This key's own requests per UTC minute; null for none of its own (ADR-0079 d4; since v0.7.3). */
             requests_per_minute?: number | null;
-            /** @description On the record of a person's <user>-web session key alone, absent on every other key's, the other session keys' included: whether the key carries a denial in force on any workarea, which refuses it the three key acts (issue a key, mint a connect code, cut off a key) for good, as access.verb_ceiling with details.reason session_key_denied. It names no workarea, count, author or time. The web console draws no form for those acts when it is true (ADR-0070 d2, d5; ADR-0039 d15; since v0.7.3). */
+            /** @description On the record of a person's <user>-web session key alone, absent on every other key's, the other session keys' included: whether the key carries a denial in force on any workspace, which refuses it the three key acts (issue a key, mint a connect code, cut off a key) for good, as access.verb_ceiling with details.reason session_key_denied. It names no workspace, count, author or time. The web console draws no form for those acts when it is true (ADR-0070 d2, d5; ADR-0039 d15; since v0.7.3). */
             denied?: boolean;
             /** @description The person the key's user root names; null for a tenant key (ADR-0070 d5). Absent with person=false (#286). */
             person?: components["schemas"]["WhoamiPerson"] | null;
@@ -2897,7 +2897,7 @@ export interface components {
             name: string | null;
             role: components["schemas"]["Role"];
             /** @enum {string} */
-            held_by: "agent" | "human" | "service";
+            used_by: "agent" | "person" | "service";
             /** @enum {string} */
             credential: "bearer" | "connection" | "session";
             /** Format: uuid */
@@ -2917,7 +2917,7 @@ export interface components {
             grants: {
                 role: components["schemas"]["Role"];
                 /** Format: uuid */
-                workarea_id: string;
+                workspace_id: string;
                 path: string;
             }[];
         };
@@ -2930,8 +2930,8 @@ export interface components {
                 item: components["schemas"]["Memory"] | null;
             }[];
         };
-        /** @description GET /v2/workareas/{workarea}/tree with counts=true (ADR-0045 d30; ADR-0070 d5). */
-        WorkareaCounts: {
+        /** @description GET /v2/workspaces/{workspace}/tree with counts=true (ADR-0045 d30; ADR-0070 d5). */
+        WorkspaceCounts: {
             items: {
                 /** Format: uuid */
                 id: string;
@@ -2957,12 +2957,12 @@ export interface components {
             next_cursor: null;
             /** @description The node or the row count stopped at 2000. */
             truncated: boolean;
-            /** @description With offers=true, the scope's offers, as GET /v2/workareas/{workarea}/offers serves them to the same caller; absent otherwise (#286). Since v0.7.1. */
-            offers?: components["schemas"]["WorkareaOffers"];
+            /** @description With offers=true, the scope's offers, as GET /v2/workspaces/{workspace}/offers serves them to the same caller; absent otherwise (#286). Since v0.7.1. */
+            offers?: components["schemas"]["WorkspaceOffers"];
         };
-        WorkareaOffers: {
+        WorkspaceOffers: {
             /** Format: uuid */
-            workarea_id: string;
+            workspace_id: string;
             status: string;
             /** @enum {string} */
             mode: "standard" | "in_progress";
@@ -2977,7 +2977,7 @@ export interface components {
                 from?: string;
                 to: string;
             }[];
-            /** @description Putting the workarea in progress, where offered; null otherwise. */
+            /** @description Putting the workspace in progress, where offered; null otherwise. */
             mode_change: {
                 /** @enum {string} */
                 to?: "in_progress";
@@ -2988,12 +2988,12 @@ export interface components {
                 /** @description The held rows that withhold the commit, or null. */
                 held: number | null;
             };
-            /** @description Each act of propose committed, propose validated, mode in_progress and mode standard that is not offered, with the refusal its verb would answer now (ADR-0045 d28). Since v0.6.4. */
+            /** @description Each act of propose protected, propose frozen, mode in_progress and mode standard that is not offered, with the refusal its verb would answer now (ADR-0045 d28). Since v0.6.4. */
             refused: {
                 /** @enum {string} */
                 op: "propose" | "mode";
                 /** @enum {string} */
-                to: "committed" | "validated" | "in_progress" | "standard";
+                to: "protected" | "frozen" | "in_progress" | "standard";
                 /** @description The error code the act's verb would answer. */
                 code: string;
                 message: string;
@@ -3134,7 +3134,7 @@ export interface components {
         };
         /** @description An account's six meters against its limits in one UTC month (ADR-0071 d2, d5, d6). Counts only. */
         AccountUsage: {
-            /** @description The id of the root workarea the account is. */
+            /** @description The id of the root workspace the account is. */
             account: string;
             user: string | null;
             /** @description The quota profile the limits come from; null for an account under no limits. */
@@ -3199,7 +3199,7 @@ export interface components {
             scanned: number;
             findings: {
                 artifact_id: string;
-                workarea_id: string;
+                workspace_id: string;
                 version: number;
                 state: string;
                 class: string;
@@ -3228,7 +3228,7 @@ export interface components {
             next_after_seq: number | null;
             /** @description Held versions whose findings this call recorded under the server's rule set (ADR-0065 d15; ADR-0074 d28); 0 for the read. */
             recorded: number;
-            /** @description After this call, the tenant's held versions last scanned under another rule set than the server's, which stay their authors' alone in in-progress workareas: doctor's scan_held_unrescanned (ADR-0074 d28). */
+            /** @description After this call, the tenant's held versions last scanned under another rule set than the server's, which stay their authors' alone in in-progress workspaces: doctor's scan_held_unrescanned (ADR-0074 d28). */
             held_unrescanned: number;
             /** @description After this call, every stored version, erased ones aside, last scanned under another rule set: doctor's scan_rescan_due (ADR-0074 d28). */
             rescan_due: number;
@@ -3300,7 +3300,7 @@ export interface components {
                 "application/json": components["schemas"]["ErrorEnvelope"];
             };
         };
-        /** @description A 409-class conflict (idempotency.*, submission.tip_conflict, workarea.frozen, review.serve_invalid, …). */
+        /** @description A 409-class conflict (idempotency.*, submission.tip_conflict, workspace.frozen, review.serve_invalid, …). */
         Conflict: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
@@ -3364,7 +3364,7 @@ export interface components {
         XCorrelationId: string;
         /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
         Traceparent: string;
-        /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+        /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
         IdempotencyKey: string;
         /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
         Limit: number;
@@ -3373,7 +3373,7 @@ export interface components {
         /** @description Read memory as it was at this past instant, under today's grants (ADR-0059 d14, d15): a version recorded after it does not exist, and a claim's tip is the version promoted latest at or before it; state, access, retirement and expiry are read today, so a version erased or demoted today is never served and no earlier one stands in. An RFC 3339 date-time with an offset and at most six fractional digits; a date, or an instant after the server's clock, is request.validation with details.field as_of. The answer never echoes it. */
         AsOf: string;
         ArtifactId: string;
-        WorkareaId: components["schemas"]["WorkareaRef"];
+        WorkspaceId: components["schemas"]["WorkspaceRef"];
         ConnectionId: string;
         KeyId: components["schemas"]["KeyRef"];
         CrewId: components["schemas"]["CrewRef"];
@@ -3394,13 +3394,13 @@ export interface operations {
     listMemories: {
         parameters: {
             query?: {
-                /** @description The subtree read, by id or name, which must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node (ADR-0039 d4, d7). With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it, and omitted the listing reads every workarea the key wrote in. Without own, the scope: a node where reader is effective, and omitted the key's default_workarea (request.workarea_unresolved for a key with neither). */
-                workarea?: components["schemas"]["WorkareaRef"];
+                /** @description The subtree read, by id or name, which must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node (ADR-0039 d4, d7). With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it, and omitted the listing reads every workspace the key wrote in. Without own, the scope: a node where reader is effective, and omitted the key's default_workspace (request.workspace_unresolved for a key with neither). */
+                workspace?: components["schemas"]["WorkspaceRef"];
                 claim_key?: string;
                 state?: "held" | "promoted" | "demoted" | "rejected" | "erased";
                 kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
                 own?: boolean;
-                /** @description true: the scoped listing (at workarea, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with author, include_text, workarea, state (held, promoted, rejected, superseded, demoted), one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
+                /** @description true: the scoped listing (at workspace, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with author, include_text, workspace, state (held, promoted, rejected, superseded, demoted), one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
                 with_own?: boolean;
                 /** @description One of the caller's own keys, by name: the caller's rows by that key alone, the scoped part dropped; a key that is not the caller's is access.not_found. Implies the with_own listing (ADR-0045 d23; ADR-0070 d5). Since v0.6.4. */
                 author?: string;
@@ -3450,8 +3450,8 @@ export interface operations {
                      *           "claim_key": "supplier-quote-am-7741",
                      *           "version": 1,
                      *           "tip": true,
-                     *           "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *           "workarea_path": "universe.procurement.metals-crew",
+                     *           "workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *           "workspace_path": "universe.procurement.metals-crew",
                      *           "kind": "memory",
                      *           "state": "promoted",
                      *           "principal": "crew-procure/agent-7",
@@ -3497,7 +3497,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -3534,7 +3534,7 @@ export interface operations {
                      *       "claim_key": "supplier-quote-am-7741",
                      *       "version": 1,
                      *       "state": "held",
-                     *       "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *       "workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *       "retirement": false,
                      *       "replaces": null,
                      *       "plaintext_digest": "sha256:7c0f3e91ab5d2c48e6f1a09b83d47c25e9b160fa4d8c72035b1e6f94a2d8c310",
@@ -3597,8 +3597,8 @@ export interface operations {
                      *           "claim_key": "quote-validity-steering",
                      *           "version": 1,
                      *           "tip": true,
-                     *           "workarea_id": "1351b2b6-5c7c-492d-9aff-630bc95035db",
-                     *           "workarea_path": "universe.procurement",
+                     *           "workspace_id": "1351b2b6-5c7c-492d-9aff-630bc95035db",
+                     *           "workspace_path": "universe.procurement",
                      *           "kind": "steering",
                      *           "state": "promoted",
                      *           "tokens": 20,
@@ -3617,8 +3617,8 @@ export interface operations {
                      *             "claim_key": "supplier-quote-am-7741",
                      *             "version": 1,
                      *             "tip": true,
-                     *             "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *             "workarea_path": "universe.procurement.metals-crew",
+                     *             "workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *             "workspace_path": "universe.procurement.metals-crew",
                      *             "kind": "memory",
                      *             "state": "promoted",
                      *             "principal": "crew-procure/agent-7",
@@ -3693,8 +3693,8 @@ export interface operations {
                      *       "claim_key": "supplier-quote-am-7741",
                      *       "version": 1,
                      *       "tip": true,
-                     *       "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *       "workarea_path": "universe.procurement.metals-crew",
+                     *       "workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *       "workspace_path": "universe.procurement.metals-crew",
                      *       "kind": "memory",
                      *       "state": "promoted",
                      *       "principal": "crew-procure/agent-7",
@@ -3740,7 +3740,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
@@ -3768,7 +3768,7 @@ export interface operations {
                      *       "claim_key": "supplier-quote-am-7741",
                      *       "version": 2,
                      *       "state": "held",
-                     *       "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *       "workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *       "retirement": false,
                      *       "replaces": {
                      *         "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
@@ -3796,7 +3796,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
@@ -3843,8 +3843,8 @@ export interface operations {
     getGuardrails: {
         parameters: {
             query?: {
-                /** @description The scope node, by id or name, within the key's grants; omitted, the key's default workarea. */
-                workarea?: string;
+                /** @description The scope node, by id or name, within the key's grants; omitted, the key's default workspace. */
+                workspace?: string;
             };
             header?: {
                 /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
@@ -3959,7 +3959,7 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    createWorkarea: {
+    createWorkspace: {
         parameters: {
             query?: never;
             header: {
@@ -3969,7 +3969,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -3984,7 +3984,7 @@ export interface operations {
                  *       "crew": "metals-crew"
                  *     }
                  */
-                "application/json": components["schemas"]["WorkareaCreate"];
+                "application/json": components["schemas"]["WorkspaceCreate"];
             };
         };
         responses: {
@@ -4012,7 +4012,7 @@ export interface operations {
                      *       "created_at": "2026-10-29T15:40:12Z"
                      *     }
                      */
-                    "application/json": components["schemas"]["Workarea"];
+                    "application/json": components["schemas"]["Workspace"];
                 };
             };
             409: components["responses"]["Conflict"];
@@ -4020,7 +4020,7 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    getWorkarea: {
+    getWorkspace: {
         parameters: {
             query?: never;
             header?: {
@@ -4032,7 +4032,7 @@ export interface operations {
                 traceparent?: components["parameters"]["Traceparent"];
             };
             path: {
-                workarea: components["parameters"]["WorkareaId"];
+                workspace: components["parameters"]["WorkspaceId"];
             };
             cookie?: never;
         };
@@ -4052,7 +4052,7 @@ export interface operations {
                      *       "name": "metals-crew",
                      *       "parent_id": "1351b2b6-5c7c-492d-9aff-630bc95035db",
                      *       "path": "universe.procurement.metals-crew",
-                     *       "status": "committed",
+                     *       "status": "protected",
                      *       "crew": {
                      *         "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
                      *         "name": "metals-crew",
@@ -4089,14 +4089,14 @@ export interface operations {
                      *       "permission_epoch": 815
                      *     }
                      */
-                    "application/json": components["schemas"]["WorkareaView"];
+                    "application/json": components["schemas"]["WorkspaceView"];
                 };
             };
             404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];
         };
     };
-    getWorkareaTree: {
+    getWorkspaceTree: {
         parameters: {
             query?: {
                 /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
@@ -4105,7 +4105,7 @@ export interface operations {
                 cursor?: components["parameters"]["Cursor"];
                 /** @description true: the whole subtree in one answer, up to 2000 nodes, each with counts of its rows by state as the caller's with_own listing shows them, counted up to 2000 rows, and truncated when either stopped there; for the admin key role every row is counted as structure. No crew, no content, and no limit or cursor beside it (ADR-0045 d30; ADR-0070 d5). Since v0.6.4. */
                 counts?: boolean;
-                /** @description true, beside counts=true only: the answer carries offers, the scope's offers exactly as GET /v2/workareas/{workarea}/offers serves them to the same caller, read beside the counts in the same request, so the web console's admin Atlas needs no call of its own for them. A scope the tree refuses names no offers; offers without counts=true is request.validation, details.field offers (ADR-0070 d8). Since v0.7.1. */
+                /** @description true, beside counts=true only: the answer carries offers, the scope's offers exactly as GET /v2/workspaces/{workspace}/offers serves them to the same caller, read beside the counts in the same request, so the web console's admin Atlas needs no call of its own for them. A scope the tree refuses names no offers; offers without counts=true is request.validation, details.field offers (ADR-0070 d8). Since v0.7.1. */
                 offers?: boolean;
             };
             header?: {
@@ -4117,7 +4117,7 @@ export interface operations {
                 traceparent?: components["parameters"]["Traceparent"];
             };
             path: {
-                workarea: components["parameters"]["WorkareaId"];
+                workspace: components["parameters"]["WorkspaceId"];
             };
             cookie?: never;
         };
@@ -4139,7 +4139,7 @@ export interface operations {
                      *           "name": "metals-crew",
                      *           "parent_id": "1351b2b6-5c7c-492d-9aff-630bc95035db",
                      *           "path": "universe.procurement.metals-crew",
-                     *           "status": "committed",
+                     *           "status": "protected",
                      *           "crew": {
                      *             "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
                      *             "name": "metals-crew",
@@ -4166,13 +4166,13 @@ export interface operations {
                      *       "next_cursor": null
                      *     }
                      */
-                    "application/json": components["schemas"]["WorkareaPage"] | components["schemas"]["WorkareaCounts"];
+                    "application/json": components["schemas"]["WorkspacePage"] | components["schemas"]["WorkspaceCounts"];
                 };
             };
             default: components["responses"]["Error"];
         };
     };
-    getWorkareaOffers: {
+    getWorkspaceOffers: {
         parameters: {
             query?: never;
             header?: {
@@ -4184,7 +4184,7 @@ export interface operations {
                 traceparent?: components["parameters"]["Traceparent"];
             };
             path: {
-                workarea: components["parameters"]["WorkareaId"];
+                workspace: components["parameters"]["WorkspaceId"];
             };
             cookie?: never;
         };
@@ -4200,13 +4200,13 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *       "workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *       "status": "development",
                      *       "mode": "standard",
                      *       "transitions": [
                      *         {
                      *           "op": "propose",
-                     *           "to": "committed"
+                     *           "to": "protected"
                      *         }
                      *       ],
                      *       "mode_change": {
@@ -4219,27 +4219,27 @@ export interface operations {
                      *       "refused": [
                      *         {
                      *           "op": "propose",
-                     *           "to": "validated",
-                     *           "code": "workarea.transition_refused",
-                     *           "message": "validated follows committed: the workarea is development"
+                     *           "to": "frozen",
+                     *           "code": "workspace.transition_refused",
+                     *           "message": "frozen follows protected: the workspace is development"
                      *         },
                      *         {
                      *           "op": "mode",
                      *           "to": "standard",
                      *           "code": "request.validation",
-                     *           "message": "the workarea is already in that mode, so there is nothing to do"
+                     *           "message": "the workspace is already in that mode, so there is nothing to do"
                      *         }
                      *       ]
                      *     }
                      */
-                    "application/json": components["schemas"]["WorkareaOffers"];
+                    "application/json": components["schemas"]["WorkspaceOffers"];
                 };
             };
             404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];
         };
     };
-    setWorkareaCrew: {
+    setWorkspaceCrew: {
         parameters: {
             query?: never;
             header: {
@@ -4249,11 +4249,11 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
-                workarea: components["parameters"]["WorkareaId"];
+                workspace: components["parameters"]["WorkspaceId"];
             };
             cookie?: never;
         };
@@ -4264,7 +4264,7 @@ export interface operations {
                  *       "crew": "metals-crew"
                  *     }
                  */
-                "application/json": components["schemas"]["WorkareaCrewUpdate"];
+                "application/json": components["schemas"]["WorkspaceCrewUpdate"];
             };
         };
         responses: {
@@ -4282,7 +4282,7 @@ export interface operations {
                      *       "name": "metals-crew",
                      *       "parent_id": "1351b2b6-5c7c-492d-9aff-630bc95035db",
                      *       "path": "universe.procurement.metals-crew",
-                     *       "status": "committed",
+                     *       "status": "protected",
                      *       "crew": {
                      *         "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
                      *         "name": "metals-crew",
@@ -4292,14 +4292,14 @@ export interface operations {
                      *       "created_at": "2026-09-02T09:14:33Z"
                      *     }
                      */
-                    "application/json": components["schemas"]["Workarea"];
+                    "application/json": components["schemas"]["Workspace"];
                 };
             };
             415: components["responses"]["UnsupportedMedia"];
             default: components["responses"]["Error"];
         };
     };
-    setWorkareaMode: {
+    setWorkspaceMode: {
         parameters: {
             query?: never;
             header: {
@@ -4309,11 +4309,11 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
-                workarea: components["parameters"]["WorkareaId"];
+                workspace: components["parameters"]["WorkspaceId"];
             };
             cookie?: never;
         };
@@ -4324,7 +4324,7 @@ export interface operations {
                  *       "mode": "in_progress"
                  *     }
                  */
-                "application/json": components["schemas"]["WorkareaModeSet"];
+                "application/json": components["schemas"]["WorkspaceModeSet"];
             };
         };
         responses: {
@@ -4336,14 +4336,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkareaView"];
+                    "application/json": components["schemas"]["WorkspaceView"];
                 };
             };
             415: components["responses"]["UnsupportedMedia"];
             default: components["responses"]["Error"];
         };
     };
-    setWorkareaFederation: {
+    setWorkspaceFederation: {
         parameters: {
             query?: never;
             header: {
@@ -4353,11 +4353,11 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
-                workarea: components["parameters"]["WorkareaId"];
+                workspace: components["parameters"]["WorkspaceId"];
             };
             cookie?: never;
         };
@@ -4450,7 +4450,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -4546,7 +4546,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
@@ -4594,11 +4594,11 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
-                workarea: components["parameters"]["WorkareaId"];
+                workspace: components["parameters"]["WorkspaceId"];
             };
             cookie?: never;
         };
@@ -4606,7 +4606,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "to": "committed"
+                 *       "to": "protected"
                  *     }
                  */
                 "application/json": components["schemas"]["TransitionProposal"];
@@ -4623,9 +4623,9 @@ export interface operations {
                     /**
                      * @example {
                      *       "transition_id": "tr_01JB2YF7H9K2M4P6R8TA1CV3EY",
-                     *       "workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
+                     *       "workspace_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                      *       "from": "development",
-                     *       "to": "committed",
+                     *       "to": "protected",
                      *       "state": "pending",
                      *       "proposed_by_key_id": "d405428e-4c99-426d-8826-76d28436e423",
                      *       "ratified_by_key_id": null
@@ -4643,11 +4643,11 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
-                workarea: components["parameters"]["WorkareaId"];
+                workspace: components["parameters"]["WorkspaceId"];
                 transition_id: string;
             };
             cookie?: never;
@@ -4664,9 +4664,9 @@ export interface operations {
                     /**
                      * @example {
                      *       "transition_id": "tr_01JB2YF7H9K2M4P6R8TA1CV3EY",
-                     *       "workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
+                     *       "workspace_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                      *       "from": "development",
-                     *       "to": "committed",
+                     *       "to": "protected",
                      *       "state": "ratified",
                      *       "proposed_by_key_id": null,
                      *       "ratified_by_key_id": null
@@ -4682,10 +4682,10 @@ export interface operations {
     listEdges: {
         parameters: {
             query: {
-                /** @description workarea is designed and refused with request.validation naming kind (ADR-0046 d4). */
+                /** @description workspace is designed and refused with request.validation naming kind (ADR-0046 d4). */
                 kind: "claim" | "brief";
-                /** @description kind claim: a subtree filter. kind brief: the workarea whose brief edges are read, required. */
-                workarea_id?: components["schemas"]["WorkareaRef"];
+                /** @description kind claim: a subtree filter. kind brief: the workspace whose brief edges are read, required. */
+                workspace_id?: components["schemas"]["WorkspaceRef"];
                 /** @description kind claim only. */
                 artifact_id?: string;
                 /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
@@ -4733,7 +4733,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -4757,7 +4757,7 @@ export interface operations {
                      *       "kind": "brief",
                      *       "edge_id": "0f9a2c4e-7d1b-4e3a-9c5f-2b8d6e1a4c70",
                      *       "from_artifact_id": "3b6e8f1a-2c4d-4e5f-8a9b-1c2d3e4f5a6b",
-                     *       "to_workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
+                     *       "to_workspace_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                      *       "label": "brief",
                      *       "state": "pending",
                      *       "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
@@ -4775,7 +4775,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
@@ -4816,8 +4816,8 @@ export interface operations {
             query?: {
                 /** @description Resume point: events return in seq ascending order — the journal's order, not created_at descending. Pass back next_after_seq verbatim. */
                 after_seq?: number;
-                /** @description The subtree tailed, by id or name, within reader effective access; defaults to the key's default workarea (request.workarea_unresolved when the key has none). */
-                workarea?: components["schemas"]["WorkareaRef"];
+                /** @description The subtree tailed, by id or name, within reader effective access; defaults to the key's default workspace (request.workspace_unresolved when the key has none). */
+                workspace?: components["schemas"]["WorkspaceRef"];
                 /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
                 limit?: components["parameters"]["Limit"];
             };
@@ -4859,7 +4859,7 @@ export interface operations {
                      *             "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
                      *             "claim_key": "supplier-quote-am-7741",
                      *             "version": 1,
-                     *             "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *             "workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *             "plaintext_digest": "sha256:7c0f3e91ab5d2c48e6f1a09b83d47c25e9b160fa4d8c72035b1e6f94a2d8c310"
                      *           }
                      *         }
@@ -4885,7 +4885,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -4915,8 +4915,8 @@ export interface operations {
                      *         "claim_key": "accra-metals-price-anchor",
                      *         "version": 1,
                      *         "tip": false,
-                     *         "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *         "workarea_path": "universe.procurement.metals-crew",
+                     *         "workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *         "workspace_path": "universe.procurement.metals-crew",
                      *         "kind": "derived_fact",
                      *         "state": "held",
                      *         "principal": "crew-procure/agent-7",
@@ -4971,7 +4971,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -5020,7 +5020,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description Subtree filter, by id or name. */
-                workarea?: components["schemas"]["WorkareaRef"];
+                workspace?: components["schemas"]["WorkspaceRef"];
                 /** @description The authoring key, by id or name. */
                 author_key?: string;
                 /** @description A literal prefix of the claim key. */
@@ -5077,7 +5077,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The queue by workarea. */
+            /** @description The queue by workspace. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
@@ -5089,7 +5089,7 @@ export interface operations {
                      * @example {
                      *       "items": [
                      *         {
-                     *           "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *           "workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *           "path": "universe.alice",
                      *           "held": 3,
                      *           "oldest_at": "2026-11-09T08:12:44.000000Z"
@@ -5100,7 +5100,7 @@ export interface operations {
                     "application/json": {
                         items: {
                             /** Format: uuid */
-                            workarea_id: string;
+                            workspace_id: string;
                             path: string;
                             held: number;
                             /** Format: date-time */
@@ -5123,7 +5123,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -5225,7 +5225,7 @@ export interface operations {
                      *           "id": "d405428e-4c99-426d-8826-76d28436e423",
                      *           "name": "alice-laptop",
                      *           "role": "writer",
-                     *           "held_by": "agent",
+                     *           "used_by": "agent",
                      *           "credential": "bearer",
                      *           "user_root_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *           "revoked": false,
@@ -5236,7 +5236,7 @@ export interface operations {
                      *           "grants": [
                      *             {
                      *               "role": "writer",
-                     *               "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *               "workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *               "path": "universe.alice"
                      *             }
                      *           ]
@@ -5266,7 +5266,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -5280,16 +5280,16 @@ export interface operations {
                  *       "name": "procure-agent-7",
                  *       "grants": [
                  *         {
-                 *           "workarea": "metals-crew",
+                 *           "workspace": "metals-crew",
                  *           "role": "writer"
                  *         },
                  *         {
-                 *           "workarea": "metals-crew",
+                 *           "workspace": "metals-crew",
                  *           "role": "reader"
                  *         }
                  *       ],
-                 *       "default_workarea": "metals-crew",
-                 *       "held_by": "agent",
+                 *       "default_workspace": "metals-crew",
+                 *       "used_by": "agent",
                  *       "crew": "metals-crew",
                  *       "label": "procure agent 7",
                  *       "principal": "crew-procure/agent-7"
@@ -5314,21 +5314,21 @@ export interface operations {
                      *       "role": "writer",
                      *       "principal": "crew-procure/agent-7",
                      *       "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
-                     *       "default_workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *       "held_by": "agent",
+                     *       "default_workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *       "used_by": "agent",
                      *       "label": "procure agent 7",
                      *       "expiry": null,
                      *       "revoked_at": null,
                      *       "rotated_from": null,
                      *       "grants": [
                      *         {
-                     *           "workarea_node_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *           "workspace_node_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *           "role": "writer",
                      *           "grant_id": "gr_01JB2YQ6R8TA1CW3EY5G7J9LN2",
                      *           "epoch": 814
                      *         },
                      *         {
-                     *           "workarea_node_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *           "workspace_node_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *           "role": "reader",
                      *           "grant_id": "gr_01JB2YQ7S9UB2DX4FZ6H8K1MP3",
                      *           "epoch": 815
@@ -5382,12 +5382,12 @@ export interface operations {
                      *       "name": "claude-laptop",
                      *       "role": "writer",
                      *       "principal": "claude/laptop",
-                     *       "held_by": "agent",
+                     *       "used_by": "agent",
                      *       "tenant": {
                      *         "id": "6f1c2a3e-0b7d-4e59-9a41-2c8d5e7f9b10",
                      *         "name": "acme"
                      *       },
-                     *       "default_workarea": {
+                     *       "default_workspace": {
                      *         "id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *         "name": "q1-2027",
                      *         "path": "universe.metals-crew.q1-2027"
@@ -5398,7 +5398,7 @@ export interface operations {
                      *       },
                      *       "grants": [
                      *         {
-                     *           "workarea_node_id": "3a5c7e9b-1d2f-4a6c-8e0b-2d4f6a8c0e1b",
+                     *           "workspace_node_id": "3a5c7e9b-1d2f-4a6c-8e0b-2d4f6a8c0e1b",
                      *           "role": "writer",
                      *           "grant_id": "9c1e3a5b-7d9f-4b2d-8a4c-6e8a0c2e4a6c",
                      *           "epoch": 41
@@ -5443,19 +5443,19 @@ export interface operations {
                      * @example {
                      *       "key_id": "d405428e-4c99-426d-8826-76d28436e423",
                      *       "name": "metals-reviewer-3",
-                     *       "role": "dreamer",
+                     *       "role": "reviewer",
                      *       "principal": "crew-review/agent-3",
                      *       "crew_id": null,
-                     *       "default_workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *       "held_by": "agent",
+                     *       "default_workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *       "used_by": "agent",
                      *       "label": "metals review agent",
                      *       "expiry": null,
                      *       "revoked_at": null,
                      *       "rotated_from": null,
                      *       "grants": [
                      *         {
-                     *           "workarea_node_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *           "role": "dreamer",
+                     *           "workspace_node_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *           "role": "reviewer",
                      *           "grant_id": "gr_01JB2YG8J1L3N5Q7S9UA2CW4FZ",
                      *           "epoch": 41
                      *         }
@@ -5481,7 +5481,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
@@ -5493,7 +5493,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "workarea": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
+                 *       "workspace": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                  *       "reason": "quarantine the q1-2027 subtree during incident 44"
                  *     }
                  */
@@ -5512,7 +5512,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "denial_id": "dn_01JB2YH9K2M4P6R8TA1CV3EX5G",
-                     *       "workarea_node_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
+                     *       "workspace_node_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                      *       "epoch": 10,
                      *       "lifted": false
                      *     }
@@ -5534,7 +5534,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
@@ -5590,7 +5590,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
@@ -5601,7 +5601,7 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
-                    /** @description How long the code lives, 1 second to 30 days; omitted, the ten-minute default. A lifetime past ten minutes is minted only for a connector key whose grants all sit on one workarea other than the universe and that names no user root; otherwise 422 oauth.connect_refused with details.reason not_confined. Outside 1 to 2592000 is request.validation naming /ttl_seconds (ADR-0067 d3). */
+                    /** @description How long the code lives, 1 second to 30 days; omitted, the ten-minute default. A lifetime past ten minutes is minted only for a connector key whose grants all sit on one workspace other than the universe and that names no user root; otherwise 422 oauth.connect_refused with details.reason not_confined. Outside 1 to 2592000 is request.validation naming /ttl_seconds (ADR-0067 d3). */
                     ttl_seconds?: number;
                 };
             };
@@ -5641,7 +5641,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
@@ -5736,8 +5736,8 @@ export interface operations {
                      *       "role": "operator",
                      *       "principal": "platform-team/bootstrap",
                      *       "crew_id": null,
-                     *       "default_workarea_id": null,
-                     *       "held_by": null,
+                     *       "default_workspace_id": null,
+                     *       "used_by": null,
                      *       "label": "root operator key",
                      *       "expiry": null,
                      *       "revoked_at": null,
@@ -6306,7 +6306,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -6359,7 +6359,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -6454,7 +6454,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
@@ -6468,7 +6468,7 @@ export interface operations {
                 /**
                  * @example {
                  *       "capacity": "review",
-                 *       "workareas": [
+                 *       "workspaces": [
                  *         "metals-crew"
                  *       ]
                  *     }
@@ -6477,7 +6477,7 @@ export interface operations {
                     /** @enum {string} */
                     capacity: "review" | "curate";
                     /** @description Each by id or name. */
-                    workareas: string[];
+                    workspaces: string[];
                 };
             };
         };
@@ -6517,7 +6517,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
@@ -6569,7 +6569,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
@@ -6615,7 +6615,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
@@ -6737,7 +6737,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -6818,7 +6818,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -6902,7 +6902,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -6988,7 +6988,7 @@ export interface operations {
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -7368,7 +7368,7 @@ export interface operations {
                  */
                 "application/json": {
                     query?: string;
-                    workarea?: string;
+                    workspace?: string;
                     /** @enum {string} */
                     state?: "held" | "promoted" | "rejected" | "superseded" | "demoted";
                     /**
@@ -7486,7 +7486,7 @@ export interface operations {
                      *       "findings": [
                      *         {
                      *           "artifact_id": "00000000-0000-4000-8000-0000000000a1",
-                     *           "workarea_id": "00000000-0000-4000-8000-0000000000b1",
+                     *           "workspace_id": "00000000-0000-4000-8000-0000000000b1",
                      *           "version": 1,
                      *           "state": "promoted",
                      *           "class": "secret.api_token",
@@ -7564,7 +7564,7 @@ export interface operations {
                 traceparent?: components["parameters"]["Traceparent"];
             };
             path: {
-                /** @description The account: its root workarea id or its user name. */
+                /** @description The account: its root workspace id or its user name. */
                 account: string;
             };
             cookie?: never;
@@ -7599,7 +7599,7 @@ export interface operations {
                 traceparent?: components["parameters"]["Traceparent"];
             };
             path: {
-                /** @description The account: its root workarea id or its user name. */
+                /** @description The account: its root workspace id or its user name. */
                 account: string;
             };
             cookie?: never;
@@ -7647,7 +7647,7 @@ export interface operations {
                 traceparent?: components["parameters"]["Traceparent"];
             };
             path: {
-                /** @description The account: its root workarea id or its user name. */
+                /** @description The account: its root workspace id or its user name. */
                 account: string;
             };
             cookie?: never;

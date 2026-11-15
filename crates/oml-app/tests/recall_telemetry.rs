@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use oml_app::App;
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
-use oml_app::domain::{EventTime, HeldBy, MemoryKind, Role};
+use oml_app::domain::{EventTime, MemoryKind, Role, UsedBy};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::search::MatchMode;
 use oml_app::telemetry::{
@@ -80,7 +80,7 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
         .await
         .expect("bootstrap");
     let grant = |role| GrantRequest {
-        node: boot.root_workarea_id.into(),
+        node: boot.root_workspace_id.into(),
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
@@ -93,8 +93,8 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
                 role: Role::Writer,
                 name: Name::parse("agent-7").expect("a name"),
                 principal: "crew/agent-7".to_owned(),
-                held_by: Some(HeldBy::Agent),
-                default_workarea: Some(boot.root_workarea_id.into()),
+                used_by: Some(UsedBy::Agent),
+                default_workspace: Some(boot.root_workspace_id.into()),
                 crew: None,
                 grants: vec![grant(Role::Writer), grant(Role::Reader)],
                 connect_code: false,
@@ -119,7 +119,7 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
                 verb: None,
                 kind: MemoryKind::Memory,
                 body: "the deploy runs on fridays".to_owned(),
-                workarea: None,
+                workspace: None,
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
@@ -137,7 +137,7 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
         anchor: oml_app::types::AnchorFilter::default(),
         query: "deploy fridays".to_owned(),
         k: 8,
-        workarea: None,
+        workspace: None,
         kinds: Vec::new(),
         include_text: true,
         include_unreviewed: Some(true),

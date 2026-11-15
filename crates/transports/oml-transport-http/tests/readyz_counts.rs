@@ -17,7 +17,7 @@ use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
 use oml_app::domain::oauth::Issuer;
 use oml_app::domain::web::Provider;
-use oml_app::domain::{HeldBy, Role};
+use oml_app::domain::{Role, UsedBy};
 use oml_app::doubles::{FakeReranker, MemSignIn, MemStore};
 use oml_app::ports::RerankError;
 use oml_app::search::{Pipeline, SearchConfig};
@@ -85,7 +85,7 @@ async fn unauthenticated_readyz_carries_no_per_pipeline_or_per_tenant_count() {
         .await
         .expect("bootstrap");
     let grant = |role| GrantRequest {
-        node: boot.root_workarea_id.into(),
+        node: boot.root_workspace_id.into(),
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
@@ -98,8 +98,8 @@ async fn unauthenticated_readyz_carries_no_per_pipeline_or_per_tenant_count() {
                 role: Role::Writer,
                 name: Name::parse("agent-7").expect("a name"),
                 principal: "crew/agent-7".to_owned(),
-                held_by: Some(HeldBy::Agent),
-                default_workarea: Some(boot.root_workarea_id.into()),
+                used_by: Some(UsedBy::Agent),
+                default_workspace: Some(boot.root_workspace_id.into()),
                 crew: None,
                 grants: vec![grant(Role::Writer), grant(Role::Reader)],
                 connect_code: false,

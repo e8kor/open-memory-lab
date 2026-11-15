@@ -9,7 +9,7 @@ fn served() -> serde_json::Value {
     json!({
         "artifact_id": "6f1c2d4e-0000-4000-8000-000000000003",
         "claim_key": "backups-nightly", "version": 3, "tip": false,
-        "workarea_id": "w1", "workarea_path": "universe.alice.proj",
+        "workspace_id": "w1", "workspace_path": "universe.alice.proj",
         "kind": "memory", "state": "held", "unreviewed": true, "tokens": 12,
         "retirement": false,
         "replaces": {"artifact_id": "6f1c2d4e-0000-4000-8000-000000000002", "version": 2},
@@ -91,13 +91,13 @@ fn a_memory_without_the_card_fields_still_decodes() {
 fn the_admin_read_carries_its_holder_its_promotion_and_its_scan_finding() {
     let read: oml_sdk::AdminRead = serde_json::from_value(json!({
         "artifact_id": "m1", "claim_key": "c", "version": 1, "state": "held",
-        "workarea_path": "universe.alice", "text": "t", "key": "alice-laptop",
+        "workspace_path": "universe.alice", "text": "t", "key": "alice-laptop",
         "key_id": "k1", "principal": "alice-laptop", "user": "alice",
-        "created_at": "2026-11-11T10:00:00Z", "held_by": "agent",
+        "created_at": "2026-11-11T10:00:00Z", "used_by": "agent",
         "promoted_at": null, "scan_finding": "injection.override: ignore-instructions at /body line 2"
     }))
     .expect("an admin read");
-    assert_eq!(read.held_by.as_deref(), Some("agent"));
+    assert_eq!(read.used_by.as_deref(), Some("agent"));
     assert_eq!(read.promoted_at, None);
     assert!(
         read.scan_finding

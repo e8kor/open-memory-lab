@@ -13,7 +13,7 @@ answers: why no text index serves a recall under row security and what does; the
 
 **Amends:** ADR-0049 (proposed, on `feat/search-v2`): d4 (the pipeline table gains `bm25-postings`,
 later `sparse` and `bm25-sparse`), d6 (the answer's `search` gains `access` and `pruned`; each hit's
-`matched.via` gains `bm25_postings` and `sparse`), d12 item 3 and its rejected alternative (per-workarea
+`matched.via` gains `bm25_postings` and `sparse`), d12 item 3 and its rejected alternative (per-workspace
 counts are kept, for this retriever alone, for the reason in d5 below). ADR-0005 d4 (the erasure
 inventory gains the postings and the counts). ADR-0034 d11 (the owner's partition step creates a
 postings partition beside each memories partition).
@@ -24,7 +24,7 @@ postings partition beside each memories partition).
 measured 2026-11-04 on PostgreSQL 18.6, 8 vCPU) found that every full-text and
 trigram operator PostgreSQL ships (`@@`, `%`, `<%`, `ts_rank`) has `proleakproof = false`, so the
 planner keeps it above the `tenant_isolation` policy's predicate and never turns it into an index
-condition. Each text statement is an index scan on `(tenant_id, workarea_id, …)` and a per-row filter
+condition. Each text statement is an index scan on `(tenant_id, workspace_id, …)` and a per-row filter
 over every readable row. Over a stored `simple` vector, an every-word match measured a p95 of 6.3 /
 56.6 / 1,400 ms at 10,000 / 100,000 / 1,000,000 rows per tenant; BM25 in SQL over stored vectors,
 52 / 677 / ≥ 5,000 ms. The same statements without the policy used the GIN index (today's every-word
@@ -39,8 +39,8 @@ Zipf-distributed postings per memory, 10 query tokens, as the serving role under
 made it linear (p95 97 / 328 / 735 ms at 30,000 / 100,000 / 200,000); with the 100 most frequent token
 ids dropped from each query, p95 4.9 / 15.3 / 29.6 ms, about 137 ms at 1,000,000 by a log-log
 extrapolation (60,000,000 postings did not fit the build host), at about 4.4 GiB of heap and 0.35 GiB
-of btree per 1,000,000 memories (extrapolated). The same lane showed that per-workarea document
-frequencies summed over the readable workareas equal the frequencies counted under the policy for
+of btree per 1,000,000 memories (extrapolated). The same lane showed that per-workspace document
+frequencies summed over the readable workspaces equal the frequencies counted under the policy for
 every term checked (157, 158 and 163 terms at three scales), and that a tenant-wide count differed for
 95 / 115 / 104 of them: a tenant-wide statistic ranks by rows the key cannot read.
 
@@ -69,7 +69,7 @@ d11). Decided, not built.
     |---|---|---|
     | `tenant_id` | `uuid` | the partition key and the policy's column |
     | `memory_id` | `uuid` | the version (`memories.id`) the posting derives from |
-    | `workarea_id` | `uuid` | that version's workarea, copied at write; a version never changes workarea |
+    | `workspace_id` | `uuid` | that version's workspace, copied at write; a version never changes workspace |
     | `kind` | `smallint` | `1` term frequency of a `oml_search_vector` lexeme (d3); `2` a `doc-v3-distill` weight (d3) |
     | `memory_kind` | `smallint` | `1` `memory`, `2` `derived_fact`, copied at write; a request's `kinds` narrows the scope, so the counts of d5 are kept per memory kind too (amended 2026-11-05) |
     | `token_id` | `bigint` | d2 |
@@ -81,16 +81,16 @@ d11). Decided, not built.
     recalled (ADR-0025 d8); a steering or guardrail row, and a retirement version, get none.
 
     Two indexes per partition (amended 2026-11-05, open question 1): `search_postings_served`,
-    `(kind, token_id, workarea_id) INCLUDE (memory_kind, memory_id, weight, doc_len, tenant_id)
+    `(kind, token_id, workspace_id) INCLUDE (memory_kind, memory_id, weight, doc_len, tenant_id)
     WHERE state = 1`, the access path every query takes, and `(memory_id)`, for the own held rows,
     the state flips, the erase and d6's rescoring. The served index holds the served postings alone,
-    ordered so that a recall reads its own workareas' postings of a token and nothing else, and
+    ordered so that a recall reads its own workspaces' postings of a token and nothing else, and
     carries every column a score needs, so the read is index-only once vacuum has marked the pages
-    visible. The first reading, `(kind, token_id)` over every posting with `workarea_id` and `state`
+    visible. The first reading, `(kind, token_id)` over every posting with `workspace_id` and `state`
     filtered from the heap and `fillfactor` 90 to keep a flip heap-only, measured 3 to 18 times
     slower (open question 1); a flip into or out of served now touches the served index, which d8's
     write cost includes. Only leakproof equalities reach the indexes (`kind`, `token_id`,
-    `workarea_id`, `memory_id`, `tenant_id`), so they serve the serving role. The owner
+    `workspace_id`, `memory_id`, `tenant_id`), so they serve the serving role. The owner
     creates each partition in the same owner transaction that ADR-0034 d11 runs for `memories`, before
     the attach, under the same lock timeout; 0021 creates one for every existing tenant. The serving
     role holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on it, as on `search_vocabulary`. The cost,
@@ -127,7 +127,7 @@ d11). Decided, not built.
   when the query has others), each word's forms (the exact word and its `english_stem`), and
   `oml_token_id` of each form. It then: (1) reads the readable counts (d5) for every form; (2) prunes
   (d6); (3) reads the postings of the kept forms, `kind = 1 AND token_id = ANY($forms)`, keeping a
-  posting when `state = 1 AND workarea_id = ANY($promoted_nodes)`, or `state = 0 AND workarea_id =
+  posting when `state = 1 AND workspace_id = ANY($promoted_nodes)`, or `state = 0 AND workspace_id =
   ANY($held_nodes)` with the version's `author_key_id` among the own held keys, read from `memories`
   for those postings alone; (4) scores BM25 exactly as ADR-0049 d12's `bm25` statement does (k1 1.2,
   b 0.75, a word scores its best form, the row length from `doc_len`), with the readable `n`, `avgdl`
@@ -139,11 +139,11 @@ d11). Decided, not built.
   weight)`, which needs no corpus statistic at all. The candidate scope is the core's
   `CandidateScope`, unchanged; the core re-checks every served row, as before (ADR-0049 d2).
 
-- **d5 — The statistics are the readable rows', kept per workarea and summed at query time.** Two
+- **d5 — The statistics are the readable rows', kept per workspace and summed at query time.** Two
   tables, maintained by the same trigger in the write's transaction and fenced like
   `search_vocabulary` (row security, `SET STATISTICS 0` per #134's rule): `search_term_rows
-  (tenant_id, workarea_id, kind, memory_kind, token_id, rows)`, the served versions in that workarea
-  holding the token, and `search_workarea_rows (tenant_id, workarea_id, kind, memory_kind, rows,
+  (tenant_id, workspace_id, kind, memory_kind, token_id, rows)`, the served versions in that workspace
+  holding the token, and `search_workspace_rows (tenant_id, workspace_id, kind, memory_kind, rows,
   total_len)`; a recall sums them over the memory kinds of its scope as well as its nodes. A recall sums them
   over the promoted nodes of its scope, and, when `include_unreviewed` asked, adds the own held rows'
   counts read from their postings and versions (few, by the `memories_author` index). The sum equals
@@ -152,9 +152,9 @@ d11). Decided, not built.
   saved 4% because the scan reads every candidate's lexemes anyway; here it buys what the scan never
   needed, a document frequency known **before** any posting is read, which d6's pruning and budget
   require and which no tenant-wide figure may supply. The cost: about one counter row per distinct
-  token per workarea (the lane's maintained table: 1.22M rows, 190 MiB, at 1,000,000 memories in 451
-  workareas, built in 26 s) and about 1 ms more per promotion (0.5 → 1.1 ms at 10,000 rows, 0.9 → 2.0
-  ms at 100,000, one client). Concurrent promotions in one workarea update the same rows of its common
+  token per workspace (the lane's maintained table: 1.22M rows, 190 MiB, at 1,000,000 memories in 451
+  workspaces, built in 26 s) and about 1 ms more per promotion (0.5 → 1.1 ms at 10,000 rows, 0.9 → 2.0
+  ms at 100,000, one client). Concurrent promotions in one workspace update the same rows of its common
   tokens; within one tenant every commit already serialises on the chain head
   ([ADR-0002](ADR-0002-postgresql-system-of-record.md); #100), so the counts lengthen that section
   rather than add a new one. That length is unmeasured, tracked as #100.
@@ -309,7 +309,7 @@ d11). Decided, not built.
   5% of `bm25-postings`'s recalls, over at least 20; read by an admin key, `GET
   /v2/search` carries the tenant's postings health, and doctor warns on a missing partition, on
   versions with no postings (the fill incomplete), on served versions with no served postings, and
-  on per-workarea or sampled word counts that disagree with the postings, each line naming the
+  on per-workspace or sampled word counts that disagree with the postings, each line naming the
   repair, the owner's `oml_search_postings_refill(tenant)`, which is 0021's fill for one tenant.
   The refill is the owner's alone (`EXECUTE` revoked from `PUBLIC`) and takes that tenant's chain
   advisory lock, so it holds that tenant's writes and no other's; `oml_search_count` is granted to
@@ -319,7 +319,7 @@ d11). Decided, not built.
   200 word counts from a random token each read. A recall's statements share one `REPEATABLE READ,
   READ ONLY` snapshot. The parent table keeps no statistics of its own (#134); each partition
   keeps its tenant's. Lock order: every count write locks its word rows in token order, then its
-  workarea row, and a take-back locks before it changes anything, so writes that skip the chain
+  workspace row, and a take-back locks before it changes anything, so writes that skip the chain
   lock neither deadlock nor drive a count below zero. Laws:
   `the_postings_health_is_clean_where_the_trigger_kept_it_and_names_each_fault_until_a_refill`,
   `the_postings_health_samples_word_counts_across_the_whole_range`,
@@ -543,7 +543,7 @@ it for v0.5.7 on 2026-11-05. d13 to d17 record how; they replace d9's fusion for
 - **Issues** opened: #103 (the postings at 100,000 and 1,000,000 rows measured, not
   extrapolated: latency by scope, the prune constants, the `scan` share, space per kind, the fill
   time), #104 (the encoder's CPU per write and the kind 2 backfill rate), #100 (the count rows
-  under concurrent promotions in one workarea), #103 (a batched, resumable fill before any tenant
+  under concurrent promotions in one workspace), #103 (a batched, resumable fill before any tenant
   reaches 1,000,000 rows; added 2026-11-05), #104 (a bound on the kind 2 postings a query reads,
   so `bm25-sparse` meets d9's latency bar; added 2026-11-05 with d13–d17).
 - **Costs**: a second copy of every version's words, larger than the table it indexes (d10); a
@@ -559,9 +559,9 @@ it for v0.5.7 on 2026-11-05. d13 to d17 record how; they replace d9's fusion for
 
 | Alternative | Why not |
 |---|---|
-| **A `SECURITY DEFINER` search function** | It moves the fence from the policy to one function's code: it would run as a role that row security does not filter, pin the tenant from `oml.tenant_id` and take the readable workareas from its caller, so one defect in it, or one injection that reaches it, reads every tenant. ADR-0034 d5 refuses a definer function in `public` at start (`definer_function`) for that reason, and the lane named the same risk. Its latency would be the no-policy column. |
+| **A `SECURITY DEFINER` search function** | It moves the fence from the policy to one function's code: it would run as a role that row security does not filter, pin the tenant from `oml.tenant_id` and take the readable workspaces from its caller, so one defect in it, or one injection that reaches it, reads every tenant. ADR-0034 d5 refuses a definer function in `public` at start (`definer_function`) for that reason, and the lane named the same risk. Its latency would be the no-policy column. |
 | **Marking `ts_match_vq` and the trigram operators `LEAKPROOF`** (ADR-0034 d13) | Only a superuser can, which adds a step outside the migrations to every install and is unavailable on most managed PostgreSQL. It does not make BM25 fast either: with `ts_match_vq` so marked, the `bm25` statement's p50 went from 615 to 442 ms at 51,830 rows (ADR-0049 d12 item 5), because common words still make most rows candidates. |
-| **A search engine per tenant (Tantivy), fed from the outbox** | A second store of every tenant's words outside row security, which ADR-0013 d1 rejects for reads; the readable-workarea filter and readable statistics would be re-implemented inside it; a promoted row would be invisible until the feed caught up; the erase inventory gains a store with its own snapshots. The `Retriever` port keeps it open if postings in PostgreSQL stop scaling (open question 5). |
+| **A search engine per tenant (Tantivy), fed from the outbox** | A second store of every tenant's words outside row security, which ADR-0013 d1 rejects for reads; the readable-workspace filter and readable statistics would be re-implemented inside it; a promoted row would be invisible until the feed caught up; the erase inventory gains a store with its own snapshots. The `Retriever` port keeps it open if postings in PostgreSQL stop scaling (open question 5). |
 | **OpenSearch, rejected for now (settled 2026-11-05)** | Today it would hold every tenant's words outside row security for a need nothing has shown: postings in PostgreSQL meet the 50 ms bound to the scale this record measures, and no deployment asks for a hosted scale-out. **Revisit** when a tenant nears 300,000 readable rows (where d10 expects the pruned postings to cross 50 ms) or a hosted deployment needs search to scale out beyond one PostgreSQL. **Conditions on any revisit**, each a requirement, not a preference: OpenSearch only proposes candidates, and PostgreSQL re-checks each under row security before it is ranked or served (the core's re-check of ADR-0049 d2 stays the fence); one index per tenant, never a shared index filtered by a tenant field; only legs that need no corpus statistic, so learned sparse with fixed model weights and vectors, never OpenSearch's BM25, whose document frequencies are the index's and so count rows the key cannot read (d5); fed from the outbox, with the feed's lag shown on `/readyz` and by doctor, and a row promoted but not yet indexed still found by the PostgreSQL legs; and its indexes and snapshots entered in ADR-0005 d4's erasure inventory, an erase deleting the version's documents in the erase's own flow. |
 | **The status quo: the stored-lexeme scan** | Linear in the readable rows: 1,400 ms p95 for the cheapest every-word form and ≥ 5,000 ms for BM25 at 1,000,000 rows, 677 ms for BM25 at 100,000. It stays as the fallback (d6). |
 | **A per-tenant dictionary with `int4` ids from a per-tenant sequence** | Four bytes less per posting, but a write must look up or insert each new word, two writers of one new word wait on each other, the dictionary holds the tenant's words as plaintext, which erase must then prune when a word's last posting goes, and each tenant needs a sequence beside its partition. A hash needs none of it (d2). |
@@ -570,14 +570,14 @@ it for v0.5.7 on 2026-11-05. d13 to d17 record how; they replace d9's fusion for
 | **Counting document frequencies at query time from the postings** | Exact, but only after the postings are read, and the reading is the cost pruning exists to avoid; a capped count would decide by how many postings an index range holds, tenant-wide, and leak. |
 | **Pruning by a frequency fixed in advance** (a shipped stop list, or the tenant's most frequent ids) | A shipped list misses the tenant's own common words; the tenant's most frequent ids are a tenant-wide statistic, so the rows a key cannot read would decide which of its words count (law in d12). |
 | **pgvector `sparsevec` with an HNSW index** | Its `ORDER BY` uses the index under the policy, as dense HNSW does, but the index takes at most 1,000 non-zero elements, ranks approximately, needs `relaxed_order` to keep recall under narrow scopes (the lane: recall@10 0.09 at a 1% share without it), and cannot express BM25 with readable-scoped statistics. |
-| **Denormalising nothing: join `memories` for every posting's scope and state** | One index lookup per posting read, where the measured case filtered on columns of the posting itself; the copied `workarea_id` never changes, and the `state` flip is a heap-only update. |
+| **Denormalising nothing: join `memories` for every posting's scope and state** | One index lookup per posting read, where the measured case filtered on columns of the posting itself; the copied `workspace_id` never changes, and the `state` flip is a heap-only update. |
 
 ## Open questions, settled 2026-11-05
 
 The operator settled each question on 2026-11-05. Where the answer is a measurement, the build lane
 (`feat/token-postings`) takes it and records the value here in the same change as the code.
 
-1. **`workarea_id` in the access index** — yes, measured on `feat/token-postings`
+1. **`workspace_id` in the access index** — yes, measured on `feat/token-postings`
    (`bench/scale/REPORT.md`, 2026-11-05): the served covering index of d1 against `(kind,
    token_id)` over every posting, warm p95 leaf / project / universe 9.2 / 12.1 / 29.9 ms against
    148 / 137 / 138 ms at 165,000 memories (99,721 readable at universe scope), and 5.7 / 12.8 /
@@ -608,7 +608,7 @@ The operator settled each question on 2026-11-05. Where the answer is a measurem
    at 165,000 memories); 10,000 put it at 266 ms, still below `bm25`'s 654 ms there. The rows are
    counted at query time (d5), so the cost follows how many the key holds in scope. Left as
    measured: the case is a bulk import awaiting review (#98), and a count kept per key would
-   need a counter per author beside the per-workarea ones.
+   need a counter per author beside the per-workspace ones.
 
 ## Test plan
 
@@ -620,7 +620,7 @@ The operator settled each question on 2026-11-05. Where the answer is a measurem
 - **The external sets** (`eval/bench/`, SciFact, NFCorpus, LoCoMo; served through `oml_read`): nDCG@10,
   success@1, p50 and p95 for `bm25`, `bm25-postings` at the candidate prune constants, and
   `bm25-postings` with pruning off, which must equal `bm25` (the agreement law, measured end to end);
-  the gate of d9 (2). A readable-half run: a key that reads half the workareas gets, for every query,
+  the gate of d9 (2). A readable-half run: a key that reads half the workspaces gets, for every query,
   the scores a database holding only that half gives.
 - **The scale lane** (`bench/scale/`): a new approach, h) `bm25-postings` through
   migration 0021's own table and trigger, at 10,000, 100,000 and 1,000,000 rows per tenant measured
@@ -628,7 +628,7 @@ The operator settled each question on 2026-11-05. Where the answer is a measurem
   scopes, warm and cold p95, the share answered by `scan`, postings touched, heap and both indexes'
   size, the write (insert, promotion, supersession) p50 and p95, the 0021 fill time; and the counts'
   equality with the policy's count, as the lane's case d) checked. The gate of d9 (3) and #103.
-- **Contention** (#100): the benchmark loader's 8 writers and 6 reviewers into one workarea, with and
+- **Contention** (#100): the benchmark loader's 8 writers and 6 reviewers into one workspace, with and
   without the trigger, the chain-head retries and promotion p95 compared.
 - **Kind 2, later**: `doc-v3-distill` encoded offline in Python over SciFact and NFCorpus first,
   checked against the model card's 0.708 and 0.345; then the `candle` encoder's output held equal to

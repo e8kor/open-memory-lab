@@ -57,7 +57,7 @@ async fn whoami(
             "name": "crew-agent",
             "role": role,
             "tenant": {"id": "t1", "name": "quickstart"},
-            "default_workarea": {"id": "w1", "path": "universe/crew"},
+            "default_workspace": {"id": "w1", "path": "universe/crew"},
         })),
     )
 }

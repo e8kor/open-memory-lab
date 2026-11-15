@@ -20,7 +20,7 @@ pub enum PageOutcome {
     FormAgain,
     /// `limit.*`: the retry page, with the API's `Retry-After`.
     Retry,
-    /// `review.*` and `workarea.*`: the page itself, with the API's message.
+    /// `review.*` and `workspace.*`: the page itself, with the API's message.
     Message,
     /// Any other code: the generic refusal page, with the request id.
     Refused,
@@ -35,7 +35,7 @@ impl PageOutcome {
             "auth.invalid" => Self::SignIn,
             "request.validation" => Self::FormAgain,
             _ if code.starts_with("limit.") => Self::Retry,
-            _ if code.starts_with("review.") || code.starts_with("workarea.") => Self::Message,
+            _ if code.starts_with("review.") || code.starts_with("workspace.") => Self::Message,
             _ => Self::Refused,
         }
     }
@@ -156,7 +156,7 @@ mod tests {
             ("limit.rate", PageOutcome::Retry),
             ("limit.quota", PageOutcome::Retry),
             ("review.self_review", PageOutcome::Message),
-            ("workarea.not_empty", PageOutcome::Message),
+            ("workspace.not_empty", PageOutcome::Message),
             ("access.verb_ceiling", PageOutcome::Refused),
             ("something.new", PageOutcome::Refused),
         ];

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 /// The stored pair. Either field may be absent in a hand-edited file; the
 /// caller refuses a file that sets one alone. A v0.3.0 file's `server`,
-/// `key`, `key_id`, `tenant_id` and `root_workarea_id` are not read: its
+/// `key`, `key_id`, `tenant_id` and `root_workspace_id` are not read: its
 /// `server` and `key` were read through v0.5.0, and v0.5.1 removed them
 /// (ADR-0039 d12, d15).
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -169,7 +169,7 @@ mod tests {
         let v0_3_0 = "server = \"https://oml.example.com\"\nkey = \"oml_admin\"\n\
                       key_id = \"0b7e9d5c-0000-4000-8000-000000000001\"\n\
                       tenant_id = \"0b7e9d5c-0000-4000-8000-000000000002\"\n\
-                      root_workarea_id = \"0b7e9d5c-0000-4000-8000-000000000003\"\n";
+                      root_workspace_id = \"0b7e9d5c-0000-4000-8000-000000000003\"\n";
         let read: Credentials = toml::from_str(v0_3_0).expect("a v0.3.0 file parses");
         assert_eq!(read.url, None);
         assert_eq!(read.api_key, None);

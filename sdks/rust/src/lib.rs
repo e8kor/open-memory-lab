@@ -35,38 +35,38 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 pub const OPERATIONS: [&str; 41] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami query:person resp:Whoami",
-    "getGuardrails GET /v1/guardrails query:workarea resp:GuardrailSet",
-    "getWorkareaTree GET /v2/workareas/{workarea}/tree query:limit,cursor resp:WorkareaPage",
+    "getGuardrails GET /v1/guardrails query:workspace resp:GuardrailSet",
+    "getWorkspaceTree GET /v2/workspaces/{workspace}/tree query:limit,cursor resp:WorkspacePage",
     "readyz GET /readyz resp:Ready",
-    "getWorkarea GET /v2/workareas/{workarea} resp:WorkareaView",
-    "getWorkareaOffers GET /v2/workareas/{workarea}/offers resp:WorkareaOffers",
-    "proposeTransition POST /v2/workareas/{workarea}/transitions body:to resp:Transition",
-    "ratifyTransition POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify resp:Transition",
-    "setWorkareaMode POST /v2/workareas/{workarea}/mode body:mode resp:WorkareaView",
-    "listMemories GET /v1/memories query:with_own,include_text,author,workarea,state,origin_kinds,limit,cursor resp:MemoryPage",
-    "recallMemories POST /v1/memories/recall body:query,k,workarea,kinds,include_text,include_unreviewed,origin_kinds resp:RecallResponse",
-    "adminSearchMemories POST /v2/admin/memories/search body:query,workarea,state,origin_kind,author,limit,cursor resp:AdminMemoryPage",
-    "getWorkareaTree GET /v2/workareas/{workarea}/tree query:counts,offers resp:WorkareaCounts",
+    "getWorkspace GET /v2/workspaces/{workspace} resp:WorkspaceView",
+    "getWorkspaceOffers GET /v2/workspaces/{workspace}/offers resp:WorkspaceOffers",
+    "proposeTransition POST /v2/workspaces/{workspace}/transitions body:to resp:Transition",
+    "ratifyTransition POST /v2/workspaces/{workspace}/transitions/{transition_id}/ratify resp:Transition",
+    "setWorkspaceMode POST /v2/workspaces/{workspace}/mode body:mode resp:WorkspaceView",
+    "listMemories GET /v1/memories query:with_own,include_text,author,workspace,state,origin_kinds,limit,cursor resp:MemoryPage",
+    "recallMemories POST /v1/memories/recall body:query,k,workspace,kinds,include_text,include_unreviewed,origin_kinds resp:RecallResponse",
+    "adminSearchMemories POST /v2/admin/memories/search body:query,workspace,state,origin_kind,author,limit,cursor resp:AdminMemoryPage",
+    "getWorkspaceTree GET /v2/workspaces/{workspace}/tree query:counts,offers resp:WorkspaceCounts",
     "listKeys GET /v2/keys query:user,limit,cursor resp:KeyPage",
-    "createWorkarea POST /v2/workareas body:name,parent resp:Workarea",
+    "createWorkspace POST /v2/workspaces body:name,parent resp:Workspace",
     "reviewNext POST /v2/review/next resp:Serve",
     "postVerdict POST /v2/review/verdicts body:serve_id,verdict,reason resp:VerdictResult",
-    "reviewHeld GET /v2/review/held query:workarea,author_key,claim_key_prefix,limit,cursor resp:HeldPage",
+    "reviewHeld GET /v2/review/held query:workspace,author_key,claim_key_prefix,limit,cursor resp:HeldPage",
     "reviewHeld GET /v2/review/held query:ids resp:HeldNamed",
     "postBulkVerdict POST /v2/review/verdicts/bulk body:verdict,artifact_ids,reason resp:BulkVerdictResult",
     "reviewQueue GET /v2/review/queue resp:ReviewQueue",
     "issueKey POST /v2/keys body:name,role,connect_code,expiry resp:KeyIssued",
     "mintConnectCode POST /v2/keys/{key}/connect-codes resp:ConnectCode",
-    "addDenial POST /v2/keys/{key}/denials body:workarea resp:Denial",
+    "addDenial POST /v2/keys/{key}/denials body:workspace resp:Denial",
     "getMemory GET /v1/memories/{artifact_id} resp:Memory",
     "adminReadMemory GET /v2/admin/memories/{artifact_id} resp:AdminRead",
-    "submitMemory POST /v1/memories body:verb,claim_key,body,workarea,derives_from resp:Accepted",
+    "submitMemory POST /v1/memories body:verb,claim_key,body,workspace,derives_from resp:Accepted",
     "supersedeMemory POST /v1/memories/{artifact_id}/supersede body:body,expected_version,retirement resp:Accepted",
     "whoami GET /v2/whoami query:start resp:Onboarding",
     "listWebEmails GET /v2/web/emails query:limit,cursor resp:WebEmailPage",
     "allowWebEmail POST /v2/web/emails body:email,user,admin,keep_an_admin resp:WebEmail",
     "removeWebEmail POST /v2/web/emails/remove body:email,keep_an_admin resp:Removed",
-    "grantWebCapacities POST /v2/web/users/{user}/capacities body:capacity,workareas resp:CapacityGranted",
+    "grantWebCapacities POST /v2/web/users/{user}/capacities body:capacity,workspaces resp:CapacityGranted",
     "listWebUsers GET /v2/web/users resp:WebUsers",
     "setWebUserQuota POST /v2/web/users/{user}/quota body:memories,keys,connections,requests_per_minute resp:WebUser",
     "disableWebUser POST /v2/web/users/{user}/disable resp:Disabled",
@@ -181,7 +181,7 @@ pub struct Whoami {
     /// The key's user root; `None` for a tenant key.
     pub user: Option<NamedRef>,
     /// Whether a person's `<user>-web` session key carries a denial on any
-    /// workarea, which refuses it issuing a key, minting a connect code and
+    /// workspace, which refuses it issuing a key, minting a connect code and
     /// cutting off a key for good; absent for every other key (ADR-0070 d2,
     /// d5).
     #[serde(default)]
@@ -191,7 +191,7 @@ pub struct Whoami {
 /// One verdict on a guardrail.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct GuardrailVerdict {
-    pub held_by: String,
+    pub used_by: String,
     pub at: String,
 }
 
@@ -201,7 +201,7 @@ pub struct ServedGuardrail {
     pub claim_key: String,
     pub version: i64,
     /// `None` where the node's path is not served.
-    pub workarea_path: Option<String>,
+    pub workspace_path: Option<String>,
     pub severity: String,
     pub text: String,
     #[serde(default)]
@@ -232,9 +232,9 @@ pub struct GuardrailSet {
     pub own_held: Vec<OwnHeld>,
 }
 
-/// One node of a workarea tree page.
+/// One node of a workspace tree page.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct WorkareaNode {
+pub struct WorkspaceNode {
     pub id: String,
     pub name: String,
     pub path: String,
@@ -247,10 +247,10 @@ pub struct WorkareaNode {
     pub user_root: bool,
 }
 
-/// `GET /v2/workareas/{workarea}/tree`: one page of nodes.
+/// `GET /v2/workspaces/{workspace}/tree`: one page of nodes.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct WorkareaPage {
-    pub items: Vec<WorkareaNode>,
+pub struct WorkspacePage {
+    pub items: Vec<WorkspaceNode>,
     pub next_cursor: Option<String>,
 }
 
@@ -263,10 +263,10 @@ pub struct Transition {
     pub state: String,
 }
 
-/// `GET /v2/workareas/{workarea}` (openapi.yaml `WorkareaView`), the fields
+/// `GET /v2/workspaces/{workspace}` (openapi.yaml `WorkspaceView`), the fields
 /// read here: the node and its live proposals.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct WorkareaView {
+pub struct WorkspaceView {
     pub id: String,
     pub name: String,
     pub path: String,
@@ -279,7 +279,7 @@ pub struct WorkareaView {
     pub policy: Option<ReviewPolicy>,
 }
 
-/// A workarea's review policy (openapi.yaml `ReviewPolicy`): how many
+/// A workspace's review policy (openapi.yaml `ReviewPolicy`): how many
 /// approving verdicts promote a version, and from which roles.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ReviewPolicy {
@@ -289,7 +289,7 @@ pub struct ReviewPolicy {
     pub required_roles: Vec<String>,
 }
 
-/// A transition a workarea's offers name: `propose` the next rung, or
+/// A transition a workspace's offers name: `propose` the next rung, or
 /// `ratify` a live proposal another key made.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct OfferedTransition {
@@ -302,7 +302,7 @@ pub struct OfferedTransition {
     pub from: Option<String>,
 }
 
-/// Putting the workarea in progress, where offered.
+/// Putting the workspace in progress, where offered.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ModeChange {
     pub to: String,
@@ -326,10 +326,10 @@ pub struct RefusedAct {
     pub message: String,
 }
 
-/// `GET /v2/workareas/{workarea}/offers` (openapi.yaml `WorkareaOffers`).
+/// `GET /v2/workspaces/{workspace}/offers` (openapi.yaml `WorkspaceOffers`).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct WorkareaOffers {
-    pub workarea_id: String,
+pub struct WorkspaceOffers {
+    pub workspace_id: String,
     pub status: String,
     pub mode: String,
     pub transitions: Vec<OfferedTransition>,
@@ -371,10 +371,10 @@ pub struct Memory {
     pub claim_key: String,
     pub version: u32,
     pub tip: bool,
-    /// The workarea's id; `None` where the key holds no role on it.
+    /// The workspace's id; `None` where the key holds no role on it.
     #[serde(default)]
-    pub workarea_id: Option<String>,
-    pub workarea_path: Option<String>,
+    pub workspace_id: Option<String>,
+    pub workspace_path: Option<String>,
     pub state: String,
     pub principal: Option<String>,
     /// Absent from an API before v0.7.0.
@@ -453,7 +453,7 @@ pub struct Memory {
     #[serde(default)]
     pub tokens: Option<u64>,
     /// Whether the served version is held: the caller's own, or another
-    /// author's inside an in-progress workarea (ADR-0030 d3, d4).
+    /// author's inside an in-progress workspace (ADR-0030 d3, d4).
     #[serde(default)]
     pub unreviewed: bool,
     /// When held-item expiry dead-letters a held row; `None` elsewhere.
@@ -504,11 +504,11 @@ pub struct Attachment {
 }
 
 /// The kind of reviewer that approved a version (ADR-0077 d2): the
-/// reviewing key's attestation, `agent`, `human` or `service`, and whether
+/// reviewing key's attestation, `agent`, `person` or `service`, and whether
 /// that key acts for the author's person.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Approver {
-    pub held_by: String,
+    pub used_by: String,
     pub same_user: bool,
 }
 
@@ -561,7 +561,7 @@ pub struct AdminMemory {
     pub claim_key: String,
     pub version: u32,
     pub state: String,
-    pub workarea_path: String,
+    pub workspace_path: String,
     pub text: String,
     #[serde(default)]
     pub format: Option<String>,
@@ -575,7 +575,7 @@ pub struct AdminMemory {
     pub anchor: Option<Anchor>,
     /// Absent, with the four fields after it, from an API before v0.7.0.
     #[serde(default)]
-    pub held_by: Option<String>,
+    pub used_by: Option<String>,
     #[serde(default)]
     pub promoted_at: Option<String>,
     #[serde(default)]
@@ -604,7 +604,7 @@ pub struct AdminRead {
     pub claim_key: String,
     pub version: u32,
     pub state: String,
-    pub workarea_path: String,
+    pub workspace_path: String,
     pub text: String,
     /// The kind the version was written as; absent from an API before
     /// v0.7.0.
@@ -637,10 +637,10 @@ pub struct AdminRead {
     pub plaintext_digest: Option<String>,
     #[serde(default)]
     pub verdicts: Vec<AdminVerdict>,
-    /// The authoring key's holder, `agent`, `human` or `service`; absent,
+    /// The authoring key's holder, `agent`, `person` or `service`; absent,
     /// with the two fields after it, from an API before v0.7.0.
     #[serde(default)]
-    pub held_by: Option<String>,
+    pub used_by: Option<String>,
     #[serde(default)]
     pub promoted_at: Option<String>,
     /// Admission's scan finding, `class: rule at place`, never the matched
@@ -659,12 +659,12 @@ pub struct Accepted {
     pub state: String,
 }
 
-/// What [`Client::learn`] submits: the text, the workarea, the memories
+/// What [`Client::learn`] submits: the text, the workspace, the memories
 /// it derives from and an optional claim key.
 #[derive(Debug, Clone, Copy)]
 pub struct Learn<'a> {
     pub body: &'a str,
-    pub workarea: &'a str,
+    pub workspace: &'a str,
     pub derives_from: &'a [&'a str],
     pub claim_key: Option<&'a str>,
 }
@@ -852,10 +852,10 @@ pub struct CountedNode {
     pub user_root: bool,
 }
 
-/// `GET /v2/workareas/{workarea}/tree?counts=true`: the subtree, a parent
+/// `GET /v2/workspaces/{workspace}/tree?counts=true`: the subtree, a parent
 /// before its children, with each node's counts.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct WorkareaCounts {
+pub struct WorkspaceCounts {
     pub items: Vec<CountedNode>,
     pub truncated: bool,
     /// The scope's offers, asked with `offers=true` (#286); absent when not
@@ -863,7 +863,7 @@ pub struct WorkareaCounts {
     /// `request.validation`, so a caller that must work one release behind
     /// reads the offers apart on that refusal (ADR-0070 d4).
     #[serde(default)]
-    pub offers: Option<WorkareaOffers>,
+    pub offers: Option<WorkspaceOffers>,
 }
 
 /// `POST /v2/review/next`: one served item, claimed by the reviewer key.
@@ -961,10 +961,10 @@ pub struct BulkVerdictResult {
     pub summary: BulkSummary,
 }
 
-/// One workarea holding held rows, as the admin's queue names it.
+/// One workspace holding held rows, as the admin's queue names it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct QueueItem {
-    pub workarea_id: String,
+    pub workspace_id: String,
     pub path: String,
     pub held: u64,
     pub oldest_at: String,
@@ -976,11 +976,11 @@ pub struct ReviewQueue {
     pub items: Vec<QueueItem>,
 }
 
-/// A grant as a listed key carries it: the role and the workarea's path.
+/// A grant as a listed key carries it: the role and the workspace's path.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ListedGrant {
     pub role: String,
-    pub workarea_id: String,
+    pub workspace_id: String,
     pub path: String,
 }
 
@@ -990,7 +990,7 @@ pub struct ListedKey {
     pub id: String,
     pub name: Option<String>,
     pub role: String,
-    pub held_by: String,
+    pub used_by: String,
     pub credential: String,
     pub revoked: bool,
     pub cut_off: bool,
@@ -1132,9 +1132,9 @@ pub struct Denial {
     pub epoch: i64,
 }
 
-/// `POST /v2/workareas`: the new node, the fields read here.
+/// `POST /v2/workspaces`: the new node, the fields read here.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Workarea {
+pub struct Workspace {
     pub id: String,
     pub name: String,
     pub path: String,
@@ -1143,7 +1143,7 @@ pub struct Workarea {
 /// The Memories list's filters for `GET /v1/memories` with `with_own`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MemoryQuery<'a> {
-    pub workarea: Option<&'a str>,
+    pub workspace: Option<&'a str>,
     pub state: Option<&'a str>,
     pub origin: Option<&'a str>,
     pub author: Option<&'a str>,
@@ -1157,7 +1157,7 @@ pub struct MemoryQuery<'a> {
 pub struct RecallQuery<'a> {
     pub query: &'a str,
     pub k: u32,
-    pub workarea: Option<&'a str>,
+    pub workspace: Option<&'a str>,
     pub origin: Option<&'a str>,
 }
 
@@ -1165,7 +1165,7 @@ pub struct RecallQuery<'a> {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AdminSearch<'a> {
     pub query: Option<&'a str>,
-    pub workarea: Option<&'a str>,
+    pub workspace: Option<&'a str>,
     pub state: Option<&'a str>,
     pub origin_kind: Option<&'a str>,
     pub author: Option<&'a str>,
@@ -1403,36 +1403,36 @@ impl<T: Transport> Client<T> {
             .await
     }
 
-    /// `GET /v1/guardrails`, at `workarea` (an id or a name) or at the key's
-    /// default workarea.
+    /// `GET /v1/guardrails`, at `workspace` (an id or a name) or at the key's
+    /// default workspace.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
     pub async fn guardrails(
         &self,
         call: &Call<'_>,
-        workarea: Option<&str>,
+        workspace: Option<&str>,
     ) -> Result<GuardrailSet, Error> {
-        let path = match workarea {
-            Some(w) => format!("/v1/guardrails?workarea={}", encode(w)),
+        let path = match workspace {
+            Some(w) => format!("/v1/guardrails?workspace={}", encode(w)),
             None => "/v1/guardrails".to_owned(),
         };
         self.get(Some(call), path).await
     }
 
-    /// `GET /v2/workareas/{workarea}/tree`: one page of `limit` nodes
+    /// `GET /v2/workspaces/{workspace}/tree`: one page of `limit` nodes
     /// after `cursor`.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
-    pub async fn workarea_tree(
+    pub async fn workspace_tree(
         &self,
         call: &Call<'_>,
-        workarea: &str,
+        workspace: &str,
         limit: u32,
         cursor: Option<&str>,
-    ) -> Result<WorkareaPage, Error> {
-        let mut path = format!("/v2/workareas/{}/tree?limit={limit}", encode(workarea));
+    ) -> Result<WorkspacePage, Error> {
+        let mut path = format!("/v2/workspaces/{}/tree?limit={limit}", encode(workspace));
         if let Some(cursor) = cursor {
             path.push_str("&cursor=");
             path.push_str(&encode(cursor));
@@ -1440,33 +1440,37 @@ impl<T: Transport> Client<T> {
         self.get(Some(call), path).await
     }
 
-    /// `GET /v2/workareas/{workarea}`: the node and its live proposals.
+    /// `GET /v2/workspaces/{workspace}`: the node and its live proposals.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
-    pub async fn workarea(&self, call: &Call<'_>, workarea: &str) -> Result<WorkareaView, Error> {
-        self.get(Some(call), format!("/v2/workareas/{}", encode(workarea)))
+    pub async fn workspace(
+        &self,
+        call: &Call<'_>,
+        workspace: &str,
+    ) -> Result<WorkspaceView, Error> {
+        self.get(Some(call), format!("/v2/workspaces/{}", encode(workspace)))
             .await
     }
 
-    /// `GET /v2/workareas/{workarea}/offers`: the acts the caller's verbs
+    /// `GET /v2/workspaces/{workspace}/offers`: the acts the caller's verbs
     /// admit there now, and each refused act's refusal.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
-    pub async fn workarea_offers(
+    pub async fn workspace_offers(
         &self,
         call: &Call<'_>,
-        workarea: &str,
-    ) -> Result<WorkareaOffers, Error> {
+        workspace: &str,
+    ) -> Result<WorkspaceOffers, Error> {
         self.get(
             Some(call),
-            format!("/v2/workareas/{}/offers", encode(workarea)),
+            format!("/v2/workspaces/{}/offers", encode(workspace)),
         )
         .await
     }
 
-    /// `POST /v2/workareas/{workarea}/transitions`: proposes `to`.
+    /// `POST /v2/workspaces/{workspace}/transitions`: proposes `to`.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -1474,19 +1478,19 @@ impl<T: Transport> Client<T> {
         &self,
         call: &Call<'_>,
         idempotency_key: &str,
-        workarea: &str,
+        workspace: &str,
         to: &str,
     ) -> Result<Transition, Error> {
         self.post(
             call,
-            format!("/v2/workareas/{}/transitions", encode(workarea)),
+            format!("/v2/workspaces/{}/transitions", encode(workspace)),
             idempotency_key,
             &serde_json::json!({ "to": to }),
         )
         .await
     }
 
-    /// `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify`.
+    /// `POST /v2/workspaces/{workspace}/transitions/{transition_id}/ratify`.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -1494,15 +1498,15 @@ impl<T: Transport> Client<T> {
         &self,
         call: &Call<'_>,
         idempotency_key: &str,
-        workarea: &str,
+        workspace: &str,
         transition_id: &str,
     ) -> Result<Transition, Error> {
         self.send(
             Method::POST,
             Some(call),
             format!(
-                "/v2/workareas/{}/transitions/{}/ratify",
-                encode(workarea),
+                "/v2/workspaces/{}/transitions/{}/ratify",
+                encode(workspace),
                 encode(transition_id)
             ),
             Some(idempotency_key),
@@ -1511,21 +1515,21 @@ impl<T: Transport> Client<T> {
         .await
     }
 
-    /// `POST /v2/workareas/{workarea}/mode`: `in_progress`, or `standard`,
+    /// `POST /v2/workspaces/{workspace}/mode`: `in_progress`, or `standard`,
     /// which on an in-progress root is its commit.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
-    pub async fn set_workarea_mode(
+    pub async fn set_workspace_mode(
         &self,
         call: &Call<'_>,
         idempotency_key: &str,
-        workarea: &str,
+        workspace: &str,
         mode: &str,
-    ) -> Result<WorkareaView, Error> {
+    ) -> Result<WorkspaceView, Error> {
         self.post(
             call,
-            format!("/v2/workareas/{}/mode", encode(workarea)),
+            format!("/v2/workspaces/{}/mode", encode(workspace)),
             idempotency_key,
             &serde_json::json!({ "mode": mode }),
         )
@@ -1548,7 +1552,7 @@ impl<T: Transport> Client<T> {
         );
         for (name, value) in [
             ("author", query.author),
-            ("workarea", query.workarea),
+            ("workspace", query.workspace),
             ("state", query.state),
             ("origin_kinds", query.origin),
             ("cursor", query.cursor),
@@ -1578,8 +1582,8 @@ impl<T: Transport> Client<T> {
             "include_text": true,
             "include_unreviewed": true,
         });
-        if let Some(workarea) = query.workarea {
-            body["workarea"] = serde_json::json!(workarea);
+        if let Some(workspace) = query.workspace {
+            body["workspace"] = serde_json::json!(workspace);
         }
         if let Some(origin) = query.origin {
             body["origin_kinds"] = serde_json::json!([origin]);
@@ -1607,7 +1611,7 @@ impl<T: Transport> Client<T> {
         let mut body = serde_json::json!({ "limit": search.limit });
         for (name, value) in [
             ("query", search.query),
-            ("workarea", search.workarea),
+            ("workspace", search.workspace),
             ("state", search.state),
             ("origin_kind", search.origin_kind),
             ("author", search.author),
@@ -1627,22 +1631,25 @@ impl<T: Transport> Client<T> {
         .await
     }
 
-    /// `GET /v2/workareas/{workarea}/tree?counts=true`: the subtree with
+    /// `GET /v2/workspaces/{workspace}/tree?counts=true`: the subtree with
     /// each node's rows counted by state, and with `offers` the scope's
     /// offers to the same caller, read beside them (#286).
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
-    pub async fn workarea_counts(
+    pub async fn workspace_counts(
         &self,
         call: &Call<'_>,
-        workarea: &str,
+        workspace: &str,
         offers: bool,
-    ) -> Result<WorkareaCounts, Error> {
+    ) -> Result<WorkspaceCounts, Error> {
         let asked = if offers { "&offers=true" } else { "" };
         self.get(
             Some(call),
-            format!("/v2/workareas/{}/tree?counts=true{asked}", encode(workarea)),
+            format!(
+                "/v2/workspaces/{}/tree?counts=true{asked}",
+                encode(workspace)
+            ),
         )
         .await
     }
@@ -1708,7 +1715,7 @@ impl<T: Transport> Client<T> {
         let mut path = format!("/v2/review/held?limit={limit}");
         for (name, value) in filters
             .iter()
-            .filter(|(n, _)| matches!(*n, "workarea" | "author_key" | "claim_key_prefix"))
+            .filter(|(n, _)| matches!(*n, "workspace" | "author_key" | "claim_key_prefix"))
         {
             path.push_str(&format!("&{name}={}", encode(value)));
         }
@@ -1756,7 +1763,7 @@ impl<T: Transport> Client<T> {
         .await
     }
 
-    /// `GET /v2/review/queue`: each workarea holding held rows, with its
+    /// `GET /v2/review/queue`: each workspace holding held rows, with its
     /// count and its oldest row's time. An admin key's.
     ///
     /// # Errors
@@ -1789,23 +1796,23 @@ impl<T: Transport> Client<T> {
         self.get(Some(call), path).await
     }
 
-    /// `POST /v2/workareas`: creates `name` under `parent`, or under the
+    /// `POST /v2/workspaces`: creates `name` under `parent`, or under the
     /// caller's own root when `parent` is `None`.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
-    pub async fn create_workarea(
+    pub async fn create_workspace(
         &self,
         call: &Call<'_>,
         idempotency_key: &str,
         name: &str,
         parent: Option<&str>,
-    ) -> Result<Workarea, Error> {
+    ) -> Result<Workspace, Error> {
         let mut body = serde_json::json!({ "name": name });
         if let Some(parent) = parent {
             body["parent"] = serde_json::json!(parent);
         }
-        self.post(call, "/v2/workareas".to_owned(), idempotency_key, &body)
+        self.post(call, "/v2/workspaces".to_owned(), idempotency_key, &body)
             .await
     }
 
@@ -1867,7 +1874,7 @@ impl<T: Transport> Client<T> {
         Ok(code)
     }
 
-    /// `POST /v2/keys/{key}/denials` on `workarea`: on `universe`, the key
+    /// `POST /v2/keys/{key}/denials` on `workspace`: on `universe`, the key
     /// is cut off.
     ///
     /// # Errors
@@ -1877,13 +1884,13 @@ impl<T: Transport> Client<T> {
         call: &Call<'_>,
         idempotency_key: &str,
         key: &str,
-        workarea: &str,
+        workspace: &str,
     ) -> Result<Denial, Error> {
         self.post(
             call,
             format!("/v2/keys/{}/denials", encode(key)),
             idempotency_key,
-            &serde_json::json!({ "workarea": workarea }),
+            &serde_json::json!({ "workspace": workspace }),
         )
         .await
     }
@@ -1913,7 +1920,7 @@ impl<T: Transport> Client<T> {
     }
 
     /// `POST /v1/memories` with `verb: learn`: a new claim deriving from
-    /// `derives_from`, in `workarea`, held until reviewed.
+    /// `derives_from`, in `workspace`, held until reviewed.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -1926,7 +1933,7 @@ impl<T: Transport> Client<T> {
         let mut body = serde_json::json!({
             "verb": "learn",
             "body": submission.body,
-            "workarea": submission.workarea,
+            "workspace": submission.workspace,
             "derives_from": submission.derives_from,
         });
         if let Some(claim_key) = submission.claim_key {
@@ -2045,7 +2052,7 @@ impl<T: Transport> Client<T> {
     }
 
     /// `POST /v2/web/users/{user}/capacities`: review or curation on
-    /// `workarea`.
+    /// `workspace`.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -2055,13 +2062,13 @@ impl<T: Transport> Client<T> {
         idempotency_key: &str,
         user: &str,
         capacity: &str,
-        workarea: &str,
+        workspace: &str,
     ) -> Result<CapacityGranted, Error> {
         self.post(
             call,
             format!("/v2/web/users/{}/capacities", encode(user)),
             idempotency_key,
-            &serde_json::json!({ "capacity": capacity, "workareas": [workarea] }),
+            &serde_json::json!({ "capacity": capacity, "workspaces": [workspace] }),
         )
         .await
     }
@@ -2321,13 +2328,13 @@ mod tests {
             decodes(&client.authorization_server_metadata().await),
             decodes(&client.whoami(&CALL).await),
             decodes(&client.guardrails(&CALL, Some("alice.proj")).await),
-            decodes(&client.workarea_tree(&CALL, "w/1", 200, Some("c 1")).await),
+            decodes(&client.workspace_tree(&CALL, "w/1", 200, Some("c 1")).await),
             decodes(&client.readyz().await),
-            decodes(&client.workarea(&CALL, "alice.proj").await),
-            decodes(&client.workarea_offers(&CALL, "alice.proj").await),
+            decodes(&client.workspace(&CALL, "alice.proj").await),
+            decodes(&client.workspace_offers(&CALL, "alice.proj").await),
             decodes(
                 &client
-                    .propose_transition(&CALL, "idem-1", "alice.proj", "committed")
+                    .propose_transition(&CALL, "idem-1", "alice.proj", "protected")
                     .await,
             ),
             decodes(
@@ -2337,7 +2344,7 @@ mod tests {
             ),
             decodes(
                 &client
-                    .set_workarea_mode(&CALL, "idem-3", "alice.proj", "in_progress")
+                    .set_workspace_mode(&CALL, "idem-3", "alice.proj", "in_progress")
                     .await,
             ),
             decodes(
@@ -2376,11 +2383,11 @@ mod tests {
                     )
                     .await,
             ),
-            decodes(&client.workarea_counts(&CALL, "alice", true).await),
+            decodes(&client.workspace_counts(&CALL, "alice", true).await),
             decodes(&client.list_keys(&CALL, Some("alice"), 200, None).await),
             decodes(
                 &client
-                    .create_workarea(&CALL, "idem-4", "proj", Some("alice"))
+                    .create_workspace(&CALL, "idem-4", "proj", Some("alice"))
                     .await,
             ),
             {
@@ -2395,7 +2402,7 @@ mod tests {
             ),
             decodes(
                 &client
-                    .review_held(&CALL, &[("workarea", "alice")], 50, None)
+                    .review_held(&CALL, &[("workspace", "alice")], 50, None)
                     .await,
             ),
             decodes(&client.review_named(&CALL, &["a", "b"]).await),
@@ -2429,7 +2436,7 @@ mod tests {
                         "idem-10",
                         &Learn {
                             body: "Keys rotate quarterly.",
-                            workarea: "universe",
+                            workspace: "universe",
                             derives_from: &["m-1"],
                             claim_key: None,
                         },
@@ -2491,14 +2498,14 @@ mod tests {
         assert_eq!(seen[1].uri(), "/v2/whoami?person=false");
         // The person block is asked for by name, on the one method that reads it.
         assert_eq!(seen[seen.len() - 1].uri(), "/v2/whoami");
-        assert_eq!(seen[2].uri(), "/v1/guardrails?workarea=alice.proj");
+        assert_eq!(seen[2].uri(), "/v1/guardrails?workspace=alice.proj");
         assert_eq!(
             seen[3].uri(),
-            "/v2/workareas/w%2F1/tree?limit=200&cursor=c%201"
+            "/v2/workspaces/w%2F1/tree?limit=200&cursor=c%201"
         ); // Each POST carries its idempotency key; one with a body sends it
         // as JSON, and the ratify sends none.
         for (i, key, body) in [
-            (7, "idem-1", Some(r#"{"to":"committed"}"#)),
+            (7, "idem-1", Some(r#"{"to":"protected"}"#)),
             (8, "idem-2", None),
             (9, "idem-3", Some(r#"{"mode":"in_progress"}"#)),
         ] {
@@ -2521,7 +2528,7 @@ mod tests {
         }
         assert_eq!(
             seen[13].uri(),
-            "/v2/workareas/alice/tree?counts=true&offers=true"
+            "/v2/workspaces/alice/tree?counts=true&offers=true"
         );
         assert_eq!(seen[15].headers()[IDEMPOTENCY_KEY], "idem-4");
         assert_eq!(
@@ -2529,7 +2536,7 @@ mod tests {
             r#"{"name":"proj","parent":"alice"}"#
         );
         assert_eq!(seen[14].uri(), "/v2/keys?limit=200&user=alice");
-        assert_eq!(seen[18].uri(), "/v2/review/held?limit=50&workarea=alice");
+        assert_eq!(seen[18].uri(), "/v2/review/held?limit=50&workspace=alice");
         assert_eq!(seen[19].uri(), "/v2/review/held?ids=a,b");
         assert_eq!(
             std::str::from_utf8(seen[22].body()).unwrap(),

@@ -1,19 +1,19 @@
 //! The status ladder as pure functions: the forward-only rungs and the
-//! refusal reasons of `workarea.transition_refused` (ADR-0009 d1, d3, d4;
-//! workareas.md, readings the build takes), the second identity of a
+//! refusal reasons of `workspace.transition_refused` (ADR-0009 d1, d3, d4;
+//! workspaces.md, readings the build takes), the second identity of a
 //! ratification (`review.ratifier_is_proposer`, R2), and the closed list of
 //! mutations a frozen area admits (ADR-0009 d5).
 
 use oml_domain::{
-    FrozenOp, LadderNode, LadderRefusal, WorkareaStatus, frozen_refuses, propose_check,
+    FrozenOp, LadderNode, LadderRefusal, WorkspaceStatus, frozen_refuses, propose_check,
     ratifier_is_proposer, ratify_check, same_user,
 };
 use uuid::Uuid;
 
 use LadderNode::{Ordinary, Universe, UserRoot};
-use WorkareaStatus::{Committed, Development, Validated};
+use WorkspaceStatus::{Development, Frozen, Protected};
 
-const ALL: [WorkareaStatus; 3] = [Development, Committed, Validated];
+const ALL: [WorkspaceStatus; 3] = [Development, Protected, Frozen];
 
 const OPS: [FrozenOp; 10] = [
     FrozenOp::Write,
@@ -31,12 +31,14 @@ const OPS: [FrozenOp; 10] = [
 #[test]
 fn each_status_spells_its_ladder_word_and_parses_back() {
     let words: Vec<&str> = ALL.iter().map(|s| s.as_str()).collect();
-    assert_eq!(words, ["development", "committed", "validated"]);
+    assert_eq!(words, ["development", "protected", "frozen"]);
     for status in ALL {
-        assert_eq!(WorkareaStatus::parse(status.as_str()), Some(status));
+        assert_eq!(WorkspaceStatus::parse(status.as_str()), Some(status));
     }
-    assert_eq!(WorkareaStatus::parse("frozen"), None);
-    assert_eq!(WorkareaStatus::parse("Validated"), None);
+    assert_eq!(WorkspaceStatus::parse("Frozen"), None);
+    // The former words are unknown input, as any other word is (ADR-0091 d2).
+    assert_eq!(WorkspaceStatus::parse("committed"), None);
+    assert_eq!(WorkspaceStatus::parse("validated"), None);
 }
 
 #[test]
@@ -44,12 +46,12 @@ fn development_moves_only_to_committed_and_committed_only_to_validated() {
     let mut admitted = Vec::new();
     for from in ALL {
         for to in ALL {
-            if propose_check(Ordinary, from, to, &[Validated]).is_ok() {
+            if propose_check(Ordinary, from, to, &[Frozen]).is_ok() {
                 admitted.push((from, to));
             }
         }
     }
-    assert_eq!(admitted, [(Development, Committed), (Committed, Validated)]);
+    assert_eq!(admitted, [(Development, Protected), (Protected, Frozen)]);
     for status in ALL {
         assert_eq!(
             propose_check(Ordinary, status, status, &[]),
@@ -61,19 +63,19 @@ fn development_moves_only_to_committed_and_committed_only_to_validated() {
 #[test]
 fn a_backward_step_is_refused_as_backward_and_none_exists_from_validated() {
     assert_eq!(
-        propose_check(Ordinary, Committed, Development, &[]),
+        propose_check(Ordinary, Protected, Development, &[]),
         Err(LadderRefusal::Backward)
     );
     assert_eq!(
-        propose_check(Ordinary, Validated, Development, &[]),
+        propose_check(Ordinary, Frozen, Development, &[]),
         Err(LadderRefusal::Backward)
     );
     assert_eq!(
-        propose_check(Ordinary, Validated, Committed, &[]),
+        propose_check(Ordinary, Frozen, Protected, &[]),
         Err(LadderRefusal::Backward)
     );
     for to in ALL {
-        assert!(propose_check(Ordinary, Validated, to, &[]).is_err());
+        assert!(propose_check(Ordinary, Frozen, to, &[]).is_err());
     }
     assert_eq!(LadderRefusal::Backward.reason(), "backward");
 }
@@ -81,7 +83,7 @@ fn a_backward_step_is_refused_as_backward_and_none_exists_from_validated() {
 #[test]
 fn validated_proposed_from_development_is_refused_as_a_skipped_rung() {
     assert_eq!(
-        propose_check(Ordinary, Development, Validated, &[]),
+        propose_check(Ordinary, Development, Frozen, &[]),
         Err(LadderRefusal::Skipped)
     );
     assert_eq!(LadderRefusal::Skipped.reason(), "skipped");
@@ -106,27 +108,27 @@ fn any_transition_proposed_on_universe_is_refused() {
 
 #[test]
 fn validated_is_refused_while_any_child_is_not_validated() {
-    assert_eq!(propose_check(Ordinary, Committed, Validated, &[]), Ok(()));
+    assert_eq!(propose_check(Ordinary, Protected, Frozen, &[]), Ok(()));
     assert_eq!(
-        propose_check(Ordinary, Committed, Validated, &[Validated, Validated]),
+        propose_check(Ordinary, Protected, Frozen, &[Frozen, Frozen]),
         Ok(())
     );
     assert_eq!(
-        propose_check(Ordinary, Committed, Validated, &[Validated, Committed]),
-        Err(LadderRefusal::ChildrenNotValidated)
+        propose_check(Ordinary, Protected, Frozen, &[Frozen, Protected]),
+        Err(LadderRefusal::ChildrenNotFrozen)
     );
     assert_eq!(
-        propose_check(Ordinary, Committed, Validated, &[Development]),
-        Err(LadderRefusal::ChildrenNotValidated)
+        propose_check(Ordinary, Protected, Frozen, &[Development]),
+        Err(LadderRefusal::ChildrenNotFrozen)
     );
-    // The children constrain only the step to validated.
+    // The children constrain only the step to frozen.
     assert_eq!(
-        propose_check(Ordinary, Development, Committed, &[Development]),
+        propose_check(Ordinary, Development, Protected, &[Development]),
         Ok(())
     );
     assert_eq!(
-        LadderRefusal::ChildrenNotValidated.reason(),
-        "children_not_validated"
+        LadderRefusal::ChildrenNotFrozen.reason(),
+        "children_not_frozen"
     );
 }
 
@@ -134,22 +136,22 @@ fn validated_is_refused_while_any_child_is_not_validated() {
 fn a_proposal_whose_from_is_no_longer_the_status_is_stale_at_ratification() {
     // A live proposal ratifies.
     assert_eq!(
-        ratify_check(Development, Ordinary, Development, Committed, &[]),
+        ratify_check(Development, Ordinary, Development, Protected, &[]),
         Ok(())
     );
     // Another proposal was ratified first: the node moved on.
     assert_eq!(
-        ratify_check(Development, Ordinary, Committed, Committed, &[]),
+        ratify_check(Development, Ordinary, Protected, Protected, &[]),
         Err(LadderRefusal::Stale)
     );
     assert_eq!(
-        ratify_check(Committed, Ordinary, Validated, Validated, &[]),
+        ratify_check(Protected, Ordinary, Frozen, Frozen, &[]),
         Err(LadderRefusal::Stale)
     );
     // The propose checks run again against the node as it is now.
     assert_eq!(
-        ratify_check(Committed, Ordinary, Committed, Validated, &[Committed]),
-        Err(LadderRefusal::ChildrenNotValidated)
+        ratify_check(Protected, Ordinary, Protected, Frozen, &[Protected]),
+        Err(LadderRefusal::ChildrenNotFrozen)
     );
     assert_eq!(LadderRefusal::Stale.reason(), "stale");
 }
@@ -188,7 +190,7 @@ fn the_ratifier_is_refused_when_its_key_or_its_principal_is_the_proposers() {
 fn a_validated_area_admits_exactly_a_reject_demote_erasure_and_crew_update() {
     let admitted: Vec<FrozenOp> = OPS
         .into_iter()
-        .filter(|op| !frozen_refuses(Validated, *op))
+        .filter(|op| !frozen_refuses(Frozen, *op))
         .collect();
     assert_eq!(
         admitted,
@@ -203,27 +205,27 @@ fn a_validated_area_admits_exactly_a_reject_demote_erasure_and_crew_update() {
 
 #[test]
 fn a_transition_on_a_validated_area_is_refused_by_the_ladder_as_backward_or_same_not_by_freeze() {
-    for to in [Development, Committed] {
+    for to in [Development, Protected] {
         assert_eq!(
-            propose_check(Ordinary, Validated, to, &[]),
+            propose_check(Ordinary, Frozen, to, &[]),
             Err(LadderRefusal::Backward)
         );
         assert_eq!(
-            ratify_check(Validated, Ordinary, Validated, to, &[]),
+            ratify_check(Frozen, Ordinary, Frozen, to, &[]),
             Err(LadderRefusal::Backward)
         );
     }
     assert_eq!(
-        propose_check(Ordinary, Validated, Validated, &[]),
+        propose_check(Ordinary, Frozen, Frozen, &[]),
         Err(LadderRefusal::Same)
     );
     assert_eq!(
-        ratify_check(Validated, Ordinary, Validated, Validated, &[]),
+        ratify_check(Frozen, Ordinary, Frozen, Frozen, &[]),
         Err(LadderRefusal::Same)
     );
     // Freeze has no transition operation to refuse: the ladder alone decides,
     // so a store or use case that runs the freeze gate first cannot answer
-    // `workarea.frozen` where errors.md documents `transition_refused`.
+    // `workspace.frozen` where errors.md documents `transition_refused`.
     // The match is exhaustive, so a transition variant fails to compile.
     for op in OPS {
         match op {
@@ -243,7 +245,7 @@ fn a_transition_on_a_validated_area_is_refused_by_the_ladder_as_backward_or_same
 
 #[test]
 fn development_and_committed_refuse_none_of_the_frozen_operations() {
-    for status in [Development, Committed] {
+    for status in [Development, Protected] {
         for op in OPS {
             assert!(
                 !frozen_refuses(status, op),
@@ -256,18 +258,18 @@ fn development_and_committed_refuse_none_of_the_frozen_operations() {
 
 #[test]
 fn a_user_root_climbs_to_committed_and_validated_is_refused_as_user_root() {
-    assert_eq!(propose_check(UserRoot, Development, Committed, &[]), Ok(()));
+    assert_eq!(propose_check(UserRoot, Development, Protected, &[]), Ok(()));
     assert_eq!(
-        propose_check(UserRoot, Committed, Validated, &[Validated]),
+        propose_check(UserRoot, Protected, Frozen, &[Frozen]),
         Err(LadderRefusal::UserRoot)
     );
     assert_eq!(
-        ratify_check(Committed, UserRoot, Committed, Validated, &[]),
+        ratify_check(Protected, UserRoot, Protected, Frozen, &[]),
         Err(LadderRefusal::UserRoot)
     );
     assert_eq!(LadderRefusal::UserRoot.reason(), "user_root");
     // Its children climb freely, so a finished subtree inside it freezes.
-    assert_eq!(propose_check(Ordinary, Committed, Validated, &[]), Ok(()));
+    assert_eq!(propose_check(Ordinary, Protected, Frozen, &[]), Ok(()));
 }
 
 #[test]
@@ -282,6 +284,6 @@ fn a_ratification_is_same_user_only_when_both_keys_act_for_one_person() {
 
 #[test]
 fn a_validated_area_admits_a_reject_and_refuses_a_promotion() {
-    assert!(!frozen_refuses(Validated, FrozenOp::Reject));
-    assert!(frozen_refuses(Validated, FrozenOp::Promote));
+    assert!(!frozen_refuses(Frozen, FrozenOp::Reject));
+    assert!(frozen_refuses(Frozen, FrozenOp::Promote));
 }

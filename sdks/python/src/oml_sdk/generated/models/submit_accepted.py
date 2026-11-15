@@ -34,8 +34,8 @@ class SubmitAccepted:
             any state, so it counts versions the key may not read — a stated residual, #129 (docs/architecture/audit-and-
             lineage.md).
         state (Literal['held']):
-        workarea_id (str): The workarea the submission was captured in — the resolved target, or a supersession target's
-            workarea.
+        workspace_id (str): The workspace the submission was captured in — the resolved target, or a supersession
+            target's workspace.
         retirement (bool): True when the submission is a retirement version. Default: False.
         replaces (None | SubmitAcceptedReplacesType0): For a supersession, the version it replaces; null for a version
             1.
@@ -50,7 +50,7 @@ class SubmitAccepted:
     claim_key: str
     version: int
     state: Literal["held"]
-    workarea_id: str
+    workspace_id: str
     replaces: None | SubmitAcceptedReplacesType0
     retirement: bool = False
     plaintext_digest: str | Unset = UNSET
@@ -70,7 +70,7 @@ class SubmitAccepted:
 
         state = self.state
 
-        workarea_id = self.workarea_id
+        workspace_id = self.workspace_id
 
         retirement = self.retirement
 
@@ -103,7 +103,7 @@ class SubmitAccepted:
                 "claim_key": claim_key,
                 "version": version,
                 "state": state,
-                "workarea_id": workarea_id,
+                "workspace_id": workspace_id,
                 "retirement": retirement,
                 "replaces": replaces,
             }
@@ -136,7 +136,7 @@ class SubmitAccepted:
         if state != "held":
             raise ValueError(f"state must match const 'held', got '{state}'")
 
-        workarea_id = d.pop("workarea_id")
+        workspace_id = d.pop("workspace_id")
 
         retirement = d.pop("retirement")
 
@@ -180,7 +180,7 @@ class SubmitAccepted:
             claim_key=claim_key,
             version=version,
             state=state,
-            workarea_id=workarea_id,
+            workspace_id=workspace_id,
             retirement=retirement,
             replaces=replaces,
             plaintext_digest=plaintext_digest,

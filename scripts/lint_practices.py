@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Five repository lints (docs/contributing/review-checklist.md).
+"""Six repository lints (docs/contributing/review-checklist.md).
 
-    python scripts/lint_practices.py migrations|ports|like|actions|voice [--root DIR] [--no-allowlist]
+    python scripts/lint_practices.py migrations|ports|like|actions|voice|vocabulary [--root DIR] [--no-allowlist]
 
 migrations  every migration not in lint_allow/migrations.txt sets lock_timeout, adds CHECK and
             FOREIGN KEY constraints NOT VALID (an inline CHECK on an added column too) and validates them (in that or a later
@@ -17,6 +17,12 @@ voice       no second- or first-person word (you, your, yours, yourself, yoursel
             changes/*.md and the descriptions in docs/api/mcp-tools.json: code (fenced, indented,
             inline), HTML comments, link targets, URLs, quotations and blockquotes are not prose,
             and a file in lint_allow/voice.txt is skipped (design/README.md, the neutral voice).
+vocabulary  no former name of ADR-0091 in a tracked file: the words workarea and dreamer, and the
+            literals and identifiers of the statuses committed and validated, the key field held_by
+            and its value human, and human in an identifier in the holder sense (mode_is_human_only,
+            the [needs-human] marker). A hit is allowed only in a path lint_allow/rename.txt lists with a
+            reason from ADR-0091 d11 (signed bytes, the former-name map, applied migrations,
+            released history, measured results, dated fixtures, quoted text, this lint).
 
 An escape is a reasoned line comment: `-- lint:allow <rule> <why>` in SQL,
 `// lint:allow-like <why>` in Rust, `lint:allow-5432 <why>` anywhere on the line,
@@ -395,8 +401,92 @@ def lint_voice(root: Path, use_allow: bool = True) -> list[str]:
     return problems
 
 
+# ---- vocabulary -------------------------------------------------------------------------
+
+# ADR-0091 d11: the two words anywhere, and the statuses and the key holder as literals and
+# identifiers only, since `committed` and `validated` stay ordinary English and the review
+# lease keeps `held_by_key`.
+FORMER = re.compile(
+    r"(?i:workarea|dreamer)"
+    r"|[\"'](?:committed|validated|human)[\"']"
+    r"|::(?:Committed|Validated)\b"
+    r"|\bheld_by(?!_key)|HeldBy|heldBy|--held-by"
+    # `human` in an identifier in the holder sense; human_required and a claim's
+    # provenance are other senses ADR-0091 d15 leaves.
+    r"|\w+_is_human_only|\bhuman_only\b|needs-human|(?:HeldBy|UsedBy)::Human\b"
+)
+
+
+def rename_allowed(root: Path, use: bool) -> list[tuple[str, str]]:
+    """The entries of lint_allow/rename.txt: `<glob>  # <reason>` allows a whole path, and
+    `<glob> | <text>  # <reason>` only the lines of that path holding the text."""
+    f = root / "scripts" / "lint_allow" / "rename.txt"
+    if not use or not f.exists():
+        return []
+    entries = []
+    for line in f.read_text().splitlines():
+        entry, _, reason = line.partition("  #")
+        if line.lstrip().startswith("#") or not entry.strip():
+            continue
+        if not reason.strip():
+            raise SystemExit(f"lint_allow/rename.txt: {entry.strip()} names no reason")
+        glob, _, needle = entry.partition(" | ")
+        entries.append((glob.strip(), needle.strip()))
+    return entries
+
+
+# Files that keep their names: an applied migration (ADR-0091 d6) and the record that decides the
+# rename (d10, d11), wherever a line names them.
+KEPT_FILE_NAMES = re.compile(
+    r"0017_workarea_transitions\.sql"
+    r"|ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer[a-z0-9-]*"
+)
+
+
+def tracked(root: Path) -> list[str]:
+    import subprocess
+    out = subprocess.run(["git", "-C", str(root), "ls-files"], capture_output=True, text=True)
+    if out.returncode != 0:
+        return sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+    return out.stdout.splitlines()
+
+
+def lint_vocabulary(root: Path, use_allow: bool = True) -> list[str]:
+    import fnmatch
+    allow = rename_allowed(root, use_allow)
+    problems = []
+    for rel in tracked(root):
+        if any(fnmatch.fnmatch(rel, g) and not n for g, n in allow):
+            continue
+        needles = [n for g, n in allow if n and fnmatch.fnmatch(rel, g)]
+        if FORMER.search(rel):
+            problems.append(f"{rel}: the path names a former name")
+        p = root / rel
+        try:
+            text = p.read_text()
+        except (UnicodeDecodeError, OSError):
+            continue
+        shell = rel.endswith(".sh")
+        for i, line in enumerate(text.splitlines(), 1):
+            if any(n in line for n in needles):
+                continue
+            # A shell script passes a holder value as a bare word, with no quotes
+            # for the literal rule to see.
+            if shell and not line.lstrip().startswith("#") and re.search(r"(?<![\w-])human(?![\w-])", line):
+                problems.append(f"{rel}:{i}: former name 'human' (ADR-0091 d11)")
+                continue
+            line = KEPT_FILE_NAMES.sub("", line)
+            m = next((m for m in FORMER.finditer(line)
+                      # `human` is also a claim's provenance, which ADR-0091 d15 leaves.
+                      if not ("human" in m.group(0) and "provenance" in f"{rel} {line}".lower())),
+                     None)
+            if m:
+                problems.append(f"{rel}:{i}: former name {m.group(0)!r} (ADR-0091 d11)")
+    return problems
+
+
 LINTS = {"migrations": lint_migrations, "ports": lint_ports, "like": lint_like, "actions": lint_actions,
-         "voice": lint_voice}
+         "voice": lint_voice, "vocabulary": lint_vocabulary}
 
 
 def main(argv: list[str] | None = None) -> int:

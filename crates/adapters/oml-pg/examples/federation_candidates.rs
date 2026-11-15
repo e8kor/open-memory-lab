@@ -1,6 +1,6 @@
 //! The candidate-count report federated recall's phase 1 reads first
 //! (ADR-0072, "Who gains"; #205): for every live key of every tenant, how
-//! many trusted workareas accepting federated reads it reads, |C| before a
+//! many trusted workspaces accepting federated reads it reads, |C| before a
 //! scope sets any aside, computed by the application exactly as a recall
 //! computes it. Prints one JSON document: the distribution and how many keys
 //! fall past `max_sources` (8) and past 1,000.
@@ -11,7 +11,7 @@
 //!
 //! `<url>` names a role that reads every tenant's `api_keys`, such as the
 //! owner. The report only reads: it opens no transaction that writes, and
-//! it prints counts, never a key, a name or a workarea.
+//! it prints counts, never a key, a name or a workspace.
 
 use std::collections::BTreeMap;
 

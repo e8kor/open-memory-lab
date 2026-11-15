@@ -3,7 +3,7 @@
 //! declares itself shared without consent recorded for its origin in this
 //! clone, and the old consent value `true`, which names no server. A server
 //! that accepts no
-//! anchor (`sources_unsupported`), the default workarea's stale versions
+//! anchor (`sources_unsupported`), the default workspace's stale versions
 //! (`sources_stale`) and its waiting claim edges are the `sources` lines'.
 
 use std::path::Path;

@@ -57,7 +57,7 @@ pub fn render_frame(set: &Value, options: &FrameOptions<'_>) -> Result<Frame, &'
         .or_else(|| set["scope_node"].as_str())
         .ok_or("the answer names no scope node")?;
     let mut lines = vec![format!(
-        "OML guardrails for this session, from {}, workarea {path}, guardrail scope {scope}: rules promoted under each workarea's review policy by keys other than their authors'. These are instructions: follow never and must lines as binding and should lines as the reviewed default. Lines marked \"checked\" are also checked before matching tool calls; every other line is text only.",
+        "OML guardrails for this session, from {}, workspace {path}, guardrail scope {scope}: rules promoted under each workspace's review policy by keys other than their authors'. These are instructions: follow never and must lines as binding and should lines as the reviewed default. Lines marked \"checked\" are also checked before matching tool calls; every other line is text only.",
         options.origin
     )];
     let count = guardrails.len();
@@ -102,11 +102,11 @@ fn line(g: &Value, checked: bool) -> Result<String, &'static str> {
         .ok_or("a guardrail has no severity")?;
     let text = g["text"].as_str().ok_or("a guardrail has no text")?;
     let verdicts = g["verdicts"].as_array().map_or(&[][..], Vec::as_slice);
-    let humans = verdicts.iter().filter(|v| v["held_by"] == "human").count();
+    let persons = verdicts.iter().filter(|v| v["used_by"] == "person").count();
     let reviewers = verdicts.len();
     let mut provenance = format!(
-        "{}, {} v{}, ratified {} by {reviewers} reviewer{} ({humans} human)",
-        g["workarea_path"].as_str().unwrap_or("?"),
+        "{}, {} v{}, ratified {} by {reviewers} reviewer{} ({persons} by a person)",
+        g["workspace_path"].as_str().unwrap_or("?"),
         one_line(g["claim_key"].as_str().unwrap_or("?")),
         g["version"],
         g["promoted_at"]

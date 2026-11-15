@@ -97,7 +97,7 @@ def sync_detailed(
      A person's web session key mints a code for one of their own connector keys, by name, at the default
     lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with
     details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). The session key's access is read when
-    the code is minted, and a session key that carries a denial, on any workarea, mints none:
+    the code is minted, and a session key that carries a denial, on any workspace, mints none:
     access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since
     v0.7.3). Otherwise requires: admin key role. The key must be a connector key (issued with
     connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer
@@ -111,7 +111,7 @@ def sync_detailed(
     idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
     s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since
     v0.7.0). Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key
-    confined to one workarea (ADR-0067 d3).
+    confined to one workspace (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -161,7 +161,7 @@ def sync(
      A person's web session key mints a code for one of their own connector keys, by name, at the default
     lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with
     details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). The session key's access is read when
-    the code is minted, and a session key that carries a denial, on any workarea, mints none:
+    the code is minted, and a session key that carries a denial, on any workspace, mints none:
     access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since
     v0.7.3). Otherwise requires: admin key role. The key must be a connector key (issued with
     connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer
@@ -175,7 +175,7 @@ def sync(
     idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
     s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since
     v0.7.0). Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key
-    confined to one workarea (ADR-0067 d3).
+    confined to one workspace (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -220,7 +220,7 @@ async def asyncio_detailed(
      A person's web session key mints a code for one of their own connector keys, by name, at the default
     lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with
     details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). The session key's access is read when
-    the code is minted, and a session key that carries a denial, on any workarea, mints none:
+    the code is minted, and a session key that carries a denial, on any workspace, mints none:
     access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since
     v0.7.3). Otherwise requires: admin key role. The key must be a connector key (issued with
     connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer
@@ -234,7 +234,7 @@ async def asyncio_detailed(
     idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
     s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since
     v0.7.0). Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key
-    confined to one workarea (ADR-0067 d3).
+    confined to one workspace (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -282,7 +282,7 @@ async def asyncio(
      A person's web session key mints a code for one of their own connector keys, by name, at the default
     lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with
     details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). The session key's access is read when
-    the code is minted, and a session key that carries a denial, on any workarea, mints none:
+    the code is minted, and a session key that carries a denial, on any workspace, mints none:
     access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since
     v0.7.3). Otherwise requires: admin key role. The key must be a connector key (issued with
     connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer
@@ -296,7 +296,7 @@ async def asyncio(
     idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
     s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since
     v0.7.0). Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key
-    confined to one workarea (ADR-0067 d3).
+    confined to one workspace (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a

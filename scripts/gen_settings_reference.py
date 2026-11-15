@@ -65,7 +65,7 @@ def render(notes: dict) -> tuple[str, list[str]]:
         "An environment name is `OML_`, then the dotted key in capitals with `__` between the parts: "
         "`search.rerank.depth` becomes `OML_SEARCH__RERANK__DEPTH`.\n",
         f"*{docgen.BANNER.format(script='scripts/gen_settings_reference.py')} Keys come from `crates/bins/oml-server-lead/src/lib.rs`; words from `scripts/settings_notes.yaml`.*\n",
-        "A value that does not parse stops the server at start and names the key. Per-tenant policy, such as a workarea's review rules, is not a setting: an administrator changes it with the [CLI](../cli/reference.md).\n",
+        "A value that does not parse stops the server at start and names the key. Per-tenant policy, such as a workspace's review rules, is not a setting: an administrator changes it with the [CLI](../cli/reference.md).\n",
         "## Server settings\n",
         "| Key | Environment variable | Default | What it does |\n|---|---|---|---|",
     ]

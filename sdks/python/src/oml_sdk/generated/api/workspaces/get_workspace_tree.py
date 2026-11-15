@@ -1,0 +1,322 @@
+from http import HTTPStatus
+from typing import Any
+from urllib.parse import quote
+
+import httpx
+
+from ...client import AuthenticatedClient, Client
+from ...models.error_envelope import ErrorEnvelope
+from ...models.workspace_counts import WorkspaceCounts
+from ...models.workspace_page import WorkspacePage
+from ...types import UNSET, Response, Unset
+
+
+def _get_kwargs(
+    workspace: str,
+    *,
+    limit: int | Unset = 50,
+    cursor: str | Unset = UNSET,
+    counts: bool | Unset = UNSET,
+    offers: bool | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
+) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
+
+    params: dict[str, Any] = {}
+
+    params["limit"] = limit
+
+    params["cursor"] = cursor
+
+    params["counts"] = counts
+
+    params["offers"] = offers
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
+
+    _kwargs: dict[str, Any] = {
+        "method": "get",
+        "url": "/v2/workspaces/{workspace}/tree".format(
+            workspace=quote(str(workspace), safe=""),
+        ),
+        "params": params,
+    }
+
+    _kwargs["headers"] = headers
+    return _kwargs
+
+
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ErrorEnvelope | WorkspaceCounts | WorkspacePage:
+    if response.status_code == 200:
+
+        def _parse_response_200(data: object) -> WorkspaceCounts | WorkspacePage:
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                response_200_type_0 = WorkspacePage.from_dict(data)
+
+                return response_200_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            if not isinstance(data, dict):
+                raise TypeError()
+            response_200_type_1 = WorkspaceCounts.from_dict(data)
+
+            return response_200_type_1
+
+        response_200 = _parse_response_200(response.json())
+
+        return response_200
+
+    response_default = ErrorEnvelope.from_dict(response.json())
+
+    return response_default
+
+
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[ErrorEnvelope | WorkspaceCounts | WorkspacePage]:
+    return Response(
+        status_code=HTTPStatus(response.status_code),
+        content=response.content,
+        headers=response.headers,
+        parsed=_parse_response(client=client, response=response),
+    )
+
+
+def sync_detailed(
+    workspace: str,
+    *,
+    client: AuthenticatedClient | Client,
+    limit: int | Unset = 50,
+    cursor: str | Unset = UNSET,
+    counts: bool | Unset = UNSET,
+    offers: bool | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
+) -> Response[ErrorEnvelope | WorkspaceCounts | WorkspacePage]:
+    """The subtree, paginated; nodes outside read scope are omitted.
+
+     Requires: reader effective access, or the admin key role, which reads the structure of every
+    workspace in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    permission matrix footnote 6; ADR-0026 d15).
+
+    Args:
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
+            server-side before any check that reads state; an unknown name answers exactly what an
+            unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
+            universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
+            derived path, a value of three or more labels or one whose first label is universe, is
+            neither, and is refused (request.validation).
+        limit (int | Unset):  Default: 50.
+        cursor (str | Unset):
+        counts (bool | Unset):
+        offers (bool | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[ErrorEnvelope | WorkspaceCounts | WorkspacePage]
+    """
+
+    kwargs = _get_kwargs(
+        workspace=workspace,
+        limit=limit,
+        cursor=cursor,
+        counts=counts,
+        offers=offers,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
+    )
+
+    response = client.get_httpx_client().request(
+        **kwargs,
+    )
+
+    return _build_response(client=client, response=response)
+
+
+def sync(
+    workspace: str,
+    *,
+    client: AuthenticatedClient | Client,
+    limit: int | Unset = 50,
+    cursor: str | Unset = UNSET,
+    counts: bool | Unset = UNSET,
+    offers: bool | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
+) -> ErrorEnvelope | WorkspaceCounts | WorkspacePage | None:
+    """The subtree, paginated; nodes outside read scope are omitted.
+
+     Requires: reader effective access, or the admin key role, which reads the structure of every
+    workspace in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    permission matrix footnote 6; ADR-0026 d15).
+
+    Args:
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
+            server-side before any check that reads state; an unknown name answers exactly what an
+            unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
+            universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
+            derived path, a value of three or more labels or one whose first label is universe, is
+            neither, and is refused (request.validation).
+        limit (int | Unset):  Default: 50.
+        cursor (str | Unset):
+        counts (bool | Unset):
+        offers (bool | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        ErrorEnvelope | WorkspaceCounts | WorkspacePage
+    """
+
+    return sync_detailed(
+        workspace=workspace,
+        client=client,
+        limit=limit,
+        cursor=cursor,
+        counts=counts,
+        offers=offers,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
+    ).parsed
+
+
+async def asyncio_detailed(
+    workspace: str,
+    *,
+    client: AuthenticatedClient | Client,
+    limit: int | Unset = 50,
+    cursor: str | Unset = UNSET,
+    counts: bool | Unset = UNSET,
+    offers: bool | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
+) -> Response[ErrorEnvelope | WorkspaceCounts | WorkspacePage]:
+    """The subtree, paginated; nodes outside read scope are omitted.
+
+     Requires: reader effective access, or the admin key role, which reads the structure of every
+    workspace in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    permission matrix footnote 6; ADR-0026 d15).
+
+    Args:
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
+            server-side before any check that reads state; an unknown name answers exactly what an
+            unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
+            universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
+            derived path, a value of three or more labels or one whose first label is universe, is
+            neither, and is refused (request.validation).
+        limit (int | Unset):  Default: 50.
+        cursor (str | Unset):
+        counts (bool | Unset):
+        offers (bool | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[ErrorEnvelope | WorkspaceCounts | WorkspacePage]
+    """
+
+    kwargs = _get_kwargs(
+        workspace=workspace,
+        limit=limit,
+        cursor=cursor,
+        counts=counts,
+        offers=offers,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
+    )
+
+    response = await client.get_async_httpx_client().request(**kwargs)
+
+    return _build_response(client=client, response=response)
+
+
+async def asyncio(
+    workspace: str,
+    *,
+    client: AuthenticatedClient | Client,
+    limit: int | Unset = 50,
+    cursor: str | Unset = UNSET,
+    counts: bool | Unset = UNSET,
+    offers: bool | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
+) -> ErrorEnvelope | WorkspaceCounts | WorkspacePage | None:
+    """The subtree, paginated; nodes outside read scope are omitted.
+
+     Requires: reader effective access, or the admin key role, which reads the structure of every
+    workspace in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md,
+    permission matrix footnote 6; ADR-0026 d15).
+
+    Args:
+        workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
+            server-side before any check that reads state; an unknown name answers exactly what an
+            unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
+            universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
+            derived path, a value of three or more labels or one whose first label is universe, is
+            neither, and is refused (request.validation).
+        limit (int | Unset):  Default: 50.
+        cursor (str | Unset):
+        counts (bool | Unset):
+        offers (bool | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        ErrorEnvelope | WorkspaceCounts | WorkspacePage
+    """
+
+    return (
+        await asyncio_detailed(
+            workspace=workspace,
+            client=client,
+            limit=limit,
+            cursor=cursor,
+            counts=counts,
+            offers=offers,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
+        )
+    ).parsed

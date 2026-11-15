@@ -86,7 +86,7 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
     - opens a session and answers `303 /web/start`.
 
     **The user is never derived from the email.** It is `u` followed by ten Crockford base32
-    symbols drawn from the process's random source, so ADR-0045 d2's rule holds. No workarea or
+    symbols drawn from the process's random source, so ADR-0045 d2's rule holds. No workspace or
     key name carries the address. A drawn name that is already taken is drawn again, at most
     three times, and then refused `name.taken`. The cost is a name a person does not choose.
     Choosing one is a later decision, since a chosen name is a namespace claim another person
@@ -110,11 +110,11 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
   agent key and their own session:
     - recalls nothing of the first person's (`POST /v1/memories/search` and the MCP read tool);
     - gets `access.not_found` for the first person's memory by id;
-    - sees no node of the first person's root in the workarea tree;
+    - sees no node of the first person's root in the workspace tree;
     - lists none of the first person's memories, keys or counts on `/web` and `/web/start`;
     - is never served the first person's held rows for review.
 
-    The Atlas of the web-memories lane (ADR-0045 d22–d31) draws only the workareas its viewer
+    The Atlas of the web-memories lane (ADR-0045 d22–d31) draws only the workspaces its viewer
     may read. Its counts join this test when that lane lands.
 
     The sign-up tenant's admins are the operator. They read every memory through the journalled
@@ -149,10 +149,10 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
 
     The `memories` check runs after the idempotency lookup and after the live `claim_key`
     refusal, and before the commit. A retry of a write that succeeded is its stored receipt, never
-    `limit.quota`. A `remember` under a claim key that is live in the workarea is the
+    `limit.quota`. A `remember` under a claim key that is live in the workspace is the
     `submission.claim_key_conflict` it always was, not a quota refusal. A new version is made by
     `supersede`, which extends the chain of an existing memory and adds none, so it is not metered:
-    the meter counts distinct `(workarea, claim_key)` chains, and a supersede, a rejection or a
+    the meter counts distinct `(workspace, claim_key)` chains, and a supersede, a rejection or a
     retirement leaves that count where it was. A person at the limit can still revise and retire
     what they hold. Quotas are read before the write commits and are not held across it, so
     concurrent writes at `limit - 1` can each pass: the memories count is exact to within the
@@ -179,7 +179,7 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
   journalled request the admin sees and acts on, never a silent removal.**
     - **Export.** `GET /web/start/export` answers `application/json` with
       `Content-Disposition: attachment`. It holds every memory in the person's root and below:
-      text, workarea path, state, claim key, version and timestamps, plus the person's keys
+      text, workspace path, state, claim key, version and timestamps, plus the person's keys
       (name, role, credential, created, cut off) and their entry's terms version. It reads as
       `<user>-web`, own set every key naming the user, so held and rejected rows are included
       (ADR-0045 d16). Nothing a second person wrote is in it, since nothing a second person
@@ -225,7 +225,7 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
     ([#266](https://github.com/e8kor/open-memory-lab/issues/266)). No refusal follows the first
     commit. An admin key whose row names the root is refused before it: no verb issues one and
     no denial cuts one off, so the row is corrupt, and the disable answers 409
-    `workarea.admin_key_under_root` naming the key and journals nothing until the row's
+    `workspace.admin_key_under_root` naming the key and journals nothing until the row's
     `user_root_id` is cleared ([#277](https://github.com/e8kor/open-memory-lab/issues/277)).
     A key gone between the listing and its denial, or made an admin key by a row edit in that
     window, is skipped and the rest are denied; the answer's `keys_cut_off` leaves it out and
@@ -304,7 +304,7 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
     | a key's request rate | `limit.rate` with `Retry-After` | — (metrics) |
     | a disabled entry | `auth.invalid`, `disabled` | — |
     | deletion requests pending | — | `warn signup` with the count and the oldest request's time (d6) |
-    | an admin key whose row names a person's root | `workarea.admin_key_under_root` on that person's disable or deletion close, nothing journalled (d8) | `warn keys` naming the key and the person, from `GET /v2/web/users`' `admin_keys` |
+    | an admin key whose row names a person's root | `workspace.admin_key_under_root` on that person's disable or deletion close, nothing journalled (d8) | `warn keys` naming the key and the person, from `GET /v2/web/users`' `admin_keys` |
     | open sign-up on a deployment with no backup | — | — (an ADR-0058 d5 rule; the production page checklist) |
 
 ## The amendment of 2026-11-13: the Start page's heading is Start
@@ -367,7 +367,7 @@ operator's act under ADR-0058 d5 (Consequences).
 | Alternative | Why not |
 |---|---|
 | **A tenant per person** | Row security would isolate each person by construction. But a tenant is created by bootstrap with its own admin key, its own chain and its own partitions, so every sign-up would mint an admin key nobody holds, a chain the operator signs, and partition DDL under the owner role (ADR-0034 d11), all from an anonymous request. ADR-0044 d3 already confines a user key to its root, and the isolation test proves it on every surface. Reopen if a person needs their own admins or crews. |
-| **Derive the user from the email's local part** | Readable, but it puts personal data into workarea and key names the journal keeps forever, collides across domains, and breaks ADR-0045 d2's "never derived from the email". |
+| **Derive the user from the email's local part** | Readable, but it puts personal data into workspace and key names the journal keeps forever, collides across domains, and breaks ADR-0045 d2's "never derived from the email". |
 | **No terms step: sign-in is consent** | Consent would not be recorded and no version would be pinned. When the terms change, nothing would show who accepted which. |
 | **Open sign-up without quotas, relying on the disable switch** | One script with a GitHub account could fill the store before anyone looks. Quotas fail closed per person, and the switch is for what quotas miss. |
 | **Quotas as journalled grant attributes on each key (errors.md D6)** | The designed home, but a person's memories are written by several keys, so a per-key budget does not bound a person. Grant attributes are not built. The per-user override is journalled, so every decision stays reproducible from the journal. |

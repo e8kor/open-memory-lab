@@ -70,14 +70,17 @@ pub const QUERIES: &[Named] = &[
               FROM claims GROUP BY tenant_id, kind ORDER BY tenant_id, kind",
     },
     Named {
-        name: "top-workareas",
-        answers: "Which workareas see the most journalled activity, with their names",
-        sql: "SELECT e.tenant_id, e.workarea_id, max(n.name) AS name, count(*) AS events, \
+        name: "top-workspaces",
+        answers: "Which workspaces see the most journalled activity, with their names",
+        // `workarea_id` is the physical name of the column the schema page
+        // names `workspace_id`, and a workspace created before v0.8.0 was
+        // journalled as `workarea.create` (ADR-0091 d4, d7).
+        sql: "SELECT e.tenant_id, e.workarea_id AS workspace_id, max(n.name) AS name, count(*) AS events, \
               sum(CASE WHEN e.event_type LIKE 'submission.%' THEN 1 ELSE 0 END) AS writes, \
               sum(CASE WHEN e.event_type IN ('lifecycle.promote', 'lifecycle.supersede') THEN 1 ELSE 0 END) AS promotions \
               FROM events e LEFT JOIN \
                 (SELECT tenant_id, workarea_id, subject_name AS name FROM events \
-                 WHERE event_type = 'workarea.create') n \
+                 WHERE event_type IN ('workspace.create', 'workarea.create')) n \
                 ON n.tenant_id = e.tenant_id AND n.workarea_id = e.workarea_id \
               WHERE e.workarea_id IS NOT NULL \
               GROUP BY e.tenant_id, e.workarea_id ORDER BY events DESC, e.workarea_id LIMIT 20",

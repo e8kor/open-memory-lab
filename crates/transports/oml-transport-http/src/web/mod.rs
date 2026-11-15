@@ -83,7 +83,7 @@ pub const SIGN_IN_COOKIE: &str = "__Host-oml_signin";
 pub const PROVIDER_CALLS_MAX: usize = 8;
 
 /// The `details.reason` of an `Authorization` header on a web route.
-pub const HUMAN_ONLY: &str = "web_is_human_only";
+pub const HUMAN_ONLY: &str = "web_is_person_only";
 
 const FORM: &str = "application/x-www-form-urlencoded";
 
@@ -408,7 +408,7 @@ where
 
     async fn user_page_inner(&self, headers: &HeaderMap, query: &str) -> Answer {
         let mut line = WebLine::default();
-        if let Some(refused) = human_only(headers) {
+        if let Some(refused) = person_only(headers) {
             return self.refused(&refused, line);
         }
         match self.session_of(headers).await {
@@ -458,7 +458,7 @@ where
     /// before the act journals nothing.
     async fn act(&self, headers: &HeaderMap, body: &Bytes) -> Answer {
         let mut line = WebLine::default();
-        if let Some(refused) = human_only(headers) {
+        if let Some(refused) = person_only(headers) {
             return self.refused(&refused, line);
         }
         let issuer = self.app.oauth_issuer().expect("routed only with an issuer");
@@ -569,7 +569,7 @@ where
     /// whose forms carry `next` as admitted, or `/web`.
     async fn sign_in_get_inner(&self, headers: &HeaderMap, query: &str) -> Answer {
         let mut line = WebLine::default();
-        if let Some(refused) = human_only(headers) {
+        if let Some(refused) = person_only(headers) {
             return self.refused(&refused, line);
         }
         let pairs = form_pairs(query.as_bytes()).unwrap_or_default();
@@ -614,7 +614,7 @@ where
     /// authorization endpoint. Writes no row.
     fn sign_in_inner(&self, headers: &HeaderMap, body: &Bytes) -> Answer {
         let mut line = WebLine::default();
-        if let Some(refused) = human_only(headers) {
+        if let Some(refused) = person_only(headers) {
             return self.refused(&refused, line);
         }
         let issuer = self.app.oauth_issuer().expect("routed only with an issuer");
@@ -720,7 +720,7 @@ where
             return self.refused(&ApiError::not_found(), line);
         };
         line.provider = Some(provider.as_str());
-        if let Some(refused) = human_only(headers) {
+        if let Some(refused) = person_only(headers) {
             return self.refused(&refused, line);
         }
         let Some(client_id) = self.pages().client_id(provider).map(ToOwned::to_owned) else {
@@ -887,7 +887,7 @@ where
 /// An `Authorization` header on a web route: refused before anything else
 /// is read, so no key, connection token or future credential reaches a
 /// page (ADR-0045 d7).
-fn human_only(headers: &HeaderMap) -> Option<ApiError> {
+fn person_only(headers: &HeaderMap) -> Option<ApiError> {
     headers.contains_key(header::AUTHORIZATION).then(|| {
         ApiError::new(
             StatusCode::FORBIDDEN,

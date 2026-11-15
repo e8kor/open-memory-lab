@@ -41,9 +41,9 @@ const TOKEN_RE = /enr_[0-9a-f]{48}/;
 export interface OmlServer {
   url: string;
   agentKey: string;
-  dreamerKey: string;
-  workarea: string;
-  reviewWorkarea: string;
+  reviewerKey: string;
+  workspace: string;
+  reviewWorkspace: string;
   stop(): Promise<void>;
 }
 
@@ -234,25 +234,25 @@ export async function startServer(): Promise<OmlServer> {
       "bootstrap", "claim", "sdk-admin", "--token-stdin",
       "--tenant-name", "sdk-tests", "--principal", "platform/admin",
     );
-    const root = String(boot.root_workarea_id);
-    const workarea = String(oml("workareas", "create", root, "sdk").id);
-    const reviewWorkarea = String(oml("workareas", "create", root, "sdk-review").id);
+    const root = String(boot.root_workspace_id);
+    const workspace = String(oml("workspaces", "create", root, "sdk").id);
+    const reviewWorkspace = String(oml("workspaces", "create", root, "sdk-review").id);
     const agentKey = String(
       oml(
-        "keys", "issue", "sdk-agent", "--role", "writer", "--held-by", "agent",
-        "--principal", "sdk/agent", "--default-workarea", workarea,
-        "--grant", `${workarea}:writer`, "--grant", `${workarea}:reader`,
-        "--grant", `${reviewWorkarea}:writer`, "--grant", `${reviewWorkarea}:reader`,
+        "keys", "issue", "sdk-agent", "--role", "writer", "--used-by", "agent",
+        "--principal", "sdk/agent", "--default-workspace", workspace,
+        "--grant", `${workspace}:writer`, "--grant", `${workspace}:reader`,
+        "--grant", `${reviewWorkspace}:writer`, "--grant", `${reviewWorkspace}:reader`,
       ).value,
     );
-    const dreamerKey = String(
+    const reviewerKey = String(
       oml(
-        "keys", "issue", "sdk-reviewer", "--role", "dreamer", "--held-by", "human",
-        "--principal", "sdk/reviewer", "--default-workarea", reviewWorkarea,
-        "--grant", `${reviewWorkarea}:dreamer`,
+        "keys", "issue", "sdk-reviewer", "--role", "reviewer", "--used-by", "person",
+        "--principal", "sdk/reviewer", "--default-workspace", reviewWorkspace,
+        "--grant", `${reviewWorkspace}:reviewer`,
       ).value,
     );
-    return { url, agentKey, dreamerKey, workarea, reviewWorkarea, stop };
+    return { url, agentKey, reviewerKey, workspace, reviewWorkspace, stop };
   } catch (error) {
     await stop();
     throw error;

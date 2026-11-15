@@ -2,7 +2,7 @@
 //! 2026-11-12): a new memory in `universe.<user>` or below it is that
 //! user's keys' alone, and so is the successor of a ratified retirement
 //! there, which would put the claim back in service. Any other key that
-//! reads the workarea or the target is refused
+//! reads the workspace or the target is refused
 //! `submission.user_root_refused`, and one that reads neither keeps
 //! `access.not_found`. A successor or a retirement of a served memory
 //! there is admitted as before, from its author or from a reviewer granted
@@ -19,7 +19,7 @@ use oml_app::app::{Caller, Capacity};
 use oml_app::domain::access::{Covers, Grant};
 use oml_app::domain::name::{Name, NamedKind, Reference};
 use oml_app::domain::web::Email;
-use oml_app::domain::{EventTime, HeldBy, MemoryKind, MemoryStatus, Role};
+use oml_app::domain::{EventTime, MemoryKind, MemoryStatus, Role, UsedBy};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::ports::{ConnectionStore, JournalStore, WebStore};
 use oml_app::types::{
@@ -54,7 +54,7 @@ fn grant(node: Uuid, role: Role) -> GrantRequest {
 }
 
 /// `universe` with ada's root, `project` beneath it and the shared
-/// workarea `shared`. Ada holds a writer key and a reviewer key in her
+/// workspace `shared`. Ada holds a writer key and a reviewer key in her
 /// root. Three tenant keys: `tenant_writer` writes and reads the whole
 /// tree by a subtree grant on `universe` (the key of #329),
 /// `tenant_reviewer` reviews and reads it, and `stranger` writes and reads
@@ -93,16 +93,16 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
             .await
             .expect("bootstrap");
         let admin = boot.admin_key.value.clone();
-        let universe = boot.root_workarea_id;
+        let universe = boot.root_workspace_id;
         let user = Name::parse("ada").expect("a user name");
         let ada_root = Reference::parse("ada").expect("a reference");
-        let user_key = |role: Role, held_by: HeldBy, roles: &[Role]| IssueKeyRequest {
+        let user_key = |role: Role, used_by: UsedBy, roles: &[Role]| IssueKeyRequest {
             profile: None,
             role,
             name: fresh("roots-key"),
             principal: format!("ada/{}", NAMES.fetch_add(1, Ordering::Relaxed)),
-            held_by: Some(held_by),
-            default_workarea: None,
+            used_by: Some(used_by),
+            default_workspace: None,
             crew: None,
             grants: roles
                 .iter()
@@ -122,40 +122,44 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
         let ada = app
             .issue_key(
                 admin.as_str(),
-                &user_key(Role::Writer, HeldBy::Agent, &[Role::Writer, Role::Reader]),
+                &user_key(Role::Writer, UsedBy::Agent, &[Role::Writer, Role::Reader]),
             )
             .await
             .expect("ada's writer key");
         let ada_reviewer = app
             .issue_key(
                 admin.as_str(),
-                &user_key(Role::Dreamer, HeldBy::Human, &[Role::Dreamer, Role::Reader]),
+                &user_key(
+                    Role::Reviewer,
+                    UsedBy::Person,
+                    &[Role::Reviewer, Role::Reader],
+                ),
             )
             .await
             .expect("ada's reviewer key");
         let root = ada.user.as_ref().expect("a user key names its root").id;
         let project = app
-            .create_workarea(
+            .create_workspace(
                 ada.value.as_str(),
                 &Name::parse("project").expect("a name"),
                 None,
                 None,
             )
             .await
-            .expect("ada creates a workarea in her root")
-            .workarea
-            .workarea_id;
+            .expect("ada creates a workspace in her root")
+            .workspace
+            .workspace_id;
         let shared = app
-            .create_workarea(
+            .create_workspace(
                 admin.as_str(),
                 &fresh("shared"),
                 Some(universe.into()),
                 None,
             )
             .await
-            .expect("a shared workarea")
-            .workarea
-            .workarea_id;
+            .expect("a shared workspace")
+            .workspace
+            .workspace_id;
         let tenant_writer = tenant_key(
             &app,
             &admin,
@@ -166,9 +170,9 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
         let tenant_reviewer = tenant_key(
             &app,
             &admin,
-            Role::Dreamer,
+            Role::Reviewer,
             vec![
-                grant(universe, Role::Dreamer),
+                grant(universe, Role::Reviewer),
                 grant(universe, Role::Reader),
             ],
         )
@@ -206,25 +210,25 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
         format!("roots-{}", self.idem.fetch_add(1, Ordering::Relaxed))
     }
 
-    /// `key` submits a new memory on `workarea`, its `claim_key` derived.
+    /// `key` submits a new memory on `workspace`, its `claim_key` derived.
     pub async fn submit(
         &self,
         key: &IssuedKey,
-        workarea: impl Into<Reference>,
+        workspace: impl Into<Reference>,
         body: &str,
     ) -> Result<Uuid, AppError> {
-        self.submit_claim(key, workarea, None, body).await
+        self.submit_claim(key, workspace, None, body).await
     }
 
-    /// `key` submits a new memory on `workarea` under `claim_key`.
+    /// `key` submits a new memory on `workspace` under `claim_key`.
     pub async fn submit_claim(
         &self,
         key: &IssuedKey,
-        workarea: impl Into<Reference>,
+        workspace: impl Into<Reference>,
         claim_key: Option<&str>,
         body: &str,
     ) -> Result<Uuid, AppError> {
-        self.submit_as(key.value.as_str(), workarea, claim_key, body)
+        self.submit_as(key.value.as_str(), workspace, claim_key, body)
             .await
     }
 
@@ -233,7 +237,7 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
     pub async fn submit_as<'a>(
         &self,
         bearer: impl Into<Bearer<'a>>,
-        workarea: impl Into<Reference>,
+        workspace: impl Into<Reference>,
         claim_key: Option<&str>,
         body: &str,
     ) -> Result<Uuid, AppError> {
@@ -251,7 +255,7 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
                     verb: None,
                     kind: MemoryKind::Memory,
                     body: body.to_owned(),
-                    workarea: Some(workarea.into()),
+                    workspace: Some(workspace.into()),
                     derives_from: Vec::new(),
                     severity: None,
                     rule: None,
@@ -301,7 +305,7 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
                     retirement,
                     derives_from: Vec::new(),
                     reason: None,
-                    workarea: None,
+                    workspace: None,
                     refuse_vocabulary_target: false,
                     severity: None,
                     rule: None,
@@ -327,9 +331,9 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
             .state
     }
 
-    /// A memory ada wrote on `workarea` and her reviewer key approved.
-    pub async fn adas_promoted(&self, workarea: Uuid, body: &str) -> Uuid {
-        let id = self.submit(&self.ada, workarea, body).await.expect("held");
+    /// A memory ada wrote on `workspace` and her reviewer key approved.
+    pub async fn adas_promoted(&self, workspace: Uuid, body: &str) -> Uuid {
+        let id = self.submit(&self.ada, workspace, body).await.expect("held");
         assert_eq!(
             self.approve(&self.ada_reviewer, id).await,
             MemoryStatus::Promoted
@@ -355,12 +359,12 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
                     role,
                     name: fresh("roots-key"),
                     principal: format!("bo/{n}"),
-                    held_by: Some(if role == Role::Dreamer {
-                        HeldBy::Human
+                    used_by: Some(if role == Role::Reviewer {
+                        UsedBy::Person
                     } else {
-                        HeldBy::Agent
+                        UsedBy::Agent
                     }),
-                    default_workarea: None,
+                    default_workspace: None,
                     crew: None,
                     grants: vec![GrantRequest {
                         node: bo,
@@ -421,15 +425,15 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
             .seq
     }
 
-    /// The ids `key`'s recall of `query` at `workarea` served as hits.
-    pub async fn hits(&self, key: &IssuedKey, workarea: Uuid, query: &str) -> Vec<Uuid> {
+    /// The ids `key`'s recall of `query` at `workspace` served as hits.
+    pub async fn hits(&self, key: &IssuedKey, workspace: Uuid, query: &str) -> Vec<Uuid> {
         self.app
             .recall(
                 key.value.as_str(),
                 &RecallRequest {
                     query: query.to_owned(),
                     k: 10,
-                    workarea: Some(workarea.into()),
+                    workspace: Some(workspace.into()),
                     kinds: Vec::new(),
                     include_text: true,
                     include_unreviewed: Some(false),
@@ -540,12 +544,12 @@ async fn tenant_key<S: JournalStore + Clone>(
             role,
             name: fresh("roots-key"),
             principal: format!("crew/{}", NAMES.fetch_add(1, Ordering::Relaxed)),
-            held_by: Some(if role == Role::Dreamer {
-                HeldBy::Human
+            used_by: Some(if role == Role::Reviewer {
+                UsedBy::Person
             } else {
-                HeldBy::Agent
+                UsedBy::Agent
             }),
-            default_workarea: None,
+            default_workspace: None,
             crew: None,
             grants,
             connect_code: false,
@@ -574,8 +578,8 @@ fn not_found(result: Result<Uuid, AppError>, what: &str) {
 }
 
 /// A tenant writer key that holds a subtree grant on `universe` writes a
-/// new memory in a shared workarea and is refused one in a user's root and
-/// in a workarea beneath it, with a `claim_key` of its own, with none, and
+/// new memory in a shared workspace and is refused one in a user's root and
+/// in a workspace beneath it, with a `claim_key` of its own, with none, and
 /// under a `claim_key` the user's rejected write released; so is a tenant
 /// key that only reads the root, in place of `access.grant_refused`, and a
 /// key of another person holding writer there. Nothing is journalled and
@@ -588,7 +592,7 @@ pub async fn a_key_that_is_not_the_users_starts_no_memory_in_a_users_root_or_bel
     let w = RootsWorld::new(store).await;
     w.submit(&w.tenant_writer, w.shared, "a shared fact")
         .await
-        .expect("a tenant key writes in a shared workarea");
+        .expect("a tenant key writes in a shared workspace");
     let reads_only = w
         .tenant_key(
             Role::Writer,
@@ -621,7 +625,7 @@ pub async fn a_key_that_is_not_the_users_starts_no_memory_in_a_users_root_or_bel
     refused(
         w.submit(&w.tenant_writer, w.project, "a fact for ada")
             .await,
-        "a workarea beneath the root",
+        "a workspace beneath the root",
     );
     refused(
         w.submit(
@@ -630,7 +634,7 @@ pub async fn a_key_that_is_not_the_users_starts_no_memory_in_a_users_root_or_bel
             "a fact for ada",
         )
         .await,
-        "a workarea beneath the root, by its qualified name",
+        "a workspace beneath the root, by its qualified name",
     );
     refused(
         w.submit_claim(&w.tenant_writer, w.root, Some("named"), "a fact for ada")
@@ -655,11 +659,11 @@ pub async fn a_key_that_is_not_the_users_starts_no_memory_in_a_users_root_or_bel
 }
 
 /// A key that reads nothing of a user's root is answered for a write there
-/// exactly as for a workarea that does not exist, by id and by qualified
+/// exactly as for a workspace that does not exist, by id and by qualified
 /// name, and for a successor of a row there, a ratified retirement
 /// included, as for a row that does not exist: the refusal confirms no
 /// root.
-pub async fn a_key_that_reads_nothing_of_a_users_root_is_told_not_found_as_for_no_workarea<
+pub async fn a_key_that_reads_nothing_of_a_users_root_is_told_not_found_as_for_no_workspace<
     S: JournalStore + Clone,
 >(
     store: S,
@@ -680,7 +684,7 @@ pub async fn a_key_that_reads_nothing_of_a_users_root_is_told_not_found_as_for_n
     not_found(
         w.submit(&w.stranger, Uuid::from_u128(0x0329_dead), "x")
             .await,
-        "an id no workarea holds",
+        "an id no workspace holds",
     );
     not_found(
         w.submit(
@@ -689,7 +693,7 @@ pub async fn a_key_that_reads_nothing_of_a_users_root_is_told_not_found_as_for_n
             "x",
         )
         .await,
-        "a workarea in the root by qualified name",
+        "a workspace in the root by qualified name",
     );
     not_found(
         w.submit(
@@ -755,7 +759,7 @@ pub async fn a_users_own_keys_still_write_supersede_retire_and_put_a_retired_cla
         MemoryStatus::Promoted
     );
     assert_eq!(w.adas_memories().await, 2, "the claim is back in service");
-    // Ada's reviewer key edits by proposal in her root, as any dreamer
+    // Ada's reviewer key edits by proposal in her root, as any reviewer
     // there does.
     let edit = w
         .supersede(&w.ada_reviewer, back, 4, false)
@@ -782,7 +786,7 @@ pub async fn a_reviewer_granted_in_a_users_root_proposes_a_successor_and_a_retir
 ) {
     let w = RootsWorld::new(store).await;
     let bos_reviewer = w
-        .bos_key_granted_on_adas_root(Role::Dreamer, &[Role::Dreamer, Role::Reader])
+        .bos_key_granted_on_adas_root(Role::Reviewer, &[Role::Reviewer, Role::Reader])
         .await;
     let mut rows = Vec::new();
     for body in [
@@ -841,7 +845,7 @@ pub async fn a_successor_of_a_ratified_retirement_in_a_users_root_is_the_users_k
 ) {
     let w = RootsWorld::new(store).await;
     let bos_reviewer = w
-        .bos_key_granted_on_adas_root(Role::Dreamer, &[Role::Dreamer, Role::Reader])
+        .bos_key_granted_on_adas_root(Role::Reviewer, &[Role::Reviewer, Role::Reader])
         .await;
     let row = w.adas_promoted(w.project, "the relay closes at noon").await;
     let retirement = w
@@ -894,7 +898,7 @@ pub async fn a_successor_proposed_while_a_retirement_is_held_is_never_ratified_a
 ) {
     let w = RootsWorld::new(store).await;
     let bos_reviewer = w
-        .bos_key_granted_on_adas_root(Role::Dreamer, &[Role::Dreamer, Role::Reader])
+        .bos_key_granted_on_adas_root(Role::Reviewer, &[Role::Reviewer, Role::Reader])
         .await;
     let row = w.adas_promoted(w.project, "the relay closes at noon").await;
     let retirement = w
@@ -1166,7 +1170,7 @@ pub async fn a_persons_session_review_key_puts_a_retired_claim_back_in_its_own_r
         );
     }
     // Bo, an admin, designates himself for review on ada's root: his
-    // review key gains dreamer and reader there (ADR-0045 d10).
+    // review key gains reviewer and reader there (ADR-0045 d10).
     let bo_admin = w.session_key(&bo, Capacity::Admin).await;
     w.app
         .grant_review_capacity(
@@ -1273,7 +1277,7 @@ where
     Fut: core::future::Future<Output = S>,
 {
     a_key_that_is_not_the_users_starts_no_memory_in_a_users_root_or_below_it(make().await).await;
-    a_key_that_reads_nothing_of_a_users_root_is_told_not_found_as_for_no_workarea(make().await)
+    a_key_that_reads_nothing_of_a_users_root_is_told_not_found_as_for_no_workspace(make().await)
         .await;
     a_users_own_keys_still_write_supersede_retire_and_put_a_retired_claim_back(make().await).await;
     a_reviewer_granted_in_a_users_root_proposes_a_successor_and_a_retirement_there(make().await)

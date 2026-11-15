@@ -98,7 +98,7 @@ async fn the_envelope_request_id_equals_the_header_on_every_route() {
             .replace("{key}", "agent-7")
             .replace("{connection_id}", "0b5f6c3e-5d0b-4d8f-9a5e-2f1d7c9e8a11")
             .replace("{crew}", "crew-a")
-            .replace("{workarea}", "area-a");
+            .replace("{workspace}", "area-a");
         let (status, headers, body) = send(
             Request::builder()
                 .method(method)

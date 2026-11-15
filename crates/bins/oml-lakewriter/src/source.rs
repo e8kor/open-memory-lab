@@ -57,7 +57,7 @@ pub struct Memory {
     pub kind: String,
     pub status: String,
     pub is_tip: bool,
-    pub workarea_id: Uuid,
+    pub workspace_id: Uuid,
     pub author_key_id: Uuid,
     pub author_principal: String,
     pub retirement: bool,
@@ -300,7 +300,7 @@ impl Source {
     pub async fn memory(&self, tenant: Uuid, id: Uuid) -> Result<Option<Memory>, SourceError> {
         let mut tx = self.tenant_tx(tenant).await?;
         let row = sqlx::query(
-            "SELECT id, version, claim_key, kind, status, is_tip, workarea_id, author_key_id, \
+            "SELECT id, version, claim_key, kind, status, is_tip, workspace_id, author_key_id, \
                     author_principal, retirement, replaces_artifact_id, claim, claim_digest, \
                     body_bytes, created_at, promoted_at, derives_from \
              FROM memories WHERE tenant_id = $1 AND id = $2",
@@ -318,7 +318,7 @@ impl Source {
             kind: r.try_get("kind")?,
             status: r.try_get("status")?,
             is_tip: r.try_get("is_tip")?,
-            workarea_id: r.try_get("workarea_id")?,
+            workspace_id: r.try_get("workspace_id")?,
             author_key_id: r.try_get("author_key_id")?,
             author_principal: r.try_get("author_principal")?,
             retirement: r.try_get("retirement")?,
@@ -360,7 +360,7 @@ impl Source {
             })
         } else {
             let brief = sqlx::query(
-                "SELECT id, artifact_id, workarea_id, state, proposer_key_id, ratifier_key_id, \
+                "SELECT id, artifact_id, workspace_id, state, proposer_key_id, ratifier_key_id, \
                         created_at FROM brief_edges WHERE tenant_id = $1 AND id = $2",
             )
             .bind(tenant)
@@ -374,7 +374,7 @@ impl Source {
                     graph: "brief",
                     label: "brief".to_owned(),
                     src: r.try_get("artifact_id")?,
-                    dst: r.try_get("workarea_id")?,
+                    dst: r.try_get("workspace_id")?,
                     ratified: r.try_get::<String, _>("state")? == "ratified",
                     proposer: r.try_get("proposer_key_id")?,
                     ratifier: r.try_get("ratifier_key_id")?,

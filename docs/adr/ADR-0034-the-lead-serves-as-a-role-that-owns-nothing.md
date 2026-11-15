@@ -233,8 +233,8 @@ Decided, not built.
       RLS-bound query, `@@` not being leakproof (S3.4), so FTS reads scan (#102, #99).
 
 - **d12 — A foreign key into a tenant table carries `tenant_id`.** The migration rewrites the three
-  keys the pg17 run caught taking another tenant's ids (`workareas.parent_id`,
-  `memories.created_event_id`, `review_queue.memory_id`), and `api_keys.default_workarea_id` and
+  keys the pg17 run caught taking another tenant's ids (`workspaces.parent_id`,
+  `memories.created_event_id`, `review_queue.memory_id`), and `api_keys.default_workspace_id` and
   `rotated_from`, as `(tenant_id, col)` → `(tenant_id, id)`, the form 0004 gave `grants`, adding
   each `UNIQUE (tenant_id, …)` it needs, so a cross-tenant reference is refused as one to no row is;
   on a provider-level `api_keys` row, whose `tenant_id` is NULL, "the row is not required to have a

@@ -1,5 +1,5 @@
 //! `oml sync` (ADR-0057): source adapters behind a port, the diff of a
-//! source against a workarea, and the run that writes, checks or links it.
+//! source against a workspace, and the run that writes, checks or links it.
 
 pub mod adapter;
 pub mod adr;

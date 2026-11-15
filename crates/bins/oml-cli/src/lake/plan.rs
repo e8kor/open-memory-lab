@@ -1,4 +1,4 @@
-//! The diff of a lake's claims against a workarea (ADR-0062 d8, d10, d11): a
+//! The diff of a lake's claims against a workspace (ADR-0062 d8, d10, d11): a
 //! pure function of the extraction, the key's own listing and the tables the
 //! run read, so the dry run's plan is the run's, byte for byte.
 //!
@@ -19,8 +19,8 @@ use crate::sync::plan::{Anchor, Check, Claim, Entry, Outcome, Plan};
 /// A run's fixed inputs.
 #[derive(Clone, Debug)]
 pub struct Context {
-    pub workarea: String,
-    pub workarea_id: String,
+    pub workspace: String,
+    pub workspace_id: String,
     pub max_writes: usize,
     /// `--check`: nothing is written.
     pub check: bool,
@@ -80,7 +80,7 @@ fn check(
         result: result.to_owned(),
         idempotency_key: format!(
             "lake:{}:{key}:check:{result}:v{}:{rev}",
-            ctx.workarea, tip.version
+            ctx.workspace, tip.version
         ),
         body,
     }
@@ -112,7 +112,7 @@ pub fn diff(
     let mut by_key: BTreeMap<String, Vec<Listed>> = BTreeMap::new();
     for v in own
         .iter()
-        .filter(|v| v.workarea_id.as_deref() == Some(ctx.workarea_id.as_str()))
+        .filter(|v| v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str()))
         .filter(|v| v.claim_key.starts_with("delta/"))
     {
         by_key
@@ -216,7 +216,7 @@ pub fn diff(
                 text_digest: Some(text_digest(&text)),
                 idempotency_key: Some(format!(
                     "lake:{}:{key}:removed:v{}",
-                    ctx.workarea, claim.latest_live
+                    ctx.workspace, claim.latest_live
                 )),
                 check: Some(check(ctx, tip, key, "removed", &rev, None)),
                 note: Some(format!("absent at version {rev}")),
@@ -250,7 +250,7 @@ fn new_entry(ctx: &Context, i: &LakeItem, version: u64) -> Entry {
         text_digest: Some(text_digest(&i.text)),
         idempotency_key: Some(format!(
             "lake:{}:{}:new:{at}{}",
-            ctx.workarea,
+            ctx.workspace,
             i.claim_key,
             short(&i.hash)
         )),
@@ -317,7 +317,7 @@ fn decide(ctx: &Context, claim: &Claim, i: &LakeItem) -> Entry {
         text_digest: Some(digest.clone()),
         idempotency_key: Some(format!(
             "lake:{}:{key}:changed:v{}:{}",
-            ctx.workarea,
+            ctx.workspace,
             claim.latest_live,
             short(&i.hash)
         )),

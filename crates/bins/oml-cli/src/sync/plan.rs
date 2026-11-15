@@ -1,4 +1,4 @@
-//! The diff of a source's items against a workarea (ADR-0057 d8, d18, d20):
+//! The diff of a source's items against a workspace (ADR-0057 d8, d18, d20):
 //! a pure function of the extraction, the listings and the run's context,
 //! so the dry run's plan is the run's, byte for byte (d9).
 
@@ -120,7 +120,7 @@ pub struct Entry {
 impl Entry {
     /// The body of the write this entry sends.
     #[must_use]
-    pub fn write_body(&self, workarea: &str) -> Option<Value> {
+    pub fn write_body(&self, workspace: &str) -> Option<Value> {
         let text = self.text.as_ref()?;
         // Every adapter sync builds reads documents, so every write it sends
         // is of kind doc, derived and never declared by hand (ADR-0063 d2).
@@ -128,7 +128,7 @@ impl Entry {
         match self.outcome {
             Outcome::New => {
                 body["claim_key"] = json!(self.claim_key);
-                body["workarea"] = json!(workarea);
+                body["workspace"] = json!(workspace);
             }
             Outcome::Changed => body["expected_version"] = json!(self.expected_version),
             Outcome::Removed => {
@@ -195,8 +195,8 @@ fn common_dir(files: &[String]) -> String {
 /// The run's fixed inputs.
 #[derive(Clone, Debug)]
 pub struct Context {
-    pub workarea: String,
-    pub workarea_id: String,
+    pub workspace: String,
+    pub workspace_id: String,
     pub repo: String,
     pub rev: String,
     pub scope: Scope,
@@ -207,7 +207,7 @@ pub struct Context {
     /// whoever wrote it; any other tip anchored into the source is reported
     /// `foreign` and never marked.
     pub check: bool,
-    /// The adapters whose claim keys this run answers for: the workarea's
+    /// The adapters whose claim keys this run answers for: the workspace's
     /// recorded adapter, and the old one under `--change-adapter`.
     pub namespaces: Vec<Kind>,
     /// Paths read and found unreadable or never read: their claims are
@@ -237,7 +237,7 @@ pub struct SourceItem {
     pub item: Item,
 }
 
-/// A claim of the workarea as the listings show it.
+/// A claim of the workspace as the listings show it.
 #[derive(Clone, Debug)]
 pub(crate) struct Claim {
     pub(crate) key: String,
@@ -374,18 +374,18 @@ impl Plan {
     }
 }
 
-/// The diff (ADR-0057 d8). `own` is the key's own rows in the workarea's
+/// The diff (ADR-0057 d8). `own` is the key's own rows in the workspace's
 /// subtree in every state; `served` the promoted tips anchored in the
 /// repository under the scope.
 #[must_use]
 pub fn diff(ctx: &Context, items: &[SourceItem], own: &[Listed], served: &[Listed]) -> Plan {
-    let in_workarea = |v: &&Listed| v.workarea_id.as_deref() == Some(ctx.workarea_id.as_str());
+    let in_workspace = |v: &&Listed| v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str());
     let ours = |key: &str| Kind::of_key(key).is_some_and(|k| ctx.namespaces.contains(&k));
     let mut by_key: BTreeMap<String, Vec<Listed>> = BTreeMap::new();
     let own_ids: HashSet<&str> = own.iter().map(|v| v.artifact_id.as_str()).collect();
     for v in own
         .iter()
-        .filter(in_workarea)
+        .filter(in_workspace)
         .filter(|v| ours(&v.claim_key))
     {
         by_key
@@ -410,7 +410,7 @@ pub fn diff(ctx: &Context, items: &[SourceItem], own: &[Listed], served: &[Liste
     });
     let mut foreign: HashMap<String, Listed> = HashMap::new();
     let mut cited: Vec<Listed> = Vec::new();
-    for v in served.iter().filter(in_workarea) {
+    for v in served.iter().filter(in_workspace) {
         if own_ids.contains(v.artifact_id.as_str()) || by_key.contains_key(&v.claim_key) {
             continue;
         }
@@ -552,7 +552,7 @@ pub fn diff(ctx: &Context, items: &[SourceItem], own: &[Listed], served: &[Liste
             text_digest: Some(text_digest(&text)),
             idempotency_key: Some(format!(
                 "sync:{}:{}:removed:v{}",
-                ctx.workarea, claim.key, claim.latest_live
+                ctx.workspace, claim.key, claim.latest_live
             )),
             check: Some(check(ctx, tip, &claim.key, "removed", None, None)),
             note: Some(format!("absent at {}", &ctx.rev[..ctx.rev.len().min(12)])),
@@ -640,7 +640,7 @@ fn new_entry(ctx: &Context, si: &SourceItem, digest: &str, version: u64) -> Entr
         text_digest: Some(digest.to_owned()),
         idempotency_key: Some(format!(
             "sync:{}:{}:new:{at}{}",
-            ctx.workarea,
+            ctx.workspace,
             si.item.claim_key,
             short(&si.item.hash)
         )),
@@ -672,7 +672,7 @@ fn check(
         result: result.to_owned(),
         idempotency_key: format!(
             "sync:{}:{key}:check:{result}:v{}:{}",
-            ctx.workarea,
+            ctx.workspace,
             tip.version,
             &ctx.rev[..ctx.rev.len().min(16)]
         ),
@@ -704,7 +704,7 @@ fn decide(ctx: &Context, claim: &Claim, si: &SourceItem, digest: &str) -> Entry 
         text_digest: Some(digest.to_owned()),
         idempotency_key: Some(format!(
             "sync:{}:{key}:changed:v{}:{}",
-            ctx.workarea,
+            ctx.workspace,
             claim.latest_live,
             short(&si.item.hash)
         )),
@@ -840,8 +840,8 @@ pub struct EdgeLine {
     pub proposer_key_id: Option<String>,
 }
 
-/// Each statement against the promoted tips and the workarea's claim edges:
-/// `unresolved` when an end is in neither the source nor the workarea,
+/// Each statement against the promoted tips and the workspace's claim edges:
+/// `unresolved` when an end is in neither the source nor the workspace,
 /// `waiting` until both ends' tips are promoted, then `proposed` (to be
 /// proposed), or the existing edge's state; and each existing edge between
 /// two of the source's tips that no statement backs, `unstated`.

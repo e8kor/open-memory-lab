@@ -24,7 +24,7 @@ use oml_app::App;
 use oml_app::domain::name::Name;
 use oml_app::domain::oauth::Issuer;
 use oml_app::domain::web::{Email, Provider};
-use oml_app::domain::{HeldBy, Role};
+use oml_app::domain::{Role, UsedBy};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSignIn, MemSigner, MemStore, SeqIdGen};
 use oml_app::ports::JournalStore as _;
 use oml_app::types::{
@@ -492,7 +492,7 @@ async fn agent_guardrail(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
                 verb: None,
                 kind: oml_app::domain::MemoryKind::Guardrail,
                 body: body.to_owned(),
-                workarea: None,
+                workspace: None,
                 derives_from: Vec::new(),
                 severity: Some(oml_app::domain::guardrail::Severity::Must),
                 rule: None,
@@ -526,7 +526,7 @@ async fn laptop_key(rig: &Rig, cookie: &str) -> String {
 // -- the Guardrails view (ADR-0037 d17), moved to oml-web ------------------
 
 #[tokio::test]
-async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
+async fn the_user_page_shows_guardrail_scope_and_selects_nested_workspaces() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let value = laptop_key(&rig, &cookie).await;
@@ -538,13 +538,13 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
         "{page}"
     );
     assert!(
-        page.contains("This workarea and its readable parent workareas."),
+        page.contains("This workspace and its readable parent workspaces."),
         "{page}"
     );
     // The picker names the scope in force by its reference (design notes
     // row 20).
     assert!(
-        page.contains(r#"name="workarea" type="text" value="alice""#),
+        page.contains(r#"name="workspace" type="text" value="alice""#),
         "{page}"
     );
     // Held, it is no rule yet: the set holds none (d3); the memories view
@@ -576,17 +576,17 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
     let (status, _, _) = act(
         &rig,
         &cookie,
-        "/web/workareas",
-        &[("action", "create_workarea"), ("name", "proj")],
+        "/web/workspaces",
+        &[("action", "create_workspace"), ("name", "proj")],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     let (status, _, _) = act(
         &rig,
         &cookie,
-        "/web/workareas",
+        "/web/workspaces",
         &[
-            ("action", "create_workarea"),
+            ("action", "create_workspace"),
             ("name", "docs"),
             ("parent", "alice.proj"),
         ],
@@ -596,25 +596,25 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
     let root = key_named(&rig, "alice-web").await.user.expect("a root");
     let proj = rig
         .store
-        .workarea_children(rig.boot.tenant_id, root)
+        .workspace_children(rig.boot.tenant_id, root)
         .await
         .unwrap()
         .into_iter()
         .find(|w| w.name.as_str() == "proj")
         .expect("proj")
-        .workarea_id;
+        .workspace_id;
     let docs = rig
         .store
-        .workarea_children(rig.boot.tenant_id, proj)
+        .workspace_children(rig.boot.tenant_id, proj)
         .await
         .unwrap()
         .into_iter()
         .find(|w| w.name.as_str() == "docs")
         .expect("docs")
-        .workarea_id;
+        .workspace_id;
     let (status, _, nested) = send(
         &rig.router,
-        get(&format!("/web/guardrails?workarea={docs}"), Some(&cookie)),
+        get(&format!("/web/guardrails?workspace={docs}"), Some(&cookie)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{nested}");
@@ -623,12 +623,12 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
         "{nested}"
     );
     assert!(
-        nested.contains(r#"name="workarea" type="text" value="alice.docs""#),
+        nested.contains(r#"name="workspace" type="text" value="alice.docs""#),
         "{nested}"
     );
     assert!(
         nested.contains("[must] Run the tests before every commit."),
-        "the parent's root rule applies to the nested workarea: {nested}"
+        "the parent's root rule applies to the nested workspace: {nested}"
     );
     // No page act writes, supersedes or retires a guardrail (d17).
     let (status, _, body) = act(
@@ -642,7 +642,7 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
 }
 
 #[tokio::test]
-async fn the_guardrail_selector_includes_workareas_after_the_first_tree_page() {
+async fn the_guardrail_selector_includes_workspaces_after_the_first_tree_page() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     for n in 0..200 {
@@ -650,8 +650,8 @@ async fn the_guardrail_selector_includes_workareas_after_the_first_tree_page() {
         let (status, _, body) = act(
             &rig,
             &cookie,
-            "/web/workareas",
-            &[("action", "create_workarea"), ("name", &name)],
+            "/web/workspaces",
+            &[("action", "create_workspace"), ("name", &name)],
         )
         .await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{name}: {body}");
@@ -659,68 +659,68 @@ async fn the_guardrail_selector_includes_workareas_after_the_first_tree_page() {
     let root = key_named(&rig, "alice-web").await.user.expect("a root");
     let last = rig
         .store
-        .workarea_children(rig.boot.tenant_id, root)
+        .workspace_children(rig.boot.tenant_id, root)
         .await
         .unwrap()
         .into_iter()
         .find(|w| w.name.as_str() == "w199")
         .expect("the child after the first 200-node page")
-        .workarea_id;
+        .workspace_id;
     let (status, _, page) = send(
         &rig.router,
-        get(&format!("/web/guardrails?workarea={last}"), Some(&cookie)),
+        get(&format!("/web/guardrails?workspace={last}"), Some(&cookie)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(
-        page.contains(r#"name="workarea" type="text" value="alice.w199""#),
-        "the chosen workarea is named beyond the first page: {page}"
+        page.contains(r#"name="workspace" type="text" value="alice.w199""#),
+        "the chosen workspace is named beyond the first page: {page}"
     );
     assert!(
         page.contains(r#"<option value="alice.w199"></option>"#),
-        "the hints hold the workarea beyond the first page: {page}"
+        "the hints hold the workspace beyond the first page: {page}"
     );
 }
 
-// -- the Workareas view (ADR-0045 d28), moved to oml-web ---------------------
+// -- the Workspaces view (ADR-0045 d28), moved to oml-web ---------------------
 
 #[tokio::test]
-async fn a_workarea_act_is_confirmed_before_it_runs() {
+async fn a_workspace_act_is_confirmed_before_it_runs() {
     let rig = rig().await;
     rig.allow("boss@example.com", "boss", true).await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let (status, _, _) = act(
         &rig,
         &cookie,
-        "/web/workareas",
-        &[("action", "create_workarea"), ("name", "proj")],
+        "/web/workspaces",
+        &[("action", "create_workspace"), ("name", "proj")],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     let root = key_named(&rig, "alice-web").await.user.expect("a root");
     let proj = rig
         .store
-        .workarea_children(rig.boot.tenant_id, root)
+        .workspace_children(rig.boot.tenant_id, root)
         .await
         .unwrap()
         .into_iter()
         .find(|w| w.name.as_str() == "proj")
         .expect("proj")
-        .workarea_id;
+        .workspace_id;
     let (status, _, _) = act(
         &rig,
         &cookie,
-        "/web/workareas",
+        "/web/workspaces",
         &[
-            ("action", "create_workarea"),
+            ("action", "create_workspace"),
             ("name", "child"),
             ("parent", "alice.proj"),
         ],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    let (_, _, page) = send(&rig.router, get("/web/workareas", Some(&cookie))).await;
-    // Each workarea by the reference every field takes, and the one it
+    let (_, _, page) = send(&rig.router, get("/web/workspaces", Some(&cookie))).await;
+    // Each workspace by the reference every field takes, and the one it
     // sits in (design notes row 20).
     assert!(!page.contains("alice.proj.child"), "{page}");
     assert!(
@@ -728,15 +728,15 @@ async fn a_workarea_act_is_confirmed_before_it_runs() {
         "{page}"
     );
     assert!(page.contains("<select name=\"op\""), "{page}");
-    assert!(page.contains("value=\"propose:committed\""), "{page}");
+    assert!(page.contains("value=\"propose:protected\""), "{page}");
     assert!(page.contains("value=\"mode:in_progress\""), "{page}");
-    assert!(!page.contains("value=\"propose:validated\""), "{page}");
+    assert!(!page.contains("value=\"propose:frozen\""), "{page}");
     assert!(!page.contains("value=\"mode:standard\""), "{page}");
     // Apply is a GET that changes nothing and asks again.
     let (status, _, confirm) = send(
         &rig.router,
         get(
-            &format!("/web/workareas?workarea={proj}&op=mode:in_progress"),
+            &format!("/web/workspaces?workspace={proj}&op=mode:in_progress"),
             Some(&cookie),
         ),
     )
@@ -744,7 +744,7 @@ async fn a_workarea_act_is_confirmed_before_it_runs() {
     assert_eq!(status, StatusCode::OK, "{confirm}");
     let node = || async {
         rig.store
-            .workarea(rig.boot.tenant_id, proj)
+            .workspace(rig.boot.tenant_id, proj)
             .await
             .unwrap()
             .unwrap()
@@ -753,48 +753,55 @@ async fn a_workarea_act_is_confirmed_before_it_runs() {
         !node().await.in_progress,
         "nothing ran before the confirmation"
     );
-    assert!(confirm.contains("value=\"workarea_mode\""), "{confirm}");
+    assert!(confirm.contains("value=\"workspace_mode\""), "{confirm}");
     assert!(confirm.contains("name=\"csrf_token\""), "{confirm}");
     let (status, _, _) = act(
         &rig,
         &cookie,
-        "/web/workareas",
+        "/web/workspaces",
         &[
-            ("action", "workarea_mode"),
-            ("workarea", &proj.to_string()),
+            ("action", "workspace_mode"),
+            ("workspace", &proj.to_string()),
             ("mode", "in_progress"),
         ],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert!(node().await.in_progress);
+    // The row names the mode as the drafts-visibility toggle does, the words
+    // scripts/check_web_signed_in.sh reads on the router (ADR-0091 d16).
+    let (_, _, after) = send(&rig.router, get("/web/workspaces", Some(&cookie))).await;
+    assert!(
+        after.contains("<td>development</td><td>drafts visible to everyone working here</td>"),
+        "{after}"
+    );
     // An act the key may not take now is refused by name at the
     // confirmation, with no form to run it.
     let (status, _, refused) = send(
         &rig.router,
         get(
-            &format!("/web/workareas?workarea={proj}&op=propose:committed"),
+            &format!("/web/workspaces?workspace={proj}&op=propose:protected"),
             Some(&cookie),
         ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{refused}");
     assert!(
-        refused.contains("workarea.in_progress_refused"),
+        refused.contains("workspace.in_progress_refused"),
         "{refused}"
     );
     assert!(
-        !refused.contains("value=\"workarea_transition\""),
+        !refused.contains("value=\"workspace_transition\""),
         "{refused}"
     );
-    // Commit, then propose committed through the dropdown's action.
+    // Commit, then propose protected through the dropdown's action.
     let (status, _, page) = act(
         &rig,
         &cookie,
-        "/web/workareas",
+        "/web/workspaces",
         &[
-            ("action", "workarea_mode"),
-            ("workarea", &proj.to_string()),
+            ("action", "workspace_mode"),
+            ("workspace", &proj.to_string()),
             ("mode", "standard"),
         ],
     )
@@ -803,21 +810,21 @@ async fn a_workarea_act_is_confirmed_before_it_runs() {
     let (status, _, page) = act(
         &rig,
         &cookie,
-        "/web/workareas",
+        "/web/workspaces",
         &[
-            ("action", "workarea_transition"),
-            ("workarea", &proj.to_string()),
-            ("to", "committed"),
+            ("action", "workspace_transition"),
+            ("workspace", &proj.to_string()),
+            ("to", "protected"),
         ],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
     // The proposer is never offered the ratification; the admin is.
-    let (_, _, page) = send(&rig.router, get("/web/workareas", Some(&cookie))).await;
+    let (_, _, page) = send(&rig.router, get("/web/workspaces", Some(&cookie))).await;
     assert!(!page.contains("value=\"ratify:"), "{page}");
-    assert!(page.contains("proposed: committed"), "{page}");
+    assert!(page.contains("proposed: protected"), "{page}");
     let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    let (status, _, page) = send(&rig.router, get("/web/admin/workareas", Some(&boss))).await;
+    let (status, _, page) = send(&rig.router, get("/web/admin/workspaces", Some(&boss))).await;
     assert_eq!(status, StatusCode::OK, "{page}");
     let marker = "value=\"ratify:";
     let at = page
@@ -828,19 +835,19 @@ async fn a_workarea_act_is_confirmed_before_it_runs() {
     let (status, _, page) = act(
         &rig,
         &boss,
-        "/web/admin/workareas",
+        "/web/admin/workspaces",
         &[
-            ("action", "workarea_ratify"),
-            ("workarea", &proj.to_string()),
+            ("action", "workspace_ratify"),
+            ("workspace", &proj.to_string()),
             ("transition", &transition),
         ],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-    assert_eq!(node().await.status.as_str(), "committed");
+    assert_eq!(node().await.status.as_str(), "protected");
 }
 
-async fn agent_writes_in(rig: &Rig, value: &str, body: &str, workarea: &str) -> uuid::Uuid {
+async fn agent_writes_in(rig: &Rig, value: &str, body: &str, workspace: &str) -> uuid::Uuid {
     rig.app
         .submit_memory(
             value,
@@ -853,8 +860,8 @@ async fn agent_writes_in(rig: &Rig, value: &str, body: &str, workarea: &str) -> 
                 verb: Some(oml_app::types::SubmitVerb::Remember),
                 kind: oml_app::domain::MemoryKind::Memory,
                 body: body.to_owned(),
-                workarea: Some(
-                    oml_app::domain::name::Reference::parse(workarea).expect("a reference"),
+                workspace: Some(
+                    oml_app::domain::name::Reference::parse(workspace).expect("a reference"),
                 ),
                 derives_from: Vec::new(),
                 severity: None,
@@ -871,7 +878,7 @@ async fn agent_writes_in(rig: &Rig, value: &str, body: &str, workarea: &str) -> 
         .memory_id
 }
 
-/// A tenant reviewer an admin granted into alice's root, dreamer and
+/// A tenant reviewer an admin granted into alice's root, reviewer and
 /// reader on its subtree: the key that puts another author's row there. A
 /// key that is not alice's starts no memory in her root (ADR-0044 d16), so
 /// what it holds there is a successor it proposed.
@@ -879,20 +886,20 @@ async fn reviewer_in_alices_root(rig: &Rig) -> oml_app::types::IssuedKey {
     tenant_reviewer_in(rig, "helper", "alice").await
 }
 
-/// The tenant reviewer `name`, dreamer and reader on `user`'s root.
+/// The tenant reviewer `name`, reviewer and reader on `user`'s root.
 async fn tenant_reviewer_in(rig: &Rig, name: &str, user: &str) -> oml_app::types::IssuedKey {
     rig.app
         .issue_key(
             &rig.boot.admin_key.value,
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Dreamer,
+                role: Role::Reviewer,
                 name: Name::parse(name).expect("a name"),
                 principal: name.to_owned(),
-                held_by: Some(HeldBy::Agent),
-                default_workarea: None,
+                used_by: Some(UsedBy::Agent),
+                default_workspace: None,
                 crew: None,
-                grants: [Role::Dreamer, Role::Reader]
+                grants: [Role::Reviewer, Role::Reader]
                     .into_iter()
                     .map(|role| GrantRequest {
                         node: Name::parse(user).expect("a name").into(),
@@ -913,7 +920,7 @@ async fn tenant_reviewer_in(rig: &Rig, name: &str, user: &str) -> oml_app::types
 }
 
 /// The reviewer approves `target`, a row alice's agent wrote, and proposes
-/// `body` as its successor: a held row in the target's workarea that
+/// `body` as its successor: a held row in the target's workspace that
 /// another author wrote.
 async fn reviewer_holds_a_successor(rig: &Rig, reviewer: &str, target: uuid::Uuid, body: &str) {
     rig.app
@@ -932,7 +939,7 @@ async fn reviewer_holds_a_successor(rig: &Rig, reviewer: &str, target: uuid::Uui
                 retirement: false,
                 derives_from: Vec::new(),
                 reason: None,
-                workarea: None,
+                workspace: None,
                 refuse_vocabulary_target: false,
                 severity: None,
                 rule: None,
@@ -978,7 +985,7 @@ async fn agent_writes(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
                 verb: Some(oml_app::types::SubmitVerb::Remember),
                 kind: oml_app::domain::MemoryKind::Memory,
                 body: body.to_owned(),
-                workarea: None,
+                workspace: None,
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
@@ -1030,8 +1037,8 @@ async fn the_atlas_treemap_draws_and_zooms_with_no_script_in_chromium() {
         let (status, _, _) = act(
             &rig,
             &cookie,
-            "/web/workareas",
-            &[("action", "create_workarea"), ("name", name)],
+            "/web/workspaces",
+            &[("action", "create_workspace"), ("name", name)],
         )
         .await;
         assert_eq!(status, StatusCode::SEE_OTHER);
@@ -1054,7 +1061,7 @@ async fn the_atlas_treemap_draws_and_zooms_with_no_script_in_chromium() {
         ],
     )
     .await;
-    for (body, workarea) in [
+    for (body, workspace) in [
         (
             "Checkout calls the payments service with an idempotency key per order",
             "alice.payments",
@@ -1078,15 +1085,15 @@ async fn the_atlas_treemap_draws_and_zooms_with_no_script_in_chromium() {
         ("Staging mirrors production schema weekly", "alice"),
         ("The on-call rotation changes on Mondays", "alice"),
     ] {
-        agent_writes_in(&rig, &agent, body, workarea).await;
+        agent_writes_in(&rig, &agent, body, workspace).await;
     }
     let (status, _, _) = act(
         &rig,
         &cookie,
-        "/web/workareas",
+        "/web/workspaces",
         &[
-            ("action", "workarea_mode"),
-            ("workarea", "alice.research"),
+            ("action", "workspace_mode"),
+            ("workspace", "alice.research"),
             ("mode", "in_progress"),
         ],
     )
@@ -1152,7 +1159,7 @@ async fn the_atlas_treemap_draws_and_zooms_with_no_script_in_chromium() {
                 assert!(
                     at("zoomed_url")
                         .as_str()
-                        .is_some_and(|u| u.starts_with(ISSUER) && u.contains("workarea=")),
+                        .is_some_and(|u| u.starts_with(ISSUER) && u.contains("workspace=")),
                     "{tag}: a region zooms by a plain link: {report}"
                 );
             }
@@ -1178,20 +1185,20 @@ async fn alice_proj(rig: &Rig, cookie: &str) -> uuid::Uuid {
     let (status, _, _) = act(
         rig,
         cookie,
-        "/web/workareas",
-        &[("action", "create_workarea"), ("name", "proj")],
+        "/web/workspaces",
+        &[("action", "create_workspace"), ("name", "proj")],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     let root = key_named(rig, "alice-web").await.user.expect("a root");
     rig.store
-        .workarea_children(rig.boot.tenant_id, root)
+        .workspace_children(rig.boot.tenant_id, root)
         .await
         .unwrap()
         .into_iter()
         .find(|w| w.name.as_str() == "proj")
         .expect("proj")
-        .workarea_id
+        .workspace_id
 }
 
 #[tokio::test]
@@ -1205,25 +1212,25 @@ async fn a_resubmitted_confirmation_replays_its_act_and_acts_once() {
     let (status, _, confirm) = send(
         &rig.router,
         get(
-            &format!("/web/workareas?workarea={proj}&op=propose:committed"),
+            &format!("/web/workspaces?workspace={proj}&op=propose:protected"),
             Some(&cookie),
         ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{confirm}");
     let fields = [
-        ("action", "workarea_transition".to_owned()),
+        ("action", "workspace_transition".to_owned()),
         ("csrf_token", field_of(&confirm, "csrf_token")),
-        ("workarea", field_of(&confirm, "workarea")),
+        ("workspace", field_of(&confirm, "workspace")),
         ("to", field_of(&confirm, "to")),
         ("nonce", field_of(&confirm, "nonce")),
     ];
     let fields: Vec<(&str, &str)> = fields.iter().map(|(n, v)| (*n, v.as_str())).collect();
     for _ in 0..2 {
         let (status, headers, page) =
-            send(&rig.router, post("/web/workareas", &fields, Some(&cookie))).await;
+            send(&rig.router, post("/web/workspaces", &fields, Some(&cookie))).await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-        assert_eq!(headers[header::LOCATION], "/web/workareas?done=proposed");
+        assert_eq!(headers[header::LOCATION], "/web/workspaces?done=proposed");
     }
     let pending = rig
         .store
@@ -1235,7 +1242,7 @@ async fn a_resubmitted_confirmation_replays_its_act_and_acts_once() {
     let (_, _, again) = send(
         &rig.router,
         get(
-            &format!("/web/workareas?workarea={proj}&op=mode:in_progress"),
+            &format!("/web/workspaces?workspace={proj}&op=mode:in_progress"),
             Some(&cookie),
         ),
     )
@@ -1250,16 +1257,16 @@ async fn a_resubmitted_confirmation_replays_its_act_and_acts_once() {
     let (status, _, confirm) = send(
         &rig.router,
         get(
-            &format!("/web/admin/workareas?workarea={proj}&op=ratify:{transition}"),
+            &format!("/web/admin/workspaces?workspace={proj}&op=ratify:{transition}"),
             Some(&boss),
         ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{confirm}");
     let fields = [
-        ("action", "workarea_ratify".to_owned()),
+        ("action", "workspace_ratify".to_owned()),
         ("csrf_token", field_of(&confirm, "csrf_token")),
-        ("workarea", proj.to_string()),
+        ("workspace", proj.to_string()),
         ("transition", field_of(&confirm, "transition")),
         ("nonce", field_of(&confirm, "nonce")),
     ];
@@ -1267,22 +1274,22 @@ async fn a_resubmitted_confirmation_replays_its_act_and_acts_once() {
     for _ in 0..2 {
         let (status, headers, page) = send(
             &rig.router,
-            post("/web/admin/workareas", &fields, Some(&boss)),
+            post("/web/admin/workspaces", &fields, Some(&boss)),
         )
         .await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
         assert_eq!(
             headers[header::LOCATION],
-            "/web/admin/workareas?done=ratified"
+            "/web/admin/workspaces?done=ratified"
         );
     }
     let node = rig
         .store
-        .workarea(rig.boot.tenant_id, proj)
+        .workspace(rig.boot.tenant_id, proj)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(node.status.as_str(), "committed");
+    assert_eq!(node.status.as_str(), "protected");
 }
 
 #[tokio::test]
@@ -1296,27 +1303,27 @@ async fn a_confirmation_sent_twice_at_once_acts_once() {
     let (_, _, confirm) = send(
         &rig.router,
         get(
-            &format!("/web/workareas?workarea={proj}&op=propose:committed"),
+            &format!("/web/workspaces?workspace={proj}&op=propose:protected"),
             Some(&cookie),
         ),
     )
     .await;
     let fields = [
-        ("action", "workarea_transition".to_owned()),
+        ("action", "workspace_transition".to_owned()),
         ("csrf_token", field_of(&confirm, "csrf_token")),
-        ("workarea", proj.to_string()),
-        ("to", "committed".to_owned()),
+        ("workspace", proj.to_string()),
+        ("to", "protected".to_owned()),
         ("nonce", field_of(&confirm, "nonce")),
     ];
     let fields: Vec<(&str, &str)> = fields.iter().map(|(n, v)| (*n, v.as_str())).collect();
     for _ in 0..5 {
         let (a, b) = tokio::join!(
-            send(&rig.router, post("/web/workareas", &fields, Some(&cookie))),
-            send(&rig.router, post("/web/workareas", &fields, Some(&cookie))),
+            send(&rig.router, post("/web/workspaces", &fields, Some(&cookie))),
+            send(&rig.router, post("/web/workspaces", &fields, Some(&cookie))),
         );
         for (status, headers, page) in [a, b] {
             assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-            assert_eq!(headers[header::LOCATION], "/web/workareas?done=proposed");
+            assert_eq!(headers[header::LOCATION], "/web/workspaces?done=proposed");
         }
     }
     let pending = rig
@@ -1336,10 +1343,10 @@ async fn a_nonce_that_is_not_one_the_page_draws_is_refused_and_nothing_runs() {
         let (status, _, page) = act(
             &rig,
             &cookie,
-            "/web/workareas",
+            "/web/workspaces",
             &[
-                ("action", "workarea_mode"),
-                ("workarea", &proj.to_string()),
+                ("action", "workspace_mode"),
+                ("workspace", &proj.to_string()),
                 ("mode", "in_progress"),
                 ("nonce", nonce),
             ],
@@ -1350,7 +1357,7 @@ async fn a_nonce_that_is_not_one_the_page_draws_is_refused_and_nothing_runs() {
     }
     let node = rig
         .store
-        .workarea(rig.boot.tenant_id, proj)
+        .workspace(rig.boot.tenant_id, proj)
         .await
         .unwrap()
         .unwrap();
@@ -1358,7 +1365,7 @@ async fn a_nonce_that_is_not_one_the_page_draws_is_refused_and_nothing_runs() {
 }
 
 #[tokio::test]
-async fn the_workareas_view_shows_only_the_notices_its_acts_name() {
+async fn the_workspaces_view_shows_only_the_notices_its_acts_name() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     for (done, shown) in [
@@ -1370,7 +1377,7 @@ async fn the_workareas_view_shows_only_the_notices_its_acts_name() {
     ] {
         let (status, _, page) = send(
             &rig.router,
-            get(&format!("/web/workareas?done={done}"), Some(&cookie)),
+            get(&format!("/web/workspaces?done={done}"), Some(&cookie)),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{page}");
@@ -1395,10 +1402,10 @@ async fn an_act_without_the_sessions_csrf_token_is_refused_before_any_api_call()
     let (status, _, body) = send(
         &rig.router,
         post(
-            "/web/workareas",
+            "/web/workspaces",
             &[
-                ("action", "workarea_mode"),
-                ("workarea", &proj.to_string()),
+                ("action", "workspace_mode"),
+                ("workspace", &proj.to_string()),
                 ("mode", "in_progress"),
                 ("csrf_token", "0000"),
             ],
@@ -1410,7 +1417,7 @@ async fn an_act_without_the_sessions_csrf_token_is_refused_before_any_api_call()
     assert!(body.contains("csrf_token"), "{body}");
     let node = rig
         .store
-        .workarea(rig.boot.tenant_id, proj)
+        .workspace(rig.boot.tenant_id, proj)
         .await
         .unwrap()
         .unwrap();
@@ -1418,18 +1425,18 @@ async fn an_act_without_the_sessions_csrf_token_is_refused_before_any_api_call()
 }
 
 #[tokio::test]
-async fn the_admin_workareas_page_is_not_found_for_a_person_who_is_not_an_admin() {
+async fn the_admin_workspaces_page_is_not_found_for_a_person_who_is_not_an_admin() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (status, _, page) = send(&rig.router, get("/web/admin/workareas", Some(&cookie))).await;
+    let (status, _, page) = send(&rig.router, get("/web/admin/workspaces", Some(&cookie))).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
     let (status, _, page) = act(
         &rig,
         &cookie,
-        "/web/admin/workareas",
+        "/web/admin/workspaces",
         &[
-            ("action", "workarea_mode"),
-            ("workarea", "alice"),
+            ("action", "workspace_mode"),
+            ("workspace", "alice"),
             ("mode", "in_progress"),
         ],
     )
@@ -1438,15 +1445,15 @@ async fn the_admin_workareas_page_is_not_found_for_a_person_who_is_not_an_admin(
 }
 
 #[tokio::test]
-async fn the_admin_workareas_page_refuses_a_create_as_no_action_of_its_own_and_creates_nothing() {
+async fn the_admin_workspaces_page_refuses_a_create_as_no_action_of_its_own_and_creates_nothing() {
     let rig = rig().await;
     rig.allow("boss@example.com", "boss", true).await;
     let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
     let (status, _, page) = act(
         &rig,
         &admin,
-        "/web/admin/workareas",
-        &[("action", "create_workarea"), ("name", "shadow")],
+        "/web/admin/workspaces",
+        &[("action", "create_workspace"), ("name", "shadow")],
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{page}");
@@ -1459,7 +1466,7 @@ async fn the_admin_workareas_page_refuses_a_create_as_no_action_of_its_own_and_c
     let root = key_named(&rig, "boss-web").await.user.expect("a root");
     let children = rig
         .store
-        .workarea_children(rig.boot.tenant_id, root)
+        .workspace_children(rig.boot.tenant_id, root)
         .await
         .unwrap();
     assert!(
@@ -1469,7 +1476,7 @@ async fn the_admin_workareas_page_refuses_a_create_as_no_action_of_its_own_and_c
 }
 
 #[tokio::test]
-async fn the_old_workareas_urls_are_not_found_and_their_acts_run_nothing() {
+async fn the_old_workspaces_urls_are_not_found_and_their_acts_run_nothing() {
     // The lead's 303s from the old URLs are deleted in v0.7.1 (ADR-0070,
     // "The old URLs deleted"): an old URL is not found, an old act is
     // refused and runs nothing, and the moved page answers at its own path.
@@ -1479,15 +1486,15 @@ async fn the_old_workareas_urls_are_not_found_and_their_acts_run_nothing() {
     let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
     let proj = alice_proj(&rig, &cookie).await;
     for (old, who, new) in [
-        ("/web?view=workarea", &cookie, "/web/workareas"),
-        ("/web/admin?view=workarea", &boss, "/web/admin/workareas"),
+        ("/web?view=workspace", &cookie, "/web/workspaces"),
+        ("/web/admin?view=workspace", &boss, "/web/admin/workspaces"),
     ] {
         let (status, headers, _) = send(&rig.router, get(old, Some(who))).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{old}");
         assert!(headers.get(header::LOCATION).is_none(), "{old}");
         let (status, _, page) = send(&rig.router, get(new, Some(who))).await;
         assert_eq!(status, StatusCode::OK, "{page}");
-        assert!(page.contains("<h1>Workareas</h1>"), "{page}");
+        assert!(page.contains("<h1>Workspaces</h1>"), "{page}");
     }
     // An old form's act is no action of POST /web and runs nothing.
     let (status, headers, _) = act(
@@ -1495,8 +1502,8 @@ async fn the_old_workareas_urls_are_not_found_and_their_acts_run_nothing() {
         &cookie,
         "/web",
         &[
-            ("action", "workarea_mode"),
-            ("workarea", &proj.to_string()),
+            ("action", "workspace_mode"),
+            ("workspace", &proj.to_string()),
             ("mode", "in_progress"),
         ],
     )
@@ -1505,18 +1512,18 @@ async fn the_old_workareas_urls_are_not_found_and_their_acts_run_nothing() {
     assert!(headers.get(header::LOCATION).is_none());
     let node = rig
         .store
-        .workarea(rig.boot.tenant_id, proj)
+        .workspace(rig.boot.tenant_id, proj)
         .await
         .unwrap()
         .unwrap();
     assert!(!node.in_progress);
-    // An old form's create runs nothing either: creating a workarea is the
+    // An old form's create runs nothing either: creating a workspace is the
     // view's own act through the API.
     let (status, headers, _) = act(
         &rig,
         &cookie,
         "/web",
-        &[("action", "create_workarea"), ("name", "docs")],
+        &[("action", "create_workspace"), ("name", "docs")],
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -1524,7 +1531,7 @@ async fn the_old_workareas_urls_are_not_found_and_their_acts_run_nothing() {
     let root = key_named(&rig, "alice-web").await.user.expect("a root");
     let docs = || async {
         rig.store
-            .workarea_children(rig.boot.tenant_id, root)
+            .workspace_children(rig.boot.tenant_id, root)
             .await
             .unwrap()
             .into_iter()
@@ -1534,37 +1541,37 @@ async fn the_old_workareas_urls_are_not_found_and_their_acts_run_nothing() {
     let (status, headers, _) = act(
         &rig,
         &cookie,
-        "/web/workareas",
-        &[("action", "create_workarea"), ("name", "docs")],
+        "/web/workspaces",
+        &[("action", "create_workspace"), ("name", "docs")],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], "/web/workareas?done=created");
+    assert_eq!(headers[header::LOCATION], "/web/workspaces?done=created");
     assert!(docs().await);
 }
 
 #[tokio::test]
-async fn the_workareas_pages_draw_the_header_and_tabs_the_leads_pages_draw() {
+async fn the_workspaces_pages_draw_the_header_and_tabs_the_leads_pages_draw() {
     let rig = rig().await;
     rig.allow("bob@example.com", "bob", true).await;
     for (subject, email) in [("sub-1", EMAIL), ("sub-2", "bob@example.com")] {
         let cookie = signed_in(&rig, subject, email).await;
         let (_, _, lead) = send(&rig.router, get("/web/setup", Some(&cookie))).await;
-        let (status, _, moved) = send(&rig.router, get("/web/workareas", Some(&cookie))).await;
+        let (status, _, moved) = send(&rig.router, get("/web/workspaces", Some(&cookie))).await;
         assert_eq!(status, StatusCode::OK, "{moved}");
         assert_eq!(header_of(&moved), header_of(&lead), "{email}");
         assert!(
-            moved.contains(r#"<a href="/web/workareas" class="on" aria-current="page">"#),
+            moved.contains(r#"<a href="/web/workspaces" class="on" aria-current="page">"#),
             "{moved}"
         );
     }
     let boss = signed_in(&rig, "sub-2", "bob@example.com").await;
     let (_, _, lead) = send(&rig.router, get("/web/admin/people", Some(&boss))).await;
-    let (status, _, moved) = send(&rig.router, get("/web/admin/workareas", Some(&boss))).await;
+    let (status, _, moved) = send(&rig.router, get("/web/admin/workspaces", Some(&boss))).await;
     assert_eq!(status, StatusCode::OK, "{moved}");
     assert_eq!(header_of(&moved), header_of(&lead));
     assert!(
-        moved.contains(r#"<a href="/web/admin/workareas" class="on" aria-current="page">"#),
+        moved.contains(r#"<a href="/web/admin/workspaces" class="on" aria-current="page">"#),
         "{moved}"
     );
 }
@@ -1606,7 +1613,7 @@ async fn the_old_guardrails_url_is_not_found_and_the_view_answers_at_its_own_pat
     // (ADR-0070, "The old URLs deleted").
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    for old in ["/web?view=guardrails", "/web?view=guardrails&workarea=x"] {
+    for old in ["/web?view=guardrails", "/web?view=guardrails&workspace=x"] {
         let (status, headers, _) = send(&rig.router, get(old, Some(&cookie))).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{old}");
         assert!(headers.get(header::LOCATION).is_none(), "{old}");
@@ -1826,7 +1833,7 @@ async fn every_refusal_page_of_a_signed_in_person_draws_the_sign_out_control_in_
         StatusCode::BAD_REQUEST,
         send(
             &rig.router,
-            get("/web/guardrails?workarea=a&workarea=b", Some(&cookie)),
+            get("/web/guardrails?workspace=a&workspace=b", Some(&cookie)),
         )
         .await,
     );
@@ -1846,14 +1853,14 @@ async fn every_refusal_page_of_a_signed_in_person_draws_the_sign_out_control_in_
         )
         .await,
     );
-    // A conflict: a workarea name the namespace already holds.
-    let create = [("action", "create_workarea"), ("name", "once")];
-    let (status, _, page) = act(&rig, &cookie, "/web/workareas", &create).await;
+    // A conflict: a workspace name the namespace already holds.
+    let create = [("action", "create_workspace"), ("name", "once")];
+    let (status, _, page) = act(&rig, &cookie, "/web/workspaces", &create).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
     drawn(
         "a name taken",
         StatusCode::CONFLICT,
-        act(&rig, &cookie, "/web/workareas", &create).await,
+        act(&rig, &cookie, "/web/workspaces", &create).await,
     );
     // Cut off: the key acts are refused on the Keys page, and so is every
     // page that reads under the key's grants.
@@ -1884,7 +1891,7 @@ async fn every_refusal_page_of_a_signed_in_person_draws_the_sign_out_control_in_
     assert!(page.contains("signing out still works"), "{page}");
     for path in [
         "/web/guardrails",
-        "/web/workareas",
+        "/web/workspaces",
         "/web/memories",
         "/web/atlas",
     ] {
@@ -2131,7 +2138,7 @@ async fn agent_writes_diagram_of(rig: &Rig, value: &str, body: &str) -> uuid::Uu
                 verb: Some(oml_app::types::SubmitVerb::Remember),
                 kind: oml_app::domain::MemoryKind::Memory,
                 body: body.to_owned(),
-                workarea: None,
+                workspace: None,
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
@@ -2439,7 +2446,7 @@ async fn a_supersession_runs_as_the_curator_on_its_own_claim_and_as_the_reviewer
     assert_eq!(status, StatusCode::OK);
     rig.allow("boss@example.com", "boss", true).await;
     let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    for (action, workarea) in [
+    for (action, workspace) in [
         ("grant_curation", "alice"),
         ("grant_review", "universe"),
         ("grant_review", "alice"),
@@ -2448,7 +2455,11 @@ async fn a_supersession_runs_as_the_curator_on_its_own_claim_and_as_the_reviewer
             &rig,
             &admin,
             "/web/admin/people",
-            &[("action", action), ("user", "boss"), ("workarea", workarea)],
+            &[
+                ("action", action),
+                ("user", "boss"),
+                ("workspace", workspace),
+            ],
         )
         .await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{action}: {body}");
@@ -2655,7 +2666,7 @@ async fn the_admin_memory_page_refuses_putting_another_persons_retired_memory_ba
         &[
             ("action", "grant_review"),
             ("user", "boss"),
-            ("workarea", "alice"),
+            ("workspace", "alice"),
         ],
     )
     .await;
@@ -2943,7 +2954,7 @@ async fn a_resubmitted_supersede_form_proposes_one_version_and_lands_on_the_memo
         &[
             ("action", "grant_review"),
             ("user", "boss"),
-            ("workarea", "alice"),
+            ("workspace", "alice"),
         ],
     )
     .await;
@@ -3395,7 +3406,7 @@ async fn an_issue_whose_name_a_stopped_attempt_holds_issues_no_next_name() {
     let scope = oml_app::ports::IdempotencyScope {
         tenant_id: rig.boot.tenant_id,
         key_id: web_key.key_id,
-        workarea_id: uuid::Uuid::nil(),
+        workspace_id: uuid::Uuid::nil(),
         idem_key: format!("keys.issue:{attempt}"),
     };
     rig.store
@@ -3653,7 +3664,7 @@ async fn a_user_issues_a_key_only_inside_its_root() {
             "{g:?}"
         );
     }
-    for (name, role) in [("review", "writer"), ("phone", "dreamer")] {
+    for (name, role) in [("review", "writer"), ("phone", "reviewer")] {
         let (status, _, body) = act_and_follow(
             &rig,
             &cookie,
@@ -3779,7 +3790,7 @@ async fn the_user_page_opens_its_agents_held_rows_and_a_person_approves_their_ow
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(page.contains("is now promoted"), "{page}");
+    assert!(page.contains("is now approved"), "{page}");
     let promoted = rig
         .store
         .memory(rig.boot.tenant_id, memory)
@@ -3890,7 +3901,7 @@ async fn review_on_the_admin_page_acts_as_the_persons_reviewer_key_and_the_admin
         &[
             ("action", "grant_review"),
             ("user", "boss"),
-            ("workarea", "alice"),
+            ("workspace", "alice"),
         ],
     )
     .await;
@@ -3952,12 +3963,16 @@ async fn a_curated_claim_is_held_until_a_key_outside_its_lineage_approves_and_th
     assert_eq!(status, StatusCode::OK);
     rig.allow("boss@example.com", "boss", true).await;
     let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    for (action, workarea) in [("grant_curation", "alice"), ("grant_review", "universe")] {
+    for (action, workspace) in [("grant_curation", "alice"), ("grant_review", "universe")] {
         let (status, _, body) = act(
             &rig,
             &admin,
             "/web/admin/people",
-            &[("action", action), ("user", "boss"), ("workarea", workarea)],
+            &[
+                ("action", action),
+                ("user", "boss"),
+                ("workspace", workspace),
+            ],
         )
         .await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{action}: {body}");
@@ -3993,7 +4008,7 @@ async fn a_curated_claim_is_held_until_a_key_outside_its_lineage_approves_and_th
         .expect("the admin reads");
     let curated = &page.items[0];
     assert_eq!(curated.state.as_str(), "held", "held until reviewed");
-    assert_eq!(curated.workarea_path, "universe");
+    assert_eq!(curated.workspace_path, "universe");
     assert_eq!(curated.memory.author_key_id, curate.key_id);
     // boss-review is outside the curated claim's lineage, so it is served.
     let (_, _, page) = act_and_follow(
@@ -4066,12 +4081,16 @@ async fn an_anonymous_universe_row_shows_no_scan_finding_to_a_reader_outside_its
     assert_eq!(status, StatusCode::OK);
     rig.allow("boss@example.com", "boss", true).await;
     let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    for (action, workarea) in [("grant_curation", "alice"), ("grant_review", "universe")] {
+    for (action, workspace) in [("grant_curation", "alice"), ("grant_review", "universe")] {
         let (status, _, body) = act(
             &rig,
             &admin,
             "/web/admin/people",
-            &[("action", action), ("user", "boss"), ("workarea", workarea)],
+            &[
+                ("action", action),
+                ("user", "boss"),
+                ("workspace", workspace),
+            ],
         )
         .await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{action}: {body}");
@@ -4087,7 +4106,7 @@ async fn an_anonymous_universe_row_shows_no_scan_finding_to_a_reader_outside_its
         &[
             ("action", "curate"),
             ("source", &source.to_string()),
-            ("text", "Keys rotate quarterly. [needs-human]"),
+            ("text", "Keys rotate quarterly. [needs-person]"),
         ],
     )
     .await;
@@ -4107,7 +4126,7 @@ async fn an_anonymous_universe_row_shows_no_scan_finding_to_a_reader_outside_its
         .expect("the admin reads");
     let curated = &page.items[0];
     assert_eq!(curated.state.as_str(), "held", "held until reviewed");
-    assert_eq!(curated.workarea_path, "universe");
+    assert_eq!(curated.workspace_path, "universe");
     assert_eq!(curated.memory.author_key_id, curate.key_id);
     // boss-review is outside the curated claim's lineage, so it is served.
     let (_, _, page) = act_and_follow(
@@ -4178,7 +4197,7 @@ async fn a_key_issued_on_the_user_page_takes_the_default_guardrail_scope_and_the
             ("action", "issue_key"),
             ("name", "narrow"),
             ("role", "writer"),
-            ("guardrail_scope", "workarea"),
+            ("guardrail_scope", "workspace"),
         ],
     )
     .await;
@@ -4203,7 +4222,7 @@ async fn the_review_page_shows_a_held_guardrails_load_warning() {
         "{page}"
     );
     assert!(
-        page.contains("every key that reads this workarea will load this rule"),
+        page.contains("every key that reads this workspace will load this rule"),
         "{page}"
     );
 }
@@ -4230,7 +4249,7 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
                 verb: Some(oml_app::types::SubmitVerb::Remember),
                 kind: oml_app::domain::MemoryKind::Memory,
                 body: "the api is at version 3".to_owned(),
-                workarea: None,
+                workspace: None,
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
@@ -4274,7 +4293,7 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
                 retirement: false,
                 derives_from: Vec::new(),
                 reason: None,
-                workarea: None,
+                workspace: None,
                 refuse_vocabulary_target: false,
                 severity: None,
                 rule: None,
@@ -4298,7 +4317,7 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
         &[
             ("action", "grant_review"),
             ("user", "boss"),
-            ("workarea", "alice"),
+            ("workspace", "alice"),
         ],
     )
     .await;
@@ -4346,15 +4365,15 @@ async fn the_review_card_names_every_scan_finding() {
                 claim_key: Some("flagged".to_owned()),
                 verb: Some(oml_app::types::SubmitVerb::Remember),
                 kind: oml_app::domain::MemoryKind::Memory,
-                body: "the deploy note [needs-human] in the body".to_owned(),
-                workarea: None,
+                body: "the deploy note [needs-person] in the body".to_owned(),
+                workspace: None,
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
                 valid_from: None,
                 valid_until: None,
                 format: None,
-                title: Some("[needs-human] in the title".to_owned()),
+                title: Some("[needs-person] in the title".to_owned()),
                 on_similar: Default::default(),
             },
         )
@@ -4370,7 +4389,7 @@ async fn the_review_card_names_every_scan_finding() {
         &[
             ("action", "grant_review"),
             ("user", "boss"),
-            ("workarea", "alice"),
+            ("workspace", "alice"),
         ],
     )
     .await;
@@ -4724,7 +4743,7 @@ async fn the_persons_review_page_holds_no_bulk_review_and_refuses_its_acts() {
     assert_eq!(held.status.as_str(), "held");
 }
 
-/// The person's Review lists what waits, by workarea, from the held
+/// The person's Review lists what waits, by workspace, from the held
 /// listing their reviewer key reads (design notes rows 1, 6, 15); a write
 /// by one of their own agents is listed marked same user; "Open to judge"
 /// draws the item with its verdict form, and the verdict is recorded as a
@@ -4846,7 +4865,7 @@ async fn a_version_the_reviewer_key_wrote_is_never_listed_and_judging_it_is_refu
         &[
             ("action", "grant_review"),
             ("user", "boss"),
-            ("workarea", "alice"),
+            ("workspace", "alice"),
         ],
     )
     .await;
@@ -4914,7 +4933,7 @@ async fn the_admin_memory_page_shows_the_scan_finding_the_persons_page_shows() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let value = laptop_key(&rig, &cookie).await;
-    let memory = agent_writes(&rig, &value, "Keys rotate quarterly. [needs-human]").await;
+    let memory = agent_writes(&rig, &value, "Keys rotate quarterly. [needs-person]").await;
     let (_, _, person) = send(
         &rig.router,
         get(&format!("/web/memory?id={memory}"), Some(&cookie)),
@@ -4932,7 +4951,7 @@ async fn the_admin_memory_page_shows_the_scan_finding_the_persons_page_shows() {
     assert!(page.contains(r#"<div class="findings">"#), "{page}");
     assert!(page.contains("scan findings · 1"), "{page}");
     assert!(
-        page.contains("0 of the 1 approval this workarea's review policy asks for."),
+        page.contains("0 of the 1 approval this workspace's review policy asks for."),
         "{page}"
     );
     assert!(
@@ -5032,7 +5051,7 @@ async fn a_reviewer_who_is_not_the_author_sees_the_held_diagram_drawn_on_the_car
         &[
             ("action", "grant_review"),
             ("user", "boss"),
-            ("workarea", "alice"),
+            ("workspace", "alice"),
         ],
     )
     .await;
@@ -5331,7 +5350,7 @@ async fn a_cut_off_persons_key_acts_are_refused_on_the_page_as_the_api_refuses_t
         ),
         (
             "/v2/keys/alice-laptop/denials",
-            json!({"workarea": "universe"}),
+            json!({"workspace": "universe"}),
             &[
                 ("action", "cut_off"),
                 ("key", "alice-laptop"),
@@ -5445,8 +5464,8 @@ async fn alice_key(
                 role,
                 name: Name::parse(name).expect("a name"),
                 principal: name.to_owned(),
-                held_by: Some(HeldBy::Human),
-                default_workarea: None,
+                used_by: Some(UsedBy::Person),
+                default_workspace: None,
                 crew: None,
                 grants,
                 connect_code: connect,
@@ -5850,7 +5869,7 @@ async fn start_pages(rig: &Rig, cookie: &str) -> String {
 }
 
 /// A person whose `<user>-web` key carries a denial, on `universe`, on their
-/// root or on a workarea outside it, is told so on the Keys page and the
+/// root or on a workspace outside it, is told so on the Keys page and the
 /// Start page and is drawn none of the forms for the three acts the API
 /// refuses that key for good; a person whose key carries none sees the
 /// forms. The page's state is the API's answer: each act posted anyway is
@@ -5874,14 +5893,14 @@ async fn a_denied_persons_keys_and_start_pages_state_the_refusal_and_draw_no_key
         )
         .await;
         issuer_app(&rig)
-            .create_workarea(
+            .create_workspace(
                 &rig.boot.admin_key.value,
                 &Name::parse("team").expect("a name"),
-                Some(rig.boot.root_workarea_id.into()),
+                Some(rig.boot.root_workspace_id.into()),
                 None,
             )
             .await
-            .expect("a workarea outside alice's root");
+            .expect("a workspace outside alice's root");
         let (_, _, keys) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
         let start = start_pages(&rig, &cookie).await;
         for form in KEY_FORMS {
@@ -5981,7 +6000,7 @@ async fn a_denied_persons_keys_and_start_pages_state_the_refusal_and_draw_no_key
             ),
             (
                 "/v2/keys/alice-laptop/denials",
-                json!({"workarea": "universe"}),
+                json!({"workspace": "universe"}),
                 vec![
                     ("action", "cut_off"),
                     ("key", "alice-laptop"),
@@ -6010,7 +6029,7 @@ async fn a_denied_persons_keys_and_start_pages_state_the_refusal_and_draw_no_key
 }
 
 /// A person whose `<user>-web` key carries a denial, on `universe`, on
-/// their root or on a workarea outside it, still downloads their export from
+/// their root or on a workspace outside it, still downloads their export from
 /// the Start page and still files a deletion request from its form: the
 /// download is what it was before the denial, and `web.deletion_requested`
 /// journals under the denied key (ADR-0070 d2, the operator's decision of
@@ -6023,14 +6042,14 @@ async fn a_denied_person_still_exports_and_requests_deletion_from_the_start_page
         let value = laptop_key(&rig, &cookie).await;
         agent_writes(&rig, &value, "a kestrel the export keeps").await;
         issuer_app(&rig)
-            .create_workarea(
+            .create_workspace(
                 &rig.boot.admin_key.value,
                 &Name::parse("team").expect("a name"),
-                Some(rig.boot.root_workarea_id.into()),
+                Some(rig.boot.root_workspace_id.into()),
                 None,
             )
             .await
-            .expect("a workarea outside alice's root");
+            .expect("a workspace outside alice's root");
         let exported = |body: &str| {
             let mut export: Value = serde_json::from_str(body).expect("an export");
             export
@@ -6177,7 +6196,7 @@ async fn the_review_and_keys_pages_draw_the_header_and_tabs_the_leads_pages_draw
 // -- the Memories list and the Atlas (ADR-0045 d22-d32), moved to oml-web ----
 
 // ---------------------------------------------------------------------------
-// The Memories list, the Atlas view and the workarea dropdowns (ADR-0045
+// The Memories list, the Atlas view and the workspace dropdowns (ADR-0045
 // d22-d29)
 // ---------------------------------------------------------------------------
 
@@ -6283,16 +6302,16 @@ async fn other_tenant_writes(rig: &Rig, body: &str) {
         .expect("a second tenant");
     let team = rig
         .app
-        .create_workarea(
+        .create_workspace(
             &boot.admin_key.value,
             &Name::parse("team").expect("a name"),
-            Some(boot.root_workarea_id.into()),
+            Some(boot.root_workspace_id.into()),
             None,
         )
         .await
-        .expect("a workarea")
-        .workarea
-        .workarea_id;
+        .expect("a workspace")
+        .workspace
+        .workspace_id;
     let key = rig
         .app
         .issue_key(
@@ -6302,8 +6321,8 @@ async fn other_tenant_writes(rig: &Rig, body: &str) {
                 role: Role::Writer,
                 name: Name::parse("rival-agent").expect("a name"),
                 principal: "rival-agent".to_owned(),
-                held_by: Some(HeldBy::Agent),
-                default_workarea: Some(team.into()),
+                used_by: Some(UsedBy::Agent),
+                default_workspace: Some(team.into()),
                 crew: None,
                 grants: vec![GrantRequest {
                     node: team.into(),
@@ -6362,12 +6381,12 @@ async fn the_user_page_never_lists_another_authors_held_row_outside_in_progress_
             assert!(!text.contains(hidden), "{json_path} answers {hidden}");
         }
     }
-    // Inside an in-progress workarea every author's held row is served.
+    // Inside an in-progress workspace every author's held row is served.
     let (status, _, page) = act(
         &rig,
         &alice,
-        "/web/workareas",
-        &[("action", "create_workarea"), ("name", "proj")],
+        "/web/workspaces",
+        &[("action", "create_workspace"), ("name", "proj")],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
@@ -6376,7 +6395,7 @@ async fn the_user_page_never_lists_another_authors_held_row_outside_in_progress_
     reviewer_holds_a_successor(&rig, &helper.value, inside, "helper held inside").await;
     let (_, _, page) = send(
         &rig.router,
-        get("/web/memories?workarea=alice.proj", Some(&alice)),
+        get("/web/memories?workspace=alice.proj", Some(&alice)),
     )
     .await;
     assert!(page.contains("helper held inside"), "{page}");
@@ -6424,7 +6443,7 @@ async fn the_json_route_answers_exactly_the_lists_rows() {
                         [
                             "artifact_id",
                             "state",
-                            "workarea",
+                            "workspace",
                             "version",
                             "title",
                             "text",
@@ -6466,7 +6485,7 @@ async fn the_json_route_answers_exactly_the_lists_rows() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
-    assert!(body.contains("web_is_human_only"), "{body}");
+    assert!(body.contains("web_is_person_only"), "{body}");
     for path in ["/web/data/memories", "/web/admin/data/memories"] {
         let (status, _, body) = send(&rig.router, get(path, None)).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
@@ -6535,8 +6554,8 @@ async fn the_atlas_view_is_a_treemap_drawn_on_the_server_with_no_script() {
     let (status, _, _) = act(
         &rig,
         &cookie,
-        "/web/workareas",
-        &[("action", "create_workarea"), ("name", "proj")],
+        "/web/workspaces",
+        &[("action", "create_workspace"), ("name", "proj")],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
@@ -6560,7 +6579,7 @@ async fn the_atlas_view_is_a_treemap_drawn_on_the_server_with_no_script() {
     assert!(page.contains("<svg class=\"tm narrow\""), "{page}");
     let proj = rig
         .store
-        .workarea_children(
+        .workspace_children(
             rig.boot.tenant_id,
             key_named(&rig, "alice-web").await.user.unwrap(),
         )
@@ -6569,13 +6588,13 @@ async fn the_atlas_view_is_a_treemap_drawn_on_the_server_with_no_script() {
         .into_iter()
         .find(|w| w.name.as_str() == "proj")
         .unwrap()
-        .workarea_id;
+        .workspace_id;
     // Each region links and is named by its reference (design notes row
     // 20), and the scope's panel links up to its parent instead of a
     // breadcrumb (AtlasScreen).
     assert!(
         page.contains(
-            "<a href=\"/web/atlas?workarea=alice.proj\" aria-label=\"alice.proj, 1 readable: 1 held\"><title>alice.proj, 1 readable: 1 held</title>"
+            "<a href=\"/web/atlas?workspace=alice.proj\" aria-label=\"alice.proj, 1 readable: 1 held\"><title>alice.proj, 1 readable: 1 held</title>"
         ),
         "{page}"
     );
@@ -6583,7 +6602,7 @@ async fn the_atlas_view_is_a_treemap_drawn_on_the_server_with_no_script() {
     assert!(page.contains("<td class=\"num\">1</td>"), "{page}");
     assert!(!page.contains("aria-label=\"Breadcrumb\""), "{page}");
     assert!(
-        page.contains(r#"Up to <a href="/web/atlas?workarea=universe">universe</a>"#),
+        page.contains(r#"Up to <a href="/web/atlas?workspace=universe">universe</a>"#),
         "{page}"
     );
     // The vendored scripts are gone with the script.
@@ -6597,21 +6616,21 @@ async fn the_atlas_view_is_a_treemap_drawn_on_the_server_with_no_script() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     // A region zooms the Atlas, and the panel's dropdown is the
-    // Workareas view's.
+    // Workspaces view's.
     let (_, _, zoomed) = send(
         &rig.router,
-        get(&format!("/web/atlas?workarea={proj}"), Some(&cookie)),
+        get(&format!("/web/atlas?workspace={proj}"), Some(&cookie)),
     )
     .await;
     assert!(
-        zoomed.contains(r#"<h2 id="sel-h" class="mono">alice.proj</h2><p class="oml-atlas-up">Up to <a href="/web/atlas?workarea=alice">alice</a></p>"#),
+        zoomed.contains(r#"<h2 id="sel-h" class="mono">alice.proj</h2><p class="oml-atlas-up">Up to <a href="/web/atlas?workspace=alice">alice</a></p>"#),
         "{zoomed}"
     );
     assert!(zoomed.contains("<select name=\"op\""), "{zoomed}");
-    // Apply asks the Workareas view, which oml-web serves at its own path
+    // Apply asks the Workspaces view, which oml-web serves at its own path
     // (ADR-0070 d7 (b)).
     assert!(
-        zoomed.contains(r#"<form class="row act" method="get" action="/web/workareas">"#),
+        zoomed.contains(r#"<form class="row act" method="get" action="/web/workspaces">"#),
         "{zoomed}"
     );
     // The list links to the Atlas of the same page, filters kept, in one
@@ -6657,7 +6676,7 @@ async fn the_filters_narrow_the_list() {
         ],
     )
     .await;
-    assert!(page.contains("is now promoted"), "{page}");
+    assert!(page.contains("is now approved"), "{page}");
     let third = agent_writes(&rig, &agent, "still held kestrel").await;
     // A second agent of alice's, to filter by author.
     let (_, _, page) = act_and_follow(
@@ -6750,10 +6769,10 @@ async fn the_filters_narrow_the_list() {
     assert_eq!(ids(&page), set(&[by_phone]));
 }
 
-/// Puts `workarea` in progress as the signed-in person's reviewer key,
-/// through the app: the act is the Workareas view's, which `oml-web` runs
+/// Puts `workspace` in progress as the signed-in person's reviewer key,
+/// through the app: the act is the Workspaces view's, which `oml-web` runs
 /// now (ADR-0070 d7 (b)); these tests read what it changes.
-async fn put_in_progress(rig: &Rig, cookie: &str, workarea: &str) {
+async fn put_in_progress(rig: &Rig, cookie: &str, workspace: &str) {
     let token = cookie.split_once('=').expect("a cookie").1;
     let session = rig
         .app
@@ -6767,25 +6786,25 @@ async fn put_in_progress(rig: &Rig, cookie: &str, workarea: &str) {
         .await
         .expect("the person's reviewer key");
     rig.app
-        .set_workarea_mode(
+        .set_workspace_mode(
             oml_app::types::Bearer::Session(&review),
-            oml_app::domain::name::Reference::parse(workarea).expect("a reference"),
-            oml_app::domain::in_progress::WorkareaMode::InProgress,
+            oml_app::domain::name::Reference::parse(workspace).expect("a reference"),
+            oml_app::domain::in_progress::WorkspaceMode::InProgress,
         )
         .await
         .expect("the reviewer key puts it in progress");
 }
 
 fn region<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
-    value["workareas"]["items"]
+    value["workspaces"]["items"]
         .as_array()
-        .expect("workareas")
+        .expect("workspaces")
         .iter()
         .find(|r| r["path"] == path)
 }
 
 #[tokio::test]
-async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_read() {
+async fn the_atlas_draws_and_counts_only_the_workspaces_and_rows_the_viewer_may_read() {
     let rig = rig().await;
     rig.allow("bob@example.com", "bob", false).await;
     rig.allow("boss@example.com", "boss", true).await;
@@ -6797,8 +6816,8 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
     let (status, _, _) = act(
         &rig,
         &alice,
-        "/web/workareas",
-        &[("action", "create_workarea"), ("name", "proj")],
+        "/web/workspaces",
+        &[("action", "create_workspace"), ("name", "proj")],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
@@ -6843,7 +6862,7 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
     );
     assert!(
         value["items"].is_array()
-            && value["workareas"]["items"]
+            && value["workspaces"]["items"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -6857,33 +6876,33 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
     let proj_id = proj["id"].as_str().unwrap().to_owned();
     let (_, _, zoomed) = json_of(
         &rig,
-        &format!("/web/data/memories?workarea={proj_id}"),
+        &format!("/web/data/memories?workspace={proj_id}"),
         &alice,
     )
     .await;
-    let paths: Vec<&str> = zoomed["workareas"]["items"]
+    let paths: Vec<&str> = zoomed["workspaces"]["items"]
         .as_array()
         .unwrap()
         .iter()
         .map(|r| r["path"].as_str().unwrap())
         .collect();
     assert_eq!(paths, ["universe.alice.proj"]);
-    // The zoomed node's dropdown is the Workareas view's: the commit waits
+    // The zoomed node's dropdown is the Workspaces view's: the commit waits
     // on the held row and says so.
-    assert_eq!(zoomed["workareas"]["items"][0]["commit_withheld"], 1);
+    assert_eq!(zoomed["workspaces"]["items"][0]["commit_withheld"], 1);
     assert!(
         zoomed["items"]
             .as_array()
             .unwrap()
             .iter()
-            .all(|i| i["workarea"] == "universe.alice.proj"),
+            .all(|i| i["workspace"] == "universe.alice.proj"),
         "{zoomed}"
     );
-    // A workarea the person may not read is not found, never drawn empty.
+    // A workspace the person may not read is not found, never drawn empty.
     let bob_root = key_named(&rig, "bob-web").await.user.unwrap();
     let (status, _, _) = json_of(
         &rig,
-        &format!("/web/data/memories?workarea={bob_root}"),
+        &format!("/web/data/memories?workspace={bob_root}"),
         &alice,
     )
     .await;
@@ -6892,12 +6911,12 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
     let (_, _, atlas) = send(&rig.router, get("/web/atlas", Some(&alice))).await;
     assert!(!atlas.contains("bob"), "{atlas}");
     assert!(
-        atlas.contains("aria-label=\"alice.proj, 2 readable: 1 promoted, 1 unreviewed in progress"),
+        atlas.contains("aria-label=\"alice.proj, 2 readable: 1 approved, 1 unreviewed in progress"),
         "the served row and the helper's held successor of it: {atlas}"
     );
     let (status, _, _) = send(
         &rig.router,
-        get(&format!("/web/atlas?workarea={bob_root}"), Some(&alice)),
+        get(&format!("/web/atlas?workspace={bob_root}"), Some(&alice)),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -7011,32 +7030,32 @@ async fn the_memories_pages_draw_the_header_and_tabs_the_leads_pages_draw() {
 }
 
 #[tokio::test]
-async fn a_resubmitted_create_form_creates_its_workarea_once() {
+async fn a_resubmitted_create_form_creates_its_workspace_once() {
     // ADR-0070 d3 layer 4: the create form carries a nonce, and its
     // Idempotency-Key is the nonce's digest with the session token, so the
     // same form sent again replays at the API instead of answering
     // name.taken.
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (_, _, view) = send(&rig.router, get("/web/workareas", Some(&cookie))).await;
+    let (_, _, view) = send(&rig.router, get("/web/workspaces", Some(&cookie))).await;
     let nonce = field_of(&view, "nonce");
     let fields = [
         ("csrf_token", csrf_of(&view)),
-        ("action", "create_workarea".to_owned()),
+        ("action", "create_workspace".to_owned()),
         ("name", "once".to_owned()),
         ("nonce", nonce),
     ];
     let fields: Vec<(&str, &str)> = fields.iter().map(|(n, v)| (*n, v.as_str())).collect();
     for _ in 0..2 {
         let (status, headers, page) =
-            send(&rig.router, post("/web/workareas", &fields, Some(&cookie))).await;
+            send(&rig.router, post("/web/workspaces", &fields, Some(&cookie))).await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-        assert_eq!(headers[header::LOCATION], "/web/workareas?done=created");
+        assert_eq!(headers[header::LOCATION], "/web/workspaces?done=created");
     }
     let root = key_named(&rig, "alice-web").await.user.expect("a root");
     let created = rig
         .store
-        .workarea_children(rig.boot.tenant_id, root)
+        .workspace_children(rig.boot.tenant_id, root)
         .await
         .unwrap()
         .into_iter()
@@ -7044,14 +7063,14 @@ async fn a_resubmitted_create_form_creates_its_workarea_once() {
         .count();
     assert_eq!(created, 1);
     // A name already taken by another form is refused by name.
-    let (_, _, view) = send(&rig.router, get("/web/workareas", Some(&cookie))).await;
+    let (_, _, view) = send(&rig.router, get("/web/workspaces", Some(&cookie))).await;
     let (status, _, page) = send(
         &rig.router,
         post(
-            "/web/workareas",
+            "/web/workspaces",
             &[
                 ("csrf_token", &csrf_of(&view)),
-                ("action", "create_workarea"),
+                ("action", "create_workspace"),
                 ("name", "once"),
                 ("nonce", &field_of(&view, "nonce")),
             ],
@@ -7104,7 +7123,7 @@ async fn a_lead_mid_rotation_accepts_the_old_and_new_secret_and_the_doctor_tells
     assert_eq!(level, Level::Fail, "the window closed: {text}");
 }
 
-// -- the workarea picker and its reference (design notes rows 14, 20, 21) --
+// -- the workspace picker and its reference (design notes rows 14, 20, 21) --
 
 /// alice with `proj` and `docs` inside it, a memory in each, and boss, an
 /// admin: alice's cookie, boss's cookie.
@@ -7115,9 +7134,9 @@ async fn alice_proj_docs(rig: &Rig) -> (String, String) {
     let (status, _, _) = act(
         rig,
         &alice,
-        "/web/workareas",
+        "/web/workspaces",
         &[
-            ("action", "create_workarea"),
+            ("action", "create_workspace"),
             ("name", "docs"),
             ("parent", "alice.proj"),
         ],
@@ -7131,12 +7150,12 @@ async fn alice_proj_docs(rig: &Rig) -> (String, String) {
 }
 
 #[tokio::test]
-async fn the_workareas_pages_name_a_workarea_by_the_reference_every_field_takes() {
+async fn the_workspaces_pages_name_a_workspace_by_the_reference_every_field_takes() {
     let rig = rig().await;
     let (alice, boss) = alice_proj_docs(&rig).await;
     for (cookie, path, memories) in [
-        (&alice, "/web/workareas", "/web/memories"),
-        (&boss, "/web/admin/workareas", "/web/admin/memories"),
+        (&alice, "/web/workspaces", "/web/memories"),
+        (&boss, "/web/admin/workspaces", "/web/admin/memories"),
     ] {
         let (status, _, page) = send(&rig.router, get(path, Some(cookie))).await;
         assert_eq!(status, StatusCode::OK, "{page}");
@@ -7148,7 +7167,7 @@ async fn the_workareas_pages_name_a_workarea_by_the_reference_every_field_takes(
         // The name the page prints is one the Memories field takes.
         let (status, _, listed) = send(
             &rig.router,
-            get(&format!("{memories}?workarea=alice.docs"), Some(cookie)),
+            get(&format!("{memories}?workspace=alice.docs"), Some(cookie)),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{listed}");
@@ -7161,15 +7180,15 @@ async fn a_bare_name_resolves_on_the_admin_pages_as_on_the_persons() {
     let rig = rig().await;
     let (alice, boss) = alice_proj_docs(&rig).await;
     for (cookie, path) in [
-        (&alice, "/web/memories?workarea=docs"),
-        (&boss, "/web/admin/memories?workarea=docs"),
-        (&alice, "/web/atlas?workarea=docs"),
-        (&boss, "/web/admin/atlas?workarea=docs"),
+        (&alice, "/web/memories?workspace=docs"),
+        (&boss, "/web/admin/memories?workspace=docs"),
+        (&alice, "/web/atlas?workspace=docs"),
+        (&boss, "/web/admin/atlas?workspace=docs"),
     ] {
         let (status, _, page) = send(&rig.router, get(path, Some(cookie))).await;
         assert_eq!(status, StatusCode::OK, "{path}: {page}");
         assert!(
-            page.contains(r#"name="workarea" type="text" value="alice.docs""#),
+            page.contains(r#"name="workspace" type="text" value="alice.docs""#),
             "{path} shows the reference it resolved: {page}"
         );
     }
@@ -7181,12 +7200,12 @@ async fn the_admin_atlas_links_up_by_a_reference_that_resolves_below_a_user_root
     let (_alice, boss) = alice_proj_docs(&rig).await;
     let (status, _, page) = send(
         &rig.router,
-        get("/web/admin/atlas?workarea=alice.docs", Some(&boss)),
+        get("/web/admin/atlas?workspace=alice.docs", Some(&boss)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
     let links: Vec<String> = page
-        .match_indices("href=\"/web/admin/atlas?workarea=")
+        .match_indices("href=\"/web/admin/atlas?workspace=")
         .map(|(at, m)| {
             let start = at + "href=\"".len();
             page[start..at + m.len() + page[at + m.len()..].find('"').unwrap()]
@@ -7196,7 +7215,7 @@ async fn the_admin_atlas_links_up_by_a_reference_that_resolves_below_a_user_root
     assert!(
         links
             .iter()
-            .any(|l| l == "/web/admin/atlas?workarea=alice.proj"),
+            .any(|l| l == "/web/admin/atlas?workspace=alice.proj"),
         "the scope links up to its parent by reference: {links:?}"
     );
     for link in &links {
@@ -7206,7 +7225,7 @@ async fn the_admin_atlas_links_up_by_a_reference_that_resolves_below_a_user_root
 }
 
 #[tokio::test]
-async fn an_unknown_and_an_unreadable_workarea_get_one_refusal_naming_only_readable_names() {
+async fn an_unknown_and_an_unreadable_workspace_get_one_refusal_naming_only_readable_names() {
     let rig = rig().await;
     let (alice, _boss) = alice_proj_docs(&rig).await;
     rig.allow("bob@example.com", "bob", false).await;
@@ -7215,11 +7234,11 @@ async fn an_unknown_and_an_unreadable_workarea_get_one_refusal_naming_only_reada
         for path in ["/web/memories", "/web/atlas"] {
             let (status, _, page) = send(
                 &rig.router,
-                get(&format!("{path}?workarea={typed}"), Some(&alice)),
+                get(&format!("{path}?workspace={typed}"), Some(&alice)),
             )
             .await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{path} {typed}: {page}");
-            let sentence = format!("No readable workarea is named <code>{said}</code>.");
+            let sentence = format!("No readable workspace is named <code>{said}</code>.");
             assert!(page.contains(&sentence), "{path} {typed}: {page}");
             assert!(page.contains(r#"aria-invalid="true""#), "{page}");
             assert!(!page.contains("<option value=\"bob"), "{page}");
@@ -7231,17 +7250,20 @@ async fn an_unknown_and_an_unreadable_workarea_get_one_refusal_naming_only_reada
         }
     }
     // A name near a readable one is offered by its reference.
-    let (status, _, page) =
-        send(&rig.router, get("/web/memories?workarea=prj", Some(&alice))).await;
+    let (status, _, page) = send(
+        &rig.router,
+        get("/web/memories?workspace=prj", Some(&alice)),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
     assert!(
-        page.contains(r#"<a href="/web/memories?workarea=alice.proj">alice.proj</a>"#),
+        page.contains(r#"<a href="/web/memories?workspace=alice.proj">alice.proj</a>"#),
         "{page}"
     );
     // A typed name is trimmed and lower-cased.
     let (status, _, page) = send(
         &rig.router,
-        get("/web/memories?workarea=%20ALICE.PROJ%20", Some(&alice)),
+        get("/web/memories?workspace=%20ALICE.PROJ%20", Some(&alice)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
@@ -7250,7 +7272,7 @@ async fn an_unknown_and_an_unreadable_workarea_get_one_refusal_naming_only_reada
 }
 
 #[tokio::test]
-async fn the_workareas_page_draws_fifty_rows_a_page_with_a_link_to_the_next() {
+async fn the_workspaces_page_draws_fifty_rows_a_page_with_a_link_to_the_next() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     for n in 0..51 {
@@ -7258,14 +7280,14 @@ async fn the_workareas_page_draws_fifty_rows_a_page_with_a_link_to_the_next() {
         let (status, _, body) = act(
             &rig,
             &cookie,
-            "/web/workareas",
-            &[("action", "create_workarea"), ("name", &name)],
+            "/web/workspaces",
+            &[("action", "create_workspace"), ("name", &name)],
         )
         .await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{name}: {body}");
     }
     // alice's root and its 51 children: 52 rows.
-    let (status, _, first) = send(&rig.router, get("/web/workareas", Some(&cookie))).await;
+    let (status, _, first) = send(&rig.router, get("/web/workspaces", Some(&cookie))).await;
     assert_eq!(status, StatusCode::OK, "{first}");
     assert_eq!(
         first.matches("<select name=\"op\"").count()
@@ -7274,20 +7296,20 @@ async fn the_workareas_page_draws_fifty_rows_a_page_with_a_link_to_the_next() {
         "{first}"
     );
     assert!(
-        first.contains(r#"<p class="pager">1–50 of 52 · <a rel="next" href="/web/workareas?from=50">Next page</a></p>"#),
+        first.contains(r#"<p class="pager">1–50 of 52 · <a rel="next" href="/web/workspaces?from=50">Next page</a></p>"#),
         "{first}"
     );
-    let (status, _, next) = send(&rig.router, get("/web/workareas?from=50", Some(&cookie))).await;
+    let (status, _, next) = send(&rig.router, get("/web/workspaces?from=50", Some(&cookie))).await;
     assert_eq!(status, StatusCode::OK, "{next}");
     assert!(next.contains(">alice.w50<"), "{next}");
     assert!(!next.contains(">alice.w00<"), "{next}");
     assert!(
         next.contains(
-            r#"<p class="pager">51–52 of 52 · <a href="/web/workareas">First page</a></p>"#
+            r#"<p class="pager">51–52 of 52 · <a href="/web/workspaces">First page</a></p>"#
         ),
         "{next}"
     );
-    let (status, _, _) = send(&rig.router, get("/web/workareas?from=x", Some(&cookie))).await;
+    let (status, _, _) = send(&rig.router, get("/web/workspaces?from=x", Some(&cookie))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
@@ -7327,7 +7349,7 @@ const PERSONAL: [(&str, &str); 7] = [
     ("/web/review", "Review"),
     ("/web/atlas", "Atlas"),
     ("/web/keys", "Keys"),
-    ("/web/workareas", "Workareas"),
+    ("/web/workspaces", "Workspaces"),
     ("/web/guardrails", "Guardrails"),
 ];
 
@@ -7338,7 +7360,7 @@ const ADMINISTRATION: [(&str, &str); 8] = [
     ("/web/admin/review", "Review"),
     ("/web/admin/atlas", "Atlas"),
     ("/web/admin/keys", "Keys"),
-    ("/web/admin/workareas", "Workareas"),
+    ("/web/admin/workspaces", "Workspaces"),
     ("/web/admin/curate", "Curate"),
 ];
 
@@ -7672,10 +7694,10 @@ async fn the_approval_line_has_one_wording_on_both_sides_and_never_names_who() {
     assert!(!admin.contains("alice-review") && !person.contains("alice-review"));
 }
 
-/// `universe.platform.oncall`, a shared workarea nested under another, and
+/// `universe.platform.oncall`, a shared workspace nested under another, and
 /// a held memory in it that a tenant writer wrote; `alice-review` and
 /// `boss-review` may judge it. Alice's cookie and the admin's.
-async fn held_in_a_nested_shared_workarea(rig: &Rig) -> (String, String, uuid::Uuid) {
+async fn held_in_a_nested_shared_workspace(rig: &Rig) -> (String, String, uuid::Uuid) {
     rig.allow("boss@example.com", "boss", true).await;
     let alice = signed_in(rig, "sub-1", EMAIL).await;
     let boss = signed_in(rig, "sub-boss", "boss@example.com").await;
@@ -7684,7 +7706,7 @@ async fn held_in_a_nested_shared_workarea(rig: &Rig) -> (String, String, uuid::U
     // Through the lead's API, whose id generator the rig's own app does
     // not share.
     for (child, parent) in [("platform", "universe"), ("oncall", "platform")] {
-        let request = Request::post("/v2/workareas")
+        let request = Request::post("/v2/workspaces")
             .header(header::AUTHORIZATION, format!("Bearer {admin}"))
             .header(header::CONTENT_TYPE, "application/json")
             .header("Idempotency-Key", format!("wa-{child}"))
@@ -7704,8 +7726,8 @@ async fn held_in_a_nested_shared_workarea(rig: &Rig) -> (String, String, uuid::U
                 role: Role::Writer,
                 name: name("pager"),
                 principal: "pager".to_owned(),
-                held_by: Some(HeldBy::Agent),
-                default_workarea: None,
+                used_by: Some(UsedBy::Agent),
+                default_workspace: None,
                 crew: None,
                 grants: [Role::Writer, Role::Reader]
                     .into_iter()
@@ -7734,7 +7756,7 @@ async fn held_in_a_nested_shared_workarea(rig: &Rig) -> (String, String, uuid::U
             &[
                 ("action", "grant_review"),
                 ("user", user),
-                ("workarea", "oncall"),
+                ("workspace", "oncall"),
             ],
         )
         .await;
@@ -7744,23 +7766,24 @@ async fn held_in_a_nested_shared_workarea(rig: &Rig) -> (String, String, uuid::U
 }
 
 #[tokio::test]
-async fn a_nested_shared_workarea_is_named_by_its_bare_name_on_both_review_pages_and_their_links() {
+async fn a_nested_shared_workspace_is_named_by_its_bare_name_on_both_review_pages_and_their_links()
+{
     let rig = rig().await;
-    let (alice, boss, memory) = held_in_a_nested_shared_workarea(&rig).await;
+    let (alice, boss, memory) = held_in_a_nested_shared_workspace(&rig).await;
     let (status, _, page) = send(&rig.router, get("/web/review", Some(&alice))).await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(page.contains("The pager rotates weekly."), "{page}");
     assert!(!page.contains("platform.oncall"), "{page}");
     // The Waiting table, the card's "in" link and the verdict line.
     assert!(
-        page.contains(r#"<a href="/web/review?workarea=oncall">oncall</a>"#),
+        page.contains(r#"<a href="/web/review?workspace=oncall">oncall</a>"#),
         "{page}"
     );
     // Its oldest row's instant is to the second, in UTC, as on every page.
     assert!(page.contains(" UTC</time></td></tr>"), "{page}");
     assert!(!page.contains("Z</td>"), "no raw instant: {page}");
     assert!(
-        page.contains(r#"href="/web/memories?workarea=oncall">oncall</a>"#),
+        page.contains(r#"href="/web/memories?workspace=oncall">oncall</a>"#),
         "{page}"
     );
     assert!(
@@ -7770,7 +7793,7 @@ async fn a_nested_shared_workarea_is_named_by_its_bare_name_on_both_review_pages
     // The name the page prints filters the list.
     let (status, _, filtered) = send(
         &rig.router,
-        get("/web/review?workarea=oncall", Some(&alice)),
+        get("/web/review?workspace=oncall", Some(&alice)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{filtered}");
@@ -7792,21 +7815,21 @@ async fn a_nested_shared_workarea_is_named_by_its_bare_name_on_both_review_pages
     assert!(!admin.contains("platform.oncall"), "{admin}");
     assert!(admin.contains(" UTC</time></td></tr>"), "{admin}");
     assert!(
-        admin.contains(r#"href="/web/admin/review?held=1&amp;workarea=oncall">oncall</a>"#),
+        admin.contains(r#"href="/web/admin/review?held=1&amp;workspace=oncall">oncall</a>"#),
         "{admin}"
     );
-    let link = r#"href="/web/admin/memories?workarea=oncall">oncall</a>"#;
+    let link = r#"href="/web/admin/memories?workspace=oncall">oncall</a>"#;
     assert!(admin.contains(link), "{admin}");
     let (status, _, listed) = send(
         &rig.router,
-        get("/web/admin/memories?workarea=oncall", Some(&boss)),
+        get("/web/admin/memories?workspace=oncall", Some(&boss)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{listed}");
     assert!(listed.contains("The pager rotates weekly."), "{listed}");
     let (status, _, filtered) = send(
         &rig.router,
-        get("/web/admin/review?held=1&workarea=oncall", Some(&boss)),
+        get("/web/admin/review?held=1&workspace=oncall", Some(&boss)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{filtered}");
@@ -7820,7 +7843,7 @@ async fn a_nested_shared_workarea_is_named_by_its_bare_name_on_both_review_pages
     assert_eq!(status, StatusCode::OK, "{one}");
     assert!(link_free(&one, "platform.oncall"), "{one}");
     assert!(
-        one.contains("this workarea's review policy asks for"),
+        one.contains("this workspace's review policy asks for"),
         "{one}"
     );
 }
@@ -8013,7 +8036,7 @@ async fn the_atlas_has_its_own_lede_and_the_admin_lists_name_the_key_that_reads(
     let (_, _, list) = send(&rig.router, get("/web/memories", Some(&alice))).await;
     let lede = |page: &str| between(page, "</h1></div><p class=\"desc\">", "</p>").to_owned();
     assert_ne!(lede(&atlas), lede(&list), "{atlas}");
-    assert!(lede(&atlas).contains("workarea"), "{atlas}");
+    assert!(lede(&atlas).contains("workspace"), "{atlas}");
     for path in ["/web/admin/memories", "/web/admin/atlas"] {
         let (_, _, page) = send(&rig.router, get(path, Some(&boss))).await;
         assert!(
@@ -8024,7 +8047,7 @@ async fn the_atlas_has_its_own_lede_and_the_admin_lists_name_the_key_that_reads(
     let (_, _, admin_atlas) = send(&rig.router, get("/web/admin/atlas", Some(&boss))).await;
     let (_, _, admin_list) = send(&rig.router, get("/web/admin/memories", Some(&boss))).await;
     assert_ne!(lede(&admin_atlas), lede(&admin_list));
-    for (path, class) in [("/web/workareas", "t-wa"), ("/web/keys", "t-keys")] {
+    for (path, class) in [("/web/workspaces", "t-wa"), ("/web/keys", "t-keys")] {
         let (_, _, page) = send(&rig.router, get(path, Some(&alice))).await;
         assert!(
             page.contains(&format!(r#"<table class="oml-stack {class}">"#)),

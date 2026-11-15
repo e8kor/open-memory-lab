@@ -83,7 +83,7 @@ Parsing rules (kept deliberately dumb and documented):
     (`GET /v2/exports/{export_id}` · `/bundle`), otherwise replacing the final
     segment (`POST /v2/memories/{id}/reassign` · `/demote`).
   * Path placeholders are normalized to {} before comparison, because http-api.md
-    writes {id} where openapi.yaml writes {workarea_id}.
+    writes {id} where openapi.yaml writes {workspace_id}.
   * A surface table is any table with a Contract column; its cell is served or
     designed, and it marks every endpoint span of its row.
   * A $ref is followed within its own document, or into openapi.yaml when it
@@ -153,7 +153,7 @@ OPENAPI_METHODS = {"get", "put", "post", "delete", "patch", "head", "options", "
 
 
 def normalize_path(path: str) -> str:
-    """{workarea_id} and {id} are the same hole: normalize every placeholder to {}."""
+    """{workspace_id} and {id} are the same hole: normalize every placeholder to {}."""
     return PLACEHOLDER_RE.sub("{}", path)
 
 
@@ -447,7 +447,7 @@ RETIRED_NAME_CATCHES = [
     "0.3.2 ships",
 ]
 RETIRED_NAME_PASSES = [
-    "call oml_write", "call oml_read", "call oml_workarea", "oml write t", "oml read --query q",
+    "call oml_write", "call oml_read", "call oml_workspace", "oml write t", "oml read --query q",
     "oml review approve", "oml --url https://x --api-key k", "--token-stdin", "--key-file k",
     "--server-url x", "OML_URL and OML_API_KEY", "include_unreviewed", "tag v0.3.1",
     "0.3.20", "10.3.2", "0.3.2.1", "oml recalls", "oml submitted",

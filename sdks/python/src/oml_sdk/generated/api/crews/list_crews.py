@@ -80,8 +80,8 @@ def sync_detailed(
 ) -> Response[CrewPage | ErrorEnvelope]:
     """The tenant's crew records, paginated.
 
-     Requires: admin key role. A crew is recorded, not operated (docs/architecture/workareas.md, Crews);
-    an agent key reads a workarea's crew only in the workarea read.
+     Requires: admin key role. A crew is recorded, not operated (docs/architecture/workspaces.md, Crews);
+    an agent key reads a workspace's crew only in the workspace read.
 
     Args:
         limit (int | Unset):  Default: 50.
@@ -124,8 +124,8 @@ def sync(
 ) -> CrewPage | ErrorEnvelope | None:
     """The tenant's crew records, paginated.
 
-     Requires: admin key role. A crew is recorded, not operated (docs/architecture/workareas.md, Crews);
-    an agent key reads a workarea's crew only in the workarea read.
+     Requires: admin key role. A crew is recorded, not operated (docs/architecture/workspaces.md, Crews);
+    an agent key reads a workspace's crew only in the workspace read.
 
     Args:
         limit (int | Unset):  Default: 50.
@@ -163,8 +163,8 @@ async def asyncio_detailed(
 ) -> Response[CrewPage | ErrorEnvelope]:
     """The tenant's crew records, paginated.
 
-     Requires: admin key role. A crew is recorded, not operated (docs/architecture/workareas.md, Crews);
-    an agent key reads a workarea's crew only in the workarea read.
+     Requires: admin key role. A crew is recorded, not operated (docs/architecture/workspaces.md, Crews);
+    an agent key reads a workspace's crew only in the workspace read.
 
     Args:
         limit (int | Unset):  Default: 50.
@@ -205,8 +205,8 @@ async def asyncio(
 ) -> CrewPage | ErrorEnvelope | None:
     """The tenant's crew records, paginated.
 
-     Requires: admin key role. A crew is recorded, not operated (docs/architecture/workareas.md, Crews);
-    an agent key reads a workarea's crew only in the workarea read.
+     Requires: admin key role. A crew is recorded, not operated (docs/architecture/workspaces.md, Crews);
+    an agent key reads a workspace's crew only in the workspace read.
 
     Args:
         limit (int | Unset):  Default: 50.

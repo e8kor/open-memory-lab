@@ -277,7 +277,7 @@ struct World {
     http: reqwest::Client,
     first: Lead,
     writer: String,
-    dreamer: String,
+    reviewer: String,
     reader: String,
     team: String,
 }
@@ -295,14 +295,14 @@ impl World {
     }
 
     /// Writes one memory as the writer; it is held.
-    async fn remember(&self, workarea: &str, claim_key: &str, kind: &str, body: &str) -> String {
-        self.remember_with(workarea, claim_key, kind, body, json!({}))
+    async fn remember(&self, workspace: &str, claim_key: &str, kind: &str, body: &str) -> String {
+        self.remember_with(workspace, claim_key, kind, body, json!({}))
             .await
     }
 
     async fn remember_with(
         &self,
-        workarea: &str,
+        workspace: &str,
         claim_key: &str,
         kind: &str,
         body: &str,
@@ -310,7 +310,7 @@ impl World {
     ) -> String {
         let mut request = json!({
             "verb": "remember", "claim_key": claim_key, "kind": kind, "body": body,
-            "workarea": workarea,
+            "workspace": workspace,
         });
         if let (Some(request), Some(more)) = (request.as_object_mut(), more.as_object()) {
             request.extend(more.clone());
@@ -336,7 +336,7 @@ impl World {
             &self.http,
             &self.first,
             "/v2/review/next",
-            &self.dreamer,
+            &self.reviewer,
             json!({}),
         )
         .await;
@@ -348,14 +348,14 @@ impl World {
             &self.http,
             &self.first,
             "/v2/review/verdicts",
-            &self.dreamer,
+            &self.reviewer,
             json!({ "serve_id": serve["serve_id"], "verdict": "approve" }),
         )
         .await;
     }
 
-    async fn promoted(&self, workarea: &str, claim_key: &str, kind: &str, body: &str) -> String {
-        let id = self.remember(workarea, claim_key, kind, body).await;
+    async fn promoted(&self, workspace: &str, claim_key: &str, kind: &str, body: &str) -> String {
+        let id = self.remember(workspace, claim_key, kind, body).await;
         self.approve(&id).await;
         id
     }
@@ -371,7 +371,7 @@ impl World {
     ) -> String {
         let grants: Vec<Value> = grants
             .iter()
-            .map(|role| json!({ "workarea": root, "role": role }))
+            .map(|role| json!({ "workspace": root, "role": role }))
             .collect();
         let issued = post(
             http,
@@ -380,7 +380,7 @@ impl World {
             admin,
             json!({
                 "role": role, "name": name, "principal": format!("crew/{name}"),
-                "held_by": "agent", "default_workarea": root, "grants": grants,
+                "used_by": "agent", "default_workspace": root, "grants": grants,
             }),
         )
         .await;
@@ -421,20 +421,20 @@ impl World {
         )
         .await;
         let admin = claimed["value"].as_str().expect("admin key").to_owned();
-        let root = claimed["root_workarea_id"]
+        let root = claimed["root_workspace_id"]
             .as_str()
-            .expect("root workarea")
+            .expect("root workspace")
             .to_owned();
         let team = post(
             &http,
             &first,
-            "/v2/workareas",
+            "/v2/workspaces",
             &admin,
             json!({ "parent": root, "name": "team" }),
         )
         .await["id"]
             .as_str()
-            .expect("workarea id")
+            .expect("workspace id")
             .to_owned();
         let writer = Self::issue(
             &first,
@@ -446,14 +446,14 @@ impl World {
             &["writer", "reader"],
         )
         .await;
-        let dreamer = Self::issue(
+        let reviewer = Self::issue(
             &first,
             &http,
             &admin,
             &root,
             "reviewer",
-            "dreamer",
-            &["dreamer"],
+            "reviewer",
+            &["reviewer"],
         )
         .await;
         let reader = Self::issue(
@@ -472,7 +472,7 @@ impl World {
             http,
             first,
             writer,
-            dreamer,
+            reviewer,
             reader,
             team,
         };
@@ -482,7 +482,7 @@ impl World {
 
     /// Steering at two depths; twelve rows whose scores for `invoice` tie
     /// in threes, each the same words around one that differs; and rows
-    /// that hold some of a longer query's words, in both workareas.
+    /// that hold some of a longer query's words, in both workspaces.
     async fn corpus(&self, root: &str) {
         self.promoted(
             root,
@@ -503,7 +503,7 @@ impl World {
             "kelp", "lumen",
         ];
         for (i, filler) in fillers.iter().enumerate() {
-            let (workarea, body) = match i % 4 {
+            let (workspace, body) = match i % 4 {
                 0 => (root, format!("The invoice for {filler} was paid.")),
                 1 => (
                     root,
@@ -518,7 +518,7 @@ impl World {
                     format!("Ledger reconciliation of the {filler} invoice runs quarterly."),
                 ),
             };
-            self.promoted(workarea, &format!("row-{filler}"), "memory", &body)
+            self.promoted(workspace, &format!("row-{filler}"), "memory", &body)
                 .await;
         }
         self.promoted(
@@ -557,7 +557,7 @@ fn recalls(team: &str) -> Vec<Value> {
         json!({ "query": "ledger reconciliation", "match": "all" }),
         json!({ "query": "invoice paid", "max_tokens": 60 }),
         json!({ "query": "quarterly invoice", "include_text": false, "k": 3 }),
-        json!({ "query": "invoice", "workarea": team }),
+        json!({ "query": "invoice", "workspace": team }),
         json!({ "query": "reconcilation ledgr" }),
         json!({ "query": "invoice ledger", "now": "2030-01-01T00:00:00Z" }),
     ]

@@ -21,7 +21,7 @@ body:
       label: Area
       options:
         - Memory store and recall
-        - Workareas and access
+        - Workspaces and access
         - Artifact store
         - Vocabularies
         - Trusted memory

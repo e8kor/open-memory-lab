@@ -106,7 +106,7 @@ def test_a_retryable_refusal_is_retried_under_the_same_key():
         "state": "held",
         "plaintext_digest": "sha256:" + "0" * 64,
         "journal_seq": 1,
-        "workarea_id": "wa_1",
+        "workspace_id": "wa_1",
         "retirement": False,
         "replaces": None,
     }

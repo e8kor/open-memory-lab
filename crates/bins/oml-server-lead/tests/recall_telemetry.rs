@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
-use oml_app::domain::{HeldBy, MemoryKind, Role};
+use oml_app::domain::{MemoryKind, Role, UsedBy};
 use oml_app::ed25519_dalek::SigningKey;
 use oml_app::types::{
     BootstrapRequest, BootstrapResult, GrantRequest, IssueKeyRequest, SubmitRequest, Verdict,
@@ -82,12 +82,12 @@ fn get(path: &str, key: &str) -> Request<Body> {
 }
 
 /// One tenant on the lead: its admin, a writer that also reads, a reader,
-/// and a dreamer that reviews.
+/// and a reviewer that reviews.
 struct Tenant {
     boot: BootstrapResult,
     writer: String,
     reader: String,
-    dreamer: String,
+    reviewer: String,
 }
 
 struct World {
@@ -114,13 +114,13 @@ async fn issue(
             role,
             name: Name::parse(name).expect("a name"),
             principal: format!("crew/{name}"),
-            held_by: Some(HeldBy::Agent),
-            default_workarea: Some(boot.root_workarea_id.into()),
+            used_by: Some(UsedBy::Agent),
+            default_workspace: Some(boot.root_workspace_id.into()),
             crew: None,
             grants: grants
                 .iter()
                 .map(|r| GrantRequest {
-                    node: boot.root_workarea_id.into(),
+                    node: boot.root_workspace_id.into(),
                     role: *r,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
@@ -156,19 +156,19 @@ async fn tenant(app: &LeadApp, name: &str) -> Tenant {
     )
     .await;
     let reader = issue(app, &boot, "reader", Role::Reader, &[Role::Reader]).await;
-    let dreamer = issue(
+    let reviewer = issue(
         app,
         &boot,
-        "dreamer",
-        Role::Dreamer,
-        &[Role::Dreamer, Role::Reader],
+        "reviewer",
+        Role::Reviewer,
+        &[Role::Reviewer, Role::Reader],
     )
     .await;
     Tenant {
         boot,
         writer,
         reader,
-        dreamer,
+        reviewer,
     }
 }
 
@@ -216,7 +216,7 @@ async fn world() -> Option<World> {
 }
 
 impl World {
-    /// A memory of `t` written by its writer and approved by its dreamer.
+    /// A memory of `t` written by its writer and approved by its reviewer.
     async fn promoted(&self, t: &Tenant, body: &str) -> Uuid {
         let id = self
             .side
@@ -231,7 +231,7 @@ impl World {
                     verb: None,
                     kind: MemoryKind::Memory,
                     body: body.to_owned(),
-                    workarea: None,
+                    workspace: None,
                     derives_from: Vec::new(),
                     severity: None,
                     rule: None,
@@ -246,7 +246,7 @@ impl World {
             .receipt
             .memory_id;
         self.side
-            .post_verdict(&t.dreamer, id, Verdict::Approve, None)
+            .post_verdict(&t.reviewer, id, Verdict::Approve, None)
             .await
             .expect("approve");
         id
@@ -379,7 +379,7 @@ async fn query_text_is_null_unless_the_tenant_opted_in() {
     tx.execute(
         format!(
             "INSERT INTO recall_events (tenant_id, recall_id, created_at, key_id, principal, \
-               scope_workarea_id, pipeline, access, query_digest, query_text, hit_ids, hit_scores) \
+               scope_workspace_id, pipeline, access, query_digest, query_text, hit_ids, hit_scores) \
              VALUES ('{}', gen_random_uuid(), now(), gen_random_uuid(), 'p', gen_random_uuid(), \
                'bm25', 'scan', decode(repeat('00', 32), 'hex'), 'inserted', '{{}}', '{{}}')",
             w.a.boot.tenant_id
@@ -398,12 +398,12 @@ async fn query_text_is_null_unless_the_tenant_opted_in() {
 }
 
 #[tokio::test]
-async fn no_agent_writer_reader_or_dreamer_key_reads_a_recall_event_on_any_transport() {
+async fn no_agent_writer_reader_or_reviewer_key_reads_a_recall_event_on_any_transport() {
     let Some(w) = world().await else { return };
     w.promoted(&w.a, "the deploy runs on fridays").await;
     let watched = w.recall(&w.a.reader, "deploy fridays").await;
     let watched_id = watched["recall_id"].as_str().expect("an id").to_owned();
-    for key in [&w.a.writer, &w.a.reader, &w.a.dreamer] {
+    for key in [&w.a.writer, &w.a.reader, &w.a.reviewer] {
         for request in [
             get("/v2/usage/events", key),
             get("/v2/usage/settings", key),
@@ -428,7 +428,7 @@ async fn no_agent_writer_reader_or_dreamer_key_reads_a_recall_event_on_any_trans
             ),
             (2, json!({"name": "oml_read", "arguments": {}})),
             (3, json!({"name": "oml_read", "arguments": {"own": false}})),
-            (4, json!({"name": "oml_workarea", "arguments": {}})),
+            (4, json!({"name": "oml_workspace", "arguments": {}})),
         ] {
             let (status, body) = call(
                 &w.router,
@@ -694,7 +694,7 @@ async fn aged_events(pool: &PgPool, tenant: Uuid, days: &[i64]) {
         tx.execute(
             format!(
                 "INSERT INTO recall_events (tenant_id, recall_id, created_at, key_id, principal, \
-                   scope_workarea_id, pipeline, access, query_digest, hit_ids, hit_scores) \
+                   scope_workspace_id, pipeline, access, query_digest, hit_ids, hit_scores) \
                  VALUES ('{tenant}', gen_random_uuid(), now() - interval '{days} days', gen_random_uuid(), \
                    'p', gen_random_uuid(), 'bm25', 'scan', decode(repeat('00', 32), 'hex'), '{{}}', '{{}}')"
             )
@@ -810,7 +810,7 @@ async fn an_opt_out_committing_during_a_batch_keeps_that_batchs_text_out() {
     tx.execute(
         format!(
             "INSERT INTO recall_events (tenant_id, recall_id, created_at, key_id, principal, \
-               scope_workarea_id, pipeline, access, query_digest, query_text, hit_ids, hit_scores) \
+               scope_workspace_id, pipeline, access, query_digest, query_text, hit_ids, hit_scores) \
              VALUES ('{tenant}', gen_random_uuid(), now(), gen_random_uuid(), 'p', gen_random_uuid(), \
                'bm25', 'scan', decode(repeat('00', 32), 'hex'), 'in flight', '{{}}', '{{}}')"
         )
@@ -1141,7 +1141,7 @@ async fn the_event_writes_cost_on_a_recalls_p95() {
         anchor: oml_app::types::AnchorFilter::default(),
         query: format!("deploy service {}", i % 17),
         k: 8,
-        workarea: None,
+        workspace: None,
         kinds: Vec::new(),
         include_text: true,
         include_unreviewed: Some(false),

@@ -17,16 +17,16 @@ T = TypeVar("T", bound="RecallSources")
 
 @_attrs_define
 class RecallSources:
-    """Under sources wide or a list: what was searched and why (ADR-0072 d8). Every name and number is of a workarea the
+    """Under sources wide or a list: what was searched and why (ADR-0072 d8). Every name and number is of a workspace the
     key reads (d6).
 
         Attributes:
             mode (RecallSourcesMode):
-            considered (int): Under wide, the trusted workareas the key reads outside the scope that accept federated reads;
-                for a list, the names listed.
+            considered (int): Under wide, the trusted workspaces the key reads outside the scope that accept federated
+                reads; for a list, the names listed.
             searched (list[RecallSourcesSearchedItem]): The scope's nodes first, then the federated sources in selection
                 order; for a list, the listed nodes in the order sent.
-            cut (RecallSourcesCut): The workareas holding a query word that wide did not search because max_sources was
+            cut (RecallSourcesCut): The workspaces holding a query word that wide did not search because max_sources was
                 reached; their statistics still scored every hit.
     """
 

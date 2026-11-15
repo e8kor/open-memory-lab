@@ -457,7 +457,7 @@ async fn a_connector_key_issued_by_the_cli_connects_by_code_and_acts_at_mcp_as_i
             "claude-mobile",
             "--principal",
             "crew/claude-mobile",
-            "--workarea",
+            "--workspace",
             "universe",
             "--connect-code",
         ])
@@ -628,7 +628,7 @@ async fn every_sign_in_call_answers_within_claudes_ten_seconds_and_a_refresh_wit
             "claude-timed",
             "--principal",
             "crew/claude-timed",
-            "--workarea",
+            "--workspace",
             "universe",
             "--connect-code",
         ])
@@ -766,7 +766,7 @@ async fn without_oauth_issuer_mcp_answers_realm_oml_and_the_cli_cannot_mint_a_co
             "claude-mobile",
             "--principal",
             "crew/claude-mobile",
-            "--workarea",
+            "--workspace",
             "universe",
             "--connect-code",
         ])
@@ -857,20 +857,20 @@ async fn doctor_reports_oauth_failing_not_off_when_the_public_origin_answers_404
     lead.stop().await;
 }
 
-/// A directory reviewer's path (ADR-0067 d3, d4): the demo workarea is seeded,
+/// A directory reviewer's path (ADR-0067 d3, d4): the demo workspace is seeded,
 /// a connector key confined to it is issued, `keys connect-code --ttl 14d`
 /// mints a code that outlives ten minutes and `keys show` names it without
 /// showing it, the code connects, and a key that reaches the universe is
 /// refused a long code by name, as is a lifetime past thirty days.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_reviewer_code_connects_a_key_confined_to_the_demo_workarea_and_is_named_on_the_key() {
+async fn a_reviewer_code_connects_a_key_confined_to_the_demo_workspace_and_is_named_on_the_key() {
     let Some(lead) = Lead::start(Some(ISSUER)).await else {
         return;
     };
     let (code, stdout, stderr) = lead.oml(&["demo", "seed", "reviewer-demo"]).await;
     assert_eq!(code, 0, "{stdout}{stderr}");
 
-    let issue = |name: &'static str, workarea: &'static str| {
+    let issue = |name: &'static str, workspace: &'static str| {
         let principal = format!("crew/{name}");
         let lead = &lead;
         async move {
@@ -880,8 +880,8 @@ async fn a_reviewer_code_connects_a_key_confined_to_the_demo_workarea_and_is_nam
                 name,
                 "--principal",
                 &principal,
-                "--workarea",
-                workarea,
+                "--workspace",
+                workspace,
                 "--connect-code",
             ])
             .await

@@ -45,13 +45,13 @@ fn ask_commit() -> Value {
 fn served(id: &str, claim_key: &str, severity: &str, text: &str, rule: Value) -> Value {
     json!({
         "artifact_id": id, "claim_key": claim_key, "version": 2,
-        "workarea_id": "00000000-0000-4000-8000-0000000000e1",
-        "workarea_path": "universe.eng", "depth": 1,
+        "workspace_id": "00000000-0000-4000-8000-0000000000e1",
+        "workspace_path": "universe.eng", "depth": 1,
         "severity": severity, "text": text, "rule": rule, "tokens": 5,
         "promoted_at": "2026-10-31T10:00:00.000000Z",
         "verdicts": [
-            {"held_by": "human", "at": "2026-10-31T10:00:00.000000Z"},
-            {"held_by": "agent", "at": "2026-10-31T09:00:00.000000Z"}
+            {"used_by": "person", "at": "2026-10-31T10:00:00.000000Z"},
+            {"used_by": "agent", "at": "2026-10-31T09:00:00.000000Z"}
         ],
         "conflict": []
     })
@@ -192,7 +192,7 @@ fn bash(command: &str) -> Value {
 // --- S3: oml hook guardrails --------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn every_line_names_its_workarea_claim_key_version_and_reviewer_count() {
+async fn every_line_names_its_workspace_claim_key_version_and_reviewer_count() {
     let (url, hits, _) = fixture(the_set()).await;
     let dir = scratch("lines");
     let out = hook("guardrails", &dir, Some(&url), &start("startup"));
@@ -200,11 +200,11 @@ async fn every_line_names_its_workarea_claim_key_version_and_reviewer_count() {
     assert_eq!(hits.load(Ordering::SeqCst), 1, "one GET /v1/guardrails");
     let text = context(&out);
     assert!(
-        text.contains("- [never] Never push to main. (universe.eng, no-push v2, ratified 2026-10-31 by 2 reviewers (1 human); checked: deny shell [\"git\",\"push\",\"*\"])"),
+        text.contains("- [never] Never push to main. (universe.eng, no-push v2, ratified 2026-10-31 by 2 reviewers (1 by a person); checked: deny shell [\"git\",\"push\",\"*\"])"),
         "{text}"
     );
     assert!(
-        text.contains("- [should] Keep pull requests small. (universe.eng, small-prs v2, ratified 2026-10-31 by 2 reviewers (1 human))"),
+        text.contains("- [should] Keep pull requests small. (universe.eng, small-prs v2, ratified 2026-10-31 by 2 reviewers (1 by a person))"),
         "a line with no rule is text only: {text}"
     );
     assert!(
@@ -225,7 +225,7 @@ async fn the_header_names_the_guardrail_scope_the_server_applied() {
     let first = text.lines().next().unwrap_or_default();
     assert!(
         first.starts_with("OML guardrails for this session, from ")
-            && first.contains("workarea universe.eng.api, guardrail scope ancestors:"),
+            && first.contains("workspace universe.eng.api, guardrail scope ancestors:"),
         "{first}"
     );
     assert!(text.contains("These are instructions"), "{text}");

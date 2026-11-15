@@ -30,8 +30,8 @@ use oml_app::domain::valid_time::{ValidEnd, ValidTime};
 use oml_app::domain::vocab_edges::EdgeState;
 use oml_app::domain::web::{Email, Provider};
 use oml_app::domain::{
-    ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, VerifyError, WorkareaStatus, ratifier_is_proposer, verify_chain,
+    ChainHead, Envelope, EventTime, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
+    SignedEnvelope, UsedBy, VerifyError, WorkspaceStatus, ratifier_is_proposer, verify_chain,
 };
 use oml_app::ed25519_dalek::Signature;
 use oml_app::ports::{
@@ -52,7 +52,7 @@ use oml_app::types::{
     ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome,
     QueueDepth, RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair,
     TokenRecord, TransitionRecord, TransitionState, UnnamedRows, VersionFinding, WebCredentialKey,
-    WebCredentialRows, WebEntry, WebSessionRecord, WorkareaRecord, WorkareaRef,
+    WebCredentialRows, WebEntry, WebSessionRecord, WorkspaceRecord, WorkspaceRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -79,6 +79,9 @@ pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../../migratio
 /// 0003 startup policy enumerates them. The served status does not change, so
 /// nothing is journalled. A fresh database, or one past 0017, is left alone,
 /// and a second run changes nothing.
+///
+/// It runs before migration 0047 renames the schema, so it names the table
+/// and the status as that database holds them (ADR-0091 d6, d11).
 pub async fn align_pre_0017_statuses(owner: &PgPool) -> Result<u64, sqlx::Error> {
     let mut tx = owner.begin().await?;
     let pending: bool = sqlx::query_scalar(
@@ -539,6 +542,7 @@ async fn create_partition_on(owner: &mut PgConnection, tenant_id: Uuid) -> Resul
         format!("ALTER TABLE {partition} FORCE ROW LEVEL SECURITY"),
         format!("CREATE POLICY tenant_isolation ON {partition} {policy}"),
         format!("ALTER TABLE memories ATTACH PARTITION {partition} FOR VALUES IN ('{tenant_id}')"),
+        derived_index_names_ddl(&partition),
     ]);
     for statement in statements {
         sqlx::query(&statement)
@@ -559,6 +563,35 @@ async fn create_partition_on(owner: &mut PgConnection, tenant_id: Uuid) -> Resul
     tx.commit().await
 }
 
+/// The statement that renames the indexes `CREATE TABLE … (LIKE … INCLUDING
+/// ALL)` derived for `partition` from its parent's index columns. An index
+/// keeps the column names it was built with, so a partition created after
+/// migration 0047 would derive names that hold the former word; this gives
+/// them the current one, as 0047 renamed every partition it found, cutting
+/// the byte before a numbered suffix where the longer word passes the 63-byte
+/// limit, and keeping two names that meet apart by a number, as PostgreSQL
+/// keeps the names it derives apart (ADR-0091 d6).
+pub(crate) fn derived_index_names_ddl(partition: &str) -> String {
+    format!(
+        "DO $rename$ DECLARE r record; renamed text; suffix text; base text; n int; BEGIN \
+         FOR r IN SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid \
+                   WHERE i.indrelid = '{partition}'::regclass \
+                     AND strpos(c.relname, 'workarea') > 0 LOOP \
+           renamed := replace(r.relname, 'workarea', 'workspace'); \
+           suffix := coalesce(substring(renamed from '(_[a-z]+[0-9]*)$'), ''); \
+           IF octet_length(renamed) > 63 THEN \
+             renamed := left(renamed, 63 - octet_length(suffix)) || suffix; \
+           END IF; \
+           base := renamed; n := 0; \
+           WHILE to_regclass(quote_ident(renamed)) IS NOT NULL LOOP \
+             n := n + 1; \
+             renamed := left(base, 63 - octet_length(n::text)) || n::text; \
+           END LOOP; \
+           EXECUTE format('ALTER INDEX %I RENAME TO %I', r.relname, renamed); \
+         END LOOP; END $rename$"
+    )
+}
+
 /// The DDL of `tenant_id`'s `search_postings` partition, fenced before it is
 /// attached, as 0021 builds every existing tenant's (ADR-0052 d1).
 fn postings_partition_ddl(tenant_id: Uuid) -> Vec<String> {
@@ -573,6 +606,7 @@ fn postings_partition_ddl(tenant_id: Uuid) -> Vec<String> {
         format!(
             "ALTER TABLE search_postings ATTACH PARTITION {postings} FOR VALUES IN ('{tenant_id}')"
         ),
+        derived_index_names_ddl(&postings),
     ]
 }
 
@@ -595,6 +629,7 @@ fn similar_partition_ddl(tenant_id: Uuid) -> Vec<String> {
         format!(
             "ALTER TABLE similar_keys ATTACH PARTITION {similar} FOR VALUES IN ('{tenant_id}')"
         ),
+        derived_index_names_ddl(&similar),
     ]
 }
 
@@ -720,7 +755,7 @@ pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, \
      FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
        AND NOT m.retirement AND m.kind = ANY($4::text[]) \
-       AND m.workarea_id = ANY($2::uuid[]) /*anchor*/ \
+       AND m.workspace_id = ANY($2::uuid[]) /*anchor*/ \
        AND to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $3) \
      ORDER BY score DESC, m.id ASC \
      LIMIT $5";
@@ -738,7 +773,7 @@ pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
        AND (m.author_key_id = ANY($2::uuid[]) \
          OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, ''), 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
        AND NOT m.retirement AND m.kind = ANY($5::text[]) \
-       AND m.workarea_id = ANY($3::uuid[]) /*anchor*/ \
+       AND m.workspace_id = ANY($3::uuid[]) /*anchor*/ \
        AND to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $4) \
      ORDER BY score DESC, m.id ASC \
      LIMIT $6";
@@ -809,8 +844,8 @@ pub const WIDEN_LINEAGE: &str = "WITH RECURSIVE \
 const SEARCH_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
        AND (m.valid_until_us IS NULL OR m.valid_until_us > $NOW::int8) \
        AND m.kind = ANY($3::text[]) \
-       AND ((m.status = 'promoted' AND m.is_tip AND m.workarea_id = ANY($2::uuid[])) \
-         OR (m.status = 'held' AND m.workarea_id = ANY($5::uuid[]) \
+       AND ((m.status = 'promoted' AND m.is_tip AND m.workspace_id = ANY($2::uuid[])) \
+         OR (m.status = 'held' AND m.workspace_id = ANY($5::uuid[]) \
              AND (m.author_key_id = ANY($4::uuid[]) \
                OR (m.scan_finding IS NULL \
                    AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, ''), 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($4::uuid[])))))";
@@ -851,14 +886,15 @@ fn with_now(sql: &str, n: usize) -> String {
 
 /// The promoted part of [`SEARCH_SCOPE`] today: the served tips on the
 /// readable nodes.
-const TIPS_TODAY: &str = "(m.status = 'promoted' AND m.is_tip AND m.workarea_id = ANY($2::uuid[]))";
+const TIPS_TODAY: &str =
+    "(m.status = 'promoted' AND m.is_tip AND m.workspace_id = ANY($2::uuid[]))";
 
 /// The held part of [`SEARCH_SCOPE`], up to its author predicate.
-const HELD_TODAY: &str = "OR (m.status = 'held' AND m.workarea_id = ANY($5::uuid[])";
+const HELD_TODAY: &str = "OR (m.status = 'held' AND m.workspace_id = ANY($5::uuid[])";
 
 /// Whether `m` was its claim's tip at the instant `at`, an SQL
 /// `timestamptz` expression (ADR-0059 d15, d16, d20): promoted at or before
-/// it, and the greatest version of its `workarea_id` and `claim_key`, in any
+/// it, and the greatest version of its `workspace_id` and `claim_key`, in any
 /// state today, promoted at or before it. Today's tip promoted by then was
 /// the tip then, since a tip moves only forward (ADR-0059 d16), so the
 /// probe runs only for a replaced version: correlated, once per such row,
@@ -875,7 +911,7 @@ pub fn tip_at_sql(at: &str) -> String {
     format!(
         "m.status = 'promoted' AND m.promoted_at <= {at} \
          AND (m.is_tip OR m.version = (SELECT max(s.version) FROM memories s \
-           WHERE s.tenant_id = m.tenant_id AND s.workarea_id = m.workarea_id \
+           WHERE s.tenant_id = m.tenant_id AND s.workspace_id = m.workspace_id \
              AND s.claim_key = m.claim_key AND s.promoted_at <= {at}))"
     )
 }
@@ -913,14 +949,14 @@ fn scope_at(sql: &str, at: Option<&EventTime>) -> String {
     sql.replace(
         TIPS_TODAY,
         &format!(
-            "({} AND m.workarea_id = ANY($2::uuid[]))",
+            "({} AND m.workspace_id = ANY($2::uuid[]))",
             tip_at_sql(&instant_literal(at))
         ),
     )
     .replace(
         HELD_TODAY,
         &format!(
-            "OR (m.status = 'held' AND m.created_at <= {} AND m.workarea_id = ANY($5::uuid[])",
+            "OR (m.status = 'held' AND m.created_at <= {} AND m.workspace_id = ANY($5::uuid[])",
             instant_literal(at)
         ),
     )
@@ -1073,7 +1109,7 @@ fn bm25_sql_within(anchor: &str) -> String {
 const REFERENCE_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
        AND (m.valid_until_us IS NULL OR m.valid_until_us > $NOW::int8) \
        AND m.kind = ANY($3::text[]) AND m.status = 'promoted' AND m.is_tip \
-       AND m.workarea_id = ANY($10::uuid[])";
+       AND m.workspace_id = ANY($10::uuid[])";
 
 /// `bm25_sql_within` under a reference set (ADR-0072 d7): the row count,
 /// the mean length and each form's document frequency are taken over
@@ -1146,64 +1182,64 @@ fn search_forms_sql() -> String {
 /// The readable counts, one statement (ADR-0052 d5): a first row with no
 /// token, the served versions on the readable nodes `$2` of the memory kinds
 /// `$3` and their summed length; then each token of `$4` with its document
-/// frequency among them. Both sum the per-workarea counts, so they are the
+/// frequency among them. Both sum the per-workspace counts, so they are the
 /// readable rows', never the tenant's.
 const POSTINGS_COUNTS: &str = "SELECT NULL::int8 AS token_id, COALESCE(sum(c.rows), 0)::int8 AS n, \
             COALESCE(sum(c.total_len), 0)::int8 AS len \
-     FROM search_workarea_rows c \
-     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+     FROM search_workspace_rows c \
+     WHERE c.tenant_id = $1 AND c.workspace_id = ANY($2::uuid[]) AND c.kind = 1 \
        AND c.memory_kind = ANY($3::int2[]) \
      UNION ALL \
      SELECT c.token_id, sum(c.rows)::int8, 0::int8 \
      FROM search_term_rows c \
-     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+     WHERE c.tenant_id = $1 AND c.workspace_id = ANY($2::uuid[]) AND c.kind = 1 \
        AND c.memory_kind = ANY($3::int2[]) AND c.token_id = ANY($4::int8[]) \
      GROUP BY c.token_id";
 
 /// The reference set's counts per node (ADR-0072 d4.2, d12): for each node
 /// of `$2`, a row with no token holding its served versions of the memory
 /// kinds `$3`; then each token of `$4` with its document frequency there.
-/// Read by the counts' primary keys, `workarea_id = ANY` and `token_id =
+/// Read by the counts' primary keys, `workspace_id = ANY` and `token_id =
 /// ANY` being leakproof equalities.
-const REFERENCE_COUNTS: &str = "SELECT c.workarea_id, NULL::int8 AS token_id, \
+const REFERENCE_COUNTS: &str = "SELECT c.workspace_id, NULL::int8 AS token_id, \
             COALESCE(sum(c.rows), 0)::int8 AS n \
-     FROM search_workarea_rows c \
-     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+     FROM search_workspace_rows c \
+     WHERE c.tenant_id = $1 AND c.workspace_id = ANY($2::uuid[]) AND c.kind = 1 \
        AND c.memory_kind = ANY($3::int2[]) \
-     GROUP BY c.workarea_id \
+     GROUP BY c.workspace_id \
      UNION ALL \
-     SELECT c.workarea_id, c.token_id, sum(c.rows)::int8 \
+     SELECT c.workspace_id, c.token_id, sum(c.rows)::int8 \
      FROM search_term_rows c \
-     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+     WHERE c.tenant_id = $1 AND c.workspace_id = ANY($2::uuid[]) AND c.kind = 1 \
        AND c.memory_kind = ANY($3::int2[]) AND c.token_id = ANY($4::int8[]) \
-     GROUP BY c.workarea_id, c.token_id";
+     GROUP BY c.workspace_id, c.token_id";
 
 /// The served versions on the reference nodes `$2` of the kinds `$3` whose
 /// valid time ended at or before the request's now `$4`, with their node:
 /// the rows the counts hold that the reference set does not (ADR-0072
 /// d4.2). Read by the `memories_valid_until` index's condition.
-const REFERENCE_EXPIRED: &str = "SELECT m.id, m.workarea_id FROM memories m \
+const REFERENCE_EXPIRED: &str = "SELECT m.id, m.workspace_id FROM memories m \
      WHERE m.tenant_id = $1 AND m.valid_until_us <= $4::int8 AND m.status = 'promoted' \
-       AND m.is_tip AND NOT m.retirement AND m.workarea_id = ANY($2::uuid[]) \
+       AND m.is_tip AND NOT m.retirement AND m.workspace_id = ANY($2::uuid[]) \
        AND m.kind = ANY($3::text[])";
 
 /// Each node of `$2`'s served versions of the memory kinds `$3`: the widen
 /// signal's rows (ADR-0072 d8, as built by #244).
-const VOCABULARY_ROWS: &str = "SELECT c.workarea_id, COALESCE(sum(c.rows), 0)::int8 \
-     FROM search_workarea_rows c \
-     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+const VOCABULARY_ROWS: &str = "SELECT c.workspace_id, COALESCE(sum(c.rows), 0)::int8 \
+     FROM search_workspace_rows c \
+     WHERE c.tenant_id = $1 AND c.workspace_id = ANY($2::uuid[]) AND c.kind = 1 \
        AND c.memory_kind = ANY($3::int2[]) \
-     GROUP BY c.workarea_id";
+     GROUP BY c.workspace_id";
 
 /// Every token's count per node of `$2`, [`REFERENCE_COUNTS`]' second half
 /// without its token filter, cut at `$4` rows so a vocabulary past the
 /// signal's cap is never read whole: the widen signal's read, made off the
 /// request path (ADR-0072 d8, as built by #244).
-const VOCABULARY_TERMS: &str = "SELECT c.workarea_id, c.token_id, sum(c.rows)::int8 \
+const VOCABULARY_TERMS: &str = "SELECT c.workspace_id, c.token_id, sum(c.rows)::int8 \
      FROM search_term_rows c \
-     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+     WHERE c.tenant_id = $1 AND c.workspace_id = ANY($2::uuid[]) AND c.kind = 1 \
        AND c.memory_kind = ANY($3::int2[]) \
-     GROUP BY c.workarea_id, c.token_id \
+     GROUP BY c.workspace_id, c.token_id \
      LIMIT $4";
 
 /// Every token each expired version `$2` holds, from its postings by the
@@ -1227,18 +1263,18 @@ const POSTINGS_OWN_HELD: &str = "SELECT m.id, m.search_len FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
         AND (m.author_key_id = ANY($2::uuid[]) \
           OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, ''), 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
-        AND m.workarea_id = ANY($3::uuid[]) AND m.kind = ANY($4::text[]) AND NOT m.retirement \
+        AND m.workspace_id = ANY($3::uuid[]) AND m.kind = ANY($4::text[]) AND NOT m.retirement \
         AND (m.valid_until_us IS NULL OR m.valid_until_us > $5::int8)";
 
 /// The served versions on the readable nodes `$2` of the kinds `$3` whose
 /// valid time ended at or before the request's now `$4`, with their
-/// lengths: the rows the per-workarea counts hold that the scope does not,
+/// lengths: the rows the per-workspace counts hold that the scope does not,
 /// taken out of the statistics so an expired version counts in none, as in
 /// `bm25`'s scan (proposed ADR-0059 d3; review M5). Read by the
 /// `memories_valid_until` index's condition.
 const POSTINGS_EXPIRED: &str = "SELECT m.id, m.search_len FROM memories m \
      WHERE m.tenant_id = $1 AND m.valid_until_us <= $4::int8 AND m.status = 'promoted' \
-       AND m.is_tip AND NOT m.retirement AND m.workarea_id = ANY($2::uuid[]) \
+       AND m.is_tip AND NOT m.retirement AND m.workspace_id = ANY($2::uuid[]) \
        AND m.kind = ANY($3::text[])";
 
 /// Each token of `$3`'s document frequency among the own held rows `$2`,
@@ -1284,7 +1320,7 @@ fn bm25_postings_sql_within(anchor: &str) -> String {
                     FROM unnest($5::text[], $6::int8[], $7::float8[]) AS q(w, token_id, df)), \
          p AS (SELECT p.memory_id, p.token_id, p.weight, p.doc_len FROM search_postings p \
                WHERE p.tenant_id = $1 AND p.kind = 1 AND p.token_id = ANY($10::int8[]) \
-                 AND p.workarea_id = ANY($2::uuid[]) AND p.state = 1 \
+                 AND p.workspace_id = ANY($2::uuid[]) AND p.state = 1 \
                  AND p.memory_kind = ANY($3::int2[]){anchor} \
                UNION ALL \
                SELECT p.memory_id, p.token_id, p.weight, p.doc_len FROM search_postings p \
@@ -1334,7 +1370,7 @@ fn sparse_sql_within(anchor: &str) -> String {
     with_now(&format!("WITH q AS (SELECT * FROM unnest($5::int8[], $6::float8[], $7::text[]) AS q(token_id, w, piece)), \
      p AS (SELECT p.memory_id, p.token_id, p.weight, p.doc_len FROM search_postings p \
            WHERE p.tenant_id = $1 AND p.kind = 2 AND p.token_id = ANY($5::int8[]) \
-             AND p.workarea_id = ANY($2::uuid[]) AND p.state = 1 \
+             AND p.workspace_id = ANY($2::uuid[]) AND p.state = 1 \
              AND p.memory_kind = ANY($3::int2[]) /*anchor*/ \
            UNION ALL \
            SELECT p.memory_id, p.token_id, p.weight, p.doc_len FROM search_postings p \
@@ -1418,38 +1454,38 @@ const SPARSE_PENDING: &str = "WITH due AS ( \
 /// exists; the versions that should have postings (a hit kind, no
 /// retirement, not erased, some lexeme) and have none, the fill
 /// incomplete; the served versions with no served posting, behind; the
-/// per-workarea counts that disagree with the served versions; and, of
-/// 200 count rows and as many served (workarea, kind, token)
+/// per-workspace counts that disagree with the served versions; and, of
+/// 200 count rows and as many served (workspace, kind, token)
 /// triples, the ones whose count disagrees with the served postings or is
 /// missing. The 200 start at a random token each read and wrap round, so
 /// repeated reads cover every count; each side's read is bounded by its
 /// index (review F7). The version checks read every version of the tenant
 /// once with an index probe each: doctor's cost, not a recall's.
 const POSTINGS_HEALTH: &str = "WITH v AS ( \
-         SELECT m.id, m.workarea_id, oml_search_memory_kind(m.kind) AS mk, m.search_len, \
+         SELECT m.id, m.workspace_id, oml_search_memory_kind(m.kind) AS mk, m.search_len, \
                 oml_search_state(m.status, m.is_tip, m.retirement, m.kind) AS state \
          FROM memories m WHERE m.tenant_id = $1), \
      want AS (SELECT * FROM v WHERE state IS NOT NULL AND search_len > 0), \
-     served AS (SELECT workarea_id, mk, count(*)::int8 AS rows, sum(search_len)::int8 AS len \
-                FROM v WHERE state = 1 GROUP BY workarea_id, mk), \
-     kept AS (SELECT workarea_id, memory_kind AS mk, rows::int8 AS rows, total_len AS len \
-              FROM search_workarea_rows WHERE tenant_id = $1 AND kind = 1), \
+     served AS (SELECT workspace_id, mk, count(*)::int8 AS rows, sum(search_len)::int8 AS len \
+                FROM v WHERE state = 1 GROUP BY workspace_id, mk), \
+     kept AS (SELECT workspace_id, memory_kind AS mk, rows::int8 AS rows, total_len AS len \
+              FROM search_workspace_rows WHERE tenant_id = $1 AND kind = 1), \
      start AS MATERIALIZED (SELECT ((random() - 0.5) * 1.8e19)::int8 AS s), \
      sampled AS (SELECT * FROM ( \
-         (SELECT 0 AS lap, c.workarea_id, c.memory_kind, c.token_id, c.rows \
+         (SELECT 0 AS lap, c.workspace_id, c.memory_kind, c.token_id, c.rows \
             FROM search_term_rows c, start WHERE c.tenant_id = $1 AND c.token_id >= start.s \
            ORDER BY c.token_id LIMIT 200) \
          UNION ALL \
-         (SELECT 1, c.workarea_id, c.memory_kind, c.token_id, c.rows \
+         (SELECT 1, c.workspace_id, c.memory_kind, c.token_id, c.rows \
             FROM search_term_rows c, start WHERE c.tenant_id = $1 AND c.token_id < start.s \
            ORDER BY c.token_id LIMIT 200)) x \
        WHERE x.token_id IS NOT NULL ORDER BY lap, token_id LIMIT 200), \
-     posted AS (SELECT DISTINCT y.workarea_id, y.memory_kind, y.token_id FROM ( \
-         (SELECT 0 AS lap, p.workarea_id, p.memory_kind, p.token_id FROM search_postings p, start \
+     posted AS (SELECT DISTINCT y.workspace_id, y.memory_kind, y.token_id FROM ( \
+         (SELECT 0 AS lap, p.workspace_id, p.memory_kind, p.token_id FROM search_postings p, start \
            WHERE p.tenant_id = $1 AND p.kind = 1 AND p.state = 1 AND p.token_id >= start.s \
            ORDER BY p.token_id LIMIT 200) \
          UNION ALL \
-         (SELECT 1, p.workarea_id, p.memory_kind, p.token_id FROM search_postings p, start \
+         (SELECT 1, p.workspace_id, p.memory_kind, p.token_id FROM search_postings p, start \
            WHERE p.tenant_id = $1 AND p.kind = 1 AND p.state = 1 AND p.token_id < start.s \
            ORDER BY p.token_id LIMIT 200)) y) \
      SELECT to_regclass($2) IS NOT NULL AS partition, \
@@ -1459,17 +1495,17 @@ const POSTINGS_HEALTH: &str = "WITH v AS ( \
        (SELECT count(*) FROM want w WHERE w.state = 1 AND NOT EXISTS ( \
             SELECT 1 FROM search_postings p WHERE p.tenant_id = $1 AND p.memory_id = w.id \
                                           AND p.state = 1))::int8 AS served_behind, \
-       (SELECT count(*) FROM served s FULL JOIN kept k USING (workarea_id, mk) \
+       (SELECT count(*) FROM served s FULL JOIN kept k USING (workspace_id, mk) \
          WHERE s.rows IS DISTINCT FROM k.rows OR s.len IS DISTINCT FROM k.len)::int8 \
-         AS workarea_drift, \
+         AS workspace_drift, \
        ((SELECT count(*) FROM sampled c WHERE c.rows <> ( \
             SELECT count(DISTINCT p.memory_id) FROM search_postings p \
              WHERE p.tenant_id = $1 AND p.kind = 1 AND p.token_id = c.token_id \
-               AND p.workarea_id = c.workarea_id AND p.state = 1 \
+               AND p.workspace_id = c.workspace_id AND p.state = 1 \
                AND p.memory_kind = c.memory_kind)) \
         + (SELECT count(*) FROM posted t WHERE NOT EXISTS ( \
             SELECT 1 FROM search_term_rows c WHERE c.tenant_id = $1 AND c.kind = 1 \
-               AND c.workarea_id = t.workarea_id AND c.memory_kind = t.memory_kind \
+               AND c.workspace_id = t.workspace_id AND c.memory_kind = t.memory_kind \
                AND c.token_id = t.token_id)))::int8 AS term_drift, \
        ((SELECT count(*) FROM sampled) + (SELECT count(*) FROM posted))::int8 AS terms_checked";
 
@@ -1607,7 +1643,7 @@ const SUGGEST: &str = "WITH q AS (SELECT w FROM unnest($3::text[]) w \
                 WHERE char_length(w) >= 4 AND ts_lexize('english_stem', w) <> '{}'::text[]) \
      SELECT word FROM (SELECT v.word, max(similarity(v.word, q.w)) AS s \
                          FROM search_vocabulary v CROSS JOIN q \
-                        WHERE v.tenant_id = $1 AND v.workarea_id = ANY($2::uuid[]) \
+                        WHERE v.tenant_id = $1 AND v.workspace_id = ANY($2::uuid[]) \
                           AND v.word <> q.w AND similarity(v.word, q.w) > 0.4 \
                         GROUP BY v.word) x \
      ORDER BY s DESC, word ASC \
@@ -1622,9 +1658,9 @@ const SUGGEST: &str = "WITH q AS (SELECT w FROM unnest($3::text[]) w \
 /// the adapter runs.
 pub const SIMILAR_CANDIDATES: &str = "SELECT s.memory_id FROM similar_keys s \
      WHERE s.tenant_id = $1 AND s.key = ANY($2::int8[]) \
-       AND ((s.state = 1 AND s.workarea_id = ANY($3::uuid[])) \
+       AND ((s.state = 1 AND s.workspace_id = ANY($3::uuid[])) \
          OR (s.state = 0 AND s.author_key_id = ANY($4::uuid[]) \
-             AND s.workarea_id = ANY($5::uuid[]))) \
+             AND s.workspace_id = ANY($5::uuid[]))) \
      GROUP BY s.memory_id \
      ORDER BY count(*) DESC, s.memory_id ASC \
      LIMIT $6";
@@ -1803,8 +1839,8 @@ impl PgStore {
     /// without `oml.serving_role`, fails at `current_setting` (`42704`).
     ///
     /// Before 0017 is applied, [`align_pre_0017_statuses`] stores each
-    /// workarea's status as the one v0.5.1 and earlier served, so 0017's
-    /// `workareas_universe_committed` holds over a database whose root a
+    /// workspace's status as the one v0.5.1 and earlier served, so 0017's
+    /// `workspaces_universe_committed` holds over a database whose root a
     /// v0.1.0 build stored `development` (docs/operations/upgrades.md
     /// "Upgrading from v0.5.1 or earlier"). Returns the rows it aligned.
     pub async fn migrate_as(&self, owner: &PgPool) -> Result<u64, sqlx::migrate::MigrateError> {
@@ -1851,6 +1887,19 @@ impl PgStore {
         tenant_id: Uuid,
         keys: &KeySet,
     ) -> Result<ChainHead, ForkCheckError> {
+        self.verify_stored_chain_reading(tenant_id, keys, |_| {})
+            .await
+    }
+
+    /// [`Self::verify_stored_chain`], showing `read` each stored event as it
+    /// pages them, so a start that also scans the journal reads it once
+    /// (ADR-0091 d4: the former-names check rides on the fork check).
+    pub async fn verify_stored_chain_reading(
+        &self,
+        tenant_id: Uuid,
+        keys: &KeySet,
+        mut read: impl FnMut(&SignedEnvelope),
+    ) -> Result<ChainHead, ForkCheckError> {
         let stated = self
             .chain_head(tenant_id)
             .await?
@@ -1862,6 +1911,7 @@ impl PgStore {
                 .events_range(tenant_id, from_seq, FORK_CHECK_PAGE)
                 .await?;
             let n = page.len();
+            page.iter().for_each(&mut read);
             events.extend(page);
             if n < FORK_CHECK_PAGE {
                 break;
@@ -1873,7 +1923,7 @@ impl PgStore {
 
     /// The rows of `tenants` that predate names, per table, the tables that
     /// hold none left out: each tenant's own `tenants` row and its
-    /// `workareas` and `api_keys` rows whose `name` is NULL. 0006 adds the
+    /// `workspaces` and `api_keys` rows whose `name` is NULL. 0006 adds the
     /// column NULL on every row it finds and every creation since names its
     /// row, an issuance's key included, so a NULL here is a row the lead
     /// names before it serves (ADR-0026 d9, d11; http-api.md "Rows created
@@ -1882,15 +1932,15 @@ impl PgStore {
         &self,
         tenants: &[Uuid],
     ) -> Result<Vec<(&'static str, u64)>, StoreError> {
-        let (mut tenant_rows, mut workarea_rows, mut key_rows) = (0_i64, 0_i64, 0_i64);
+        let (mut tenant_rows, mut workspace_rows, mut key_rows) = (0_i64, 0_i64, 0_i64);
         for tenant_id in tenants {
             let mut tx = self.pool.begin().await.map_err(backend)?;
             set_tenant(&mut tx, *tenant_id).await?;
             let row = sqlx::query(
                 "SELECT (SELECT count(*) FROM tenants WHERE id = $1 AND name IS NULL) \
                         AS tenants, \
-                        (SELECT count(*) FROM workareas WHERE tenant_id = $1 AND name IS NULL) \
-                        AS workareas, \
+                        (SELECT count(*) FROM workspaces WHERE tenant_id = $1 AND name IS NULL) \
+                        AS workspaces, \
                         (SELECT count(*) FROM api_keys WHERE tenant_id = $1 AND name IS NULL) \
                         AS api_keys",
             )
@@ -1900,12 +1950,12 @@ impl PgStore {
             .map_err(backend)?;
             tx.commit().await.map_err(backend)?;
             tenant_rows += row.try_get::<i64, _>("tenants").map_err(backend)?;
-            workarea_rows += row.try_get::<i64, _>("workareas").map_err(backend)?;
+            workspace_rows += row.try_get::<i64, _>("workspaces").map_err(backend)?;
             key_rows += row.try_get::<i64, _>("api_keys").map_err(backend)?;
         }
         [
             ("tenants", tenant_rows),
-            ("workareas", workarea_rows),
+            ("workspaces", workspace_rows),
             ("api_keys", key_rows),
         ]
         .into_iter()
@@ -1914,24 +1964,24 @@ impl PgStore {
         .collect()
     }
 
-    /// One workarea read under the tenant's RLS context: `sql` binds the
-    /// tenant as `$1` and a node id as `$2` and selects [`WORKAREA_COLUMNS`].
-    async fn workarea_rows(
+    /// One workspace read under the tenant's RLS context: `sql` binds the
+    /// tenant as `$1` and a node id as `$2` and selects [`WORKSPACE_COLUMNS`].
+    async fn workspace_rows(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         sql: &str,
-    ) -> Result<Vec<WorkareaRecord>, StoreError> {
+    ) -> Result<Vec<WorkspaceRecord>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         let rows = sqlx::query(sql)
             .bind(tenant_id)
-            .bind(workarea_id)
+            .bind(workspace_id)
             .fetch_all(&mut *tx)
             .await
             .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
-        rows.iter().map(workarea_from_row).collect()
+        rows.iter().map(workspace_from_row).collect()
     }
 
     /// One transition read under the tenant's RLS context: `sql` binds the
@@ -1959,17 +2009,17 @@ impl PgStore {
 // Small conversions between the port's types and the schema's columns
 // ---------------------------------------------------------------------------
 
-/// The `workarea_transitions` columns a transition read selects.
-const TRANSITION_COLUMNS: &str = "id, tenant_id, workarea_id, from_status, to_status, state, \
+/// The `workspace_transitions` columns a transition read selects.
+const TRANSITION_COLUMNS: &str = "id, tenant_id, workspace_id, from_status, to_status, state, \
      proposer_key_id, proposer_principal, ratifier_key_id";
 
-/// A `workarea_transitions` row as the port's record; a status or state
+/// A `workspace_transitions` row as the port's record; a status or state
 /// word the record does not spell fails closed.
 fn transition_from_row(row: &PgRow) -> Result<TransitionRecord, StoreError> {
     let transition_id: Uuid = row.try_get("id").map_err(backend)?;
-    let status = |column: &str| -> Result<WorkareaStatus, StoreError> {
+    let status = |column: &str| -> Result<WorkspaceStatus, StoreError> {
         let word: String = row.try_get(column).map_err(backend)?;
-        WorkareaStatus::parse(&word).ok_or_else(|| {
+        WorkspaceStatus::parse(&word).ok_or_else(|| {
             StoreError::Backend(format!("transition {transition_id} has {column} {word:?}"))
         })
     };
@@ -1977,7 +2027,7 @@ fn transition_from_row(row: &PgRow) -> Result<TransitionRecord, StoreError> {
     Ok(TransitionRecord {
         transition_id,
         tenant_id: row.try_get("tenant_id").map_err(backend)?,
-        workarea_id: row.try_get("workarea_id").map_err(backend)?,
+        workspace_id: row.try_get("workspace_id").map_err(backend)?,
         from: status("from_status")?,
         to: status("to_status")?,
         state: TransitionState::parse(&state).ok_or_else(|| {
@@ -2075,7 +2125,7 @@ async fn key_access_in(
         return Ok(None);
     };
     let grants = sqlx::query(
-        "SELECT id, role, workarea_node_id, deny, epoch, covers FROM grants \
+        "SELECT id, role, workspace_node_id, deny, epoch, covers FROM grants \
          WHERE tenant_id = $1 AND key_id = $2 ORDER BY epoch ASC, id ASC",
     )
     .bind(tenant_id)
@@ -2085,7 +2135,7 @@ async fn key_access_in(
     .map_err(backend)?;
     // A lifted denial masks nothing; its lift still moves the epoch.
     let denials = sqlx::query(
-        "SELECT id, workarea_node_id, created_by, epoch FROM key_denials \
+        "SELECT id, workspace_node_id, created_by, epoch FROM key_denials \
          WHERE tenant_id = $1 AND key_id = $2 AND lifted_epoch IS NULL \
          ORDER BY epoch ASC, id ASC",
     )
@@ -2114,7 +2164,7 @@ async fn key_access_in(
             Ok(GrantRecord {
                 grant: Grant {
                     grant_id: row.try_get("id").map_err(backend)?,
-                    node: row.try_get("workarea_node_id").map_err(backend)?,
+                    node: row.try_get("workspace_node_id").map_err(backend)?,
                     role: role_from_str(&role)?,
                     deny: deny_from_json(&deny)?,
                     covers: Covers::parse(&covers).ok_or_else(|| {
@@ -2131,7 +2181,7 @@ async fn key_access_in(
             Ok(DenialRecord {
                 denial: KeyDenial {
                     denial_id: row.try_get("id").map_err(backend)?,
-                    node: row.try_get("workarea_node_id").map_err(backend)?,
+                    node: row.try_get("workspace_node_id").map_err(backend)?,
                 },
                 created_by: row.try_get("created_by").map_err(backend)?,
                 epoch: seq_from_column(row, "epoch")?,
@@ -2150,10 +2200,10 @@ async fn key_access_in(
 }
 
 /// The 0001 idempotency PK is `(tenant_id, key)`; the port scope's
-/// `(key_id, workarea_id, idem_key)` packs into the key column. Uuids
+/// `(key_id, workspace_id, idem_key)` packs into the key column. Uuids
 /// contain no `:`, so the packing is injective.
 fn scope_key(scope: &IdempotencyScope) -> String {
-    format!("{}:{}:{}", scope.key_id, scope.workarea_id, scope.idem_key)
+    format!("{}:{}:{}", scope.key_id, scope.workspace_id, scope.idem_key)
 }
 
 /// The port's key hash is `sha256:<hex>`; `api_keys.hash` stores the raw
@@ -2196,19 +2246,19 @@ fn role_from_str(s: &str) -> Result<Role, StoreError> {
     match s {
         "reader" => Ok(Role::Reader),
         "writer" => Ok(Role::Writer),
-        "dreamer" => Ok(Role::Dreamer),
+        "reviewer" => Ok(Role::Reviewer),
         "admin" => Ok(Role::Admin),
         "operator" => Ok(Role::Operator),
         other => Err(StoreError::Backend(format!("unknown role {other:?}"))),
     }
 }
 
-fn held_by_from_str(s: &str) -> Result<HeldBy, StoreError> {
+fn used_by_from_str(s: &str) -> Result<UsedBy, StoreError> {
     match s {
-        "agent" => Ok(HeldBy::Agent),
-        "human" => Ok(HeldBy::Human),
-        "service" => Ok(HeldBy::Service),
-        other => Err(StoreError::Backend(format!("unknown held_by {other:?}"))),
+        "agent" => Ok(UsedBy::Agent),
+        "person" => Ok(UsedBy::Person),
+        "service" => Ok(UsedBy::Service),
+        other => Err(StoreError::Backend(format!("unknown used_by {other:?}"))),
     }
 }
 
@@ -2216,7 +2266,7 @@ fn held_by_from_str(s: &str) -> Result<HeldBy, StoreError> {
 /// `created_at` and `promoted_at` come back through `to_char` in the
 /// fixed-width signed form so `EventTime` round-trips exactly
 /// (timestamptz(6) holds the microseconds).
-const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workarea_id, m.claim_key, m.version, \
+const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workspace_id, m.claim_key, m.version, \
      m.kind, m.claim, m.claim_digest, m.body_bytes, m.status, m.is_tip, m.retirement, \
      m.replaces_artifact_id, m.author_principal, m.author_key_id, m.derives_from, \
      m.lineage_principals, m.lineage_key_ids, m.scan_finding, m.scanned_under, \
@@ -2230,7 +2280,7 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workarea_id, m.claim_key, m.v
      AS created_at_signed, \
      to_char(m.promoted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS promoted_at_signed, \
-     m.approver_held_by, m.approver_same_user, \
+     m.approver_used_by, m.approver_same_user, \
      to_char(m.approved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS approved_at_signed";
 
@@ -2252,7 +2302,7 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
     Ok(MemoryRecord {
         memory_id: row.try_get("id").map_err(backend)?,
         tenant_id: row.try_get("tenant_id").map_err(backend)?,
-        workarea_id: row.try_get("workarea_id").map_err(backend)?,
+        workspace_id: row.try_get("workspace_id").map_err(backend)?,
         claim_key: row.try_get("claim_key").map_err(backend)?,
         version: unsigned(row, "version")?,
         kind: MemoryKind::parse(&kind)
@@ -2383,11 +2433,11 @@ fn approval_from_row(row: &PgRow) -> Result<Option<Approval>, StoreError> {
     else {
         return Ok(None);
     };
-    let held_by: Option<String> = row.try_get("approver_held_by").map_err(backend)?;
-    let held_by = held_by
+    let used_by: Option<String> = row.try_get("approver_used_by").map_err(backend)?;
+    let used_by = used_by
         .ok_or_else(|| StoreError::Backend("an approval without its attestation".to_owned()))?;
     Ok(Some(Approval {
-        held_by: held_by_from_str(&held_by)?,
+        used_by: used_by_from_str(&used_by)?,
         same_user: row.try_get("approver_same_user").map_err(backend)?,
         at: EventTime::parse(&at).map_err(backend)?,
     }))
@@ -2450,33 +2500,33 @@ fn hit_kinds(kinds: &[MemoryKind]) -> Vec<&'static str> {
         .collect()
 }
 
-/// The workarea columns every workarea read selects (unqualified: the
+/// The workspace columns every workspace read selects (unqualified: the
 /// recursive walks select them from their CTE).
-const WORKAREA_COLUMNS: &str =
+const WORKSPACE_COLUMNS: &str =
     "id, tenant_id, parent_id, name, status, crew, crew_id, user_root, namespace_root_id, mode";
 
-/// A workarea row as the port's record. A row with no name yet predates
+/// A workspace row as the port's record. A row with no name yet predates
 /// names and is served to no one: the lead names every such row before it
 /// serves (ADR-0026 d11), and until that naming is built a lead whose store
 /// holds one serves no request ([`PgStore::rows_without_names`]), so one
 /// found here fails closed.
-fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
-    let workarea_id: Uuid = row.try_get("id").map_err(backend)?;
+fn workspace_from_row(row: &PgRow) -> Result<WorkspaceRecord, StoreError> {
+    let workspace_id: Uuid = row.try_get("id").map_err(backend)?;
     let crew: Option<Value> = row.try_get("crew").map_err(backend)?;
-    Ok(WorkareaRecord {
-        workarea_id,
+    Ok(WorkspaceRecord {
+        workspace_id,
         tenant_id: row.try_get("tenant_id").map_err(backend)?,
         parent_id: row.try_get("parent_id").map_err(backend)?,
         name: stored_name(row, "name")?.ok_or_else(|| {
             StoreError::Backend(format!(
-                "workarea {workarea_id} has no name: the lead names every row that predates \
+                "workspace {workspace_id} has no name: the lead names every row that predates \
                  names before it serves (ADR-0026 d11)"
             ))
         })?,
         status: {
             let status: String = row.try_get("status").map_err(backend)?;
-            WorkareaStatus::parse(&status).ok_or_else(|| {
-                StoreError::Backend(format!("workarea {workarea_id} has status {status:?}"))
+            WorkspaceStatus::parse(&status).ok_or_else(|| {
+                StoreError::Backend(format!("workspace {workspace_id} has status {status:?}"))
             })?
         },
         crew: crew
@@ -2493,7 +2543,7 @@ fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
 /// The `api_keys` columns a key read selects. `revoked_at` and
 /// `expires_at` come back through `to_char` in the fixed-width signed form,
 /// as a memory's `promoted_at` does, so `EventTime` round-trips exactly.
-const KEY_COLUMNS: &str = "id, tenant_id, role, principal, held_by, default_workarea_id, \
+const KEY_COLUMNS: &str = "id, tenant_id, role, principal, used_by, default_workspace_id, \
      issued_by, hash, credential, name, crew_id, user_root_id, session_for, guardrail_scope, \
      profile, requests_per_minute, \
      to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -2537,7 +2587,7 @@ fn claim_edge_from_row(row: &PgRow) -> Result<ClaimEdgeRecord, StoreError> {
     })
 }
 
-const BRIEF_EDGE_COLUMNS: &str = "e.id, e.tenant_id, e.artifact_id, e.workarea_id, e.state, \
+const BRIEF_EDGE_COLUMNS: &str = "e.id, e.tenant_id, e.artifact_id, e.workspace_id, e.state, \
      e.proposer_key_id, k.principal AS proposer_principal, e.ratifier_key_id, e.ratified_seq, \
      to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS created_at_signed";
@@ -2551,7 +2601,7 @@ fn brief_edge_from_row(row: &PgRow) -> Result<BriefEdgeRecord, StoreError> {
         edge_id: row.try_get("id").map_err(backend)?,
         tenant_id: row.try_get("tenant_id").map_err(backend)?,
         artifact_id: row.try_get("artifact_id").map_err(backend)?,
-        workarea_id: row.try_get("workarea_id").map_err(backend)?,
+        workspace_id: row.try_get("workspace_id").map_err(backend)?,
         state: match state.as_str() {
             "pending" => EdgeState::Pending,
             "ratified" => EdgeState::Ratified,
@@ -2578,7 +2628,7 @@ fn brief_edge_from_row(row: &PgRow) -> Result<BriefEdgeRecord, StoreError> {
 fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
     let tenant_id: Option<Uuid> = row.try_get("tenant_id").map_err(backend)?;
     let role: String = row.try_get("role").map_err(backend)?;
-    let held_by: String = row.try_get("held_by").map_err(backend)?;
+    let used_by: String = row.try_get("used_by").map_err(backend)?;
     let stored_hash: Option<Vec<u8>> = row.try_get("hash").map_err(backend)?;
     let credential: String = row.try_get("credential").map_err(backend)?;
     let revoked: Option<String> = row.try_get("revoked_at_signed").map_err(backend)?;
@@ -2590,8 +2640,8 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
         tenant_id: tenant_id.unwrap_or(PROVIDER_TENANT),
         role: role_from_str(&role)?,
         principal: row.try_get("principal").map_err(backend)?,
-        held_by: held_by_from_str(&held_by)?,
-        default_workarea: row.try_get("default_workarea_id").map_err(backend)?,
+        used_by: used_by_from_str(&used_by)?,
+        default_workspace: row.try_get("default_workspace_id").map_err(backend)?,
         issued_by: row.try_get("issued_by").map_err(backend)?,
         credential: Credential::parse(&credential).ok_or_else(|| {
             StoreError::Backend(format!(
@@ -2870,7 +2920,7 @@ async fn insert_memory(
         (String::new(), String::new())
     };
     let sql = format!(
-        "INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, \
+        "INSERT INTO memories (id, tenant_id, workspace_id, claim, claim_digest, status, \
          created_event_id, created_at, claim_key, author_principal, \
          author_key_id, derives_from, lineage_principals, lineage_key_ids, scan_finding, \
          version, kind, body_bytes, is_tip, promoted_at, retirement, replaces_artifact_id, \
@@ -2882,7 +2932,7 @@ async fn insert_memory(
     let mut insert = sqlx::query(&sql)
         .bind(m.memory_id)
         .bind(m.tenant_id)
-        .bind(m.workarea_id)
+        .bind(m.workspace_id)
         .bind(&m.body)
         .bind(digest.0.to_vec())
         .bind(m.status.as_str())
@@ -2968,12 +3018,12 @@ async fn insert_memory(
     // its promotion's fold would have written it (ADR-0077 d6).
     if let Some(approval) = m.approval.as_deref() {
         sqlx::query(
-            "UPDATE memories SET approver_held_by = $3, approver_same_user = $4, \
+            "UPDATE memories SET approver_used_by = $3, approver_same_user = $4, \
              approved_at = ($5)::timestamptz WHERE tenant_id = $1 AND id = $2",
         )
         .bind(m.tenant_id)
         .bind(m.memory_id)
-        .bind(approval.held_by.as_str())
+        .bind(approval.used_by.as_str())
         .bind(approval.same_user)
         .bind(approval.at.as_str())
         .execute(&mut **tx)
@@ -3053,7 +3103,7 @@ async fn promote_memory(
     let promote = match approval {
         Some(_) => {
             "UPDATE memories SET status = 'promoted', is_tip = true, \
-             promoted_at = ($3)::timestamptz, approver_held_by = $4, \
+             promoted_at = ($3)::timestamptz, approver_used_by = $4, \
              approver_same_user = $5, approved_at = ($6)::timestamptz \
              WHERE tenant_id = $1 AND id = $2"
         }
@@ -3068,7 +3118,7 @@ async fn promote_memory(
         .bind(at.as_str());
     if let Some(approval) = approval {
         promote = promote
-            .bind(approval.held_by.as_str())
+            .bind(approval.used_by.as_str())
             .bind(approval.same_user)
             .bind(approval.at.as_str());
     }
@@ -3084,7 +3134,7 @@ async fn promote_memory(
 
 /// Ratification of a supersession: the compare-and-set takes the tip off
 /// `replaced` only while it is the promoted tip under the held successor's
-/// own workarea and `claim_key` and the successor replaces it, reading the
+/// own workspace and `claim_key` and the successor replaces it, reading the
 /// successor's claim identity in the same statement; a zero row count
 /// refuses the commit, whose transaction then rolls back, journal row
 /// included. Only then is the successor promoted and made the tip
@@ -3105,7 +3155,7 @@ async fn supersede_tip(
          WHERE s.tenant_id = $1 AND s.id = $2 AND s.status = 'held' \
            AND s.replaces_artifact_id = $3 \
            AND t.tenant_id = $1 AND t.id = $3 \
-           AND t.workarea_id = s.workarea_id AND t.claim_key = s.claim_key \
+           AND t.workspace_id = s.workspace_id AND t.claim_key = s.claim_key \
            AND t.is_tip AND t.status = 'promoted'",
     )
     .bind(tenant_id)
@@ -3229,7 +3279,7 @@ async fn ratify_claim_edge(
 }
 
 /// The fold of `brief_edge.proposed`: the pending row, created at its
-/// event's `at`; the keys refuse a claim, workarea or proposer of another
+/// event's `at`; the keys refuse a claim, workspace or proposer of another
 /// tenant (postgres-schema.md `brief_edges`; ADR-0046 d7).
 async fn propose_brief_edge(
     tx: &mut Transaction<'_, Postgres>,
@@ -3248,14 +3298,14 @@ async fn propose_brief_edge(
         )));
     }
     sqlx::query(
-        "INSERT INTO brief_edges (id, tenant_id, artifact_id, workarea_id, state, \
+        "INSERT INTO brief_edges (id, tenant_id, artifact_id, workspace_id, state, \
          proposer_key_id, ratifier_key_id, ratified_seq, created_at) \
          VALUES ($1, $2, $3, $4, 'pending', $5, NULL, NULL, ($6)::timestamptz)",
     )
     .bind(edge.edge_id)
     .bind(tenant_id)
     .bind(edge.artifact_id)
-    .bind(edge.workarea_id)
+    .bind(edge.workspace_id)
     .bind(edge.proposer_key_id)
     .bind(at.as_str())
     .execute(&mut **tx)
@@ -3292,9 +3342,9 @@ async fn ratify_brief_edge(
 }
 
 /// The fold of `system.names_assigned` into the columns 0006 added: each
-/// crew record inserted, each listed row — the tenant, its workareas, its
-/// keys — named where its `name` is still NULL, each listed workarea
-/// pointed at its crew record, and every workarea path that is still NULL
+/// crew record inserted, each listed row — the tenant, its workspaces, its
+/// keys — named where its `name` is still NULL, each listed workspace
+/// pointed at its crew record, and every workspace path that is still NULL
 /// derived from the names, root first. A listed row that already has a
 /// name, or that the tenant does not hold, refuses the commit; a name its
 /// kind already holds is [`StoreError::NameTaken`] (postgres-schema.md
@@ -3330,14 +3380,14 @@ async fn fold_names_assigned(
             ),
             // A non-root `universe` meets the CHECK that ties the name to
             // the root; the naming never assigns one (ADR-0026 d6).
-            NamedKind::Workarea => (
-                "UPDATE workareas SET name = $3 WHERE tenant_id = $1 AND id = $2 \
+            NamedKind::Workspace => (
+                "UPDATE workspaces SET name = $3 WHERE tenant_id = $1 AND id = $2 \
                  AND name IS NULL",
                 if assignment.name.as_str() == UNIVERSE {
-                    "workareas_universe_is_root"
+                    "workspaces_universe_is_root"
                 } else {
                     // Every row that predates names is shared (ADR-0044 d12).
-                    "workareas_shared_name"
+                    "workspaces_shared_name"
                 },
             ),
             NamedKind::Key => (
@@ -3370,16 +3420,16 @@ async fn fold_names_assigned(
     }
     for crew in &naming.crews {
         let pointed =
-            sqlx::query("UPDATE workareas SET crew_id = $3 WHERE tenant_id = $1 AND id = ANY($2)")
+            sqlx::query("UPDATE workspaces SET crew_id = $3 WHERE tenant_id = $1 AND id = ANY($2)")
                 .bind(tenant_id)
-                .bind(&crew.workarea_ids)
+                .bind(&crew.workspace_ids)
                 .bind(crew.crew_id)
                 .execute(&mut **tx)
                 .await
                 .map_err(backend)?;
-        if pointed.rows_affected() != u64::try_from(crew.workarea_ids.len()).map_err(backend)? {
+        if pointed.rows_affected() != u64::try_from(crew.workspace_ids.len()).map_err(backend)? {
             return Err(StoreError::Backend(format!(
-                "crew {} names a workarea this tenant does not hold",
+                "crew {} names a workspace this tenant does not hold",
                 crew.crew_id
             )));
         }
@@ -3388,13 +3438,13 @@ async fn fold_names_assigned(
     // its name alone (ADR-0026 d7).
     sqlx::query(
         "WITH RECURSIVE tree (id, path) AS ( \
-             SELECT id, text2ltree(name) FROM workareas \
+             SELECT id, text2ltree(name) FROM workspaces \
               WHERE tenant_id = $1 AND parent_id IS NULL AND name IS NOT NULL \
              UNION ALL \
-             SELECT w.id, tree.path || text2ltree(w.name) FROM workareas w \
+             SELECT w.id, tree.path || text2ltree(w.name) FROM workspaces w \
                JOIN tree ON w.parent_id = tree.id \
               WHERE w.tenant_id = $1 AND w.name IS NOT NULL \
-         ) UPDATE workareas w SET path = tree.path FROM tree \
+         ) UPDATE workspaces w SET path = tree.path FROM tree \
             WHERE w.tenant_id = $1 AND w.id = tree.id AND w.path IS NULL",
     )
     .bind(tenant_id)
@@ -3436,22 +3486,22 @@ async fn apply_fold(
             .await
             .map_err(backend)?;
         }
-        MetadataFold::WorkareaFederationSet {
-            workarea_id,
+        MetadataFold::WorkspaceFederationSet {
+            workspace_id,
             accept_federated,
         } => {
             let updated = sqlx::query(
-                "UPDATE workareas SET accept_federated = $3 WHERE tenant_id = $1 AND id = $2",
+                "UPDATE workspaces SET accept_federated = $3 WHERE tenant_id = $1 AND id = $2",
             )
             .bind(tenant_id)
-            .bind(workarea_id)
+            .bind(workspace_id)
             .bind(accept_federated)
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
             if updated.rows_affected() != 1 {
                 return Err(StoreError::Backend(format!(
-                    "workarea {workarea_id} is not held by this tenant"
+                    "workspace {workspace_id} is not held by this tenant"
                 )));
             }
         }
@@ -3485,9 +3535,9 @@ async fn apply_fold(
                 .map_err(backend)?;
             }
         }
-        MetadataFold::WorkareaCreated(w) => {
+        MetadataFold::WorkspaceCreated(w) => {
             // The status stored is the record's, the one column every
-            // workarea read serves (ADR-0009 d1). The path is the parent's
+            // workspace read serves (ADR-0009 d1). The path is the parent's
             // with this node's name appended, the root's its name alone
             // (ADR-0026 d7); a parent the lead has not named yet has no
             // path, and neither does its child until the naming fold. A
@@ -3501,14 +3551,14 @@ async fn apply_fold(
                 .transpose()
                 .map_err(backend)?;
             sqlx::query(
-                "INSERT INTO workareas (id, tenant_id, parent_id, name, path, status, crew, \
+                "INSERT INTO workspaces (id, tenant_id, parent_id, name, path, status, crew, \
                  crew_id, user_root, namespace_root_id) VALUES ($1, $2, $3, $4, \
                  CASE WHEN $3::uuid IS NULL THEN text2ltree($4) \
-                      ELSE (SELECT p.path FROM workareas p \
+                      ELSE (SELECT p.path FROM workspaces p \
                              WHERE p.tenant_id = $2 AND p.id = $3) || text2ltree($4) END, \
                  $5, $6, $7, $8, $9)",
             )
-            .bind(w.workarea_id)
+            .bind(w.workspace_id)
             .bind(w.tenant_id)
             .bind(w.parent_id)
             .bind(w.name.as_str())
@@ -3524,17 +3574,17 @@ async fn apply_fold(
                 // to the root before the unique index, and errors.md
                 // answers it as `name.taken`; a root of another name lost
                 // no name, so its refusal stays the backend's
-                // (postgres-schema.md `workareas`; ADR-0026 d5, d6). A name
+                // (postgres-schema.md `workspaces`; ADR-0026 d5, d6). A name
                 // is unique in its namespace, the shared one or its user
                 // root's (ADR-0044 d5).
                 let constraint = if w.parent_id.is_some() && w.name.as_str() == UNIVERSE {
-                    "workareas_universe_is_root"
+                    "workspaces_universe_is_root"
                 } else if w.namespace.is_some() {
-                    "workareas_user_name"
+                    "workspaces_user_name"
                 } else {
-                    "workareas_shared_name"
+                    "workspaces_shared_name"
                 };
-                name_taken_or_backend(e, constraint, NamedKind::Workarea, &w.name)
+                name_taken_or_backend(e, constraint, NamedKind::Workspace, &w.name)
             })?;
         }
         MetadataFold::WebEmailAllowed(entry) => {
@@ -3769,27 +3819,27 @@ async fn apply_fold(
             }
         }
         // The tenant-scoped foreign key onto crews refuses another tenant's
-        // crew (0006_names.sql `workareas_crew`).
-        MetadataFold::WorkareaCrewUpdated {
-            workarea_id,
+        // crew (0006_names.sql `workspaces_crew`).
+        MetadataFold::WorkspaceCrewUpdated {
+            workspace_id,
             crew_id,
         } => {
             let updated =
-                sqlx::query("UPDATE workareas SET crew_id = $3 WHERE tenant_id = $1 AND id = $2")
+                sqlx::query("UPDATE workspaces SET crew_id = $3 WHERE tenant_id = $1 AND id = $2")
                     .bind(tenant_id)
-                    .bind(workarea_id)
+                    .bind(workspace_id)
                     .bind(crew_id)
                     .execute(&mut **tx)
                     .await
                     .map_err(backend)?;
             if updated.rows_affected() != 1 {
                 return Err(StoreError::Backend(format!(
-                    "workarea {workarea_id} is not held by this tenant"
+                    "workspace {workspace_id} is not held by this tenant"
                 )));
             }
         }
-        MetadataFold::WorkareaModeSet {
-            workarea_id,
+        MetadataFold::WorkspaceModeSet {
+            workspace_id,
             in_progress,
             held_free,
         } => {
@@ -3798,7 +3848,7 @@ async fn apply_fold(
             if !held_free.is_empty() {
                 let held: bool = sqlx::query_scalar(
                     "SELECT EXISTS (SELECT 1 FROM memories WHERE tenant_id = $1 \
-                     AND workarea_id = ANY($2::uuid[]) AND status = 'held')",
+                     AND workspace_id = ANY($2::uuid[]) AND status = 'held')",
                 )
                 .bind(tenant_id)
                 .bind(&held_free)
@@ -3810,9 +3860,9 @@ async fn apply_fold(
                 }
             }
             let updated =
-                sqlx::query("UPDATE workareas SET mode = $3 WHERE tenant_id = $1 AND id = $2")
+                sqlx::query("UPDATE workspaces SET mode = $3 WHERE tenant_id = $1 AND id = $2")
                     .bind(tenant_id)
-                    .bind(workarea_id)
+                    .bind(workspace_id)
                     .bind(if in_progress {
                         "in_progress"
                     } else {
@@ -3823,7 +3873,7 @@ async fn apply_fold(
                     .map_err(backend)?;
             if updated.rows_affected() != 1 {
                 return Err(StoreError::Backend(format!(
-                    "workarea {workarea_id} is not held by this tenant"
+                    "workspace {workspace_id} is not held by this tenant"
                 )));
             }
         }
@@ -3849,14 +3899,14 @@ async fn apply_fold(
             let limited = k.expiry.is_some() || k.requests_per_minute.is_some();
             let insert = if limited {
                 "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
-                 held_by, default_workarea_id, issued_by, issued_seq, name, crew_id, \
+                 used_by, default_workspace_id, issued_by, issued_seq, name, crew_id, \
                  user_root_id, session_for, guardrail_scope, profile, expires_at, \
                  requests_per_minute) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, \
                  ($17)::timestamptz, $18)"
             } else {
                 "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
-                 held_by, default_workarea_id, issued_by, issued_seq, name, crew_id, \
+                 used_by, default_workspace_id, issued_by, issued_seq, name, crew_id, \
                  user_root_id, session_for, guardrail_scope, profile) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"
             };
@@ -3867,8 +3917,8 @@ async fn apply_fold(
                 .bind(k.credential.as_str())
                 .bind(k.role.as_str())
                 .bind(&k.principal)
-                .bind(k.held_by.as_str())
-                .bind(k.default_workarea)
+                .bind(k.used_by.as_str())
+                .bind(k.default_workspace)
                 .bind(k.issued_by)
                 .bind(seq)
                 .bind(k.name.as_ref().map(Name::as_str))
@@ -3892,12 +3942,12 @@ async fn apply_fold(
         // The schema's role CHECK and its foreign keys refuse a grant or
         // denial on a key or node the tenant does not hold; the error aborts
         // the commit. The keys name the tenant with the id, (tenant_id,
-        // key_id) and (tenant_id, workarea_node_id), because PostgreSQL runs
+        // key_id) and (tenant_id, workspace_node_id), because PostgreSQL runs
         // a foreign-key check without row-level security: a reference on id
         // alone would accept another tenant's key or node (0004_grants.sql).
         MetadataFold::GrantIssued { key_id, grant } => {
             sqlx::query(
-                "INSERT INTO grants (id, tenant_id, key_id, role, workarea_node_id, deny, epoch, \
+                "INSERT INTO grants (id, tenant_id, key_id, role, workspace_node_id, deny, epoch, \
                  covers) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
             )
             .bind(grant.grant_id)
@@ -3918,7 +3968,7 @@ async fn apply_fold(
             created_by,
         } => {
             sqlx::query(
-                "INSERT INTO key_denials (id, tenant_id, key_id, workarea_node_id, epoch, \
+                "INSERT INTO key_denials (id, tenant_id, key_id, workspace_node_id, epoch, \
                  created_by) VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .bind(denial.denial_id)
@@ -4161,13 +4211,13 @@ async fn apply_fold(
                 )));
             }
             sqlx::query(
-                "INSERT INTO workarea_transitions (id, tenant_id, workarea_id, from_status, \
+                "INSERT INTO workspace_transitions (id, tenant_id, workspace_id, from_status, \
                  to_status, state, proposer_key_id, proposer_principal, ratifier_key_id, \
                  proposed_seq) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             )
             .bind(p.transition_id)
             .bind(tenant_id)
-            .bind(p.workarea_id)
+            .bind(p.workspace_id)
             .bind(p.from.as_str())
             .bind(p.to.as_str())
             .bind(p.state.as_str())
@@ -4181,7 +4231,7 @@ async fn apply_fold(
         }
         MetadataFold::TransitionRatified {
             transition_id,
-            workarea_id,
+            workspace_id,
             to,
             ratifier_key_id,
         } => {
@@ -4190,7 +4240,7 @@ async fn apply_fold(
                 tenant_id,
                 seq,
                 transition_id,
-                workarea_id,
+                workspace_id,
                 to,
                 ratifier_key_id,
             )
@@ -4218,40 +4268,40 @@ async fn apply_fold(
     Ok(())
 }
 
-/// `workarea.status_transition`'s fold, under the chain lock the commit
+/// `workspace.status_transition`'s fold, under the chain lock the commit
 /// already holds. The node row and the proposal row are locked and read
 /// first, so nothing moves either between the re-checks and the writes
-/// (workareas.md, ratification re-checks). A row that is not a proposal on
+/// (workspaces.md, ratification re-checks). A row that is not a proposal on
 /// this node with this `to`, and a ratifier key the tenant does not hold,
 /// are defects; a row already ratified or whose `from` is no longer the
 /// node's status is [`StoreError::TransitionStale`]; a ratifier that is the
 /// proposing key or holds the proposer's principal, read from its key row
-/// here, is [`StoreError::RatifierIsProposer`]; and a step to `validated`
-/// that finds a direct child not `validated` is
-/// [`StoreError::ChildrenNotValidated`]. Any refusal refuses the commit,
+/// here, is [`StoreError::RatifierIsProposer`]; and a step to `frozen`
+/// that finds a direct child not `frozen` is
+/// [`StoreError::ChildrenNotFrozen`]. Any refusal refuses the commit,
 /// which writes nothing. The schema still refuses a ratifier that is the
-/// proposing key and a universe root moved off `committed` (ADR-0009 d1,
+/// proposing key and a universe root moved off `protected` (ADR-0009 d1,
 /// d3, d4; ADR-0010 R2).
 async fn ratify_transition(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
     seq: i64,
     transition_id: Uuid,
-    workarea_id: Uuid,
-    to: WorkareaStatus,
+    workspace_id: Uuid,
+    to: WorkspaceStatus,
     ratifier_key_id: Uuid,
 ) -> Result<(), StoreError> {
     let defect = || {
         StoreError::Backend(format!(
-            "transition {transition_id} is not a proposal on workarea {workarea_id} to {}",
+            "transition {transition_id} is not a proposal on workspace {workspace_id} to {}",
             to.as_str()
         ))
     };
     let status: Option<String> = sqlx::query_scalar(
-        "SELECT status FROM workareas WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
+        "SELECT status FROM workspaces WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
     )
     .bind(tenant_id)
-    .bind(workarea_id)
+    .bind(workspace_id)
     .fetch_optional(&mut **tx)
     .await
     .map_err(backend)?;
@@ -4259,8 +4309,8 @@ async fn ratify_transition(
         return Err(defect());
     };
     let row: Option<(Uuid, String, String, String, Uuid, String)> = sqlx::query_as(
-        "SELECT workarea_id, from_status, to_status, state, proposer_key_id, \
-         proposer_principal FROM workarea_transitions \
+        "SELECT workspace_id, from_status, to_status, state, proposer_key_id, \
+         proposer_principal FROM workspace_transitions \
          WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
     )
     .bind(tenant_id)
@@ -4268,19 +4318,20 @@ async fn ratify_transition(
     .fetch_optional(&mut **tx)
     .await
     .map_err(backend)?;
-    let Some((row_workarea, from, row_to, state, proposer_key_id, proposer_principal)) = row else {
+    let Some((row_workspace, from, row_to, state, proposer_key_id, proposer_principal)) = row
+    else {
         return Err(defect());
     };
-    if row_workarea != workarea_id || row_to != to.as_str() {
+    if row_workspace != workspace_id || row_to != to.as_str() {
         return Err(defect());
     }
     if state != TransitionState::Pending.as_str() || from != current {
-        let from = WorkareaStatus::parse(&from).ok_or_else(|| {
+        let from = WorkspaceStatus::parse(&from).ok_or_else(|| {
             StoreError::Backend(format!("transition {transition_id} has from {from:?}"))
         })?;
         return Err(StoreError::TransitionStale {
             transition_id,
-            workarea_id,
+            workspace_id,
             from,
             to,
         });
@@ -4305,27 +4356,27 @@ async fn ratify_transition(
     ) {
         return Err(StoreError::RatifierIsProposer { transition_id });
     }
-    if to == WorkareaStatus::Validated {
+    if to == WorkspaceStatus::Frozen {
         // Under the chain lock every child create and reparent waits for
         // this commit, so the read sees the subtree as it is (ADR-0009 d4).
         let short: Option<i32> = sqlx::query_scalar(
-            "SELECT 1 FROM workareas WHERE tenant_id = $1 AND parent_id = $2 \
-             AND status <> 'validated' LIMIT 1",
+            "SELECT 1 FROM workspaces WHERE tenant_id = $1 AND parent_id = $2 \
+             AND status <> 'frozen' LIMIT 1",
         )
         .bind(tenant_id)
-        .bind(workarea_id)
+        .bind(workspace_id)
         .fetch_optional(&mut **tx)
         .await
         .map_err(backend)?;
         if short.is_some() {
-            return Err(StoreError::ChildrenNotValidated {
+            return Err(StoreError::ChildrenNotFrozen {
                 transition_id,
-                workarea_id,
+                workspace_id,
             });
         }
     }
     sqlx::query(
-        "UPDATE workarea_transitions SET state = 'ratified', ratifier_key_id = $3, \
+        "UPDATE workspace_transitions SET state = 'ratified', ratifier_key_id = $3, \
          ratified_seq = $4 WHERE tenant_id = $1 AND id = $2",
     )
     .bind(tenant_id)
@@ -4335,9 +4386,9 @@ async fn ratify_transition(
     .execute(&mut **tx)
     .await
     .map_err(backend)?;
-    sqlx::query("UPDATE workareas SET status = $3 WHERE tenant_id = $1 AND id = $2")
+    sqlx::query("UPDATE workspaces SET status = $3 WHERE tenant_id = $1 AND id = $2")
         .bind(tenant_id)
-        .bind(workarea_id)
+        .bind(workspace_id)
         .bind(to.as_str())
         .execute(&mut **tx)
         .await
@@ -4613,7 +4664,7 @@ struct MeterPlan {
 /// fold.
 #[derive(Debug)]
 struct TrackedChain {
-    workarea_id: Uuid,
+    workspace_id: Uuid,
     claim_key: String,
     /// The chain's account; `None` for a chain whose first version the
     /// fold itself may store, so its account is read once the fold has,
@@ -4643,12 +4694,12 @@ async fn author_account(
 async fn chain_live(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
-    workarea_id: Uuid,
+    workspace_id: Uuid,
     claim_key: &str,
 ) -> Result<bool, StoreError> {
     sqlx::query_scalar("SELECT oml_chain_live($1, $2, $3)")
         .bind(tenant_id)
-        .bind(workarea_id)
+        .bind(workspace_id)
         .bind(claim_key)
         .fetch_one(&mut **tx)
         .await
@@ -4661,19 +4712,19 @@ async fn chain_live(
 async fn tracked_chain(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
-    workarea_id: Uuid,
+    workspace_id: Uuid,
     claim_key: &str,
 ) -> Result<Option<TrackedChain>, StoreError> {
     let (account, live): (Option<Uuid>, bool) =
         sqlx::query_as("SELECT oml_chain_account($1, $2, $3), oml_chain_live($1, $2, $3)")
             .bind(tenant_id)
-            .bind(workarea_id)
+            .bind(workspace_id)
             .bind(claim_key)
             .fetch_one(&mut **tx)
             .await
             .map_err(backend)?;
     Ok(account.map(|account| TrackedChain {
-        workarea_id,
+        workspace_id,
         claim_key: claim_key.to_owned(),
         account: Some(account),
         live_before: live,
@@ -4687,9 +4738,9 @@ async fn tracked_chain_of(
     memory_id: Uuid,
 ) -> Result<Option<TrackedChain>, StoreError> {
     let row: Option<(Uuid, String, Option<Uuid>, bool)> = sqlx::query_as(
-        "SELECT m.workarea_id, m.claim_key, \
-                oml_chain_account(m.tenant_id, m.workarea_id, m.claim_key), \
-                oml_chain_live(m.tenant_id, m.workarea_id, m.claim_key) \
+        "SELECT m.workspace_id, m.claim_key, \
+                oml_chain_account(m.tenant_id, m.workspace_id, m.claim_key), \
+                oml_chain_live(m.tenant_id, m.workspace_id, m.claim_key) \
            FROM memories m WHERE m.tenant_id = $1 AND m.id = $2",
     )
     .bind(tenant_id)
@@ -4697,9 +4748,9 @@ async fn tracked_chain_of(
     .fetch_optional(&mut **tx)
     .await
     .map_err(backend)?;
-    Ok(row.and_then(|(workarea_id, claim_key, account, live)| {
+    Ok(row.and_then(|(workspace_id, claim_key, account, live)| {
         account.map(|account| TrackedChain {
-            workarea_id,
+            workspace_id,
             claim_key,
             account: Some(account),
             live_before: live,
@@ -4770,20 +4821,20 @@ async fn meter_plan(
                 // the chain has rows, and its first names its account.
                 Some(_) => {
                     plan.chain =
-                        tracked_chain(tx, tenant_id, memory.workarea_id, &memory.claim_key).await?;
+                        tracked_chain(tx, tenant_id, memory.workspace_id, &memory.claim_key).await?;
                 }
                 // Nothing was read for the store: the chain may be this
                 // version's to start, so its account is read after the
                 // fold, when its liveness changed.
                 None => {
                     plan.chain = Some(TrackedChain {
-                        workarea_id: memory.workarea_id,
+                        workspace_id: memory.workspace_id,
                         claim_key: memory.claim_key.clone(),
                         account: None,
                         live_before: chain_live(
                             tx,
                             tenant_id,
-                            memory.workarea_id,
+                            memory.workspace_id,
                             &memory.claim_key,
                         )
                         .await?,
@@ -4849,11 +4900,11 @@ async fn meter_plan(
         // later, a demotion or an erasure among them, does not compile
         // until it says what it moves (ADR-0071 d2).
         MetadataFold::TenantGenesis { .. }
-        | MetadataFold::WorkareaCreated(_)
+        | MetadataFold::WorkspaceCreated(_)
         | MetadataFold::CrewCreated(_)
         | MetadataFold::CrewUpdated(_)
-        | MetadataFold::WorkareaCrewUpdated { .. }
-        | MetadataFold::WorkareaModeSet { .. }
+        | MetadataFold::WorkspaceCrewUpdated { .. }
+        | MetadataFold::WorkspaceModeSet { .. }
         | MetadataFold::NamesAssigned(_)
         | MetadataFold::GrantIssued { .. }
         | MetadataFold::KeyDenied { .. }
@@ -4883,7 +4934,7 @@ async fn meter_plan(
         | MetadataFold::SearchDefaultSet { .. }
         | MetadataFold::TelemetrySettingsSet { .. }
         | MetadataFold::FederationPolicySet(_)
-        | MetadataFold::WorkareaFederationSet { .. } => {}
+        | MetadataFold::WorkspaceFederationSet { .. } => {}
     }
     Ok(plan)
 }
@@ -4907,13 +4958,13 @@ async fn apply_meters(
     ceiling: Option<&Ceiling>,
 ) -> Result<Option<QuotaReached>, StoreError> {
     if let Some(chain) = plan.chain.take() {
-        let after = chain_live(tx, tenant_id, chain.workarea_id, &chain.claim_key).await?;
+        let after = chain_live(tx, tenant_id, chain.workspace_id, &chain.claim_key).await?;
         if after != chain.live_before {
             let account = match chain.account {
                 Some(account) => Some(account),
                 None => sqlx::query_scalar("SELECT oml_chain_account($1, $2, $3)")
                     .bind(tenant_id)
-                    .bind(chain.workarea_id)
+                    .bind(chain.workspace_id)
                     .bind(&chain.claim_key)
                     .fetch_one(&mut **tx)
                     .await
@@ -5669,7 +5720,7 @@ impl PgStore {
             }
         }
         // An expired version counts in no statistic, as in bm25's scan: the
-        // per-workarea counts hold every served version, so the expired ones
+        // per-workspace counts hold every served version, so the expired ones
         // on the readable nodes are taken out by id (proposed ADR-0059 d3).
         let expired: Vec<(Uuid, i32)> = sqlx::query_as(POSTINGS_EXPIRED)
             .bind(scope.tenant_id)
@@ -6183,7 +6234,7 @@ impl Retriever for PgStore {
             partition: row.try_get("partition").map_err(backend)?,
             unfilled: count("unfilled")?,
             served_behind: count("served_behind")?,
-            workarea_drift: count("workarea_drift")?,
+            workspace_drift: count("workspace_drift")?,
             term_drift: count("term_drift")?,
             terms_checked: count("terms_checked")?,
             sparse_backlog: u64::try_from(queued.0).map_err(backend)?,
@@ -6380,7 +6431,7 @@ impl Retriever for PgStore {
                 }
             }
         }
-        let Some((workarea_id, Some(memory_kind), Some(state))) = version else {
+        let Some((workspace_id, Some(memory_kind), Some(state))) = version else {
             tx.commit().await.map_err(backend)?;
             return Ok(true);
         };
@@ -6396,14 +6447,14 @@ impl Retriever for PgStore {
         let weights: Vec<f32> = postings.iter().map(|p| p.weight).collect();
         let in_text: Vec<i32> = postings.iter().map(|p| i32::from(p.in_text)).collect();
         sqlx::query(
-            "INSERT INTO search_postings (tenant_id, memory_id, workarea_id, token_id, weight, \
+            "INSERT INTO search_postings (tenant_id, memory_id, workspace_id, token_id, weight, \
                                           doc_len, kind, memory_kind, state) \
              SELECT $1, $2, $3, t, w, d, 2, $4, $5 \
                FROM unnest($6::int8[], $7::float4[], $8::int4[]) AS x(t, w, d)",
         )
         .bind(tenant_id)
         .bind(pending.memory_id)
-        .bind(workarea_id)
+        .bind(workspace_id)
         .bind(memory_kind)
         .bind(state)
         .bind(&tokens)
@@ -6539,7 +6590,7 @@ pub const SPARSE_TAKE_ENTRY: &str = "DELETE FROM search_sparse_queue \
 
 /// The drain's read of the version it writes, held `FOR SHARE`: `$1`
 /// tenant, `$2` version (ADR-0052 d15).
-pub const SPARSE_HOLD_VERSION: &str = "SELECT m.workarea_id, oml_search_memory_kind(m.kind), \
+pub const SPARSE_HOLD_VERSION: &str = "SELECT m.workspace_id, oml_search_memory_kind(m.kind), \
             oml_search_state(m.status, m.is_tip, m.retirement, m.kind) \
        FROM memories m WHERE m.tenant_id = $1 AND m.id = $2 FOR SHARE";
 
@@ -7091,7 +7142,7 @@ impl JournalStore for PgStore {
             .filter_map(|e| claim_subject(&e.envelope.event_type, &e.envelope.payload))
             .collect();
         let subjects = sqlx::query(
-            "SELECT id, workarea_id, author_key_id FROM memories \
+            "SELECT id, workspace_id, author_key_id FROM memories \
              WHERE tenant_id = $1 AND id = ANY($2::uuid[])",
         )
         .bind(tenant_id)
@@ -7105,7 +7156,7 @@ impl JournalStore for PgStore {
             .map(|row| {
                 let subject = SubjectRow {
                     artifact_id: row.try_get("id").map_err(backend)?,
-                    workarea_id: row.try_get("workarea_id").map_err(backend)?,
+                    workspace_id: row.try_get("workspace_id").map_err(backend)?,
                     author_key_id: row.try_get("author_key_id").map_err(backend)?,
                 };
                 Ok((subject.artifact_id, subject))
@@ -7285,7 +7336,7 @@ impl JournalStore for PgStore {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         let declining: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM workareas WHERE tenant_id = $1 AND id = ANY($2::uuid[]) \
+            "SELECT id FROM workspaces WHERE tenant_id = $1 AND id = ANY($2::uuid[]) \
              AND NOT accept_federated ORDER BY id",
         )
         .bind(tenant_id)
@@ -7539,8 +7590,8 @@ impl JournalStore for PgStore {
             "SELECT {MEMORY_COLUMNS} FROM memories m \
              WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
                AND NOT m.retirement AND m.kind = 'steering' \
-               AND m.workarea_id = ANY($2::uuid[]) \
-             ORDER BY array_position($2::uuid[], m.workarea_id) ASC, \
+               AND m.workspace_id = ANY($2::uuid[]) \
+             ORDER BY array_position($2::uuid[], m.workspace_id) ASC, \
                       m.promoted_at ASC, m.id ASC"
         );
         let rows = sqlx::query(&sql)
@@ -7568,8 +7619,8 @@ impl JournalStore for PgStore {
             "SELECT {MEMORY_COLUMNS} FROM memories m \
              WHERE m.tenant_id = $1 AND {} \
                AND NOT m.retirement AND m.kind = 'steering' \
-               AND m.workarea_id = ANY($2::uuid[]) \
-             ORDER BY array_position($2::uuid[], m.workarea_id) ASC, \
+               AND m.workspace_id = ANY($2::uuid[]) \
+             ORDER BY array_position($2::uuid[], m.workspace_id) ASC, \
                       m.promoted_at ASC, m.id ASC",
             tip_at_sql("($3)::timestamptz")
         );
@@ -7624,7 +7675,7 @@ impl JournalStore for PgStore {
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM memories m \
              WHERE m.tenant_id = $1 AND m.kind = 'guardrail' \
-               AND m.workarea_id = ANY($2::uuid[]) \
+               AND m.workspace_id = ANY($2::uuid[]) \
                AND ((m.status = 'promoted' AND m.is_tip AND NOT m.retirement) \
                     OR (m.status = 'held' AND m.author_key_id = $3))"
         );
@@ -7659,7 +7710,7 @@ impl JournalStore for PgStore {
             ListingScope::Own { key_ids, masked } => {
                 sql.push(" AND m.author_key_id = ANY(")
                     .push_bind(key_ids.clone())
-                    .push("::uuid[]) AND NOT (m.workarea_id = ANY(")
+                    .push("::uuid[]) AND NOT (m.workspace_id = ANY(")
                     .push_bind(masked.clone())
                     .push("::uuid[]))");
             }
@@ -7688,20 +7739,20 @@ impl JournalStore for PgStore {
                     sql.push(
                         "m.status = 'held' AND NOT m.retirement \
                          AND m.scan_finding IS NULL \
-                         AND m.kind IN ('memory', 'derived_fact') AND m.workarea_id = ANY(",
+                         AND m.kind IN ('memory', 'derived_fact') AND m.workspace_id = ANY(",
                     )
                     .push_bind(held.clone())
                     .push("::uuid[]) AND m.scanned_under IS NOT DISTINCT FROM ")
                     .push_bind(current_scanner.clone())
                     .push("::text)");
                 }
-                sql.push(") AND m.workarea_id = ANY(")
+                sql.push(") AND m.workspace_id = ANY(")
                     .push_bind(nodes.clone())
                     .push("::uuid[])");
             }
         }
         if let Some(subtree) = &filter.subtree {
-            sql.push(" AND m.workarea_id = ANY(")
+            sql.push(" AND m.workspace_id = ANY(")
                 .push_bind(subtree.clone())
                 .push("::uuid[])");
         }
@@ -7769,7 +7820,7 @@ impl JournalStore for PgStore {
     async fn claim_key_state(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         claim_key: &str,
     ) -> Result<ClaimKeyState, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
@@ -7777,10 +7828,10 @@ impl JournalStore for PgStore {
         let row = sqlx::query(
             "SELECT max(version) AS greatest, \
                     coalesce(bool_or(status IN ('held', 'promoted', 'demoted')), false) AS live \
-             FROM memories WHERE tenant_id = $1 AND workarea_id = $2 AND claim_key = $3",
+             FROM memories WHERE tenant_id = $1 AND workspace_id = $2 AND claim_key = $3",
         )
         .bind(tenant_id)
-        .bind(workarea_id)
+        .bind(workspace_id)
         .bind(claim_key)
         .fetch_one(&mut *tx)
         .await
@@ -7903,13 +7954,13 @@ impl JournalStore for PgStore {
     }
 
     async fn held_count(&self, tenant_id: Uuid, nodes: &[Uuid]) -> Result<u64, StoreError> {
-        // One probe per node through memories_workarea (tenant_id,
-        // workarea_id, state) (ADR-0030 d6).
+        // One probe per node through memories_workspace (tenant_id,
+        // workspace_id, state) (ADR-0030 d6).
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         let n: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM memories \
-             WHERE tenant_id = $1 AND workarea_id = ANY($2::uuid[]) AND status = 'held'",
+             WHERE tenant_id = $1 AND workspace_id = ANY($2::uuid[]) AND status = 'held'",
         )
         .bind(tenant_id)
         .bind(nodes)
@@ -7920,16 +7971,16 @@ impl JournalStore for PgStore {
         u64::try_from(n).map_err(backend)
     }
 
-    async fn stale_count(&self, tenant_id: Uuid, workarea_id: Uuid) -> Result<u64, StoreError> {
+    async fn stale_count(&self, tenant_id: Uuid, workspace_id: Uuid) -> Result<u64, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         let n: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM memories \
-             WHERE tenant_id = $1 AND workarea_id = $2 AND status = 'promoted' AND is_tip \
+             WHERE tenant_id = $1 AND workspace_id = $2 AND status = 'promoted' AND is_tip \
                AND source_check_result IN ('changed', 'removed')",
         )
         .bind(tenant_id)
-        .bind(workarea_id)
+        .bind(workspace_id)
         .fetch_one(&mut *tx)
         .await
         .map_err(backend)?;
@@ -7940,7 +7991,7 @@ impl JournalStore for PgStore {
     async fn claim_latest_readable(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         claim_key: &str,
         own_key_ids: &[Uuid],
         reads_promoted: bool,
@@ -7949,12 +8000,12 @@ impl JournalStore for PgStore {
         set_tenant(&mut tx, tenant_id).await?;
         let latest: Option<i32> = sqlx::query_scalar(
             "SELECT max(version) FROM memories \
-             WHERE tenant_id = $1 AND workarea_id = $2 AND claim_key = $3 \
+             WHERE tenant_id = $1 AND workspace_id = $2 AND claim_key = $3 \
                AND ((status = 'promoted' AND ($5 OR author_key_id = ANY($4::uuid[]))) \
                  OR (status = 'held' AND author_key_id = ANY($4::uuid[])))",
         )
         .bind(tenant_id)
-        .bind(workarea_id)
+        .bind(workspace_id)
         .bind(claim_key)
         .bind(own_key_ids)
         .bind(reads_promoted)
@@ -7973,7 +8024,7 @@ impl JournalStore for PgStore {
     async fn claim_tip(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
         claim_key: &str,
     ) -> Result<Option<MemoryRecord>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
@@ -7981,12 +8032,12 @@ impl JournalStore for PgStore {
         // The memories_served_tip index answers this lookup.
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM memories m \
-             WHERE m.tenant_id = $1 AND m.workarea_id = $2 AND m.claim_key = $3 \
+             WHERE m.tenant_id = $1 AND m.workspace_id = $2 AND m.claim_key = $3 \
                AND m.is_tip AND m.status = 'promoted'"
         );
         let row = sqlx::query(&sql)
             .bind(tenant_id)
-            .bind(workarea_id)
+            .bind(workspace_id)
             .bind(claim_key)
             .fetch_optional(&mut *tx)
             .await
@@ -8022,12 +8073,12 @@ impl JournalStore for PgStore {
         tenant_id: Uuid,
         reviewer_principal: &str,
         reviewer_key_id: Uuid,
-        workareas: &[Uuid],
+        workspaces: &[Uuid],
     ) -> Result<Option<MemoryRecord>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         // Serve the oldest entry this reviewer may judge: only rows within
-        // its dreamer access (ADR-0025 d1), skipping rows another key
+        // its reviewer access (ADR-0025 d1), skipping rows another key
         // claimed, rows whose lineage closure contains the reviewer, and
         // held successors whose target has a held rival the reviewer
         // authored (admission.md review; roles-and-keys.md rival
@@ -8043,7 +8094,7 @@ impl JournalStore for PgStore {
             "SELECT {MEMORY_COLUMNS} FROM review_queue q \
              JOIN memories m ON m.tenant_id = q.tenant_id AND m.id = q.memory_id \
              WHERE q.tenant_id = $1 AND m.tenant_id = $1 \
-               AND m.workarea_id = ANY($4::uuid[]) \
+               AND m.workspace_id = ANY($4::uuid[]) \
                AND (q.held_by_key IS NULL OR q.held_by_key = $2) \
                AND NOT (m.lineage_principals @> ARRAY[$3]::text[]) \
                AND NOT (m.lineage_key_ids @> ARRAY[$2]::uuid[]) \
@@ -8051,7 +8102,7 @@ impl JournalStore for PgStore {
                    SELECT 1 FROM memories r \
                    WHERE r.tenant_id = $1 AND r.id <> m.id AND r.status = 'held' \
                      AND r.replaces_artifact_id = m.replaces_artifact_id \
-                     AND r.workarea_id = m.workarea_id AND r.claim_key = m.claim_key \
+                     AND r.workspace_id = m.workspace_id AND r.claim_key = m.claim_key \
                      AND (r.author_key_id = $2 OR r.author_principal = $3))) \
              ORDER BY q.held_since ASC, q.memory_id ASC \
              LIMIT 1 \
@@ -8061,7 +8112,7 @@ impl JournalStore for PgStore {
             .bind(tenant_id)
             .bind(reviewer_key_id)
             .bind(reviewer_principal)
-            .bind(workareas)
+            .bind(workspaces)
             .fetch_optional(&mut *tx)
             .await
             .map_err(backend)?;
@@ -8135,7 +8186,7 @@ impl JournalStore for PgStore {
         sql.push_bind(tenant_id)
             .push(" AND m.tenant_id = ")
             .push_bind(tenant_id)
-            .push(" AND m.workarea_id = ANY(")
+            .push(" AND m.workspace_id = ANY(")
             .push_bind(filter.nodes.clone())
             .push("::uuid[]) AND (q.held_by_key IS NULL OR q.held_by_key = ")
             .push_bind(reviewer_key_id)
@@ -8151,7 +8202,7 @@ impl JournalStore for PgStore {
             .push(
                 " AND r.id <> m.id AND r.status = 'held' \
                  AND r.replaces_artifact_id = m.replaces_artifact_id \
-                 AND r.workarea_id = m.workarea_id AND r.claim_key = m.claim_key \
+                 AND r.workspace_id = m.workspace_id AND r.claim_key = m.claim_key \
                  AND (r.author_key_id = ",
             )
             .push_bind(reviewer_key_id)
@@ -8240,8 +8291,8 @@ impl JournalStore for PgStore {
         // (ADR-0026 d10). Tenant names are the deployment's.
         let sql = match kind {
             // The shared namespace alone (ADR-0044 d5).
-            NamedKind::Workarea => {
-                "SELECT id FROM workareas WHERE tenant_id = $1 AND name = $2 \
+            NamedKind::Workspace => {
+                "SELECT id FROM workspaces WHERE tenant_id = $1 AND name = $2 \
                  AND namespace_root_id IS NULL"
             }
             NamedKind::Crew => "SELECT id FROM crews WHERE tenant_id = $1 AND name = $2",
@@ -8309,17 +8360,17 @@ impl JournalStore for PgStore {
         row.as_ref().map(key_from_row).transpose()
     }
 
-    async fn resolve_user_workarea(
+    async fn resolve_user_workspace(
         &self,
         tenant_id: Uuid,
         user_root: Uuid,
         name: &Name,
     ) -> Result<Option<Uuid>, StoreError> {
-        // One lookup on workareas_user_name (ADR-0044 d5).
+        // One lookup on workspaces_user_name (ADR-0044 d5).
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         let id: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM workareas WHERE tenant_id = $1 AND namespace_root_id = $2 \
+            "SELECT id FROM workspaces WHERE tenant_id = $1 AND namespace_root_id = $2 \
              AND name = $3",
         )
         .bind(tenant_id)
@@ -8340,35 +8391,35 @@ impl JournalStore for PgStore {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         // One query under the tenant's fence: the key row, its tenant, its
-        // crew record, and its default workarea with the path the walk up
+        // crew record, and its default workspace with the path the walk up
         // the parent_id links derives, root first, and whether that walk
         // reached a root (ADR-0039 d15).
         let row = sqlx::query(
             "WITH RECURSIVE k AS ( \
-                 SELECT default_workarea_id, crew_id, user_root_id FROM api_keys \
+                 SELECT default_workspace_id, crew_id, user_root_id FROM api_keys \
                   WHERE tenant_id = $1 AND id = $2 \
              ), up AS ( \
                  SELECT w.id, w.parent_id, w.name, 0 AS depth \
-                   FROM workareas w JOIN k ON w.id = k.default_workarea_id \
+                   FROM workspaces w JOIN k ON w.id = k.default_workspace_id \
                   WHERE w.tenant_id = $1 \
                  UNION ALL \
                  SELECT w.id, w.parent_id, w.name, up.depth + 1 \
-                   FROM workareas w JOIN up ON w.id = up.parent_id \
+                   FROM workspaces w JOIN up ON w.id = up.parent_id \
                   WHERE w.tenant_id = $1 \
              ) \
              SELECT t.name::text AS tenant_name, \
-                    k.default_workarea_id, \
-                    (SELECT up.name::text FROM up WHERE up.depth = 0) AS workarea_name, \
+                    k.default_workspace_id, \
+                    (SELECT up.name::text FROM up WHERE up.depth = 0) AS workspace_name, \
                     (SELECT string_agg(up.name::text, '.' ORDER BY up.depth DESC) FROM up) \
-                        AS workarea_path, \
+                        AS workspace_path, \
                     (SELECT bool_and(up.name IS NOT NULL) \
-                            AND bool_or(up.parent_id IS NULL) FROM up) AS workarea_whole, \
+                            AND bool_or(up.parent_id IS NULL) FROM up) AS workspace_whole, \
                     k.crew_id, c.name::text AS crew_name, \
                     k.user_root_id, r.name::text AS user_name \
                FROM k \
                JOIN tenants t ON t.id = $1 \
                LEFT JOIN crews c ON c.tenant_id = $1 AND c.id = k.crew_id \
-               LEFT JOIN workareas r ON r.tenant_id = $1 AND r.id = k.user_root_id",
+               LEFT JOIN workspaces r ON r.tenant_id = $1 AND r.id = k.user_root_id",
         )
         .bind(tenant_id)
         .bind(key_id)
@@ -8384,26 +8435,26 @@ impl JournalStore for PgStore {
             name: stored_name(&row, "tenant_name")?
                 .ok_or_else(|| StoreError::Backend(format!("tenant {tenant_id} has no name")))?,
         };
-        let default_workarea = match row
-            .try_get::<Option<Uuid>, _>("default_workarea_id")
+        let default_workspace = match row
+            .try_get::<Option<Uuid>, _>("default_workspace_id")
             .map_err(backend)?
         {
             None => None,
-            Some(workarea_id) => {
+            Some(workspace_id) => {
                 // A default the tenant does not hold, or whose walk names a
                 // row with no name or stops short of a root, fails closed,
                 // as the ancestry read does.
-                let whole: Option<bool> = row.try_get("workarea_whole").map_err(backend)?;
-                let path: Option<String> = row.try_get("workarea_path").map_err(backend)?;
-                match (whole, stored_name(&row, "workarea_name")?, path) {
-                    (Some(true), Some(name), Some(path)) => Some(WorkareaRef {
-                        id: workarea_id,
+                let whole: Option<bool> = row.try_get("workspace_whole").map_err(backend)?;
+                let path: Option<String> = row.try_get("workspace_path").map_err(backend)?;
+                match (whole, stored_name(&row, "workspace_name")?, path) {
+                    (Some(true), Some(name), Some(path)) => Some(WorkspaceRef {
+                        id: workspace_id,
                         name,
                         path,
                     }),
                     _ => {
                         return Err(StoreError::Backend(format!(
-                            "key {key_id}'s default workarea {workarea_id} has no named \
+                            "key {key_id}'s default workspace {workspace_id} has no named \
                              ancestry to a root in this tenant"
                         )));
                     }
@@ -8433,7 +8484,7 @@ impl JournalStore for PgStore {
         };
         Ok(Some(KeyReferences {
             tenant,
-            default_workarea,
+            default_workspace,
             crew,
             user,
         }))
@@ -8453,8 +8504,8 @@ impl JournalStore for PgStore {
         .fetch_one(&mut *tx)
         .await
         .map_err(backend)?;
-        let workareas: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM workareas WHERE tenant_id = $1 AND name IS NULL ORDER BY id",
+        let workspaces: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM workspaces WHERE tenant_id = $1 AND name IS NULL ORDER BY id",
         )
         .bind(tenant_id)
         .fetch_all(&mut *tx)
@@ -8470,43 +8521,43 @@ impl JournalStore for PgStore {
         tx.commit().await.map_err(backend)?;
         Ok(UnnamedRows {
             tenant,
-            workareas,
+            workspaces,
             keys,
         })
     }
 
-    async fn workarea(
+    async fn workspace(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> Result<Option<WorkareaRecord>, StoreError> {
+        workspace_id: Uuid,
+    ) -> Result<Option<WorkspaceRecord>, StoreError> {
         let sql =
-            format!("SELECT {WORKAREA_COLUMNS} FROM workareas WHERE tenant_id = $1 AND id = $2");
+            format!("SELECT {WORKSPACE_COLUMNS} FROM workspaces WHERE tenant_id = $1 AND id = $2");
         Ok(self
-            .workarea_rows(tenant_id, workarea_id, &sql)
+            .workspace_rows(tenant_id, workspace_id, &sql)
             .await?
             .into_iter()
             .next())
     }
 
-    async fn workarea_ancestry(
+    async fn workspace_ancestry(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> Result<Option<Vec<WorkareaRecord>>, StoreError> {
+        workspace_id: Uuid,
+    ) -> Result<Option<Vec<WorkspaceRecord>>, StoreError> {
         // Up the parent_id links from the node; the depth orders the walk.
         let sql = format!(
             "WITH RECURSIVE up AS ( \
-                 SELECT {WORKAREA_COLUMNS}, 0 AS depth FROM workareas \
+                 SELECT {WORKSPACE_COLUMNS}, 0 AS depth FROM workspaces \
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
                  SELECT w.id, w.tenant_id, w.parent_id, w.name, w.status, w.crew, w.crew_id, \
                         w.user_root, w.namespace_root_id, w.mode, up.depth + 1 \
-                   FROM workareas w JOIN up ON w.id = up.parent_id \
+                   FROM workspaces w JOIN up ON w.id = up.parent_id \
                   WHERE w.tenant_id = $1 \
-             ) SELECT {WORKAREA_COLUMNS} FROM up ORDER BY depth ASC"
+             ) SELECT {WORKSPACE_COLUMNS} FROM up ORDER BY depth ASC"
         );
-        let ancestry = self.workarea_rows(tenant_id, workarea_id, &sql).await?;
+        let ancestry = self.workspace_rows(tenant_id, workspace_id, &sql).await?;
         let Some(top) = ancestry.last() else {
             return Ok(None);
         };
@@ -8517,45 +8568,45 @@ impl JournalStore for PgStore {
         // stays as the walk's own guard.
         if let Some(parent_id) = top.parent_id {
             return Err(StoreError::Backend(format!(
-                "the ancestry of {workarea_id} names parent {parent_id}, \
+                "the ancestry of {workspace_id} names parent {parent_id}, \
                  which this tenant does not hold"
             )));
         }
         Ok(Some(ancestry))
     }
 
-    async fn workarea_subtree(
+    async fn workspace_subtree(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> Result<Vec<WorkareaRecord>, StoreError> {
+        workspace_id: Uuid,
+    ) -> Result<Vec<WorkspaceRecord>, StoreError> {
         let sql = format!(
             "WITH RECURSIVE down AS ( \
-                 SELECT {WORKAREA_COLUMNS}, 0 AS depth FROM workareas \
+                 SELECT {WORKSPACE_COLUMNS}, 0 AS depth FROM workspaces \
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
                  SELECT w.id, w.tenant_id, w.parent_id, w.name, w.status, w.crew, w.crew_id, \
                         w.user_root, w.namespace_root_id, w.mode, down.depth + 1 \
-                   FROM workareas w JOIN down ON w.parent_id = down.id \
+                   FROM workspaces w JOIN down ON w.parent_id = down.id \
                   WHERE w.tenant_id = $1 \
-             ) SELECT {WORKAREA_COLUMNS} FROM down ORDER BY depth ASC, id ASC"
+             ) SELECT {WORKSPACE_COLUMNS} FROM down ORDER BY depth ASC, id ASC"
         );
-        self.workarea_rows(tenant_id, workarea_id, &sql).await
+        self.workspace_rows(tenant_id, workspace_id, &sql).await
     }
 
-    async fn workarea_children(
+    async fn workspace_children(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
-    ) -> Result<Vec<WorkareaRecord>, StoreError> {
+        workspace_id: Uuid,
+    ) -> Result<Vec<WorkspaceRecord>, StoreError> {
         // COLLATE "C" compares the UTF-8 bytes, whatever the database's
         // locale, and uuid compares its 16 bytes.
         let sql = format!(
-            "SELECT {WORKAREA_COLUMNS} FROM workareas \
+            "SELECT {WORKSPACE_COLUMNS} FROM workspaces \
              WHERE tenant_id = $1 AND parent_id = $2 \
              ORDER BY name COLLATE \"C\" ASC, id ASC"
         );
-        self.workarea_rows(tenant_id, workarea_id, &sql).await
+        self.workspace_rows(tenant_id, workspace_id, &sql).await
     }
 
     async fn transition(
@@ -8564,7 +8615,7 @@ impl JournalStore for PgStore {
         transition_id: Uuid,
     ) -> Result<Option<TransitionRecord>, StoreError> {
         let sql = format!(
-            "SELECT {TRANSITION_COLUMNS} FROM workarea_transitions \
+            "SELECT {TRANSITION_COLUMNS} FROM workspace_transitions \
              WHERE tenant_id = $1 AND id = $2"
         );
         Ok(self
@@ -8577,15 +8628,15 @@ impl JournalStore for PgStore {
     async fn pending_transitions(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
     ) -> Result<Vec<TransitionRecord>, StoreError> {
-        // The index on (tenant_id, workarea_id, state) serves the filter.
+        // The index on (tenant_id, workspace_id, state) serves the filter.
         let sql = format!(
-            "SELECT {TRANSITION_COLUMNS} FROM workarea_transitions \
-             WHERE tenant_id = $1 AND workarea_id = $2 AND state = 'pending' \
+            "SELECT {TRANSITION_COLUMNS} FROM workspace_transitions \
+             WHERE tenant_id = $1 AND workspace_id = $2 AND state = 'pending' \
              ORDER BY proposed_seq"
         );
-        self.transition_rows(tenant_id, workarea_id, &sql).await
+        self.transition_rows(tenant_id, workspace_id, &sql).await
     }
 
     async fn idempotency_get(
@@ -8753,18 +8804,18 @@ impl JournalStore for PgStore {
     async fn brief_edges(
         &self,
         tenant_id: Uuid,
-        workarea_id: Uuid,
+        workspace_id: Uuid,
     ) -> Result<Vec<BriefEdgeRecord>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         let rows = sqlx::query(&format!(
             "SELECT {BRIEF_EDGE_COLUMNS} FROM brief_edges e \
              JOIN api_keys k ON k.tenant_id = e.tenant_id AND k.id = e.proposer_key_id \
-             WHERE e.tenant_id = $1 AND e.workarea_id = $2 \
+             WHERE e.tenant_id = $1 AND e.workspace_id = $2 \
              ORDER BY e.created_at DESC, e.id DESC"
         ))
         .bind(tenant_id)
-        .bind(workarea_id)
+        .bind(workspace_id)
         .fetch_all(&mut *tx)
         .await
         .map_err(backend)?;
@@ -8818,7 +8869,7 @@ impl JournalStore for PgStore {
         // Read scope: both endpoints in a reader node, each promoted or the
         // key's own (roles-and-keys.md footnote 5).
         for row in ["s", "d"] {
-            sql.push(format!(" AND {row}.workarea_id = ANY("))
+            sql.push(format!(" AND {row}.workspace_id = ANY("))
                 .push_bind(selection.readable_nodes.clone())
                 .push(format!(
                     "::uuid[]) AND ({row}.status = 'promoted' OR {row}.author_key_id = "
@@ -8830,7 +8881,7 @@ impl JournalStore for PgStore {
                 .push(format!(
                     " OR ({row}.status = 'held' AND NOT {row}.retirement \
                      AND {row}.scan_finding IS NULL \
-                     AND {row}.kind IN ('memory', 'derived_fact') AND {row}.workarea_id = ANY("
+                     AND {row}.kind IN ('memory', 'derived_fact') AND {row}.workspace_id = ANY("
                 ))
                 .push_bind(selection.held_nodes.clone())
                 .push(format!(
@@ -8847,9 +8898,9 @@ impl JournalStore for PgStore {
                 .push(")");
         }
         if let Some(within) = &selection.within {
-            sql.push(" AND (s.workarea_id = ANY(")
+            sql.push(" AND (s.workspace_id = ANY(")
                 .push_bind(within.clone())
-                .push("::uuid[]) OR d.workarea_id = ANY(")
+                .push("::uuid[]) OR d.workspace_id = ANY(")
                 .push_bind(within.clone())
                 .push("::uuid[]))");
         }
@@ -9505,9 +9556,9 @@ impl WebStore for PgStore {
                 let access = key_access_in(&mut tx, tenant_id, key.key_id).await?;
                 let (user_root, own_keys) = match key.user {
                     Some(root) => {
-                        // As `workarea` and `web_user_keys`.
+                        // As `workspace` and `web_user_keys`.
                         let node = sqlx::query(&format!(
-                            "SELECT {WORKAREA_COLUMNS} FROM workareas \
+                            "SELECT {WORKSPACE_COLUMNS} FROM workspaces \
                              WHERE tenant_id = $1 AND id = $2"
                         ))
                         .bind(tenant_id)
@@ -9525,7 +9576,7 @@ impl WebStore for PgStore {
                         .await
                         .map_err(backend)?;
                         (
-                            node.as_ref().map(workarea_from_row).transpose()?,
+                            node.as_ref().map(workspace_from_row).transpose()?,
                             keys.iter()
                                 .map(key_from_row)
                                 .collect::<Result<Vec<_>, StoreError>>()?,
@@ -9607,10 +9658,10 @@ impl WebStore for PgStore {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         let rows = sqlx::query(concat!(
-            "SELECT workarea_id, count(*) AS held, ",
+            "SELECT workspace_id, count(*) AS held, ",
             utc!("min(created_at)"),
             " AS oldest_signed FROM memories WHERE tenant_id = $1 AND status = 'held' \
-             GROUP BY workarea_id ORDER BY workarea_id"
+             GROUP BY workspace_id ORDER BY workspace_id"
         ))
         .bind(tenant_id)
         .fetch_all(&mut *tx)
@@ -9621,7 +9672,7 @@ impl WebStore for PgStore {
             .map(|row| {
                 let held: i64 = row.try_get("held").map_err(backend)?;
                 Ok(QueueDepth {
-                    workarea_id: row.try_get("workarea_id").map_err(backend)?,
+                    workspace_id: row.try_get("workspace_id").map_err(backend)?,
                     held: u64::try_from(held).map_err(backend)?,
                     oldest: event_time_column(row, "oldest_signed")?.ok_or_else(|| {
                         StoreError::Backend("a held group has no oldest row".to_owned())
@@ -9647,7 +9698,7 @@ impl WebStore for PgStore {
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = $1 \
              AND ($2::text IS NULL OR to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $2)) \
-             AND ($3::uuid[] IS NULL OR m.workarea_id = ANY($3)) \
+             AND ($3::uuid[] IS NULL OR m.workspace_id = ANY($3)) \
              AND {state} \
              AND ($4::timestamptz IS NULL OR (m.created_at, m.id) < ($4::timestamptz, $5::uuid)) \
              AND (cardinality($7::text[]) = 0 OR m.origin_kind = ANY($7)) \

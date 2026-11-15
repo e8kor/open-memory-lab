@@ -21,7 +21,7 @@ here measures it.
 | e) `pg_trgm`, text / identifiers | not at 10k (218 / 51 ms) | ≥ 5,000 / 4,535 | the slowest; no index use under RLS, and `word_similarity` per row is expensive |
 | f) pgvector HNSW, 384-d | past 1M (halfvec 1M: p95 15.4) | 15.4 (halfvec) | **holds to 1M** when resident and with `relaxed_order`: its ORDER BY uses the index under RLS |
 | g) ADR-0050 similar check per write | 50 ms p50 at ~100k | p50 128, p95 180 | affordable to ~100k per tenant; at 1M it adds a fifth of a second to each write |
-| added: exact halfvec scan, no index | 100k at any share (p95 ≤ 32 ms) | ~250–300 (not measured; linear) | exact and simple to 100k; it reads the whole partition whatever the scope (no workarea index on vectors), so ~250–300 ms at 1M; HNSW plus relaxed_order beats it from ~100k |
+| added: exact halfvec scan, no index | 100k at any share (p95 ≤ 32 ms) | ~250–300 (not measured; linear) | exact and simple to 100k; it reads the whole partition whatever the scope (no workspace index on vectors), so ~250–300 ms at 1M; HNSW plus relaxed_order beats it from ~100k |
 | added: learned-sparse inverted table | under 30k unpruned; ~300k with the 100 commonest tokens pruned (extrapolated) | 3,959 (unpruned) / 137 (pruned) (extrapolated) | **its index works under RLS** (int equality is leakproof); cost is the postings of common tokens: unpruned queries fail at 30k, queries without the 100 most frequent tokens hold 50 ms to ~300k (extrapolated) |
 
 **The one finding that decides the rest: under OML's row security no text index is used.** Every
@@ -29,7 +29,7 @@ full-text and trigram operator PostgreSQL ships (`@@`, `%`, `<%`, `ts_rank`) is 
 (`pg_proc.proleakproof = false`). The planner puts the `tenant_isolation` policy's predicate at a lower
 security level than the query's own predicates, and a non-leakproof predicate cannot become an index
 condition above it. Only the leakproof `uuid` and `int` equalities reach an index, so each text approach
-is an index scan on `(tenant_id, workarea_id, …)` followed by a per-row filter over **every readable
+is an index scan on `(tenant_id, workspace_id, …)` followed by a per-row filter over **every readable
 row** (EXPLAIN below). Its latency is the readable row count times the per-row cost of the operator. The
 0009 migration says so in one line ("An FTS read scans its tenant's partition under row-level
 security"); this bench puts numbers on it. The same statements as the superuser use the GIN index and
@@ -42,7 +42,7 @@ Three ways out, none measured as a change to OML, each a decision for the review
 1. **Mark the operators leakproof** (`ts_match_vq`, `word_similarity_op`): superuser only, rejected by
    ADR-0034 d13, unavailable on most managed PostgreSQL. The no-RLS column is its upper bound.
 2. **Query the text index through one `SECURITY DEFINER` function** owned by a role that bypasses row
-   security, which pins `tenant_id` from `oml.tenant_id` and takes the readable workareas from the
+   security, which pins `tenant_id` from `oml.tenant_id` and takes the readable workspaces from the
    caller. The fence becomes that function's code instead of the policy. Its latency is the no-RLS
    column.
 3. **Keep the per-row filter, but make the row cheap and the readable set small**: a stored tsvector
@@ -85,14 +85,14 @@ behaves this way: its cost is the readable rows, not the matches.
   universe scope). The cold pass matches the warm pass because the scan is CPU-bound: it computes
   `to_tsvector` for every readable row, about 5 µs a row on this host.
 - **Plan under RLS** (1M, exact query, universe scope): a parallel bitmap heap scan on the
-  `(tenant_id, workarea_id, …)` index, `Rows Removed by Filter: 215455` per worker, 3.2 s. The same
+  `(tenant_id, workspace_id, …)` index, `Rows Removed by Filter: 215455` per worker, 3.2 s. The same
   statement without the policy uses `Bitmap Index Scan on …_claim_fts` (5,860 rows) and takes 106 ms,
   mostly `ts_rank` recomputing `to_tsvector` for the 3,621 matches.
 
 ```
 -- serving role, RLS (1M, "Idempotency-Key header", universe scope)
 Parallel Bitmap Heap Scan on memories_t_<tenant> m_1 (actual time=63.859..3189.324 rows=1207.00 loops=3)
-  Recheck Cond: ((tenant_id = '<uuid>') AND (workarea_id = ANY (…)) AND is_tip AND (status = 'promoted'))
+  Recheck Cond: ((tenant_id = '<uuid>') AND (workspace_id = ANY (…)) AND is_tip AND (status = 'promoted'))
   Filter: ((NOT retirement) AND (kind = ANY (…)) AND (to_tsvector('simple', claim) @@ '…'::tsquery))
   Rows Removed by Filter: 215455
 -- the same statement without the policy
@@ -145,16 +145,16 @@ for two columns (half that for `simple` alone).
   cost: N and avgdl read one aggregate, and df comes free from the candidates. The cost is
   materialising and scoring every OR candidate's lexemes. Over a stored tsvector (d') this is about 3×
   cheaper.
-- **Correctness against RLS:** at every scale, df summed from the maintained per-(workarea, term)
-  counts over the readable workareas equals df counted at query time under the policy, for every term
+- **Correctness against RLS:** at every scale, df summed from the maintained per-(workspace, term)
+  counts over the readable workspaces equals df counted at query time under the policy, for every term
   checked (157, 158 and 163 terms). The tenant-wide df, the obvious maintained form, differs from the
   readable df for 95 / 115 / 104 of those terms. A tenant-wide idf would rank by, and so reveal, terms
-  in rows the key cannot read. Statistics must be kept per workarea (or per scope) and summed over the
+  in rows the key cannot read. Statistics must be kept per workspace (or per scope) and summed over the
   readable set, as here.
-- **Cost:** the maintained table has 1.22M rows (190 MiB) at 1M memories with 451 workareas, and builds
+- **Cost:** the maintained table has 1.22M rows (190 MiB) at 1M memories with 451 workspaces, and builds
   in 26 s. The trigger adds about 1 ms to the promotion UPDATE (0.5 → 1.1 ms at 10k, 0.9 → 2.0 ms at
-  100k). Every promotion in a workarea updates the same hot (workarea, common term) rows, so concurrent
-  promotions in one workarea will serialise on them. That contention is not measured here (one client).
+  100k). Every promotion in a workspace updates the same hot (workspace, common term) rows, so concurrent
+  promotions in one workspace will serialise on them. That contention is not measured here (one client).
 
 ### e) `pg_trgm` (GIN `gin_trgm_ops`)
 
@@ -231,7 +231,7 @@ HNSW on halfvec(384) in the main workload (leaf / project / universe scopes):
   1.0 ms), because the scan walks further for matches. OML must set it; the main runs did.
 - **The exact scan is the safe default to ~100k**: p95 3.5–7 ms at 10k and 25–32 ms at 100k, with
   recall 1 by definition and no index to build, keep resident or warm. It reads the whole tenant
-  partition whatever the scope, because nothing indexes the workarea on the vector table, so it grows
+  partition whatever the scope, because nothing indexes the workspace on the vector table, so it grows
   linearly to roughly 250–300 ms at 1M (not measured). HNSW plus relaxed_order is 10–15× faster from
   100k on.
 - The main runs' recall@10 of 1.000 was an artefact. Their "exact" side kept the HNSW plan, because
@@ -292,7 +292,7 @@ have a slope of 0.7–1.2: linear in readable rows, as a per-row filter must be.
   per-row cost and leaves it linear. Past ~100k readable rows, recall needs one of: an index the policy
   lets the planner use (a leakproof operator, a `SECURITY DEFINER` search function, or an integer-keyed
   inverted table like added case 2, whose `token_id = ANY(int[])` is leakproof); a search engine with
-  one index per tenant (Tantivy, OpenSearch) fed from the outbox, with the readable-workarea filter
+  one index per tenant (Tantivy, OpenSearch) fed from the outbox, with the readable-workspace filter
   applied inside it; or keeping the scopes narrow by design.
 - **HNSW is bounded by memory**: about 2 GiB per 1M memories (halfvec, table plus index), resident.
   Tenants in the tens of millions need a dedicated vector host or a disk-friendly index (pgvectorscale's

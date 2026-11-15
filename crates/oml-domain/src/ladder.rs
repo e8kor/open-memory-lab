@@ -1,4 +1,4 @@
-//! The workarea status ladder as pure functions (ADR-0009; workareas.md, the
+//! The workspace status ladder as pure functions (ADR-0009; workspaces.md, the
 //! status ladder): the three statuses (d1), the forward-only step that a
 //! proposal and its ratification both test (d3), the child-status constraint
 //! (d4), the second identity a ratification needs (R2 as errors.md words
@@ -8,29 +8,29 @@
 //! The functions decide; the caller supplies the node as it is at that
 //! moment. Ratification's caller reads the node and its children under the
 //! tenant's chain lock in the transaction that writes the status, so nothing
-//! arrives between the test and the write (workareas.md, readings the build
+//! arrives between the test and the write (workspaces.md, readings the build
 //! takes).
 
 use uuid::Uuid;
 
 use crate::name::Name;
 
-/// A workarea's status, in rung order (ADR-0009 d1). The derived order is
+/// A workspace's status, in rung order (ADR-0009 d1). The derived order is
 /// the ladder's: a step moves to the next rung and never back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum WorkareaStatus {
+pub enum WorkspaceStatus {
     Development,
-    Committed,
-    Validated,
+    Protected,
+    Frozen,
 }
 
-impl WorkareaStatus {
+impl WorkspaceStatus {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            WorkareaStatus::Development => "development",
-            WorkareaStatus::Committed => "committed",
-            WorkareaStatus::Validated => "validated",
+            WorkspaceStatus::Development => "development",
+            WorkspaceStatus::Protected => "protected",
+            WorkspaceStatus::Frozen => "frozen",
         }
     }
 
@@ -39,48 +39,48 @@ impl WorkareaStatus {
     #[must_use]
     pub fn parse(word: &str) -> Option<Self> {
         match word {
-            "development" => Some(WorkareaStatus::Development),
-            "committed" => Some(WorkareaStatus::Committed),
-            "validated" => Some(WorkareaStatus::Validated),
+            "development" => Some(WorkspaceStatus::Development),
+            "protected" => Some(WorkspaceStatus::Protected),
+            "frozen" => Some(WorkspaceStatus::Frozen),
             _ => None,
         }
     }
 
     fn rung(self) -> u8 {
         match self {
-            WorkareaStatus::Development => 0,
-            WorkareaStatus::Committed => 1,
-            WorkareaStatus::Validated => 2,
+            WorkspaceStatus::Development => 0,
+            WorkspaceStatus::Protected => 1,
+            WorkspaceStatus::Frozen => 2,
         }
     }
 }
 
 /// Why a transition is refused: the `reason` of
-/// `workarea.transition_refused` (errors.md; workareas.md, a refusal names
+/// `workspace.transition_refused` (errors.md; workspaces.md, a refusal names
 /// its reason).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
 pub enum LadderRefusal {
     /// To a lower rung; none exist (ADR-0009 d3).
     #[error("backward transitions do not exist on the status ladder")]
     Backward,
-    /// Past the next rung: `validated` from `development` (d3).
+    /// Past the next rung: `frozen` from `development` (d3).
     #[error("a transition moves one rung; this one skips a rung")]
     Skipped,
     /// To the status the node already has (d3).
     #[error("the node already has this status")]
     Same,
-    /// On the universe root, which is permanently `committed`.
+    /// On the universe root, which is permanently `protected`.
     #[error("the universe root takes no transition")]
     Universe,
-    /// To `validated` while a child is not `validated` (d4).
-    #[error("an area becomes validated only when every child is validated")]
-    ChildrenNotValidated,
+    /// To `frozen` while a child is not `frozen` (d4).
+    #[error("a workspace becomes frozen only when every child is frozen")]
+    ChildrenNotFrozen,
     /// At ratification, the proposal's `from` is no longer the node's status.
     #[error("the proposal's from is no longer the node's status")]
     Stale,
-    /// To `validated` on a user root, which climbs to `committed` at most
+    /// To `frozen` on a user root, which climbs to `protected` at most
     /// (ADR-0046 d1).
-    #[error("a user root climbs to committed and is never validated")]
+    #[error("a user root climbs to protected and is never frozen")]
     UserRoot,
 }
 
@@ -93,7 +93,7 @@ impl LadderRefusal {
             LadderRefusal::Skipped => "skipped",
             LadderRefusal::Same => "same",
             LadderRefusal::Universe => "universe",
-            LadderRefusal::ChildrenNotValidated => "children_not_validated",
+            LadderRefusal::ChildrenNotFrozen => "children_not_frozen",
             LadderRefusal::Stale => "stale",
             LadderRefusal::UserRoot => "user_root",
         }
@@ -101,7 +101,7 @@ impl LadderRefusal {
 }
 
 /// What a node is to the ladder: the universe root, which takes no
-/// transition; a user root, which climbs to `committed` at most (ADR-0044
+/// transition; a user root, which climbs to `protected` at most (ADR-0044
 /// d1; ADR-0046 d1); or any other node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LadderNode {
@@ -115,9 +115,9 @@ pub enum LadderNode {
 /// the preconditions (ADR-0009 d3, d4; ADR-0046 d1).
 pub fn propose_check(
     node: LadderNode,
-    current: WorkareaStatus,
-    to: WorkareaStatus,
-    children: &[WorkareaStatus],
+    current: WorkspaceStatus,
+    to: WorkspaceStatus,
+    children: &[WorkspaceStatus],
 ) -> Result<(), LadderRefusal> {
     if node == LadderNode::Universe {
         return Err(LadderRefusal::Universe);
@@ -130,7 +130,7 @@ pub fn propose_check(
         }
         std::cmp::Ordering::Greater => {}
     }
-    if node == LadderNode::UserRoot && to == WorkareaStatus::Validated {
+    if node == LadderNode::UserRoot && to == WorkspaceStatus::Frozen {
         return Err(LadderRefusal::UserRoot);
     }
     transition_preconditions(current, to, children)
@@ -139,13 +139,13 @@ pub fn propose_check(
 /// Whether a ratification of a proposal made from `proposal_from` is
 /// admitted on the node as it is now: stale when the node has moved on, and
 /// otherwise the propose checks again against the current children
-/// (workareas.md, ratification re-checks; ADR-0009 d3, d4).
+/// (workspaces.md, ratification re-checks; ADR-0009 d3, d4).
 pub fn ratify_check(
-    proposal_from: WorkareaStatus,
+    proposal_from: WorkspaceStatus,
     node: LadderNode,
-    current: WorkareaStatus,
-    to: WorkareaStatus,
-    children: &[WorkareaStatus],
+    current: WorkspaceStatus,
+    to: WorkspaceStatus,
+    children: &[WorkspaceStatus],
 ) -> Result<(), LadderRefusal> {
     if proposal_from != current {
         return Err(LadderRefusal::Stale);
@@ -154,21 +154,21 @@ pub fn ratify_check(
 }
 
 /// The preconditions of a one-rung step, the one place each lands. Today
-/// that is d4's child-status constraint on the step to `validated`. The
+/// that is d4's child-status constraint on the step to `frozen`. The
 /// matrix's "no simulation is fenced on the subtree" holds vacuously while
-/// simulations are unbuilt (workareas.md, readings the build takes) and
+/// simulations are unbuilt (workspaces.md, readings the build takes) and
 /// lands here with them, as does any precondition on
-/// `development` → `committed`.
+/// `development` → `protected`.
 pub fn transition_preconditions(
-    current: WorkareaStatus,
-    to: WorkareaStatus,
-    children: &[WorkareaStatus],
+    current: WorkspaceStatus,
+    to: WorkspaceStatus,
+    children: &[WorkspaceStatus],
 ) -> Result<(), LadderRefusal> {
     match (current, to) {
-        (WorkareaStatus::Committed, WorkareaStatus::Validated)
-            if children.iter().any(|c| *c != WorkareaStatus::Validated) =>
+        (WorkspaceStatus::Protected, WorkspaceStatus::Frozen)
+            if children.iter().any(|c| *c != WorkspaceStatus::Frozen) =>
         {
-            Err(LadderRefusal::ChildrenNotValidated)
+            Err(LadderRefusal::ChildrenNotFrozen)
         }
         _ => Ok(()),
     }
@@ -198,7 +198,7 @@ pub fn same_user(proposer_person: Option<&Name>, ratifier_person: Option<&Name>)
     matches!((proposer_person, ratifier_person), (Some(p), Some(r)) if p == r)
 }
 
-/// An operation a frozen area may refuse (workareas.md, refusal matrix).
+/// An operation a frozen area may refuse (workspaces.md, refusal matrix).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrozenOp {
     /// A new claim write into the area.
@@ -211,7 +211,7 @@ pub enum FrozenOp {
     ReassignIn,
     /// A reassignment of a claim out of the area.
     ReassignOut,
-    /// A child workarea created under the node.
+    /// A child workspace created under the node.
     CreateChild,
     /// A re-parent of the node's subtree.
     Reparent,
@@ -224,16 +224,16 @@ pub enum FrozenOp {
 }
 
 /// Whether `status` refuses `op` because the area is frozen
-/// (`workarea.frozen`): a `validated` area admits exactly demote, erasure
+/// (`workspace.frozen`): a `frozen` area admits exactly demote, erasure
 /// and crew-metadata update, and admits a reject verdict, which promotes
 /// nothing (ADR-0046 d10), and every other status refuses none of these
 /// operations by status (ADR-0009 d5). A status transition is not one of
 /// these operations: [`propose_check`] and [`ratify_check`] alone refuse it,
-/// as `workarea.transition_refused` with `backward` or `same` from
-/// `validated` (errors.md).
+/// as `workspace.transition_refused` with `backward` or `same` from
+/// `frozen` (errors.md).
 #[must_use]
-pub fn frozen_refuses(status: WorkareaStatus, op: FrozenOp) -> bool {
-    status == WorkareaStatus::Validated
+pub fn frozen_refuses(status: WorkspaceStatus, op: FrozenOp) -> bool {
+    status == WorkspaceStatus::Frozen
         && !matches!(
             op,
             FrozenOp::Demote | FrozenOp::Erase | FrozenOp::CrewUpdate | FrozenOp::Reject

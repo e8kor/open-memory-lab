@@ -59,13 +59,13 @@ pass `replaces` with its artifact id. Replacing a held version raises `submissio
 |---|---|
 | `write` | Saves a memory. With `replaces`, supersedes one; with `retirement`, retires it. |
 | `read` | With `artifact_id`, fetches. With `query`, recalls. With neither, lists the key's own rows. |
-| `workarea` | Reads one workarea; omitted, the key's default. |
+| `workspace` | Reads one workspace; omitted, the key's default. |
 | `events` | Tails the journal from `after_seq`. |
 | `review_next` (`reviewNext`) | Serves one held memory to a reviewer key. |
-| `approve`, `reject` | Record a verdict. Pass the `serve_id`, or none for the one item the key has claimed. |
+| `approve`, `reject` | Record a verdict. Pass the `serve_id`, or none for the one item the key has taken. |
 
 `write` takes the same fields as `oml_write`, and `read` the same as `oml_read`. Administration
-(bootstrap, workareas, keys) stays in the `oml` CLI. The SDK adds no second administration surface.
+(bootstrap, workspaces, keys) stays in the `oml` CLI. The SDK adds no second administration surface.
 
 ## What the wrapper does
 

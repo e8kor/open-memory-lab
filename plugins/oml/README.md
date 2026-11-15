@@ -1,7 +1,7 @@
 # The `oml` agent plugin
 
 This plugin connects Claude Code to an Open Memory Lab server over MCP. It adds three
-tools, `oml_write`, `oml_read` and `oml_workarea`, a skill that explains when to use
+tools, `oml_write`, `oml_read` and `oml_workspace`, a skill that explains when to use
 them, and a read-only subagent that searches. Every write is held until a
 different identity approves it.
 That is the point of the server, and it means a stored fact is not shared the moment
@@ -103,11 +103,11 @@ from whichever was added, and only one is held at a time. See
 
 The plugin registers one MCP connection, `oml`, and every tool runs on the one key behind
 it. Issue that key with the writer role, a writer grant and a reader grant on the agent's
-workarea, and that workarea as its default. A key without the reader grant still writes,
+workspace, and that workspace as its default. A key without the reader grant still writes,
 but recall through `oml_read` refuses it with `access.not_found`.
 
-Every tool argument that takes a workarea is `workarea`, and takes its name, such as
-`metals-crew`, or its id. A workarea's name is unique in the tenant and never changes. A name
+Every tool argument that takes a workspace is `workspace`, and takes its name, such as
+`metals-crew`, or its id. A workspace's name is unique in the tenant and never changes. A name
 the key cannot see is refused exactly as its id would be, with `access.not_found`, and a path
 such as `universe.procurement.metals-crew` is not a name and is refused.
 
@@ -115,13 +115,13 @@ such as `universe.procurement.metals-crew` is not a name and is refused.
 
 Every write is held until a reviewer who did not write it approves it. Until then only its author
 reads it: the agent finds it with `oml_read` and `include_unreviewed: true`, and nobody else finds
-it at all. Once it is approved, every key that reads the workarea finds it.
+it at all. Once it is approved, every key that reads the workspace finds it.
 
 ## The loop
 
 On that one key the agent:
 
-1. checks what it may do in its workarea with `oml_workarea`;
+1. checks what it may do in its workspace with `oml_workspace`;
 2. recalls before it acts with `oml_read` and a `query`, reading the `steering` rows first;
 3. writes with `oml_write`, adding `derives_from` for a conclusion drawn from memories it
    holds, and gets `state: "held"` back; the server derives the `claim_key`;
@@ -130,7 +130,7 @@ On that one key the agent:
    `include_unreviewed: true` with the `query`; no other key reads or recalls them before
    approval;
 5. learns whether a different identity approved them by listing its own work with `state`,
-   after which every key that reads the workarea recalls them;
+   after which every key that reads the workspace recalls them;
 6. revises or retires a memory with `oml_write`, `replaces` and the `expected_version` it read,
    which is held and approved like any write while recall keeps serving the version it
    replaces.
@@ -144,9 +144,9 @@ Give each agent its own key. Attribution, and the rule that a reviewer never rev
 their own work, both depend on it. To run a server, see the
 [self-hosting guide](../../docs/start/run-your-own.md).
 
-`oml keys issue-agent <key-name> --principal <principal> --workarea <workarea>` issues an
+`oml keys issue-agent <key-name> --principal <principal> --workspace <workspace>` issues an
 agent's key in one call: a writer key named `<key-name>`, with a writer and a reader grant on the
-workarea, given by its name or id, which is also its default. With `--out <path>` the value goes
+workspace, given by its name or id, which is also its default. With `--out <path>` the value goes
 to a new owner-only file, the file the shell path under "Install" reads, and the CLI prints
 that path's `oml setup claude-code --key-file` line and its `jq | claude plugin configure`
 line, filled in; the `oml-admin` plugin
@@ -180,7 +180,7 @@ sends two requests with the agent's key, both to that one server: `GET
 /v1/memories?own=true&limit=10`, the key's ten newest submissions, and `POST
 /v1/memories/recall`, whose query is the name of the working directory, split into words
 (`open memory lab` for `~/src/open-memory-lab`, never the rest of the path), and which answers
-the workarea's steering and at most 800 budget tokens of matching memories. It adds what comes
+the workspace's steering and at most 800 budget tokens of matching memories. It adds what comes
 back to the session as stored data to check. After a compaction it also asks Claude to record the
 summary's durable facts with `oml_write`. The hook reads its server and key from the plugin's two
 settings, the ones the tools use, `url` at its default when only `api_key` is set; with neither
@@ -199,7 +199,7 @@ two read tools to `permissions.allow` in the settings:
   "permissions": {
     "allow": [
       "mcp__plugin_oml_oml__oml_read",
-      "mcp__plugin_oml_oml__oml_workarea"
+      "mcp__plugin_oml_oml__oml_workspace"
     ]
   }
 }
@@ -209,7 +209,7 @@ The broader rule, `mcp__plugin_oml_oml`, allows every tool of the plugin, the wr
 costs the user the sight of it: Claude then calls `oml_write`, which can propose retiring a claim,
 without showing the call, so whatever the session
 chooses to record leaves for the server unseen. What it chooses is shaped by the stored text the
-hook adds at session start, which other writers in the workarea can influence. Every write is
+hook adds at session start, which other writers in the workspace can influence. Every write is
 still held until a different identity reviews it, so nothing it records is shared before then.
 
 ## Recall after a failed command (opt-in)
@@ -233,7 +233,7 @@ the SessionEnd hook deletes it. See the
 
 Run `oml chat init` once with the user's own key, not an agent's: it opens `chat` under the user
 root, the one place agents write what the user says, and prints its id. Put that id in the
-plugin's `chat_workarea` setting, or `OML_CHAT_WORKAREA`, and set `OML_CHAT_CAPTURE=1`. Every
+plugin's `chat_workspace` setting, or `OML_CHAT_WORKSPACE`, and set `OML_CHAT_CAPTURE=1`. Every
 fifth turn (`OML_CHAT_CAPTURE_EVERY`), and at once after a compaction, the Stop hook asks Claude
 to use the `oml-chat-capture` skill: Claude itself picks out the preferences, decisions and
 corrections those turns settled and writes each as one held memory, with the turn it came from.
@@ -247,12 +247,12 @@ between two captures are not kept. `OML_CHAT_EXCERPT=1` lets Claude quote up to 
 the user's words under a fact.
 
 Set `OML_TURN_RECALL=1` and the UserPromptSubmit hook searches with up to eight words of each
-prompt, in the chat workarea and the key's default workarea, and adds at most six memories,
+prompt, in the chat workspace and the key's default workspace, and adds at most six memories,
 each marked `[unreviewed]` when no one has reviewed it yet. It waits at most
 `OML_TURN_RECALL_BUDGET_MS` (300 ms by default, at most 1,000) and adds nothing when the server is
 slower; after three slow answers it stops for the session. The cost is that the prompt's words
 go to the server on every turn, and a short secret typed as plain words, such as a password, is
-not recognised as one and goes with them. Nothing the user or Claude writes leaves the chat workarea until it is
+not recognised as one and goes with them. Nothing the user or Claude writes leaves the chat workspace until it is
 reviewed.
 
 ## Guardrails
@@ -261,7 +261,7 @@ reviewed.
 
 When the `oml` CLI is on the `PATH`, the plugin also runs `oml hook guardrails` at every session
 start, after a compaction and when Claude starts a subagent. It loads the reviewed rules in force
-for the key's workarea, and for the workareas above it when the key's guardrail scope is
+for the key's workspace, and for the workspaces above it when the key's guardrail scope is
 `ancestors`, which an admin sets when issuing the key. Claude sees them as instructions, each with
 where it was set and how many reviewers approved it. At session start it also writes the rules
 that carry a check to a file only its owner can read, under `~/.local/state/oml/guardrails`, and the
@@ -280,7 +280,7 @@ run. See the
 The plugin adds one subagent, `oml:librarian`, for "what does OML hold about X". Claude delegates
 to it, or the user asks for it with `@agent-oml:librarian`. One query that finds nothing proves
 little; the librarian runs up to eight, the subject's own words and then their variants
-(synonyms, abbreviations, the most distinctive word alone), and returns each finding with its `artifact_id`, `claim_key`, workarea and time,
+(synonyms, abbreviations, the most distinctive word alone), and returns each finding with its `artifact_id`, `claim_key`, workspace and time,
 under the same data line the hooks use, with the queries it ran. Its only tool is `oml_read`: it
 cannot call `oml_write`, edit a file or run a command. It runs on Haiku, so the searching costs
 less than on the main conversation's model and its raw results stay out of that conversation's
@@ -339,7 +339,7 @@ tool: an agent learns what became of its writes with `oml_read` and `state`, and
 *Eight tools since v0.2.0; three task-shaped tools since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 [docs/api/mcp-tools.json](../../docs/api/mcp-tools.json) declares exactly the three tools above,
-each with its MCP annotations: `oml_read` and `oml_workarea` are read-only, and `oml_write` is
+each with its MCP annotations: `oml_read` and `oml_workspace` are read-only, and `oml_write` is
 neither read-only nor destructive, since every write is held and a retirement is a proposal.
 [docs/api/mcp-tools.designed.json](../../docs/api/mcp-tools.designed.json) holds what is designed
 and not served: `oml_relate_propose`, `oml_vocab`, `oml_read`'s lineage mode and `oml_write`'s

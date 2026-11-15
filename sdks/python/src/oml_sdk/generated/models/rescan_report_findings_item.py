@@ -16,7 +16,7 @@ class RescanReportFindingsItem:
     """
     Attributes:
         artifact_id (str):
-        workarea_id (str):
+        workspace_id (str):
         version (int):
         state (str):
         class_ (str):
@@ -30,7 +30,7 @@ class RescanReportFindingsItem:
     """
 
     artifact_id: str
-    workarea_id: str
+    workspace_id: str
     version: int
     state: str
     class_: str
@@ -43,7 +43,7 @@ class RescanReportFindingsItem:
     def to_dict(self) -> dict[str, Any]:
         artifact_id = self.artifact_id
 
-        workarea_id = self.workarea_id
+        workspace_id = self.workspace_id
 
         version = self.version
 
@@ -70,7 +70,7 @@ class RescanReportFindingsItem:
         field_dict.update(
             {
                 "artifact_id": artifact_id,
-                "workarea_id": workarea_id,
+                "workspace_id": workspace_id,
                 "version": version,
                 "state": state,
                 "class": class_,
@@ -91,7 +91,7 @@ class RescanReportFindingsItem:
         d = dict(src_dict)
         artifact_id = d.pop("artifact_id")
 
-        workarea_id = d.pop("workarea_id")
+        workspace_id = d.pop("workspace_id")
 
         version = d.pop("version")
 
@@ -118,7 +118,7 @@ class RescanReportFindingsItem:
 
         rescan_report_findings_item = cls(
             artifact_id=artifact_id,
-            workarea_id=workarea_id,
+            workspace_id=workspace_id,
             version=version,
             state=state,
             class_=class_,

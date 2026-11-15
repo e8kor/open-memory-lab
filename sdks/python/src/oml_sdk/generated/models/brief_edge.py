@@ -24,7 +24,7 @@ class BriefEdge:
         kind (Literal['brief']):
         edge_id (str):
         from_artifact_id (str):
-        to_workarea_id (str):
+        to_workspace_id (str):
         label (Literal['brief']):
         state (BriefEdgeState):
         proposer_key_id (str):
@@ -34,7 +34,7 @@ class BriefEdge:
     kind: Literal["brief"]
     edge_id: str
     from_artifact_id: str
-    to_workarea_id: str
+    to_workspace_id: str
     label: Literal["brief"]
     state: BriefEdgeState
     proposer_key_id: str
@@ -48,7 +48,7 @@ class BriefEdge:
 
         from_artifact_id = self.from_artifact_id
 
-        to_workarea_id = self.to_workarea_id
+        to_workspace_id = self.to_workspace_id
 
         label = self.label
 
@@ -66,7 +66,7 @@ class BriefEdge:
                 "kind": kind,
                 "edge_id": edge_id,
                 "from_artifact_id": from_artifact_id,
-                "to_workarea_id": to_workarea_id,
+                "to_workspace_id": to_workspace_id,
                 "label": label,
                 "state": state,
                 "proposer_key_id": proposer_key_id,
@@ -87,7 +87,7 @@ class BriefEdge:
 
         from_artifact_id = d.pop("from_artifact_id")
 
-        to_workarea_id = d.pop("to_workarea_id")
+        to_workspace_id = d.pop("to_workspace_id")
 
         label = cast(Literal["brief"], d.pop("label"))
         if label != "brief":
@@ -108,7 +108,7 @@ class BriefEdge:
             kind=kind,
             edge_id=edge_id,
             from_artifact_id=from_artifact_id,
-            to_workarea_id=to_workarea_id,
+            to_workspace_id=to_workspace_id,
             label=label,
             state=state,
             proposer_key_id=proposer_key_id,

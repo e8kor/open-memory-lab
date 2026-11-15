@@ -15,7 +15,7 @@ T = TypeVar("T", bound="MemorySummaryReplacesType0")
 class MemorySummaryReplacesType0:
     """For a supersession, the version it replaces; null for a version 1. It obeys the same readability test as
     derives_from on every read, so it is also null when the caller cannot read the replaced version — after an admin
-    moved that version into another workarea or back into held, say (ADR-0025 d3).
+    moved that version into another workspace or back into held, say (ADR-0025 d3).
 
         Attributes:
             artifact_id (str | Unset):

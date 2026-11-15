@@ -38,23 +38,23 @@ class Memory:
             in a simulation's audience an overlay tip that shadows the default tip, which then reads tip false; for every
             other key the default tip (docs/architecture/audit-and-lineage.md). A superseded version is state promoted, tip
             false.
-        workarea_id (None | str): Null when the calling key holds no role on the node (naming a node,
+        workspace_id (None | str): Null when the calling key holds no role on the node (naming a node,
             docs/architecture/roles-and-keys.md, Own) — possible only on an own row an admin moved there (ADR-0025 d3).
-        workarea_path (None | str): Derived at read time; grants bind to node ids. Null wherever workarea_id is.
+        workspace_path (None | str): Derived at read time; grants bind to node ids. Null wherever workspace_id is.
         kind (MemorySummaryKind):
         state (MemorySummaryState):
         unreviewed (bool): True exactly when the served version is held: the caller's own held version, or, inside a
-            workarea a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4).
+            workspace a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4).
         tokens (int): Budget tokens of the body (counter oml-tc/1): ceil(UTF-8 bytes of the NFC body / 4); not any
             model's count (docs/architecture/retrieval.md, Token budgets).
         retirement (bool): True on a retirement version; a claim whose served tip is one is a retired claim, which
             recall does not serve. Default: False.
         replaces (MemorySummaryReplacesType0 | None): For a supersession, the version it replaces; null for a version 1.
             It obeys the same readability test as derives_from on every read, so it is also null when the caller cannot read
-            the replaced version — after an admin moved that version into another workarea or back into held, say (ADR-0025
+            the replaced version — after an admin moved that version into another workspace or back into held, say (ADR-0025
             d3).
         held_expires_at (datetime.datetime | None): For a held row, when held-item expiry dead-letters it under the
-            workarea's review policy; null on every other row, and on every row while held-item expiry is unbuilt (ADR-0025
+            workspace's review policy; null on every other row, and on every row while held-item expiry is unbuilt (ADR-0025
             d13).
         created_at (datetime.datetime):
         promoted_at (datetime.datetime | None):
@@ -66,13 +66,13 @@ class Memory:
         severity (MemorySummarySeverity | Unset): On kind guardrail alone, except a retirement version (ADR-0037 d2).
         rule (Any | Unset): On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8).
         load_warning (str | Unset): On a held guardrail alone: every reader of it is told that every key reading its
-            workarea will load the rule once it binds (ADR-0037 d10).
+            workspace will load the rule once it binds (ADR-0037 d10).
         scan_findings (list[ScanFinding] | Unset): Every finding stored on the version, in the order recorded, on the
             review serve, the held listing and the named read alone; absent elsewhere, so an empty list means the scan found
             nothing (ADR-0074 d17, d23).
         principal (None | str | Unset): The authoring principal; null on a version in universe served to a key outside
-            its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its
-            source (ADR-0044 d9).
+            its authoring key set, which is served with derives_from empty and workspace_path universe, so no field names
+            its source (ADR-0044 d9).
         author_key_id (None | str | Unset): The authoring key's id; null wherever principal is (ADR-0044 d9). The web
             console names the kind of its person's own keys by it and narrows a search to one of them (ADR-0070 d5). Since
             v0.7.0.
@@ -82,7 +82,7 @@ class Memory:
         provenance (MemorySummaryProvenance | Unset):
         simulation_id (None | str | Unset):
         self_signed (bool | Unset): Marked rows under the bounded development exception; never promote beyond their
-            workarea.
+            workspace.
         plaintext_digest (str | Unset): SHA-256 of plaintext unless a field says ciphertext.
         derives_from (list[str] | Unset): On get, recall and every listing, only the ancestors the caller can read — its
             own rows in any state, promoted rows within its reader effective access (ADR-0025 d3); the lineage read shows
@@ -118,8 +118,8 @@ class Memory:
     claim_key: str
     version: int
     tip: bool
-    workarea_id: None | str
-    workarea_path: None | str
+    workspace_id: None | str
+    workspace_path: None | str
     kind: MemorySummaryKind
     state: MemorySummaryState
     unreviewed: bool
@@ -172,11 +172,11 @@ class Memory:
 
         tip = self.tip
 
-        workarea_id: None | str
-        workarea_id = self.workarea_id
+        workspace_id: None | str
+        workspace_id = self.workspace_id
 
-        workarea_path: None | str
-        workarea_path = self.workarea_path
+        workspace_path: None | str
+        workspace_path = self.workspace_path
 
         kind = self.kind.value
 
@@ -342,8 +342,8 @@ class Memory:
                 "claim_key": claim_key,
                 "version": version,
                 "tip": tip,
-                "workarea_id": workarea_id,
-                "workarea_path": workarea_path,
+                "workspace_id": workspace_id,
+                "workspace_path": workspace_path,
                 "kind": kind,
                 "state": state,
                 "unreviewed": unreviewed,
@@ -426,19 +426,19 @@ class Memory:
 
         tip = d.pop("tip")
 
-        def _parse_workarea_id(data: object) -> None | str:
+        def _parse_workspace_id(data: object) -> None | str:
             if data is None:
                 return data
             return cast(None | str, data)
 
-        workarea_id = _parse_workarea_id(d.pop("workarea_id"))
+        workspace_id = _parse_workspace_id(d.pop("workspace_id"))
 
-        def _parse_workarea_path(data: object) -> None | str:
+        def _parse_workspace_path(data: object) -> None | str:
             if data is None:
                 return data
             return cast(None | str, data)
 
-        workarea_path = _parse_workarea_path(d.pop("workarea_path"))
+        workspace_path = _parse_workspace_path(d.pop("workspace_path"))
 
         kind = MemorySummaryKind(d.pop("kind"))
 
@@ -711,8 +711,8 @@ class Memory:
             claim_key=claim_key,
             version=version,
             tip=tip,
-            workarea_id=workarea_id,
-            workarea_path=workarea_path,
+            workspace_id=workspace_id,
+            workspace_path=workspace_path,
             kind=kind,
             state=state,
             unreviewed=unreviewed,

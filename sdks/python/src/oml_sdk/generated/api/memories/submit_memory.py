@@ -98,25 +98,26 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | SubmitAccepted]:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
-     Requires: writer effective access on the resolved workarea; every derives_from ancestor must be
+     Requires: writer effective access on the resolved workspace; every derives_from ancestor must be
     readable by the key — promoted within its reader effective access, or its own row in any state —
     else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
-    attribution, not a verb of its own. The target workarea is the body's workarea, by id or name,
-    honoured only within the key's grants, else the key's default_workarea; request.workarea_unresolved
-    with neither, and an X-OML-Workarea header is request.validation naming /workarea in
-    details.renamed_to (ADR-0039 d7). A workarea in a user's root takes a new memory from that user's
-    keys alone: from any other key that reads the workarea it is 409 submission.user_root_refused,
-    answered in place of access.grant_refused, and a key that reads nothing of it gets 404
-    access.not_found (ADR-0044 d16). Journals submission.remember or submission.learn; verb learn with
-    an empty or omitted derives_from is refused (submission.lineage_required).
+    attribution, not a verb of its own. The target workspace is the body's workspace, by id or name,
+    honoured only within the key's grants, else the key's default_workspace;
+    request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming
+    /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new memory from
+    that user's keys alone: from any other key that reads the workspace it is 409
+    submission.user_root_refused, answered in place of access.grant_refused, and a key that reads
+    nothing of it gets 404 access.not_found (ADR-0044 d16). Journals submission.remember or
+    submission.learn; verb learn with an empty or omitted derives_from is refused
+    (submission.lineage_required).
 
     Args:
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (SubmitRequest): The target is workarea, else the key's default_workarea; neither
-            present is refused with request.workarea_unresolved (ADR-0039 d4, d7). This body, and its
+        body (SubmitRequest): The target is workspace, else the key's default_workspace; neither
+            present is refused with request.workspace_unresolved (ADR-0039 d4, d7). This body, and its
             nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and
             grant bodies only. The designed attachment, simulation and vocabulary fields are declared
             under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0
@@ -156,25 +157,26 @@ def sync(
 ) -> ErrorEnvelope | SubmitAccepted | None:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
-     Requires: writer effective access on the resolved workarea; every derives_from ancestor must be
+     Requires: writer effective access on the resolved workspace; every derives_from ancestor must be
     readable by the key — promoted within its reader effective access, or its own row in any state —
     else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
-    attribution, not a verb of its own. The target workarea is the body's workarea, by id or name,
-    honoured only within the key's grants, else the key's default_workarea; request.workarea_unresolved
-    with neither, and an X-OML-Workarea header is request.validation naming /workarea in
-    details.renamed_to (ADR-0039 d7). A workarea in a user's root takes a new memory from that user's
-    keys alone: from any other key that reads the workarea it is 409 submission.user_root_refused,
-    answered in place of access.grant_refused, and a key that reads nothing of it gets 404
-    access.not_found (ADR-0044 d16). Journals submission.remember or submission.learn; verb learn with
-    an empty or omitted derives_from is refused (submission.lineage_required).
+    attribution, not a verb of its own. The target workspace is the body's workspace, by id or name,
+    honoured only within the key's grants, else the key's default_workspace;
+    request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming
+    /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new memory from
+    that user's keys alone: from any other key that reads the workspace it is 409
+    submission.user_root_refused, answered in place of access.grant_refused, and a key that reads
+    nothing of it gets 404 access.not_found (ADR-0044 d16). Journals submission.remember or
+    submission.learn; verb learn with an empty or omitted derives_from is refused
+    (submission.lineage_required).
 
     Args:
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (SubmitRequest): The target is workarea, else the key's default_workarea; neither
-            present is refused with request.workarea_unresolved (ADR-0039 d4, d7). This body, and its
+        body (SubmitRequest): The target is workspace, else the key's default_workspace; neither
+            present is refused with request.workspace_unresolved (ADR-0039 d4, d7). This body, and its
             nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and
             grant bodies only. The designed attachment, simulation and vocabulary fields are declared
             under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0
@@ -209,25 +211,26 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | SubmitAccepted]:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
-     Requires: writer effective access on the resolved workarea; every derives_from ancestor must be
+     Requires: writer effective access on the resolved workspace; every derives_from ancestor must be
     readable by the key — promoted within its reader effective access, or its own row in any state —
     else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
-    attribution, not a verb of its own. The target workarea is the body's workarea, by id or name,
-    honoured only within the key's grants, else the key's default_workarea; request.workarea_unresolved
-    with neither, and an X-OML-Workarea header is request.validation naming /workarea in
-    details.renamed_to (ADR-0039 d7). A workarea in a user's root takes a new memory from that user's
-    keys alone: from any other key that reads the workarea it is 409 submission.user_root_refused,
-    answered in place of access.grant_refused, and a key that reads nothing of it gets 404
-    access.not_found (ADR-0044 d16). Journals submission.remember or submission.learn; verb learn with
-    an empty or omitted derives_from is refused (submission.lineage_required).
+    attribution, not a verb of its own. The target workspace is the body's workspace, by id or name,
+    honoured only within the key's grants, else the key's default_workspace;
+    request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming
+    /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new memory from
+    that user's keys alone: from any other key that reads the workspace it is 409
+    submission.user_root_refused, answered in place of access.grant_refused, and a key that reads
+    nothing of it gets 404 access.not_found (ADR-0044 d16). Journals submission.remember or
+    submission.learn; verb learn with an empty or omitted derives_from is refused
+    (submission.lineage_required).
 
     Args:
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (SubmitRequest): The target is workarea, else the key's default_workarea; neither
-            present is refused with request.workarea_unresolved (ADR-0039 d4, d7). This body, and its
+        body (SubmitRequest): The target is workspace, else the key's default_workspace; neither
+            present is refused with request.workspace_unresolved (ADR-0039 d4, d7). This body, and its
             nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and
             grant bodies only. The designed attachment, simulation and vocabulary fields are declared
             under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0
@@ -265,25 +268,26 @@ async def asyncio(
 ) -> ErrorEnvelope | SubmitAccepted | None:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
-     Requires: writer effective access on the resolved workarea; every derives_from ancestor must be
+     Requires: writer effective access on the resolved workspace; every derives_from ancestor must be
     readable by the key — promoted within its reader effective access, or its own row in any state —
     else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
-    attribution, not a verb of its own. The target workarea is the body's workarea, by id or name,
-    honoured only within the key's grants, else the key's default_workarea; request.workarea_unresolved
-    with neither, and an X-OML-Workarea header is request.validation naming /workarea in
-    details.renamed_to (ADR-0039 d7). A workarea in a user's root takes a new memory from that user's
-    keys alone: from any other key that reads the workarea it is 409 submission.user_root_refused,
-    answered in place of access.grant_refused, and a key that reads nothing of it gets 404
-    access.not_found (ADR-0044 d16). Journals submission.remember or submission.learn; verb learn with
-    an empty or omitted derives_from is refused (submission.lineage_required).
+    attribution, not a verb of its own. The target workspace is the body's workspace, by id or name,
+    honoured only within the key's grants, else the key's default_workspace;
+    request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming
+    /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new memory from
+    that user's keys alone: from any other key that reads the workspace it is 409
+    submission.user_root_refused, answered in place of access.grant_refused, and a key that reads
+    nothing of it gets 404 access.not_found (ADR-0044 d16). Journals submission.remember or
+    submission.learn; verb learn with an empty or omitted derives_from is refused
+    (submission.lineage_required).
 
     Args:
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (SubmitRequest): The target is workarea, else the key's default_workarea; neither
-            present is refused with request.workarea_unresolved (ADR-0039 d4, d7). This body, and its
+        body (SubmitRequest): The target is workspace, else the key's default_workspace; neither
+            present is refused with request.workspace_unresolved (ADR-0039 d4, d7). This body, and its
             nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and
             grant bodies only. The designed attachment, simulation and vocabulary fields are declared
             under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0

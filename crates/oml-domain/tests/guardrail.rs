@@ -235,8 +235,8 @@ fn a_journalled_issuance_without_guardrail_scope_folds_as_the_issuance_default()
         Some(GuardrailScope::Ancestors)
     );
     assert_eq!(
-        GuardrailScope::of_issuance(Some(&json!("workarea"))),
-        Some(GuardrailScope::Workarea)
+        GuardrailScope::of_issuance(Some(&json!("workspace"))),
+        Some(GuardrailScope::Workspace)
     );
     assert_eq!(
         GuardrailScope::of_issuance(Some(&json!("ancestors"))),
@@ -244,9 +244,9 @@ fn a_journalled_issuance_without_guardrail_scope_folds_as_the_issuance_default()
     );
     for refused in [
         json!("off"),
-        json!("Workarea"),
+        json!("Workspace"),
         json!(1),
-        json!(["workarea"]),
+        json!(["workspace"]),
     ] {
         assert_eq!(
             GuardrailScope::of_issuance(Some(&refused)),

@@ -34,7 +34,7 @@ dashboard and the stage roadmap).
 **Recall today matches every word, exactly.** A recall runs one statement, `RECALL_FTS` in
 `crates/adapters/oml-pg/src/lib.rs`: `to_tsvector('simple', m.claim) @@ plainto_tsquery('simple',
 query)`, ranked by `ts_rank(…, 0)`, ties broken by id, cut at `k`, over the promoted served tips of
-the readable workareas; the caller's own held rows come from a second statement with the same
+the readable workspaces; the caller's own held rows come from a second statement with the same
 score ([retrieval](../architecture/retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked)).
 Four properties follow. `plainto_tsquery` joins the words with AND, so one word the memory lacks
 removes it. `simple` stems nothing and drops no stop word, so "what" and "deployment" are required
@@ -71,7 +71,7 @@ memory in the top five:
 The report's bootstrap intervals for success@5 are 0.80–0.92 for `english` any word, 0.88–0.98
 with trigrams, 0.87–0.96 for BM25 and 0.93–0.99 for hybrid. With 11 queries a category, one query
 moves a category by 0.09, and the report reads per-category differences under about 0.2 as noise.
-One model wrote the corpus, the queries and the labels; the set holds one workarea, one kind, no
+One model wrote the corpus, the queries and the labels; the set holds one workspace, one kind, no
 held rows, no supersession, no non-English text and no unanswerable query, so false positives are
 unmeasured. The report names three more findings this record takes: no method finds "the latest"
 of two facts (q100 ranks the superseded deploy window first under every method); identifiers fail
@@ -127,7 +127,7 @@ are never ranked" ([ADR-0001](ADR-0001-the-constitution.md) d3). Decided, not bu
     | **S1** any word | OR on today's index; `match: all` with a flagged fallback; the test store agrees | question, negation, temporal, long | 0.17 → 0.73, measured | one statement, no reindex | ≥ 0.70 overall, zero results ≤ 0.05 |
     | **S2** tokens and rarity | identifier splitting; `simple` and `english` vectors; BM25-class weights over the readable rows | inflection, question, long, multihop, identifier | 0.73 → 0.86–0.92, between the measured `english` OR and BM25 | one migration, one reindex | ≥ 0.86, success@1 ≥ 0.67 |
     | **S3** typos and fragments | `pg_trgm` fused by reciprocal rank; did-you-mean | partial, typo, identifier | 0.86 → 0.93, measured on `english` OR | two trusted extensions, a trigram index | ≥ 0.92; partial and typo ≥ 0.91 |
-    | **S4** structure | filters inside the scan; time windows; supersession for "latest" | temporal; filters (eval v2) | unmeasured: version 1 has one workarea and one kind | indexed columns, parameters | eval v2's filter and supersession queries; no under-return |
+    | **S4** structure | filters inside the scan; time windows; supersession for "latest" | temporal; filters (eval v2) | unmeasured: version 1 has one workspace and one kind | indexed columns, parameters | eval v2's filter and supersession queries; no under-return |
     | **S5** keywords at write | an author's index terms, reviewed with the text | paraphrase, partial | unmeasured; LongMemEval +0.049 recall@5 for BM25 | one field, one weighted vector | paraphrase rises, nothing falls |
     | **S6** reranker | an off-the-shelf cross-encoder over the top 50, opt-in | success@1, paraphrase | 0.92 → 0.94, success@1 0.79 → 0.88, measured in scratch | a model in the lead; 33–176 ms median | inside the latency budget, else opt-in |
     | **S7** meaning | embeddings fused with the keyword lists | paraphrase | 0.93 → 0.97, measured offline | an indexer, a vector index, held embeddings, erasure rows | a paraphrase gap left after S1–S6 |
@@ -168,7 +168,7 @@ are never ranked" ([ADR-0001](ADR-0001-the-constitution.md) d3). Decided, not bu
       [retrieval](../architecture/retrieval.md#text-handling) gave for it holds: a non-English word
       still matches exactly, and English words also match their stems (the eval: 0.73 → 0.86;
       inflection 0.73 → 0.91; multihop 0.46 → 0.91). `unaccent` folds accents in both. A
-      per-workarea language stays #155.
+      per-workspace language stays #155.
     - **Rarity, over the readable rows only.** The score is BM25-class: for each query term, its
       inverse document frequency times a saturated, length-normalised term frequency, with k1 1.2
       and b 0.75, the textbook constants, unmeasured on OML. The document frequencies, the row
@@ -196,7 +196,7 @@ are never ranked" ([ADR-0001](ADR-0001-the-constitution.md) d3). Decided, not bu
 
 - **d5 — S4: filters run inside the scan, before ranking, and time is structure, not search.**
   `oml_read` in recall mode and `GET /v1/memories` take: `kinds` (as today; a kind kept out of the
-  default set, such as `code` from ADR-0047 d2, is served only when named); `workareas`, up to four
+  default set, such as `code` from ADR-0047 d2, is served only when named); `workspaces`, up to four
   scopes read as one, each under its own access and ADR-0030's boundary; `since` and `until` on a
   version's creation time, as the listing has them; `anchor_repo`, `anchor_path_prefix` and
   `anchor_symbol` (ADR-0047 d3); and `claim_key_prefix`. Each is a predicate in the candidate
@@ -207,7 +207,7 @@ are never ranked" ([ADR-0001](ADR-0001-the-constitution.md) d3). Decided, not bu
   supersession, which already keeps a replaced version out of the hits; the plugin's skill asks a
   writer to replace a changed fact rather than add a second, and no ranking term reads
   `promoted_at`, which would let review's timing reorder results. The gain is unmeasured: version
-  2 of the eval adds filter, multi-workarea and supersession queries (d12).
+  2 of the eval adds filter, multi-workspace and supersession queries (d12).
 
 - **d6 — S5: an author may give a memory up to eight index keywords, reviewed with its text.**
   `oml_write` takes `keywords`, words or short phrases indexed at a lower weight than the text,
@@ -291,14 +291,14 @@ are never ranked" ([ADR-0001](ADR-0001-the-constitution.md) d3). Decided, not bu
   `search: "keyword"` does not reproduce `pg_simple_and` exactly, when a served stage falls below
   its gate in d1, or when a category falls by more than one query against the committed results.
   Version 2 of the data adds what version 1 lacks: unanswerable queries, to measure the false
-  positives an any-word recall brings (#105); filter, multi-workarea, held and supersession
+  positives an any-word recall brings (#105); filter, multi-workspace, held and supersession
   queries for S4; memories with keywords for S5; at least 30 paraphrase queries for S7's gate; S6
   as a committed method; and labels pooled from every method's top 10, graded by someone who did
   not write the memories. Real traffic: the request log keeps no query text (ADR-0042 d8's
   plaintext rule), so no real-traffic set can be drawn from it, and this record does not change
   that. Two consented routes remain: a person on the user page marks a search that missed and
   names the memory it should have found, which writes the query and the label as a held memory in
-  an eval workarea, reviewed like any claim; and the maintainer exports recall queries from their
+  an eval workspace, reviewed like any claim; and the maintainer exports recall queries from their
   own sessions' transcripts on their own machine. The designed read log, not scheduled, would add
   text-free signals per query digest: whether a recall served nothing, and whether a served id was
   fetched next ([read log](../architecture/retrieval.md#the-read-log)).
@@ -307,7 +307,7 @@ are never ranked" ([ADR-0001](ADR-0001-the-constitution.md) d3). Decided, not bu
   every stage ranks only candidates the key may read; S2's rarity statistics and d9's counts are
   computed over those rows alone, S6's model sees only them, and S7's index is filtered inside the
   scan. Held rows: a held row is a candidate only for its author with `include_unreviewed`, or
-  inside an ADR-0030 in-progress workarea, scored by the same function as a promoted row, through
+  inside an ADR-0030 in-progress workspace, scored by the same function as a promoted row, through
   held-text containment extended to the stemmed, trigram and (S7) embedding rows. Review never
   reorders: no ranking term reads a verdict, a reviewer or `promoted_at`, and S5's keywords are
   authored and reviewed content, never added by a verdict. Steering: first, unranked, outside
@@ -345,7 +345,7 @@ are never ranked" ([ADR-0001](ADR-0001-the-constitution.md) d3). Decided, not bu
 |---|---|---|
 | Today 83% of the eval's queries return nothing | solved by S1 | 0.83 → 0.05 zero results, on the index that exists (d2). |
 | Any-word recall serves rows that share one common word | argument, bounded | S2's rarity weights push them down, `matched` shows "1 of 2", and eval v2's unanswerable queries measure it (#105). |
-| Stemming corrupts non-English text | argument, answered | `simple` stays beside `english`, so the exact form always matches (d3); a per-workarea language stays #155. |
+| Stemming corrupts non-English text | argument, answered | `simple` stays beside `english`, so the exact form always matches (d3); a per-workspace language stays #155. |
 | Rarity statistics leak rows a key cannot read | solved by design | Computed per query over the readable rows only (d3), at a cost #102 measures. |
 | A trigram index costs writes and storage | argument | Unmeasured at scale (#102); +0.07 success@5 on the eval is the case for paying it. |
 | Hooks gated on AND would fire on loose matches | solved | They send `search: "keyword"` (d10). |
@@ -392,7 +392,7 @@ three.
 | 5 | The field's name? | a. `search`; b. `mode`, as the first draft had it | a: `mode` already names get, recall and listing in every answer |
 | 6 | S6 before S7? | a. yes; b. S7 first; c. neither | a: the same paraphrase number on this set, no stored derived data |
 | 7 | When does `text` become the default? | a. when its served form passes the eval in CI; b. after #150's 100,000-row measurement too | a for self-hosted deployments, b for the public server |
-| 8 | Does `workareas` (several scopes) belong here? | a. yes, up to four; b. no | a: one budget across a branch and its repository (ADR-0047) |
+| 8 | Does `workspaces` (several scopes) belong here? | a. yes, up to four; b. no | a: one budget across a branch and its repository (ADR-0047) |
 | 9 | Is a consented query sample worth a page feature? | a. the user page's "this missed" form; b. the maintainer's own transcripts only; c. neither | a and b |
 | 10 | Is a provider plugin allowed on the public server (S7)? | a. no; b. yes, disclosed | a: the public server's users chose no provider |
 

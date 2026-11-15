@@ -24,9 +24,9 @@ class RecallResponseHitsItem:
         memory (Memory):
         score (float): The pipeline's score, comparable within one answer only; ties break by artifact_id ascending.
         matched (RecallMatched): Why a hit matched (ADR-0049 d6).
-        via (RecallResponseHitsItemVia | Unset): Under sources wide or a list only: scope when the hit's workarea is the
-            recall's scope or under it, federated when it is another workarea the key reads; memory.workarea_path names it
-            (ADR-0072 d8).
+        via (RecallResponseHitsItemVia | Unset): Under sources wide or a list only: scope when the hit's workspace is
+            the recall's scope or under it, federated when it is another workspace the key reads; memory.workspace_path
+            names it (ADR-0072 d8).
     """
 
     memory: Memory

@@ -29,7 +29,7 @@ class SupersedeRequest:
             body (str): Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body;
                 larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired.
             expected_version (int): The claim's latest version the caller can read, as it last read it: its promoted
-                versions where it reads the workarea and its own keys' versions; never another author's held version. Any other
+                versions where it reads the workspace and its own keys' versions; never another author's held version. Any other
                 is 409 submission.version_conflict, details.current_version (ADR-0057 d19).
             anchor (Anchor | Unset): The origin the author declares (ADR-0057 d1-d3, d21): signed in the submission event,
                 immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-
@@ -40,11 +40,11 @@ class SupersedeRequest:
                 event, immutable per version, never inherited by a successor. Omitted on a write, it is recorded manual. chat
                 requires a chat anchor and a chat anchor requires chat; either mismatch is request.validation naming
                 /origin/kind.
-            workarea (str | Unset): A workarea, by its node id, its name or its qualified name. Resolved server-side before
-                any check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a
-                bare name in its own user root's namespace, plus universe and its root's name; every other key in the shared
-                namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
-                is neither, and is refused (request.validation).
+            workspace (str | Unset): A workspace, by its node id, its name or its qualified name. Resolved server-side
+                before any check that reads state; an unknown name answers exactly what an unknown id answers. A user key
+                resolves a bare name in its own user root's namespace, plus universe and its root's name; every other key in the
+                shared namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is
+                universe, is neither, and is refused (request.validation).
             retirement (bool | Unset): true proposes retiring the claim, and body states why. Refused with
                 request.validation when the target's kind is term (terms deprecate), or when a kind is sent that differs from
                 the target's. Default: False.
@@ -85,7 +85,7 @@ class SupersedeRequest:
     expected_version: int
     anchor: Anchor | Unset = UNSET
     origin: Origin | Unset = UNSET
-    workarea: str | Unset = UNSET
+    workspace: str | Unset = UNSET
     retirement: bool | Unset = False
     kind: SupersedeRequestKind | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
@@ -111,11 +111,11 @@ class SupersedeRequest:
         if not isinstance(self.origin, Unset):
             origin = self.origin.to_dict()
 
-        workarea: str | Unset
-        if isinstance(self.workarea, Unset):
-            workarea = UNSET
+        workspace: str | Unset
+        if isinstance(self.workspace, Unset):
+            workspace = UNSET
         else:
-            workarea = self.workarea
+            workspace = self.workspace
 
         retirement = self.retirement
 
@@ -161,8 +161,8 @@ class SupersedeRequest:
             field_dict["anchor"] = anchor
         if origin is not UNSET:
             field_dict["origin"] = origin
-        if workarea is not UNSET:
-            field_dict["workarea"] = workarea
+        if workspace is not UNSET:
+            field_dict["workspace"] = workspace
         if retirement is not UNSET:
             field_dict["retirement"] = retirement
         if kind is not UNSET:
@@ -213,12 +213,12 @@ class SupersedeRequest:
         else:
             origin = Origin.from_dict(_origin)
 
-        def _parse_workarea(data: object) -> str | Unset:
+        def _parse_workspace(data: object) -> str | Unset:
             if isinstance(data, Unset):
                 return data
             return cast(str | Unset, data)
 
-        workarea = _parse_workarea(d.pop("workarea", UNSET))
+        workspace = _parse_workspace(d.pop("workspace", UNSET))
 
         retirement = d.pop("retirement", UNSET)
 
@@ -267,7 +267,7 @@ class SupersedeRequest:
             expected_version=expected_version,
             anchor=anchor,
             origin=origin,
-            workarea=workarea,
+            workspace=workspace,
             retirement=retirement,
             kind=kind,
             derives_from=derives_from,

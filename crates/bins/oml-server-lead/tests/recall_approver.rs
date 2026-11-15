@@ -166,20 +166,20 @@ async fn issue(router: &Router, admin: &str, name: &str, role: &str, more: Value
     }
 }
 
-fn grants(workarea: &str, roles: &[&str]) -> Value {
+fn grants(workspace: &str, roles: &[&str]) -> Value {
     Value::Array(
         roles
             .iter()
-            .map(|role| json!({ "workarea": workarea, "role": role }))
+            .map(|role| json!({ "workspace": workspace, "role": role }))
             .collect(),
     )
 }
 
-/// Writes one memory as `writer` into `workarea`; it is held.
+/// Writes one memory as `writer` into `workspace`; it is held.
 async fn remember(
     router: &Router,
     writer: &Key,
-    workarea: &str,
+    workspace: &str,
     claim_key: &str,
     text: &str,
 ) -> String {
@@ -190,7 +190,7 @@ async fn remember(
         &writer.value,
         Some(json!({
             "verb": "remember", "claim_key": claim_key, "kind": "memory", "body": text,
-            "workarea": workarea,
+            "workspace": workspace,
         })),
         StatusCode::ACCEPTED,
     )
@@ -314,8 +314,8 @@ async fn reviewed(db: &str, artifact_id: &str) -> Reviewed {
 }
 
 // ---------------------------------------------------------------------------
-// The world: a crew workarea with a crew's reviewer and a person, a user
-// root with a person's own agent and reviewer, `universe`, and a workarea
+// The world: a crew workspace with a crew's reviewer and a person, a user
+// root with a person's own agent and reviewer, `universe`, and a workspace
 // in progress
 // ---------------------------------------------------------------------------
 
@@ -353,36 +353,36 @@ impl World {
         .await;
         assert_eq!(status, StatusCode::CREATED, "{claimed}");
         let admin = claimed["value"].as_str().expect("admin key").to_owned();
-        let root = claimed["root_workarea_id"]
+        let root = claimed["root_workspace_id"]
             .as_str()
             .expect("root")
             .to_owned();
-        let workarea = |parent: String, name: &'static str| {
+        let workspace = |parent: String, name: &'static str| {
             let admin = admin.clone();
             async move {
                 ok(
                     r,
                     "POST",
-                    "/v2/workareas",
+                    "/v2/workspaces",
                     &admin,
                     Some(json!({ "parent": parent, "name": name })),
                     StatusCode::CREATED,
                 )
                 .await["id"]
                     .as_str()
-                    .expect("workarea id")
+                    .expect("workspace id")
                     .to_owned()
             }
         };
-        let crew = workarea(root.clone(), "crew").await;
-        let proj = workarea(crew.clone(), "proj").await;
+        let crew = workspace(root.clone(), "crew").await;
+        let proj = workspace(crew.clone(), "proj").await;
 
         let ann = issue(
             r,
             &admin,
             "ann-writer",
             "writer",
-            json!({ "held_by": "agent", "default_workarea": crew,
+            json!({ "used_by": "agent", "default_workspace": crew,
                     "grants": grants(&root, &["writer", "reader"]) }),
         )
         .await;
@@ -391,7 +391,7 @@ impl World {
             &admin,
             "ray-reader",
             "reader",
-            json!({ "held_by": "agent", "default_workarea": crew,
+            json!({ "used_by": "agent", "default_workspace": crew,
                     "grants": grants(&root, &["reader"]) }),
         )
         .await;
@@ -400,8 +400,8 @@ impl World {
             r,
             &admin,
             "zed-crew-reviewer",
-            "dreamer",
-            json!({ "held_by": "agent", "grants": grants(&crew, &["dreamer", "reader"]) }),
+            "reviewer",
+            json!({ "used_by": "agent", "grants": grants(&crew, &["reviewer", "reader"]) }),
         )
         .await;
         // A person, who also reviews `universe` and puts `proj` in progress.
@@ -409,8 +409,8 @@ impl World {
             r,
             &admin,
             "pat-person-reviewer",
-            "dreamer",
-            json!({ "held_by": "human", "grants": grants(&root, &["dreamer", "reader"]) }),
+            "reviewer",
+            json!({ "used_by": "person", "grants": grants(&root, &["reviewer", "reader"]) }),
         )
         .await;
         // One person's agent and reviewer keys, in that person's own root.
@@ -419,7 +419,7 @@ impl World {
             &admin,
             "eve-agent",
             "writer",
-            json!({ "held_by": "agent", "user": "eve",
+            json!({ "used_by": "agent", "user": "eve",
                     "grants": grants("eve", &["writer", "reader"]) }),
         )
         .await;
@@ -427,9 +427,9 @@ impl World {
             r,
             &admin,
             "eve-own-reviewer",
-            "dreamer",
-            json!({ "held_by": "human", "user": "eve",
-                    "grants": grants("eve", &["dreamer", "reader"]) }),
+            "reviewer",
+            json!({ "used_by": "person", "user": "eve",
+                    "grants": grants("eve", &["reviewer", "reader"]) }),
         )
         .await;
 
@@ -474,7 +474,7 @@ impl World {
         ok(
             r,
             "POST",
-            &format!("/v2/workareas/{proj}/mode"),
+            &format!("/v2/workspaces/{proj}/mode"),
             &pat.value,
             Some(json!({ "mode": "in_progress" })),
             StatusCode::OK,
@@ -505,7 +505,7 @@ impl World {
         })
     }
 
-    /// Every recall the laws read: the crew scope, the workarea in
+    /// Every recall the laws read: the crew scope, the workspace in
     /// progress, the person's own root (which also searches `universe`),
     /// the author's own held rows, and the author's recall from
     /// `universe` down, each with the key that sent it.
@@ -518,7 +518,7 @@ impl World {
                 recall(
                     r,
                     &self.reader,
-                    json!({ "query": query, "workarea": self.crew }),
+                    json!({ "query": query, "workspace": self.crew }),
                 )
                 .await,
             ),
@@ -527,7 +527,7 @@ impl World {
                 recall(
                     r,
                     &self.reader,
-                    json!({ "query": query, "workarea": self.proj }),
+                    json!({ "query": query, "workspace": self.proj }),
                 )
                 .await,
             ),
@@ -540,7 +540,7 @@ impl World {
                 recall(
                     r,
                     &self.ann,
-                    json!({ "query": query, "workarea": self.proj, "include_unreviewed": true }),
+                    json!({ "query": query, "workspace": self.proj, "include_unreviewed": true }),
                 )
                 .await,
             ),
@@ -549,7 +549,7 @@ impl World {
                 recall(
                     r,
                     &self.ann,
-                    json!({ "query": query, "workarea": "universe" }),
+                    json!({ "query": query, "workspace": "universe" }),
                 )
                 .await,
             ),
@@ -571,26 +571,26 @@ async fn a_hit_says_when_it_was_approved_and_whether_a_crew_a_person_or_the_auth
     let answer = recall(
         r,
         &w.reader,
-        json!({ "query": "gantry crane", "workarea": w.crew }),
+        json!({ "query": "gantry crane", "workspace": w.crew }),
     )
     .await;
 
     // A crew's reviewer and a person, each as what it is.
     assert_eq!(
         hit(&answer, &w.by_crew)["approver"],
-        json!({ "held_by": "agent", "same_user": false }),
+        json!({ "used_by": "agent", "same_user": false }),
         "{answer}"
     );
     assert_eq!(
         hit(&answer, &w.by_person)["approver"],
-        json!({ "held_by": "human", "same_user": false }),
+        json!({ "used_by": "person", "same_user": false }),
         "{answer}"
     );
     // A person approving their own agent's write is a self-review.
     let own = recall(r, &w.eve_agent, json!({ "query": "gantry crane" })).await;
     assert_eq!(
         hit(&own, &w.by_self)["approver"],
-        json!({ "held_by": "human", "same_user": true }),
+        json!({ "used_by": "person", "same_user": true }),
         "{own}"
     );
 
@@ -620,13 +620,13 @@ async fn get_and_recall_serve_the_same_approval_over_http_and_over_mcp() {
     let answer = recall(
         r,
         &w.reader,
-        json!({ "query": "gantry crane", "workarea": w.crew }),
+        json!({ "query": "gantry crane", "workspace": w.crew }),
     )
     .await;
     let over_mcp = mcp_read(
         r,
         &w.reader,
-        json!({ "query": "gantry crane", "workarea": w.crew }),
+        json!({ "query": "gantry crane", "workspace": w.crew }),
     )
     .await;
     for id in [&w.by_crew, &w.by_person] {
@@ -731,7 +731,7 @@ async fn no_read_of_a_memory_names_its_reviewer() {
         mcp_read(
             r,
             &w.reader,
-            json!({ "query": "gantry crane", "workarea": w.crew }),
+            json!({ "query": "gantry crane", "workspace": w.crew }),
         )
         .await,
     );
@@ -750,7 +750,7 @@ async fn no_read_of_a_memory_names_its_reviewer() {
     let answer = recall(
         r,
         &w.reader,
-        json!({ "query": "gantry crane", "workarea": w.crew }),
+        json!({ "query": "gantry crane", "workspace": w.crew }),
     )
     .await;
     let approver = hit(&answer, &w.by_crew)["approver"]
@@ -758,7 +758,7 @@ async fn no_read_of_a_memory_names_its_reviewer() {
         .expect("an approver");
     let mut members: Vec<&str> = approver.keys().map(String::as_str).collect();
     members.sort_unstable();
-    assert_eq!(members, ["held_by", "same_user"]);
+    assert_eq!(members, ["same_user", "used_by"]);
     drop_db(&w.rig.db_name).await;
 }
 
@@ -785,7 +785,7 @@ async fn a_universe_hit_carries_no_approval_for_any_key_but_its_authors() {
     let authors = get(r, &w.ann, &w.in_universe).await;
     assert_eq!(
         authors["approver"],
-        json!({ "held_by": "human", "same_user": false }),
+        json!({ "used_by": "person", "same_user": false }),
         "{authors}"
     );
     drop_db(&w.rig.db_name).await;
@@ -797,7 +797,7 @@ async fn an_unreviewed_hit_carries_no_approval_and_gains_one_when_it_is_approved
         return;
     };
     let r = &w.rig.router;
-    let scoped = json!({ "query": "gantry crane", "workarea": w.proj });
+    let scoped = json!({ "query": "gantry crane", "workspace": w.proj });
     let before = recall(r, &w.reader, scoped.clone()).await;
     let memory = hit(&before, &w.unreviewed);
     assert_eq!(memory["unreviewed"], true, "{memory}");
@@ -810,7 +810,7 @@ async fn an_unreviewed_hit_carries_no_approval_and_gains_one_when_it_is_approved
     assert_eq!(memory["unreviewed"], false, "{memory}");
     assert_eq!(
         memory["approver"],
-        json!({ "held_by": "human", "same_user": false }),
+        json!({ "used_by": "person", "same_user": false }),
         "{memory}"
     );
     drop_db(&w.rig.db_name).await;
@@ -842,19 +842,19 @@ async fn a_successor_carries_its_own_approval_and_the_version_it_replaced_keeps_
     let answer = recall(
         r,
         &w.reader,
-        json!({ "query": "gantry crane", "workarea": w.crew }),
+        json!({ "query": "gantry crane", "workspace": w.crew }),
     )
     .await;
     assert_eq!(
         hit(&answer, &successor)["approver"],
-        json!({ "held_by": "human", "same_user": false }),
+        json!({ "used_by": "person", "same_user": false }),
         "{answer}"
     );
     let replaced = get(r, &w.reader, &w.by_crew).await;
     assert_eq!(replaced["tip"], false, "{replaced}");
     assert_eq!(
         replaced["approver"],
-        json!({ "held_by": "agent", "same_user": false }),
+        json!({ "used_by": "agent", "same_user": false }),
         "{replaced}"
     );
     drop_db(&w.rig.db_name).await;
@@ -891,7 +891,7 @@ async fn the_rescan_read_counts_the_promoted_versions_that_carry_no_approval() {
         .expect("superuser connect");
     for id in [&w.by_crew, &w.by_person] {
         sqlx::query(
-            "UPDATE memories SET approver_held_by = NULL, approver_same_user = NULL, \
+            "UPDATE memories SET approver_used_by = NULL, approver_same_user = NULL, \
              approved_at = NULL WHERE id = $1::uuid",
         )
         .bind(id)
@@ -968,7 +968,7 @@ async fn superseding_an_unapproved_version_and_approving_its_successor_brings_th
         .await
         .expect("superuser connect");
     sqlx::query(
-        "UPDATE memories SET approver_held_by = NULL, approver_same_user = NULL, \
+        "UPDATE memories SET approver_used_by = NULL, approver_same_user = NULL, \
          approved_at = NULL WHERE id = $1::uuid",
     )
     .bind(&w.by_crew)
@@ -1014,6 +1014,8 @@ async fn run_the_fill(db: &str) {
         .await
         .expect("owner connect");
     let mut tx = owner.begin().await.expect("begin");
+    // 0047 renamed the columns the fill names (ADR-0091 d6, d15).
+    let fill = fill.replace("held_by", "used_by");
     tx.execute(fill.as_str()).await.expect("the fill runs");
     tx.commit().await.expect("commit");
     owner.close().await.expect("close");
@@ -1026,7 +1028,7 @@ async fn stored_approvals(db: &str) -> Vec<(String, Option<String>)> {
         .expect("superuser connect");
     sqlx::query_as(
         "SELECT id::text, \
-                approver_held_by || ' ' || approver_same_user::text || ' ' || \
+                approver_used_by || ' ' || approver_same_user::text || ' ' || \
                 approved_at::text \
            FROM memories ORDER BY id",
     )
@@ -1089,7 +1091,7 @@ async fn migration_0044_fills_from_the_journal_exactly_what_a_promotion_stores()
         .expect("superuser connect");
     owner
         .execute(
-            "UPDATE memories SET approver_held_by = NULL, approver_same_user = NULL, \
+            "UPDATE memories SET approver_used_by = NULL, approver_same_user = NULL, \
              approved_at = NULL",
         )
         .await
@@ -1152,8 +1154,8 @@ async fn migration_0044_reads_a_promotion_that_names_its_verdict_as_v0_1_0_did()
     let mut conn = PgConnection::connect(&super_url(&w.rig.db_name))
         .await
         .expect("superuser connect");
-    let (held_by, same_user, at): (String, Option<bool>, String) = sqlx::query_as(
-        "SELECT approver_held_by, approver_same_user, \
+    let (used_by, same_user, at): (String, Option<bool>, String) = sqlx::query_as(
+        "SELECT approver_used_by, approver_same_user, \
                 to_char(approved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
            FROM memories WHERE id = $1::uuid",
     )
@@ -1164,8 +1166,8 @@ async fn migration_0044_reads_a_promotion_that_names_its_verdict_as_v0_1_0_did()
     // The crew's reviewer approved it; the appended promotion names the
     // person's verdict, and the row now reads as that one.
     assert_eq!(
-        (held_by.as_str(), same_user, at),
-        ("human", None, persons.verdict_at),
+        (used_by.as_str(), same_user, at),
+        ("person", None, persons.verdict_at),
         "the row holds the verdict the v0.1.0-shaped promotion names"
     );
     drop_db(&w.rig.db_name).await;

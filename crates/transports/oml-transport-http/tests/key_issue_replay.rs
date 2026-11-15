@@ -86,7 +86,7 @@ fn agent(name: &str, connect_code: bool) -> Value {
         "role": "writer",
         "name": name,
         "principal": format!("crew/{name}"),
-        "grants": [{"workarea": "universe", "role": "writer"}],
+        "grants": [{"workspace": "universe", "role": "writer"}],
         "connect_code": connect_code,
     })
 }

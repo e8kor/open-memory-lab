@@ -5,10 +5,10 @@ An adapter's `load(cache, seed, limit)` returns a `Bench`:
 - `docs`: the memories to write, each `Doc(id, text, group)`. One doc is one
   memory, written as kind `memory` under claim_key `bench-<dataset>-<id>`.
 - `queries`: `Query(id, text, group, category)`. A query is asked only of the
-  workarea of its group, so a benchmark built of many separate haystacks
+  workspace of its group, so a benchmark built of many separate haystacks
   (LoCoMo's ten conversations) keeps them apart: each group is its own
-  workarea `bench-<dataset>-<group>`, and a dataset with one haystack has
-  the single group "" and the workarea `bench-<dataset>`.
+  workspace `bench-<dataset>-<group>`, and a dataset with one haystack has
+  the single group "" and the workspace `bench-<dataset>`.
 - `qrels`: `{query_id: {doc_id: grade}}`, grade >= 1 relevant.
 - `success_rel`: the grade a hit needs to count for success@k (1 for most;
   2 for the synthetic set, whose grade 2 means "answers it").
@@ -63,7 +63,7 @@ class Bench:
     notes: list = field(default_factory=list)
 
 
-def workarea(dataset, group):
+def workspace(dataset, group):
     return f"bench-{dataset}" + (f"-{group}" if group else "")
 
 
@@ -101,7 +101,7 @@ class Synthetic:
 class Grown:
     """eval/recall's 200 memories and the grown set's queries (ADR-0075 d8, phase 0a).
 
-    The same corpus as `synthetic`, loaded as its own workarea so the two sets'
+    The same corpus as `synthetic`, loaded as its own workspace so the two sets'
     runs never share a load; the queries and labels are `queries-grown.json`'s.
     """
 
@@ -157,7 +157,7 @@ class Beir:
 
 
 class Scaled:
-    """A BEIR set grown to `copies` times its corpus in one workarea, for latency at scale.
+    """A BEIR set grown to `copies` times its corpus in one workspace, for latency at scale.
 
     Copy 0 is the set as published; copy i (1..copies-1) replaces each word of
     every document with probability 0.1 by a word drawn from the corpus's own
@@ -220,7 +220,7 @@ class Locomo:
     A turn's memory is `[<session date>] <speaker>: <text>`, with a shared
     photo's caption appended as `[shares a photo: <caption>]`: the date is
     what the temporal questions ask about and what a memory written at the
-    time would carry. Each conversation is its own workarea, and each
+    time would carry. Each conversation is its own workspace, and each
     question is asked only of its own conversation. The qrels are the
     question's `evidence` dialogue ids. Category 5 (adversarial: the question
     presumes something the conversation never says) keeps its evidence
@@ -303,7 +303,7 @@ class LongMemEvalTemporal:
     """LongMemEval_s (MIT), its temporal-reasoning questions only.
 
     Each question has its own haystack of about 50 chat sessions; one turn is
-    one memory, `[<session date>] <role>: <content>`, in a workarea of the
+    one memory, `[<session date>] <role>: <content>`, in a workspace of the
     question's own, and the session's date is the turn's valid_from. The
     qrels are the turns the dataset marks `has_answer`; a question with none
     is dropped. The question is asked at its `question_date`, sent as now.
@@ -332,7 +332,7 @@ class LongMemEvalTemporal:
         items = random.Random(seed).sample(items, min(n, len(items)))
         docs, qs, qrels = [], [], {}
         for q in items:
-            # A workarea name is a lowercase RFC 1035 label (ADR-0026 d2).
+            # A workspace name is a lowercase RFC 1035 label (ADR-0026 d2).
             group = re.sub(r"[^a-z0-9]+", "-", q["question_id"].lower()).strip("-")
             rel = {}
             for s_i, (session, stamp) in enumerate(zip(q["haystack_sessions"],

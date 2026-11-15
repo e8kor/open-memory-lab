@@ -27,7 +27,7 @@ class FederationSettings:
         Attributes:
             enabled (bool): Whether recall may search beyond its scope when asked; off by default.
             default_sources (FederationSettingsDefaultSources): What an absent sources reads; never a list.
-            max_sources (int): The most workareas a wide recall searches beside its scope, and the most a list names; 8 by
+            max_sources (int): The most workspaces a wide recall searches beside its scope, and the most a list names; 8 by
                 default.
             wide_keys (list[FederationSettingsWideKeysItem]):
             widen_signal (FederationSettingsWidenSignal): The widen hint's signals on this tenant since the lead started;

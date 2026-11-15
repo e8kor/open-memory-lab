@@ -10,7 +10,7 @@ use oml_app::App;
 use oml_app::domain::access::Covers;
 use oml_app::domain::event_types;
 use oml_app::domain::name::Name;
-use oml_app::domain::{HeldBy, MemoryKind, Role};
+use oml_app::domain::{MemoryKind, Role, UsedBy};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::ports::JournalStore;
 use oml_app::search::{MatchMode, Pipeline, RetrieverKind, SearchConfig};
@@ -59,7 +59,7 @@ struct World {
     clock: FixedClock,
     tenant: Uuid,
     writer: String,
-    dreamer: String,
+    reviewer: String,
     reader: String,
 }
 
@@ -73,8 +73,8 @@ async fn issue(app: &TestApp, admin: &str, role: Role, grants: Vec<GrantRequest>
             role,
             name: name(&format!("time-key-{n}")),
             principal: format!("principal-{n}"),
-            held_by: Some(HeldBy::Agent),
-            default_workarea: None,
+            used_by: Some(UsedBy::Agent),
+            default_workspace: None,
             crew: None,
             grants,
             connect_code: false,
@@ -112,16 +112,16 @@ async fn world() -> World {
         .expect("bootstrap");
     let admin = boot.admin_key.value.clone();
     let crew = app
-        .create_workarea(
+        .create_workspace(
             &admin,
             &name("crew"),
-            Some(boot.root_workarea_id.into()),
+            Some(boot.root_workspace_id.into()),
             None,
         )
         .await
-        .expect("workarea")
-        .workarea
-        .workarea_id;
+        .expect("workspace")
+        .workspace
+        .workspace_id;
     let writer = issue(
         &app,
         &admin,
@@ -129,11 +129,11 @@ async fn world() -> World {
         vec![grant(crew, Role::Writer), grant(crew, Role::Reader)],
     )
     .await;
-    let dreamer = issue(
+    let reviewer = issue(
         &app,
         &admin,
-        Role::Dreamer,
-        vec![grant(crew, Role::Dreamer)],
+        Role::Reviewer,
+        vec![grant(crew, Role::Reviewer)],
     )
     .await;
     let reader = issue(&app, &admin, Role::Reader, vec![grant(crew, Role::Reader)]).await;
@@ -143,7 +143,7 @@ async fn world() -> World {
         clock,
         tenant: boot.tenant_id,
         writer,
-        dreamer,
+        reviewer,
         reader,
     }
 }
@@ -157,7 +157,7 @@ fn submit(idem: &str, body: &str, from: Option<&str>, until: Option<&str>) -> Su
         verb: None,
         kind: MemoryKind::Memory,
         body: body.to_owned(),
-        workarea: None,
+        workspace: None,
         derives_from: Vec::new(),
         severity: None,
         rule: None,
@@ -175,7 +175,7 @@ fn recall(query: &str, pipeline: Pipeline) -> RecallRequest {
         timings: false,
         query: query.to_owned(),
         k: 10,
-        workarea: None,
+        workspace: None,
         kinds: Vec::new(),
         include_text: true,
         include_unreviewed: Some(false),
@@ -209,7 +209,7 @@ impl World {
             .receipt
             .memory_id;
         self.app
-            .post_verdict(&self.dreamer, id, Verdict::Approve, None)
+            .post_verdict(&self.reviewer, id, Verdict::Approve, None)
             .await
             .expect("approve");
         id
@@ -434,12 +434,12 @@ async fn no_ranking_input_reads_promoted_at_or_a_verdict() {
         .receipt
         .memory_id;
     w.app
-        .post_verdict(&w.dreamer, second, Verdict::Approve, None)
+        .post_verdict(&w.reviewer, second, Verdict::Approve, None)
         .await
         .expect("approve");
     w.clock.advance(3_600);
     w.app
-        .post_verdict(&w.dreamer, first, Verdict::Approve, Some("checked twice"))
+        .post_verdict(&w.reviewer, first, Verdict::Approve, Some("checked twice"))
         .await
         .expect("approve");
     for pipeline in PIPELINES {
@@ -487,7 +487,7 @@ async fn valid_time_is_refused_on_steering_and_on_a_retirement() {
         retirement: true,
         derives_from: Vec::new(),
         reason: None,
-        workarea: None,
+        workspace: None,
         refuse_vocabulary_target: false,
         anchor: None,
         expected_version: 1,
@@ -518,7 +518,7 @@ async fn a_fact_ends_by_a_reviewed_supersession_and_a_successor_inherits_no_vali
         retirement: false,
         derives_from: Vec::new(),
         reason: Some("ended".to_owned()),
-        workarea: None,
+        workspace: None,
         refuse_vocabulary_target: false,
         anchor: None,
         expected_version: 1,
@@ -552,7 +552,7 @@ async fn a_fact_ends_by_a_reviewed_supersession_and_a_successor_inherits_no_vali
         vec![v1]
     );
     w.app
-        .post_verdict(&w.dreamer, v2, Verdict::Approve, None)
+        .post_verdict(&w.reviewer, v2, Verdict::Approve, None)
         .await
         .expect("approve");
     assert!(ids(&w.recall(&recall("freeze", Pipeline::Bm25Postings)).await).is_empty());
@@ -619,7 +619,7 @@ async fn a_ratified_supersession_ends_the_replaced_version_where_the_successor_b
         retirement: false,
         derives_from: Vec::new(),
         reason: None,
-        workarea: None,
+        workspace: None,
         refuse_vocabulary_target: false,
         anchor: None,
         expected_version: 1,
@@ -641,7 +641,7 @@ async fn a_ratified_supersession_ends_the_replaced_version_where_the_successor_b
     let before = w.app.get_memory(&w.reader, v1).await.expect("get").memory;
     assert!(before.valid.until.is_none(), "never on submission");
     w.app
-        .post_verdict(&w.dreamer, v2, Verdict::Approve, None)
+        .post_verdict(&w.reviewer, v2, Verdict::Approve, None)
         .await
         .expect("approve");
     let after = w.app.get_memory(&w.reader, v1).await.expect("get").memory;

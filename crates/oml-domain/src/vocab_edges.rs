@@ -130,7 +130,7 @@ pub struct EndpointVersion {
     pub artifact_id: Uuid,
     pub kind: MemoryKind,
     pub status: MemoryStatus,
-    /// The version's workarea is a vocabulary node
+    /// The version's workspace is a vocabulary node
     /// ([`crate::vocab::PrefixRegistry::is_vocabulary_node`]).
     pub in_vocabulary: bool,
 }

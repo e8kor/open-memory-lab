@@ -276,7 +276,7 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   one window of at most 1,000 journal events, loads their versions in one statement, and runs the
   composed scanner over every stored version but an erased one: the body, each anchor field, and
   the path rule (d4), with any anchor finding reported as a veto, as admission treats it. It
-  answers each finding as `artifact_id`, `workarea_id`, `version`, `state`, class, rule, action
+  answers each finding as `artifact_id`, `workspace_id`, `version`, `state`, class, rule, action
   and place, plus the counts by rule and the next window's `after_seq`. It journals nothing,
   because it reveals no text and decides nothing. A version it would veto stays where it is,
   promoted or held. Deleting it would be the silent drop R4 forbids
@@ -331,7 +331,7 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
 
 - **d15 — Inside an in-progress scope, another author's held version is served only when the
   server's rule set scanned it and found nothing** (added 2026-11-10, amending
-  [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
+  [ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
   d3). ADR-0030 serves every author's held memory to readers inside an in-progress root. A held
   version is among them only when its `scan_finding` is empty and its `scanned_under` is the
   server's own (`None` matching `None` for a scanner that pins no version). Any other held version
@@ -359,7 +359,7 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
 - Rows written before this change are not re-scanned at admission (d1). `oml admin rescan`
   finds them (d13), and a person retires them. Nothing retires them on its own.
 - After an upgrade to `oml-scan/1.1`, run `oml admin rescan --record-held`. Until it runs,
-  sibling agents in an in-progress workarea do not see held versions written before the
+  sibling agents in an in-progress workspace do not see held versions written before the
   upgrade (d15): it records each held version under `/1.1`, keeps the ones the amended rules
   flag their author's, and serves the rest inside again. A promoted version it reports keeps its
   state; a person reads each with `oml admin read` and demotes or retires it. Doctor warns with

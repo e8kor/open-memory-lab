@@ -1,0 +1,187 @@
+from __future__ import annotations
+
+import datetime
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+
+from ..models.workspace_mode import WorkspaceMode
+from ..models.workspace_status import WorkspaceStatus
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.crew import Crew
+
+
+T = TypeVar("T", bound="Workspace")
+
+
+@_attrs_define
+class Workspace:
+    """
+    Attributes:
+        id (str):
+        name (str): Unique in the tenant and never changed; universe for the root (ADR-0026 d1, d6).
+        parent_id (None | str): Null only for the tenant universe root.
+        path (str): Derived ltree path, the names from universe joined with "."; never the grant target, and never
+            accepted as a reference.
+        status (WorkspaceStatus):
+        crew (Crew | None | Unset): The crew record the workspace names, or null.
+        user_root (bool | Unset): Whether the node is a user root, universe.<user>, which only the issuance of the first
+            key naming its user creates (ADR-0044 d1, d11).
+        mode (WorkspaceMode | Unset): in_progress when a person's key put the node in progress: readers inside recall
+            unreviewed memories, labelled, and nothing inside reaches a read from outside until the commit (ADR-0030 d1,
+            d2).
+        created_at (datetime.datetime | Unset):
+    """
+
+    id: str
+    name: str
+    parent_id: None | str
+    path: str
+    status: WorkspaceStatus
+    crew: Crew | None | Unset = UNSET
+    user_root: bool | Unset = UNSET
+    mode: WorkspaceMode | Unset = UNSET
+    created_at: datetime.datetime | Unset = UNSET
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        from ..models.crew import Crew
+
+        id = self.id
+
+        name = self.name
+
+        parent_id: None | str
+        parent_id = self.parent_id
+
+        path = self.path
+
+        status = self.status.value
+
+        crew: dict[str, Any] | None | Unset
+        if isinstance(self.crew, Unset):
+            crew = UNSET
+        elif isinstance(self.crew, Crew):
+            crew = self.crew.to_dict()
+        else:
+            crew = self.crew
+
+        user_root = self.user_root
+
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode.value
+
+        created_at: str | Unset = UNSET
+        if not isinstance(self.created_at, Unset):
+            created_at = self.created_at.isoformat()
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "id": id,
+                "name": name,
+                "parent_id": parent_id,
+                "path": path,
+                "status": status,
+            }
+        )
+        if crew is not UNSET:
+            field_dict["crew"] = crew
+        if user_root is not UNSET:
+            field_dict["user_root"] = user_root
+        if mode is not UNSET:
+            field_dict["mode"] = mode
+        if created_at is not UNSET:
+            field_dict["created_at"] = created_at
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.crew import Crew
+
+        d = dict(src_dict)
+        id = d.pop("id")
+
+        name = d.pop("name")
+
+        def _parse_parent_id(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        parent_id = _parse_parent_id(d.pop("parent_id"))
+
+        path = d.pop("path")
+
+        status = WorkspaceStatus(d.pop("status"))
+
+        def _parse_crew(data: object) -> Crew | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                crew_type_0 = Crew.from_dict(data)
+
+                return crew_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(Crew | None | Unset, data)
+
+        crew = _parse_crew(d.pop("crew", UNSET))
+
+        user_root = d.pop("user_root", UNSET)
+
+        _mode = d.pop("mode", UNSET)
+        mode: WorkspaceMode | Unset
+        if isinstance(_mode, Unset):
+            mode = UNSET
+        else:
+            mode = WorkspaceMode(_mode)
+
+        _created_at = d.pop("created_at", UNSET)
+        created_at: datetime.datetime | Unset
+        if isinstance(_created_at, Unset):
+            created_at = UNSET
+        else:
+            created_at = datetime.datetime.fromisoformat(_created_at)
+
+        workspace = cls(
+            id=id,
+            name=name,
+            parent_id=parent_id,
+            path=path,
+            status=status,
+            crew=crew,
+            user_root=user_root,
+            mode=mode,
+            created_at=created_at,
+        )
+
+        workspace.additional_properties = d
+        return workspace
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

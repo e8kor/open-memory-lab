@@ -9,12 +9,12 @@ from attrs import field as _attrs_field
 
 from ..models.guardrail_scope import GuardrailScope
 from ..models.key_credential import KeyCredential
-from ..models.key_held_by_type_1 import KeyHeldByType1
-from ..models.key_held_by_type_2_type_1 import KeyHeldByType2Type1
-from ..models.key_held_by_type_3_type_1 import KeyHeldByType3Type1
 from ..models.key_profile_type_1 import KeyProfileType1
 from ..models.key_profile_type_2_type_1 import KeyProfileType2Type1
 from ..models.key_profile_type_3_type_1 import KeyProfileType3Type1
+from ..models.key_used_by_type_1 import KeyUsedByType1
+from ..models.key_used_by_type_2_type_1 import KeyUsedByType2Type1
+from ..models.key_used_by_type_3_type_1 import KeyUsedByType3Type1
 from ..models.role import Role
 from ..types import UNSET, Unset
 
@@ -36,10 +36,10 @@ class Key:
         key_id (str):
         name (str): Unique in the key's namespace, never changed, never released (ADR-0026 d1, d10).
         role (Role):
-        default_workarea_id (None | str): The key's default workarea; for an issued key, as key.issued journals it — the
-            one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance
-            order; ADR-0025 d2). The provider-ring target when a request names no workarea (ADR-0039 d4).
-        held_by (KeyHeldByType1 | KeyHeldByType2Type1 | KeyHeldByType3Type1 | None): The issuing admin's attestation;
+        default_workspace_id (None | str): The key's default workspace; for an issued key, as key.issued journals it —
+            the one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md,
+            issuance order; ADR-0025 d2). The provider-ring target when a request names no workspace (ADR-0039 d4).
+        used_by (KeyUsedByType1 | KeyUsedByType2Type1 | KeyUsedByType3Type1 | None): The issuing admin's attestation;
             for an issued key, as key.issued journals it, null when none was sent (ADR-0025 d2).
         principal (str | Unset):
         crew_id (None | str | Unset): The key's crew record, as key.issued journals it; null when none was named
@@ -61,7 +61,7 @@ class Key:
         credential (KeyCredential | Unset): bearer: the key has a value presented as Authorization: Bearer. connection:
             a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7). session: a key the
             server holds for a person and acts with only from their web session, no value (ADR-0045 d6).
-        guardrail_scope (GuardrailScope | Unset): Which applicable guardrails the key loads: workarea, the scope node's
+        guardrail_scope (GuardrailScope | Unset): Which applicable guardrails the key loads: workspace, the scope node's
             alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted,
             journalled in key.issued; no request changes it, and any other value is request.validation, details.field
             /guardrail_scope (ADR-0037 d4; since v0.5.1).
@@ -78,8 +78,8 @@ class Key:
     key_id: str
     name: str
     role: Role
-    default_workarea_id: None | str
-    held_by: KeyHeldByType1 | KeyHeldByType2Type1 | KeyHeldByType3Type1 | None
+    default_workspace_id: None | str
+    used_by: KeyUsedByType1 | KeyUsedByType2Type1 | KeyUsedByType3Type1 | None
     principal: str | Unset = UNSET
     crew_id: None | str | Unset = UNSET
     user: None | Unset | WhoamiRef = UNSET
@@ -111,18 +111,18 @@ class Key:
 
         role = self.role.value
 
-        default_workarea_id: None | str
-        default_workarea_id = self.default_workarea_id
+        default_workspace_id: None | str
+        default_workspace_id = self.default_workspace_id
 
-        held_by: None | str
+        used_by: None | str
         if (
-            isinstance(self.held_by, KeyHeldByType1)
-            or isinstance(self.held_by, KeyHeldByType2Type1)
-            or isinstance(self.held_by, KeyHeldByType3Type1)
+            isinstance(self.used_by, KeyUsedByType1)
+            or isinstance(self.used_by, KeyUsedByType2Type1)
+            or isinstance(self.used_by, KeyUsedByType3Type1)
         ):
-            held_by = self.held_by.value
+            used_by = self.used_by.value
         else:
-            held_by = self.held_by
+            used_by = self.used_by
 
         principal = self.principal
 
@@ -230,8 +230,8 @@ class Key:
                 "key_id": key_id,
                 "name": name,
                 "role": role,
-                "default_workarea_id": default_workarea_id,
-                "held_by": held_by,
+                "default_workspace_id": default_workspace_id,
+                "used_by": used_by,
             }
         )
         if principal is not UNSET:
@@ -286,47 +286,49 @@ class Key:
 
         role = Role(d.pop("role"))
 
-        def _parse_default_workarea_id(data: object) -> None | str:
+        def _parse_default_workspace_id(data: object) -> None | str:
             if data is None:
                 return data
             return cast(None | str, data)
 
-        default_workarea_id = _parse_default_workarea_id(d.pop("default_workarea_id"))
+        default_workspace_id = _parse_default_workspace_id(
+            d.pop("default_workspace_id")
+        )
 
-        def _parse_held_by(
+        def _parse_used_by(
             data: object,
-        ) -> KeyHeldByType1 | KeyHeldByType2Type1 | KeyHeldByType3Type1 | None:
+        ) -> KeyUsedByType1 | KeyUsedByType2Type1 | KeyUsedByType3Type1 | None:
             if data is None:
                 return data
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                held_by_type_1 = KeyHeldByType1(data)
+                used_by_type_1 = KeyUsedByType1(data)
 
-                return held_by_type_1
+                return used_by_type_1
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                held_by_type_2_type_1 = KeyHeldByType2Type1(data)
+                used_by_type_2_type_1 = KeyUsedByType2Type1(data)
 
-                return held_by_type_2_type_1
+                return used_by_type_2_type_1
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
             try:
                 if not isinstance(data, str):
                     raise TypeError()
-                held_by_type_3_type_1 = KeyHeldByType3Type1(data)
+                used_by_type_3_type_1 = KeyUsedByType3Type1(data)
 
-                return held_by_type_3_type_1
+                return used_by_type_3_type_1
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
             return cast(
-                KeyHeldByType1 | KeyHeldByType2Type1 | KeyHeldByType3Type1 | None, data
+                KeyUsedByType1 | KeyUsedByType2Type1 | KeyUsedByType3Type1 | None, data
             )
 
-        held_by = _parse_held_by(d.pop("held_by"))
+        used_by = _parse_used_by(d.pop("used_by"))
 
         principal = d.pop("principal", UNSET)
 
@@ -524,8 +526,8 @@ class Key:
             key_id=key_id,
             name=name,
             role=role,
-            default_workarea_id=default_workarea_id,
-            held_by=held_by,
+            default_workspace_id=default_workspace_id,
+            used_by=used_by,
             principal=principal,
             crew_id=crew_id,
             user=user,

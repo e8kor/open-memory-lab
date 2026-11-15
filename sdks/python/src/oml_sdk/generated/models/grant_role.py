@@ -2,8 +2,8 @@ from enum import StrEnum
 
 
 class GrantRole(StrEnum):
-    DREAMER = "dreamer"
     READER = "reader"
+    REVIEWER = "reviewer"
     WRITER = "writer"
 
     def __str__(self) -> str:

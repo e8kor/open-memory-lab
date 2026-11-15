@@ -25,7 +25,7 @@ fn report_json(r: &RescanReport) -> Value {
         "scanned": r.scanned,
         "findings": r.hits.iter().map(|h| json!({
             "artifact_id": h.artifact_id.to_string(),
-            "workarea_id": h.workarea_id.to_string(),
+            "workspace_id": h.workspace_id.to_string(),
             "version": h.version,
             "state": h.state.as_str(),
             "class": h.finding.class,

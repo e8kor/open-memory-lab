@@ -108,10 +108,10 @@ struct Tenant {
     admin: String,
     crew: String,
     writer: String,
-    dreamer: String,
+    reviewer: String,
 }
 
-/// Bootstrap, one workarea `metals-crew`, a writer and a dreamer on it.
+/// Bootstrap, one workspace `metals-crew`, a writer and a reviewer on it.
 async fn tenant(router: &Router) -> Tenant {
     let (status, boot) = send(
         router,
@@ -124,43 +124,43 @@ async fn tenant(router: &Router) -> Tenant {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
     let admin = boot["value"].as_str().expect("admin key").to_owned();
-    let root = boot["root_workarea_id"].as_str().expect("root").to_owned();
+    let root = boot["root_workspace_id"].as_str().expect("root").to_owned();
     let (status, wa) = send(
         router,
         "POST",
-        "/v2/workareas",
+        "/v2/workspaces",
         Some(&admin),
         Some("wa-1"),
         Some(&json!({"parent": root, "name": "metals-crew"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{wa}");
-    let crew = wa["id"].as_str().expect("workarea id").to_owned();
+    let crew = wa["id"].as_str().expect("workspace id").to_owned();
     let writer = issue(
         router,
         &admin,
         json!({"role": "writer", "name": "writer", "principal": "crew/agent-7",
-               "grants": [{"workarea": crew, "role": "writer"}, {"workarea": crew, "role": "reader"}]}),
+               "grants": [{"workspace": crew, "role": "writer"}, {"workspace": crew, "role": "reader"}]}),
     )
     .await["value"]
         .as_str()
         .expect("writer value")
         .to_owned();
-    let dreamer = issue(
+    let reviewer = issue(
         router,
         &admin,
-        json!({"role": "dreamer", "name": "dreamer", "principal": "crew/reviewer",
-               "grants": [{"workarea": crew, "role": "dreamer"}, {"workarea": crew, "role": "reader"}]}),
+        json!({"role": "reviewer", "name": "reviewer", "principal": "crew/reviewer",
+               "grants": [{"workspace": crew, "role": "reviewer"}, {"workspace": crew, "role": "reader"}]}),
     )
     .await["value"]
         .as_str()
-        .expect("dreamer value")
+        .expect("reviewer value")
         .to_owned();
     Tenant {
         admin,
         crew,
         writer,
-        dreamer,
+        reviewer,
     }
 }
 
@@ -183,7 +183,7 @@ fn deny_push() -> Value {
     json!({"rule": "oml-gr/1", "tool": "shell", "command": ["git", "push", "*"], "effect": "deny"})
 }
 
-/// Submit a guardrail on the crew workarea; its `artifact_id`.
+/// Submit a guardrail on the crew workspace; its `artifact_id`.
 async fn submit_guardrail(router: &Router, t: &Tenant, idem: &str, body: Value) -> String {
     let (status, receipt) = send(
         router,
@@ -201,13 +201,13 @@ async fn submit_guardrail(router: &Router, t: &Tenant, idem: &str, body: Value) 
         .to_owned()
 }
 
-/// The dreamer takes the next item and approves it; the served item.
+/// The reviewer takes the next item and approves it; the served item.
 async fn approve_next(router: &Router, t: &Tenant, n: u32) -> Value {
     let (status, served) = send(
         router,
         "POST",
         "/v2/review/next",
-        Some(&t.dreamer),
+        Some(&t.reviewer),
         Some(&format!("n-{n}")),
         Some(&json!({})),
     )
@@ -217,7 +217,7 @@ async fn approve_next(router: &Router, t: &Tenant, n: u32) -> Value {
         router,
         "POST",
         "/v2/review/verdicts",
-        Some(&t.dreamer),
+        Some(&t.reviewer),
         Some(&format!("v-{n}")),
         Some(&json!({"serve_id": served["serve_id"], "verdict": "approve"})),
     )
@@ -236,7 +236,7 @@ async fn post_v1_memories_takes_kind_guardrail_with_its_severity_and_rule() {
         &t,
         "g-1",
         json!({"kind": "guardrail", "severity": "never", "rule": deny_push(),
-               "body": "Never push to main.", "workarea": t.crew}),
+               "body": "Never push to main.", "workspace": t.crew}),
     )
     .await;
     let (status, memory) = send(
@@ -265,7 +265,7 @@ async fn a_guardrail_without_a_severity_is_refused_naming_severity() {
         "/v1/memories",
         Some(&t.writer),
         Some("g-1"),
-        Some(&json!({"kind": "guardrail", "body": "Never push to main.", "workarea": t.crew})),
+        Some(&json!({"kind": "guardrail", "body": "Never push to main.", "workspace": t.crew})),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -281,7 +281,7 @@ async fn severity_and_rule_are_refused_on_any_other_kind_naming_the_field() {
         .into_iter()
         .enumerate()
     {
-        let mut body = json!({"kind": "memory", "body": "a fact", "workarea": t.crew});
+        let mut body = json!({"kind": "memory", "body": "a fact", "workspace": t.crew});
         body[field] = value;
         let (status, refusal) = send(
             &router,
@@ -311,7 +311,7 @@ async fn an_unknown_severity_is_refused_naming_severity() {
         "/v1/memories",
         Some(&t.writer),
         Some("g-1"),
-        Some(&json!({"kind": "guardrail", "severity": "may", "body": "Push freely.", "workarea": t.crew})),
+        Some(&json!({"kind": "guardrail", "severity": "may", "body": "Push freely.", "workspace": t.crew})),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -338,7 +338,7 @@ async fn oml_write_refuses_kind_guardrail_and_a_guardrail_target() {
         &router,
         &t,
         "g-1",
-        json!({"kind": "guardrail", "severity": "must", "body": "Run the tests.", "workarea": t.crew}),
+        json!({"kind": "guardrail", "severity": "must", "body": "Run the tests.", "workspace": t.crew}),
     )
     .await;
     approve_next(&router, &t, 1).await;
@@ -363,7 +363,7 @@ async fn the_serve_of_a_held_guardrail_carries_the_load_warning() {
         &router,
         &t,
         "g-1",
-        json!({"kind": "guardrail", "severity": "should", "body": "Prefer small commits.", "workarea": t.crew}),
+        json!({"kind": "guardrail", "severity": "should", "body": "Prefer small commits.", "workspace": t.crew}),
     )
     .await;
     let served = approve_next(&router, &t, 1).await;
@@ -382,14 +382,14 @@ async fn get_v1_guardrails_serves_the_promoted_set_under_the_keys_scope() {
         &t,
         "g-1",
         json!({"kind": "guardrail", "severity": "never", "rule": deny_push(),
-               "body": "Never push to main.", "workarea": t.crew}),
+               "body": "Never push to main.", "workspace": t.crew}),
     )
     .await;
     approve_next(&router, &t, 1).await;
     let (status, set) = send(
         &router,
         "GET",
-        &format!("/v1/guardrails?workarea={}", t.crew),
+        &format!("/v1/guardrails?workspace={}", t.crew),
         Some(&t.writer),
         None,
         None,
@@ -414,13 +414,13 @@ async fn get_v1_guardrails_serves_the_promoted_set_under_the_keys_scope() {
     assert_eq!(g["severity"], "never");
     assert_eq!(g["text"], "Never push to main.");
     assert_eq!(g["rule"], deny_push());
-    assert_eq!(g["workarea_path"], "universe.metals-crew");
+    assert_eq!(g["workspace_path"], "universe.metals-crew");
     assert_eq!(g["conflict"], json!([]));
     let verdicts = g["verdicts"].as_array().expect("verdicts");
     assert_eq!(verdicts.len(), 1, "{g}");
     // A verdict names its reviewer's attestation and time, never its key
     // (ADR-0037 d5, ADR-0025 d15).
-    assert_eq!(verdicts[0]["held_by"], "agent", "{g}");
+    assert_eq!(verdicts[0]["used_by"], "agent", "{g}");
     assert!(verdicts[0].get("key_id").is_none(), "{g}");
     assert_eq!(set["own_held"], json!([]));
 }
@@ -433,7 +433,7 @@ async fn no_parameter_or_field_changes_the_guardrail_scope() {
         &router,
         "GET",
         &format!(
-            "/v1/guardrails?workarea={}&guardrail_scope=workarea",
+            "/v1/guardrails?workspace={}&guardrail_scope=workspace",
             t.crew
         ),
         Some(&t.writer),
@@ -457,15 +457,15 @@ async fn post_v2_keys_takes_guardrail_scope_and_the_key_reads_serve_it() {
         &router,
         &t.admin,
         json!({"role": "reader", "name": "narrow", "principal": "crew/narrow",
-               "guardrail_scope": "workarea",
-               "grants": [{"workarea": t.crew, "role": "reader"}]}),
+               "guardrail_scope": "workspace",
+               "grants": [{"workspace": t.crew, "role": "reader"}]}),
     )
     .await;
-    assert_eq!(issued["guardrail_scope"], "workarea", "{issued}");
+    assert_eq!(issued["guardrail_scope"], "workspace", "{issued}");
     let value = issued["value"].as_str().expect("value");
     let (status, me) = send(&router, "GET", "/v2/whoami", Some(value), None, None).await;
     assert_eq!(status, StatusCode::OK, "{me}");
-    assert_eq!(me["guardrail_scope"], "workarea", "{me}");
+    assert_eq!(me["guardrail_scope"], "workspace", "{me}");
     let (status, key) = send(
         &router,
         "GET",
@@ -476,7 +476,7 @@ async fn post_v2_keys_takes_guardrail_scope_and_the_key_reads_serve_it() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{key}");
-    assert_eq!(key["guardrail_scope"], "workarea", "{key}");
+    assert_eq!(key["guardrail_scope"], "workspace", "{key}");
 
     // Sent none, the issuance default (d4; d18 Q1).
     let (status, me) = send(&router, "GET", "/v2/whoami", Some(&t.writer), None, None).await;
@@ -485,7 +485,7 @@ async fn post_v2_keys_takes_guardrail_scope_and_the_key_reads_serve_it() {
 }
 
 #[tokio::test]
-async fn a_guardrail_scope_other_than_workarea_or_ancestors_is_refused() {
+async fn a_guardrail_scope_other_than_workspace_or_ancestors_is_refused() {
     let router = doubles_router();
     let t = tenant(&router).await;
     let (status, body) = send(
@@ -497,7 +497,7 @@ async fn a_guardrail_scope_other_than_workarea_or_ancestors_is_refused() {
         Some(
             &json!({"role": "reader", "name": "off", "principal": "crew/off",
                      "guardrail_scope": "off",
-                     "grants": [{"workarea": t.crew, "role": "reader"}]}),
+                     "grants": [{"workspace": t.crew, "role": "reader"}]}),
         ),
     )
     .await;
@@ -516,7 +516,7 @@ async fn recall_refuses_kinds_guardrail_naming_kinds_and_the_listing_serves_the_
         &router,
         &t,
         "g-1",
-        json!({"kind": "guardrail", "severity": "must", "body": "Run the tests.", "workarea": t.crew}),
+        json!({"kind": "guardrail", "severity": "must", "body": "Run the tests.", "workspace": t.crew}),
     )
     .await;
     let (status, body) = send(
@@ -525,7 +525,7 @@ async fn recall_refuses_kinds_guardrail_naming_kinds_and_the_listing_serves_the_
         "/v1/memories/recall",
         Some(&t.writer),
         None,
-        Some(&json!({"query": "tests", "kinds": ["guardrail"], "workarea": t.crew})),
+        Some(&json!({"query": "tests", "kinds": ["guardrail"], "workspace": t.crew})),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -577,7 +577,7 @@ async fn the_prompt_renders_the_hook_text() {
         &t,
         "g-1",
         json!({"kind": "guardrail", "severity": "never", "rule": deny_push(),
-               "body": "Never push to main.", "workarea": t.crew}),
+               "body": "Never push to main.", "workspace": t.crew}),
     )
     .await;
     approve_next(&router, &t, 1).await;

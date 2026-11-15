@@ -1,4 +1,4 @@
-//! Names — the unique, immutable key a workarea, crew, key or tenant carries
+//! Names — the unique, immutable key a workspace, crew, key or tenant carries
 //! beside its id: the grammar a name may spell, the parse-time
 //! classification of a reference as an id or a name, the derived name, the
 //! unresolved value an unknown name is replaced by, and the naming of rows
@@ -14,7 +14,7 @@ use std::fmt;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-/// The name of every tenant's root workarea, the one workarea name the
+/// The name of every tenant's root workspace, the one workspace name the
 /// design fixes (ADR-0026 d6).
 pub const UNIVERSE: &str = "universe";
 
@@ -23,7 +23,7 @@ pub const UNIVERSE: &str = "universe";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum NamedKind {
     Tenant,
-    Workarea,
+    Workspace,
     Crew,
     Key,
 }
@@ -31,19 +31,19 @@ pub enum NamedKind {
 impl NamedKind {
     const ALL: [NamedKind; 4] = [
         NamedKind::Tenant,
-        NamedKind::Workarea,
+        NamedKind::Workspace,
         NamedKind::Crew,
         NamedKind::Key,
     ];
 
-    /// The kind's word: `tenant`, `workarea`, `crew` or `key`, as
+    /// The kind's word: `tenant`, `workspace`, `crew` or `key`, as
     /// `name.taken`'s `details.kind` and `system.names_assigned`'s `kind`
     /// spell it (errors.md; event-catalog.md).
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             NamedKind::Tenant => "tenant",
-            NamedKind::Workarea => "workarea",
+            NamedKind::Workspace => "workspace",
             NamedKind::Crew => "crew",
             NamedKind::Key => "key",
         }
@@ -54,7 +54,7 @@ impl NamedKind {
     fn derived_prefix(self) -> &'static str {
         match self {
             NamedKind::Tenant => "tenant",
-            NamedKind::Workarea => "wa",
+            NamedKind::Workspace => "wa",
             NamedKind::Crew => "crew",
             NamedKind::Key => "key",
         }
@@ -195,16 +195,16 @@ pub fn parse_id(value: &str) -> Option<Uuid> {
     }
 }
 
-/// A value that names a workarea, crew, key or tenant, classified at parse,
+/// A value that names a workspace, crew, key or tenant, classified at parse,
 /// before any check that consults state (ADR-0026 d3). The classes never
 /// overlap, so a value's class never depends on what exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reference {
     Id(Uuid),
     Name(Name),
-    /// A qualified name `<user>.<name>`: the workarea named `name` in the
+    /// A qualified name `<user>.<name>`: the workspace named `name` in the
     /// namespace of the user root named `user`, unique in the tenant and
-    /// never changed (ADR-0044 d5). Only a workarea reference resolves one.
+    /// never changed (ADR-0044 d5). Only a workspace reference resolves one.
     Qualified {
         user: Name,
         name: Name,
@@ -342,7 +342,7 @@ pub struct UnnamedRow {
     pub prior_name: Option<String>,
 }
 
-/// A workarea's crew object as `workarea.create` and `workarea.crew_updated`
+/// A workspace's crew object as `workspace.create` and `workspace.crew_updated`
 /// carried it before crews were records, every member optional
 /// (event-catalog.md; ADR-0026 d8, d11 rule 4).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -362,7 +362,7 @@ pub struct Assignment {
     pub prior_name: Option<String>,
 }
 
-/// A crew record made from one distinct crew object, with the workareas
+/// A crew record made from one distinct crew object, with the workspaces
 /// that point at it: an entry of `system.names_assigned`'s `crews`
 /// (event-catalog.md; ADR-0026 d11, rule 4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -371,8 +371,8 @@ pub struct CrewRecord {
     pub name: Name,
     pub charter_uri: Option<String>,
     pub external_manager: Option<String>,
-    /// In the order the workareas were given.
-    pub workarea_ids: Vec<Uuid>,
+    /// In the order the workspaces were given.
+    pub workspace_ids: Vec<Uuid>,
 }
 
 /// What ADR-0026 d11 assigns in one chain: the content of its
@@ -392,7 +392,7 @@ struct Held(BTreeSet<(NamedKind, Name)>);
 
 impl Held {
     /// Rules 1–3 for one row: the root is `universe`; a prior name the
-    /// grammar admits, not `universe` on a non-root workarea and not yet
+    /// grammar admits, not `universe` on a non-root workspace and not yet
     /// held in its kind, is kept; anything else is derived from the id.
     fn name(&mut self, kind: NamedKind, id: Uuid, prior: Option<&str>, root: bool) -> Name {
         let name = if root {
@@ -400,7 +400,7 @@ impl Held {
         } else {
             prior
                 .and_then(|p| Name::parse(p).ok())
-                .filter(|n| !(kind == NamedKind::Workarea && n.as_str() == UNIVERSE))
+                .filter(|n| !(kind == NamedKind::Workspace && n.as_str() == UNIVERSE))
                 .filter(|n| !self.0.contains(&(kind, n.clone())))
                 .unwrap_or_else(|| Name::derived(kind, id))
         };
@@ -412,20 +412,20 @@ impl Held {
 /// Names the rows of one chain that predate names, by the deterministic
 /// rule of ADR-0026 d11 (http-api.md, "Rows created before names"):
 ///
-/// 1. the workarea `root`, the tenant's root, is named `universe`, whatever
+/// 1. the workspace `root`, the tenant's root, is named `universe`, whatever
 ///    its creation event says;
 /// 2. per kind, in the order given — journal order of creation — a row
 ///    whose prior name the grammar admits, that is not `universe` for a
-///    non-root workarea, and that no earlier row of its kind holds, keeps
+///    non-root workspace, and that no earlier row of its kind holds, keeps
 ///    it;
 /// 3. every other row is given its [`Name::derived`] name;
-/// 4. `crews` pairs each workarea with its current crew object (the latest
-///    of its `workarea.create` and `workarea.crew_updated`), in journal
-///    order of the workareas; each distinct object becomes one crew record
+/// 4. `crews` pairs each workspace with its current crew object (the latest
+///    of its `workspace.create` and `workspace.crew_updated`), in journal
+///    order of the workspaces; each distinct object becomes one crew record
 ///    with an id from `fresh_id`, named by rules 2 and 3 in order of first
-///    appearance, and every workarea with that object points at it.
+///    appearance, and every workspace with that object points at it.
 ///
-/// A tenant's chain passes its root, its workareas and its keys; the
+/// A tenant's chain passes its root, its workspaces and its keys; the
 /// provider chain passes no root, its tenants and its operator keys. Fresh
 /// ids enter as inputs, so the function is deterministic, and the event it
 /// fills records every id it was given.
@@ -439,7 +439,7 @@ pub fn assign_names(
     let names = rows
         .iter()
         .map(|row| {
-            let is_root = row.kind == NamedKind::Workarea && root == Some(row.id);
+            let is_root = row.kind == NamedKind::Workspace && root == Some(row.id);
             Assignment {
                 kind: row.kind,
                 id: row.id,
@@ -450,9 +450,9 @@ pub fn assign_names(
         .collect();
     let mut records: Vec<CrewRecord> = Vec::new();
     let mut record_of: BTreeMap<&CrewObject, usize> = BTreeMap::new();
-    for (workarea_id, object) in crews {
+    for (workspace_id, object) in crews {
         if let Some(&index) = record_of.get(object) {
-            records[index].workarea_ids.push(*workarea_id);
+            records[index].workspace_ids.push(*workspace_id);
             continue;
         }
         let crew_id = fresh_id();
@@ -462,7 +462,7 @@ pub fn assign_names(
             name: held.name(NamedKind::Crew, crew_id, object.name.as_deref(), false),
             charter_uri: object.charter_uri.clone(),
             external_manager: object.external_manager.clone(),
-            workarea_ids: vec![*workarea_id],
+            workspace_ids: vec![*workspace_id],
         });
     }
     Naming {

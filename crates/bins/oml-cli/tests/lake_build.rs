@@ -83,7 +83,7 @@ fn the_lake_build_adds_the_reader_and_parquet_and_no_arrow() {
 #[test]
 fn the_default_cli_refuses_the_delta_adapter_naming_the_lake_build() {
     let out = Command::new(env!("CARGO_BIN_EXE_oml"))
-        .args(["sync", ".", "--adapter", "delta", "--workarea", "w"])
+        .args(["sync", ".", "--adapter", "delta", "--workspace", "w"])
         .env_remove("OML_API_KEY")
         .env_remove("OML_URL")
         .env("HOME", env!("CARGO_MANIFEST_DIR"))

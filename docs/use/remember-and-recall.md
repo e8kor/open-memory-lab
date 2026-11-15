@@ -7,7 +7,7 @@ answers: "what an agent saves and finds with the three tools, how recall is scop
 # Write and read memories
 
 An agent holds one key and three tools. `oml_write` saves, `oml_read` finds and lists,
-`oml_workarea` says where the agent works and what it may do there. People use the same calls
+`oml_workspace` says where the agent works and what it may do there. People use the same calls
 through `oml write` and `oml read`. An agent can save and find memories. It cannot approve, sign,
 demote or delete them ([MCP tools](../api/mcp-plugin.md)).
 
@@ -27,7 +27,7 @@ kind, the memories it derives from, and a source anchor. Every save is **held**.
 
 ## Find
 
-`oml_read` with a query returns steering rules first, then ranked hits within the workarea's
+`oml_read` with a query returns steering rules first, then ranked hits within the workspace's
 subtree, within the budget the agent sets (`max_tokens`). Each hit says which words it matched.
 A hit holds any of the words, ranked by how many. Add `--match all` (`match: all`) to require
 every word.
@@ -36,7 +36,7 @@ The agent sees its own held writes with `include_unreviewed`. Everyone else sees
 non-author approves it. An empty answer does not prove the answer is unknown. Try other words, or
 ask the librarian subagent.
 
-Without a query, `oml_read` lists the key's own work by state or the promoted tips of a workarea.
+Without a query, `oml_read` lists the key's own work by state or the promoted tips of a workspace.
 `oml read --state` accepts `held`, `promoted`, `demoted`, `rejected` and `erased`.
 
 ## Correct, retire and link
@@ -53,6 +53,6 @@ Without a query, `oml_read` lists the key's own work by state or the promoted ti
 
 ## Scope
 
-A key reads and writes only where it holds a grant. A denial always wins. [Workareas](workareas.md)
+A key reads and writes only where it holds a grant. A denial always wins. [Workspaces](workspaces.md)
 sets that scope; [guardrails](guardrails.md) adds reviewed rules every session loads at its
 start.

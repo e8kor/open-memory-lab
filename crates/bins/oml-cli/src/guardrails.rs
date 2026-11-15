@@ -351,7 +351,7 @@ pub fn export(
         .filter(|l| l.starts_with("- ["))
         .collect();
     let header = format!(
-        "<!-- OML guardrails exported from {origin}, workarea {} ({}), guardrail scope {}, {} guardrails, set_digest {digest}: text, not enforcement; do not edit, re-run oml guardrails export -->",
+        "<!-- OML guardrails exported from {origin}, workspace {} ({}), guardrail scope {}, {} guardrails, set_digest {digest}: text, not enforcement; do not edit, re-run oml guardrails export -->",
         set["scope_path"].as_str().unwrap_or("?"),
         set["scope_node"].as_str().unwrap_or("?"),
         set["guardrail_scope"].as_str().unwrap_or("?"),

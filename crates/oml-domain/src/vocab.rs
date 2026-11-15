@@ -5,7 +5,7 @@
 //! (ADR-0021 d1, d2, d3; ADR-0027 [proposed in #10, unmerged] d7).
 //!
 //! The rules are declared on `docs/architecture/ontologies.md` ("A
-//! vocabulary is a workarea with a prefix", "The term lifecycle", "CURIEs
+//! vocabulary is a workspace with a prefix", "The term lifecycle", "CURIEs
 //! and permanence") and the CURIE pattern on `docs/api/openapi.yaml`
 //! (`components.schemas.Curie`); this module mirrors them and adds nothing.
 //!
@@ -134,8 +134,8 @@ fn is_curie_space(c: char) -> bool {
     c.is_whitespace() || c == '\u{feff}'
 }
 
-/// A refused prefix registration, in the vocabulary workarea's creation act
-/// (ADR-0021 d2; http-api.md `POST /v2/workareas`).
+/// A refused prefix registration, in the vocabulary workspace's creation act
+/// (ADR-0021 d2; http-api.md `POST /v2/workspaces`).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PrefixRefusal {
     /// `request.validation`, `details.field: "prefix"`: the prefix fails the
@@ -170,13 +170,13 @@ pub struct UnknownCurie {
 pub enum CurieOwner {
     /// The provider: an `oml:` label of the shipped register.
     Provider(OmlLabel),
-    /// The vocabulary workarea that registered the prefix. Whether a term
+    /// The vocabulary workspace that registered the prefix. Whether a term
     /// of that localname exists there is the caller's lookup.
     Vocabulary(Uuid),
 }
 
 /// One tenant's prefix registry, `vocab_prefixes`, folded from the journal:
-/// each prefix maps to the vocabulary workarea whose creation registered
+/// each prefix maps to the vocabulary workspace whose creation registered
 /// it. A prefix is permanent — never reused or reassigned — so nothing
 /// removes one (ADR-0021 d2; postgres-schema.md).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -190,10 +190,10 @@ impl PrefixRegistry {
         Self::default()
     }
 
-    /// Registers `prefix` for the vocabulary workarea `workarea_id`, refusing
+    /// Registers `prefix` for the vocabulary workspace `workspace_id`, refusing
     /// a malformed prefix, then one this tenant already holds or the
     /// reserved `oml`.
-    pub fn register(&mut self, prefix: &str, workarea_id: Uuid) -> Result<(), PrefixRefusal> {
+    pub fn register(&mut self, prefix: &str, workspace_id: Uuid) -> Result<(), PrefixRefusal> {
         if check_prefix(prefix).is_err() {
             return Err(PrefixRefusal::Malformed {
                 prefix: prefix.to_owned(),
@@ -204,24 +204,25 @@ impl PrefixRegistry {
                 prefix: prefix.to_owned(),
             });
         }
-        self.prefixes.insert(prefix.to_owned(), workarea_id);
+        self.prefixes.insert(prefix.to_owned(), workspace_id);
         Ok(())
     }
 
-    /// The vocabulary workarea that registered `prefix`; `None` for `oml`
+    /// The vocabulary workspace that registered `prefix`; `None` for `oml`
     /// and for any prefix this tenant has not registered.
     #[must_use]
-    pub fn workarea_of(&self, prefix: &str) -> Option<Uuid> {
+    pub fn workspace_of(&self, prefix: &str) -> Option<Uuid> {
         self.prefixes.get(prefix).copied()
     }
 
     /// The owner of `curie`'s prefix: the provider for an `oml:` label of
-    /// the register, else the registering vocabulary workarea.
+    /// the register, else the registering vocabulary workspace.
     pub fn owner(&self, curie: &Curie) -> Result<CurieOwner, UnknownCurie> {
         let owner = if curie.prefix() == OML_PREFIX {
             OmlLabel::parse(curie.as_str()).map(CurieOwner::Provider)
         } else {
-            self.workarea_of(curie.prefix()).map(CurieOwner::Vocabulary)
+            self.workspace_of(curie.prefix())
+                .map(CurieOwner::Vocabulary)
         };
         owner.ok_or_else(|| UnknownCurie {
             curie: curie.clone(),
@@ -229,7 +230,7 @@ impl PrefixRegistry {
     }
 
     /// Whether the node whose ancestry (from the node to the root) is
-    /// `ancestry` is a vocabulary node: a workarea in the subtree of one that
+    /// `ancestry` is a vocabulary node: a workspace in the subtree of one that
     /// registered a prefix (ADR-0027 d2). An empty ancestry is no node.
     #[must_use]
     pub fn is_vocabulary_node(&self, ancestry: &[Uuid]) -> bool {

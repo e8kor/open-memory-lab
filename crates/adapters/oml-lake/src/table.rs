@@ -198,6 +198,10 @@ pub const BRONZE_EVENTS: Spec = Spec {
         ("api_key_id", Col::Str, true),
         ("artifact_id", Col::Str, true),
         ("version", Col::Long, true),
+        // The physical name of the column the schema page names
+        // `workspace_id`: the pinned deltalake cannot put an existing table
+        // into column mapping mode, so the column keeps the name its data
+        // files were written under, and every reader maps it (ADR-0091 d7).
         ("workarea_id", Col::Str, true),
         ("kind", Col::Str, true),
         ("subject_name", Col::Str, true),
@@ -220,6 +224,7 @@ pub const SILVER_CLAIMS: Spec = Spec {
         ("claim_key", Col::Str, false),
         ("kind", Col::Str, false),
         ("state", Col::Str, false),
+        // `workspace_id` by its physical name (ADR-0091 d7).
         ("workarea_id", Col::Str, false),
         ("writer_identity", Col::Str, false),
         ("principal", Col::Str, false),

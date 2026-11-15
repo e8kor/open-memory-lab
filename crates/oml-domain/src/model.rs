@@ -16,7 +16,7 @@ use uuid::Uuid;
 pub enum Role {
     Reader,
     Writer,
-    Dreamer,
+    Reviewer,
     Admin,
     Operator,
 }
@@ -27,7 +27,7 @@ impl Role {
         match self {
             Role::Reader => "reader",
             Role::Writer => "writer",
-            Role::Dreamer => "dreamer",
+            Role::Reviewer => "reviewer",
             Role::Admin => "admin",
             Role::Operator => "operator",
         }
@@ -37,19 +37,19 @@ impl Role {
 /// The issuing admin's journalled attestation of who holds a key
 /// (event-catalog.md, `key.issued`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum HeldBy {
+pub enum UsedBy {
     Agent,
-    Human,
+    Person,
     Service,
 }
 
-impl HeldBy {
+impl UsedBy {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            HeldBy::Agent => "agent",
-            HeldBy::Human => "human",
-            HeldBy::Service => "service",
+            UsedBy::Agent => "agent",
+            UsedBy::Person => "person",
+            UsedBy::Service => "service",
         }
     }
 }
@@ -217,16 +217,16 @@ impl LineageClosure {
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum VerdictError {
     #[error(
-        "verdicts are the dreamer surface; a {0:?} key cannot review (ADR-0001 R1, admission.md)"
+        "verdicts are the reviewer surface; a {0:?} key cannot review (ADR-0001 R1, admission.md)"
     )]
-    NotDreamer(Role),
+    NotReviewer(Role),
     #[error("reviewer principal {0:?} appears in the row's lineage closure (ADR-0001 R2)")]
     PrincipalInLineage(String),
     #[error("reviewer key {0} appears in the row's lineage closure (ADR-0001 R2)")]
     KeyInLineage(Uuid),
 }
 
-/// The R2 check at verdict time: a dreamer whose key or principal appears
+/// The R2 check at verdict time: a reviewer whose key or principal appears
 /// anywhere in the lineage closure — the author included — is refused the
 /// verdict (ADR-0001 d2). The caller builds the closure with the author in it.
 pub fn check_reviewer(
@@ -235,8 +235,8 @@ pub fn check_reviewer(
     reviewer_key_id: Uuid,
     lineage: &LineageClosure,
 ) -> Result<(), VerdictError> {
-    if reviewer_role != Role::Dreamer {
-        return Err(VerdictError::NotDreamer(reviewer_role));
+    if reviewer_role != Role::Reviewer {
+        return Err(VerdictError::NotReviewer(reviewer_role));
     }
     if lineage.contains_principal(reviewer_principal) {
         return Err(VerdictError::PrincipalInLineage(

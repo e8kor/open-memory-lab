@@ -6,8 +6,8 @@ from typing import Any, Self, TypeVar
 
 from attrs import define as _attrs_define
 
-from ..models.served_guardrail_verdicts_item_held_by import (
-    ServedGuardrailVerdictsItemHeldBy,
+from ..models.served_guardrail_verdicts_item_used_by import (
+    ServedGuardrailVerdictsItemUsedBy,
 )
 
 T = TypeVar("T", bound="ServedGuardrailVerdictsItem")
@@ -17,15 +17,15 @@ T = TypeVar("T", bound="ServedGuardrailVerdictsItem")
 class ServedGuardrailVerdictsItem:
     """
     Attributes:
-        held_by (ServedGuardrailVerdictsItemHeldBy):
+        used_by (ServedGuardrailVerdictsItemUsedBy):
         at (datetime.datetime):
     """
 
-    held_by: ServedGuardrailVerdictsItemHeldBy
+    used_by: ServedGuardrailVerdictsItemUsedBy
     at: datetime.datetime
 
     def to_dict(self) -> dict[str, Any]:
-        held_by = self.held_by.value
+        used_by = self.used_by.value
 
         at = self.at.isoformat()
 
@@ -33,7 +33,7 @@ class ServedGuardrailVerdictsItem:
 
         field_dict.update(
             {
-                "held_by": held_by,
+                "used_by": used_by,
                 "at": at,
             }
         )
@@ -43,12 +43,12 @@ class ServedGuardrailVerdictsItem:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        held_by = ServedGuardrailVerdictsItemHeldBy(d.pop("held_by"))
+        used_by = ServedGuardrailVerdictsItemUsedBy(d.pop("used_by"))
 
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         served_guardrail_verdicts_item = cls(
-            held_by=held_by,
+            used_by=used_by,
             at=at,
         )
 
