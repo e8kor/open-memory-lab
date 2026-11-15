@@ -286,18 +286,25 @@ fn a_user_root_already_protected_is_refused_frozen_as_user_root() {
 }
 
 #[test]
-fn a_backward_or_same_step_inside_a_user_root_keeps_its_own_reason() {
+fn a_proposal_skipping_to_frozen_inside_a_user_root_is_refused_as_user_root() {
+    // Every proposal inside a user root answers user_root, before the rung
+    // order is read (ADR-0085 d17).
     assert_eq!(
-        propose_check(UserRoot, Protected, Development, &[]),
-        Err(LadderRefusal::Backward)
+        propose_check(UserRoot, Development, Frozen, &[]),
+        Err(LadderRefusal::UserRoot)
     );
     assert_eq!(
-        propose_check(UserRoot, Development, Development, &[]),
-        Err(LadderRefusal::Same)
+        ratify_check(Development, UserRoot, Development, Frozen, &[]),
+        Err(LadderRefusal::UserRoot)
     );
-    // A shared workspace still climbs and freezes (ADR-0009 d3).
+    // A shared workspace still climbs and freezes, and still names the
+    // skipped rung (ADR-0009 d3).
     assert_eq!(propose_check(Ordinary, Development, Protected, &[]), Ok(()));
     assert_eq!(propose_check(Ordinary, Protected, Frozen, &[]), Ok(()));
+    assert_eq!(
+        propose_check(Ordinary, Development, Frozen, &[]),
+        Err(LadderRefusal::Skipped)
+    );
 }
 
 #[test]
