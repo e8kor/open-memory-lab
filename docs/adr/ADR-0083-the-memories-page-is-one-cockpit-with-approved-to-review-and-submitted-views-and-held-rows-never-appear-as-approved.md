@@ -10,7 +10,7 @@ answers: what the views of the Memories cockpit show and which API call serves e
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with the screen
 choices settled from the approved design system v18 mockups (d2, d3, d5 to d9, d11, d12), the withdraw act (d13) decided the same day, and every
 other default as drafted · proposed the same day, tracking #374, with the operator's answers
-(d10) · aligned with ADR-0089 (admins fix production at once, a person confirms or reverts)
+(d10) · aligned with ADR-0089 (admins fix production at once, a person confirms or reverts) · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d12, 2026-11-15)
 
 **Release:** planned for v0.7.4
 

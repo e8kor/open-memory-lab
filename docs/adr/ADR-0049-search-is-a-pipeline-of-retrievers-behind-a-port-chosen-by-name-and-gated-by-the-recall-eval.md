@@ -7,7 +7,7 @@ answers: how search plugs into the hexagonal core; which port a retriever implem
 
 # ADR-0049 — Search is a pipeline of retrievers behind a port, chosen by name and gated by the recall eval
 
-**Status:** proposed · 2026-11-04
+**Status:** proposed · 2026-11-04 · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d2, d7, 2026-11-15)
 
 **Release:** introduced in v0.5.5 (increment 1, with ADR-0048's S1–S3 as its pipelines); d13,
 each retriever's list capped before fusion, introduced in v0.5.8 with ADR-0057 d22; d14 proposed

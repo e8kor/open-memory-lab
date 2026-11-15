@@ -12,7 +12,7 @@ question 8 decided at its recommendation (putting a workspace in progress stays 
 is never an admin fix act), every other default as drafted, and, the same day, d14 revised and
 d16 added so that a skill follows the rules of every claim of its class with no exception of its
 own (the operator: "Skills is another type of claim it should obey same rules as others") · proposed the same day, tracking
-#374, with the operator's answers (d13) · aligned with ADR-0089 (PR #377)
+#374, with the operator's answers (d13) · aligned with ADR-0089 (PR #377) · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d10, d16, 2026-11-15)
 
 **Release:** planned for v0.7.4
 
@@ -277,7 +277,7 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
     - **Nowhere else.** Outside an in-progress root no held guardrail is served (ADR-0037 d3
       holds), and no held skill is served except to its author key (d14); d4 offers
       promoted tips to everyone else, and recall never serves either kind as
-      a hit (amends ADR-0025 d8). Federation and wide sources never carry one: ADR-0072 searches
+      a hit (amends ADR-0025 d8). *(Amended 2026-11-15 by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) d3: recall ranks offered skills and applicable guardrails as data hits, under this same held rule.)* Federation and wide sources never carry one: ADR-0072 searches
       only protected and frozen workspaces, and an in-progress workspace is a `development` one;
       an `ancestors` walk from a scope node outside the root never enters it (ADR-0030 d2). The
       commit still needs zero held versions in the subtree (ADR-0030 d6), held skills and
