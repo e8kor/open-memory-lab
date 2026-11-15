@@ -10403,6 +10403,125 @@ async fn an_agent_reviewer_key_is_refused_on_steering_with_instruction_needs_per
 }
 
 #[tokio::test]
+async fn an_agent_reviewers_approval_of_a_memory_successor_of_steering_is_refused_person_required()
+{
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew, _team, writer, reviewer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let steering = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", crew),
+    )
+    .await;
+    // A successor of another kind in the class supersession admits: it
+    // would retire the steering once approved.
+    let successor = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                kind: Some(MemoryKind::Memory),
+                ..supersede_req("s1-mem", steering, "Quotes are in USD/t.")
+            },
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    let crew_reviewer = agent_reviewer(&app, admin, "crew-reviewer", crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let err = app
+        .post_verdict(&crew_reviewer.value, successor, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(person_required(&err, MemoryKind::Steering), "{err:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    // A person approves it, and the policy names the stricter class.
+    app.post_verdict(&reviewer.value, successor, Verdict::Approve, None)
+        .await
+        .expect("a person approves");
+    let events = journal(&store, boot.tenant_id).await;
+    let supersede = events
+        .iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_types::LIFECYCLE_SUPERSEDE)
+        .expect("the supersession");
+    assert_eq!(supersede.envelope.payload["policy"]["class"], "instruction");
+    assert_eq!(supersede.envelope.payload["policy"]["human_required"], true);
+}
+
+#[tokio::test]
+async fn a_person_key_with_a_crew_bulk_approves_a_memory_and_is_refused_a_guardrail() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew_wa, _team, writer, _reviewer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    metals_crew(&app, admin).await;
+    let crew_person = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                crew: Some(by_name("metals-crew")),
+                ..issue_req(
+                    Role::Reviewer,
+                    "crew/lead",
+                    vec![grant(crew_wa, Role::Reviewer), grant(crew_wa, Role::Reader)],
+                )
+            },
+        )
+        .await
+        .expect("a person's reviewer key in a crew");
+    let memory = app
+        .submit_memory(
+            &writer.value,
+            &submit_into("m1", "Quotes drift weekly.", crew_wa),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let rule = app
+        .submit_memory(
+            &writer.value,
+            &guardrail_req("g1", Severity::Never, "Never push to main.", crew_wa),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let items = app
+        .review_bulk(
+            &crew_person.value,
+            &oml_app::types::BulkVerdictRequest {
+                verdict: Verdict::Approve,
+                artifact_ids: vec![memory, rule],
+                reason: None,
+                idempotency_key: "bulk-1".to_owned(),
+            },
+        )
+        .await
+        .expect("a bulk verdict");
+    let outcome = |id: Uuid| items.iter().find(|i| i.memory_id == id).expect("an item");
+    assert_eq!(
+        outcome(memory).result.as_ref().expect("approved").state,
+        MemoryStatus::Promoted
+    );
+    let refused = outcome(rule).result.as_ref().unwrap_err();
+    assert!(
+        person_required(refused, MemoryKind::Guardrail),
+        "{refused:?}"
+    );
+    let row = store
+        .memory(boot.tenant_id, rule)
+        .await
+        .expect("memory")
+        .expect("row");
+    assert_eq!(row.status, MemoryStatus::Held);
+}
+
+#[tokio::test]
 async fn a_promotion_snapshots_the_versions_class_and_whether_a_person_was_required() {
     let store = MemStore::new();
     let app = app_over(store.clone());
