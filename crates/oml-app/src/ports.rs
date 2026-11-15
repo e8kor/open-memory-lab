@@ -25,9 +25,9 @@ use crate::types::{
     ConnectGrant, ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, HeldFilter,
     HeldRow, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord,
     OAuthClientRecord, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts,
-    RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
-    UnnamedRows, VersionFinding, WebCredentialKey, WebCredentialRows, WebEntry, WebSessionRecord,
-    WorkspaceRecord,
+    RefreshOutcome, ReviewLane, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord,
+    TransitionRecord, UnnamedRows, VersionFinding, WebCredentialKey, WebCredentialRows, WebEntry,
+    WebSessionRecord, WorkspaceRecord,
 };
 use oml_domain::web::Provider;
 
@@ -1275,12 +1275,18 @@ pub trait JournalStore: Retriever + Send + Sync {
     /// store never serves what this key may not judge (admission.md review;
     /// the R2 check proper still runs at verdict time in the use-case). An
     /// empty set serves nothing.
+    /// `lane` narrows the rows by who may approve them; in the person lane
+    /// the rows are served per author key, the author holding the fewest
+    /// first, ties to the author whose oldest is older, and each author's
+    /// oldest first, so one key's flood does not bury another's item
+    /// (ADR-0074 d19; ADR-0080 d16).
     fn review_claim_next(
         &self,
         tenant_id: Uuid,
         reviewer_principal: &str,
         reviewer_key_id: Uuid,
         workspaces: &[Uuid],
+        lane: ReviewLane,
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send;
 
     /// The memory ids of the queue entries this reviewer key has claimed,
@@ -1309,6 +1315,17 @@ pub trait JournalStore: Retriever + Send + Sync {
         after: Option<&ListingPosition>,
         limit: usize,
     ) -> impl Future<Output = Result<Vec<HeldRow>, StoreError>> + Send;
+
+    /// How many rows the held listing under `filter` would serve this key,
+    /// per author key, the author keys in id order: the person lane's
+    /// counts (ADR-0074 d19; ADR-0080 d16).
+    fn review_held_authors(
+        &self,
+        tenant_id: Uuid,
+        reviewer_principal: &str,
+        reviewer_key_id: Uuid,
+        filter: &HeldFilter,
+    ) -> impl Future<Output = Result<Vec<(Uuid, u64)>, StoreError>> + Send;
 
     /// One equality lookup on the key-value hash (roles-and-keys.md); a
     /// revoked key resolves to nothing.

@@ -16289,3 +16289,236 @@ async fn a_veto_in_a_skill_description_or_a_document_title_refuses_the_write_and
     assert!(matches!(err, AppError::ScanVeto(_)), "{err:?}");
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
 }
+
+// -- the person lane of the instruction class (ADR-0074 d19; ADR-0080 d16)
+
+#[tokio::test]
+async fn review_next_never_serves_an_agent_reviewer_a_steering_version_it_cannot_approve() {
+    let app = app();
+    let (boot, crew, _team, writer, _reviewer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let crew_reviewer = agent_reviewer(&app, admin, "crew-reviewer", crew).await;
+    app.submit_memory(
+        &writer.value,
+        &submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", crew),
+    )
+    .await
+    .expect("steering");
+    let memory = app
+        .submit_memory(&writer.value, &submit_into("m1", "Quotes drift.", crew))
+        .await
+        .expect("a memory")
+        .receipt
+        .memory_id;
+    let served = app
+        .review_next(&crew_reviewer.value)
+        .await
+        .expect("review next")
+        .expect("the memory");
+    assert_eq!(served.memory.memory_id, memory);
+    // Nothing else: the steering is not this key's to judge.
+    app.post_verdict(&crew_reviewer.value, memory, Verdict::Approve, None)
+        .await
+        .expect("agents approve knowledge");
+    assert_eq!(
+        app.review_next(&crew_reviewer.value).await.expect("next"),
+        None
+    );
+    assert_eq!(
+        app.review_next_needing(
+            &crew_reviewer.value,
+            Some(oml_app::types::ReviewLane::Person)
+        )
+        .await
+        .expect("next"),
+        None
+    );
+}
+
+#[tokio::test]
+async fn review_next_never_serves_an_agent_reviewer_a_memory_successor_of_steering() {
+    let app = app();
+    let (boot, crew, _team, writer, reviewer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let steering = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", crew),
+    )
+    .await;
+    let successor = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                kind: Some(MemoryKind::Memory),
+                ..supersede_req("s1-mem", steering, "Quotes are in USD/t.")
+            },
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    let crew_reviewer = agent_reviewer(&app, admin, "crew-reviewer", crew).await;
+    assert_eq!(
+        app.review_next(&crew_reviewer.value).await.expect("next"),
+        None
+    );
+    let served = app
+        .review_next(&reviewer.value)
+        .await
+        .expect("next")
+        .expect("a person is served it");
+    assert_eq!(served.memory.memory_id, successor);
+}
+
+#[tokio::test]
+async fn needs_person_serves_only_the_person_lane() {
+    let app = app();
+    let (_boot, crew, _team, writer, reviewer) = guardrail_tenant(&app).await;
+    let memory = app
+        .submit_memory(&writer.value, &submit_into("m1", "Quotes drift.", crew))
+        .await
+        .expect("a memory")
+        .receipt
+        .memory_id;
+    let rule = app
+        .submit_memory(
+            &writer.value,
+            &guardrail_req("g1", Severity::Never, "Never push to main.", crew),
+        )
+        .await
+        .expect("a guardrail")
+        .receipt
+        .memory_id;
+    let lane = Some(oml_app::types::ReviewLane::Person);
+    let served = app
+        .review_next_needing(&reviewer.value, lane)
+        .await
+        .expect("next")
+        .expect("the guardrail");
+    assert_eq!(served.memory.memory_id, rule);
+    app.post_verdict(&reviewer.value, rule, Verdict::Approve, None)
+        .await
+        .expect("a person approves");
+    assert_eq!(
+        app.review_next_needing(&reviewer.value, lane)
+            .await
+            .expect("next"),
+        None,
+        "the memory {memory} is not in the person lane"
+    );
+    // The listing narrows the same way and counts the lane per author.
+    let page = app
+        .review_held(
+            &reviewer.value,
+            &oml_app::types::HeldListingRequest {
+                limit: 50,
+                needs: lane,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the listing");
+    assert!(page.items.is_empty());
+    assert_eq!(page.lane_authors, Some(Vec::new()));
+}
+
+#[tokio::test]
+async fn the_person_lane_is_ordered_per_author_oldest_first() {
+    let app = app();
+    let (boot, crew, _team, flood, reviewer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let other = agent(&app, admin, "other-writer", crew).await;
+    let mut flooded = Vec::new();
+    for n in 0..3 {
+        flooded.push(
+            app.submit_memory(
+                &flood.value,
+                &submit_kind(
+                    &format!("f{n}"),
+                    MemoryKind::Steering,
+                    &format!("Flood rule {n}."),
+                    crew,
+                ),
+            )
+            .await
+            .expect("steering")
+            .receipt
+            .memory_id,
+        );
+    }
+    let lone = app
+        .submit_memory(
+            &other.value,
+            &submit_kind("o1", MemoryKind::Steering, "The other rule.", crew),
+        )
+        .await
+        .expect("steering")
+        .receipt
+        .memory_id;
+    let lane = Some(oml_app::types::ReviewLane::Person);
+    let page = app
+        .review_held(
+            &reviewer.value,
+            &oml_app::types::HeldListingRequest {
+                limit: 50,
+                needs: lane,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the listing");
+    let mut counts = page.lane_authors.expect("the lane's counts");
+    counts.sort_by_key(|(_, n)| *n);
+    assert_eq!(
+        counts.iter().map(|(_, n)| *n).collect::<Vec<_>>(),
+        vec![1, 3]
+    );
+    // Per author key, the author with the fewest held items first and each
+    // author's oldest first: the other author's one is served before the
+    // flood, though it was written last.
+    let mut order = Vec::new();
+    while let Some(served) = app
+        .review_next_needing(&reviewer.value, lane)
+        .await
+        .expect("next")
+    {
+        let id = served.memory.memory_id;
+        order.push(id);
+        app.post_verdict(&reviewer.value, id, Verdict::Reject, Some("not now"))
+            .await
+            .expect("a reject");
+    }
+    assert_eq!(order, vec![lone, flooded[0], flooded[1], flooded[2]]);
+}
+
+#[tokio::test]
+async fn a_person_reviewer_is_served_instructions_and_knowledge() {
+    let app = app();
+    let (_boot, crew, _team, writer, reviewer) = guardrail_tenant(&app).await;
+    let steering = app
+        .submit_memory(
+            &writer.value,
+            &submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", crew),
+        )
+        .await
+        .expect("steering")
+        .receipt
+        .memory_id;
+    let memory = app
+        .submit_memory(&writer.value, &submit_into("m1", "Quotes drift.", crew))
+        .await
+        .expect("a memory")
+        .receipt
+        .memory_id;
+    let mut served = Vec::new();
+    while let Some(next) = app.review_next(&reviewer.value).await.expect("next") {
+        let id = next.memory.memory_id;
+        served.push(id);
+        app.post_verdict(&reviewer.value, id, Verdict::Approve, None)
+            .await
+            .expect("a person approves both");
+    }
+    assert_eq!(served, vec![steering, memory]);
+}
