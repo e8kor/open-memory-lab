@@ -259,6 +259,7 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
                     derives_from: Vec::new(),
                     severity: None,
                     rule: None,
+                    kind_fields: None,
                     format: None,
                     title: None,
                 },

@@ -16,6 +16,7 @@ pub mod telemetry;
 use oml_app::domain::access::{Covers, Grant, KeyDenial};
 use oml_app::domain::anchor::{Anchor, CheckResult, Origin};
 use oml_app::domain::budget::hit_order;
+use oml_app::domain::claim_kinds::TestShape;
 use oml_app::domain::guardrail::{GuardrailScope, Severity};
 use oml_app::domain::in_progress::KeyProfile;
 use oml_app::domain::name::{Name, NamedKind, Naming, UNIVERSE};
@@ -47,7 +48,7 @@ use oml_app::types::{
     AdminSearch, AdminState, Approval, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
     ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind, ConnectCode,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, CrewRecord,
-    DenialRecord, DocumentCaching, FormatFields, GrantRecord, GuardrailFields, HIT_KINDS,
+    DenialRecord, DocumentCaching, FormatFields, GrantRecord, GuardrailFields, HIT_KINDS, KindFields,
     HeldFilter, HeldRow, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition,
     ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome,
     QueueDepth, RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair,
@@ -2228,6 +2229,7 @@ fn status_from_str(s: &str) -> Result<MemoryStatus, StoreError> {
         "demoted" => Ok(MemoryStatus::Demoted),
         "rejected" => Ok(MemoryStatus::Rejected),
         "erased" => Ok(MemoryStatus::Erased),
+        "withdrawn" => Ok(MemoryStatus::Withdrawn),
         other => Err(StoreError::Backend(format!(
             "unknown memory status {other:?}"
         ))),
@@ -2271,6 +2273,7 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workspace_id, m.claim_key, m.
      m.replaces_artifact_id, m.author_principal, m.author_key_id, m.derives_from, \
      m.lineage_principals, m.lineage_key_ids, m.scan_finding, m.scanned_under, \
      m.severity, m.rule, \
+     m.skill_name, m.skill_description, m.document_title, m.test_shape, \
      m.valid_from, m.valid_until, m.valid_from_us, m.valid_until_us, \
      m.anchor_repo, m.anchor_uri, m.anchor_rev, m.anchor_path, m.anchor_fragment, \
      m.anchor_hash, m.anchor_hasher, m.source_check_rev, m.source_check_result, \
@@ -2299,14 +2302,16 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
             Ok::<_, StoreError>(Box::new(GuardrailFields { severity, rule }))
         })
         .transpose()?;
+    let kind = MemoryKind::parse(&kind)
+        .ok_or_else(|| StoreError::Backend(format!("unknown memory kind {kind:?}")))?;
+    let kind_fields = kind_fields_from_row(row, kind)?.map(Box::new);
     Ok(MemoryRecord {
         memory_id: row.try_get("id").map_err(backend)?,
         tenant_id: row.try_get("tenant_id").map_err(backend)?,
         workspace_id: row.try_get("workspace_id").map_err(backend)?,
         claim_key: row.try_get("claim_key").map_err(backend)?,
         version: unsigned(row, "version")?,
-        kind: MemoryKind::parse(&kind)
-            .ok_or_else(|| StoreError::Backend(format!("unknown memory kind {kind:?}")))?,
+        kind,
         body: row.try_get("claim").map_err(backend)?,
         body_digest: hash32(&claim_digest)?.to_prefixed(),
         body_bytes: unsigned(row, "body_bytes")?,
@@ -2328,6 +2333,7 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
         scanned_under: row.try_get("scanned_under").map_err(backend)?,
         created_at: EventTime::parse(&created).map_err(backend)?,
         guardrail,
+        kind_fields,
         valid: Box::new(valid_from_row(row)?),
         anchor: anchor_from_row(row)?.map(Box::new),
         origin_kind: origin_kind_from_row(row)?,
@@ -2339,6 +2345,36 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
             search_text: row.try_get("search_text").map_err(backend)?,
             search_text_by: row.try_get("search_text_by").map_err(backend)?,
         }),
+    })
+}
+
+/// A skill's, a document's or a test case's fields from their columns,
+/// `None` on every other kind and on a retirement, which store none
+/// (migration 0048; ADR-0080 d1; ADR-0081 d1; ADR-0086 d1).
+fn kind_fields_from_row(row: &PgRow, kind: MemoryKind) -> Result<Option<KindFields>, StoreError> {
+    Ok(match kind {
+        MemoryKind::Skill => {
+            let name: Option<String> = row.try_get("skill_name").map_err(backend)?;
+            let description: Option<String> =
+                row.try_get("skill_description").map_err(backend)?;
+            name.zip(description)
+                .map(|(name, description)| KindFields::Skill { name, description })
+        }
+        MemoryKind::Document => {
+            let title: Option<String> = row.try_get("document_title").map_err(backend)?;
+            title.map(|title| KindFields::Document { title: Some(title) })
+        }
+        MemoryKind::Test => {
+            let shape: Option<String> = row.try_get("test_shape").map_err(backend)?;
+            shape
+                .map(|word| {
+                    TestShape::parse(&word)
+                        .map(|shape| KindFields::Test { shape })
+                        .ok_or_else(|| StoreError::Backend(format!("unknown test shape {word:?}")))
+                })
+                .transpose()?
+        }
+        _ => None,
     })
 }
 
@@ -2977,6 +3013,30 @@ async fn insert_memory(
         insert = insert.bind(scanner);
     }
     insert.execute(&mut **tx).await.map_err(backend)?;
+    // A skill's, a document's or a test case's fields in the same
+    // transaction, only when the version carries any (migration 0048).
+    if let Some(fields) = m.kind_fields.as_deref() {
+        let (name, description, title, shape) = match fields {
+            KindFields::Skill { name, description } => {
+                (Some(name.as_str()), Some(description.as_str()), None, None)
+            }
+            KindFields::Document { title } => (None, None, title.as_deref(), None),
+            KindFields::Test { shape } => (None, None, None, Some(shape.as_str())),
+        };
+        sqlx::query(
+            "UPDATE memories SET skill_name = $3, skill_description = $4, document_title = $5, \
+             test_shape = $6 WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(m.tenant_id)
+        .bind(m.memory_id)
+        .bind(name)
+        .bind(description)
+        .bind(title)
+        .bind(shape)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    }
     // The format, the title and the derived search text in the same
     // transaction, only when the version carries any, so a schema before 0032
     // still takes every prose row without one; the lexemes and the postings
@@ -9694,6 +9754,7 @@ impl WebStore for PgStore {
             Some(AdminState::Superseded) => "m.status = 'promoted' AND NOT m.is_tip",
             Some(AdminState::Rejected) => "m.status = 'rejected'",
             Some(AdminState::Demoted) => "m.status IN ('demoted', 'erased')",
+            Some(AdminState::Withdrawn) => "m.status = 'withdrawn'",
         };
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = $1 \

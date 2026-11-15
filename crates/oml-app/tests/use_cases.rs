@@ -209,6 +209,7 @@ fn submit_req(idem: &str, body: &str) -> SubmitRequest {
         derives_from: Vec::new(),
         severity: None,
         rule: None,
+        kind_fields: None,
         valid_from: None,
         valid_until: None,
         format: None,
@@ -263,6 +264,7 @@ fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
         refuse_vocabulary_target: false,
         severity: None,
         rule: None,
+        kind_fields: None,
         valid_from: None,
         valid_until: None,
         format: None,
@@ -9862,6 +9864,7 @@ async fn a_guardrail_without_a_severity_is_refused() {
             &SubmitRequest {
                 on_similar: Default::default(),
                 rule: Some(deny_push()),
+                kind_fields: None,
                 ..submit_into("m2", "a fact", crew)
             },
         )
@@ -10012,6 +10015,7 @@ async fn a_rule_outside_oml_gr_1_or_with_allow_is_vetoed_as_guardrail_rule_unpar
                 &SubmitRequest {
                     on_similar: Default::default(),
                     rule: Some(rule.clone()),
+                    kind_fields: None,
                     ..guardrail_req(&format!("g{i}"), severity, "Never push.", crew)
                 },
             )
@@ -10028,6 +10032,7 @@ async fn a_rule_outside_oml_gr_1_or_with_allow_is_vetoed_as_guardrail_rule_unpar
             &SubmitRequest {
                 on_similar: Default::default(),
                 rule: Some(deny_push()),
+                kind_fields: None,
                 ..guardrail_req("ok", Severity::Never, "Never push.", crew)
             },
         )
@@ -15897,4 +15902,293 @@ async fn an_account_outside_the_sign_up_tenant_returns_to_no_limits_when_its_pro
     app.submit_memory(&writer.value, &submit_req("i2", "the fleet follows"))
         .await
         .expect("under no limits again");
+}
+
+// -- the claim kinds skill, document and test (ADR-0080 d1, d2; ADR-0081
+// d1, d2; ADR-0086 d1) ------------------------------------------------------
+
+fn skill_fields(name: &str) -> oml_app::types::KindFields {
+    oml_app::types::KindFields::Skill {
+        name: name.to_owned(),
+        description: "Deploy the service and check it.".to_owned(),
+    }
+}
+
+/// Whether `err` is a kind field's refusal naming `field`.
+fn kind_field_refused(err: &AppError, field: &str) -> bool {
+    matches!(err, AppError::KindField(r) if r.field == field)
+}
+
+#[tokio::test]
+async fn a_skill_is_stored_held_with_its_fields_markdown_and_its_derived_key() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "wanda", crew).await;
+    let receipt = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                kind_fields: Some(skill_fields("deploy")),
+                ..submit_kind("k1", MemoryKind::Skill, "Run the deploy script.", crew)
+            },
+        )
+        .await
+        .expect("a skill")
+        .receipt;
+    assert_eq!(receipt.claim_key, "skill/deploy");
+    assert_eq!(receipt.state, "held");
+    let row = store
+        .memory(boot.tenant_id, receipt.memory_id)
+        .await
+        .expect("read")
+        .expect("row");
+    assert_eq!(row.kind_fields.as_deref(), Some(&skill_fields("deploy")));
+    assert_eq!(row.format.media_type, "text/markdown");
+    // The signed submission carries the object.
+    let events = journal(&store, boot.tenant_id).await;
+    let submitted = events
+        .iter()
+        .rev()
+        .find(|e| e.envelope.payload["artifact_id"] == receipt.memory_id.to_string())
+        .expect("the submission");
+    assert_eq!(submitted.envelope.payload["skill"]["name"], "deploy");
+}
+
+#[tokio::test]
+async fn a_skill_body_opening_with_front_matter_is_refused_naming_body() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "wanda", crew).await;
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                kind_fields: Some(skill_fields("deploy")),
+                ..submit_kind(
+                    "k1",
+                    MemoryKind::Skill,
+                    "---\nname: deploy\n---\nRun it.",
+                    crew,
+                )
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(kind_field_refused(&err, "/body"), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_skill_needs_its_object_its_key_and_markdown_and_no_other_kind_takes_one() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "wanda", crew).await;
+    let refused = |req: SubmitRequest| {
+        let (app, writer) = (&app, writer.value.clone());
+        async move { app.submit_memory(&writer, &req).await.unwrap_err() }
+    };
+    let skill = |idem: &str| submit_kind(idem, MemoryKind::Skill, "Run it.", crew);
+    let err = refused(skill("a")).await;
+    assert!(kind_field_refused(&err, "/skill"), "{err:?}");
+    let err = refused(SubmitRequest {
+        kind_fields: Some(skill_fields("deploy")),
+        claim_key: Some("deploy-steps".to_owned()),
+        ..skill("b")
+    })
+    .await;
+    assert!(kind_field_refused(&err, "/claim_key"), "{err:?}");
+    let err = refused(SubmitRequest {
+        kind_fields: Some(skill_fields("deploy")),
+        format: Some("text/plain".to_owned()),
+        ..skill("c")
+    })
+    .await;
+    assert!(kind_field_refused(&err, "/format"), "{err:?}");
+    let err = refused(SubmitRequest {
+        kind_fields: Some(skill_fields("guardrails")),
+        ..skill("d")
+    })
+    .await;
+    assert!(kind_field_refused(&err, "/skill/name"), "{err:?}");
+    let err = refused(SubmitRequest {
+        kind_fields: Some(skill_fields("deploy")),
+        ..submit_into("e", "A plain memory.", crew)
+    })
+    .await;
+    assert!(kind_field_refused(&err, "/skill"), "{err:?}");
+    let big = "a".repeat(32_769);
+    let err = refused(SubmitRequest {
+        kind_fields: Some(skill_fields("big")),
+        ..submit_kind("f", MemoryKind::Skill, &big, crew)
+    })
+    .await;
+    assert!(matches!(err, AppError::SkillBodyTooLarge), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_skill_successor_keeps_its_name_and_may_change_its_description() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
+    let skill = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &SubmitRequest {
+            kind_fields: Some(skill_fields("deploy")),
+            ..submit_kind("k1", MemoryKind::Skill, "Run the deploy script.", crew)
+        },
+    )
+    .await;
+    let err = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                kind_fields: Some(skill_fields("release")),
+                ..supersede_req("k1-2", skill, "Run the release script.")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(kind_field_refused(&err, "/skill/name"), "{err:?}");
+    let err = app
+        .supersede(
+            &writer.value,
+            &supersede_req("k1-3", skill, "Run the deploy script twice."),
+        )
+        .await
+        .unwrap_err();
+    assert!(kind_field_refused(&err, "/skill"), "{err:?}");
+    let successor = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                kind_fields: Some(oml_app::types::KindFields::Skill {
+                    name: "deploy".to_owned(),
+                    description: "Deploy, then check the health page.".to_owned(),
+                }),
+                ..supersede_req("k1-4", skill, "Run the deploy script, then check.")
+            },
+        )
+        .await
+        .expect("a successor that keeps the name");
+    assert_eq!(successor.receipt.claim_key, "skill/deploy");
+}
+
+#[tokio::test]
+async fn a_document_takes_its_key_and_title_from_its_first_heading_or_a_sent_key() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "wanda", crew).await;
+    let receipt = app
+        .submit_memory(
+            &writer.value,
+            &submit_kind(
+                "d1",
+                MemoryKind::Document,
+                "intro\n# Release Notes\n## Fixes\n- one",
+                crew,
+            ),
+        )
+        .await
+        .expect("a document")
+        .receipt;
+    assert_eq!(receipt.claim_key, "doc/release-notes");
+    let row = store
+        .memory(boot.tenant_id, receipt.memory_id)
+        .await
+        .expect("read")
+        .expect("row");
+    assert_eq!(
+        row.kind_fields.as_deref(),
+        Some(&oml_app::types::KindFields::Document {
+            title: Some("Release Notes".to_owned())
+        })
+    );
+    assert_eq!(row.format.media_type, "text/markdown");
+    let sent = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                claim_key: Some("doc/ops/runbook".to_owned()),
+                ..submit_kind("d2", MemoryKind::Document, "No heading.", crew)
+            },
+        )
+        .await
+        .expect("a document with a sent key");
+    let row = store
+        .memory(boot.tenant_id, sent.receipt.memory_id)
+        .await
+        .expect("read")
+        .expect("row");
+    assert_eq!(
+        row.kind_fields.as_deref(),
+        Some(&oml_app::types::KindFields::Document {
+            title: Some("runbook".to_owned())
+        })
+    );
+    for (idem, key) in [("d3", Some("docs/runbook")), ("d4", None)] {
+        let err = app
+            .submit_memory(
+                &writer.value,
+                &SubmitRequest {
+                    claim_key: key.map(str::to_owned),
+                    ..submit_kind(idem, MemoryKind::Document, "No heading.", crew)
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(kind_field_refused(&err, "/claim_key"), "{err:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_test_case_needs_its_shape_and_a_test_key() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "wanda", crew).await;
+    let shape = Some(oml_app::types::KindFields::Test {
+        shape: oml_app::domain::claim_kinds::TestShape::Recall,
+    });
+    let case = |idem: &str| submit_kind(idem, MemoryKind::Test, "query: runbook", crew);
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                claim_key: Some("test/finds-the-runbook".to_owned()),
+                ..case("t1")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(kind_field_refused(&err, "/test"), "{err:?}");
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                kind_fields: shape.clone(),
+                ..case("t2")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(kind_field_refused(&err, "/claim_key"), "{err:?}");
+    let receipt = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                kind_fields: shape,
+                claim_key: Some("test/finds-the-runbook".to_owned()),
+                ..case("t3")
+            },
+        )
+        .await
+        .expect("a test case")
+        .receipt;
+    assert_eq!(receipt.claim_key, "test/finds-the-runbook");
+    assert_eq!(receipt.state, "held");
 }

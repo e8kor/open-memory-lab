@@ -344,6 +344,7 @@ async fn an_in_progress_workspace_with_held_rows_withholds_the_commit_with_their
                     derives_from: Vec::new(),
                     severity: None,
                     rule: None,
+                    kind_fields: None,
                     valid_from: None,
                     valid_until: None,
                     format: None,

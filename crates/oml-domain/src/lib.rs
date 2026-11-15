@@ -44,6 +44,7 @@ pub mod brief;
 pub mod budget;
 pub mod chain;
 pub mod claim_edges;
+pub mod claim_kinds;
 pub mod envelope;
 pub mod federation;
 pub mod guardrail;

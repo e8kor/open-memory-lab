@@ -123,6 +123,7 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
+                kind_fields: None,
                 valid_from: None,
                 valid_until: None,
                 format: None,

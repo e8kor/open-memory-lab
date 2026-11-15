@@ -41,6 +41,7 @@ fn request(idem: &str, body: &str, format: Option<&str>) -> SubmitRequest {
         derives_from: Vec::new(),
         severity: None,
         rule: None,
+        kind_fields: None,
         valid_from: None,
         valid_until: None,
         format: format.map(str::to_owned),
