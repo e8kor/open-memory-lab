@@ -4434,7 +4434,7 @@ fn get_as_of(params: &[(String, String)]) -> Result<Option<EventTime>, ApiError>
 
 /// The listing's query parameters (openapi.yaml `searchMemories`): each
 /// at most once, and an unknown one refused rather than ignored, so a
-/// mistyped filter never widens a listing; v0.3.0's `workspace_id` names
+/// mistyped filter never widens a listing; v0.3.0's `workarea_id` names
 /// its successor, `workspace` (ADR-0039 d7).
 fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
     let mut req = ListRequest {
