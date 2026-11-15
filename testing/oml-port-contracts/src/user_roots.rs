@@ -310,6 +310,7 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
                     refuse_vocabulary_target: false,
                     severity: None,
                     rule: None,
+                    kind_fields: None,
                     valid_from: None,
                     valid_until: None,
                     anchor: None,

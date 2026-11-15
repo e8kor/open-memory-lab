@@ -95,6 +95,7 @@ from .denial import Denial
 from .denial_request import DenialRequest
 from .disable_web_user_body import DisableWebUserBody
 from .disable_web_user_response_200 import DisableWebUserResponse200
+from .document_fields import DocumentFields
 from .edge_page import EdgePage
 from .error_code import ErrorCode
 from .error_envelope import ErrorEnvelope
@@ -269,6 +270,7 @@ from .similar_item import SimilarItem
 from .similar_item_kind import SimilarItemKind
 from .similar_item_relation import SimilarItemRelation
 from .similar_item_state import SimilarItemState
+from .skill_fields import SkillFields
 from .source_check_request import SourceCheckRequest
 from .source_check_request_result import SourceCheckRequestResult
 from .source_check_result import SourceCheckResult
@@ -286,6 +288,8 @@ from .submit_request_verb import SubmitRequestVerb
 from .supersede_request import SupersedeRequest
 from .supersede_request_kind import SupersedeRequestKind
 from .supersede_request_on_similar import SupersedeRequestOnSimilar
+from .test_fields import TestFields
+from .test_fields_shape import TestFieldsShape
 from .token_request import TokenRequest
 from .token_request_grant_type import TokenRequestGrantType
 from .token_request_scope import TokenRequestScope
@@ -453,6 +457,7 @@ __all__ = (
     "DenialRequest",
     "DisableWebUserBody",
     "DisableWebUserResponse200",
+    "DocumentFields",
     "EdgePage",
     "ErrorCode",
     "ErrorEnvelope",
@@ -617,6 +622,7 @@ __all__ = (
     "SimilarItemKind",
     "SimilarItemRelation",
     "SimilarItemState",
+    "SkillFields",
     "SourceCheckRequest",
     "SourceCheckRequestResult",
     "SourceCheckResult",
@@ -634,6 +640,8 @@ __all__ = (
     "SupersedeRequest",
     "SupersedeRequestKind",
     "SupersedeRequestOnSimilar",
+    "TestFields",
+    "TestFieldsShape",
     "TokenRequest",
     "TokenRequestGrantType",
     "TokenRequestScope",

@@ -18,10 +18,13 @@ if TYPE_CHECKING:
     from ..models.anchor import Anchor
     from ..models.approver import Approver
     from ..models.attachment_descriptor import AttachmentDescriptor
+    from ..models.document_fields import DocumentFields
     from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
     from ..models.origin import Origin
     from ..models.scan_finding import ScanFinding
+    from ..models.skill_fields import SkillFields
     from ..models.source_checked import SourceChecked
+    from ..models.test_fields import TestFields
 
 
 T = TypeVar("T", bound="MemorySummary")
@@ -42,7 +45,8 @@ class MemorySummary:
             docs/architecture/roles-and-keys.md, Own) — possible only on an own row an admin moved there (ADR-0025 d3).
         workspace_path (None | str): Derived at read time; grants bind to node ids. Null wherever workspace_id is.
         kind (MemorySummaryKind):
-        state (MemorySummaryState):
+        state (MemorySummaryState): withdrawn is a held version its author retracted, kept and never served (ADR-0083
+            d13; since v0.8.0).
         unreviewed (bool): True exactly when the served version is held: the caller's own held version, or, inside a
             workspace a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4).
         tokens (int): Budget tokens of the body (counter oml-tc/1): ceil(UTF-8 bytes of the NFC body / 4); not any
@@ -65,6 +69,9 @@ class MemorySummary:
             (ADR-0057 d5).
         severity (MemorySummarySeverity | Unset): On kind guardrail alone, except a retirement version (ADR-0037 d2).
         rule (Any | Unset): On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8).
+        skill (SkillFields | Unset): A skill's name and description, signed with the version (ADR-0080 d1).
+        document (DocumentFields | Unset): A document's title, signed with the version (ADR-0081 d1).
+        test (TestFields | Unset): A test case's shape (ADR-0086 d1).
         load_warning (str | Unset): On a held guardrail alone: every reader of it is told that every key reading its
             workspace will load the rule once it binds (ADR-0037 d10).
         scan_findings (list[ScanFinding] | Unset): Every finding stored on the version, in the order recorded, on the
@@ -131,6 +138,9 @@ class MemorySummary:
     retirement: bool = False
     severity: MemorySummarySeverity | Unset = UNSET
     rule: Any | Unset = UNSET
+    skill: SkillFields | Unset = UNSET
+    document: DocumentFields | Unset = UNSET
+    test: TestFields | Unset = UNSET
     load_warning: str | Unset = UNSET
     scan_findings: list[ScanFinding] | Unset = UNSET
     principal: None | str | Unset = UNSET
@@ -227,6 +237,18 @@ class MemorySummary:
             severity = self.severity.value
 
         rule = self.rule
+
+        skill: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.skill, Unset):
+            skill = self.skill.to_dict()
+
+        document: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.document, Unset):
+            document = self.document.to_dict()
+
+        test: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.test, Unset):
+            test = self.test.to_dict()
 
         load_warning = self.load_warning
 
@@ -356,6 +378,12 @@ class MemorySummary:
             field_dict["severity"] = severity
         if rule is not UNSET:
             field_dict["rule"] = rule
+        if skill is not UNSET:
+            field_dict["skill"] = skill
+        if document is not UNSET:
+            field_dict["document"] = document
+        if test is not UNSET:
+            field_dict["test"] = test
         if load_warning is not UNSET:
             field_dict["load_warning"] = load_warning
         if scan_findings is not UNSET:
@@ -404,10 +432,13 @@ class MemorySummary:
         from ..models.anchor import Anchor
         from ..models.approver import Approver
         from ..models.attachment_descriptor import AttachmentDescriptor
+        from ..models.document_fields import DocumentFields
         from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
         from ..models.origin import Origin
         from ..models.scan_finding import ScanFinding
+        from ..models.skill_fields import SkillFields
         from ..models.source_checked import SourceChecked
+        from ..models.test_fields import TestFields
 
         d = dict(src_dict)
         artifact_id = d.pop("artifact_id")
@@ -542,6 +573,27 @@ class MemorySummary:
             severity = MemorySummarySeverity(_severity)
 
         rule = d.pop("rule", UNSET)
+
+        _skill = d.pop("skill", UNSET)
+        skill: SkillFields | Unset
+        if isinstance(_skill, Unset):
+            skill = UNSET
+        else:
+            skill = SkillFields.from_dict(_skill)
+
+        _document = d.pop("document", UNSET)
+        document: DocumentFields | Unset
+        if isinstance(_document, Unset):
+            document = UNSET
+        else:
+            document = DocumentFields.from_dict(_document)
+
+        _test = d.pop("test", UNSET)
+        test: TestFields | Unset
+        if isinstance(_test, Unset):
+            test = UNSET
+        else:
+            test = TestFields.from_dict(_test)
 
         load_warning = d.pop("load_warning", UNSET)
 
@@ -717,6 +769,9 @@ class MemorySummary:
             source_checked=source_checked,
             severity=severity,
             rule=rule,
+            skill=skill,
+            document=document,
+            test=test,
             load_warning=load_warning,
             scan_findings=scan_findings,
             principal=principal,

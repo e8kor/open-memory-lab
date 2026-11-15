@@ -1436,14 +1436,14 @@ export interface components {
             claim_key: string;
             version: number;
             /** @enum {string} */
-            state: "held" | "promoted" | "rejected" | "superseded" | "demoted";
+            state: "held" | "promoted" | "rejected" | "superseded" | "demoted" | "withdrawn";
             workspace_path: string;
             text: string;
             /**
              * @description The kind the version was written as; the admin page refuses to supersede or retire a guardrail by it (ADR-0037 d17; ADR-0070 d5). Since v0.7.0.
              * @enum {string}
              */
-            kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
+            kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail" | "skill" | "document" | "test";
             /** @description The authoring key's name; null for a key that has no name, which key_id names (ADR-0070 d5). */
             key: string | null;
             /** @description The authoring key's id, which names a key that has no name (ADR-0070 d5). Since v0.7.0. */
@@ -1558,17 +1558,23 @@ export interface components {
             /** @description Groups versions of one claim; one live claim per (tenant, workspace): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with request.validation, details.field /claim_key (ADR-0039 d6). */
             claim_key?: string;
             /**
-             * @description guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1).
+             * @description guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1). skill requires skill and format text/markdown, its default, and derives claim_key skill/<name>; a sent claim_key other than that, a body opening with a --- line and a body past 32,768 bytes are refused (request.validation naming the field; request.payload_too_large naming /body) (ADR-0080 d1, d9). document takes text/markdown, its default, or text/plain and an optional document; its claim_key is doc/ and segments of a-z 0-9 . _ -, or derived from its title (ADR-0081 d1, d2). test requires test and a claim_key test/<name> (ADR-0086 d1). The three are written over this API only: oml_write refuses them (since v0.8.0).
              * @default memory
              * @enum {string}
              */
-            kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
+            kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail" | "skill" | "document" | "test";
             /** @description When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the submission; only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (ADR-0059 d2). */
             valid_from?: components["schemas"]["ValidEnd"];
             /** @description When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (ADR-0059 d2, d3). */
             valid_until?: components["schemas"]["ValidEnd"];
             severity?: components["schemas"]["Severity"];
             rule?: components["schemas"]["GuardrailRule"];
+            /** @description Required on kind skill, refused on every other kind (ADR-0080 d1). Since v0.8.0. */
+            skill?: components["schemas"]["SkillFields"];
+            /** @description Optional on kind document, refused on every other kind (ADR-0081 d1). Since v0.8.0. */
+            document?: components["schemas"]["DocumentFields"];
+            /** @description Required on kind test, refused on every other kind (ADR-0086 d1). Since v0.8.0. */
+            test?: components["schemas"]["TestFields"];
             /** @description Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through the designed attachments (openapi-designed.yaml). */
             body: string;
             /** @description The workspace written in, by id or name, honoured only within the key's grants; omitted, the key's default_workspace (ADR-0039 d4, d7). */
@@ -1659,9 +1665,12 @@ export interface components {
             /** @description Derived at read time; grants bind to node ids. Null wherever workspace_id is. */
             workspace_path: string | null;
             /** @enum {string} */
-            kind: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
-            /** @enum {string} */
-            state: "held" | "promoted" | "demoted" | "rejected" | "erased";
+            kind: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail" | "skill" | "document" | "test";
+            /**
+             * @description withdrawn is a held version its author retracted, kept and never served (ADR-0083 d13; since v0.8.0).
+             * @enum {string}
+             */
+            state: "held" | "promoted" | "demoted" | "rejected" | "erased" | "withdrawn";
             /** @description True exactly when the served version is held: the caller's own held version, or, inside a workspace a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4). */
             unreviewed: boolean;
             /**
@@ -1671,6 +1680,12 @@ export interface components {
             severity?: "never" | "must" | "should";
             /** @description On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8). */
             rule?: unknown;
+            /** @description On kind skill alone, except a retirement version (ADR-0080 d1; since v0.8.0). */
+            skill?: components["schemas"]["SkillFields"];
+            /** @description On kind document alone, except a retirement version; its title as sent, else the first level-1 heading, else the claim key's last segment (ADR-0081 d1; since v0.8.0). */
+            document?: components["schemas"]["DocumentFields"];
+            /** @description On kind test alone, except a retirement version (ADR-0086 d1; since v0.8.0). */
+            test?: components["schemas"]["TestFields"];
             /** @description On a held guardrail alone: every reader of it is told that every key reading its workspace will load the rule once it binds (ADR-0037 d10). */
             load_warning?: string;
             /** @description Every finding stored on the version, in the order recorded, on the review serve, the held listing and the named read alone; absent elsewhere, so an empty list means the scan found nothing (ADR-0074 d17, d23). */
@@ -2135,12 +2150,18 @@ export interface components {
              * @description Omitted, the successor takes the target's kind — the one field inherited from the target. A memory, derived_fact or steering target admits any of those three; a vocabulary-kind target and a retirement keep the target's kind; anything else is request.validation (docs/architecture/audit-and-lineage.md).
              * @enum {string}
              */
-            kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
+            kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail" | "skill" | "document" | "test";
             /** @description The superseded target is included implicitly. */
             derives_from?: string[];
             reason?: string;
             severity?: components["schemas"]["Severity"];
             rule?: components["schemas"]["GuardrailRule"];
+            /** @description Required on a skill successor unless it retires; its name is the target's, a renamed skill being a retirement and a new claim (ADR-0080 d2). Since v0.8.0. */
+            skill?: components["schemas"]["SkillFields"];
+            /** @description Optional on a document successor, refused on a retirement (ADR-0081 d1). Since v0.8.0. */
+            document?: components["schemas"]["DocumentFields"];
+            /** @description Required on a test successor unless it retires (ADR-0086 d1). Since v0.8.0. */
+            test?: components["schemas"]["TestFields"];
             /**
              * @description Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the request digest. Since v0.5.9.
              * @enum {string}
@@ -2726,6 +2747,23 @@ export interface components {
          * @enum {string}
          */
         Severity: "never" | "must" | "should";
+        /** @description A skill's name and description, signed with the version (ADR-0080 d1). */
+        SkillFields: {
+            /** @description A lowercase label: a letter first, then letters, digits and hyphens, ending in a letter or digit; no --; not guardrails, and not ending in -unreviewed (ADR-0080 d1, d10). */
+            name: string;
+            /** @description One line. */
+            description: string;
+        };
+        /** @description A document's title, signed with the version (ADR-0081 d1). */
+        DocumentFields: {
+            /** @description One line. Omitted, the first level-1 heading of a markdown body, else the claim key's last segment. */
+            title?: string;
+        };
+        /** @description A test case's shape (ADR-0086 d1). */
+        TestFields: {
+            /** @enum {string} */
+            shape: "recall" | "guardrail" | "skill" | "document";
+        };
         /** @description A guardrail's optional rule in the oml-gr/1 grammar: one tool class, its match and an effect, deny or ask, never allow; should takes ask only. Refused on every other kind and on a retirement (request.validation, details.field /rule); a rule outside the grammar, or over 160 bytes, is vetoed as submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (ADR-0037 d8, d10; since v0.5.1). */
         GuardrailRule: {
             /** @enum {string} */
@@ -3403,7 +3441,7 @@ export interface operations {
                 /** @description The subtree read, by id or name, which must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node (ADR-0039 d4, d7). With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it, and omitted the listing reads every workspace the key wrote in. Without own, the scope: a node where reader is effective, and omitted the key's default_workspace (request.workspace_unresolved for a key with neither). */
                 workspace?: components["schemas"]["WorkspaceRef"];
                 claim_key?: string;
-                state?: "held" | "promoted" | "demoted" | "rejected" | "erased";
+                state?: "held" | "promoted" | "demoted" | "rejected" | "erased" | "withdrawn";
                 kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
                 own?: boolean;
                 /** @description true: the scoped listing (at workspace, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with author, include_text, workspace, state (held, promoted, rejected, superseded, demoted), one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
@@ -7376,7 +7414,7 @@ export interface operations {
                     query?: string;
                     workspace?: string;
                     /** @enum {string} */
-                    state?: "held" | "promoted" | "rejected" | "superseded" | "demoted";
+                    state?: "held" | "promoted" | "rejected" | "superseded" | "demoted" | "withdrawn";
                     /**
                      * @description One origin.kind (ADR-0045 d22, d24; ADR-0070 d5). Since v0.6.4.
                      * @enum {string}

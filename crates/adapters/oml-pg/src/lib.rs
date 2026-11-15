@@ -48,12 +48,12 @@ use oml_app::types::{
     AdminSearch, AdminState, Approval, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
     ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind, ConnectCode,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, CrewRecord,
-    DenialRecord, DocumentCaching, FormatFields, GrantRecord, GuardrailFields, HIT_KINDS, KindFields,
-    HeldFilter, HeldRow, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition,
-    ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome,
-    QueueDepth, RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair,
-    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, VersionFinding, WebCredentialKey,
-    WebCredentialRows, WebEntry, WebSessionRecord, WorkspaceRecord, WorkspaceRef,
+    DenialRecord, DocumentCaching, FormatFields, GrantRecord, GuardrailFields, HIT_KINDS,
+    HeldFilter, HeldRow, KeyAccess, KeyRecord, KeyReferences, KindFields, ListingFilter,
+    ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT,
+    PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow,
+    TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows, VersionFinding,
+    WebCredentialKey, WebCredentialRows, WebEntry, WebSessionRecord, WorkspaceRecord, WorkspaceRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -2355,8 +2355,7 @@ fn kind_fields_from_row(row: &PgRow, kind: MemoryKind) -> Result<Option<KindFiel
     Ok(match kind {
         MemoryKind::Skill => {
             let name: Option<String> = row.try_get("skill_name").map_err(backend)?;
-            let description: Option<String> =
-                row.try_get("skill_description").map_err(backend)?;
+            let description: Option<String> = row.try_get("skill_description").map_err(backend)?;
             name.zip(description)
                 .map(|(name, description)| KindFields::Skill { name, description })
         }

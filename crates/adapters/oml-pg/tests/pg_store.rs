@@ -3039,7 +3039,9 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // (ADR-0063 d2); 0032 adds the format, the title and the derived
             // search text, text/plain with none on every existing row
             // (ADR-0056 d1, d4); 0044 adds the approval, null on every row
-            // never promoted (ADR-0077 d6).
+            // never promoted (ADR-0077 d6); 0048 adds a skill's, a document's
+            // and a test case's fields, null on every existing row (ADR-0080
+            // d1; ADR-0081 d1; ADR-0086 d1).
             (true, "memories") => {
                 "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
                  - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
@@ -3048,7 +3050,8 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'source_check_fragment' - 'source_check_at' \
                  - 'valid_from' - 'valid_until' - 'valid_from_us' - 'valid_until_us' \
                  - 'origin_kind' - 'scanned_under' - 'format' - 'title' - 'search_text' - 'search_text_by' \
-                 - 'approver_used_by' - 'approver_same_user' - 'approved_at'"
+                 - 'approver_used_by' - 'approver_same_user' - 'approved_at' \
+                 - 'skill_name' - 'skill_description' - 'document_title' - 'test_shape'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
@@ -6374,7 +6377,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 47, "every migration through 0047_workspace_rename");
+    assert_eq!(applied, 49, "every migration through 0049_claim_kinds_validate");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7828,7 +7831,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 47, "every migration through 0047_workspace_rename");
+    assert_eq!(applied, 49, "every migration through 0049_claim_kinds_validate");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8709,7 +8712,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 47, "every migration through 0047_workspace_rename");
+    assert_eq!(applied, 49, "every migration through 0049_claim_kinds_validate");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -11814,5 +11817,256 @@ async fn writers_that_skip_the_pre_check_are_held_by_the_commits_own_ceiling() {
         store.usage_drift(t, Month::of(&at)).await.expect("drift"),
         Vec::new()
     );
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// The claim kinds and the withdrawn state (migrations 0048, 0049; ADR-0080
+// d1; ADR-0081 d1; ADR-0086 d1; ADR-0083 d13)
+// ---------------------------------------------------------------------------
+
+/// A writer key used by an agent, with writer and reader on `node`.
+async fn writer_pg(app: &PgApp, admin: &str, node: Uuid) -> String {
+    app.issue_key(
+        admin,
+        &oml_app::types::IssueKeyRequest {
+            profile: None,
+            role: Role::Writer,
+            name: name("kinds-writer"),
+            principal: "kinds/agent".to_owned(),
+            used_by: Some(oml_app::domain::UsedBy::Agent),
+            default_workspace: Some(node.into()),
+            crew: None,
+            grants: [Role::Writer, Role::Reader]
+                .into_iter()
+                .map(|role| oml_app::types::GrantRequest {
+                    node: node.into(),
+                    role,
+                    deny: Vec::new(),
+                    covers: Covers::Subtree,
+                })
+                .collect(),
+            connect_code: false,
+            user: None,
+            guardrail_scope: None,
+            expiry: None,
+            requests_per_minute: None,
+        },
+    )
+    .await
+    .expect("a writer key")
+    .value
+}
+
+fn kind_submit(
+    idem: &str,
+    kind: oml_app::domain::MemoryKind,
+    body: &str,
+    claim_key: Option<&str>,
+    kind_fields: Option<oml_app::types::KindFields>,
+) -> oml_app::types::SubmitRequest {
+    oml_app::types::SubmitRequest {
+        on_similar: Default::default(),
+        idempotency_key: idem.to_owned(),
+        claim_key: claim_key.map(str::to_owned),
+        verb: None,
+        kind,
+        body: body.to_owned(),
+        workspace: None,
+        derives_from: Vec::new(),
+        severity: None,
+        rule: None,
+        kind_fields,
+        valid_from: None,
+        valid_until: None,
+        anchor: None,
+        format: None,
+        title: None,
+        origin: None,
+    }
+}
+
+#[tokio::test]
+async fn a_skill_a_document_and_a_test_case_round_trip_their_fields_through_postgres() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let app = app_over_pg(&store);
+    let boot = bootstrap_pg(&app, "kinds").await;
+    let admin = boot.admin_key.value.as_str();
+    let crew = workspace_pg(&app, admin, "crew", boot.root_workspace_id).await;
+    let writer = writer_pg(&app, admin, crew).await;
+    let skill = oml_app::types::KindFields::Skill {
+        name: "deploy".to_owned(),
+        description: "Deploy the service.".to_owned(),
+    };
+    let test = oml_app::types::KindFields::Test {
+        shape: oml_app::domain::claim_kinds::TestShape::Recall,
+    };
+    let cases = [
+        (
+            kind_submit(
+                "k-skill",
+                MemoryKind::Skill,
+                "Run the deploy script.",
+                None,
+                Some(skill.clone()),
+            ),
+            "skill/deploy",
+            skill,
+        ),
+        (
+            kind_submit(
+                "k-doc",
+                MemoryKind::Document,
+                "# Runbook\nStep one.",
+                None,
+                None,
+            ),
+            "doc/runbook",
+            oml_app::types::KindFields::Document {
+                title: Some("Runbook".to_owned()),
+            },
+        ),
+        (
+            kind_submit(
+                "k-test",
+                MemoryKind::Test,
+                "query: runbook",
+                Some("test/finds-the-runbook"),
+                Some(test.clone()),
+            ),
+            "test/finds-the-runbook",
+            test,
+        ),
+    ];
+    for (req, key, fields) in &cases {
+        let receipt = app
+            .submit_memory(writer.as_str(), req)
+            .await
+            .expect("a held version of the kind")
+            .receipt;
+        assert_eq!(receipt.claim_key, *key);
+        let row = store
+            .memory(boot.tenant_id, receipt.memory_id)
+            .await
+            .expect("read")
+            .expect("row");
+        assert_eq!(row.kind, req.kind);
+        assert_eq!(row.kind_fields.as_deref(), Some(fields));
+    }
+    drop_dbs(&created).await;
+}
+
+#[tokio::test]
+async fn a_withdrawn_version_leaves_the_live_claim_index() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let db: String = sqlx::query_scalar("SELECT current_database()::text")
+        .fetch_one(store.pool())
+        .await
+        .expect("database name");
+    let app = app_over_pg(&store);
+    let boot = bootstrap_pg(&app, "withdrawn").await;
+    let admin = boot.admin_key.value.as_str();
+    let crew = workspace_pg(&app, admin, "crew", boot.root_workspace_id).await;
+    let writer = writer_pg(&app, admin, crew).await;
+    let req = |idem: &str| {
+        kind_submit(
+            idem,
+            oml_app::domain::MemoryKind::Memory,
+            &format!("The quote holds for 30 days ({idem})."),
+            Some("quote-validity"),
+            None,
+        )
+    };
+    let first = app
+        .submit_memory(writer.as_str(), &req("w-1"))
+        .await
+        .expect("a held version")
+        .receipt;
+    // While held, the key is live: a second version 1 is refused.
+    let err = app
+        .submit_memory(writer.as_str(), &req("w-2"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, oml_app::types::AppError::ClaimKeyConflict),
+        "{err:?}"
+    );
+    // Withdrawn, as #401's act leaves it (no verb writes the state yet).
+    let mut owner = admin_in(&db).await;
+    let done =
+        sqlx::query("UPDATE memories SET status = 'withdrawn' WHERE tenant_id = $1 AND id = $2")
+            .bind(boot.tenant_id)
+            .bind(first.memory_id)
+            .execute(&mut owner)
+            .await
+            .expect("the check admits withdrawn");
+    assert_eq!(done.rows_affected(), 1);
+    owner.close().await.expect("close");
+    let row = store
+        .memory(boot.tenant_id, first.memory_id)
+        .await
+        .expect("read")
+        .expect("row");
+    assert_eq!(row.status, MemoryStatus::Withdrawn);
+    // The key is released, as a rejected version releases it.
+    app.submit_memory(writer.as_str(), &req("w-3"))
+        .await
+        .expect("a fresh claim under the released key");
+    drop_dbs(&created).await;
+}
+
+#[tokio::test]
+async fn the_kind_field_check_refuses_a_skill_name_on_another_kind() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let db: String = sqlx::query_scalar("SELECT current_database()::text")
+        .fetch_one(store.pool())
+        .await
+        .expect("database name");
+    let app = app_over_pg(&store);
+    let boot = bootstrap_pg(&app, "kindcheck").await;
+    let admin = boot.admin_key.value.as_str();
+    let crew = workspace_pg(&app, admin, "crew", boot.root_workspace_id).await;
+    let writer = writer_pg(&app, admin, crew).await;
+    let memory = app
+        .submit_memory(
+            writer.as_str(),
+            &kind_submit(
+                "c-1",
+                oml_app::domain::MemoryKind::Memory,
+                "A plain memory.",
+                None,
+                None,
+            ),
+        )
+        .await
+        .expect("a memory")
+        .receipt;
+    let mut owner = admin_in(&db).await;
+    let refused = sqlx::query(
+        "UPDATE memories SET skill_name = 'deploy', skill_description = 'x' \
+         WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(boot.tenant_id)
+    .bind(memory.memory_id)
+    .execute(&mut owner)
+    .await
+    .expect_err("memories_kind_fields refuses a skill's fields on a memory");
+    assert!(
+        refused.to_string().contains("memories_kind_fields"),
+        "{refused}"
+    );
+    owner.close().await.expect("close");
     drop_dbs(&created).await;
 }

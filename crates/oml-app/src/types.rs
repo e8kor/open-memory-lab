@@ -1363,9 +1363,16 @@ impl AnchorFilter {
 /// admitted, a document's title resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KindFields {
-    Skill { name: String, description: String },
-    Document { title: Option<String> },
-    Test { shape: oml_domain::claim_kinds::TestShape },
+    Skill {
+        name: String,
+        description: String,
+    },
+    Document {
+        title: Option<String>,
+    },
+    Test {
+        shape: oml_domain::claim_kinds::TestShape,
+    },
 }
 
 impl KindFields {

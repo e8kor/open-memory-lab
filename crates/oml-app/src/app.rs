@@ -112,9 +112,9 @@ use crate::types::{
     ConfirmOutcome, ConfirmationGrant, ConfirmationView, ConnectCode, ConnectCodeIssued,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, CreatedWorkspace,
     Credential, CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DenialRecord,
-    EdgeRatification, ExchangeForm, FormatFields, GrantRecord, GuardrailFields, GuardrailRequest, KindFields,
+    EdgeRatification, ExchangeForm, FormatFields, GrantRecord, GuardrailFields, GuardrailRequest,
     GuardrailSet, GuardrailVerdict, HIT_KINDS, IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess,
-    KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition, ListingScope,
+    KeyDetail, KeyRecord, KindFields, ListRequest, ListingFilter, ListingPosition, ListingScope,
     LiveConnectCode, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
     OAuthClientRecord, OnSimilar, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge,
     ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm,
@@ -985,9 +985,9 @@ fn kind_fields(
                     key
                 }
             };
-            let title = sent_title.or(heading).unwrap_or_else(|| {
-                key.rsplit('/').next().unwrap_or_default().to_owned()
-            });
+            let title = sent_title
+                .or(heading)
+                .unwrap_or_else(|| key.rsplit('/').next().unwrap_or_default().to_owned());
             Ok((Some(KindFields::Document { title: Some(title) }), Some(key)))
         }
         MemoryKind::Test => {

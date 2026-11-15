@@ -74,10 +74,9 @@ use oml_app::types::{
     ClaimEdgeQuery, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
     EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest,
     IssuedKey, KeyDetail, KeyLimitsChange, KindFields, ListRequest, MemoryRecord, NamedServe,
-    OnSimilar,
-    ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory, SimilarItem, SourceCheck,
-    SourceCheckRequest, SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict,
-    VerdictRequest, Whoami, WorkspaceInfo, WorkspaceRecord,
+    OnSimilar, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory, SimilarItem,
+    SourceCheck, SourceCheckRequest, SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent,
+    Verdict, VerdictRequest, Whoami, WorkspaceInfo, WorkspaceRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage,
@@ -4696,8 +4695,10 @@ fn parse_kind_fields(
         [] => Ok(None),
         [(name, value)] => match *name {
             "skill" => {
-                let Skill { name, description } = serde_json::from_value(value.clone())
-                    .map_err(|_| shape_error("skill", "an object {name, description}, both strings"))?;
+                let Skill { name, description } =
+                    serde_json::from_value(value.clone()).map_err(|_| {
+                        shape_error("skill", "an object {name, description}, both strings")
+                    })?;
                 Ok(Some(KindFields::Skill { name, description }))
             }
             "document" => {

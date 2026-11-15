@@ -12,8 +12,11 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.anchor import Anchor
+    from ..models.document_fields import DocumentFields
     from ..models.guardrail_rule import GuardrailRule
     from ..models.origin import Origin
+    from ..models.skill_fields import SkillFields
+    from ..models.test_fields import TestFields
 
 
 T = TypeVar("T", bound="SupersedeRequest")
@@ -61,6 +64,9 @@ class SupersedeRequest:
                 an effect, deny or ask, never allow; should takes ask only. Refused on every other kind and on a retirement
                 (request.validation, details.field /rule); a rule outside the grammar, or over 160 bytes, is vetoed as
                 submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (ADR-0037 d8, d10; since v0.5.1).
+            skill (SkillFields | Unset): A skill's name and description, signed with the version (ADR-0080 d1).
+            document (DocumentFields | Unset): A document's title, signed with the version (ADR-0081 d1).
+            test (TestFields | Unset): A test case's shape (ADR-0086 d1).
             on_similar (SupersedeRequestOnSimilar | Unset): Omitted, hold. What the write does when the similar check names
                 a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the
                 rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims
@@ -92,6 +98,9 @@ class SupersedeRequest:
     reason: str | Unset = UNSET
     severity: Severity | Unset = UNSET
     rule: GuardrailRule | Unset = UNSET
+    skill: SkillFields | Unset = UNSET
+    document: DocumentFields | Unset = UNSET
+    test: TestFields | Unset = UNSET
     on_similar: SupersedeRequestOnSimilar | Unset = UNSET
     valid_from: str | Unset = UNSET
     valid_until: str | Unset = UNSET
@@ -137,6 +146,18 @@ class SupersedeRequest:
         if not isinstance(self.rule, Unset):
             rule = self.rule.to_dict()
 
+        skill: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.skill, Unset):
+            skill = self.skill.to_dict()
+
+        document: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.document, Unset):
+            document = self.document.to_dict()
+
+        test: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.test, Unset):
+            test = self.test.to_dict()
+
         on_similar: str | Unset = UNSET
         if not isinstance(self.on_similar, Unset):
             on_similar = self.on_similar.value
@@ -175,6 +196,12 @@ class SupersedeRequest:
             field_dict["severity"] = severity
         if rule is not UNSET:
             field_dict["rule"] = rule
+        if skill is not UNSET:
+            field_dict["skill"] = skill
+        if document is not UNSET:
+            field_dict["document"] = document
+        if test is not UNSET:
+            field_dict["test"] = test
         if on_similar is not UNSET:
             field_dict["on_similar"] = on_similar
         if valid_from is not UNSET:
@@ -191,8 +218,11 @@ class SupersedeRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.anchor import Anchor
+        from ..models.document_fields import DocumentFields
         from ..models.guardrail_rule import GuardrailRule
         from ..models.origin import Origin
+        from ..models.skill_fields import SkillFields
+        from ..models.test_fields import TestFields
 
         d = dict(src_dict)
         body = d.pop("body")
@@ -247,6 +277,27 @@ class SupersedeRequest:
         else:
             rule = GuardrailRule.from_dict(_rule)
 
+        _skill = d.pop("skill", UNSET)
+        skill: SkillFields | Unset
+        if isinstance(_skill, Unset):
+            skill = UNSET
+        else:
+            skill = SkillFields.from_dict(_skill)
+
+        _document = d.pop("document", UNSET)
+        document: DocumentFields | Unset
+        if isinstance(_document, Unset):
+            document = UNSET
+        else:
+            document = DocumentFields.from_dict(_document)
+
+        _test = d.pop("test", UNSET)
+        test: TestFields | Unset
+        if isinstance(_test, Unset):
+            test = UNSET
+        else:
+            test = TestFields.from_dict(_test)
+
         _on_similar = d.pop("on_similar", UNSET)
         on_similar: SupersedeRequestOnSimilar | Unset
         if isinstance(_on_similar, Unset):
@@ -274,6 +325,9 @@ class SupersedeRequest:
             reason=reason,
             severity=severity,
             rule=rule,
+            skill=skill,
+            document=document,
+            test=test,
             on_similar=on_similar,
             valid_from=valid_from,
             valid_until=valid_until,

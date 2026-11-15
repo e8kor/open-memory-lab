@@ -3,9 +3,8 @@
 //! state's one edge (ADR-0083 d13).
 
 use oml_domain::claim_kinds::{
-    TestShape, check_document_key, check_document_title, check_skill_body,
-    check_skill_description, check_skill_name, check_test_key, document_key_from_title,
-    markdown_title, skill_claim_key,
+    TestShape, check_document_key, check_document_title, check_skill_body, check_skill_description,
+    check_skill_name, check_test_key, document_key_from_title, markdown_title, skill_claim_key,
 };
 use oml_domain::{ClaimClass, MemoryKind, MemoryStatus, TransitionError, transition};
 
@@ -102,7 +101,11 @@ fn a_documents_title_is_its_first_level_1_heading_and_its_key_follows_the_title(
 fn a_test_key_is_test_and_a_label_and_its_shape_is_one_of_four() {
     assert!(check_test_key("test/recall-finds-the-runbook").is_ok());
     for key in ["test/", "tests/a", "test/A", "test/a/b"] {
-        assert_eq!(check_test_key(key).map_err(|e| e.field), Err("/claim_key"), "{key}");
+        assert_eq!(
+            check_test_key(key).map_err(|e| e.field),
+            Err("/claim_key"),
+            "{key}"
+        );
     }
     for word in ["recall", "guardrail", "skill", "document"] {
         assert_eq!(TestShape::parse(word).map(TestShape::as_str), Some(word));

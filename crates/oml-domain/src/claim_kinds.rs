@@ -126,7 +126,11 @@ pub fn check_skill_description(description: &str) -> Result<(), FieldRefusal> {
 /// Whether a skill body is admitted: no front matter, since the name and
 /// the description are fields (ADR-0080 d1).
 pub fn check_skill_body(body: &str) -> Result<(), FieldRefusal> {
-    if body.lines().next().is_some_and(|line| line.trim_end() == "---") {
+    if body
+        .lines()
+        .next()
+        .is_some_and(|line| line.trim_end() == "---")
+    {
         return Err(refused(
             "/body",
             "a skill body opens with no `---` front matter: the name and the description are fields",

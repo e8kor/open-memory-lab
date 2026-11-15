@@ -194,6 +194,9 @@ fn kind_phrase(kind: MemoryKind) -> &'static str {
         MemoryKind::Term => "kind term",
         MemoryKind::TermMapping => "kind term_mapping",
         MemoryKind::VocabRelease => "kind vocab_release",
+        MemoryKind::Skill => "kind skill",
+        MemoryKind::Document => "kind document",
+        MemoryKind::Test => "kind test",
         MemoryKind::Memory | MemoryKind::DerivedFact => "this kind",
     }
 }

@@ -15907,6 +15907,15 @@ async fn an_account_outside_the_sign_up_tenant_returns_to_no_limits_when_its_pro
 // -- the claim kinds skill, document and test (ADR-0080 d1, d2; ADR-0081
 // d1, d2; ADR-0086 d1) ------------------------------------------------------
 
+/// A submission of `kind` with no claim key, so the kind derives or
+/// requires its own (ADR-0080 d1; ADR-0081 d2; ADR-0086 d1).
+fn kind_req(idem: &str, kind: MemoryKind, body: &str, workspace_id: Uuid) -> SubmitRequest {
+    SubmitRequest {
+        claim_key: None,
+        ..submit_kind(idem, kind, body, workspace_id)
+    }
+}
+
 fn skill_fields(name: &str) -> oml_app::types::KindFields {
     oml_app::types::KindFields::Skill {
         name: name.to_owned(),
@@ -15930,7 +15939,7 @@ async fn a_skill_is_stored_held_with_its_fields_markdown_and_its_derived_key() {
             &writer.value,
             &SubmitRequest {
                 kind_fields: Some(skill_fields("deploy")),
-                ..submit_kind("k1", MemoryKind::Skill, "Run the deploy script.", crew)
+                ..kind_req("k1", MemoryKind::Skill, "Run the deploy script.", crew)
             },
         )
         .await
@@ -15965,7 +15974,7 @@ async fn a_skill_body_opening_with_front_matter_is_refused_naming_body() {
             &writer.value,
             &SubmitRequest {
                 kind_fields: Some(skill_fields("deploy")),
-                ..submit_kind(
+                ..kind_req(
                     "k1",
                     MemoryKind::Skill,
                     "---\nname: deploy\n---\nRun it.",
@@ -15987,7 +15996,7 @@ async fn a_skill_needs_its_object_its_key_and_markdown_and_no_other_kind_takes_o
         let (app, writer) = (&app, writer.value.clone());
         async move { app.submit_memory(&writer, &req).await.unwrap_err() }
     };
-    let skill = |idem: &str| submit_kind(idem, MemoryKind::Skill, "Run it.", crew);
+    let skill = |idem: &str| kind_req(idem, MemoryKind::Skill, "Run it.", crew);
     let err = refused(skill("a")).await;
     assert!(kind_field_refused(&err, "/skill"), "{err:?}");
     let err = refused(SubmitRequest {
@@ -16019,7 +16028,7 @@ async fn a_skill_needs_its_object_its_key_and_markdown_and_no_other_kind_takes_o
     let big = "a".repeat(32_769);
     let err = refused(SubmitRequest {
         kind_fields: Some(skill_fields("big")),
-        ..submit_kind("f", MemoryKind::Skill, &big, crew)
+        ..kind_req("f", MemoryKind::Skill, &big, crew)
     })
     .await;
     assert!(matches!(err, AppError::SkillBodyTooLarge), "{err:?}");
@@ -16038,7 +16047,7 @@ async fn a_skill_successor_keeps_its_name_and_may_change_its_description() {
         &reviewer.value,
         &SubmitRequest {
             kind_fields: Some(skill_fields("deploy")),
-            ..submit_kind("k1", MemoryKind::Skill, "Run the deploy script.", crew)
+            ..kind_req("k1", MemoryKind::Skill, "Run the deploy script.", crew)
         },
     )
     .await;
@@ -16086,7 +16095,7 @@ async fn a_document_takes_its_key_and_title_from_its_first_heading_or_a_sent_key
     let receipt = app
         .submit_memory(
             &writer.value,
-            &submit_kind(
+            &kind_req(
                 "d1",
                 MemoryKind::Document,
                 "intro\n# Release Notes\n## Fixes\n- one",
@@ -16114,7 +16123,7 @@ async fn a_document_takes_its_key_and_title_from_its_first_heading_or_a_sent_key
             &writer.value,
             &SubmitRequest {
                 claim_key: Some("doc/ops/runbook".to_owned()),
-                ..submit_kind("d2", MemoryKind::Document, "No heading.", crew)
+                ..kind_req("d2", MemoryKind::Document, "No heading.", crew)
             },
         )
         .await
@@ -16136,7 +16145,7 @@ async fn a_document_takes_its_key_and_title_from_its_first_heading_or_a_sent_key
                 &writer.value,
                 &SubmitRequest {
                     claim_key: key.map(str::to_owned),
-                    ..submit_kind(idem, MemoryKind::Document, "No heading.", crew)
+                    ..kind_req(idem, MemoryKind::Document, "No heading.", crew)
                 },
             )
             .await
@@ -16154,7 +16163,7 @@ async fn a_test_case_needs_its_shape_and_a_test_key() {
     let shape = Some(oml_app::types::KindFields::Test {
         shape: oml_app::domain::claim_kinds::TestShape::Recall,
     });
-    let case = |idem: &str| submit_kind(idem, MemoryKind::Test, "query: runbook", crew);
+    let case = |idem: &str| kind_req(idem, MemoryKind::Test, "query: runbook", crew);
     let err = app
         .submit_memory(
             &writer.value,
