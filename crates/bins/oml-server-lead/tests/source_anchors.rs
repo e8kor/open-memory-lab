@@ -2286,7 +2286,7 @@ async fn an_agent_key_cannot_open_a_persons_chat_workspace_and_the_persons_key_c
     assert_eq!(error_code(&body), "access.verb_ceiling");
     assert_eq!(
         body["error"]["details"]["reason"],
-        "chat_scope_is_human_only"
+        "chat_scope_is_person_only"
     );
     // Nothing was journalled: the person's key opens it next.
     let (status, body) = open(person, "chat").await;
@@ -2355,7 +2355,7 @@ async fn an_agent_key_cannot_take_the_name_chat_anywhere_under_a_user_root() {
     assert_eq!(status, StatusCode::FORBIDDEN, "a nested squat: {body}");
     assert_eq!(
         body["error"]["details"]["reason"],
-        "chat_scope_is_human_only"
+        "chat_scope_is_person_only"
     );
     let (status, body) = create(person, None, "chat").await;
     assert_eq!(status, StatusCode::CREATED, "{body}");

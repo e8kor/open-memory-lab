@@ -272,3 +272,42 @@ fn a_former_name_the_map_does_not_cover_is_named() {
         ["children_all_validated", "kind: workarea"]
     );
 }
+
+#[test]
+fn a_v0_7_promotion_reads_its_policy_roles_as_reviewer_and_leaves_no_former_name() {
+    for event_type in ["lifecycle.promote", "lifecycle.supersede"] {
+        let stored = json!({
+            "artifact_id": "a",
+            "policy": {"k": 1, "required_roles": ["dreamer"]},
+            "same_user": false,
+        });
+        let (_, payload) = read(event_type, &stored);
+        assert_eq!(
+            payload,
+            json!({"artifact_id": "a", "policy": {"k": 1, "required_roles": ["reviewer"]}, "same_user": false}),
+            "{event_type}"
+        );
+        assert_eq!(
+            unmapped_former_names(event_type, &stored),
+            Vec::<String>::new(),
+            "{event_type}"
+        );
+    }
+}
+
+#[test]
+fn a_payload_holding_both_a_former_key_and_its_successor_fails_closed() {
+    let err = read_event(
+        "key.issued",
+        &json!({"default_workarea_id": "a", "default_workspace_id": "b"}),
+    )
+    .expect_err("the map never collapses two keys into one");
+    assert_eq!(err.event_type, "key.issued");
+    assert_eq!(err.name, "default_workarea_id");
+    let err = read_event(
+        "key.issued",
+        &json!({"held_by": "agent", "used_by": "agent"}),
+    )
+    .expect_err("held_by beside used_by");
+    assert_eq!(err.name, "held_by");
+}

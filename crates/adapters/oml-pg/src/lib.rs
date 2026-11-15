@@ -1887,6 +1887,19 @@ impl PgStore {
         tenant_id: Uuid,
         keys: &KeySet,
     ) -> Result<ChainHead, ForkCheckError> {
+        self.verify_stored_chain_reading(tenant_id, keys, |_| {})
+            .await
+    }
+
+    /// [`Self::verify_stored_chain`], showing `read` each stored event as it
+    /// pages them, so a start that also scans the journal reads it once
+    /// (ADR-0091 d4: the former-names check rides on the fork check).
+    pub async fn verify_stored_chain_reading(
+        &self,
+        tenant_id: Uuid,
+        keys: &KeySet,
+        mut read: impl FnMut(&SignedEnvelope),
+    ) -> Result<ChainHead, ForkCheckError> {
         let stated = self
             .chain_head(tenant_id)
             .await?
@@ -1898,6 +1911,7 @@ impl PgStore {
                 .events_range(tenant_id, from_seq, FORK_CHECK_PAGE)
                 .await?;
             let n = page.len();
+            page.iter().for_each(&mut read);
             events.extend(page);
             if n < FORK_CHECK_PAGE {
                 break;

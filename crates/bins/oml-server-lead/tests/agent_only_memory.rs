@@ -1064,11 +1064,11 @@ fn hit_ids(recall: &Value) -> BTreeSet<String> {
 }
 
 #[tokio::test]
-async fn the_x_oml_workspace_header_is_refused_naming_workspace() {
+async fn the_x_oml_workarea_header_is_refused_naming_workspace() {
     let router = doubles_router();
     let crew = crew(&router).await;
     let token = crew.agent.token.as_str();
-    let header = [("x-oml-workspace", crew.workspace.as_str())];
+    let header = [("x-oml-workarea", crew.workspace.as_str())];
 
     let (status, written) = submit(&router, &crew.agent, "hdr-0", &json!({ "body": QUOTE })).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{written}");
@@ -1118,7 +1118,7 @@ async fn the_x_oml_workspace_header_is_refused_naming_workspace() {
             &header,
         )
         .await;
-        assert_renamed(status, &refused, "X-OML-Workspace", renamed_to);
+        assert_renamed(status, &refused, "X-OML-Workarea", renamed_to);
     }
 
     // The same target in the field is honoured.

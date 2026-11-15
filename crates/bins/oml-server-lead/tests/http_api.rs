@@ -626,26 +626,10 @@ async fn the_startup_names_check_passes_on_a_deployment_this_build_bootstrapped(
     drop_db(&rig.db_name).await;
 }
 
-/// A journal event that holds a former name the former-name map does not
-/// cover is found at the lead's start: the check names
-/// `journal_unmapped_former_name`, the tenant, the seq, the event and the
-/// name, and `/readyz` reports `former_names` unmapped and is not ready; a
-/// chain written in the current names, or in former names the map covers,
-/// passes (ADR-0091 d4).
-#[tokio::test]
-async fn a_journal_event_naming_a_former_name_the_map_does_not_cover_fails_the_startup_former_names_check()
- {
-    let Some(rig) = fresh_rig().await else {
-        return;
-    };
-    let router = &rig.router;
-    let (_admin, tenant, _root) = bootstrap(router).await;
-    let tenants = enumerate_tenants(rig.store.pool()).await.expect("tenants");
-    assert_eq!(
-        startup_former_names_check(&rig.store, &tenants).await,
-        Ok(())
-    );
-
+/// Signs `event_type` with `payload` onto `tenant`'s chain under the lead's
+/// key and commits it with no fold of its own: an event as a released binary
+/// wrote it.
+async fn commit_as_written(rig: &Rig, tenant: Uuid, event_type: &str, payload: Value) -> u64 {
     let head = rig
         .store
         .chain_head(tenant)
@@ -661,11 +645,11 @@ async fn a_journal_event_naming_a_former_name_the_map_does_not_cover_fails_the_s
     let draft = EventDraft {
         tenant_id: tenant,
         event_id: OsIds.new_id(),
-        event_type: "workarea.retired".to_owned(),
+        event_type: event_type.to_owned(),
         principal: "oml/admin".to_owned(),
         api_key_id: None,
         at: EventTime::parse("2026-11-02T10:30:00.123456Z").expect("time"),
-        payload: json!({}),
+        payload,
     };
     let event = sign(
         next_envelope(Some(&prev), draft).expect("lawful"),
@@ -687,17 +671,74 @@ async fn a_journal_event_naming_a_former_name_the_map_does_not_cover_fails_the_s
             written: None,
         })
         .await
-        .expect("an event no released binary wrote");
+        .expect("an event as a released binary wrote it");
+    seq
+}
 
-    let failure = startup_former_names_check(&rig.store, &tenants)
+/// The lead's start reads every stored event through the former-name map
+/// in the fork check's one pass. A v0.7 promotion, whose `policy` names the
+/// role `dreamer`, reads in full and passes. An event that holds a former
+/// name the map does not cover fails the check: it names
+/// `journal_unmapped_former_name`, the count, and the first twenty by
+/// tenant, seq, event and name, and `/readyz` reports `former_names`
+/// unmapped and is not ready, naming no event (ADR-0091 d4).
+#[tokio::test]
+async fn a_journal_event_naming_a_former_name_the_map_does_not_cover_fails_the_startup_former_names_check()
+ {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (_admin, tenant, _root) = bootstrap(router).await;
+    let tenants = enumerate_tenants(rig.store.pool()).await.expect("tenants");
+    let key = rig.signing.verifying_key();
+    assert_eq!(
+        startup_former_names_check(&rig.store, key, &tenants).await,
+        Ok(())
+    );
+
+    commit_as_written(
+        &rig,
+        tenant,
+        "lifecycle.promote",
+        json!({
+            "artifact_id": Uuid::from_u128(0xC0DE).to_string(),
+            "workarea_id": Uuid::from_u128(0xC0DF).to_string(),
+            "same_user": false,
+            "policy": { "k": 1, "required_roles": ["dreamer"] },
+        }),
+    )
+    .await;
+    assert_eq!(
+        startup_former_names_check(&rig.store, key, &tenants).await,
+        Ok(()),
+        "a v0.7 promotion reads in full"
+    );
+
+    let first = commit_as_written(&rig, tenant, "workarea.retired", json!({})).await;
+    for _ in 0..21 {
+        commit_as_written(&rig, tenant, "workarea.retired", json!({})).await;
+    }
+    let failure = startup_former_names_check(&rig.store, key, &tenants)
         .await
         .expect_err("the map does not cover workarea.retired");
     for named in [
-        "journal_unmapped_former_name",
-        &format!("tenant {tenant} seq {seq} workarea.retired"),
+        "journal_unmapped_former_name: 22 former names",
+        &format!("tenant {tenant} seq {first} workarea.retired"),
+        "; and 2 more",
     ] {
         assert!(failure.contains(named), "{named}: {failure}");
     }
+    assert_eq!(
+        failure.matches("workarea.retired names").count(),
+        20,
+        "{failure}"
+    );
+    assert_eq!(
+        startup_fork_check(&rig.store, key, &tenants).await,
+        Ok(()),
+        "the chain still verifies"
+    );
     let router = lead_state(
         &rig.store,
         rig.signing.clone(),
@@ -6599,7 +6640,7 @@ async fn own_true_lists_every_state_of_the_keys_own_rows_newest_first() {
     // query's workspace (ADR-0039 d7).
     let (status, body) = list(
         router,
-        Call::auth(&writer).header("x-oml-workspace", &crew.to_string()),
+        Call::auth(&writer).header("x-oml-workarea", &crew.to_string()),
         "own=true",
     )
     .await;
@@ -7151,7 +7192,7 @@ async fn a_get_with_x_oml_workspace_is_request_validation() {
         router,
         "GET",
         &path,
-        Call::auth(&writer).header("x-oml-workspace", &crew.to_string()),
+        Call::auth(&writer).header("x-oml-workarea", &crew.to_string()),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");

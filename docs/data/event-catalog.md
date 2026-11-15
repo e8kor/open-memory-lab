@@ -72,9 +72,11 @@ Writes enter held. Nothing in this family changes what anyone can read.
 
 | Event | Payload fields | Meaning |
 |---|---|---|
-| `lifecycle.promote` | `artifact_id`, `version`, `workspace_id`, `claim_key`, `ratification_event_id`, `previous_tip_version`, `self_signed`, `same_user` | An approved memory becomes readable by others. This is the state `promoted`. `previous_tip_version` is null for a claim's first version. `same_user` is `true` when the reviewing and authoring keys act for one person. |
-| `lifecycle.supersede` | `claim_key`, `workspace_id`, `new_artifact_id`, `new_version`, `replaces_artifact_id`, `replaces_version`, `retirement`, `ratification_event_id`, `self_signed`, `same_user` | A supersession is promoted and takes the tip from the replaced version in one event. It is written after a check that the replaced version is still the tip. |
+| `lifecycle.promote` | `artifact_id`, `version`, `workspace_id`, `claim_key`, `ratification_event_id`, `previous_tip_version`, `self_signed`, `same_user`, `policy` | An approved memory becomes readable by others. This is the state `promoted`. `previous_tip_version` is null for a claim's first version. `same_user` is `true` when the reviewing and authoring keys act for one person. |
+| `lifecycle.supersede` | `claim_key`, `workspace_id`, `new_artifact_id`, `new_version`, `replaces_artifact_id`, `replaces_version`, `retirement`, `ratification_event_id`, `self_signed`, `same_user`, `policy` | A supersession is promoted and takes the tip from the replaced version in one event. It is written after a check that the replaced version is still the tip. |
 | `lifecycle.erase` | `artifact_id`, `version`, `workspace_id`, `claim_key`, `dek_destroyed`, `copy_classes`, `erased_by_key_id` | The memory's encryption key is destroyed and its index rows are removed in the same commit. `copy_classes` names the copies affected. Ciphertext in backups persists until its window ends. |
+
+`policy` holds the review policy the promotion or supersession was decided under: `k` and `required_roles`.
 
 ## Workspaces and crews
 
@@ -143,7 +145,8 @@ lake writer's projection, the events tail and its visibility, `oml events`) read
 one map, after the stored bytes are verified as they stand
 ([ADR-0091](../adr/ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md)
 d4). The map is the identity on every event v0.8.0 writes. A `workarea.*` type outside the first
-table fails the reader closed, named `journal_unmapped_former_name`. This table is the only place
+table fails the reader closed, named `journal_unmapped_former_name`, as does an object that holds a
+former key beside its successor. This table is the only place
 the catalog spells the former names.
 
 | Former event type | Read as |
@@ -162,7 +165,7 @@ the catalog spells the former names.
 |---|---|---|
 | a payload key holding `workarea` or `workareas`, at any depth | every event | the same key with `workspace` or `workspaces` |
 | `workarea` | `kind` of each row of `system.names_assigned`'s `names`; `guardrail_scope` of `key.issued` and of any event that records it | `workspace` |
-| `dreamer` | `role` of `key.issued` and `grant.issued`; each of `required_roles` inside a `policy_snapshot` | `reviewer` |
+| `dreamer` | `role` of `key.issued` and `grant.issued`; each of `required_roles` inside a `policy_snapshot`, and inside the `policy` of `lifecycle.promote` and `lifecycle.supersede` | `reviewer` |
 | `committed`, `validated` | `status` of `workspace.create`; `from` and `to` of `workspace.status_proposed` and `workspace.status_transition` | `protected`, `frozen` |
 | `children_all_validated` | a key of `workspace.status_transition`'s `policy_snapshot` | `children_all_frozen` |
 | `held_by`, valued `human` | a key of `key.issued` | `used_by`, valued `person` |

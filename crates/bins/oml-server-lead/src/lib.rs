@@ -1603,70 +1603,101 @@ pub async fn startup_fork_check(
     verifying_key: VerifyingKey,
     tenants: &[Uuid],
 ) -> Result<(), String> {
-    let keys = KeySet::new(vec![verifying_key]);
-    let mut failures = Vec::new();
-    for tenant_id in tenants {
-        match store.verify_stored_chain(*tenant_id, &keys).await {
-            Ok(_) => {}
-            Err(ForkCheckError::EmptyChain) => {
-                failures.push(format!("tenant {tenant_id}: tenants row with no chain"));
-            }
-            Err(e) => failures.push(format!("tenant {tenant_id}: {e}")),
-        }
-    }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(failures.join("; "))
-    }
+    startup_journal_checks(store, verifying_key, tenants)
+        .await
+        .0
 }
 
-/// The startup former-names check (ADR-0091 d4): every stored event reads in
-/// the current names through the former-name map, or the failure names
-/// `journal_unmapped_former_name`, each tenant, seq, event type and former
-/// name it found. A lead that fails it is not ready (`/readyz` reports
-/// `former_names`), and every reader that meets such an event fails closed
-/// naming it; `oml doctor` prints the line. A store the check cannot read
-/// fails it.
-pub async fn startup_former_names_check(store: &PgStore, tenants: &[Uuid]) -> Result<(), String> {
-    const PAGE: usize = 1024;
-    let mut found = Vec::new();
+/// The startup former-names check (ADR-0091 d4), as [`startup_journal_checks`]
+/// runs it beside the fork check.
+pub async fn startup_former_names_check(
+    store: &PgStore,
+    verifying_key: VerifyingKey,
+    tenants: &[Uuid],
+) -> Result<(), String> {
+    startup_journal_checks(store, verifying_key, tenants)
+        .await
+        .1
+}
+
+/// The most former names the start names one by one; past it the failure
+/// gives their count.
+pub const FORMER_NAMES_LISTED: usize = 20;
+
+/// The journal checks of the lead's start, in one read of every stored
+/// event: the ADR-0002 d7 fork check, then the former-names check of
+/// ADR-0091 d4, which reads each event the fork check pages through the
+/// former-name map. The second fails naming `journal_unmapped_former_name`,
+/// how many former names the map does not cover, and the first
+/// [`FORMER_NAMES_LISTED`] by tenant, seq, event type and name; a lead that
+/// fails it is not ready (`/readyz` reports `former_names`), and every
+/// reader that meets such an event fails closed naming it. A chain the fork
+/// check could not read fails both.
+pub async fn startup_journal_checks(
+    store: &PgStore,
+    verifying_key: VerifyingKey,
+    tenants: &[Uuid],
+) -> (Result<(), String>, Result<(), String>) {
+    let keys = KeySet::new(vec![verifying_key]);
+    let mut failures = Vec::new();
+    let mut found: Vec<String> = Vec::new();
+    let mut count = 0_usize;
+    let mut unread = Vec::new();
     for tenant_id in tenants {
-        let mut from_seq = 1_u64;
-        loop {
-            let events =
-                oml_app::ports::JournalStore::events_range(store, *tenant_id, from_seq, PAGE)
-                    .await
-                    .map_err(|e| {
-                        format!("journal_unmapped_former_name: the journal could not be read: {e}")
-                    })?;
-            for event in &events {
+        let verified = store
+            .verify_stored_chain_reading(*tenant_id, &keys, |event| {
                 let envelope = &event.envelope;
                 for name in oml_app::domain::former_names::unmapped_former_names(
                     &envelope.event_type,
                     &envelope.payload,
                 ) {
-                    found.push(format!(
-                        "tenant {tenant_id} seq {} {} names {name:?}",
-                        envelope.seq, envelope.event_type
-                    ));
+                    count += 1;
+                    if found.len() < FORMER_NAMES_LISTED {
+                        found.push(format!(
+                            "tenant {tenant_id} seq {} {} names {name:?}",
+                            envelope.seq, envelope.event_type
+                        ));
+                    }
                 }
+            })
+            .await;
+        match verified {
+            Ok(_) => {}
+            Err(ForkCheckError::EmptyChain) => {
+                failures.push(format!("tenant {tenant_id}: tenants row with no chain"));
             }
-            match events.last() {
-                Some(last) if events.len() == PAGE => from_seq = last.envelope.seq + 1,
-                _ => break,
+            Err(ForkCheckError::Store(e)) => {
+                unread.push(format!("tenant {tenant_id}: {e}"));
+                failures.push(format!("tenant {tenant_id}: {e}"));
             }
+            Err(e) => failures.push(format!("tenant {tenant_id}: {e}")),
         }
     }
-    if found.is_empty() {
+    let fork = if failures.is_empty() {
         Ok(())
     } else {
+        Err(failures.join("; "))
+    };
+    let former = if !unread.is_empty() {
         Err(format!(
-            "journal_unmapped_former_name: {} former names the former-name map does not cover ({}) (ADR-0091 d4)",
-            found.len(),
-            found.join("; ")
+            "journal_unmapped_former_name: the journal could not be read ({})",
+            unread.join("; ")
         ))
-    }
+    } else if count == 0 {
+        Ok(())
+    } else {
+        let more = count.saturating_sub(found.len());
+        Err(format!(
+            "journal_unmapped_former_name: {count} former names the former-name map does not cover ({}{}) (ADR-0091 d4)",
+            found.join("; "),
+            if more > 0 {
+                format!("; and {more} more")
+            } else {
+                String::new()
+            }
+        ))
+    };
+    (fork, former)
 }
 
 /// The startup names check: the store holds no row that predates names, or
@@ -2168,7 +2199,8 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     let tenants = enumerate_tenants(store.pool())
         .await
         .map_err(|e| format!("tenant enumeration: {e}"))?;
-    let fork_check = startup_fork_check(store, signing_key.verifying_key(), &tenants).await;
+    let (fork_check, former_names) =
+        startup_journal_checks(store, signing_key.verifying_key(), &tenants).await;
     // A tenant whose default this lead does not serve gets the deployment's
     // default, marked in each answer; the start names it for the operator,
     // who alone can serve it again (ADR-0049 d15).
@@ -2255,7 +2287,6 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
             .await
             .map(|()| Vec::new())
     };
-    let former_names = startup_former_names_check(store, &tenants).await;
     let enrollment_token = (tenants.is_empty() && fork_check.is_ok()).then(mint_enrollment_token);
     let state = composed(
         app,

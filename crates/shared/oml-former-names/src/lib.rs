@@ -112,7 +112,14 @@ pub fn read_key(key: &str) -> String {
 ///
 /// [`UnmappedFormerName`] for a former event type the map does not list.
 pub fn read_event(event_type: &str, payload: &Value) -> Result<ReadEvent, UnmappedFormerName> {
-    let event_type = read_event_type(event_type)?;
+    let read_type = read_event_type(event_type)?;
+    if let Some(name) = colliding_key(payload) {
+        return Err(UnmappedFormerName {
+            event_type: event_type.to_owned(),
+            name,
+        });
+    }
+    let event_type = read_type;
     let mut payload = read_keys(payload);
     if let Value::Object(fields) = &mut payload {
         read_values(&event_type, fields);
@@ -122,6 +129,28 @@ pub fn read_event(event_type: &str, payload: &Value) -> Result<ReadEvent, Unmapp
         event_type,
         payload,
     })
+}
+
+/// A former key whose successor the same object also holds, at any depth:
+/// reading it would collapse two values into one, so the reader fails
+/// closed naming the former key instead.
+fn colliding_key(value: &Value) -> Option<String> {
+    match value {
+        Value::Object(fields) => fields.iter().find_map(|(k, v)| {
+            let successor = if k == "held_by" {
+                "used_by".to_owned()
+            } else {
+                read_key(k)
+            };
+            if successor != *k && fields.contains_key(&successor) {
+                Some(k.clone())
+            } else {
+                colliding_key(v)
+            }
+        }),
+        Value::Array(items) => items.iter().find_map(colliding_key),
+        _ => None,
+    }
 }
 
 /// Rule 2, at every depth.
@@ -196,13 +225,21 @@ fn read_values(event_type: &str, fields: &mut Map<String, Value>) {
     }
 }
 
-/// Rule 4 inside every `policy_snapshot`, and rule 5's snapshot key in a
-/// status transition.
+/// Whether `key` holds a review policy in an event of `event_type`: a
+/// `policy_snapshot` in any event, and the `policy` a promotion or a
+/// supersession records (rule 4).
+fn holds_policy(event_type: &str, key: &str) -> bool {
+    key == "policy_snapshot"
+        || (key == "policy" && matches!(event_type, "lifecycle.promote" | "lifecycle.supersede"))
+}
+
+/// Rule 4 inside every review policy an event records, and rule 5's
+/// snapshot key in a status transition.
 fn read_snapshots(event_type: &str, value: &mut Value) {
     match value {
         Value::Object(fields) => {
             for (key, inner) in fields.iter_mut() {
-                if key == "policy_snapshot"
+                if holds_policy(event_type, key)
                     && let Value::Object(snapshot) = inner
                 {
                     if let Some(Value::Array(roles)) = snapshot.get_mut("required_roles") {

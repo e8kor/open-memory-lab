@@ -520,7 +520,7 @@ async fn a_reviewer_key_used_by_an_agent_is_refused_bulk_review() {
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
         assert_eq!(error_code(&body), "access.verb_ceiling", "{body}");
         assert_eq!(
-            body["error"]["details"]["reason"], "bulk_review_is_human_only",
+            body["error"]["details"]["reason"], "bulk_review_is_person_only",
             "{body}"
         );
     }
