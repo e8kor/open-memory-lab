@@ -121,7 +121,9 @@ A **steering** memory has kind `steering`. Once approved, every recall in that w
 returns it first, unranked, and no budget cuts it. Read
 steering more strictly than a fact, because it shapes every later session in the subtree. Steering
 and guardrails are instructions, so only a person's reviewer key approves them; an agent's or a
-service's reviewer key is refused `review.person_required` and may still reject.
+service's reviewer key is refused `review.person_required` and may still reject. For now a
+person's key is a reviewer key issued `--used-by person` with no crew and no profile, the CLI's
+included; a confirmed, fresh sign-in comes with #214.
 
 ## A worked session
 

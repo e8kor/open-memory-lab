@@ -34,6 +34,8 @@ Every write has a producer and needs a reviewer who is not that producer. Three 
 | Any class | any key | the author's key, or any key sharing a principal with the lineage | no | no | none | built: refused `review.author_in_lineage` |
 | Any class, in progress | any key | an agent `curator` profile | never approves; rejects, proposes retirements, flags contradictions | not applicable | none | built |
 
+"A person" in this table is, for now, a reviewer key its issuer attested `used_by: person`, with no crew and no profile. The stricter definition of [ADR-0074](../adr/ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings.md) d2, a confirmed sign-in session opened within the last 15 minutes, is designed and comes with #214.
+
 Two more acts follow the same split, both designed: a release is cut in a shared workspace, by one person, and published by another person, since production rules govern a published release; no release is cut in a user root, which stays in development (ADR-0085 d4, d17); an admin fix is confirmed by the admin's own person under development rules, marked `same_user`, and only by another person under production rules or on a release's overlay ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d8).
 
 ## Who sees what where
