@@ -38,7 +38,7 @@ without reopening a decision above:
 
 - **The v0.4.0 API** ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md)). MCP serves three
   tools, `oml_write`, `oml_read` and `oml_workspace` (its d2); a request names its workspace in a
-  `workspace` field and the `X-OML-Workspace` header is gone (its d7); a response says `text` where
+  `workspace` field and the `X-OML-Workarea` header is gone (its d7); a response says `text` where
   it said `body` (its d7); and `GET /v2/whoami` was built to gain "the guardrail scope when
   ADR-0037's is built" (its d15). d4, d5, d10 and d11 below speak that API.
 - **User roots** ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md),

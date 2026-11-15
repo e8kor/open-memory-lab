@@ -93,7 +93,7 @@ workareas become workspaces, the role `dreamer` becomes `reviewer`, the statuses
 answers 404, a former field or enum value is `request.validation`, and a former query parameter or
 environment variable is ignored. A v0.7 client that names its workspace only by the former query
 parameter is therefore not refused, and its write lands, held, in its key's default workspace. The
-header `X-OML-Workarea`, which v0.4.0 already retired, is still refused naming its successor.
+header that v0.4.0 already retired is still refused naming its successor.
 
 **Clients and the server upgrade in one window.** The cut breaks both ways: a v0.7 client fails
 against a v0.8.0 server, and a v0.8.0 client fails against a v0.7 server. Announce one window to

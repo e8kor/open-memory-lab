@@ -61,7 +61,7 @@ category while the workspace machinery keeps working underneath, by default, for
 - **d4 — The target workspace comes from the key.** A key may carry a journalled
   `default_workspace` (an issuance attribute, like `used_by`). A `/v1` request names no workspace:
   the target is the key's default; recall's default scope is that workspace's subtree. The
-  explicit override is the **`X-OML-Workspace` header** (a node id), honored only within the
+  explicit override is the **`X-OML-Workarea` header** (a node id), honored only within the
   key's grants — plain-passable because it is authorization-checked data, never a secret. A v1
   request from a key with neither a default nor an override is refused with the typed
   `request.workspace_unresolved`. `/v2` keeps explicit workspace ids in paths and bodies — an
@@ -75,7 +75,7 @@ category while the workspace machinery keeps working underneath, by default, for
   [roles-and-keys](../architecture/roles-and-keys.md) is unchanged — "in the key" means
   *derivable from the key*, not *embedded in it*;
   **plain headers** — non-secret per-request modifiers that the server authorization-checks:
-  `Idempotency-Key`, `X-OML-Workspace`;
+  `Idempotency-Key`, `X-OML-Workarea`;
   **bodies** — domain content. An attribute that requires secure transfer is, by this rule, a
   key-resolved issuance attribute — never a header.
 
@@ -88,7 +88,7 @@ category while the workspace machinery keeps working underneath, by default, for
 ## Consequences
 
 - The OpenAPI document gains `/v2` servers/paths; provider-ring schemas drop required
-  `workspace_id`; `X-OML-Workspace` becomes a shared header parameter;
+  `workspace_id`; `X-OML-Workarea` becomes a shared header parameter;
   `request.workspace_unresolved` (422) joins the taxonomy.
 - `api_keys` gains `default_workspace_id`; `key.issued` journals it; the CLI issuance ceremony
   takes `--default-workspace`.

@@ -582,7 +582,7 @@ sourced to the code that has them; nothing decided below is built.
     4. a reviewer key needs reviewer and reader on the target's workspace, resolved by the refusal
        order of d1, whoever authored the target — its own ratified edits included
        (edit-as-proposal, http-api.md:215);
-    5. only then the refusals that depend on the target, in this order: an `X-OML-Workspace`
+    5. only then the refusals that depend on the target, in this order: an `X-OML-Workarea`
        equal to the target's workspace, else `request.validation`; the target is the current
        served tip, else `submission.tip_conflict`; the kind and retirement checks of d11, and on
        `oml_supersede` the vocabulary-kind check of d12, else `request.validation`; the workspace
@@ -606,7 +606,7 @@ sourced to the code that has them; nothing decided below is built.
     with `details.current_tip {artifact_id, version}` when the caller can read it; superseding a
     held version is not admitted (#156), and
     [admission](../architecture/admission.md) (admission.md:65-66) is edited to match
-    http-api.md:386-387. The scope is the target's workspace: an `X-OML-Workspace` that differs from
+    http-api.md:386-387. The scope is the target's workspace: an `X-OML-Workarea` that differs from
     it is `request.validation`. `Idempotency-Key` is stored and honoured, scoped to (key, nil
     workspace, idem_key), as lab endpoints that name no workspace already are, so no target's
     workspace ever enters a record. The record is looked up after step 1 and before step 2: a
@@ -744,14 +744,14 @@ sourced to the code that has them; nothing decided below is built.
   node where reader is effective, else `access.not_found`, and the listing is the intersection of
   its subtree with the scope's, the scope still resolving from the key. `claim_key`, `state`,
   `kind`, `since` and `until` also filter. The own-work listing and get resolve no workspace, so an
-  `X-OML-Workspace` header sent with either is `request.validation`. The order is `created_at`
+  `X-OML-Workarea` header sent with either is `request.validation`. The order is `created_at`
   descending, then `artifact_id` descending. The cursor is an opaque keyset position bound to the
   key id and expiring under `api.cursor_ttl`; a foreign or stale cursor answers
   `request.validation`, and every page re-applies the predicates. Without `own`, the listing returns
   promoted served tips within subtree(scope) ∩ reader access — a `self_signed` version only when
   the scope node is its own workspace (d8) — as summaries only, and never another key's held row;
   a retired claim's tip, its retirement version, is among them, flagged `retirement: true`. This
-  amends ADR-0022 d4: get and the own-work listing refuse the `X-OML-Workspace` override instead
+  amends ADR-0022 d4: get and the own-work listing refuse the `X-OML-Workarea` override instead
   of honouring it, supersede accepts it only when it equals the target's workspace (d10), and none
   of the three answers `request.workspace_unresolved`.
 
@@ -806,7 +806,7 @@ sourced to the code that has them; nothing decided below is built.
     [security](../architecture/security.md) states that window as the elevation-of-privilege
     residual. A lead-only deployment, the default, has no such window.
 
-    `oml_workspace_info` with no workspace, and `oml_events_tail` with no scope, take the key's
+    `oml_workarea_info` with no workspace, and `oml_events_tail` with no scope, take the key's
     journalled `default_workspace` from the authenticated key record (ADR-0022 d4, "the key's
     default") and make one ring call; a key with no default is refused with
     `request.workspace_unresolved`.
@@ -1017,7 +1017,7 @@ sourced to the code that has them; nothing decided below is built.
   default workspace and never answer it.
 - A second supersession of a tip whose first successor is still held is admitted, not refused;
   the competing verdicts meet the compare-and-set (d10).
-- Unknown request fields that were tolerated are refused, and an `X-OML-Workspace` header on get
+- Unknown request fields that were tolerated are refused, and an `X-OML-Workarea` header on get
   or the own-work listing is refused (d13).
 - The PoC's "superseded" status is migrated away; rows whose successor never reached promotion
   become served tips again.
@@ -1130,7 +1130,7 @@ denial lift; issuance idempotency; key rotation and expiry enforcement; the oper
 | **d12 — A batch get** | No ring endpoint for it exists, and recall already returns text. |
 | **d13 — Default `own=true` to the key workspace's subtree** | Silently leaves out the key's rows in other areas. |
 | **d13 — Facade-only `submitted_at` and `held_expires_at`** | ADR-0014 d1. |
-| **d13 — `X-OML-Workspace` with `own=true` as a second subtree filter** | Two filters on one listing need an intersection rule of their own; refusing the header is the smaller contract. |
+| **d13 — `X-OML-Workarea` with `own=true` as a second subtree filter** | Two filters on one listing need an intersection rule of their own; refusing the header is the smaller contract. |
 | **d13 — Omit retirement tips from the listing** | The listing would hide a promoted served tip that get serves, and no reader could see in it that a claim is retired. |
 | **d14 — Compose `/tree`, `/edges` and `/status` in the facade** | Several ring calls, against mcp-plugin.md:14-16. |
 | **d14 — Open `GET /v2/keys/{id}/effective-access` to agents** | It is an admin read, and it returns roles. |

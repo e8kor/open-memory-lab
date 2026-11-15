@@ -2,7 +2,7 @@
 id: adr/ADR-0039-the-api-rewritten-for-v0-4-0
 tier: engineering
 status: accepted design · 2026-11-04
-answers: why the agent and HTTP surfaces are rewritten for v0.4.0 while OML is pre-release instead of layered; the three MCP tools that replace the eight served ones, their hints and their argument rules; why the events tail leaves MCP and no file tool returns; the server-derived claim_key beside a required idempotency_key; one workspace field in place of the X-OML-Workspace header; one include_unreviewed flag; which HTTP routes collapse and where the 49 declared-but-unrouted operations go; the old-to-new mapping that shows nothing is lost; the breaking changes, their migration and the alias window; one error shape on HTTP and MCP; the URL and key that are every client's only start settings, and the whoami read that derives the rest; the build plan and its tests
+answers: why the agent and HTTP surfaces are rewritten for v0.4.0 while OML is pre-release instead of layered; the three MCP tools that replace the eight served ones, their hints and their argument rules; why the events tail leaves MCP and no file tool returns; the server-derived claim_key beside a required idempotency_key; one workspace field in place of the X-OML-Workarea header; one include_unreviewed flag; which HTTP routes collapse and where the 49 declared-but-unrouted operations go; the old-to-new mapping that shows nothing is lost; the breaking changes, their migration and the alias window; one error shape on HTTP and MCP; the URL and key that are every client's only start settings, and the whoami read that derives the rest; the build plan and its tests
 -->
 
 # ADR-0039 — The API is rewritten for v0.4.0 while OML is pre-release: three task-shaped MCP tools, a contract that declares only what is served, one URL and one key to start, and nothing lost
@@ -24,7 +24,7 @@ Every decision below is the maintainer's. Five facts, checked against `feat/v0.3
 [openapi.yaml](../api/openapi.yaml) declares 71 operations, the router serves 22 plus `/mcp`
 (`crates/transports/oml-transport-http/src/lib.rs:192-225`), and the SDKs generated from all 71
 offer calls answered with 404. The own-work listing has four names, and a workspace seven
-spellings, the `X-OML-Workspace` header among them ([mcp-tools.json](../api/mcp-tools.json)). The
+spellings, the `X-OML-Workarea` header among them ([mcp-tools.json](../api/mcp-tools.json)). The
 writes are one endpoint behind three tools (`mcp.rs:287-288`), each needing a `claim_key` the
 agent invents. Four built CLI verbs are in no row of [the CLI reference](../cli/reference.md),
 which documents `bootstrap claim --token-stdin` where the build takes `--token <value>`
@@ -93,7 +93,7 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
     |---|---|---|
     | get | `artifact_id`; designed: `lineage` (`ancestors` \| `descendants`), `depth` | `GET /v1/memories/{artifact_id}`; the designed lineage read |
     | recall | `query`, `workspace`, `k`, `kinds`, `include_unreviewed`, `max_tokens` | `POST /v1/memories/recall` |
-    | listing | `own` (default `true`), `workspace`, `claim_key`, `state`, `kind`, `since`, `until`, `limit`, `cursor` | `GET /v1/memories` |
+    | listing | `own` (default `true`), `workarea`, `claim_key`, `state`, `kind`, `since`, `until`, `limit`, `cursor` | `GET /v1/memories` |
 
     `workspace` names the subtree read. Omitted, recall and the scoped listing (`own: false`, new
     on MCP) read the key's default workspace, and the own-work listing everything the key wrote.
@@ -130,16 +130,16 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
 
     | Where | v0.3.0 | v0.4.0 |
     |---|---|---|
-    | `POST /v2/keys` | `default_workspace_id`; `tenant_id`; each grant's `workspace_node_id`; `deny[].subtree_node_id` | `default_workspace`; `tenant`; `workspace`; `deny[].workspace` |
-    | `POST /v2/keys/{key}/denials`; `POST /v2/workspaces` | `workspace_node_id`; `parent_id` | `workspace`; `parent` |
-    | `POST /v1/memories`, `…/supersede`, `…/recall` | header `X-OML-Workspace` | body field `workspace` |
-    | `GET /v1/memories`, `GET /v2/events` | header `X-OML-Workspace` and query `workspace_id` | query `workspace` |
+    | `POST /v2/keys` | `default_workarea_id`; `tenant_id`; each grant's `workarea_node_id`; `deny[].subtree_node_id` | `default_workspace`; `tenant`; `workspace`; `deny[].workspace` |
+    | `POST /v2/keys/{key}/denials`; `POST /v2/workspaces` | `workarea_node_id`; `parent_id` | `workspace`; `parent` |
+    | `POST /v1/memories`, `…/supersede`, `…/recall` | header `X-OML-Workarea` | body field `workspace` |
+    | `GET /v1/memories`, `GET /v2/events` | header `X-OML-Workarea` and query `workarea_id` | query `workspace` |
     | recall, every surface; MCP `oml_recall`, `oml_events_tail` | `include_own_held`; `scope` | `include_unreviewed` (d4); `workspace` |
-    | path parameters | `{workspace_id}`, `{crew_id}`, `{key_id}` | `{workspace}`, `{crew}`, `{key}` |
+    | path parameters | `{workarea_id}`, `{crew_id}`, `{key_id}` | `{workspace}`, `{crew}`, `{key}` |
 
-    **The header goes (call map M7).** ADR-0022 d4's `X-OML-Workspace` is a second form of an
+    **The header goes (call map M7).** ADR-0022 d4's `X-OML-Workarea` is a second form of an
     argument every other request carries as a field, and on the listing it sat beside a
-    `workspace_id` filter with another meaning. One `workspace` field, the subtree the call reads or
+    `workarea_id` filter with another meaning. One `workspace` field, the subtree the call reads or
     writes in, replaces both, with d4's defaults. Responses keep their v0.3.0 names, since a
     response names a stored record by its id where a request may use the name; the one rename is
     `body` → `text` (`include_bodies` → `include_text`), "body" staying
@@ -175,7 +175,7 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
     | `oml_recall {query, scope, k, include_own_held, max_tokens}` | `oml_read {query, workspace, k, include_unreviewed, max_tokens}`, and `kinds` |
     | `oml_get {artifact_id}` | `oml_read {artifact_id}` |
     | `oml_my_work {workspace, claim_key, state, limit, cursor}` | `oml_read` listing, and `kind`, `since`, `until`; `own: false` is new on MCP |
-    | `oml_workspace_info {workspace}` | `oml_workspace {workspace}` |
+    | `oml_workarea_info {workspace}` | `oml_workspace {workspace}` |
     | `oml_events_tail {scope, after_seq, limit}` | `GET /v2/events`, SDK `events`, `oml events`; for an agent's own writes, `oml_read {state}` (d2) |
     | `attachments`, `attachments_bound`; `simulation_id`, `simulated_time` | the designed annex (d9), answering their v0.3.0 codes |
     | `oml_attach`, `oml_graph` (listed, never served) | the designed upload verbs; `oml_read`'s lineage mode (d2) |
@@ -351,7 +351,7 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
 | **Fold `oml_workspace` into `oml_read`** | It returns a node with the caller's verbs, not claim items. |
 | **Keep `oml_graph`, its fold left to a later record** (the first draft) | Lineage returns claim items, so it passes d4's one-shape test as a mode (call map M4). |
 | **`oml_attach` returning when uploads are built** | MCP carries no file bytes; the agent would still need a terminal for the parts (call map C2). |
-| **Keep `X-OML-Workspace` beside the `workspace` field** (the first draft's d7) | Two forms of one argument, with different meanings on the listing (call map M7). |
+| **Keep `X-OML-Workarea` beside the `workspace` field** (the first draft's d7) | Two forms of one argument, with different meanings on the listing (call map M7). |
 | **Keep `include_own_held` beside `include_unreviewed`, or name the one flag `include_held`** | Two flags for one question; ADR-0030 already uses `include_unreviewed`, and the maintainer chose it. |
 | **`kind` required on `POST /v1/memories`** | `memory` is MCP's default already and covers the common write (call map D3). |
 | **`serve_id` required on approve** (the first draft's d10) | The reviewer copies what `review next` printed though it holds one item (call map D5). |

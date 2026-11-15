@@ -22,7 +22,7 @@ may share one, so the derived path, not the name, is what tells them apart
 principal and a label and nothing that addresses it but its id
 ([roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)). An
 operator issuing a plugin key has to copy a UUID out of one command's output into the next, and
-an agent configured with `X-OML-Workspace` has to carry one.
+an agent configured with `X-OML-Workarea` has to carry one.
 
 **The convenience the pages already promise is undecided.** The [CLI](../cli/reference.md#conventions)
 says "workspaces may be named by path for convenience"; the `oml_remember` argument says "a path
@@ -175,7 +175,7 @@ Everything this record decides is design; nothing below is built.
 - **d4 — Names are accepted everywhere an id is, and the server resolves a name by substituting
   its id before any check that consults state.** Every request field, path parameter, query
   parameter, header and MCP tool argument that names a workspace, crew, key or tenant accepts that
-  row's id or its name: `X-OML-Workspace`, the `{workspace_id}`, `{key_id}` and `{crew_id}` path
+  row's id or its name: `X-OML-Workarea`, the `{workspace_id}`, `{key_id}` and `{crew_id}` path
   parameters, `workspace_id` filters, `parent_id`, `new_parent_id`, `to_workspace_id`, a grant's
   `workspace_node_id`, a deny's `subtree_node_id`, `default_workspace_id`, `crew`, `tenant_id`, a
   simulation audience's `key_id`, the `workspace`, `scope`, `from`, `to` and `workspace_id`
@@ -216,7 +216,7 @@ Everything this record decides is design; nothing below is built.
     `access.grant_refused`'s `details.workspace_id` on a node where reader is effective.
     `access.not_found` never carries, in its message or its details, an id or an unresolved value
     that a name was replaced by. On the provider ring an unresolved
-    `X-OML-Workspace` puts its unresolved value in the idempotency record's workspace component, so
+    `X-OML-Workarea` puts its unresolved value in the idempotency record's workspace component, so
     every unknown name has a scope of its own, as every unknown id does, and no replay,
     `idempotency.in_progress` or digest mismatch tells a writer whether a name it guessed exists.
 
@@ -228,7 +228,7 @@ Everything this record decides is design; nothing below is built.
     The idempotency request digest covers the method, the route template, the path parameters
     and the body, each as sent ([HTTP API](../api/http-api.md#idempotency)), so a request that
     names a row in a path or a body and the same request by its id are two requests: reusing one
-    `Idempotency-Key` for the other spelling is `idempotency.digest_mismatch`. `X-OML-Workspace` is
+    `Idempotency-Key` for the other spelling is `idempotency.digest_mismatch`. `X-OML-Workarea` is
     not in the digest, and on the provider ring the record's workspace component is the resolved
     node id (ADR-0022 d4), so a `/v1` request whose header names the node and the same request
     whose header carries its id are one request, and a retry that switches the header's spelling
@@ -522,7 +522,7 @@ Everything this record decides is design; nothing below is built.
 
 **What callers see**
 
-- An agent configures `X-OML-Workspace: metals-crew`, an operator runs `oml keys revoke
+- An agent configures `X-OML-Workarea: metals-crew`, an operator runs `oml keys revoke
   claude-laptop`, and a plugin key is one command away: `eval "$(oml keys issue-agent
   claude-laptop --principal claude/laptop --workspace metals-crew)"`.
 - An unknown or unreadable name answers what its id would; a malformed one answers
@@ -556,7 +556,7 @@ Everything this record decides is design; nothing below is built.
   every field is optional but `name`, so a later record can add a crew kind and member profiles
   as new optional fields, columns and payload members — additive on `/v2` — without reshaping or
   renaming anything this record defines; this record decides neither.
-- `/v1` changes on the request side only: `X-OML-Workspace` and the listing's `workspace_id` accept
+- `/v1` changes on the request side only: `X-OML-Workarea` and the listing's `workarea_id` accept
   names, and a value that is neither an id (d3) nor a name, which 0.2.0-design answered
   `access.not_found`, now answers `request.validation`. That narrowing is permitted only because
   `/v1` is not frozen (#150). Example ids of the four kinds in the OpenAPI
@@ -566,7 +566,7 @@ Everything this record decides is design; nothing below is built.
   ADR-0025's revision was published and tagged `spec-v0.2` at its acceptance, so a `/v1` change
   opens the next revision, tagged `spec-v0.3` when this record is accepted.
 - `mcp-tools.json` changes the descriptions of the unserved tools that take a workspace; the served
-  `oml_remember`, `oml_learn`, `oml_recall`, `oml_my_work`, `oml_workspace_info` and
+  `oml_remember`, `oml_learn`, `oml_recall`, `oml_my_work`, `oml_workarea_info` and
   `oml_events_tail` keep their entries until the code that serves names lands, and
   `_meta.pending_design` names what this record decides for them. The tool count is unchanged.
 
@@ -579,7 +579,7 @@ Everything this record decides is design; nothing below is built.
 - The PoC accepts a global denial on an admin key; d11's rule 5 lifts every such denial, and new
   ones are refused (d15).
 - The PoC's transport parses every workspace and key reference as a UUID — the
-  `X-OML-Workspace` header, the `{key_id}` path parameter and the body fields
+  `X-OML-Workarea` header, the `{key_id}` path parameter and the body fields
   (crates/transports/oml-transport-http/src/lib.rs:585, 831-867, 962-971) — and its CLI accepts
   only UUIDs (crates/bins/oml-cli/src/main.rs:253-259); both classify under d3 instead.
 - The crew object stored on workspaces (migrations/0004_grants.sql:54) becomes crew records.
@@ -628,7 +628,7 @@ the PoC's single tenant; the independence axis's crew and manager comparisons.
 | **d4 — Resolve names in the MCP facade or the CLI** | A second resolver that can drift from the server's, and a facade that says more than the ring (ADR-0014 d1). |
 | **d4 — Rename every `*_id` input to the kind's word (`workspace`, `key`)** | Every `/v1` client and every page changes for no behavioural gain, and a request field would stop matching the response field that carries its id. |
 | **d4 — Digest the request with names replaced by ids** | The digest would depend on what a lookup finds at each attempt instead of on the bytes sent, and every digest would carry a lookup; a client never needs to switch spelling inside one retry. |
-| **d4 — One fixed value, the nil id, for every unknown name** | Every unknown `X-OML-Workspace` would share one idempotency scope, and the nil scope of supersede and the lab records, while an existing name had its own; a replay or a digest mismatch would then tell a writer which guessed names exist. |
+| **d4 — One fixed value, the nil id, for every unknown name** | Every unknown `X-OML-Workarea` would share one idempotency scope, and the nil scope of supersede and the lab records, while an existing name had its own; a replay or a digest mismatch would then tell a writer which guessed names exist. |
 | **d4 — An unresolved value drawn at random per request** | Retries of one unknown name would land in different scopes, so a retry would replay for an existing name and never for an unknown one: the existence oracle the nil value has. |
 | **d4 — Add a name field to claim items and events** | The derived path's last segment already is the name, and a `/v1` response field would grow to carry what is served. |
 | **d5 — `request.validation` for a taken name** | It hides a state conflict that can never succeed on retry behind the code for a malformed request, and it would be a 400 where every other permanent-identifier collision is a 409. |

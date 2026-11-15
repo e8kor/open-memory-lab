@@ -190,7 +190,7 @@ accepts it.
 
     Neither request names the key's default workspace, so the header names the path of the newest
     own submission that carries one, which is that workspace unless the submission named another;
-    with none, it says "this key's default workspace" and that `oml_workspace_info` names it. Every
+    with none, it says "this key's default workspace" and that `oml_workarea_info` names it. Every
     entry is one line, its whitespace collapsed, so a stored body cannot forge a section header or
     the framing line; the cost is that a multi-line body, a list or a code block, reaches Claude
     flattened, its structure lost, and `oml_get` serves it whole. The verb takes `--json` like every
@@ -223,7 +223,7 @@ accepts it.
   settings a plugin ships, Claude Code applies only `agent` and `subagentStatusLine`
   ([plugins reference](https://code.claude.com/docs/en/plugins-reference), fetched 2026-10-31).
   The narrower rule names `mcp__plugin_oml_oml__oml_recall`, `__oml_get`, `__oml_my_work`,
-  `__oml_workspace_info` and `__oml_events_tail`: reads run without a question, and every write
+  `__oml_workarea_info` and `__oml_events_tail`: reads run without a question, and every write
   still asks. The broader rule allows every tool of the plugin's one server, the writes too.
 
     The context of d6 asks Claude to call `oml_remember`, so without a rule every call asks the

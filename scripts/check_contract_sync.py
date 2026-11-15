@@ -44,7 +44,7 @@ This script extracts each surface and fails with a diff on any disagreement:
     (ADR-0039 d15)
   * a v0.3.0 spelling from d10's table on a start page: the eight tool names
     (V0_3_0_TOOLS below, removed in v0.5.1),
-    `X-OML-Workspace`, `include_own_held`, `OML_CLI_SERVER`, `OML_CLI_KEY`, the
+    `X-OML-Workarea`, `include_own_held`, `OML_CLI_SERVER`, `OML_CLI_KEY`, the
     `--token`, `--server` and `--key` flags, the verbs `oml submit`, `oml recall`,
     `oml supersede` and `oml review verdict`, or the release 0.3.2 or v0.3.2,
     the pattern first checked against probe lines it must catch and pass, on a
@@ -127,7 +127,7 @@ RETIRED_VERB_EXEMPT = [ROOT / "docs" / "adr", ROOT / "docs" / "atlas", ROOT / "d
 # no start page teaches.
 V0_3_0_TOOLS = [
     "oml_remember", "oml_learn", "oml_recall", "oml_get",
-    "oml_supersede", "oml_my_work", "oml_workspace_info", "oml_events_tail",
+    "oml_supersede", "oml_my_work", "oml_workarea_info", "oml_events_tail",
 ]
 
 
@@ -136,7 +136,7 @@ V0_3_0_TOOLS = [
 # replaced with v0.4.0, spelled with or without a "v" and at a sentence's end.
 RETIRED_NAME_RE = re.compile(
     "|".join(rf"\b{re.escape(tool)}\b" for tool in V0_3_0_TOOLS)
-    + r"|X-OML-Workspace|\binclude_own_held\b|\bOML_CLI_(?:SERVER|KEY)\b"
+    + r"|X-OML-Workarea|\binclude_own_held\b|\bOML_CLI_(?:SERVER|KEY)\b"
     r"|(?<![-\w])--(?:token|server|key)(?![-\w])"
     r"|\boml (?:submit|recall|supersede|review verdict)\b"
     r"|(?<![\w.])v?0\.3\.2(?!\.?\w)"
@@ -439,8 +439,8 @@ def start_pages() -> list[Path]:
 # pattern is checked against these before it reads a page.
 RETIRED_NAME_CATCHES = [
     "call oml_remember", "call oml_learn", "call oml_recall", "call oml_get",
-    "call oml_supersede", "call oml_my_work", "call oml_workspace_info",
-    "call oml_events_tail", "send X-OML-Workspace", "set include_own_held",
+    "call oml_supersede", "call oml_my_work", "call oml_workarea_info",
+    "call oml_events_tail", "send X-OML-Workarea", "set include_own_held",
     "export OML_CLI_SERVER=x", "export OML_CLI_KEY=x", "oml bootstrap claim ci --token s",
     "oml --server https://x", "oml --key k", "oml submit --claim t", "oml recall --query q",
     "oml supersede a", "oml review verdict --approve", "tag v0.3.2", "ships in 0.3.2.",
