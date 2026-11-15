@@ -16289,3 +16289,39 @@ async fn a_veto_in_a_skill_description_or_a_document_title_refuses_the_write_and
     assert!(matches!(err, AppError::ScanVeto(_)), "{err:?}");
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
 }
+
+#[tokio::test]
+async fn a_documents_heading_title_past_200_characters_is_stored_cut_to_200() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "wanda", crew).await;
+    let heading = "é".repeat(250);
+    let receipt = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                claim_key: Some("doc/long".to_owned()),
+                ..kind_req(
+                    "d1",
+                    MemoryKind::Document,
+                    &format!("# {heading}\nBody."),
+                    crew,
+                )
+            },
+        )
+        .await
+        .expect("a document")
+        .receipt;
+    let row = store
+        .memory(boot.tenant_id, receipt.memory_id)
+        .await
+        .expect("read")
+        .expect("row");
+    let Some(oml_app::types::KindFields::Document { title: Some(title) }) =
+        row.kind_fields.as_deref()
+    else {
+        panic!("a document's title");
+    };
+    assert_eq!(title.chars().count(), 200);
+}

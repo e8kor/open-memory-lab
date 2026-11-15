@@ -67,7 +67,7 @@ Requires: writer effective access on the resolved workspace; every derives_from 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `verb` | `remember` \| `learn` | no | Omitted, learn when derives_from is non-empty and remember otherwise; a sent verb is honoured. learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact. |
-| `claim_key` | string | no | Groups versions of one claim; one live claim per (tenant, workspace): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). |
+| `claim_key` | string | no | Groups versions of one claim; one live claim per (tenant, workspace): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected, withdrawn or erased releases the key (docs/architecture/audit-and-lineage.md). |
 | `kind` | `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` \| `guardrail` \| `skill` \| `document` \| `test` | no | guardrail requires severity and admits rule (since v0.5.1). skill requires skill and format text/markdown, its default, and derives claim_key skill/<name>; a sent claim_key other than that, a body opening with a --- line and a body past 32,768 bytes are refused (request.validation naming the field; request.payload_too_large naming /body). document takes text/markdown, its default, or text/plain and an optional document; its claim_key is doc/ and segments of a-z 0-9. _ -, or derived from its title. test requires test and a claim_key test/<name>. |
 | `valid_from` | string | no | When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. |
 | `valid_until` | string | no | When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. |
@@ -99,7 +99,7 @@ Requires: reader effective access; own=true admits any tenant role except operat
 | `workspace` | query | WorkspaceRef | no | The subtree read, by id or name, which must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node. |
 | `claim_key` | query | string | no |  |
 | `state` | query | `held` \| `promoted` \| `demoted` \| `rejected` \| `erased` \| `withdrawn` | no |  |
-| `kind` | query | `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` | no |  |
+| `kind` | query | `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` \| `skill` \| `document` \| `test` | no |  |
 | `own` | query | boolean | no |  |
 | `with_own` | query | boolean | no | true: the scoped listing (at workspace, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once. |
 | `author` | query | string | no | One of the caller's own keys, by name: the caller's rows by that key alone, the scoped part dropped; a key that is not the caller's is access.not_found. |
