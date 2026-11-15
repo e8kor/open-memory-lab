@@ -16201,3 +16201,53 @@ async fn a_test_case_needs_its_shape_and_a_test_key() {
     assert_eq!(receipt.claim_key, "test/finds-the-runbook");
     assert_eq!(receipt.state, "held");
 }
+
+#[tokio::test]
+async fn an_agent_reviewer_key_is_refused_on_a_skill_and_approves_a_document_and_a_test_case() {
+    let app = app();
+    let (boot, crew, _team, writer, _reviewer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let crew_reviewer = agent_reviewer(&app, admin, "crew-reviewer", crew).await;
+    let written = |req: SubmitRequest| {
+        let (app, writer) = (&app, writer.value.clone());
+        async move {
+            app.submit_memory(&writer, &req)
+                .await
+                .expect("submit")
+                .receipt
+                .memory_id
+        }
+    };
+    let skill = written(SubmitRequest {
+        kind_fields: Some(skill_fields("deploy")),
+        ..kind_req("a1", MemoryKind::Skill, "Run the deploy script.", crew)
+    })
+    .await;
+    let err = app
+        .post_verdict(&crew_reviewer.value, skill, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(person_required(&err, MemoryKind::Skill), "{err:?}");
+    let document = written(kind_req(
+        "a2",
+        MemoryKind::Document,
+        "# Runbook\nStep one.",
+        crew,
+    ))
+    .await;
+    let case = written(SubmitRequest {
+        kind_fields: Some(oml_app::types::KindFields::Test {
+            shape: oml_app::domain::claim_kinds::TestShape::Document,
+        }),
+        claim_key: Some("test/runbook-parses".to_owned()),
+        ..kind_req("a3", MemoryKind::Test, "key: doc/runbook", crew)
+    })
+    .await;
+    for id in [document, case] {
+        let outcome = app
+            .post_verdict(&crew_reviewer.value, id, Verdict::Approve, None)
+            .await
+            .expect("agents approve knowledge");
+        assert_eq!(outcome.state, MemoryStatus::Promoted);
+    }
+}
