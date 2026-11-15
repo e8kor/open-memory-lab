@@ -105,17 +105,18 @@ def sync_detailed(
     refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession
     whose target is no longer the tip of the successor's own workspace and claim_key is refused with 409
     submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id
-    is not consumed (ADR-0025 d10). An approval of a steering or guardrail version, an instruction,
-    counts only from a person's reviewer key (used_by person, no crew, no profile); any other key is
-    refused 403 review.person_required, details.reason instruction_needs_person, nothing is journalled
-    and the version stays held, while a reject from it is admitted (ADR-0080 d3, d16). Resulting state:
-    promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict
-    applies to the one review item this key has claimed through review next, and with none or several it
-    is refused with request.validation, details.field /serve_id, nothing journalled; the default rests
-    on the claimed queue row, not on a serve record (#130; ADR-0039 d10). The Idempotency-Key record,
-    scoped to the key and a nil workspace, is looked up before the default resolves: a retry of a
-    committed verdict replays its stored response with Idempotency-Replay: true and never applies to
-    another item.
+    is not consumed (ADR-0025 d10). An approval of a steering or guardrail version, an instruction, or
+    of a successor of another kind that replaces one, counts only from a person's reviewer key (used_by
+    person, no crew, no profile); any other key is refused 403 review.person_required, details.reason
+    instruction_needs_person and details.kind the instruction's kind, the replaced version's for such a
+    successor, nothing is journalled and the version stays held, while a reject from it is admitted
+    (ADR-0080 d3, d16). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is
+    optional: omitted, the verdict applies to the one review item this key has claimed through review
+    next, and with none or several it is refused with request.validation, details.field /serve_id,
+    nothing journalled; the default rests on the claimed queue row, not on a serve record (#130;
+    ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workspace, is looked up
+    before the default resolves: a retry of a committed verdict replays its stored response with
+    Idempotency-Replay: true and never applies to another item.
 
     Args:
         x_request_id (str | Unset):
@@ -165,17 +166,18 @@ def sync(
     refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession
     whose target is no longer the tip of the successor's own workspace and claim_key is refused with 409
     submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id
-    is not consumed (ADR-0025 d10). An approval of a steering or guardrail version, an instruction,
-    counts only from a person's reviewer key (used_by person, no crew, no profile); any other key is
-    refused 403 review.person_required, details.reason instruction_needs_person, nothing is journalled
-    and the version stays held, while a reject from it is admitted (ADR-0080 d3, d16). Resulting state:
-    promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict
-    applies to the one review item this key has claimed through review next, and with none or several it
-    is refused with request.validation, details.field /serve_id, nothing journalled; the default rests
-    on the claimed queue row, not on a serve record (#130; ADR-0039 d10). The Idempotency-Key record,
-    scoped to the key and a nil workspace, is looked up before the default resolves: a retry of a
-    committed verdict replays its stored response with Idempotency-Replay: true and never applies to
-    another item.
+    is not consumed (ADR-0025 d10). An approval of a steering or guardrail version, an instruction, or
+    of a successor of another kind that replaces one, counts only from a person's reviewer key (used_by
+    person, no crew, no profile); any other key is refused 403 review.person_required, details.reason
+    instruction_needs_person and details.kind the instruction's kind, the replaced version's for such a
+    successor, nothing is journalled and the version stays held, while a reject from it is admitted
+    (ADR-0080 d3, d16). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is
+    optional: omitted, the verdict applies to the one review item this key has claimed through review
+    next, and with none or several it is refused with request.validation, details.field /serve_id,
+    nothing journalled; the default rests on the claimed queue row, not on a serve record (#130;
+    ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workspace, is looked up
+    before the default resolves: a retry of a committed verdict replays its stored response with
+    Idempotency-Replay: true and never applies to another item.
 
     Args:
         x_request_id (str | Unset):
@@ -220,17 +222,18 @@ async def asyncio_detailed(
     refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession
     whose target is no longer the tip of the successor's own workspace and claim_key is refused with 409
     submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id
-    is not consumed (ADR-0025 d10). An approval of a steering or guardrail version, an instruction,
-    counts only from a person's reviewer key (used_by person, no crew, no profile); any other key is
-    refused 403 review.person_required, details.reason instruction_needs_person, nothing is journalled
-    and the version stays held, while a reject from it is admitted (ADR-0080 d3, d16). Resulting state:
-    promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict
-    applies to the one review item this key has claimed through review next, and with none or several it
-    is refused with request.validation, details.field /serve_id, nothing journalled; the default rests
-    on the claimed queue row, not on a serve record (#130; ADR-0039 d10). The Idempotency-Key record,
-    scoped to the key and a nil workspace, is looked up before the default resolves: a retry of a
-    committed verdict replays its stored response with Idempotency-Replay: true and never applies to
-    another item.
+    is not consumed (ADR-0025 d10). An approval of a steering or guardrail version, an instruction, or
+    of a successor of another kind that replaces one, counts only from a person's reviewer key (used_by
+    person, no crew, no profile); any other key is refused 403 review.person_required, details.reason
+    instruction_needs_person and details.kind the instruction's kind, the replaced version's for such a
+    successor, nothing is journalled and the version stays held, while a reject from it is admitted
+    (ADR-0080 d3, d16). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is
+    optional: omitted, the verdict applies to the one review item this key has claimed through review
+    next, and with none or several it is refused with request.validation, details.field /serve_id,
+    nothing journalled; the default rests on the claimed queue row, not on a serve record (#130;
+    ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workspace, is looked up
+    before the default resolves: a retry of a committed verdict replays its stored response with
+    Idempotency-Replay: true and never applies to another item.
 
     Args:
         x_request_id (str | Unset):
@@ -278,17 +281,18 @@ async def asyncio(
     refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession
     whose target is no longer the tip of the successor's own workspace and claim_key is refused with 409
     submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id
-    is not consumed (ADR-0025 d10). An approval of a steering or guardrail version, an instruction,
-    counts only from a person's reviewer key (used_by person, no crew, no profile); any other key is
-    refused 403 review.person_required, details.reason instruction_needs_person, nothing is journalled
-    and the version stays held, while a reject from it is admitted (ADR-0080 d3, d16). Resulting state:
-    promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict
-    applies to the one review item this key has claimed through review next, and with none or several it
-    is refused with request.validation, details.field /serve_id, nothing journalled; the default rests
-    on the claimed queue row, not on a serve record (#130; ADR-0039 d10). The Idempotency-Key record,
-    scoped to the key and a nil workspace, is looked up before the default resolves: a retry of a
-    committed verdict replays its stored response with Idempotency-Replay: true and never applies to
-    another item.
+    is not consumed (ADR-0025 d10). An approval of a steering or guardrail version, an instruction, or
+    of a successor of another kind that replaces one, counts only from a person's reviewer key (used_by
+    person, no crew, no profile); any other key is refused 403 review.person_required, details.reason
+    instruction_needs_person and details.kind the instruction's kind, the replaced version's for such a
+    successor, nothing is journalled and the version stays held, while a reject from it is admitted
+    (ADR-0080 d3, d16). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is
+    optional: omitted, the verdict applies to the one review item this key has claimed through review
+    next, and with none or several it is refused with request.validation, details.field /serve_id,
+    nothing journalled; the default rests on the claimed queue row, not on a serve record (#130;
+    ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workspace, is looked up
+    before the default resolves: a retry of a committed verdict replays its stored response with
+    Idempotency-Replay: true and never applies to another item.
 
     Args:
         x_request_id (str | Unset):

@@ -100,8 +100,9 @@ def sync_detailed(
     /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or
     review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying
     same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal's code:
-    review.author_in_lineage (R2), review.person_required (an approval of an instruction-class version
-    by a key that is not a person's reviewer key, ADR-0080 d16), review.serve_invalid (no longer held),
+    review.author_in_lineage (R2), review.person_required (an approval of an instruction-class version,
+    or of a successor that replaces one, by a key that is not a person's reviewer key; details.kind is
+    then the replaced version's kind; ADR-0080 d16), review.serve_invalid (no longer held),
     submission.tip_conflict, access.not_found, access.grant_refused, workspace.frozen; nothing already
     committed is undone (d5, d6). Each item records under the Idempotency-Key and its own id: a retry
     replays decided items with replayed true and judges the rest; another verdict or reason for a
@@ -156,8 +157,9 @@ def sync(
     /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or
     review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying
     same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal's code:
-    review.author_in_lineage (R2), review.person_required (an approval of an instruction-class version
-    by a key that is not a person's reviewer key, ADR-0080 d16), review.serve_invalid (no longer held),
+    review.author_in_lineage (R2), review.person_required (an approval of an instruction-class version,
+    or of a successor that replaces one, by a key that is not a person's reviewer key; details.kind is
+    then the replaced version's kind; ADR-0080 d16), review.serve_invalid (no longer held),
     submission.tip_conflict, access.not_found, access.grant_refused, workspace.frozen; nothing already
     committed is undone (d5, d6). Each item records under the Idempotency-Key and its own id: a retry
     replays decided items with replayed true and judges the rest; another verdict or reason for a
@@ -207,8 +209,9 @@ async def asyncio_detailed(
     /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or
     review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying
     same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal's code:
-    review.author_in_lineage (R2), review.person_required (an approval of an instruction-class version
-    by a key that is not a person's reviewer key, ADR-0080 d16), review.serve_invalid (no longer held),
+    review.author_in_lineage (R2), review.person_required (an approval of an instruction-class version,
+    or of a successor that replaces one, by a key that is not a person's reviewer key; details.kind is
+    then the replaced version's kind; ADR-0080 d16), review.serve_invalid (no longer held),
     submission.tip_conflict, access.not_found, access.grant_refused, workspace.frozen; nothing already
     committed is undone (d5, d6). Each item records under the Idempotency-Key and its own id: a retry
     replays decided items with replayed true and judges the rest; another verdict or reason for a
@@ -261,8 +264,9 @@ async def asyncio(
     /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or
     review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying
     same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal's code:
-    review.author_in_lineage (R2), review.person_required (an approval of an instruction-class version
-    by a key that is not a person's reviewer key, ADR-0080 d16), review.serve_invalid (no longer held),
+    review.author_in_lineage (R2), review.person_required (an approval of an instruction-class version,
+    or of a successor that replaces one, by a key that is not a person's reviewer key; details.kind is
+    then the replaced version's kind; ADR-0080 d16), review.serve_invalid (no longer held),
     submission.tip_conflict, access.not_found, access.grant_refused, workspace.frozen; nothing already
     committed is undone (d5, d6). Each item records under the Idempotency-Key and its own id: a retry
     replays decided items with replayed true and judges the rest; another verdict or reason for a
