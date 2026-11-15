@@ -113,10 +113,11 @@ Decided, not built.
   stops working in the same release. A retired name answers exactly as any unknown input answers
   today, with no rule of its own: a retired path is 404; a retired JSON field or enum value is
   `request.validation` as an unknown field or value, with no `details.renamed_to` entry
-  ([errors](../api/errors.md)); a retired header (`X-OML-Workarea`), query parameter or
+  ([errors](../api/errors.md)); a retired query parameter or
   environment variable (`OML_CHAT_WORKAREA`, `OML_WORKAREA_NAME`) is ignored, as an unknown one
-  is today. The cost is stated openly: a v0.7 client that names its target only by the retired
-  header or query parameter is not refused, so its write can land silently in its key's default
+  is today; the header `X-OML-Workarea`, retired in v0.4.0, stays refused by its real name, as
+  before the cut (ADR-0039 d7; amended with the build). The cost is stated openly: a v0.7 client
+  that names its target only by a retired query parameter is not refused, so its write can land silently in its key's default
   workspace instead of the one it meant, held there under review like any write. The guard is
   the order of the upgrade: the v0.8.0 upgrade note (d12) tells every client to upgrade its CLI,
   plugins and SDKs before the server is upgraded, and a v0.8.0 client already speaks only the new
@@ -125,7 +126,7 @@ Decided, not built.
     | Surface | Former | From v0.8.0 |
     |---|---|---|
     | HTTP paths | `/v2/workareas`, `/v2/workareas/{workarea}` and its `tree`, `offers`, `crew`, `mode`, `federation`, `transitions` and `transitions/{transition_id}/ratify` | `/v2/workspaces`, `/v2/workspaces/{workspace}/…` |
-    | HTTP header | `X-OML-Workarea` | `X-OML-Workspace` |
+    | HTTP header | `X-OML-Workarea` (retired in v0.4.0) | refused by its real name, as before the cut (ADR-0039 d7) |
     | Query and JSON fields | every field whose name holds the token: `workarea`, `workarea_id`, `default_workarea_id`, `workarea_path`, `root_workarea_id`, `to_workarea_id`, `scope_workarea_id`, `workarea_ids`, … | the same name with `workspace` |
     | Error codes | the family `workarea` (`workarea.frozen`, `workarea.transition_refused`, `workarea.in_progress_refused`, `workarea.held_remaining`, `workarea.admin_key_under_root`, and the designed ones of ADR-0080 to ADR-0089); `request.workarea_unresolved` | the family `workspace`; `request.workspace_unresolved` |
     | Error details | `details.kind: "workarea"` of `name.taken`; `details.workarea_id` | `"workspace"`; `details.workspace_id` |
@@ -346,7 +347,7 @@ Decided, not built.
   console bookmark stops working against a v0.8.0 server: paths, fields, the MCP tool
   `oml_workarea` (now `oml_workspace`), the CLI noun, `OML_CHAT_WORKAREA` and the plugin setting
   `chat_workarea` all change. Upgrade the CLI, plugins and SDKs before the server is upgraded:
-  v0.8.0 ignores an old client's workarea header or query parameter, so a write it sends can
+  v0.8.0 ignores an old client's workarea query parameter, so a write it sends can
   land in the key's default workspace. Set `chat_workspace`, and update saved
   permission rules that name `oml_workarea`. Memories, keys, grants and workspace names are
   unchanged. The role `dreamer` is now `reviewer`: `--role reviewer` and grants such as
@@ -447,8 +448,8 @@ Recorded with the build (PR #431, 2026-11-14), each as the operator decided it t
   verification reconstructs and checks the stored bytes; `oml events` maps the type it prints.
 - **The retired header keeps its refusal.** `X-OML-Workarea` was retired in v0.4.0, and since
   then a request that sends it is refused naming its successor (ADR-0039 d7). The cut keeps that
-  refusal under the header's real name; no `X-OML-Workspace` header exists. The rows of d2 that
-  name the header read as this note says (the build, 2026-11-15).
+  refusal under the header's real name, and d2's table row and text say so (the build,
+  2026-11-15).
 - **The holder's reasons.** The reasons `bulk_review_is_human_only`, `chat_scope_is_human_only`,
   `mode_is_human_only`, `federation_is_human_only` and `web_is_human_only` are now
   `*_is_person_only`, and the scanner's hold marker `[needs-human]` is `[needs-person]`, under
