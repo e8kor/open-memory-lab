@@ -317,6 +317,9 @@ workspace holds across kinds has the workspace page's contents by kind for one w
       served on the first page only (d11 answer 6). An index on `(tenant_id, workspace_id,
       kind, created_at)` serves the page; the count is a bottleneck row with the build,
       unmeasured until then.
+    - **Prefix.** `prefix` is a byte range on `claim_key` (at or after the prefix and before its
+      successor), never `LIKE`, which row security may evaluate on a row before its policy
+      filters it (ADR-0052; `scripts/lint_practices.py like`).
     - **Bindings.** A `latest` or pinned key resolves its release per workspace before the
       statement, as ADR-0085 states for every read; the catalog adds no lookup of its own.
 
