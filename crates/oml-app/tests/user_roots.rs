@@ -85,13 +85,20 @@ fn node_grant(node: Reference, role: Role) -> GrantRequest {
     }
 }
 
+/// A reviewer key is a person's, since only a person's verdict counts on a
+/// steering or guardrail version (ADR-0080 d16); every other key is an
+/// agent's.
 fn user_req(role: Role, user: &str, principal: &str, grants: Vec<GrantRequest>) -> IssueKeyRequest {
     IssueKeyRequest {
         profile: None,
         role,
         name: fresh_key_name(),
         principal: principal.to_owned(),
-        used_by: Some(UsedBy::Agent),
+        used_by: Some(if role == Role::Reviewer {
+            UsedBy::Person
+        } else {
+            UsedBy::Agent
+        }),
         default_workspace: None,
         crew: None,
         grants,
@@ -1345,7 +1352,7 @@ async fn a_universe_guardrail_is_served_with_origin_universe_its_verdicts_and_no
     assert_eq!(g.depth, 0);
     // Its verdict's attestation and time, never a key (d18 Q6).
     assert_eq!(g.verdicts.len(), 1);
-    assert_eq!(g.verdicts[0].used_by, UsedBy::Agent);
+    assert_eq!(g.verdicts[0].used_by, UsedBy::Person);
 }
 
 #[tokio::test]

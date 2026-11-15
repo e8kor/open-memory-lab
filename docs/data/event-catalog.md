@@ -76,7 +76,7 @@ Writes enter held. Nothing in this family changes what anyone can read.
 | `lifecycle.supersede` | `claim_key`, `workspace_id`, `new_artifact_id`, `new_version`, `replaces_artifact_id`, `replaces_version`, `retirement`, `ratification_event_id`, `self_signed`, `same_user`, `policy` | A supersession is promoted and takes the tip from the replaced version in one event. It is written after a check that the replaced version is still the tip. |
 | `lifecycle.erase` | `artifact_id`, `version`, `workspace_id`, `claim_key`, `dek_destroyed`, `copy_classes`, `erased_by_key_id` | The memory's encryption key is destroyed and its index rows are removed in the same commit. `copy_classes` names the copies affected. Ciphertext in backups persists until its window ends. |
 
-`policy` holds the review policy the promotion or supersession was decided under: `k` and `required_roles`.
+`policy` holds the review policy the promotion or supersession was decided under: `k`, `required_roles`, the version's `class` (`knowledge`, `instruction` or `vocabulary`) and `human_required`, true for an instruction, whose approval counts only from a person's reviewer key ([ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16). A promotion journalled before v0.8.0 carries `k` and `required_roles` only.
 
 ## Workspaces and crews
 

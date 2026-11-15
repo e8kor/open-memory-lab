@@ -89,9 +89,9 @@ use oml_domain::vocab_edges::{EdgeState, TermEdge, check_acyclic, edge_transitio
 use oml_domain::{
     ChainHead, DERIVED_CLAIM_KEY_PREFIX, Envelope, EventDraft, EventTime, FrozenOp, KeySet,
     LadderNode, LadderRefusal, LineageClosure, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, UsedBy, WorkspaceStatus, canonical_bytes, check_reviewer, derive_claim_key,
-    event_types, frozen_refuses, next_envelope, nfc, propose_check, ratifier_is_proposer,
-    ratify_check, same_user, sha256_digest_string, transition,
+    SignedEnvelope, UsedBy, WorkspaceStatus, canonical_bytes, check_approval_class, check_reviewer,
+    derive_claim_key, event_types, frozen_refuses, next_envelope, nfc, propose_check,
+    ratifier_is_proposer, ratify_check, same_user, sha256_digest_string, transition,
 };
 
 use crate::cursor::{ClaimEdgeCursor, ListingCursor, NameCursor, PathCursor};
@@ -158,6 +158,16 @@ const EVENTS_PAGE: usize = 512;
 /// snapshot is the policy in force plus the precondition; ADR-0009 d3).
 fn review_policy() -> Value {
     json!({ "k": 1, "required_roles": ["reviewer"] })
+}
+
+/// The policy a claim's ratification snapshots: [`review_policy`] with the
+/// version's class and whether only a person's verdict counts on it
+/// (ADR-0080 d16).
+fn claim_review_policy(kind: MemoryKind) -> Value {
+    let mut policy = review_policy();
+    policy["class"] = json!(kind.class().as_str());
+    policy["human_required"] = json!(kind.class().needs_person());
+    policy
 }
 
 /// The fixed reason a failed issuance's `key.revoked` digests
@@ -6019,6 +6029,18 @@ where
             }
         }
         check_reviewer(key.role, &key.principal, key.key_id, &exclusion)?;
+        // Only a person's reviewer key approves an instruction-class
+        // version; a reject promotes nothing and any reviewer may give one
+        // (ADR-0080 d3, d16). The version stays held.
+        if verdict == Verdict::Approve {
+            check_approval_class(
+                memory.kind,
+                key.role,
+                key.used_by,
+                key.crew_id.is_some(),
+                key.profile.is_some(),
+            )?;
+        }
         // A claim's ratification is marked as a transition's and an edge's
         // are: whether the reviewing key and the authoring key name one
         // user (ADR-0046 d2, ADR-0055 d7).
@@ -6113,7 +6135,7 @@ where
                 // the approving verdict is the ratifying act, so
                 // ratification_event_id names it. Nothing is self-signed in
                 // the PoC (ADR-0025 d17).
-                let policy = review_policy();
+                let policy = claim_review_policy(memory.kind);
                 // What the promoted row keeps of this verdict: the reviewing
                 // key's attestation, the same-person mark and the verdict's
                 // own time, never the key (ADR-0077 d3, d6).

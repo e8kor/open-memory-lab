@@ -145,6 +145,7 @@ These codes enforce [R2](https://github.com/e8kor/open-memory-lab/blob/main/docs
 | Code | HTTP | Fires when |
 |---|---|---|
 | `review.author_in_lineage` | 403 | The reviewer, or its principal, appears in the memory's derivation lineage, or authored a rival successor. |
+| `review.person_required` | 403 | An approval of an instruction-class version, `steering` or `guardrail`, came from a key that is not a person's reviewer key (`used_by: person`, no crew, no profile). Nothing is journalled and the version stays held; a reject from the same key is admitted. `details`: `reason` (`instruction_needs_person`), `kind` ([ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d3, d16). |
 | `review.ratifier_is_proposer` | 403 | The key ratifying an edge or status change is the one that proposed it. |
 | `review.serve_invalid` | 409 | The served item expired, was used, was served to another key, or changed. `details.reason`: `expired`, `consumed`, `reviewer_mismatch`, `content_changed` or `unknown`. |
 
@@ -217,7 +218,7 @@ Review unavailability is not an API error. When no reviewer can approve, writes 
 |---|---|
 | 400 | `oauth.client_invalid`, `oauth.redirect_refused`, `oauth.pkce_required`, `oauth.resource_mismatch`, `oauth.authorization_expired`, `oauth.connect_code_invalid`, `oauth.authorization_code_invalid`, `oauth.refresh_invalid`, `request.validation`, `request.idempotency_key_required` |
 | 401 | `auth.missing`, `auth.invalid` |
-| 403 | `oauth.origin_refused`, `oauth.attach_refused`, `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.ratifier_is_proposer`, `simulation.audience_refused` |
+| 403 | `oauth.origin_refused`, `oauth.attach_refused`, `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.person_required`, `review.ratifier_is_proposer`, `simulation.audience_refused` |
 | 404 | `access.not_found` |
 | 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `submission.user_root_refused`, `name.taken`, `workspace.frozen`, `workspace.transition_refused`, `workspace.in_progress_refused`, `workspace.held_remaining`, `workspace.admin_key_under_root`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `export.not_ready` |
 | 410 | `lifecycle.erased` |

@@ -35,6 +35,7 @@ class ErrorCode(StrEnum):
     REQUEST_VALIDATION = "request.validation"
     REQUEST_WORKSPACE_UNRESOLVED = "request.workspace_unresolved"
     REVIEW_AUTHOR_IN_LINEAGE = "review.author_in_lineage"
+    REVIEW_PERSON_REQUIRED = "review.person_required"
     REVIEW_RATIFIER_IS_PROPOSER = "review.ratifier_is_proposer"
     REVIEW_SERVE_INVALID = "review.serve_invalid"
     SETTINGS_INVALID = "settings.invalid"

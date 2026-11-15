@@ -385,7 +385,13 @@ async fn issue_key_with(
         "/v2/keys",
         Call::auth(admin)
             .idem(&format!("issue-{role}-{principal}"))
-            .body(json!({ "role": role, "name": name, "principal": principal, "grants": grants })),
+            // A reviewer is a person's, since only a person's verdict
+            // approves steering (ADR-0080 d16); other keys are unattested.
+            .body(if role == "reviewer" {
+                json!({ "role": role, "name": name, "principal": principal, "grants": grants, "used_by": "person" })
+            } else {
+                json!({ "role": role, "name": name, "principal": principal, "grants": grants })
+            }),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "issue {role}: {body}");

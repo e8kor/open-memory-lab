@@ -526,6 +526,28 @@ async fn laptop_key(rig: &Rig, cookie: &str) -> String {
 // -- the Guardrails view (ADR-0037 d17), moved to oml-web ------------------
 
 #[tokio::test]
+async fn the_review_page_marks_a_held_instruction_as_needing_a_person() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let id = agent_guardrail(&rig, &value, "Run the tests before every commit.").await;
+    let (_, _, page) = send(&rig.router, get("/web/review", Some(&cookie))).await;
+    assert!(
+        page.contains(
+            "<span class=\"k\">Needs a person</span><span>An instruction: only a person's reviewer key approves it; any other key may reject it.</span>"
+        ),
+        "{page}"
+    );
+    // The judge page draws the same check from the row's kind.
+    let (_, _, page) = send(
+        &rig.router,
+        get(&format!("/web/review?memory={id}"), Some(&cookie)),
+    )
+    .await;
+    assert!(page.contains("Needs a person"), "{page}");
+}
+
+#[tokio::test]
 async fn the_user_page_shows_guardrail_scope_and_selects_nested_workspaces() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;

@@ -119,7 +119,9 @@ nothing is journaled. The serve can still carry a reject.
 
 A **steering** memory has kind `steering`. Once approved, every recall in that workspace and below
 returns it first, unranked, and no budget cuts it. Read
-steering more strictly than a fact, because it shapes every later session in the subtree.
+steering more strictly than a fact, because it shapes every later session in the subtree. Steering
+and guardrails are instructions, so only a person's reviewer key approves them; an agent's or a
+service's reviewer key is refused `review.person_required` and may still reject.
 
 ## A worked session
 

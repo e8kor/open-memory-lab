@@ -81,7 +81,7 @@ pub use ladder::{
     ratifier_is_proposer, ratify_check, same_user, transition_preconditions,
 };
 pub use model::{
-    DERIVED_CLAIM_KEY_PREFIX, KeyCrew, LineageClosure, MemoryKind, MemoryStatus, Role,
-    TransitionError, UsedBy, VerdictError, check_reviewer, derive_claim_key, nfc,
-    satisfies_crew_inequality, satisfies_manager_inequality, transition,
+    ClaimClass, DERIVED_CLAIM_KEY_PREFIX, KeyCrew, LineageClosure, MemoryKind, MemoryStatus, Role,
+    TransitionError, UsedBy, VerdictError, check_approval_class, check_reviewer, derive_claim_key,
+    is_person_reviewer, nfc, satisfies_crew_inequality, satisfies_manager_inequality, transition,
 };

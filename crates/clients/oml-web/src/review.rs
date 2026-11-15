@@ -195,7 +195,7 @@ fn code(value: &str) -> String {
 /// author is one of the person's keys, where the page knows it, and so
 /// whether approving is a self-review; and how many readable memories it
 /// derives from.
-fn lineage(card: &Card, reviewer: &str, same_user: Option<bool>) -> String {
+fn lineage(card: &Card, reviewer: &str, same_user: Option<bool>, needs_person: bool) -> String {
     let author = card
         .author()
         .map_or_else(|| "the shared area".to_owned(), code);
@@ -222,9 +222,22 @@ fn lineage(card: &Card, reviewer: &str, same_user: Option<bool>) -> String {
             let _ = write!(line, " It derives from {n} readable memories.");
         }
     }
+    // Only a person's verdict approves an instruction (ADR-0080 d16).
+    let person = if needs_person {
+        r#"<li><span class="k">Needs a person</span><span>An instruction: only a person's reviewer key approves it; any other key may reject it.</span></li>"#
+    } else {
+        ""
+    };
     format!(
-        r#"<ul class="oml-checks" aria-label="Checks"><li><span class="k">Lineage</span><span>{line}</span></li></ul>"#
+        r#"<ul class="oml-checks" aria-label="Checks"><li><span class="k">Lineage</span><span>{line}</span></li>{person}</ul>"#
     )
+}
+
+/// Whether a version of this kind is an instruction, which only a
+/// person's verdict approves (ADR-0080 d16): the judge page reads a named
+/// row, which carries its kind and not the listing's `needs_person`.
+fn instruction_kind(kind: Option<&str>) -> bool {
+    matches!(kind, Some("steering" | "guardrail"))
 }
 
 /// What each verdict does, in one muted line, by the kind of decision
@@ -266,7 +279,13 @@ fn verdict_line(card: &Card, reviewer: &str, roots: &Roots) -> String {
 /// A listed row as a review card at row density: the decision first, the
 /// facts, and opened, the checks, what each verdict does and "Open to
 /// judge", which draws the item with its verdict form.
-fn review_row(view: &ViewCtx<'_>, m: &Memory, same_user: bool, roots: &Roots) -> String {
+fn review_row(
+    view: &ViewCtx<'_>,
+    m: &Memory,
+    same_user: bool,
+    needs_person: bool,
+    roots: &Roots,
+) -> String {
     let card = Card::of_held(m, same_user);
     let reviewer = view.reviewer();
     // "Open to judge" is the person's page's; the admin page picks and
@@ -282,7 +301,7 @@ fn review_row(view: &ViewCtx<'_>, m: &Memory, same_user: bool, roots: &Roots) ->
     };
     let strip = format!(
         r#"<div class="oml-strip" aria-label="Review">{}{}{open}</div>"#,
-        lineage(&card, &reviewer, Some(same_user)),
+        lineage(&card, &reviewer, Some(same_user), needs_person),
         verdict_line(&card, &reviewer, roots),
     );
     card.render(&View {
@@ -397,7 +416,12 @@ async fn item(
     };
     let strip = format!(
         r#"<div class="oml-strip" aria-label="Review">{}{}{}</div>"#,
-        lineage(&card, &reviewer, same_user),
+        lineage(
+            &card,
+            &reviewer,
+            same_user,
+            instruction_kind(item.kind.as_deref()),
+        ),
         verdict_line(&card, &reviewer, &roots),
         form(
             view.side.path(),
@@ -713,7 +737,13 @@ async fn person_list(
             let _ = write!(
                 body,
                 "<li>{}</li>",
-                review_row(view, item.memory(), item.same_user, &roots)
+                review_row(
+                    view,
+                    item.memory(),
+                    item.same_user,
+                    item.needs_person,
+                    &roots
+                )
             );
         }
         body.push_str("</ul>");
@@ -783,7 +813,7 @@ async fn held(
                 m.version,
                 attr(&m.artifact_id),
                 if all { " checked" } else { "" },
-                review_row(view, m, item.same_user, &roots)
+                review_row(view, m, item.same_user, item.needs_person, &roots)
             );
         }
         rows.push_str("</ul>");

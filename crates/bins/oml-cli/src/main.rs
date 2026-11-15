@@ -5071,22 +5071,28 @@ fn key_doctor(me: Option<&Result<Value, CliError>>) -> Vec<String> {
     lines
 }
 
-/// Whether this key may review in bulk, for a reviewer key only (ADR-0055
-/// d1, d13): a key a person holds may; one used by an agent or a service is
-/// refused, which a person holding such a key otherwise learns mid-import,
-/// so the line warns and names the fix.
+/// Whether this key may review in bulk and approve instructions, for a
+/// reviewer key only (ADR-0055 d1, d13; ADR-0080 d16): a key a person holds
+/// may; one used by an agent or a service is refused both, which a person
+/// holding such a key otherwise learns mid-import, so the line warns and
+/// names the fix. A person's key with a crew or a profile reviews in bulk
+/// and is refused an instruction's approval.
 fn review_doctor(me: Option<&Value>) -> Option<String> {
     let me = me?;
     if me["role"] != "reviewer" {
         return None;
     }
-    Some(match me["used_by"].as_str() {
-        Some("person") => "ok bulk review: this key lists and judges held items in bulk (oml review list, oml review approve --ids)".to_owned(),
-        used_by => format!(
+    let person = me["used_by"] == "person";
+    let instructions = person && me["crew"].is_null() && me["profile"].is_null();
+    Some(match (person, instructions) {
+        (true, true) => "ok bulk review: this key lists and judges held items in bulk (oml review list, oml review approve --ids), steering and guardrails included".to_owned(),
+        (true, false) => "warn instructions: this key has a crew or a profile, so its approval of a steering or guardrail version is refused (review.person_required, instruction_needs_person); use a person's reviewer key with neither".to_owned(),
+        (false, _) => format!(
             "warn bulk review: this key is used by {}, so it cannot review in bulk \
-             (access.verb_ceiling, bulk_review_is_person_only); use a reviewer key issued \
-             --used-by person or the admin page",
-            used_by.unwrap_or("unknown")
+             (access.verb_ceiling, bulk_review_is_person_only) or approve a steering or \
+             guardrail version (review.person_required, instruction_needs_person); use a \
+             reviewer key issued --used-by person or the admin page",
+            me["used_by"].as_str().unwrap_or("unknown")
         ),
     })
 }
@@ -6632,6 +6638,31 @@ fn verdict(ok: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn doctor_warns_a_reviewer_key_that_is_not_a_persons_that_instructions_need_a_person() {
+        let agent =
+            review_doctor(Some(&json!({"role": "reviewer", "used_by": "agent"}))).expect("a line");
+        assert!(
+            agent.starts_with("warn bulk review: this key is used by agent"),
+            "{agent}"
+        );
+        assert!(
+            agent.contains("review.person_required, instruction_needs_person"),
+            "{agent}"
+        );
+        let crew = review_doctor(Some(&json!({
+            "role": "reviewer", "used_by": "person", "crew": {"name": "ops"}, "profile": null,
+        })))
+        .expect("a line");
+        assert!(crew.starts_with("warn instructions:"), "{crew}");
+        let person = review_doctor(Some(&json!({
+            "role": "reviewer", "used_by": "person", "crew": null, "profile": null,
+        })))
+        .expect("a line");
+        assert!(person.starts_with("ok bulk review:"), "{person}");
+        assert_eq!(review_doctor(Some(&json!({"role": "writer"}))), None);
+    }
 
     #[test]
     fn printed_shell_commands_quote_each_path_as_one_word() {

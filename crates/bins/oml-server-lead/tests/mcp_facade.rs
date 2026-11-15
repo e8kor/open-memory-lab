@@ -199,7 +199,12 @@ async fn crew_and_admin(
             "/v2/keys",
             Some(&admin),
             Some(&format!("issue-{role}")),
-            Some(&json!({"role": role, "name": role, "principal": principal, "grants": grants})),
+            // The reviewer is a person's, since only a person's verdict
+            // approves steering (ADR-0080 d16).
+            Some(
+                &json!({"role": role, "name": role, "principal": principal, "grants": grants,
+                         "used_by": if role == "reviewer" { "person" } else { "agent" }}),
+            ),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{key}");

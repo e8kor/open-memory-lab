@@ -794,6 +794,13 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "R1: verdicts are the reviewer surface.",
             format!("a {} key cannot review", role.as_str()),
         ),
+        AppError::Verdict(e @ VerdictError::PersonRequired(kind)) => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "review.person_required",
+            "An instruction is followed, not weighed as data, so only a person's reviewer key approves a steering or guardrail version (ADR-0080 d16).",
+            e.to_string(),
+        )
+        .with_details(json!({ "reason": "instruction_needs_person", "kind": kind.as_str() })),
         AppError::Verdict(e) => ApiError::new(
             StatusCode::FORBIDDEN,
             "review.author_in_lineage",
