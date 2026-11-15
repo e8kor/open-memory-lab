@@ -386,7 +386,7 @@ workspace holds across kinds has the workspace page's contents by kind for one w
     9. **BM25 statistics under `kinds`** (d4): the reference set is every readable kind of the
        scope, fixed before the filter; ADR-0049 d7's law is restated so that the scope means every
        kind and `kinds` narrows the candidates only. Rejected: the named kinds only. *The author's
-       reading after review (2026-11-15), not an operator decision:* the set excludes steering,
+       reading after review, confirmed by the operator on 2026-11-15:* the set excludes steering,
        counts vocabulary only where opted in and counts readable skills and guardrails that are
        not offered, and the restriction law has one exception, a `kinds` naming vocabulary
        outside the opt-in (d4).
