@@ -14,8 +14,9 @@ T = TypeVar("T", bound="TransitionProposal")
 class TransitionProposal:
     """
     Attributes:
-        to (TransitionProposalTo): Forward only; backward transitions do not exist, and a user root climbs to protected
-            at most (ADR-0046 d1).
+        to (TransitionProposalTo): Forward only; backward transitions do not exist, and a user root and every workspace
+            under it stay development, so a proposal there is refused workspace.transition_refused, reason user_root
+            (ADR-0085 d17).
     """
 
     to: TransitionProposalTo

@@ -757,6 +757,17 @@ impl MemStore {
         }
     }
 
+    /// Holds a pending transition proposal, journalling nothing: one a build
+    /// before ADR-0085 d17 left inside a user root, which no proposal through
+    /// the port now produces. The proposal's fold checks it as a journalled
+    /// one would be checked.
+    pub fn seed_pending_transition(&self, proposal: TransitionRecord) -> Result<(), StoreError> {
+        let tenant = self.tenant(proposal.tenant_id);
+        let mut state = tenant.lock().expect("tenant lock");
+        let seq = state.transitions.len() as u64 + 1;
+        propose_transition_fold(&mut state, seq, proposal)
+    }
+
     fn tenant(&self, tenant_id: Uuid) -> Arc<Mutex<TenantState>> {
         Arc::clone(
             self.tenants

@@ -4477,7 +4477,7 @@ components:
       additionalProperties: false
       required: [to]
       properties:
-        to: { type: string, enum: [protected, frozen], description: 'Forward only; backward transitions do not exist, and a user root climbs to protected at most (ADR-0046 d1).' }
+        to: { type: string, enum: [protected, frozen], description: 'Forward only; backward transitions do not exist, and a user root and every workspace under it stay development, so a proposal there is refused workspace.transition_refused, reason user_root (ADR-0085 d17).' }
 
     Transition:
       type: object

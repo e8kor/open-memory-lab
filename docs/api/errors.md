@@ -133,7 +133,7 @@ Refusals from the workspace tree and its status ladder.
 | Code | HTTP | Fires when |
 |---|---|---|
 | `workspace.frozen` | 409 | A `frozen` workspace was asked to accept a new write, child, promotion or move. |
-| `workspace.transition_refused` | 409 | The status change skips a rung, goes backward, or breaks a rule such as a child not being frozen. |
+| `workspace.transition_refused` | 409 | The status change skips a rung, goes backward, or breaks a rule such as a child not being frozen, or moves a user root or a workspace under it off `development` (`details.reason`: `user_root`; [ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d17). |
 | `workspace.in_progress_refused` | 409 | The in-progress mode or change conflicts with the node's subtree, ancestors or status. `details.reason` says which. |
 | `workspace.held_remaining` | 409 | The commit of an in-progress workspace was asked while a version in its subtree is held. |
 | `workspace.admin_key_under_root` | 409 | A person's disable, or the deletion close that disables them, met a live admin key whose row names their user root. No verb issues one and no denial cuts one off, so nothing is journalled. `details`: `user`, `key`. Clear the key row's `user_root_id`, then send again ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d8). |
