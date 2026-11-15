@@ -266,3 +266,30 @@ COMMENT ON TABLE search_workspace_rows IS
     'Per workspace and memory kind, the served versions and their summed search_len (ADR-0052 d5). Owning page: docs/data/postgres-schema.md.';
 COMMENT ON COLUMN recall_events.sources IS
     'The recall''s sources on a federated tenant: "scope", "wide" or the list''s workspace ids; NULL with federation off (ADR-0072 d9).';
+
+-- Each partition copied its parent's column comments when it was created
+-- (LIKE ... INCLUDING ALL), so every recall_events partition's `sources`
+-- says it again; those copies are re-commented from the catalog, as is any
+-- other comment in public that still holds the word.
+DO $$
+DECLARE
+    r record;
+BEGIN
+    FOR r IN
+        SELECT d.objoid::regclass AS rel, a.attname, d.description
+          FROM pg_description d
+          JOIN pg_class c ON c.oid = d.objoid
+          LEFT JOIN pg_attribute a ON a.attrelid = d.objoid AND a.attnum = d.objsubid
+         WHERE d.classoid = 'pg_class'::regclass
+           AND c.relnamespace = 'public'::regnamespace
+           AND d.description LIKE '%workarea%'
+    LOOP
+        IF r.attname IS NULL THEN
+            EXECUTE format('COMMENT ON TABLE %s IS %L', r.rel,
+                           replace(r.description, 'workarea', 'workspace'));
+        ELSE
+            EXECUTE format('COMMENT ON COLUMN %s.%I IS %L', r.rel, r.attname,
+                           replace(r.description, 'workarea', 'workspace'));
+        END IF;
+    END LOOP;
+END $$;
