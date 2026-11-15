@@ -31,7 +31,7 @@ branch that reserved later renumbers.
 | adr | 0005 | `main` |  | erasure by crypto shredding | used |
 | adr | 0006 | `main` |  | pure rust | used |
 | adr | 0007 | `main` |  | tenancy first class | used |
-| adr | 0008 | `main` |  | workarea algebra | used |
+| adr | 0008 | `main` |  | workspace algebra | used |
 | adr | 0009 | `main` |  | status ladder | used |
 | adr | 0010 | `main` |  | roles and keys | used |
 | adr | 0011 | `main` |  | simulations | used |
@@ -52,7 +52,7 @@ branch that reserved later renumbers.
 | adr | 0026 | `main` |  | names are keys | used |
 | adr | 0028 | `main` |  | agent key issuance | used |
 | adr | 0029 | `main` |  | session start hook | used |
-| adr | 0030 | `main` |  | an in progress workarea serves unreviewed memories inside it and nothi | used |
+| adr | 0030 | `main` |  | an in progress workspace serves unreviewed memories inside it and noth | used |
 | adr | 0031 | `main` |  | oauth connections by connect code | used |
 | adr | 0033 | `main` |  | interim helm chart | used |
 | adr | 0034 | `main` |  | the lead serves as a role that owns nothing | used |
@@ -88,13 +88,13 @@ branch that reserved later renumbers.
 | adr | 0064 | `main` |  | a repositorys knowledge is captured implicitly by git hooks and agent  | used |
 | adr | 0065 | `main` |  | the scan is a versioned compiled in rule set that vetoes leaked keys a | used |
 | adr | 0066 | `main` |  | open work is tracked as github issues and the roadmap fr numbers and d | used |
-| adr | 0067 | `main` |  | a directory reviewer reaches a demo workarea through a connect code th | used |
+| adr | 0067 | `main` |  | a directory reviewer reaches a demo workspace through a connect code t | used |
 | adr | 0068 | `main` |  | anyone signs in and gets a private root under quotas when the operator | used |
 | adr | 0069 | `main` |  | oml s design system is the source of truth for every surface | used |
 | adr | 0070 | `main` |  | the web console is a client of the public http api in a crate that can | used |
 | adr | 0071 | `main` |  | every account is metered by counters the write updates in its own tran | used |
-| adr | 0072 | `main` |  | recall searches the trusted workareas a key already reads chosen per q | used |
-| adr | 0073 | `main` |  | a leader signs every write and nodes serve the workareas placed on the | used |
+| adr | 0072 | `main` |  | recall searches the trusted workspaces a key already reads chosen per  | used |
+| adr | 0073 | `main` |  | a leader signs every write and nodes serve the workspaces placed on th | used |
 | adr | 0074 | `main` |  | the scan names a threat class for every finding refuses only what can  | used |
 | adr | 0075 | `main` |  | each approved memory is indexed by the questions it answers generated  | used |
 | adr | 0076 | `main` |  | releases ship no default server and setup asks for the server or reads | used |
@@ -103,14 +103,14 @@ branch that reserved later renumbers.
 | adr | 0079 | `main` |  | a key ends on a date and is held to a request rate both set at issuanc | used |
 | adr | 0080 | `main` |  | a skill is a reviewed claim the mcp server lists as a prompt and serve | used |
 | adr | 0081 | `main` |  | a document is a reviewed markdown or text claim that recall searches b | used |
-| adr | 0082 | `main` |  | a person builds and edits a workareas skills guardrails and documents  | used |
+| adr | 0082 | `main` |  | a person builds and edits a workspaces skills guardrails and documents | used |
 | adr | 0083 | `main` |  | the memories page is one cockpit with approved to review and submitted | used |
-| adr | 0084 | `main` |  | a workarea moves between servers as a signed bundle that lands held or | used |
-| adr | 0085 | `main` |  | a workarea publishes immutable releases that one person cuts and anoth | used |
-| adr | 0086 | `main` |  | a workareas tests are reviewed claims the server runs under the caller | used |
+| adr | 0084 | `main` |  | a workspace moves between servers as a signed bundle that lands held o | used |
+| adr | 0085 | `main` |  | a workspace publishes immutable releases that one person cuts and anot | used |
+| adr | 0086 | `main` |  | a workspaces tests are reviewed claims the server runs under the calle | used |
 | adr | 0087 | `main` |  | an impact report shows under the callers own reads what a candidate re | used |
 | adr | 0088 | `main` |  | an imported version counts as reviewed only from a trusted source a te | used |
-| adr | 0089 | `main` |  | an admin fixes a production workarea at once by a marked break glass a | used |
+| adr | 0089 | `main` |  | an admin fixes a production workspace at once by a marked break glass  | used |
 | adr | 0090 | `main` |  | the lake is a replayable twin of postgresql that holds every signed ev | used |
 | adr | 0091 | `main` |  | workareas become workspaces and the dreamer role becomes reviewer on e | used |
 | migration | 0001 | `main` |  | init | used |
@@ -156,4 +156,6 @@ branch that reserved later renumbers.
 | migration | 0044 | `main` |  | memory approval | used |
 | migration | 0045 | `main` |  | usage metering | used |
 | migration | 0046 | `main` |  | key limits | used |
-| migration | 0047 | `rename/code` |  | rename workarea to workspace, dreamer to reviewer, committed and validated to protected and frozen, held_by to used_by (ADR-0091 d6) | reserved |
+| migration | 0047 | `main` |  | workspace rename | used |
+| migration | 0048 | `feat/claim-kinds-and-withdrawn` | #438 | claim kinds and withdrawn | open |
+| migration | 0049 | `feat/claim-kinds-and-withdrawn` | #438 | claim kinds validate | open |

@@ -14,8 +14,11 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.anchor import Anchor
+    from ..models.document_fields import DocumentFields
     from ..models.guardrail_rule import GuardrailRule
     from ..models.origin import Origin
+    from ..models.skill_fields import SkillFields
+    from ..models.test_fields import TestFields
 
 
 T = TypeVar("T", bound="SubmitRequest")
@@ -38,12 +41,17 @@ class SubmitRequest:
                 otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact.
             claim_key (str | Unset): Groups versions of one claim; one live claim per (tenant, workspace): a new claim
                 collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every
-                version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server
-                derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a
-                conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with
+                version is rejected, withdrawn or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the
+                server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body),
+                so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with
                 request.validation, details.field /claim_key (ADR-0039 d6).
             kind (SubmitRequestKind | Unset): guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1).
-                Default: SubmitRequestKind.MEMORY.
+                skill requires skill and format text/markdown, its default, and derives claim_key skill/<name>; a sent claim_key
+                other than that, a body opening with a --- line and a body past 32,768 bytes are refused (request.validation
+                naming the field; request.payload_too_large naming /body) (ADR-0080 d1, d9). document takes text/markdown, its
+                default, or text/plain and an optional document; its claim_key is doc/ and segments of a-z 0-9 . _ -, or derived
+                from its title (ADR-0081 d1, d2). test requires test and a claim_key test/<name> (ADR-0086 d1). The three are
+                written over this API only: oml_write refuses them (since v0.8.0). Default: SubmitRequestKind.MEMORY.
             valid_from (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
                 fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (ADR-0059 d2).
             valid_until (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
@@ -55,6 +63,9 @@ class SubmitRequest:
                 an effect, deny or ask, never allow; should takes ask only. Refused on every other kind and on a retirement
                 (request.validation, details.field /rule); a rule outside the grammar, or over 160 bytes, is vetoed as
                 submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (ADR-0037 d8, d10; since v0.5.1).
+            skill (SkillFields | Unset): A skill's name and description, signed with the version (ADR-0080 d1).
+            document (DocumentFields | Unset): A document's title, signed with the version (ADR-0081 d1).
+            test (TestFields | Unset): A test case's shape (ADR-0086 d1).
             workspace (str | Unset): A workspace, by its node id, its name or its qualified name. Resolved server-side
                 before any check that reads state; an unknown name answers exactly what an unknown id answers. A user key
                 resolves a bare name in its own user root's namespace, plus universe and its root's name; every other key in the
@@ -92,6 +103,9 @@ class SubmitRequest:
     valid_until: str | Unset = UNSET
     severity: Severity | Unset = UNSET
     rule: GuardrailRule | Unset = UNSET
+    skill: SkillFields | Unset = UNSET
+    document: DocumentFields | Unset = UNSET
+    test: TestFields | Unset = UNSET
     workspace: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
     on_similar: SubmitRequestOnSimilar | Unset = UNSET
@@ -125,6 +139,18 @@ class SubmitRequest:
         rule: dict[str, Any] | Unset = UNSET
         if not isinstance(self.rule, Unset):
             rule = self.rule.to_dict()
+
+        skill: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.skill, Unset):
+            skill = self.skill.to_dict()
+
+        document: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.document, Unset):
+            document = self.document.to_dict()
+
+        test: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.test, Unset):
+            test = self.test.to_dict()
 
         workspace: str | Unset
         if isinstance(self.workspace, Unset):
@@ -173,6 +199,12 @@ class SubmitRequest:
             field_dict["severity"] = severity
         if rule is not UNSET:
             field_dict["rule"] = rule
+        if skill is not UNSET:
+            field_dict["skill"] = skill
+        if document is not UNSET:
+            field_dict["document"] = document
+        if test is not UNSET:
+            field_dict["test"] = test
         if workspace is not UNSET:
             field_dict["workspace"] = workspace
         if derives_from is not UNSET:
@@ -193,8 +225,11 @@ class SubmitRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.anchor import Anchor
+        from ..models.document_fields import DocumentFields
         from ..models.guardrail_rule import GuardrailRule
         from ..models.origin import Origin
+        from ..models.skill_fields import SkillFields
+        from ..models.test_fields import TestFields
 
         d = dict(src_dict)
         body = d.pop("body")
@@ -232,6 +267,27 @@ class SubmitRequest:
             rule = UNSET
         else:
             rule = GuardrailRule.from_dict(_rule)
+
+        _skill = d.pop("skill", UNSET)
+        skill: SkillFields | Unset
+        if isinstance(_skill, Unset):
+            skill = UNSET
+        else:
+            skill = SkillFields.from_dict(_skill)
+
+        _document = d.pop("document", UNSET)
+        document: DocumentFields | Unset
+        if isinstance(_document, Unset):
+            document = UNSET
+        else:
+            document = DocumentFields.from_dict(_document)
+
+        _test = d.pop("test", UNSET)
+        test: TestFields | Unset
+        if isinstance(_test, Unset):
+            test = UNSET
+        else:
+            test = TestFields.from_dict(_test)
 
         def _parse_workspace(data: object) -> str | Unset:
             if isinstance(data, Unset):
@@ -276,6 +332,9 @@ class SubmitRequest:
             valid_until=valid_until,
             severity=severity,
             rule=rule,
+            skill=skill,
+            document=document,
+            test=test,
             workspace=workspace,
             derives_from=derives_from,
             on_similar=on_similar,

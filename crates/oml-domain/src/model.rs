@@ -68,6 +68,14 @@ pub enum MemoryKind {
     TermMapping,
     VocabRelease,
     Guardrail,
+    /// A reviewed instruction the MCP server offers as a prompt (ADR-0080
+    /// d1).
+    Skill,
+    /// A titled markdown or plain-text body recall cuts into passages
+    /// (ADR-0081 d1).
+    Document,
+    /// A test case a workspace's suite runs (ADR-0086 d1).
+    Test,
 }
 
 impl MemoryKind {
@@ -81,6 +89,9 @@ impl MemoryKind {
             MemoryKind::TermMapping => "term_mapping",
             MemoryKind::VocabRelease => "vocab_release",
             MemoryKind::Guardrail => "guardrail",
+            MemoryKind::Skill => "skill",
+            MemoryKind::Document => "document",
+            MemoryKind::Test => "test",
         }
     }
 
@@ -96,6 +107,9 @@ impl MemoryKind {
             "term_mapping" => Some(MemoryKind::TermMapping),
             "vocab_release" => Some(MemoryKind::VocabRelease),
             "guardrail" => Some(MemoryKind::Guardrail),
+            "skill" => Some(MemoryKind::Skill),
+            "document" => Some(MemoryKind::Document),
+            "test" => Some(MemoryKind::Test),
             _ => None,
         }
     }
@@ -106,8 +120,13 @@ impl MemoryKind {
     #[must_use]
     pub fn class(self) -> ClaimClass {
         match self {
-            MemoryKind::Memory | MemoryKind::DerivedFact => ClaimClass::Knowledge,
-            MemoryKind::Steering | MemoryKind::Guardrail => ClaimClass::Instruction,
+            MemoryKind::Memory
+            | MemoryKind::DerivedFact
+            | MemoryKind::Document
+            | MemoryKind::Test => ClaimClass::Knowledge,
+            MemoryKind::Steering | MemoryKind::Guardrail | MemoryKind::Skill => {
+                ClaimClass::Instruction
+            }
             MemoryKind::Term | MemoryKind::TermMapping | MemoryKind::VocabRelease => {
                 ClaimClass::Vocabulary
             }
@@ -154,6 +173,9 @@ pub enum MemoryStatus {
     Demoted,
     Rejected,
     Erased,
+    /// Retracted by its author while held: kept with its text, never served
+    /// and in no review queue (ADR-0083 d13).
+    Withdrawn,
 }
 
 impl MemoryStatus {
@@ -165,6 +187,7 @@ impl MemoryStatus {
             MemoryStatus::Demoted => "demoted",
             MemoryStatus::Rejected => "rejected",
             MemoryStatus::Erased => "erased",
+            MemoryStatus::Withdrawn => "withdrawn",
         }
     }
 }
@@ -178,15 +201,18 @@ pub struct TransitionError {
 }
 
 /// The pure transition function of the built lifecycle:
-/// held -> promoted | rejected. Everything else is refused — the gate changes
-/// visibility exactly once, at ratification (admission.md). The diagram's
+/// held -> promoted | rejected | withdrawn. Everything else is refused — the
+/// gate changes visibility exactly once, at ratification (admission.md), and
+/// a withdrawal is the author retracting its own held version, which
+/// promotes nothing (ADR-0083 d13). The diagram's
 /// other edges (reopen, reassignment, dead letter, demote, erase) are
 /// unbuilt; a supersession is no edge, since the tip moves and the state
 /// does not (ADR-0025 d10).
 pub fn transition(from: MemoryStatus, to: MemoryStatus) -> Result<MemoryStatus, TransitionError> {
     match (from, to) {
         (MemoryStatus::Held, MemoryStatus::Promoted)
-        | (MemoryStatus::Held, MemoryStatus::Rejected) => Ok(to),
+        | (MemoryStatus::Held, MemoryStatus::Rejected)
+        | (MemoryStatus::Held, MemoryStatus::Withdrawn) => Ok(to),
         _ => Err(TransitionError { from, to }),
     }
 }

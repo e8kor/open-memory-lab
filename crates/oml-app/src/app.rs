@@ -114,7 +114,7 @@ use crate::types::{
     Credential, CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DenialRecord,
     EdgeRatification, ExchangeForm, FormatFields, GrantRecord, GuardrailFields, GuardrailRequest,
     GuardrailSet, GuardrailVerdict, HIT_KINDS, IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess,
-    KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition, ListingScope,
+    KeyDetail, KeyRecord, KindFields, ListRequest, ListingFilter, ListingPosition, ListingScope,
     LiveConnectCode, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
     OAuthClientRecord, OnSimilar, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge,
     ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm,
@@ -720,7 +720,8 @@ fn submit_request_digest(
         "derives_from": req.derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "workspace_id": workspace_id.to_string(),
     });
-    let mut doc = with_guardrail_fields(doc, req.severity, req.rule.as_ref());
+    let doc = with_guardrail_fields(doc, req.severity, req.rule.as_ref());
+    let mut doc = with_kind_fields(doc, req.kind_fields.as_ref());
     if let Some(members) = doc.as_object_mut() {
         for (name, value) in [
             ("valid_from", &req.valid_from),
@@ -868,6 +869,148 @@ fn guardrail_payload(
     Ok(())
 }
 
+/// The media type a kind takes when a request names none: `text/markdown`
+/// for a skill and a document (ADR-0080 d1; ADR-0081 d1), `text/plain`
+/// for every other kind (ADR-0056 d1).
+fn default_format(kind: MemoryKind) -> &'static str {
+    match kind {
+        MemoryKind::Skill | MemoryKind::Document => "text/markdown",
+        _ => "text/plain",
+    }
+}
+
+/// A skill's, a document's or a test case's fields as admitted, and the
+/// claim key the kind derives, checked as ADR-0080 d1, d9, ADR-0081 d1, d2
+/// and ADR-0086 d1 state: the object is refused on any other kind and on a
+/// retirement, and required where the kind requires it; a skill's key is
+/// `skill/<name>` and a successor keeps its name; a document's is sent
+/// under `doc/`'s grammar or derived from its title; a test case's is sent
+/// as `test/<name>`. `claim_key` is the key a submission sent, or a
+/// successor's target's. `(None, None)` for a version of any other kind.
+fn kind_fields(
+    kind: MemoryKind,
+    retirement: bool,
+    successor: bool,
+    sent: Option<&KindFields>,
+    claim_key: Option<&str>,
+    body: &str,
+    media_type: &str,
+) -> Result<(Option<KindFields>, Option<String>), AppError> {
+    use oml_domain::claim_kinds::{self as ck, FieldRefusal};
+    let refuse = |field: &'static str, reason: &'static str| {
+        AppError::KindField(FieldRefusal { field, reason })
+    };
+    let field = |e: FieldRefusal| AppError::KindField(e);
+    if let Some(sent) = sent
+        && (sent.kind() != kind || retirement)
+    {
+        return Err(refuse(
+            match sent {
+                KindFields::Skill { .. } => "/skill",
+                KindFields::Document { .. } => "/document",
+                KindFields::Test { .. } => "/test",
+            },
+            "this object is its kind's field, refused on any other kind and on a retirement",
+        ));
+    }
+    if retirement {
+        return Ok((None, None));
+    }
+    match kind {
+        MemoryKind::Skill => {
+            let Some(KindFields::Skill { name, description }) = sent else {
+                return Err(refuse(
+                    "/skill",
+                    "a skill carries skill {name, description}",
+                ));
+            };
+            ck::check_skill_name(name).map_err(field)?;
+            ck::check_skill_description(description).map_err(field)?;
+            if media_type != "text/markdown" {
+                return Err(refuse("/format", "a skill is text/markdown"));
+            }
+            ck::check_skill_body(body).map_err(field)?;
+            if body.len() > ck::SKILL_BODY_MAX_BYTES {
+                return Err(AppError::SkillBodyTooLarge);
+            }
+            let derived = ck::skill_claim_key(name);
+            match claim_key {
+                Some(sent) if sent != derived && successor => {
+                    return Err(refuse(
+                        "/skill/name",
+                        "a skill successor keeps its name: a renamed skill retires the old claim and starts a new one",
+                    ));
+                }
+                Some(sent) if sent != derived => {
+                    return Err(refuse(
+                        "/claim_key",
+                        "a skill's claim key is skill/<name>, derived and never chosen",
+                    ));
+                }
+                _ => {}
+            }
+            Ok((sent.cloned(), Some(derived)))
+        }
+        MemoryKind::Document => {
+            if !matches!(media_type, "text/markdown" | "text/plain") {
+                return Err(refuse(
+                    "/format",
+                    "a document is text/markdown or text/plain",
+                ));
+            }
+            let sent_title = match sent {
+                Some(KindFields::Document { title: Some(t) }) => {
+                    ck::check_document_title(t).map_err(field)?;
+                    Some(t.clone())
+                }
+                _ => None,
+            };
+            let heading = (media_type == "text/markdown")
+                .then(|| ck::markdown_title(body))
+                .flatten();
+            let key = match claim_key {
+                Some(key) => {
+                    ck::check_document_key(key).map_err(field)?;
+                    key.to_owned()
+                }
+                None => {
+                    let Some(from) = sent_title.as_deref().or(heading.as_deref()) else {
+                        return Err(refuse(
+                            "/claim_key",
+                            "a document with no claim_key takes its key from its title: send document.title, a level-1 heading or a doc/ key",
+                        ));
+                    };
+                    let key = ck::document_key_from_title(from);
+                    ck::check_document_key(&key).map_err(field)?;
+                    key
+                }
+            };
+            let title = sent_title
+                .or(heading)
+                .unwrap_or_else(|| key.rsplit('/').next().unwrap_or_default().to_owned());
+            Ok((Some(KindFields::Document { title: Some(title) }), Some(key)))
+        }
+        MemoryKind::Test => {
+            let Some(KindFields::Test { .. }) = sent else {
+                return Err(refuse("/test", "a test case carries test {shape}"));
+            };
+            ck::check_test_key(claim_key.unwrap_or_default()).map_err(field)?;
+            Ok((sent.cloned(), claim_key.map(str::to_owned)))
+        }
+        _ => Ok((None, None)),
+    }
+}
+
+/// A request digest's or a submission payload's document with the kind's
+/// object under its member name, and unchanged otherwise, so every other
+/// request digests as it did before the kinds (ADR-0080 d1).
+fn with_kind_fields(mut doc: Value, fields: Option<&KindFields>) -> Value {
+    if let (Some(fields), Some(members)) = (fields, doc.as_object_mut()) {
+        members.insert(fields.member().to_owned(), fields.to_json());
+    }
+    doc
+}
+
 /// A version's valid time as sent, parsed and checked against its kind
 /// (proposed ADR-0059 d2): `request.validation` naming the field for an end
 /// in no accepted form, an empty interval, or valid time on a kind or a
@@ -932,6 +1075,7 @@ fn supersede_request_digest(req: &SupersedeRequest) -> Result<String, AppError> 
     let mut doc = doc;
     if let Some(body) = doc.get_mut("body") {
         *body = with_guardrail_fields(body.take(), req.severity, req.rule.as_ref());
+        *body = with_kind_fields(body.take(), req.kind_fields.as_ref());
         *body = with_anchor(body.take(), req.anchor.as_ref());
         *body = with_format(body.take(), req.format.as_deref(), req.title.as_deref());
         *body = with_origin(body.take(), req.origin);
@@ -5288,12 +5432,33 @@ where
         // is the key's own id while rotation is unbuilt; once it is, d6 names
         // the root of the key's `rotated_from` chain, so a rotated key keeps
         // deriving the keys its predecessor did.
-        let claim_key = match &req.claim_key {
-            Some(sent) if sent.starts_with(DERIVED_CLAIM_KEY_PREFIX) => {
-                return Err(AppError::DerivedClaimKeySent);
-            }
-            Some(sent) => sent.clone(),
-            None => derive_claim_key(key.key_id, &req.body),
+        if req
+            .claim_key
+            .as_deref()
+            .is_some_and(|sent| sent.starts_with(DERIVED_CLAIM_KEY_PREFIX))
+        {
+            return Err(AppError::DerivedClaimKeySent);
+        }
+        // A skill's, a document's or a test case's fields and the key the
+        // kind derives, before the digest, so an omitted key and its
+        // derived spelling are one request (ADR-0080 d1; ADR-0081 d2).
+        let requested_format = req
+            .format
+            .clone()
+            .unwrap_or_else(|| default_format(req.kind).to_owned());
+        let (admitted_fields, kind_key) = kind_fields(
+            req.kind,
+            false,
+            false,
+            req.kind_fields.as_ref(),
+            req.claim_key.as_deref(),
+            &nfc(&req.body),
+            &requested_format,
+        )?;
+        let claim_key = match (&req.claim_key, kind_key) {
+            (_, Some(derived)) => derived,
+            (Some(sent), None) => sent.clone(),
+            (None, None) => derive_claim_key(key.key_id, &req.body),
         };
         // An omitted verb is learn when lineage is declared, remember
         // otherwise; a sent verb is honoured (ADR-0039 d3).
@@ -5345,7 +5510,7 @@ where
         let body = nfc(&req.body);
         let (format, parsed) = self.capture_format(
             req.kind,
-            req.format.as_deref(),
+            Some(&requested_format),
             req.title.as_deref(),
             &body,
             false,
@@ -5365,6 +5530,7 @@ where
         if let Some(claim_key) = req.claim_key.as_deref() {
             self.scan_veto_only(key.tenant_id, "claim_key", claim_key)?;
         }
+        self.scan_kind_fields(key.tenant_id, admitted_fields.as_ref())?;
         let origin = recorded_origin(req.origin, req.anchor.as_ref())?;
 
         // Deterministic scan: same call, before the commit transaction. A
@@ -5490,6 +5656,7 @@ where
             scanned_under: self.scanner.version().map(str::to_owned),
             created_at: self.clock.now(),
             guardrail,
+            kind_fields: admitted_fields.map(Box::new),
             valid: Box::new(valid),
             anchor: req.anchor.clone().map(Box::new),
             origin_kind: Some(origin),
@@ -5527,6 +5694,7 @@ where
             },
         });
         guardrail_payload(&mut payload, memory.guardrail.as_deref())?;
+        let mut payload = with_kind_fields(payload, memory.kind_fields.as_deref());
         with_valid_time(&mut payload, &memory.valid);
         with_format_fields(&mut payload, &memory.format);
         let event = self.seal(
@@ -7597,6 +7765,26 @@ where
         }
     }
 
+    /// A skill's name and description and a document's title reach the
+    /// journal in clear in the signed submission, so a veto in them refuses
+    /// as one in the body does (ADR-0065 d7; ADR-0080 d1; ADR-0081 d1).
+    fn scan_kind_fields(
+        &self,
+        tenant_id: Uuid,
+        fields: Option<&KindFields>,
+    ) -> Result<(), AppError> {
+        match fields {
+            Some(KindFields::Skill { name, description }) => {
+                self.scan_veto_only(tenant_id, "skill.name", name)?;
+                self.scan_veto_only(tenant_id, "skill.description", description)
+            }
+            Some(KindFields::Document { title: Some(title) }) => {
+                self.scan_veto_only(tenant_id, "document.title", title)
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn scan_anchor(&self, tenant_id: Uuid, anchor: Option<&Anchor>) -> Result<(), AppError> {
         let Some(anchor) = anchor else {
             return Ok(());
@@ -7974,6 +8162,20 @@ where
         if req.refuse_vocabulary_target && target.kind == MemoryKind::Guardrail {
             return Err(AppError::GuardrailTarget);
         }
+        // Nor a skill, a document or a test case, which are written on the
+        // HTTP API with their objects until their serving lands (ADR-0080
+        // d3; #403, #405, #419): a successor of one takes its kind.
+        if req.refuse_vocabulary_target
+            && matches!(
+                target.kind,
+                MemoryKind::Skill | MemoryKind::Document | MemoryKind::Test
+            )
+        {
+            return Err(AppError::KindField(oml_domain::claim_kinds::FieldRefusal {
+                field: "/kind",
+                reason: "a skill, a document or a test case is superseded and retired on the HTTP API in this release, with its object",
+            }));
+        }
         // Step 5's last check, after the head read above: a ratification
         // that validates the area in between moves the head and the commit
         // conflicts (roles-and-keys.md supersede; ADR-0009 d5).
@@ -7986,15 +8188,29 @@ where
         // re-sends its fields, which run their checks first (proposed
         // ADR-0037 d10).
         let body = nfc(&req.body);
+        let requested_format = req
+            .format
+            .clone()
+            .unwrap_or_else(|| default_format(kind).to_owned());
         let (format, parsed) = self.capture_format(
             kind,
-            req.format.as_deref(),
+            Some(&requested_format),
             req.title.as_deref(),
             &body,
             req.retirement,
         )?;
         let guardrail =
             guardrail_fields(kind, req.retirement, req.severity, req.rule.as_ref(), &body)?;
+        let (admitted_fields, _) = kind_fields(
+            kind,
+            req.retirement,
+            true,
+            req.kind_fields.as_ref(),
+            Some(&target.claim_key),
+            &body,
+            &requested_format,
+        )?;
+        self.scan_kind_fields(key.tenant_id, admitted_fields.as_ref())?;
         // The successor's own valid time: it inherits none (proposed
         // ADR-0059 d2, d4).
         let valid = valid_time(
@@ -8131,6 +8347,7 @@ where
             scanned_under: self.scanner.version().map(str::to_owned),
             created_at: self.clock.now(),
             guardrail,
+            kind_fields: admitted_fields.map(Box::new),
             valid: Box::new(valid),
             anchor: req.anchor.clone().map(Box::new),
             origin_kind: Some(origin),
@@ -8174,6 +8391,7 @@ where
             },
         });
         guardrail_payload(&mut payload, successor.guardrail.as_deref())?;
+        let mut payload = with_kind_fields(payload, successor.kind_fields.as_deref());
         with_valid_time(&mut payload, &successor.valid);
         with_format_fields(&mut payload, &successor.format);
         let event = self.seal(

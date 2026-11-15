@@ -1205,6 +1205,10 @@ pub struct MemoryRecord {
     /// ADR-0037 d10). Boxed: few rows carry it, and every fold carries the
     /// record.
     pub guardrail: Option<Box<GuardrailFields>>,
+    /// A skill's, a document's or a test case's own fields; `None` on every
+    /// other kind and on a retirement (ADR-0080 d1; ADR-0081 d1; ADR-0086
+    /// d1). Boxed: few rows carry it.
+    pub kind_fields: Option<Box<KindFields>>,
     /// When the version says it holds, declared by its author and signed;
     /// open on both sides when it declares none (proposed ADR-0059 d2).
     /// Boxed: most rows declare none, and every fold carries the record.
@@ -1350,6 +1354,54 @@ impl AnchorFilter {
                 .path_prefix
                 .as_deref()
                 .is_none_or(|p| anchor.path().is_some_and(|path| path.starts_with(p)))
+    }
+}
+
+/// A skill's, a document's or a test case's own fields, signed with the
+/// version and stored beside it (ADR-0080 d1; ADR-0081 d1; ADR-0086 d1). As
+/// a request's member, the object as sent; on a row, the fields as
+/// admitted, a document's title resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KindFields {
+    Skill {
+        name: String,
+        description: String,
+    },
+    Document {
+        title: Option<String>,
+    },
+    Test {
+        shape: oml_domain::claim_kinds::TestShape,
+    },
+}
+
+impl KindFields {
+    /// The kind whose object this is.
+    #[must_use]
+    pub fn kind(&self) -> MemoryKind {
+        match self {
+            KindFields::Skill { .. } => MemoryKind::Skill,
+            KindFields::Document { .. } => MemoryKind::Document,
+            KindFields::Test { .. } => MemoryKind::Test,
+        }
+    }
+
+    /// The wire member's name: `skill`, `document` or `test`.
+    #[must_use]
+    pub fn member(&self) -> &'static str {
+        self.kind().as_str()
+    }
+
+    /// The object as the wire and the signed submission spell it.
+    #[must_use]
+    pub fn to_json(&self) -> Value {
+        match self {
+            KindFields::Skill { name, description } => {
+                serde_json::json!({ "name": name, "description": description })
+            }
+            KindFields::Document { title } => serde_json::json!({ "title": title }),
+            KindFields::Test { shape } => serde_json::json!({ "shape": shape.as_str() }),
+        }
     }
 }
 
@@ -1775,6 +1827,9 @@ pub struct SubmitRequest {
     /// A guardrail's optional `oml-gr/1` rule, refused on every other kind
     /// (proposed ADR-0037 d8, d10).
     pub rule: Option<Value>,
+    /// The `skill`, `document` or `test` object as sent, required or refused
+    /// by the kind (ADR-0080 d1; ADR-0081 d1; ADR-0086 d1).
+    pub kind_fields: Option<KindFields>,
     /// `valid_from` and `valid_until` as sent; parsed and checked against
     /// the kind by the capture (proposed ADR-0059 d2).
     pub valid_from: Option<String>,
@@ -2521,6 +2576,10 @@ pub struct SupersedeRequest {
     /// A guardrail successor's optional rule, refused on every other kind and
     /// on a retirement (proposed ADR-0037 d10).
     pub rule: Option<Value>,
+    /// A skill, document or test successor's object as sent: a skill and a
+    /// test case re-send theirs unless they retire, a skill keeps its name
+    /// (ADR-0080 d2).
+    pub kind_fields: Option<KindFields>,
     /// The successor's own valid time as sent; it inherits none (proposed
     /// ADR-0059 d2, d4).
     pub valid_from: Option<String>,
@@ -3249,6 +3308,15 @@ pub enum AppError {
         "{field} is a guardrail's field, refused on any other kind and on a retirement (proposed ADR-0037 d10, request.validation)"
     )]
     GuardrailFieldRefused { field: &'static str },
+    /// A skill's, a document's or a test case's field refused or missing,
+    /// or a claim key outside the kind's grammar (ADR-0080 d1; ADR-0081 d1,
+    /// d2; ADR-0086 d1; request.validation naming `field`).
+    #[error("{0} (request.validation)")]
+    KindField(oml_domain::claim_kinds::FieldRefusal),
+    /// A skill body past 32 KiB (ADR-0080 d9; request.payload_too_large
+    /// naming `/body`).
+    #[error("a skill body is at most 32,768 bytes after NFC (ADR-0080 d9)")]
+    SkillBodyTooLarge,
     /// A valid end in no accepted form, an empty interval, or valid time on
     /// a kind or a retirement that takes none (proposed ADR-0059 d2,
     /// request.validation).
@@ -3711,6 +3779,8 @@ pub enum AdminState {
     Rejected,
     Superseded,
     Demoted,
+    /// Retracted by its author while held (ADR-0083 d13).
+    Withdrawn,
 }
 
 impl AdminState {
@@ -3722,6 +3792,7 @@ impl AdminState {
             MemoryStatus::Promoted => AdminState::Superseded,
             MemoryStatus::Rejected => AdminState::Rejected,
             MemoryStatus::Demoted | MemoryStatus::Erased => AdminState::Demoted,
+            MemoryStatus::Withdrawn => AdminState::Withdrawn,
         }
     }
 
@@ -3733,6 +3804,7 @@ impl AdminState {
             AdminState::Rejected => "rejected",
             AdminState::Superseded => "superseded",
             AdminState::Demoted => "demoted",
+            AdminState::Withdrawn => "withdrawn",
         }
     }
 
@@ -3744,6 +3816,7 @@ impl AdminState {
             AdminState::Rejected,
             AdminState::Superseded,
             AdminState::Demoted,
+            AdminState::Withdrawn,
         ]
         .into_iter()
         .find(|s| s.as_str() == value)

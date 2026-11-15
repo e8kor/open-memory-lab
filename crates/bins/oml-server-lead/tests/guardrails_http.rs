@@ -423,6 +423,144 @@ async fn oml_write_refuses_kind_guardrail_and_a_guardrail_target() {
 }
 
 #[tokio::test]
+async fn oml_write_refuses_the_skill_document_and_test_kinds_naming_kind() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    for kind in ["skill", "document", "test"] {
+        let result = call_tool(
+            &router,
+            &t.writer,
+            "oml_write",
+            json!({"text": "Run it.", "kind": kind, "idempotency_key": format!("w-{kind}")}),
+        )
+        .await;
+        assert_eq!(
+            tool_refusal_field(&result),
+            ("request.validation".to_owned(), "/kind".to_owned()),
+            "{kind}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn oml_write_with_replaces_naming_a_document_is_refused_naming_kind() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    let document = submit_guardrail(
+        &router,
+        &t,
+        "d-1",
+        json!({"kind": "document", "body": "# Runbook\nStep one.", "workspace": t.crew}),
+    )
+    .await;
+    approve_next(&router, &t, 1).await;
+    let result = call_tool(
+        &router,
+        &t.writer,
+        "oml_write",
+        json!({"expected_version": 1, "text": "# Runbook\nStep two.", "replaces": document,
+               "idempotency_key": "w-doc"}),
+    )
+    .await;
+    assert_eq!(
+        tool_refusal_field(&result),
+        ("request.validation".to_owned(), "/kind".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn oml_write_retiring_a_skill_is_refused_naming_kind() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    let skill = submit_guardrail(
+        &router,
+        &t,
+        "k-1",
+        json!({"kind": "skill", "skill": {"name": "deploy", "description": "Deploy it."},
+               "body": "Run the deploy script.", "workspace": t.crew}),
+    )
+    .await;
+    approve_next(&router, &t, 1).await;
+    let result = call_tool(
+        &router,
+        &t.writer,
+        "oml_write",
+        json!({"expected_version": 1, "text": "No longer used.", "replaces": skill,
+               "retirement": true, "idempotency_key": "w-retire"}),
+    )
+    .await;
+    assert_eq!(
+        tool_refusal_field(&result),
+        ("request.validation".to_owned(), "/kind".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn post_v1_memories_takes_kind_skill_with_its_object_and_serves_it_back() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    let id = submit_guardrail(
+        &router,
+        &t,
+        "s-1",
+        json!({"kind": "skill", "skill": {"name": "deploy", "description": "Deploy the service."},
+               "body": "Run the deploy script.", "workspace": t.crew}),
+    )
+    .await;
+    let (status, memory) = send(
+        &router,
+        "GET",
+        &format!("/v1/memories/{id}"),
+        Some(&t.writer),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{memory}");
+    assert_eq!(memory["kind"], "skill");
+    assert_eq!(memory["claim_key"], "skill/deploy");
+    assert_eq!(memory["format"], "text/markdown");
+    assert_eq!(
+        memory["skill"],
+        json!({"name": "deploy", "description": "Deploy the service."})
+    );
+    // Two objects at once, an unknown member and a skill object on another
+    // kind are each refused naming the field.
+    for (idem, body, field) in [
+        (
+            "s-2",
+            json!({"kind": "skill", "skill": {"name": "a", "description": "b"},
+                   "document": {"title": "c"}, "body": "x", "workspace": t.crew}),
+            "/document",
+        ),
+        (
+            "s-3",
+            json!({"kind": "skill", "skill": {"name": "a", "description": "b", "extra": 1},
+                   "body": "x", "workspace": t.crew}),
+            "/skill",
+        ),
+        (
+            "s-4",
+            json!({"kind": "memory", "skill": {"name": "a", "description": "b"},
+                   "body": "x", "workspace": t.crew}),
+            "/skill",
+        ),
+    ] {
+        let (status, refused) = send(
+            &router,
+            "POST",
+            "/v1/memories",
+            Some(&t.writer),
+            Some(idem),
+            Some(&body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        assert_eq!(refused["error"]["details"]["field"], field, "{refused}");
+    }
+}
+
+#[tokio::test]
 async fn the_serve_of_a_held_guardrail_carries_the_load_warning() {
     let router = doubles_router();
     let t = tenant(&router).await;

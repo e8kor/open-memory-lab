@@ -92,6 +92,7 @@ async fn reader_with_a_hit(timings: bool) -> (TestApp, String) {
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
+                kind_fields: None,
                 anchor: None,
                 format: None,
                 title: None,

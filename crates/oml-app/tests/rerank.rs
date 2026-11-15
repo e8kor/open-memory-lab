@@ -158,6 +158,7 @@ fn submit(idem: &str, body: &str, workspace: Option<Uuid>) -> SubmitRequest {
         derives_from: Vec::new(),
         severity: None,
         rule: None,
+        kind_fields: None,
         valid_from: None,
         valid_until: None,
         format: None,

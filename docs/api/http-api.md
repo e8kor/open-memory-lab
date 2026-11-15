@@ -67,12 +67,15 @@ Requires: writer effective access on the resolved workspace; every derives_from 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `verb` | `remember` \| `learn` | no | Omitted, learn when derives_from is non-empty and remember otherwise; a sent verb is honoured. learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact. |
-| `claim_key` | string | no | Groups versions of one claim; one live claim per (tenant, workspace): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). |
-| `kind` | `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` \| `guardrail` | no | guardrail requires severity and admits rule (since v0.5.1). |
+| `claim_key` | string | no | Groups versions of one claim; one live claim per (tenant, workspace): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected, withdrawn or erased releases the key (docs/architecture/audit-and-lineage.md). |
+| `kind` | `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` \| `guardrail` \| `skill` \| `document` \| `test` | no | guardrail requires severity and admits rule (since v0.5.1). skill requires skill and format text/markdown, its default, and derives claim_key skill/<name>; a sent claim_key other than that, a body opening with a --- line and a body past 32,768 bytes are refused (request.validation naming the field; request.payload_too_large naming /body). document takes text/markdown, its default, or text/plain and an optional document; its claim_key is doc/ and segments of a-z 0-9. _ -, or derived from its title. test requires test and a claim_key test/<name>. |
 | `valid_from` | string | no | When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. |
 | `valid_until` | string | no | When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. |
 | `severity` | `never` \| `must` \| `should` | no | A guardrail's severity: never and must bind, should is the reviewed default, and it orders the set first; required on kind guardrail except a retirement, refused on every other kind (request.validation, details.field /severity). |
 | `rule` | object | no | A guardrail's optional rule in the oml-gr/1 grammar: one tool class, its match and an effect, deny or ask, never allow; should takes ask only. |
+| `skill` | object | no | Required on kind skill, refused on every other kind. |
+| `document` | object | no | Optional on kind document, refused on every other kind. |
+| `test` | object | no | Required on kind test, refused on every other kind. |
 | `body` | string | yes | Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). |
 | `workspace` | WorkspaceRef | no | The workspace written in, by id or name, honoured only within the key's grants; omitted, the key's default_workspace. |
 | `derives_from` | array of string | no | Artifact ids; the declared lineage (omission is undetectable — honesty rule). |
@@ -95,8 +98,8 @@ Requires: reader effective access; own=true admits any tenant role except operat
 |---|---|---|---|---|
 | `workspace` | query | WorkspaceRef | no | The subtree read, by id or name, which must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node. |
 | `claim_key` | query | string | no |  |
-| `state` | query | `held` \| `promoted` \| `demoted` \| `rejected` \| `erased` | no |  |
-| `kind` | query | `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` | no |  |
+| `state` | query | `held` \| `promoted` \| `demoted` \| `rejected` \| `erased` \| `withdrawn` | no |  |
+| `kind` | query | `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` \| `skill` \| `document` \| `test` | no |  |
 | `own` | query | boolean | no |  |
 | `with_own` | query | boolean | no | true: the scoped listing (at workspace, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once. |
 | `author` | query | string | no | One of the caller's own keys, by name: the caller's rows by that key alone, the scoped part dropped; a key that is not the caller's is access.not_found. |
@@ -178,11 +181,14 @@ Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Gr
 | `origin` | object | no | What kind of source the text was taken from: signed in the submission event, immutable per version, never inherited by a successor. |
 | `workspace` | WorkspaceRef | no | When sent, the target's workspace, by id or name; any other is request.validation, details.field /workspace. |
 | `retirement` | boolean | no | true proposes retiring the claim, and body states why. |
-| `kind` | `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` \| `guardrail` | no | Omitted, the successor takes the target's kind — the one field inherited from the target. |
+| `kind` | `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` \| `guardrail` \| `skill` \| `document` \| `test` | no | Omitted, the successor takes the target's kind — the one field inherited from the target. |
 | `derives_from` | array of string | no | The superseded target is included implicitly. |
 | `reason` | string | no |  |
 | `severity` | `never` \| `must` \| `should` | no | A guardrail's severity: never and must bind, should is the reviewed default, and it orders the set first; required on kind guardrail except a retirement, refused on every other kind (request.validation, details.field /severity). |
 | `rule` | object | no | A guardrail's optional rule in the oml-gr/1 grammar: one tool class, its match and an effect, deny or ask, never allow; should takes ask only. |
+| `skill` | object | no | Required on a skill successor unless it retires; its name is the target's, a renamed skill being a retirement and a new claim. |
+| `document` | object | no | Optional on a document successor, refused on a retirement. |
+| `test` | object | no | Required on a test successor unless it retires. |
 | `on_similar` | `hold` \| `refuse` | no | Omitted, hold. |
 | `valid_from` | string | no | When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. |
 | `valid_until` | string | no | When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. |
@@ -1226,7 +1232,7 @@ Requires: admin key role; the operator and every other role answer access.verb_c
 |---|---|---|---|
 | `query` | string | no |  |
 | `workspace` | string | no |  |
-| `state` | `held` \| `promoted` \| `rejected` \| `superseded` \| `demoted` | no |  |
+| `state` | `held` \| `promoted` \| `rejected` \| `superseded` \| `demoted` \| `withdrawn` | no |  |
 | `origin_kind` | `repo` \| `doc` \| `code` \| `lake` \| `chat` \| `web` \| `manual` | no | One origin.kind. |
 | `author` | string | no | The authoring key of the tenant, by name or id. |
 | `limit` | integer | no | At most 200, the console list's largest page (raised from 100 in v0.7.0). |

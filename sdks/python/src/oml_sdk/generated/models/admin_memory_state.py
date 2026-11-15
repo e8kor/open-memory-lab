@@ -7,6 +7,7 @@ class AdminMemoryState(StrEnum):
     PROMOTED = "promoted"
     REJECTED = "rejected"
     SUPERSEDED = "superseded"
+    WITHDRAWN = "withdrawn"
 
     def __str__(self) -> str:
         return str(self.value)

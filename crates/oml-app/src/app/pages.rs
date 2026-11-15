@@ -885,6 +885,7 @@ where
             Some(AdminState::Superseded) => (Some(MemoryStatus::Promoted), Some(false)),
             Some(AdminState::Rejected) => (Some(MemoryStatus::Rejected), None),
             Some(AdminState::Demoted) => (Some(MemoryStatus::Demoted), None),
+            Some(AdminState::Withdrawn) => (Some(MemoryStatus::Withdrawn), None),
         };
         let listing = |own: bool, workspace: Option<Reference>| ListRequest {
             own,

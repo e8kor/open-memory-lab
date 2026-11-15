@@ -678,6 +678,7 @@ impl Lab {
                     derives_from: Vec::new(),
                     severity: None,
                     rule: None,
+                    kind_fields: None,
                     anchor: None,
                 },
             )

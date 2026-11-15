@@ -55,6 +55,7 @@ use oml_app::domain::EventTime;
 use oml_app::domain::access::Covers;
 use oml_app::domain::anchor::{self as anchor_grammar, Anchor, CheckResult};
 use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
+use oml_app::domain::claim_kinds::TestShape;
 use oml_app::domain::guardrail::{GuardrailScope, Severity};
 use oml_app::domain::in_progress::{KeyProfile, WorkspaceMode};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
@@ -72,10 +73,10 @@ use oml_app::types::{
     AnchorFilter, AppError, Bearer, BootstrapRequest, BriefEdgeView, ClaimEdgeProposal,
     ClaimEdgeQuery, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
     EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest,
-    IssuedKey, KeyDetail, KeyLimitsChange, ListRequest, MemoryRecord, NamedServe, OnSimilar,
-    ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory, SimilarItem, SourceCheck,
-    SourceCheckRequest, SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict,
-    VerdictRequest, Whoami, WorkspaceInfo, WorkspaceRecord,
+    IssuedKey, KeyDetail, KeyLimitsChange, KindFields, ListRequest, MemoryRecord, NamedServe,
+    OnSimilar, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory, SimilarItem,
+    SourceCheck, SourceCheckRequest, SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent,
+    Verdict, VerdictRequest, Whoami, WorkspaceInfo, WorkspaceRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage,
@@ -674,6 +675,7 @@ where
             derives_from: req.derives_from,
             severity: parse_severity(req.severity.as_deref())?,
             rule: req.rule,
+            kind_fields: parse_kind_fields(req.skill, req.document, req.test)?,
             valid_from: req.valid_from,
             valid_until: req.valid_until,
             anchor: parse_anchor(req.anchor.as_ref())?,
@@ -1351,6 +1353,7 @@ where
             refuse_vocabulary_target,
             severity: parse_severity(req.severity.as_deref())?,
             rule: req.rule,
+            kind_fields: parse_kind_fields(req.skill, req.document, req.test)?,
             valid_from: req.valid_from,
             valid_until: req.valid_until,
             anchor: parse_anchor(req.anchor.as_ref())?,
@@ -3263,6 +3266,15 @@ struct SubmitBody {
     /// A guardrail's optional `oml-gr/1` rule (proposed ADR-0037 d8, d10).
     #[serde(default)]
     rule: Option<Value>,
+    /// A skill's `{name, description}` (ADR-0080 d1).
+    #[serde(default)]
+    skill: Option<Value>,
+    /// A document's `{title}` (ADR-0081 d1).
+    #[serde(default)]
+    document: Option<Value>,
+    /// A test case's `{shape}` (ADR-0086 d1).
+    #[serde(default)]
+    test: Option<Value>,
     /// `hold` (the default) or `refuse` (ADR-0050 d1).
     #[serde(default)]
     on_similar: Option<String>,
@@ -3441,6 +3453,15 @@ struct SupersedeBody {
     /// A guardrail successor's optional rule (proposed ADR-0037 d10).
     #[serde(default)]
     rule: Option<Value>,
+    /// A skill successor's `{name, description}` (ADR-0080 d2).
+    #[serde(default)]
+    skill: Option<Value>,
+    /// A document successor's `{title}` (ADR-0081 d1).
+    #[serde(default)]
+    document: Option<Value>,
+    /// A test successor's `{shape}` (ADR-0086 d1).
+    #[serde(default)]
+    test: Option<Value>,
     /// `hold` (the default) or `refuse` (ADR-0050 d1).
     #[serde(default)]
     on_similar: Option<String>,
@@ -4622,6 +4643,7 @@ fn parse_state(state: &str) -> Result<MemoryStatus, ApiError> {
         "demoted" => Ok(MemoryStatus::Demoted),
         "rejected" => Ok(MemoryStatus::Rejected),
         "erased" => Ok(MemoryStatus::Erased),
+        "withdrawn" => Ok(MemoryStatus::Withdrawn),
         other => Err(ApiError::validation(format!("unknown state {other:?}"))),
     }
 }
@@ -4632,6 +4654,75 @@ fn parse_state(state: &str) -> Result<MemoryStatus, ApiError> {
 /// ADR-0037 d10).
 fn parse_kind(kind: &str) -> Result<MemoryKind, ApiError> {
     MemoryKind::parse(kind).ok_or_else(|| ApiError::validation(format!("unknown kind {kind:?}")))
+}
+
+/// The one `skill`, `document` or `test` object a body sends, shaped as
+/// openapi.yaml says, each refused naming its field: two at once, an
+/// unknown member, a member of the wrong type, or an unknown test shape.
+/// Whether the kind takes it is the use case's to decide (ADR-0080 d1;
+/// ADR-0081 d1; ADR-0086 d1).
+fn parse_kind_fields(
+    skill: Option<Value>,
+    document: Option<Value>,
+    test: Option<Value>,
+) -> Result<Option<KindFields>, ApiError> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Skill {
+        name: String,
+        description: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Document {
+        #[serde(default)]
+        title: Option<String>,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Test {
+        shape: String,
+    }
+    let sent: Vec<(&str, Value)> = [("skill", skill), ("document", document), ("test", test)]
+        .into_iter()
+        .filter_map(|(name, value)| value.map(|v| (name, v)))
+        .collect();
+    let shape_error = |field: &str, what: &str| {
+        ApiError::validation(format!("{field} is {what}"))
+            .with_details(json!({ "field": format!("/{field}") }))
+    };
+    match sent.as_slice() {
+        [] => Ok(None),
+        [(name, value)] => match *name {
+            "skill" => {
+                let Skill { name, description } =
+                    serde_json::from_value(value.clone()).map_err(|_| {
+                        shape_error("skill", "an object {name, description}, both strings")
+                    })?;
+                Ok(Some(KindFields::Skill { name, description }))
+            }
+            "document" => {
+                let Document { title } = serde_json::from_value(value.clone())
+                    .map_err(|_| shape_error("document", "an object {title?}, title a string"))?;
+                Ok(Some(KindFields::Document { title }))
+            }
+            _ => {
+                let Test { shape } = serde_json::from_value(value.clone())
+                    .map_err(|_| shape_error("test", "an object {shape}"))?;
+                let shape = TestShape::parse(&shape).ok_or_else(|| {
+                    ApiError::validation(format!(
+                        "test.shape is recall, guardrail, skill or document, not {shape:?}"
+                    ))
+                    .with_details(json!({ "field": "/test/shape" }))
+                })?;
+                Ok(Some(KindFields::Test { shape }))
+            }
+        },
+        [_, (second, _), ..] => Err(ApiError::validation(
+            "a version carries one of skill, document and test, the object of its kind",
+        )
+        .with_details(json!({ "field": format!("/{second}") }))),
+    }
 }
 
 /// A guardrail's `severity`, `never`, `must` or `should`; any other word is
@@ -4895,6 +4986,11 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
             "rule".to_owned(),
             fields.rule.clone().unwrap_or(Value::Null),
         );
+    }
+    // A skill's, a document's or a test case's own object, under its kind's
+    // name (ADR-0080 d1; ADR-0081 d1; ADR-0086 d1).
+    if let (Some(fields), Some(obj)) = (m.kind_fields.as_deref(), value.as_object_mut()) {
+        obj.insert(fields.member().to_owned(), fields.to_json());
     }
     // On a held successor, the end approving it gives the version it
     // replaces, shown to a reviewer before the verdict (proposed ADR-0059

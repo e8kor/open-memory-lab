@@ -249,6 +249,7 @@ async fn tenant(app: &TestApp, name: &str, canary: &str, n: usize) -> (Uuid, Vec
             derives_from: if i % 3 == 2 { vec![ids[0]] } else { Vec::new() },
             severity: None,
             rule: None,
+            kind_fields: None,
             anchor: None,
             valid_from: None,
             valid_until: None,

@@ -7,6 +7,7 @@ class MemorySummaryState(StrEnum):
     HELD = "held"
     PROMOTED = "promoted"
     REJECTED = "rejected"
+    WITHDRAWN = "withdrawn"
 
     def __str__(self) -> str:
         return str(self.value)

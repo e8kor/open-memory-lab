@@ -546,6 +546,10 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "{field} is a guardrail's field, refused on any other kind and on a retirement"
         ))
         .with_details(json!({ "field": format!("/{field}") })),
+        AppError::KindField(refusal) => ApiError::validation(refusal.reason)
+            .with_details(json!({ "field": refusal.field })),
+        AppError::SkillBodyTooLarge => ApiError::payload_too_large("a skill body past 32,768 bytes")
+            .with_details(json!({ "field": "/body" })),
         AppError::ValidTime(err) => ApiError::validation(err.to_string())
             .with_details(json!({ "field": err.field() })),
         AppError::AsOfInvalid { field, reason } => {
