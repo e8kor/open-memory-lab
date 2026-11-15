@@ -90,33 +90,47 @@ v0.8.0 renames five names on every surface in one cut, with no alias
 workareas become workspaces, the role `dreamer` becomes `reviewer`, the statuses `committed` and
 `validated` become `protected` and `frozen`, and a key's `held_by` becomes `used_by`, its value
 `human` becoming `person`. A v0.8.0 server reads a former name as unknown input: a former path
-answers 404, a former field or enum value is `request.validation`, and a former header, query
-parameter or environment variable is ignored. A v0.7 client that names its workspace only by the
-former header or query parameter is therefore not refused, and its write lands, held, in its key's
-default workspace.
+answers 404, a former field or enum value is `request.validation`, and a former query parameter or
+environment variable is ignored. A v0.7 client that names its workspace only by the former query
+parameter is therefore not refused, and its write lands, held, in its key's default workspace. The
+header `X-OML-Workarea`, which v0.4.0 already retired, is still refused naming its successor.
 
-**Clients upgrade first.** Every key holder upgrades the CLI, the plugins and the SDKs to v0.8.0
-before the server is upgraded; a v0.8.0 client speaks only the new names. The notice to send to
-every key holder before the date:
+**Clients and the server upgrade in one window.** The cut breaks both ways: a v0.7 client fails
+against a v0.8.0 server, and a v0.8.0 client fails against a v0.7 server. Announce one window to
+every key holder, upgrade the server in it, and have every key holder upgrade the CLI, the plugins
+and the SDKs in the same window. The notice to send before the date:
 
 > OML v0.8.0 renames workareas to workspaces. A v0.7 CLI, plugin, SDK or console bookmark stops
-> working against a v0.8.0 server: paths, fields, the MCP tool `oml_workarea` (now
-> `oml_workspace`), the CLI noun, `OML_CHAT_WORKAREA` and the plugin setting `chat_workarea` all
-> change. Upgrade the CLI, plugins and SDKs before the server is upgraded: v0.8.0 ignores an old
-> client's workarea header or query parameter, so a write it sends can land in the key's default
-> workspace. Set `chat_workspace`, and update saved permission rules that name `oml_workarea`.
-> Memories, keys, grants and workspace names are unchanged. The role `dreamer` is now `reviewer`:
-> `--role reviewer` and grants such as `dev:reviewer`. The statuses `committed` and `validated`
-> are now `protected` and `frozen`, and a key's `held_by` is now `used_by`, with `human` now
-> `person`. Existing keys, grants and workspaces are converted by the upgrade.
+> working against a v0.8.0 server, and a v0.8.0 one does not work against a v0.7 server: paths,
+> fields, the MCP tool `oml_workarea` (now `oml_workspace`), the CLI noun, `OML_CHAT_WORKAREA` and
+> the plugin setting `chat_workarea` all change. Upgrade the CLI, plugins and SDKs in the announced
+> window: v0.8.0 ignores an old client's workarea query parameter, so a write it sends can land in
+> the key's default workspace. Set `chat_workspace`, and update saved permission rules that name
+> `oml_workarea`. Memories, keys, grants and workspace names are unchanged. The role `dreamer` is
+> now `reviewer`: `--role reviewer` and grants such as `dev:reviewer`. The statuses `committed`
+> and `validated` are now `protected` and `frozen`, and a key's `held_by` is now `used_by`, with
+> `human` now `person`. Existing keys, grants and workspaces are converted by the upgrade.
+
+**Before the server.** Take a backup and verify that it restores
+([restore](restore.md)): migration 0047 has no reverse, and only that verified dump undoes it.
+Check that every function whose body names a former name belongs to the role the migrations run
+as, since 0047 re-creates each one:
+
+```sql
+SELECT proname, proowner::regrole FROM pg_proc
+ WHERE pronamespace = 'public'::regnamespace AND prosrc LIKE '%workarea%';
+```
 
 **The server.** The upgrade is not rolling: a v0.7 binary cannot read the renamed schema. Follow
-[Upgrade in order](#upgrade-in-order) with every node stopped, and the console with them. At boot
-the server applies one migration that renames the schema and converts the stored roles, statuses
-and holder values. Then check `oml doctor`, which names `journal_unmapped_former_name` when a
-journal event spells a former name the server cannot map, and `oml verify` for every tenant. The
-signed journal keeps the former names in the events written before the upgrade; every reader maps
-them to the new ones after verifying the signed bytes, so nothing signed is rewritten.
+[Upgrade in order](#upgrade-in-order) with every node stopped, the console and the lake writer with
+them, since the lake writer reads the renamed tables too. At boot the server applies one migration
+that renames the schema and converts the stored roles, statuses and holder values. Then check
+`oml doctor`, which names `journal_unmapped_former_name` when a journal event spells a former name
+the server cannot map, and `oml verify` for every tenant. The signed journal keeps the former names
+in the events written before the upgrade; every reader maps them to the new ones after verifying the
+signed bytes, so nothing signed is rewritten. An `Idempotency-Key` retried across the cut replays
+the response the v0.7 server recorded, in the former names, for as long as the replay window keeps
+it.
 
 **After the server.** Set `chat_workspace` wherever `chat_workarea` was set, update permission
 rules that name `mcp__plugin_oml_oml__oml_workarea` to `mcp__plugin_oml_oml__oml_workspace`, and

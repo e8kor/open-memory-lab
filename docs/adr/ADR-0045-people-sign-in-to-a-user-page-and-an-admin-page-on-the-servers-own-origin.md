@@ -256,7 +256,7 @@ Decided; introduced in v0.5.0 demotion (d12) followed in v0.6.0 with its verb.
 
 - **d7 — The pages are reachable by a person's browser and by nothing an agent holds (R1).**
     - A web route that receives an `Authorization` header answers `access.verb_ceiling` with
-      `details.reason: web_is_human_only` before anything else is read: no bearer key, no
+      `details.reason: web_is_person_only` before anything else is read: no bearer key, no
       connection token and no future credential reaches a page.
     - The API and `/mcp` never read the `Cookie` header: a request to `/v1`, `/v2` or `/mcp`
       carrying only a session cookie answers `auth.missing`, as one carrying nothing does, and
@@ -528,7 +528,7 @@ Decided; introduced in v0.5.0 demotion (d12) followed in v0.6.0 with its verb.
     | an email not on the list, unverified, with a stale or foreign `state`, or a moved account | `auth.invalid`, `details.reason` per d4, on the page | — (the person reads it; d14 logs the outcome) |
     | the provider's token or email call fails, or the cap is reached | `auth.invalid` `provider_refused` / `limit.rate`, on the page | `oml doctor` (operator key): `warn web_provider_<p>: <n> failed exchanges since start, last <reason>` from the lead's counters, read through `/readyz`'s web section |
     | a `POST` from another origin, or without a valid `csrf_token` | `oauth.origin_refused` / `request.validation` (`csrf_token`), journalling nothing | — |
-    | an `Authorization` header on a web route | `access.verb_ceiling`, `web_is_human_only` | — |
+    | an `Authorization` header on a web route | `access.verb_ceiling`, `web_is_person_only` | — |
     | a session expired or ended | the sign-in page, `auth.invalid` `session_expired` on a `POST` | — |
     | a non-admin session on the admin page | `access.not_found` | — |
     | a composed key name already taken, at entry creation | `name.taken`, kind `key` | — |
@@ -697,7 +697,7 @@ Decided; introduced in v0.5.0 demotion (d12) followed in v0.6.0 with its verb.
     `format`, `valid`, and since v0.7.3 `approved_at` and `approver`, ADR-0077 d2), with `author` null wherever the card shows the shared area, and
     `workspaces` the regions of d30, each with its counts, and the scope node alone with its dropdown's offers (one offer is several store reads, so a region is zoomed to for its own; the Workspaces table computes one per listed node, at most 200, which is a scaling limit to batch if a tenant's tree grows past it). The Atlas page itself reads no memory, only counts, so it
     journals nothing. The routes take the session cookie alone: an `Authorization` header is
-    `access.verb_ceiling` `web_is_human_only` (d7), no session is `access.not_found` as JSON,
+    `access.verb_ceiling` `web_is_person_only` (d7), no session is `access.not_found` as JSON,
     and every answer carries `Cache-Control: no-store` and `nosniff`. A `GET` changes nothing,
     so it needs no CSRF token; a cross-site page cannot read the answer without CORS, which the
     routes never send, and `SameSite=Lax` withholds the cookie from a cross-site `fetch` (d5).

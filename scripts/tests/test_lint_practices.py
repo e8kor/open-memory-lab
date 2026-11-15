@@ -371,3 +371,12 @@ class Vocabulary(unittest.TestCase):
         root = tree({"a.md": "[x](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every.md) "
                              "migrations/0017_workarea_transitions.sql\n"})
         self.assertEqual([], L.lint_vocabulary(root, False))
+
+    def test_human_in_a_holder_identifier_is_flagged_and_its_other_senses_are_not(self):
+        root = tree({
+            "a.rs": 'reason: "mode_is_human_only"\n',
+            "b.rs": 'let marker = "[needs-human]";\n',
+            "ok.rs": "human_required_classes, provenance human, a human layout\n",
+        })
+        flagged = {p.split(":")[0] for p in L.lint_vocabulary(root, False)}
+        self.assertEqual(flagged, {"a.rs", "b.rs"})

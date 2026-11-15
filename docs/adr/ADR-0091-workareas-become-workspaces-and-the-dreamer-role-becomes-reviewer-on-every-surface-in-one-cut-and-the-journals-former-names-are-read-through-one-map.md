@@ -164,7 +164,10 @@ Decided, not built.
      that records it;
   4. a closed list of (event type, field) values that hold a role has the value `dreamer`
      replaced by `reviewer`: `role` of `key.issued` and `grant.issued`, `required_roles` inside
-     a `policy_snapshot`; the catalog types no other event field as a role (d13);
+     a `policy_snapshot`, and `required_roles` inside the `policy` that `lifecycle.promote` and
+     `lifecycle.supersede` record; the catalog types no other event field as a role (d13;
+     the `policy` case amended with the build, 2026-11-15, after review found every promotion
+     carries it);
   5. a status value `committed` or `validated`, in `status` of `workarea.create` and `from` and
      `to` of `workarea.status_proposed` and `workarea.status_transition`, becomes `protected` or
      `frozen`, and inside the `policy_snapshot` of `workarea.status_transition` the key
@@ -181,7 +184,9 @@ Decided, not built.
   catalog lists each former name beside its successor in a table of its own, the only place the
   catalog spells `workarea`. A reader that meets a `workarea`-spelled name outside the map's
   lists fails closed naming the event and the name, and `oml doctor` gains the line
-  `journal_unmapped_former_name`.
+  `journal_unmapped_former_name`. So does an object that holds both a former key and its
+  successor, such as `workarea_id` beside `workspace_id`: the map never collapses two values into
+  one (amended with the build, 2026-11-15).
 
 - **d5 — The twin's equality holds across the cut.** ADR-0090 d12's law is that each use case's
   fold equals `fold_of` of its event and its staged parts; d14 proves it as an equality of two
@@ -327,8 +332,9 @@ Decided, not built.
      upgrade note in `docs/operations/upgrades.md`, and ask them to upgrade their clients before
      the server;
   2. take a backup and verify it restores (the backup runbook);
-  3. stop `oml-web` and the lead; the deployer installs v0.8.0 of both from one tag, its Caddy
-     route read from `deploy/caddy/Caddyfile` at that tag, which names `/web/workspaces`;
+  3. stop `oml-web`, the lead and the lake writer, which reads the renamed tables too; the
+     deployer installs v0.8.0 of all three from one tag, its Caddy route read from
+     `deploy/caddy/Caddyfile` at that tag, which names `/web/workspaces`;
   4. start the lead, which applies d6's migration; check `oml doctor` (no
      `journal_unmapped_former_name`), `oml verify` over every tenant, and the schema law of d6;
   5. drain the lake and run ADR-0090's compare when the twin is built;
@@ -439,13 +445,23 @@ Recorded with the build (PR #431, 2026-11-14), each as the operator decided it t
   which the CLI composes no port trait and no domain crate.
 - **`oml verify` maps nothing it checks.** The events tail serves each event as stored, and
   verification reconstructs and checks the stored bytes; `oml events` maps the type it prints.
-- **The doctor line.** The lead's start reads every stored event through the map and names each
+- **The retired header keeps its refusal.** `X-OML-Workarea` was retired in v0.4.0, and since
+  then a request that sends it is refused naming its successor (ADR-0039 d7). The cut keeps that
+  refusal under the header's real name; no `X-OML-Workspace` header exists. The rows of d2 that
+  name the header read as this note says (the build, 2026-11-15).
+- **The holder's reasons.** The reasons `bulk_review_is_human_only`, `chat_scope_is_human_only`,
+  `mode_is_human_only`, `federation_is_human_only` and `web_is_human_only` are now
+  `*_is_person_only`, and the scanner's hold marker `[needs-human]` is `[needs-person]`, under
+  d15's rule that `human` becomes `person`. A claim's `provenance` `human` and `human_required` in a
+  review policy are other senses and keep their spelling.
+- **The doctor line.** The lead's start reads every stored event through the map, in the fork
+  check's one pass over the journal, and names each
   former name the map does not cover: a `workarea.*` type outside the list, a `held_by` key
   outside `key.issued`, or a former value in a kind, role, scope, holder or status field the
   lists do not reach. A lead that finds one is not ready, and `/readyz` reports `former_names`
   as `unmapped`; `oml doctor` prints `journal_unmapped_former_name`, and the start log names
-  each tenant, seq, event and name. The tenant, seq and event stay out of `/readyz`'s answer,
-  because `/readyz` answers anyone.
+  the count and the first 20 by tenant, seq, event and name. The tenant, seq and event stay out
+  of `/readyz`'s answer, because `/readyz` answers anyone.
 - **The lake kept its physical column (d7).** The spike found that the pinned deltalake refuses
   to put an existing table into column mapping mode, so the fallback is built:
   `bronze.events` and `silver.claims` keep the physical column `workarea_id`, and

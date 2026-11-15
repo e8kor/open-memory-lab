@@ -67,7 +67,7 @@ Questions revision 1 left open are settled below at their recommended answers, e
   **reviewer key `used_by: person`** with reviewer effective access on the node — the predicate
   ADR-0055 d1 gives bulk review, for the same reason: the mark changes who reads what other keys
   wrote, so it is a review-class act and a person's attestation. Every other key is refused
-  before any lookup with `access.verb_ceiling`, `details.reason: mode_is_human_only`: a writer or
+  before any lookup with `access.verb_ceiling`, `details.reason: mode_is_person_only`: a writer or
   reader key (R1), an admin key (an admin is never a reviewer, D9), a service key and any reviewer
   key used by an agent, a curator's included. No MCP tool, argument or resource sets it.
   Inside a user root the user's own reviewer key sets it (ADR-0046 d2). *Recommended answer:* the
@@ -260,7 +260,7 @@ Questions revision 1 left open are settled below at their recommended answers, e
   key (amending ADR-0045 d1, d9). Codes, each in the errors tables and the `ErrorCode` enum:
   `workspace.in_progress_refused` (409, reasons `status`, `universe`, `nested`, `commit_first`,
   `edge_crosses`), `workspace.held_remaining` (409); `access.verb_ceiling` gains reasons
-  `mode_is_human_only`, `curator_narrow_only` and `curator_outside_in_progress`. The SDKs are
+  `mode_is_person_only`, `curator_narrow_only` and `curator_outside_in_progress`. The SDKs are
   regenerated from the contract.
 
 - **d14 — Migration and doctor.** One forward-only migration adds `workspaces.mode` (`text NOT

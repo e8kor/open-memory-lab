@@ -419,7 +419,7 @@ sequenceDiagram
     `POST /v2/workspaces/{workspace}/federation` and `oml workspaces federation`, journalled
     `workspace.federation_set {workspace_id, field, value, from}`, by a reviewer key `used_by:
     person` with reviewer access on the node or by a tenant admin (an agent key is refused
-    `access.verb_ceiling`, reason `federation_is_human_only`, ADR-0030 d1's predicate):
+    `access.verb_ceiling`, reason `federation_is_person_only`, ADR-0030 d1's predicate):
     `accept_federated` (default `true` on a trusted source): recalls scoped elsewhere may search
     this workspace. It grants nothing, and nothing changes until a tenant enables federation and a
     caller asks; turning it off changes no access, since a key that reads the workspace still

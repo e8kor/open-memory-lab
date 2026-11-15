@@ -138,7 +138,7 @@ Decided, not built: this lane writes no code and ran no build.
   `POST /v2/workspaces/{workspace}/mode` gains a second mark, `{children: "agent"}`, journalled
   `workspace.mode_set` like the first and admitted under exactly ADR-0030 d1's predicate: a reviewer
   key `used_by: person` with reviewer effective access on the node; every other key is refused
-  `access.verb_ceiling`, `details.reason: mode_is_human_only`. A code parent is itself `standard`,
+  `access.verb_ceiling`, `details.reason: mode_is_person_only`. A code parent is itself `standard`,
   so its children may each be in progress (ADR-0030 d1 refuses nesting). Under a code parent, and
   only there, `POST /v2/workspaces` admits `mode: in_progress` in the create body from a writer key
   with effective `writer` on the parent: the child is `development` and in progress from its

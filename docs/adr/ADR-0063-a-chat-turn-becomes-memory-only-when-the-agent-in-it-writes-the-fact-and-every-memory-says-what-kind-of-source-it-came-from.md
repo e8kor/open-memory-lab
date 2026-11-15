@@ -190,7 +190,7 @@ a use case, and a capability is a parameter before it is a tool.
   its path is `universe.<user>.chat`. The name `chat` is reserved in every user root's namespace
   for a key `used_by: person`, at any depth: creating a workspace named `chat` anywhere under a user
   root with any other key, an agent's writer key in that root included, is refused with
-  `access.verb_ceiling`, `details.reason: chat_scope_is_human_only`, before anything is
+  `access.verb_ceiling`, `details.reason: chat_scope_is_person_only`, before anything is
   journalled, so an agent cannot take the name first (the namespace is one per root, ADR-0044 d5).
   `oml chat init` creates it with the CLI's stored credentials; when the name is taken it adopts
   only `universe.<user>.chat` and otherwise refuses with `chat_scope_not_the_persons`; it prints the `OML_CHAT_WORKSPACE` value, and, once

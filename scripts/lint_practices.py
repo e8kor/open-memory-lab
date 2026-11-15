@@ -19,7 +19,8 @@ voice       no second- or first-person word (you, your, yours, yourself, yoursel
             and a file in lint_allow/voice.txt is skipped (design/README.md, the neutral voice).
 vocabulary  no former name of ADR-0091 in a tracked file: the words workarea and dreamer, and the
             literals and identifiers of the statuses committed and validated, the key field held_by
-            and its value human. A hit is allowed only in a path lint_allow/rename.txt lists with a
+            and its value human, and human in an identifier in the holder sense (mode_is_human_only,
+            the [needs-human] marker). A hit is allowed only in a path lint_allow/rename.txt lists with a
             reason from ADR-0091 d11 (signed bytes, the former-name map, applied migrations,
             released history, measured results, dated fixtures, quoted text, this lint).
 
@@ -410,6 +411,9 @@ FORMER = re.compile(
     r"|[\"'](?:committed|validated|human)[\"']"
     r"|::(?:Committed|Validated)\b"
     r"|\bheld_by(?!_key)|HeldBy|heldBy|--held-by"
+    # `human` in an identifier in the holder sense; human_required and a claim's
+    # provenance are other senses ADR-0091 d15 leaves.
+    r"|\w+_is_human_only|\bhuman_only\b|needs-human|(?:HeldBy|UsedBy)::Human\b"
 )
 
 
