@@ -5530,6 +5530,7 @@ where
         if let Some(claim_key) = req.claim_key.as_deref() {
             self.scan_veto_only(key.tenant_id, "claim_key", claim_key)?;
         }
+        self.scan_kind_fields(key.tenant_id, admitted_fields.as_ref())?;
         let origin = recorded_origin(req.origin, req.anchor.as_ref())?;
 
         // Deterministic scan: same call, before the commit transaction. A
@@ -7764,6 +7765,26 @@ where
         }
     }
 
+    /// A skill's name and description and a document's title reach the
+    /// journal in clear in the signed submission, so a veto in them refuses
+    /// as one in the body does (ADR-0065 d7; ADR-0080 d1; ADR-0081 d1).
+    fn scan_kind_fields(
+        &self,
+        tenant_id: Uuid,
+        fields: Option<&KindFields>,
+    ) -> Result<(), AppError> {
+        match fields {
+            Some(KindFields::Skill { name, description }) => {
+                self.scan_veto_only(tenant_id, "skill.name", name)?;
+                self.scan_veto_only(tenant_id, "skill.description", description)
+            }
+            Some(KindFields::Document { title: Some(title) }) => {
+                self.scan_veto_only(tenant_id, "document.title", title)
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn scan_anchor(&self, tenant_id: Uuid, anchor: Option<&Anchor>) -> Result<(), AppError> {
         let Some(anchor) = anchor else {
             return Ok(());
@@ -8175,6 +8196,7 @@ where
             &body,
             &requested_format,
         )?;
+        self.scan_kind_fields(key.tenant_id, admitted_fields.as_ref())?;
         // The successor's own valid time: it inherits none (proposed
         // ADR-0059 d2, d4).
         let valid = valid_time(

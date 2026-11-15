@@ -16251,3 +16251,41 @@ async fn an_agent_reviewer_key_is_refused_on_a_skill_and_approves_a_document_and
         assert_eq!(outcome.state, MemoryStatus::Promoted);
     }
 }
+
+#[tokio::test]
+async fn a_veto_in_a_skill_description_or_a_document_title_refuses_the_write_and_journals_nothing()
+{
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "wanda", crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                kind_fields: Some(oml_app::types::KindFields::Skill {
+                    name: "deploy".to_owned(),
+                    description: "-----BEGIN PRIVATE KEY".to_owned(),
+                }),
+                ..kind_req("v1", MemoryKind::Skill, "Run it.", crew)
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ScanVeto(_)), "{err:?}");
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                kind_fields: Some(oml_app::types::KindFields::Document {
+                    title: Some("-----BEGIN PRIVATE KEY".to_owned()),
+                }),
+                ..kind_req("v2", MemoryKind::Document, "Body.", crew)
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ScanVeto(_)), "{err:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
