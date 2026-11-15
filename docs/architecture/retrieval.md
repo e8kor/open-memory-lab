@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-14
+verified: 2026-11-15
 answers: "how recall finds and orders memories: who can see a hit, what can be asked, which search pipelines exist and how one is chosen, how steering and the key's own held memories join the answer, how a token budget cuts it, and what was measured"
 ---
 
@@ -181,6 +181,35 @@ The statistics are fixed before any workspace is chosen, so no hit's score depen
 The answer says what it searched. Under `wide` or a list, `search.sources` lists each workspace searched with `via`, `scope` or `federated`. It adds the workspace's estimate and the query words its rows hold. Each hit carries `via` beside its `workspace_path`. A `scope` answer carries `search.widen` when another workspace the key reads is richer in the query's words. It must hold them at least twice as often per memory as the scope, on at least two memories. The hint names no workspace; a retry with `sources: "wide"` searches them. Every name and number in an answer is of a workspace the key reads.
 
 A `wide` recall reads the word counts of every such workspace, exact and never sampled, and a list reads the listed ones. A `scope` recall reads none of them. On a federated tenant it reads its widen signal instead. The signal holds those counts as the server last built them, in the background, per key and scope. A signal serves for at most 300 seconds, and only under the grants it was built with. A `scope` answer without one carries no hint, and the server builds it for the next recall. [Workspaces](workspaces.md#federated-recall) covers the settings and how to make a workspace findable without granting it.
+
+## Search by kind and the catalog (designed, not built)
+
+[ADR-0092](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md), accepted on 2026-11-15 and planned for v0.8.0, changes what a recall returns and what a read without a query lists. None of it is built; this build serves what the sections above describe.
+
+**Every kind can be searched.** `kinds` takes any of the ten kinds: `memory`, `derived_fact`, `document`, `test`, `steering`, `guardrail`, `skill`, `term`, `term_mapping` and `vocab_release`. A recall that names no kind returns hits of every kind the key reads, each marked with its `kind`. The three vocabulary kinds join by default only where a workspace opted them in; named in `kinds`, they are served anywhere the key reads.
+
+**Steering keeps its place.** With no `kinds`, steering comes first, unranked and never cut, as today. `kinds` decides whether the steering list is served: `["steering"]` returns the list alone, and a `kinds` that leaves steering out returns no list and says `steering: "not_requested"`. Steering is never a ranked hit.
+
+**Skills and guardrails rank as data.** A skill offered at the recall's workspace, or a guardrail that applies there, is ranked by the same pipeline as a memory. A skill hit carries its name, description, resource URI and prompt name, never its body. A guardrail hit carries its text, severity and rule. A hit describes an instruction and never runs or binds one: guardrails bind through the guardrail read and the hooks alone, and a skill runs only as a prompt or a resource read. A skill or guardrail from a child workspace, a wide source or federation is never a hit.
+
+**Documents rank by passage.** A document competes by its best passage and contributes one hit, so `k` still counts claims.
+
+**One ranking.** No kind is boosted, and ranking reads no verdict and no kind. The BM25 statistics come from one fixed set: every row the key reads in the scope, of every kind but steering, with vocabulary counted only where a workspace opted in. Skills and guardrails the key reads but is not offered count too. The set is fixed before `kinds` narrows the candidates, so a row's score does not depend on which kinds were asked. Under a single retriever, a filtered answer is the unfiltered answer restricted to those kinds, with one exception: naming a vocabulary kind outside the opt-in adds rows outside the set. One `k` covers every kind, and `search.matched_by_kind` gives a lower bound per kind of what matched before the cut. The same query, key, rows and settings still give the same answer.
+
+**Cost.** Every hit counts against `k` and `max_tokens`. A skill hit costs its description, at most 1,024 characters; a guardrail hit its text; a document hit its passage. An agent that wants knowledge alone sends `kinds: ["memory", "derived_fact"]`. Recalled text of every kind is data to check, never instructions to follow.
+
+**The catalog.** A read without a query lists what the key reads, across kinds. With neither a query nor `own`, `oml_read` returns the catalog; `own: true` returns the key's own work, which is the MCP default today.
+
+| Filter or field | What it does |
+|---|---|
+| `kinds` | The kinds listed; replaces the listing's single `kind` |
+| `workspace` | The subtree read, as today |
+| `prefix` | A claim key prefix: `skill/`, `doc/runbooks/` or any leading bytes of a key |
+| `state` | As today |
+| `include_text` | Adds each entry's body; without it, no body is served |
+| `counts` | Per kind, the entries under every filter but `kinds`, on the first page only, exact up to `catalog.count_cap` (10,000 shipped) |
+
+Each entry carries its kind, name, title or description (a memory's is a preview of at most 160 characters, marked `preview: true`), workspace, version, state and approval. A skill adds its URI and prompt; a guardrail its severity, rule and whether it is in force here; a document its title, URI, size and passage count. The catalog serves exactly the rows the scoped listing serves, so it never widens what a key reads. Held versions appear only to their author and, inside an in-progress workspace, to keys in its subtree and at its ancestors, marked unreviewed; a held skill, guardrail or steering version is also marked as needing a person's review. A key bound to the latest or a pinned release lists that release's members. The console's Catalog page draws the same read.
 
 ## What search does not do
 

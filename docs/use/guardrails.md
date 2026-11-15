@@ -29,3 +29,10 @@ nothing at all (`access.verb_ceiling`).
 **What a rule cannot do.** A rule the agent only reads is an instruction to a model, not a
 guarantee. Only the tool-call check binds. An exported file is a copy that withdrawal and erasure
 do not reach. Whether agents follow rules they only read has not been measured.
+
+**Finding a rule. Designed, not built** ([ADR-0092](../adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md), planned for v0.8.0). Today recall
+refuses `kinds: ["guardrail"]` and points at the guardrail read. Once built, recall ranks the
+guardrails that apply at the agent's workspace beside memories, each hit showing its text,
+severity and rule, and the catalog lists every guardrail the key reads with whether it is in
+force there. A hit or a catalog entry only shows a rule: what binds is still the set the hooks
+load, whatever a query ranks.

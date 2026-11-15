@@ -7,7 +7,7 @@ answers: how search plugs into the hexagonal core; which port a retriever implem
 
 # ADR-0049 — Search is a pipeline of retrievers behind a port, chosen by name and gated by the recall eval
 
-**Status:** proposed · 2026-11-04
+**Status:** proposed · 2026-11-04 · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d2, d7, 2026-11-15)
 
 **Release:** introduced in v0.5.5 (increment 1, with ADR-0048's S1–S3 as its pipelines); d13,
 each retriever's list capped before fusion, introduced in v0.5.8 with ADR-0057 d22; d14 proposed
@@ -139,7 +139,7 @@ reorders results, and steering rows, which precede hits, are never ranked"
   (another node's row, another key's held row, steering, a held row when no own keys are named;
   an empty scope ranks nothing); `a_retriever_orders_deterministically_by_score_then_id`;
   `a_row_outside_the_scope_never_changes_a_candidates_score` (so a rarity statistic cannot leak
-  unreadable rows); `the_keyword_retrievers_match_all_or_any_word_on_every_store` (independent
+  unreadable rows; *restated 2026-11-15 by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) d4: the scope is the fixed reference set of every readable kind, and `kinds` narrows the candidates only*); `the_keyword_retrievers_match_all_or_any_word_on_every_store` (independent
   expected sets, so the two stores agree with each other); and, where served,
   `bm25_finds_an_identifier_by_its_parts_and_a_word_by_its_stem` and
   `trigram_finds_a_misspelled_words_memory` (with `did_you_mean` taken only from the scope).

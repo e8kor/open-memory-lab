@@ -8,7 +8,7 @@ answers: why a document is a kind and not a memory with a markdown format; which
 # ADR-0081 — A document is a reviewed markdown or text claim that recall searches by passage and the MCP server serves as a resource
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, every default as
-drafted · proposed the same day, tracking #374
+drafted · proposed the same day, tracking #374 · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d4, 2026-11-15)
 
 **Release:** planned for v0.7.4
 

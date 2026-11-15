@@ -7,7 +7,7 @@ answers: why no text index serves a recall under row security and what does; the
 
 # ADR-0052 — Text search reads integer postings, which row security lets an index serve, and says when it pruned a word or scanned
 
-**Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.6
+**Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.6 · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d2, d5, 2026-11-15)
 
 **Release:** introduced in v0.5.6; kind 2, `sparse` and `bm25-sparse` (d13 to d17) introduced in v0.5.7; since v0.5.8 each list `bm25-sparse` fuses is capped at its depth before fusion (ADR-0049 d13); d13's served `bm25-sparse-rrf` baseline proposed for v0.5.9 ([releases](../changelog.md))
 

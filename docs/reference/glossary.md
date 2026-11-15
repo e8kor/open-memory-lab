@@ -30,6 +30,7 @@ answers: "the terms the OML docs use and what each means"
 | **journal** | The signed, hash-chained record of every write, verdict and key issuance. |
 | **brief** | The memories a workspace's reviewers chose for an agent to read first when it enters. |
 | **steering** | A memory of a kind that tells agents how to work. Recall returns it before hits. |
+| **catalog** | What a read without a query lists: every kind of claim the key reads in a workspace and below, each with its name, description, version and approval, and counts per kind. Designed for v0.8.0, not built ([ADR-0092](../adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md)). Today a read without a query lists the key's own work on MCP, or a workspace's approved claims, filtered by at most one kind and without counts. |
 | **tip** | The current approved version of a memory. |
 | **recall** | A ranked search over approved memories with `oml read --query` or `oml_read`. |
 | **self-signed** | Designed, not built: a memory approved by its own author in a development workspace. It would count once and never be called a review. |

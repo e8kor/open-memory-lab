@@ -7,7 +7,7 @@ answers: what a guardrail is and how it differs from steering; how it composes w
 
 # ADR-0037 — A guardrail is a claim of its own kind, ratified under its workspace's review policy, that the agent plugin loads at every session start within the scope an admin set on its key, and whose optional rule a local hook checks before each tool call
 
-**Status:** accepted design · 2026-11-04 · proposed 2026-10-31, revised 2026-11-04 onto the v0.4.0 API, ADR-0044 and ADR-0045, and accepted with release v0.5.1 · amended by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d3, d4, d5, d6, d9, d10, d11, 2026-11-14), [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d17, 2026-11-14), [ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) (d17, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d10, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d4, 2026-11-14)
+**Status:** accepted design · 2026-11-04 · proposed 2026-10-31, revised 2026-11-04 onto the v0.4.0 API, ADR-0044 and ADR-0045, and accepted with release v0.5.1 · amended by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d3, d4, d5, d6, d9, d10, d11, 2026-11-14), [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d17, 2026-11-14), [ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) (d17, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d10, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d4, 2026-11-14) · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d5, d18 Q7, 2026-11-15)
 
 **Release:** introduced in v0.5.1 ([releases](../changelog.md))
 
@@ -137,7 +137,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
   tokens, promoted_at, verdicts: [{used_by, at}], conflict}], own_held:
   [{claim_key, version}]}`; `set_digest`, over the served ids and versions, is opaque to clients,
   which only compare it (d11). Recall never serves kind `guardrail`, and the read is logged as
-  recall is (ADR-0025 d9). No reviewer key name is served: ADR-0025 d15 keeps review events in
+  recall is (ADR-0025 d9). *(Amended 2026-11-15 by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) d3: recall ranks applicable guardrails as data hits; this read stays the only set that binds.)* No reviewer key name is served: ADR-0025 d15 keeps review events in
   the evidence export. The cost: every reader in scope learns how many reviewers ratified a rule
   and how many of them were human. `GET /v2/whoami` serves the key's `guardrail_scope` beside
   its grants, as ADR-0039 d15 reserved, so `oml doctor` and a page can say which scope a key
@@ -399,7 +399,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
       d16), which name no key, curator or source.
     - **Q7 — The listings serve kind `guardrail` like any kind, and recall refuses
       `kinds: ["guardrail"]`** with `request.validation`, `details.field: /kinds` (d5): recall
-      never serves a guardrail, and a filter that names one is refused, never answered empty.
+      never serves a guardrail, and a filter that names one is refused, never answered empty. *(Replaced 2026-11-15 by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) d3: recall ranks applicable guardrails as data hits, and `kinds: ["guardrail"]` is answered; the set that binds is still this record's d5 read.)*
     - **Q8 — `oml write` takes `--severity` and `--rule`** (d10): the CLI is an HTTP client, and
       d10 keeps guardrails off MCP alone.
     - **Q9 — `info.version` moves once, at the release that carries this record,** one step past

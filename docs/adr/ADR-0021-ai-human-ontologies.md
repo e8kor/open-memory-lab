@@ -7,7 +7,7 @@ answers: why shared vocabularies are governed claims on the existing pipeline ra
 
 # ADR-0021 — AI+Human ontologies: vocabularies as governed claims
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d9, 2026-11-15)
 
 **Release:** claim edges introduced in v0.5.2; the rest not built ([releases](../changelog.md))
 
@@ -192,7 +192,7 @@ Two stances bind every decision below:
   `max_tokens` (#106) are untouched — expansion widens a filter before retrieval, never reorders
   results. Term, term_mapping and vocab_release rows are **excluded** from the shared FTS and
   vector indexes by default (a vocabulary workspace's policy may opt in, mirroring ADR-0020 d11);
-  `RecallRequest.kinds` already excludes them — kept deliberate and stated.
+  `RecallRequest.kinds` already excludes them — kept deliberate and stated. *(Amended 2026-11-15 by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) d1, d4: with no `kinds` the opt-in still decides; a `kinds` that names a vocabulary kind indexes and serves it as a hit in any workspace the key reads.)*
 
 - **d10 — What this is not.** No annotation or NER service: `suggest` is deterministic matching,
   and interpreting claim content to propose terms is client-side crew work. No reasoner: no OWL
