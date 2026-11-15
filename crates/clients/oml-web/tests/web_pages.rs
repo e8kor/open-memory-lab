@@ -768,6 +768,13 @@ async fn a_workspace_act_is_confirmed_before_it_runs() {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert!(node().await.in_progress);
+    // The row names the mode as the drafts-visibility toggle does, the words
+    // scripts/check_web_signed_in.sh reads on the router (ADR-0091 d16).
+    let (_, _, after) = send(&rig.router, get("/web/workspaces", Some(&cookie))).await;
+    assert!(
+        after.contains("<td>development</td><td>drafts visible to everyone working here</td>"),
+        "{after}"
+    );
     // An act the key may not take now is refused by name at the
     // confirmation, with no form to run it.
     let (status, _, refused) = send(

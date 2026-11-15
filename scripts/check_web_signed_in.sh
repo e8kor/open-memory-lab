@@ -115,8 +115,8 @@ for attempt in first resubmitted; do
 done
 code="$(curl -s -o "$work/after.html" -w '%{http_code}' -H "$jar" "$origin/web/workspaces?done=mode+set")"
 [ "$code" = 200 ] || fail "GET /web/workspaces after the act answered $code"
-grep -q "workspace=$user\.proj\">$user\.proj</a></td><td class=\"mono\">$user</td><td>development</td><td>in progress</td>" "$work/after.html" \
-    || fail "the act did not put $user.proj in progress: $(head -c 600 "$work/after.html")"
+grep -q "workspace=$user\.proj\">$user\.proj</a></td><td class=\"mono\">$user</td><td>development</td><td>drafts visible to everyone working here</td>" "$work/after.html" \
+    || fail "the act did not make $user.proj's drafts visible to everyone working here: $(head -c 600 "$work/after.html")"
 
 code="$(curl -s -o /dev/null -D "$work/old-workspaces" -w '%{http_code}' -H "$jar" "$origin/web?view=workspace")"
 location="$(header "$work/old-workspaces" location || true)"
