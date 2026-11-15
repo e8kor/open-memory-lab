@@ -108,7 +108,7 @@ def sync_detailed(
     answers 410 lifecycle.erased only to a key that could read the version immediately before its
     erasure — its author's key set, or, when it was promoted then, a key with reader effective access on
     its workspace; readability is checked first, and every other key gets access.not_found. Resolves no
-    workspace: an X-OML-Workspace header is request.validation, details.field X-OML-Workspace.
+    workspace: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea.
     derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read
     the replaced version, and workspace_id is null on an own row whose node the key holds no role on.
     With as_of, a version recorded after the instant is access.not_found and any other answers as get
@@ -163,7 +163,7 @@ def sync(
     answers 410 lifecycle.erased only to a key that could read the version immediately before its
     erasure — its author's key set, or, when it was promoted then, a key with reader effective access on
     its workspace; readability is checked first, and every other key gets access.not_found. Resolves no
-    workspace: an X-OML-Workspace header is request.validation, details.field X-OML-Workspace.
+    workspace: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea.
     derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read
     the replaced version, and workspace_id is null on an own row whose node the key holds no role on.
     With as_of, a version recorded after the instant is access.not_found and any other answers as get
@@ -213,7 +213,7 @@ async def asyncio_detailed(
     answers 410 lifecycle.erased only to a key that could read the version immediately before its
     erasure — its author's key set, or, when it was promoted then, a key with reader effective access on
     its workspace; readability is checked first, and every other key gets access.not_found. Resolves no
-    workspace: an X-OML-Workspace header is request.validation, details.field X-OML-Workspace.
+    workspace: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea.
     derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read
     the replaced version, and workspace_id is null on an own row whose node the key holds no role on.
     With as_of, a version recorded after the instant is access.not_found and any other answers as get
@@ -266,7 +266,7 @@ async def asyncio(
     answers 410 lifecycle.erased only to a key that could read the version immediately before its
     erasure — its author's key set, or, when it was promoted then, a key with reader effective access on
     its workspace; readability is checked first, and every other key gets access.not_found. Resolves no
-    workspace: an X-OML-Workspace header is request.validation, details.field X-OML-Workspace.
+    workspace: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea.
     derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read
     the replaced version, and workspace_id is null on an own row whose node the key holds no role on.
     With as_of, a version recorded after the instant is access.not_found and any other answers as get

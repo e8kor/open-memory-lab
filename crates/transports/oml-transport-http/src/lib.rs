@@ -627,7 +627,7 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, connection)?;
-        refuse_workspace_header(headers, "/workspace")?;
+        refuse_workarea_header(headers, "/workspace")?;
         let idem_key = idempotency_key(headers)?;
         let req: SubmitBody = parse_json(headers, body)?;
         // kind defaults to memory, and an omitted verb is the app's to
@@ -746,7 +746,7 @@ where
         connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, connection)?;
-        refuse_workspace_header(headers, "workspace")?;
+        refuse_workarea_header(headers, "workspace")?;
         if params
             .iter()
             .any(|(n, v)| (n == "with_own" && v == "true") || n == "author")
@@ -888,7 +888,7 @@ where
     }
 
     /// `GET /v1/memories/{artifact_id}` (http-api.md get). Get resolves no
-    /// workspace, so an `X-OML-Workspace` sent with it is refused, not
+    /// workspace, so an `X-OML-Workarea` sent with it is refused, not
     /// ignored, and names no successor (ADR-0025 d13, ADR-0039 d7).
     /// A read's `feedback` member, checked and queued (ADR-0054 d6); the
     /// read it rides on runs only when this answers.
@@ -915,11 +915,11 @@ where
         connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, connection)?;
-        if headers.contains_key(WORKSPACE_HEADER) {
+        if headers.contains_key(WORKAREA_HEADER) {
             return Err(ApiError::validation(
-                "X-OML-Workspace is refused on get: get resolves no workspace",
+                "X-OML-Workarea is refused on get: get resolves no workspace",
             )
-            .with_details(json!({ "field": "X-OML-Workspace" })));
+            .with_details(json!({ "field": "X-OML-Workarea" })));
         }
         // Ids are opaque; one that can name no row is absent (access.not_found).
         let id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
@@ -943,7 +943,7 @@ where
     ) -> Result<Response, ApiError> {
         // Read-shaped POST: no Idempotency-Key (http-api.md idempotency).
         let acting = acting(headers, connection)?;
-        refuse_workspace_header(headers, "/workspace")?;
+        refuse_workarea_header(headers, "/workspace")?;
         // The body is closed: a field the server does not serve is refused,
         // never dropped (ADR-0025 d16), and a v0.3.0 spelling names its
         // successor (ADR-0039 d7).
@@ -1181,7 +1181,7 @@ where
         connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, connection)?;
-        refuse_workspace_header(headers, "workspace")?;
+        refuse_workarea_header(headers, "workspace")?;
         let mut workspace = None;
         for (name, value) in params {
             match name.as_str() {
@@ -1313,7 +1313,7 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, connection)?;
-        refuse_workspace_header(headers, "/workspace")?;
+        refuse_workarea_header(headers, "/workspace")?;
         let idem_key = idempotency_key(headers)?;
         let target_id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
         let req: SupersedeBody = parse_json(headers, body)?;
@@ -2578,7 +2578,7 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, None)?;
-        refuse_workspace_header(headers, "workspace")?;
+        refuse_workarea_header(headers, "workspace")?;
         if params.contains_key("workspace_id") {
             return Err(ApiError::renamed("workspace_id", "workspace"));
         }
@@ -3982,14 +3982,14 @@ fn idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
 }
 
 /// ADR-0022 d4's per-request target header, which v0.4.0 removed.
-const WORKSPACE_HEADER: &str = "x-oml-workspace";
+const WORKAREA_HEADER: &str = "x-oml-workarea";
 
-/// v0.3.0's `X-OML-Workspace` is refused, whatever it holds, naming the
+/// v0.3.0's `X-OML-Workarea` is refused, whatever it holds, naming the
 /// `workspace` field that replaces it on this route: `/workspace` in a body,
 /// `workspace` in a query (ADR-0039 d7, d11).
-fn refuse_workspace_header(headers: &HeaderMap, renamed_to: &str) -> Result<(), ApiError> {
-    if headers.contains_key(WORKSPACE_HEADER) {
-        return Err(ApiError::renamed("X-OML-Workspace", renamed_to));
+fn refuse_workarea_header(headers: &HeaderMap, renamed_to: &str) -> Result<(), ApiError> {
+    if headers.contains_key(WORKAREA_HEADER) {
+        return Err(ApiError::renamed("X-OML-Workarea", renamed_to));
     }
     Ok(())
 }

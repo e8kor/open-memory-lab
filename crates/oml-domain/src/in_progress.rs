@@ -351,7 +351,7 @@ mod tests {
                 (id(2), true, true)
             ]),
             None,
-            "a development node under a committed one under a mark"
+            "a development node under a protected one under a mark"
         );
         assert_eq!(
             in_progress_root_of(&[

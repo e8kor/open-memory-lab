@@ -184,8 +184,8 @@ def sync_detailed(
     to the key's default_workspace (ADR-0039 d4) — a self_signed version only when the scope node is its
     own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
     others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
-    v0.3.0's workspace_id parameter and X-OML-Workspace header are request.validation naming workspace
-    in details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
+    v0.3.0's workspace_id parameter and X-OML-Workarea header are request.validation naming workspace in
+    details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
     cursor is bound to the calling key and expires under api.cursor_ttl.
 
     Args:
@@ -288,8 +288,8 @@ def sync(
     to the key's default_workspace (ADR-0039 d4) — a self_signed version only when the scope node is its
     own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
     others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
-    v0.3.0's workspace_id parameter and X-OML-Workspace header are request.validation naming workspace
-    in details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
+    v0.3.0's workspace_id parameter and X-OML-Workarea header are request.validation naming workspace in
+    details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
     cursor is bound to the calling key and expires under api.cursor_ttl.
 
     Args:
@@ -387,8 +387,8 @@ async def asyncio_detailed(
     to the key's default_workspace (ADR-0039 d4) — a self_signed version only when the scope node is its
     own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
     others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
-    v0.3.0's workspace_id parameter and X-OML-Workspace header are request.validation naming workspace
-    in details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
+    v0.3.0's workspace_id parameter and X-OML-Workarea header are request.validation naming workspace in
+    details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
     cursor is bound to the calling key and expires under api.cursor_ttl.
 
     Args:
@@ -489,8 +489,8 @@ async def asyncio(
     to the key's default_workspace (ADR-0039 d4) — a self_signed version only when the scope node is its
     own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
     others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
-    v0.3.0's workspace_id parameter and X-OML-Workspace header are request.validation naming workspace
-    in details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
+    v0.3.0's workspace_id parameter and X-OML-Workarea header are request.validation naming workspace in
+    details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
     cursor is bound to the calling key and expires under api.cursor_ttl.
 
     Args:

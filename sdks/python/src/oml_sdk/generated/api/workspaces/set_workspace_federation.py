@@ -93,7 +93,7 @@ def sync_detailed(
 
      Requires: a reviewer key used_by person with reviewer effective access on the node, or an admin key;
     every other key is refused before any lookup with access.verb_ceiling, details.reason
-    federation_is_human_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still
+    federation_is_person_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still
     recalls there by naming it as the scope. Setting the value the node holds journals nothing;
     otherwise journals workspace.federation_set. Since v0.7.0.
 
@@ -149,7 +149,7 @@ def sync(
 
      Requires: a reviewer key used_by person with reviewer effective access on the node, or an admin key;
     every other key is refused before any lookup with access.verb_ceiling, details.reason
-    federation_is_human_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still
+    federation_is_person_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still
     recalls there by naming it as the scope. Setting the value the node holds journals nothing;
     otherwise journals workspace.federation_set. Since v0.7.0.
 
@@ -200,7 +200,7 @@ async def asyncio_detailed(
 
      Requires: a reviewer key used_by person with reviewer effective access on the node, or an admin key;
     every other key is refused before any lookup with access.verb_ceiling, details.reason
-    federation_is_human_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still
+    federation_is_person_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still
     recalls there by naming it as the scope. Setting the value the node holds journals nothing;
     otherwise journals workspace.federation_set. Since v0.7.0.
 
@@ -254,7 +254,7 @@ async def asyncio(
 
      Requires: a reviewer key used_by person with reviewer effective access on the node, or an admin key;
     every other key is refused before any lookup with access.verb_ceiling, details.reason
-    federation_is_human_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still
+    federation_is_person_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still
     recalls there by naming it as the scope. Setting the value the node holds journals nothing;
     otherwise journals workspace.federation_set. Since v0.7.0.
 

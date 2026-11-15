@@ -401,7 +401,7 @@ async fn a_held_version_with_a_hold_finding_is_never_served_unreviewed_in_progre
         .write(
             &w.ann,
             "f1",
-            "the canary drains first [needs-human]",
+            "the canary drains first [needs-person]",
             w.proj,
         )
         .await;

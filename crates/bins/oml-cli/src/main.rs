@@ -5084,7 +5084,7 @@ fn review_doctor(me: Option<&Value>) -> Option<String> {
         Some("person") => "ok bulk review: this key lists and judges held items in bulk (oml review list, oml review approve --ids)".to_owned(),
         used_by => format!(
             "warn bulk review: this key is used by {}, so it cannot review in bulk \
-             (access.verb_ceiling, bulk_review_is_human_only); use a reviewer key issued \
+             (access.verb_ceiling, bulk_review_is_person_only); use a reviewer key issued \
              --used-by person or the admin page",
             used_by.unwrap_or("unknown")
         ),

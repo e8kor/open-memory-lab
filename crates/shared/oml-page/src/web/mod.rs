@@ -284,7 +284,7 @@ pub fn attr(value: &str) -> String {
 }
 
 /// A state's chip (the design system's `StateChip`): the word, its glyph
-/// and its colour together. A word that is not a memory's state or a
+/// and its colour together; the state `promoted` reads as approved. A word that is not a memory's state or a
 /// verdict is a quiet chip without a glyph.
 #[must_use]
 pub fn state_tag(state: &str) -> String {
@@ -296,10 +296,16 @@ pub fn state_tag(state: &str) -> String {
         "reject" => ("rejected", "rejected"),
         _ => ("quiet", ""),
     };
+    // The stored state `promoted` reads as approved (ADR-0091 d16).
+    let word = if state == "promoted" {
+        "approved"
+    } else {
+        state
+    };
     format!(
         r#"<span class="tag oml-chip is-{class}">{}{}</span>"#,
         glyph_svg(glyph),
-        escape(state)
+        escape(word)
     )
 }
 

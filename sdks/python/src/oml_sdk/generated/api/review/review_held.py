@@ -137,7 +137,7 @@ def sync_detailed(
     """The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
 
      Requires: a reviewer key used_by person; any other key, a reviewer key used by an agent or a service
-    included, is refused with access.verb_ceiling, details.reason bulk_review_is_human_only, before any
+    included, is refused with access.verb_ceiling, details.reason bulk_review_is_person_only, before any
     lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its reviewer
     effective access, not claimed by another key, whose lineage closure holds neither the key nor its
     principal, and no held successor whose rival the key authored, ordered held_since then artifact_id.
@@ -204,7 +204,7 @@ def sync(
     """The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
 
      Requires: a reviewer key used_by person; any other key, a reviewer key used by an agent or a service
-    included, is refused with access.verb_ceiling, details.reason bulk_review_is_human_only, before any
+    included, is refused with access.verb_ceiling, details.reason bulk_review_is_person_only, before any
     lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its reviewer
     effective access, not claimed by another key, whose lineage closure holds neither the key nor its
     principal, and no held successor whose rival the key authored, ordered held_since then artifact_id.
@@ -266,7 +266,7 @@ async def asyncio_detailed(
     """The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
 
      Requires: a reviewer key used_by person; any other key, a reviewer key used by an agent or a service
-    included, is refused with access.verb_ceiling, details.reason bulk_review_is_human_only, before any
+    included, is refused with access.verb_ceiling, details.reason bulk_review_is_person_only, before any
     lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its reviewer
     effective access, not claimed by another key, whose lineage closure holds neither the key nor its
     principal, and no held successor whose rival the key authored, ordered held_since then artifact_id.
@@ -331,7 +331,7 @@ async def asyncio(
     """The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
 
      Requires: a reviewer key used_by person; any other key, a reviewer key used by an agent or a service
-    included, is refused with access.verb_ceiling, details.reason bulk_review_is_human_only, before any
+    included, is refused with access.verb_ceiling, details.reason bulk_review_is_person_only, before any
     lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its reviewer
     effective access, not claimed by another key, whose lineage closure holds neither the key nor its
     principal, and no held successor whose rival the key authored, ordered held_since then artifact_id.

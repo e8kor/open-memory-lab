@@ -105,7 +105,7 @@ def sync_detailed(
     ordinal, competing-successor, retirement and retired-claim rules are declared in
     docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workspace, if sent, must
     equal the target's workspace (request.validation, details.field /workspace, otherwise), and an
-    X-OML-Workspace header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7);
+    X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7);
     that check, the tip, the kind and retirement checks and workspace.frozen are answered only after the
     target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
     the key with a nil workspace; the record is looked up after step 1 of that rule and before step 2,
@@ -179,7 +179,7 @@ def sync(
     ordinal, competing-successor, retirement and retired-claim rules are declared in
     docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workspace, if sent, must
     equal the target's workspace (request.validation, details.field /workspace, otherwise), and an
-    X-OML-Workspace header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7);
+    X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7);
     that check, the tip, the kind and retirement checks and workspace.frozen are answered only after the
     target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
     the key with a nil workspace; the record is looked up after step 1 of that rule and before step 2,
@@ -248,7 +248,7 @@ async def asyncio_detailed(
     ordinal, competing-successor, retirement and retired-claim rules are declared in
     docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workspace, if sent, must
     equal the target's workspace (request.validation, details.field /workspace, otherwise), and an
-    X-OML-Workspace header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7);
+    X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7);
     that check, the tip, the kind and retirement checks and workspace.frozen are answered only after the
     target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
     the key with a nil workspace; the record is looked up after step 1 of that rule and before step 2,
@@ -320,7 +320,7 @@ async def asyncio(
     ordinal, competing-successor, retirement and retired-claim rules are declared in
     docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workspace, if sent, must
     equal the target's workspace (request.validation, details.field /workspace, otherwise), and an
-    X-OML-Workspace header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7);
+    X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7);
     that check, the tip, the kind and retirement checks and workspace.frozen are answered only after the
     target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
     the key with a nil workspace; the record is looked up after step 1 of that rule and before step 2,

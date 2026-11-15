@@ -57,7 +57,7 @@ def sync_detailed(
     """The sign-in page without a session; a signed-in browser goes on to the Keys view.
 
      Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with
-    access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Every view of the user page is
+    access.verb_ceiling, details.reason web_is_person_only (ADR-0045 d7). Every view of the user page is
     oml-web's at a path of its own (ADR-0070 d7 (b)); a signed-in request naming a view is
     access.not_found, the old ?view= URLs' 303s having been deleted in v0.7.1 (ADR-0070, "The old URLs
     deleted"). Served with the connect page's headers (ADR-0045 d8). Routed only on the lead and only
@@ -87,7 +87,7 @@ def sync(
     """The sign-in page without a session; a signed-in browser goes on to the Keys view.
 
      Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with
-    access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Every view of the user page is
+    access.verb_ceiling, details.reason web_is_person_only (ADR-0045 d7). Every view of the user page is
     oml-web's at a path of its own (ADR-0070 d7 (b)); a signed-in request naming a view is
     access.not_found, the old ?view= URLs' 303s having been deleted in v0.7.1 (ADR-0070, "The old URLs
     deleted"). Served with the connect page's headers (ADR-0045 d8). Routed only on the lead and only
@@ -113,7 +113,7 @@ async def asyncio_detailed(
     """The sign-in page without a session; a signed-in browser goes on to the Keys view.
 
      Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with
-    access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Every view of the user page is
+    access.verb_ceiling, details.reason web_is_person_only (ADR-0045 d7). Every view of the user page is
     oml-web's at a path of its own (ADR-0070 d7 (b)); a signed-in request naming a view is
     access.not_found, the old ?view= URLs' 303s having been deleted in v0.7.1 (ADR-0070, "The old URLs
     deleted"). Served with the connect page's headers (ADR-0045 d8). Routed only on the lead and only
@@ -141,7 +141,7 @@ async def asyncio(
     """The sign-in page without a session; a signed-in browser goes on to the Keys view.
 
      Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with
-    access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Every view of the user page is
+    access.verb_ceiling, details.reason web_is_person_only (ADR-0045 d7). Every view of the user page is
     oml-web's at a path of its own (ADR-0070 d7 (b)); a signed-in request naming a view is
     access.not_found, the old ?view= URLs' 303s having been deleted in v0.7.1 (ADR-0070, "The old URLs
     deleted"). Served with the connect page's headers (ADR-0045 d8). Routed only on the lead and only

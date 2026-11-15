@@ -1,5 +1,5 @@
 //! The layers of ADR-0070 d3, outermost first: 1 the ids and the line, 2
-//! the human-only gate, 4 the same-origin and CSRF check, 5 the headers.
+//! the person-only gate, 4 the same-origin and CSRF check, 5 the headers.
 //! Layer 3, the session load, is [`crate::session::load`] on the page
 //! routes, inside these, so a form is refused before any API call; layer 7
 //! is [`crate::outcome`]. Layer 6, the per-session cap on calls in flight,
@@ -25,7 +25,7 @@ pub const REQUEST_ID: &str = "x-request-id";
 pub const CORRELATION_ID: &str = "x-correlation-id";
 /// The `details.reason` of an `Authorization` header on a page route,
 /// the lead's own reason for the same refusal (ADR-0045 d7).
-pub const HUMAN_ONLY: &str = "web_is_human_only";
+pub const HUMAN_ONLY: &str = "web_is_person_only";
 
 /// The pages' policy (ADR-0070 d3 layer 5): nothing loads but the one
 /// stylesheet, named by its compile-time digest, forms post only to the
@@ -182,7 +182,7 @@ fn ids_of(req: &Request) -> RequestIds {
 /// Layer 2: a page answers browsers only. An `Authorization` header on any
 /// route but the health probe is refused before anything else is read
 /// (ADR-0045 d7).
-pub async fn human_only(req: Request, next: Next) -> Response {
+pub async fn person_only(req: Request, next: Next) -> Response {
     if req.uri().path() != HEALTH_PATH && req.headers().contains_key(header::AUTHORIZATION) {
         return refusal(
             &ids_of(&req),

@@ -111,7 +111,7 @@ async fn every_request_writes_one_line_naming_the_route_template_and_no_header_v
 }
 
 #[tokio::test]
-async fn an_authorization_header_on_a_page_route_is_refused_as_human_only_and_still_logged() {
+async fn an_authorization_header_on_a_page_route_is_refused_as_person_only_and_still_logged() {
     let (app, lines) = rig();
     let response = app
         .oneshot(

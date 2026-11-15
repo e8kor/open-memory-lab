@@ -960,7 +960,7 @@ async fn submission_digests_nfc_text() {
         SeqIdGen::new(),
         MarkerScanner {
             veto_marker: "caf\u{e9}".to_owned(),
-            hold_marker: "[needs-human]".to_owned(),
+            hold_marker: "[needs-person]".to_owned(),
         },
     );
     let (boot, crew) = tenant(&scanning).await;
@@ -4788,7 +4788,7 @@ fn rendered(err: &AppError) -> (String, String) {
     (err.to_string(), format!("{err:?}"))
 }
 
-/// `X-OML-Workspace` names the node by name; the server replaces the name by
+/// `X-OML-Workarea` names the node by name; the server replaces the name by
 /// the node's id after the verb ceiling, and the request runs as the same
 /// request by id runs — which is the same request, so it replays
 /// (http-api.md names and ids; ADR-0026 d4).
@@ -10476,7 +10476,7 @@ async fn no_parameter_or_header_changes_the_guardrail_scope() {
         )
         .await
         .expect("issue key");
-    // X-OML-Workspace picks the node within the grants, never the scope.
+    // X-OML-Workarea picks the node within the grants, never the scope.
     for node in [crew, team] {
         let set = app
             .guardrails(
@@ -14833,7 +14833,7 @@ async fn rescan_record_held_records_findings_on_held_versions_and_touches_no_pro
     let writer = issue(&before, &admin, Role::Writer, "wanda", crew).await;
     let reviewer = issue(&before, &admin, Role::Reviewer, "dana", crew).await;
     let held = before
-        .submit_memory(&writer.value, &submit_req("held", "[needs-human] held"))
+        .submit_memory(&writer.value, &submit_req("held", "[needs-person] held"))
         .await
         .expect("held")
         .receipt
@@ -14843,7 +14843,7 @@ async fn rescan_record_held_records_findings_on_held_versions_and_touches_no_pro
             &writer.value,
             &SubmitRequest {
                 claim_key: Some("promoted".to_owned()),
-                ..submit_req("promoted", "[needs-human] promoted")
+                ..submit_req("promoted", "[needs-person] promoted")
             },
         )
         .await
@@ -14950,7 +14950,7 @@ async fn a_claim_key_or_a_verdict_reason_carrying_a_finding_is_refused() {
         &reviewer.value,
         id,
         Verdict::Approve,
-        Some("[needs-human] fine"),
+        Some("[needs-person] fine"),
     )
     .await
     .expect("a hold finding in a reason passes");

@@ -333,7 +333,7 @@ Requires: admin key role.
 
 A person's key puts a workspace in progress, or commits it back to standard.
 
-Requires: a reviewer key used_by person with reviewer effective access on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only. in_progress is refused with 409 workspace.in_progress_refused, details.reason universe, status (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress root is its commit, refused with 409 workspace.held_remaining while any version in its subtree is held, dead-lettered ones included.
+Requires: a reviewer key used_by person with reviewer effective access on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason mode_is_person_only. in_progress is refused with 409 workspace.in_progress_refused, details.reason universe, status (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress root is its commit, refused with 409 workspace.held_remaining while any version in its subtree is held, dead-lettered ones included.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
@@ -353,7 +353,7 @@ Requires: a reviewer key used_by person with reviewer effective access on the no
 
 Whether recalls scoped elsewhere may search this workspace when they ask for wider sources.
 
-Requires: a reviewer key used_by person with reviewer effective access on the node, or an admin key; every other key is refused before any lookup with access.verb_ceiling, details.reason federation_is_human_only.
+Requires: a reviewer key used_by person with reviewer effective access on the node, or an admin key; every other key is refused before any lookup with access.verb_ceiling, details.reason federation_is_person_only.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
@@ -546,7 +546,7 @@ The per-tenant journal tail.
 
 The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a verification surface).
 
-Requires: reader effective access on workspace (access.not_found otherwise); omitted, the key's default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workspace_id parameter and X-OML-Workspace header are request.validation naming workspace in details.renamed_to.
+Requires: reader effective access on workspace (access.not_found otherwise); omitted, the key's default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workspace_id parameter and X-OML-Workarea header are request.validation naming workspace in details.renamed_to.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
@@ -609,7 +609,7 @@ Requires: reviewer(review), valid unexpired unconsumed serve bound to this key (
 
 The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
 
-Requires: a reviewer key used_by person; any other key, a reviewer key used by an agent or a service included, is refused with access.verb_ceiling, details.reason bulk_review_is_human_only, before any lookup.
+Requires: a reviewer key used_by person; any other key, a reviewer key used by an agent or a service included, is refused with access.verb_ceiling, details.reason bulk_review_is_person_only, before any lookup.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|

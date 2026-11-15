@@ -89,7 +89,7 @@ def sync_detailed(
     """A person's key puts a workspace in progress, or commits it back to standard (ADR-0030).
 
      Requires: a reviewer key used_by person with reviewer effective access on the node; every other key
-    is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030
+    is refused before any lookup with access.verb_ceiling, details.reason mode_is_person_only (ADR-0030
     d1). in_progress is refused with 409 workspace.in_progress_refused, details.reason universe, status
     (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress
     root is its commit, refused with 409 workspace.held_remaining while any version in its subtree is
@@ -149,7 +149,7 @@ def sync(
     """A person's key puts a workspace in progress, or commits it back to standard (ADR-0030).
 
      Requires: a reviewer key used_by person with reviewer effective access on the node; every other key
-    is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030
+    is refused before any lookup with access.verb_ceiling, details.reason mode_is_person_only (ADR-0030
     d1). in_progress is refused with 409 workspace.in_progress_refused, details.reason universe, status
     (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress
     root is its commit, refused with 409 workspace.held_remaining while any version in its subtree is
@@ -204,7 +204,7 @@ async def asyncio_detailed(
     """A person's key puts a workspace in progress, or commits it back to standard (ADR-0030).
 
      Requires: a reviewer key used_by person with reviewer effective access on the node; every other key
-    is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030
+    is refused before any lookup with access.verb_ceiling, details.reason mode_is_person_only (ADR-0030
     d1). in_progress is refused with 409 workspace.in_progress_refused, details.reason universe, status
     (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress
     root is its commit, refused with 409 workspace.held_remaining while any version in its subtree is
@@ -262,7 +262,7 @@ async def asyncio(
     """A person's key puts a workspace in progress, or commits it back to standard (ADR-0030).
 
      Requires: a reviewer key used_by person with reviewer effective access on the node; every other key
-    is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030
+    is refused before any lookup with access.verb_ceiling, details.reason mode_is_person_only (ADR-0030
     d1). in_progress is refused with 409 workspace.in_progress_refused, details.reason universe, status
     (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress
     root is its commit, refused with 409 workspace.held_remaining while any version in its subtree is

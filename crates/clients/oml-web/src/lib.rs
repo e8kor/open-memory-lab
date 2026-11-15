@@ -275,7 +275,7 @@ async fn not_found() -> StatusCode {
 }
 
 /// The router with every layer, outermost first: ids and the line, the
-/// human-only gate, the same-origin and CSRF check, the headers; then on the
+/// person-only gate, the same-origin and CSRF check, the headers; then on the
 /// page routes the session load.
 pub fn router(web: Web) -> Router {
     let pages = Router::new()
@@ -353,7 +353,7 @@ pub fn router(web: Web) -> Router {
                     web.layers.clone(),
                     middleware::ids_and_log,
                 ))
-                .layer(axum::middleware::from_fn(middleware::human_only))
+                .layer(axum::middleware::from_fn(middleware::person_only))
                 .layer(axum::middleware::from_fn_with_state(
                     web.layers,
                     middleware::same_origin,

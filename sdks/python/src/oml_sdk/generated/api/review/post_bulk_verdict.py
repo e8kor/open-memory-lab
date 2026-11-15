@@ -95,8 +95,8 @@ def sync_detailed(
     per item.
 
      Requires: a reviewer key used_by person (access.verb_ceiling, details.reason
-    bulk_review_is_human_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct ids
-    the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST
+    bulk_review_is_person_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct
+    ids the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST
     /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or
     review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying
     same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal's code:
@@ -150,8 +150,8 @@ def sync(
     per item.
 
      Requires: a reviewer key used_by person (access.verb_ceiling, details.reason
-    bulk_review_is_human_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct ids
-    the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST
+    bulk_review_is_person_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct
+    ids the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST
     /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or
     review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying
     same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal's code:
@@ -200,8 +200,8 @@ async def asyncio_detailed(
     per item.
 
      Requires: a reviewer key used_by person (access.verb_ceiling, details.reason
-    bulk_review_is_human_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct ids
-    the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST
+    bulk_review_is_person_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct
+    ids the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST
     /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or
     review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying
     same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal's code:
@@ -253,8 +253,8 @@ async def asyncio(
     per item.
 
      Requires: a reviewer key used_by person (access.verb_ceiling, details.reason
-    bulk_review_is_human_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct ids
-    the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST
+    bulk_review_is_person_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct
+    ids the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST
     /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or
     review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying
     same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal's code:

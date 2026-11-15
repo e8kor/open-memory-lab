@@ -47,7 +47,7 @@ pub enum StoreError {
     QuotaReached(oml_domain::signup::QuotaReached),
     /// An in-progress commit found a held version on its subtree inside
     /// the committing transaction; the commit wrote nothing (ADR-0030 d6).
-    #[error("a version in the committed subtree is still held")]
+    #[error("a version in the subtree whose drafts return to the writing key is still held")]
     HeldRemaining,
     /// A promotion or ratification carried no approval to a store whose
     /// schema keeps one (migration 0044): the commit wrote nothing. The
@@ -84,7 +84,7 @@ pub enum StoreError {
     /// in, since the proposal. The commit wrote nothing; answered
     /// `workspace.transition_refused`, `details.reason`
     /// `children_not_frozen` (errors.md; ADR-0009 d4).
-    #[error("transition {transition_id}: workspace {workspace_id} has a child not validated")]
+    #[error("transition {transition_id}: workspace {workspace_id} has a child that is not frozen")]
     ChildrenNotFrozen {
         transition_id: Uuid,
         workspace_id: Uuid,

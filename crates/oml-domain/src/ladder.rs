@@ -73,14 +73,14 @@ pub enum LadderRefusal {
     #[error("the universe root takes no transition")]
     Universe,
     /// To `frozen` while a child is not `frozen` (d4).
-    #[error("an area becomes validated only when every child is validated")]
+    #[error("a workspace becomes frozen only when every child is frozen")]
     ChildrenNotFrozen,
     /// At ratification, the proposal's `from` is no longer the node's status.
     #[error("the proposal's from is no longer the node's status")]
     Stale,
     /// To `frozen` on a user root, which climbs to `protected` at most
     /// (ADR-0046 d1).
-    #[error("a user root climbs to protected and is never validated")]
+    #[error("a user root climbs to protected and is never frozen")]
     UserRoot,
 }
 

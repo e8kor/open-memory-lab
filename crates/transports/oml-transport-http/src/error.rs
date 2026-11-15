@@ -264,7 +264,7 @@ fn transition_refused(
     ApiError::new(
         StatusCode::CONFLICT,
         "workspace.transition_refused",
-        "The status ladder moves forward only — development → protected → frozen — and an area becomes validated only when all its children are.",
+        "The status ladder moves forward only — development → protected → frozen — and a workspace becomes frozen only when all its children are.",
         message,
     )
     .with_details(json!({
@@ -601,7 +601,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ),
         )
         .with_details(json!({
-            "reason": "bulk_review_is_human_only",
+            "reason": "bulk_review_is_person_only",
             "role": role.as_str(),
             "used_by": used_by.as_str(),
         })),
@@ -620,7 +620,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ),
         )
         .with_details(json!({
-            "reason": "chat_scope_is_human_only",
+            "reason": "chat_scope_is_person_only",
             "used_by": used_by.as_str(),
         })),
         // Only a person's key sets a workspace's mode (ADR-0030 d1).
@@ -635,7 +635,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ),
         )
         .with_details(json!({
-            "reason": "mode_is_human_only",
+            "reason": "mode_is_person_only",
             "role": role.as_str(),
             "used_by": used_by.as_str(),
         })),
@@ -652,7 +652,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ),
         )
         .with_details(json!({
-            "reason": "federation_is_human_only",
+            "reason": "federation_is_person_only",
             "role": role.as_str(),
             "used_by": used_by.as_str(),
         })),
@@ -841,7 +841,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "protected",
             "frozen",
             "children_not_frozen",
-            format!("transition {transition_id}'s node has a child not validated"),
+            format!("transition {transition_id}'s node has a child that is not frozen"),
         ),
         AppError::Store(StoreError::RatifierIsProposer { transition_id }) => ApiError::new(
             StatusCode::FORBIDDEN,
@@ -870,8 +870,8 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::WorkspaceFrozen { workspace_id, op } => ApiError::new(
             StatusCode::CONFLICT,
             "workspace.frozen",
-            "`frozen` is frozen: the only mutations it admits are demote, erasure, and crew-metadata update, each journalled.",
-            format!("workspace {workspace_id} is validated and refuses {op:?}"),
+            "A frozen workspace admits only demote, erasure and crew-metadata update, each journalled.",
+            format!("workspace {workspace_id} is frozen and refuses {op:?}"),
         ),
         AppError::RatifierIsProposer => ApiError::new(
             StatusCode::FORBIDDEN,

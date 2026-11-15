@@ -142,7 +142,7 @@ impl Act {
                 text(to)
             ),
             Self::InProgress => format!(
-                "Makes the drafts in <code>{path}</code> visible to everyone working here: the user's agents recall each other's unreviewed memories inside it, marked unreviewed, and nothing leaves it until its drafts are visible to the writing key alone again."
+                "Makes the drafts in <code>{path}</code> visible to everyone working here: each key that reads inside it sees the others' held memories, marked unreviewed. A read scoped above it or beside it sees none of them."
             ),
             Self::Commit => format!(
                 "Makes the drafts in <code>{path}</code> visible to the writing key alone, which needs every memory in it reviewed."
@@ -807,7 +807,7 @@ async fn view(
                 r#"<h1>Workspaces</h1><p class="desc">Under <code>{}</code>. Apply asks for a confirmation.</p>{confirm}{table}"#,
                 short(user)
             );
-            body.push_str("<details class=\"help\"><summary>?</summary>Drafts visible to everyone working here: the user's agents recall each other's unreviewed memories inside it, and nothing leaves it until its drafts are visible to the writing key alone again, which needs every memory in it reviewed.</details>");
+            body.push_str("<details class=\"help\"><summary>?</summary>Drafts visible to everyone working here: each key that reads inside the workspace sees the others' held memories, marked unreviewed, and a read scoped above it or beside it sees none of them. Making the drafts visible to the writing key alone again needs every memory in it reviewed.</details>");
             body.push_str("<h2>New workspace</h2>");
             // Creating a workspace is the view's act, through `POST
             // /v2/workspaces` under the form's nonce (ADR-0070 d7 (b)).

@@ -4099,7 +4099,7 @@ async fn an_anonymous_universe_row_shows_no_scan_finding_to_a_reader_outside_its
         &[
             ("action", "curate"),
             ("source", &source.to_string()),
-            ("text", "Keys rotate quarterly. [needs-human]"),
+            ("text", "Keys rotate quarterly. [needs-person]"),
         ],
     )
     .await;
@@ -4358,7 +4358,7 @@ async fn the_review_card_names_every_scan_finding() {
                 claim_key: Some("flagged".to_owned()),
                 verb: Some(oml_app::types::SubmitVerb::Remember),
                 kind: oml_app::domain::MemoryKind::Memory,
-                body: "the deploy note [needs-human] in the body".to_owned(),
+                body: "the deploy note [needs-person] in the body".to_owned(),
                 workspace: None,
                 derives_from: Vec::new(),
                 severity: None,
@@ -4366,7 +4366,7 @@ async fn the_review_card_names_every_scan_finding() {
                 valid_from: None,
                 valid_until: None,
                 format: None,
-                title: Some("[needs-human] in the title".to_owned()),
+                title: Some("[needs-person] in the title".to_owned()),
                 on_similar: Default::default(),
             },
         )
@@ -4926,7 +4926,7 @@ async fn the_admin_memory_page_shows_the_scan_finding_the_persons_page_shows() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let value = laptop_key(&rig, &cookie).await;
-    let memory = agent_writes(&rig, &value, "Keys rotate quarterly. [needs-human]").await;
+    let memory = agent_writes(&rig, &value, "Keys rotate quarterly. [needs-person]").await;
     let (_, _, person) = send(
         &rig.router,
         get(&format!("/web/memory?id={memory}"), Some(&cookie)),
@@ -6478,7 +6478,7 @@ async fn the_json_route_answers_exactly_the_lists_rows() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
-    assert!(body.contains("web_is_human_only"), "{body}");
+    assert!(body.contains("web_is_person_only"), "{body}");
     for path in ["/web/data/memories", "/web/admin/data/memories"] {
         let (status, _, body) = send(&rig.router, get(path, None)).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");

@@ -504,7 +504,7 @@ pub struct Attachment {
 }
 
 /// The kind of reviewer that approved a version (ADR-0077 d2): the
-/// reviewing key's attestation, `agent`, `human` or `service`, and whether
+/// reviewing key's attestation, `agent`, `person` or `service`, and whether
 /// that key acts for the author's person.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Approver {
@@ -637,7 +637,7 @@ pub struct AdminRead {
     pub plaintext_digest: Option<String>,
     #[serde(default)]
     pub verdicts: Vec<AdminVerdict>,
-    /// The authoring key's holder, `agent`, `human` or `service`; absent,
+    /// The authoring key's holder, `agent`, `person` or `service`; absent,
     /// with the two fields after it, from an API before v0.7.0.
     #[serde(default)]
     pub used_by: Option<String>,

@@ -279,7 +279,7 @@
                 }
               }
             ],
-            "description": "Recall only: where to search. scope (the default) is the workspace and its subtree; wide adds the committed and validated workspaces this key already reads elsewhere, chosen by how many of their rows hold the query's words; a list such as [\"acme.legal\", \"acme.product\"] searches exactly those workspaces, answered whole or refused. Each hit then names its workspace_path and via, scope or federated. Refused unless a tenant admin enabled federation. Refused in get and listing modes."
+            "description": "Recall only: where to search. scope (the default) is the workspace and its subtree; wide adds the protected and frozen workspaces this key already reads elsewhere, chosen by how many of their rows hold the query's words; a list such as [\"acme.legal\", \"acme.product\"] searches exactly those workspaces, answered whole or refused. Each hit then names its workspace_path and via, scope or federated. Refused unless a tenant admin enabled federation. Refused in get and listing modes."
           },
           "include_expired": {
             "type": "boolean",

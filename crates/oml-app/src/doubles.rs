@@ -5437,7 +5437,7 @@ impl Default for MarkerScanner {
     fn default() -> Self {
         Self {
             veto_marker: "-----BEGIN".to_owned(),
-            hold_marker: "[needs-human]".to_owned(),
+            hold_marker: "[needs-person]".to_owned(),
         }
     }
 }

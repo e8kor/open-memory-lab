@@ -103,9 +103,9 @@ def sync_detailed(
     else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
     attribution, not a verb of its own. The target workspace is the body's workspace, by id or name,
     honoured only within the key's grants, else the key's default_workspace;
-    request.workspace_unresolved with neither, and an X-OML-Workspace header is request.validation
-    naming /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new
-    memory from that user's keys alone: from any other key that reads the workspace it is 409
+    request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming
+    /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new memory from
+    that user's keys alone: from any other key that reads the workspace it is 409
     submission.user_root_refused, answered in place of access.grant_refused, and a key that reads
     nothing of it gets 404 access.not_found (ADR-0044 d16). Journals submission.remember or
     submission.learn; verb learn with an empty or omitted derives_from is refused
@@ -162,9 +162,9 @@ def sync(
     else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
     attribution, not a verb of its own. The target workspace is the body's workspace, by id or name,
     honoured only within the key's grants, else the key's default_workspace;
-    request.workspace_unresolved with neither, and an X-OML-Workspace header is request.validation
-    naming /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new
-    memory from that user's keys alone: from any other key that reads the workspace it is 409
+    request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming
+    /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new memory from
+    that user's keys alone: from any other key that reads the workspace it is 409
     submission.user_root_refused, answered in place of access.grant_refused, and a key that reads
     nothing of it gets 404 access.not_found (ADR-0044 d16). Journals submission.remember or
     submission.learn; verb learn with an empty or omitted derives_from is refused
@@ -216,9 +216,9 @@ async def asyncio_detailed(
     else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
     attribution, not a verb of its own. The target workspace is the body's workspace, by id or name,
     honoured only within the key's grants, else the key's default_workspace;
-    request.workspace_unresolved with neither, and an X-OML-Workspace header is request.validation
-    naming /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new
-    memory from that user's keys alone: from any other key that reads the workspace it is 409
+    request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming
+    /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new memory from
+    that user's keys alone: from any other key that reads the workspace it is 409
     submission.user_root_refused, answered in place of access.grant_refused, and a key that reads
     nothing of it gets 404 access.not_found (ADR-0044 d16). Journals submission.remember or
     submission.learn; verb learn with an empty or omitted derives_from is refused
@@ -273,9 +273,9 @@ async def asyncio(
     else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
     attribution, not a verb of its own. The target workspace is the body's workspace, by id or name,
     honoured only within the key's grants, else the key's default_workspace;
-    request.workspace_unresolved with neither, and an X-OML-Workspace header is request.validation
-    naming /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new
-    memory from that user's keys alone: from any other key that reads the workspace it is 409
+    request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming
+    /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new memory from
+    that user's keys alone: from any other key that reads the workspace it is 409
     submission.user_root_refused, answered in place of access.grant_refused, and a key that reads
     nothing of it gets 404 access.not_found (ADR-0044 d16). Journals submission.remember or
     submission.learn; verb learn with an empty or omitted derives_from is refused

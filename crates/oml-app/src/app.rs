@@ -7742,7 +7742,7 @@ where
     /// (ADR-0044 d16); a writer's own target and writer on its workspace
     /// (step 3), or a reviewer's reviewer and reader there, whoever authored
     /// it (step 4, edit-as-proposal); then the target-dependent refusals —
-    /// `X-OML-Workspace`, the served tip, the kind and retirement checks,
+    /// `X-OML-Workarea`, the served tip, the kind and retirement checks,
     /// and from `oml_write` the vocabulary-kind check, and last the
     /// workspace not `frozen`, else `workspace.frozen` (step 5; ADR-0009
     /// d5); then the checks every submit runs. The successor takes the next

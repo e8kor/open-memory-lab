@@ -3286,7 +3286,7 @@ pub enum AppError {
     ServeIdUnresolved { several: bool },
     /// The held listing and the bulk verdict are a person's act: a key not
     /// a reviewer used by a person is refused before any lookup (ADR-0055 d1;
-    /// errors.md `access.verb_ceiling`, reason `bulk_review_is_human_only`).
+    /// errors.md `access.verb_ceiling`, reason `bulk_review_is_person_only`).
     #[error("bulk review is a person's act: a {} key used by {} is refused (ADR-0055 d1, access.verb_ceiling)", .role.as_str(), .used_by.as_str())]
     BulkReviewHumanOnly { role: Role, used_by: UsedBy },
     /// `origin` outside its grammar, or out of step with the anchor
@@ -3295,16 +3295,16 @@ pub enum AppError {
     OriginInvalid { field: String, reason: String },
     /// A person's chat workspace, `chat` directly under a user root, is
     /// created only by a key used by a person (ADR-0063 d8;
-    /// `access.verb_ceiling`, reason `chat_scope_is_human_only`).
+    /// `access.verb_ceiling`, reason `chat_scope_is_person_only`).
     #[error("the chat workspace is a person's to open: a key used by {} is refused (ADR-0063 d8, access.verb_ceiling)", .used_by.as_str())]
     ChatScopeHumanOnly { used_by: UsedBy },
     /// Only a person's key sets a workspace's mode (ADR-0030 d1; errors.md
-    /// `access.verb_ceiling`, reason `mode_is_human_only`).
+    /// `access.verb_ceiling`, reason `mode_is_person_only`).
     #[error("a workspace's mode is set by a person's key: a {} key used by {} is refused (ADR-0030 d1, access.verb_ceiling)", .role.as_str(), .used_by.as_str())]
     ModeHumanOnly { role: Role, used_by: UsedBy },
     /// Only a person's reviewer key or a tenant admin sets a workspace's
     /// federation field (ADR-0072 d5; errors.md `access.verb_ceiling`,
-    /// reason `federation_is_human_only`).
+    /// reason `federation_is_person_only`).
     #[error("a workspace's federation field is set by a person's reviewer key or a tenant admin: a {} key used by {} is refused (ADR-0072 d5, access.verb_ceiling)", .role.as_str(), .used_by.as_str())]
     FederationHumanOnly { role: Role, used_by: UsedBy },
     /// The shape of `sources`, `wide` or a list on a tenant with federation
@@ -3415,9 +3415,7 @@ pub enum AppError {
     },
     /// A `frozen` node was asked for an operation freeze forbids
     /// (errors.md `workspace.frozen`; ADR-0009 d5).
-    #[error(
-        "workspace {workspace_id} is validated and refuses {op:?} (errors.md workspace.frozen)"
-    )]
+    #[error("workspace {workspace_id} is frozen and refuses {op:?} (errors.md workspace.frozen)")]
     WorkspaceFrozen { workspace_id: Uuid, op: FrozenOp },
     /// The ratifying key is the proposing key or holds the proposer's
     /// principal, of a status transition or a claim edge (errors.md

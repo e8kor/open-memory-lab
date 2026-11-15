@@ -87,7 +87,7 @@ def sync_detailed(
 
      Requires: reader effective access on the subtree. The scope is the subtree of the body's workspace,
     by id or name, else of the key's default_workspace (ADR-0039 d4); neither answers
-    request.workspace_unresolved, with no tenant-wide fallback, and an X-OML-Workspace header is
+    request.workspace_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
     request.validation naming /workspace in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
@@ -142,7 +142,7 @@ def sync(
 
      Requires: reader effective access on the subtree. The scope is the subtree of the body's workspace,
     by id or name, else of the key's default_workspace (ADR-0039 d4); neither answers
-    request.workspace_unresolved, with no tenant-wide fallback, and an X-OML-Workspace header is
+    request.workspace_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
     request.validation naming /workspace in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
@@ -192,7 +192,7 @@ async def asyncio_detailed(
 
      Requires: reader effective access on the subtree. The scope is the subtree of the body's workspace,
     by id or name, else of the key's default_workspace (ADR-0039 d4); neither answers
-    request.workspace_unresolved, with no tenant-wide fallback, and an X-OML-Workspace header is
+    request.workspace_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
     request.validation naming /workspace in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
@@ -245,7 +245,7 @@ async def asyncio(
 
      Requires: reader effective access on the subtree. The scope is the subtree of the body's workspace,
     by id or name, else of the key's default_workspace (ADR-0039 d4); neither answers
-    request.workspace_unresolved, with no tenant-wide fallback, and an X-OML-Workspace header is
+    request.workspace_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is
     request.validation naming /workspace in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
