@@ -295,17 +295,18 @@ def journal_row(conn, t: Tenant, seq: int, event_type: str, payload: dict, key: 
 
 
 def seed_before_0004(conn: psycopg.Connection, t: Tenant) -> None:
-    """Rows in every 0001-0003 table, in the 0003 schema (0001 + 0002 columns)."""
+    """Rows in every 0001-0003 table, in the 0003 schema (0001 + 0002 columns), in the names
+    that schema holds: 0047 renames them later (ADR-0091 d6)."""
     with tenant_tx(conn, t.id):
         seed_insert(conn, "INSERT INTO tenants (id, name) VALUES (%s, %s)", [t.id, f"{t.marker} tenant"])
         seed_insert(
-            conn, "INSERT INTO workspaces (id, tenant_id, parent_id, name, status) VALUES "
-            "(%s, %s, NULL, %s, 'protected'), (%s, %s, %s, %s, 'development')",
+            conn, "INSERT INTO workareas (id, tenant_id, parent_id, name, status) VALUES "
+            "(%s, %s, NULL, %s, 'committed'), (%s, %s, %s, %s, 'development')",
             [t.universe, t.id, f"{t.marker} universe", t.child, t.id, t.universe, f"{t.marker} child"],
         )
         seed_insert(
-            conn, "INSERT INTO api_keys (id, tenant_id, hash, role, principal, used_by, default_workspace_id) "
-            "VALUES (%s, %s, %s, 'writer', %s, 'agent', %s), (%s, %s, %s, 'reviewer', %s, 'agent', %s)",
+            conn, "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, default_workarea_id) "
+            "VALUES (%s, %s, %s, 'writer', %s, 'agent', %s), (%s, %s, %s, 'dreamer', %s, 'agent', %s)",
             [t.writer, t.id, key_hash(t.letter, "writer"), t.principal, t.child,
              t.reviewer, t.id, key_hash(t.letter, "reviewer"), f"{t.marker}/reviewer-1", t.universe],
         )
@@ -333,7 +334,7 @@ def seed_before_0004(conn: psycopg.Connection, t: Tenant) -> None:
         ]
         for mid, claim, status, seq, claim_key in memories:
             seed_insert(
-                conn, "INSERT INTO memories (id, tenant_id, workspace_id, claim, claim_digest, status, "
+                conn, "INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, "
                 "created_event_id, terms, claim_key, author_principal, author_key_id, derives_from, "
                 "lineage_principals, lineage_key_ids) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",

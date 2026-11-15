@@ -154,3 +154,8 @@ sdks/typescript/src/generated/schema.ts | (default_workarea_id  # generated from
 docs/api/openapi.yaml | workarea_node_id, the v0.3.0 spelling, is refused  # the denial route refuses v0.3.0's spelling by its real name (ADR-0039 d7)
 crates/transports/oml-transport-http/src/lib.rs | v0.3.0's `workarea_id` names  # names v0.3.0's spelling the listing refuses by its real name (ADR-0039 d7)
 sdks/typescript/src/generated/schema.ts | workarea_node_id, the v0.3.0 spelling, is refused  # generated from openapi.yaml's description of the denial route's v0.3.0 spelling (ADR-0039 d7)
+testing/spikes/rls/spike_rls.py | INSERT INTO workareas (id, tenant_id, parent_id, name, status)  # the spike seeds the 0003 schema before 0004 in the names it holds (d6, d11)
+testing/spikes/rls/spike_rls.py | (%s, %s, NULL, %s, 'committed')  # the spike seeds the 0003 schema before 0004 in the names it holds (d6, d11)
+testing/spikes/rls/spike_rls.py | principal, held_by, default_workarea_id)  # the spike seeds the 0003 schema before 0004 in the names it holds (d6, d11)
+testing/spikes/rls/spike_rls.py | 'dreamer', %s, 'agent', %s)  # the spike seeds the 0003 schema before 0004 in the names it holds (d6, d11)
+testing/spikes/rls/spike_rls.py | INSERT INTO memories (id, tenant_id, workarea_id, claim  # the spike seeds the 0003 schema before 0004 in the names it holds (d6, d11)
