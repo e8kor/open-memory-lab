@@ -3711,9 +3711,7 @@ impl JournalStore for MemStore {
                 {
                     continue;
                 }
-                let (count, first) = authors
-                    .entry(memory.author_key_id)
-                    .or_insert((0, position));
+                let (count, first) = authors.entry(memory.author_key_id).or_insert((0, position));
                 *count += 1;
                 *first = (*first).min(position);
             }

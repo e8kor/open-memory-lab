@@ -79,7 +79,7 @@ use oml_app::types::{
     Verdict, VerdictRequest, Whoami, WorkspaceInfo, WorkspaceRecord,
 };
 use oml_app::types::{
-    BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage,
+    BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage, ReviewLane,
 };
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -1411,6 +1411,7 @@ where
         st.require_writes_open()?; // claiming a serve is a side effect
         let acting = acting(headers, None)?;
         let _idem = idempotency_key(headers)?;
+        let mut needs = None;
         if !body.is_empty() {
             // The subtree filter is not built: the PoC serves the whole
             // tenant queue, so a `workspace` is refused by name, never
@@ -1424,10 +1425,11 @@ where
                 )
                 .with_details(json!({ "field": "/workspace" })));
             }
+            needs = parse_needs(filter.needs.as_deref(), "/needs")?;
         }
         let served = st
             .app
-            .review_next(acting.bearer())
+            .review_next_needing(acting.bearer(), needs)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Review))?;
         match served {
@@ -1593,6 +1595,7 @@ where
                 "workspace" => req.workspace = Some(reference("workspace", value)?),
                 "author_key" => req.author_key = Some(reference("author_key", value)?),
                 "claim_key_prefix" => req.claim_key_prefix = Some(value.clone()),
+                "needs" => req.needs = parse_needs(Some(value), "needs")?,
                 "limit" => req.limit = page_limit(value)?,
                 "cursor" => req.cursor = Some(value.clone()),
                 other => {
@@ -3485,6 +3488,23 @@ struct ReviewNextBody {
     /// the filter is unbuilt. Any JSON value is the field's presence.
     #[serde(default)]
     workspace: Option<Value>,
+    /// `person` serves the person lane alone, `reviewer` the rows any
+    /// reviewer may approve (ADR-0074 d19; ADR-0080 d16).
+    #[serde(default)]
+    needs: Option<String>,
+}
+
+/// The `needs` of a review read, `person` or `reviewer`, refused naming
+/// `field` otherwise (ADR-0074 d19; ADR-0080 d16).
+fn parse_needs(needs: Option<&str>, field: &str) -> Result<Option<ReviewLane>, ApiError> {
+    needs
+        .map(|word| {
+            ReviewLane::parse(word).ok_or_else(|| {
+                ApiError::validation(format!("needs is person or reviewer, not {word:?}"))
+                    .with_details(json!({ "field": field }))
+            })
+        })
+        .transpose()
 }
 
 #[derive(Deserialize)]
@@ -3606,6 +3626,13 @@ pub fn held_page_json(page: &HeldPage) -> Value {
             value
         }).collect::<Vec<_>>(),
         "next_cursor": page.next_cursor,
+        // With needs=person, the lane's rows per author key (ADR-0074 d19).
+        "lane_authors": page.lane_authors.as_ref().map(|authors| {
+            authors
+                .iter()
+                .map(|(author, held)| json!({ "author_key_id": author, "held": held }))
+                .collect::<Vec<_>>()
+        }),
     })
 }
 

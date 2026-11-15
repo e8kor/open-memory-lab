@@ -1133,7 +1133,7 @@ paths:
       tags: [review]
       operationId: reviewNext
       summary: Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under an expiring serve_id.
-      description: 'Requires: reviewer(review). Serves only rows within the key''s reviewer effective access on the row''s workspace; 204 when nothing in scope waits. A used_by: service key is refused with access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on lineage collision (review.author_in_lineage).'
+      description: 'Requires: reviewer(review). Serves only rows within the key''s reviewer effective access on the row''s workspace; 204 when nothing in scope waits. Never serves a steering, guardrail or skill version, or a successor of another kind that replaces one, to a key that cannot approve it: until #214, a key that is not a reviewer key used_by person with no crew and no profile (ADR-0074 d19, accepted for the instruction class by ADR-0080 d16). A used_by: service key is refused with access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on lineage collision (review.author_in_lineage).'
       parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: false
@@ -1143,6 +1143,8 @@ paths:
             schema:
               type: object
               description: 'The queue is served whole: the subtree filter workspace is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with request.validation until it is built (ADR-0039 d9).'
+              properties:
+                needs: { type: string, enum: [person, reviewer], description: "person serves the person lane alone: steering, guardrail and skill versions and a successor of another kind that replaces one, per author key, the author holding the fewest first and each author's oldest first; a key that cannot approve them is served none, 204. reviewer serves the rows any reviewer may approve. Omitted, a person's reviewer key is served every row and any other key the rows it may approve (ADR-0074 d19; ADR-0080 d16). Since v0.8.0." }
       responses:
         '200':
           description: The serve.
@@ -1242,6 +1244,7 @@ paths:
         - { name: workspace, in: query, schema: { $ref: '#/components/schemas/WorkspaceRef' }, description: "Subtree filter, by id or name." }
         - { name: author_key, in: query, schema: { type: string }, description: "The authoring key, by id or name." }
         - { name: claim_key_prefix, in: query, schema: { type: string }, description: A literal prefix of the claim key. }
+        - { name: needs, in: query, schema: { type: string, enum: [person, reviewer] }, description: "person lists the person lane alone and counts it per author key in lane_authors; reviewer the rows any reviewer may approve. A key that cannot approve an instruction is listed none of the lane (ADR-0074 d19; ADR-0080 d16). Since v0.8.0." }
         - { $ref: '#/components/parameters/Limit' }
         - { $ref: '#/components/parameters/Cursor' }
         - { name: ids, in: query, style: form, explode: false, schema: { type: array, minItems: 1, maxItems: 200, items: { type: string, format: uuid } }, description: "Comma-separated memory ids: each named row as this listing serves it while it is still held and still the key's to judge, else null, in the order named; the bulk confirmation reads it (ADR-0055 d10; ADR-0070 d5). Takes no other parameter. Since v0.6.4." }
@@ -4683,6 +4686,15 @@ components:
                   needs_person: { type: boolean, description: "true for an instruction-class version (steering, guardrail), or a successor of another kind that replaces one: only a person's reviewer key approves it, and any other key is refused review.person_required (ADR-0080 d3, d16). Since v0.8.0." }
                   needs_person_reason: { type: [string, 'null'], description: "instruction_needs_person when needs_person is true; null when it is false (ADR-0080 d16). Since v0.8.0." }
         next_cursor: { type: [string, 'null'] }
+        lane_authors:
+          type: [array, 'null']
+          description: "With needs=person, the lane's rows per author key, in author key id order; null otherwise (ADR-0074 d19). Since v0.8.0."
+          items:
+            type: object
+            required: [author_key_id, held]
+            properties:
+              author_key_id: { type: string, format: uuid }
+              held: { type: integer, minimum: 0 }
 
     BulkVerdictRequest:
       type: object

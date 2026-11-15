@@ -1078,7 +1078,13 @@ struct EventsArgs {
 #[derive(Subcommand)]
 enum ReviewCommand {
     /// Take one held item for this key and serve it.
-    Next,
+    Next {
+        /// `person`: only steering, guardrails and skills, and a change that
+        /// would replace one, which only a person approves. `reviewer`: only
+        /// what any reviewer may approve.
+        #[arg(long, value_parser = ["person", "reviewer"])]
+        needs: Option<String>,
+    },
     /// List held items this key may judge, with text, oldest first, without
     /// taking them. Reviewer keys used by a person only.
     List(ReviewListArgs),
@@ -2965,7 +2971,7 @@ fn run_review(
     command: &ReviewCommand,
 ) -> Result<ExitCode, CliError> {
     match command {
-        ReviewCommand::Next => run_review_next(cli, stored),
+        ReviewCommand::Next { needs } => run_review_next(cli, stored, needs.as_deref()),
         ReviewCommand::List(args) => run_review_list(cli, stored, args),
         ReviewCommand::Approve {
             ids: Some(ids),
@@ -2987,10 +2993,16 @@ fn run_review(
 }
 
 /// `oml review next`: one `POST /v2/review/next`, which claims the item it
-/// serves for this key; 204 when nothing in scope waits.
-fn run_review_next(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
+/// serves for this key; 204 when nothing in scope waits. `--needs` narrows
+/// to the person lane or to the rest (ADR-0074 d19; ADR-0080 d16).
+fn run_review_next(
+    cli: &Cli,
+    stored: &Credentials,
+    needs: Option<&str>,
+) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
-    let (status, response) = client.post("/v2/review/next", &json!({}), &write_opts())?;
+    let body = needs.map_or_else(|| json!({}), |needs| json!({ "needs": needs }));
+    let (status, response) = client.post("/v2/review/next", &body, &write_opts())?;
     if status == 204 {
         if cli.json {
             print_json(&json!({ "serve": Value::Null }));

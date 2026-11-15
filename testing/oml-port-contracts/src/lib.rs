@@ -2218,6 +2218,21 @@ pub async fn journal_review_lane_laws<S: JournalStore>(store: &S) {
         .await
         .expect("commit");
     }
+    // The listing narrows by the lane and counts it per author key, before
+    // any lane row is claimed by another key.
+    let filter = HeldFilter {
+        nodes: vec![wa],
+        author_key_id: None,
+        claim_key_prefix: None,
+        lane: ReviewLane::Person,
+    };
+    let fresh = Uuid::from_u128(0xFA);
+    let mut counts = store
+        .review_held_authors(rig.tenant_id, "fresh", fresh, &filter)
+        .await
+        .expect("counts");
+    counts.sort();
+    assert_eq!(counts, vec![(a, 2), (b, 1), (d, 1)]);
     // The reviewer lane serves the memory alone.
     let agent = Uuid::from_u128(0xE0);
     let served = store
@@ -2259,20 +2274,6 @@ pub async fn journal_review_lane_laws<S: JournalStore>(store: &S) {
         }
     }
     assert_eq!(order, vec![s3, succ, s1, s2]);
-    // The listing narrows by the lane and counts it per author key.
-    let filter = HeldFilter {
-        nodes: vec![wa],
-        author_key_id: None,
-        claim_key_prefix: None,
-        lane: ReviewLane::Person,
-    };
-    let fresh = Uuid::from_u128(0xFA);
-    let mut counts = store
-        .review_held_authors(rig.tenant_id, "fresh", fresh, &filter)
-        .await
-        .expect("counts");
-    counts.sort();
-    assert_eq!(counts, vec![(a, 2), (b, 1), (d, 1)]);
 }
 
 /// The review queue serves each item to one reviewer, only from the
@@ -2310,7 +2311,13 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
 
     // A reviewer with no reviewer node is served nothing, never the tenant.
     let none = store
-        .review_claim_next(rig.tenant_id, "erin", Uuid::from_u128(0xE4), &[], ReviewLane::Any)
+        .review_claim_next(
+            rig.tenant_id,
+            "erin",
+            Uuid::from_u128(0xE4),
+            &[],
+            ReviewLane::Any,
+        )
         .await
         .expect("claim");
     assert!(none.is_none(), "an empty workspace set serves nothing");
@@ -2331,7 +2338,13 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
     assert_eq!(again.memory_id, m2);
     // An independent reviewer gets the remaining item, not alice's claim.
     let served = store
-        .review_claim_next(rig.tenant_id, "carol", Uuid::from_u128(0xE2), &[wa], ReviewLane::Any)
+        .review_claim_next(
+            rig.tenant_id,
+            "carol",
+            Uuid::from_u128(0xE2),
+            &[wa],
+            ReviewLane::Any,
+        )
         .await
         .expect("claim")
         .expect("m1 waits");
@@ -2339,12 +2352,24 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
     // Everything in the set is claimed: m3 waits outside it and is never
     // served from it.
     let none = store
-        .review_claim_next(rig.tenant_id, "dave", Uuid::from_u128(0xE3), &[wa], ReviewLane::Any)
+        .review_claim_next(
+            rig.tenant_id,
+            "dave",
+            Uuid::from_u128(0xE3),
+            &[wa],
+            ReviewLane::Any,
+        )
         .await
         .expect("claim");
     assert!(none.is_none(), "a row outside the set is never served");
     let served = store
-        .review_claim_next(rig.tenant_id, "dave", Uuid::from_u128(0xE3), &[elsewhere], ReviewLane::Any)
+        .review_claim_next(
+            rig.tenant_id,
+            "dave",
+            Uuid::from_u128(0xE3),
+            &[elsewhere],
+            ReviewLane::Any,
+        )
         .await
         .expect("claim")
         .expect("m3 waits");
@@ -2414,7 +2439,13 @@ pub async fn journal_review_held_laws<S: JournalStore>(store: &S) {
     }
     // Another key claims C6 through review next; the listing then skips it.
     let claimed = store
-        .review_claim_next(rig.tenant_id, "carol", Uuid::from_u128(0xE2), &[wa], ReviewLane::Any)
+        .review_claim_next(
+            rig.tenant_id,
+            "carol",
+            Uuid::from_u128(0xE2),
+            &[wa],
+            ReviewLane::Any,
+        )
         .await
         .expect("claim")
         .expect("a row waits");

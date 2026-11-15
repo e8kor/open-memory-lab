@@ -549,6 +549,25 @@ async fn the_review_page_marks_a_held_instruction_as_needing_a_person() {
 }
 
 #[tokio::test]
+async fn the_review_list_shows_the_person_lane_first_with_each_authors_count() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    agent_guardrail(&rig, &value, "Run the tests before every commit.").await;
+    agent_guardrail(&rig, &value, "Never push to main.").await;
+    let (_, _, page) = send(&rig.router, get("/web/review", Some(&cookie))).await;
+    let lane = page
+        .find("<h2>Needs a person</h2>")
+        .expect("the lane section");
+    let held = page.find("<h2>Held memories</h2>").expect("the rest");
+    assert!(lane < held, "the lane comes first: {page}");
+    assert!(page[lane..held].contains("<td>2</td>"), "{page}");
+    assert!(page[lane..held].contains("Never push to main."), "{page}");
+    // The rest holds no lane row twice.
+    assert!(!page[held..].contains("Never push to main."), "{page}");
+}
+
+#[tokio::test]
 async fn the_judge_page_marks_a_memory_successor_of_steering_as_needing_a_person() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;

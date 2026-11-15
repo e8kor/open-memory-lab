@@ -16521,6 +16521,7 @@ async fn a_person_reviewer_is_served_instructions_and_knowledge() {
             .expect("a person approves both");
     }
     assert_eq!(served, vec![steering, memory]);
+}
 
 #[tokio::test]
 async fn a_documents_heading_title_past_200_characters_is_stored_cut_to_200() {

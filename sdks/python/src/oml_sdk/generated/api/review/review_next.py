@@ -100,10 +100,13 @@ def sync_detailed(
     an expiring serve_id.
 
      Requires: reviewer(review). Serves only rows within the key's reviewer effective access on the row's
-    workspace; 204 when nothing in scope waits. A used_by: service key is refused with
-    access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify
-    (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set);
-    refused per item on lineage collision (review.author_in_lineage).
+    workspace; 204 when nothing in scope waits. Never serves a steering, guardrail or skill version, or
+    a successor of another kind that replaces one, to a key that cannot approve it: until #214, a key
+    that is not a reviewer key used_by person with no crew and no profile (ADR-0074 d19, accepted for
+    the instruction class by ADR-0080 d16). A used_by: service key is refused with access.verb_ceiling
+    before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve
+    bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on
+    lineage collision (review.author_in_lineage).
 
     Args:
         x_request_id (str | Unset):
@@ -150,10 +153,13 @@ def sync(
     an expiring serve_id.
 
      Requires: reviewer(review). Serves only rows within the key's reviewer effective access on the row's
-    workspace; 204 when nothing in scope waits. A used_by: service key is refused with
-    access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify
-    (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set);
-    refused per item on lineage collision (review.author_in_lineage).
+    workspace; 204 when nothing in scope waits. Never serves a steering, guardrail or skill version, or
+    a successor of another kind that replaces one, to a key that cannot approve it: until #214, a key
+    that is not a reviewer key used_by person with no crew and no profile (ADR-0074 d19, accepted for
+    the instruction class by ADR-0080 d16). A used_by: service key is refused with access.verb_ceiling
+    before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve
+    bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on
+    lineage collision (review.author_in_lineage).
 
     Args:
         x_request_id (str | Unset):
@@ -195,10 +201,13 @@ async def asyncio_detailed(
     an expiring serve_id.
 
      Requires: reviewer(review). Serves only rows within the key's reviewer effective access on the row's
-    workspace; 204 when nothing in scope waits. A used_by: service key is refused with
-    access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify
-    (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set);
-    refused per item on lineage collision (review.author_in_lineage).
+    workspace; 204 when nothing in scope waits. Never serves a steering, guardrail or skill version, or
+    a successor of another kind that replaces one, to a key that cannot approve it: until #214, a key
+    that is not a reviewer key used_by person with no crew and no profile (ADR-0074 d19, accepted for
+    the instruction class by ADR-0080 d16). A used_by: service key is refused with access.verb_ceiling
+    before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve
+    bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on
+    lineage collision (review.author_in_lineage).
 
     Args:
         x_request_id (str | Unset):
@@ -243,10 +252,13 @@ async def asyncio(
     an expiring serve_id.
 
      Requires: reviewer(review). Serves only rows within the key's reviewer effective access on the row's
-    workspace; 204 when nothing in scope waits. A used_by: service key is refused with
-    access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify
-    (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set);
-    refused per item on lineage collision (review.author_in_lineage).
+    workspace; 204 when nothing in scope waits. Never serves a steering, guardrail or skill version, or
+    a successor of another kind that replaces one, to a key that cannot approve it: until #214, a key
+    that is not a reviewer key used_by person with no crew and no profile (ADR-0074 d19, accepted for
+    the instruction class by ADR-0080 d16). A used_by: service key is refused with access.verb_ceiling
+    before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve
+    bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on
+    lineage collision (review.author_in_lineage).
 
     Args:
         x_request_id (str | Unset):
