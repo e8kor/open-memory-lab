@@ -549,6 +549,106 @@ async fn the_review_page_marks_a_held_instruction_as_needing_a_person() {
 }
 
 #[tokio::test]
+async fn the_judge_page_marks_a_memory_successor_of_steering_as_needing_a_person() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let steering = rig
+        .app
+        .submit_memory(
+            value.as_str(),
+            &oml_app::types::SubmitRequest {
+                kind: oml_app::domain::MemoryKind::Steering,
+                severity: None,
+                idempotency_key: "s-quotes".to_owned(),
+                body: "Quote in USD/t.".to_owned(),
+                ..steering_req()
+            },
+        )
+        .await
+        .expect("the agent proposes steering")
+        .receipt
+        .memory_id;
+    // The person's reviewer key approves it.
+    act_and_follow(&rig, &cookie, "/web/review", &[("action", "review_next")]).await;
+    let serve_id = format!("srv_{}", steering.simple());
+    let (status, _, page) = act_and_follow(
+        &rig,
+        &cookie,
+        "/web/review",
+        &[
+            ("action", "verdict"),
+            ("serve_id", &serve_id),
+            ("verdict", "approve"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    // A memory successor would retire it, so approving it needs a person.
+    let successor = rig
+        .app
+        .supersede(
+            value.as_str(),
+            &oml_app::types::SupersedeRequest {
+                on_similar: Default::default(),
+                anchor: None,
+                origin: None,
+                expected_version: 1,
+                idempotency_key: "s-quotes-memory".to_owned(),
+                target_id: steering,
+                body: "Quotes are in USD/t.".to_owned(),
+                kind: Some(oml_app::domain::MemoryKind::Memory),
+                retirement: false,
+                derives_from: Vec::new(),
+                reason: None,
+                workspace: None,
+                refuse_vocabulary_target: false,
+                severity: None,
+                rule: None,
+                valid_from: None,
+                valid_until: None,
+                format: None,
+                title: None,
+            },
+        )
+        .await
+        .expect("the agent proposes a memory successor")
+        .receipt
+        .memory_id;
+    let (_, _, page) = send(
+        &rig.router,
+        get(&format!("/web/review?memory={successor}"), Some(&cookie)),
+    )
+    .await;
+    assert!(
+        page.contains("<span class=\"k\">Needs a person</span>"),
+        "{page}"
+    );
+}
+
+/// A steering submission's fields apart from its kind, key and body.
+fn steering_req() -> oml_app::types::SubmitRequest {
+    oml_app::types::SubmitRequest {
+        on_similar: Default::default(),
+        anchor: None,
+        origin: None,
+        idempotency_key: String::new(),
+        claim_key: None,
+        verb: None,
+        kind: oml_app::domain::MemoryKind::Steering,
+        body: String::new(),
+        workspace: None,
+        derives_from: Vec::new(),
+        severity: None,
+        rule: None,
+        valid_from: None,
+        valid_until: None,
+        format: None,
+        title: None,
+    }
+}
+
+#[tokio::test]
 async fn the_user_page_shows_guardrail_scope_and_selects_nested_workspaces() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;

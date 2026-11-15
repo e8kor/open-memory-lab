@@ -19,11 +19,14 @@ class HeldNamedItemsItem:
     """
     Attributes:
         id (UUID):
+        needs_person (bool): true when only a person's reviewer key approves the row: it, or the version it replaces, is
+            steering or a guardrail (ADR-0080 d16); false when item is null. Since v0.8.0.
         item (Memory | None): The row as the held listing serves its text, or null when it is no longer held or no
             longer the key's to judge.
     """
 
     id: UUID
+    needs_person: bool
     item: Memory | None
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -31,6 +34,8 @@ class HeldNamedItemsItem:
         from ..models.memory import Memory
 
         id = str(self.id)
+
+        needs_person = self.needs_person
 
         item: dict[str, Any] | None
         if isinstance(self.item, Memory):
@@ -43,6 +48,7 @@ class HeldNamedItemsItem:
         field_dict.update(
             {
                 "id": id,
+                "needs_person": needs_person,
                 "item": item,
             }
         )
@@ -55,6 +61,8 @@ class HeldNamedItemsItem:
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
+
+        needs_person = d.pop("needs_person")
 
         def _parse_item(data: object) -> Memory | None:
             if data is None:
@@ -73,6 +81,7 @@ class HeldNamedItemsItem:
 
         held_named_items_item = cls(
             id=id,
+            needs_person=needs_person,
             item=item,
         )
 

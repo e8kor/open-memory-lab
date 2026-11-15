@@ -2930,6 +2930,8 @@ export interface components {
             items: {
                 /** Format: uuid */
                 id: string;
+                /** @description true when only a person's reviewer key approves the row: it, or the version it replaces, is steering or a guardrail (ADR-0080 d16); false when item is null. Since v0.8.0. */
+                needs_person: boolean;
                 /** @description The row as the held listing serves its text, or null when it is no longer held or no longer the key's to judge. */
                 item: components["schemas"]["Memory"] | null;
             }[];
