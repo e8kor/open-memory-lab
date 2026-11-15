@@ -99,6 +99,47 @@ impl MemoryKind {
             _ => None,
         }
     }
+
+    /// The class whose rules the kind follows (ADR-0080 d16): knowledge is
+    /// read as data, an instruction is followed by the agent that loads it,
+    /// and vocabulary changes how queries match.
+    #[must_use]
+    pub fn class(self) -> ClaimClass {
+        match self {
+            MemoryKind::Memory | MemoryKind::DerivedFact => ClaimClass::Knowledge,
+            MemoryKind::Steering | MemoryKind::Guardrail => ClaimClass::Instruction,
+            MemoryKind::Term | MemoryKind::TermMapping | MemoryKind::VocabRelease => {
+                ClaimClass::Vocabulary
+            }
+        }
+    }
+}
+
+/// The three claim classes of ADR-0080 d16. A rule holds for every kind of
+/// its class; only the instruction class needs a person's verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ClaimClass {
+    Knowledge,
+    Instruction,
+    Vocabulary,
+}
+
+impl ClaimClass {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ClaimClass::Knowledge => "knowledge",
+            ClaimClass::Instruction => "instruction",
+            ClaimClass::Vocabulary => "vocabulary",
+        }
+    }
+
+    /// Whether only a person's approving verdict counts on a version of
+    /// this class (ADR-0080 d3, d16).
+    #[must_use]
+    pub fn needs_person(self) -> bool {
+        self == ClaimClass::Instruction
+    }
 }
 
 /// A claim version's state: the design set of the `memories.state` column
@@ -224,6 +265,39 @@ pub enum VerdictError {
     PrincipalInLineage(String),
     #[error("reviewer key {0} appears in the row's lineage closure (ADR-0001 R2)")]
     KeyInLineage(Uuid),
+    /// An approval of an instruction-class version from a key that is not a
+    /// person's reviewer key (ADR-0080 d3, d16): `review.person_required`,
+    /// reason `instruction_needs_person`.
+    #[error(
+        "a {} version is an instruction, and only a person's reviewer key approves one (ADR-0080 d16)",
+        .0.as_str()
+    )]
+    PersonRequired(MemoryKind),
+}
+
+/// A person's reviewer key: role reviewer, `used_by: person`, no crew and no
+/// profile, the predicate ADR-0074 d2 (item 4) names after ADR-0055 d1 and
+/// ADR-0030 d1.
+#[must_use]
+pub fn is_person_reviewer(role: Role, used_by: UsedBy, crew: bool, profile: bool) -> bool {
+    role == Role::Reviewer && used_by == UsedBy::Person && !crew && !profile
+}
+
+/// Whether an approving verdict on a version of `kind` counts from this
+/// key: always for knowledge and vocabulary, and for an instruction only
+/// from a person's reviewer key (ADR-0080 d3, d16). A reject promotes
+/// nothing and is not checked here.
+pub fn check_approval_class(
+    kind: MemoryKind,
+    role: Role,
+    used_by: UsedBy,
+    crew: bool,
+    profile: bool,
+) -> Result<(), VerdictError> {
+    if kind.class().needs_person() && !is_person_reviewer(role, used_by, crew, profile) {
+        return Err(VerdictError::PersonRequired(kind));
+    }
+    Ok(())
 }
 
 /// The R2 check at verdict time: a reviewer whose key or principal appears

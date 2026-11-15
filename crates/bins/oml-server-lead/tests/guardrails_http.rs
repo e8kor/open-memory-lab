@@ -149,7 +149,9 @@ async fn tenant(router: &Router) -> Tenant {
     let reviewer = issue(
         router,
         &admin,
-        json!({"role": "reviewer", "name": "reviewer", "principal": "crew/reviewer",
+        // A person's: only a person's verdict approves a guardrail
+        // (ADR-0080 d16).
+        json!({"role": "reviewer", "name": "reviewer", "principal": "crew/reviewer", "used_by": "person",
                "grants": [{"workspace": crew, "role": "reviewer"}, {"workspace": crew, "role": "reader"}]}),
     )
     .await["value"]
@@ -199,6 +201,71 @@ async fn submit_guardrail(router: &Router, t: &Tenant, idem: &str, body: Value) 
         .as_str()
         .expect("artifact_id")
         .to_owned()
+}
+
+#[tokio::test]
+async fn an_agent_reviewers_approval_of_a_guardrail_is_refused_person_required_and_it_stays_held() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    let agent = issue(
+        &router,
+        &t.admin,
+        json!({"role": "reviewer", "name": "crew-reviewer", "principal": "crew/agent-reviewer", "used_by": "agent",
+               "grants": [{"workspace": t.crew, "role": "reviewer"}, {"workspace": t.crew, "role": "reader"}]}),
+    )
+    .await["value"]
+        .as_str()
+        .expect("agent reviewer value")
+        .to_owned();
+    submit_guardrail(
+        &router,
+        &t,
+        "g-agent",
+        json!({"kind": "guardrail", "severity": "never", "body": "Never push to main.",
+               "workspace": t.crew}),
+    )
+    .await;
+    let (status, served) = send(
+        &router,
+        "POST",
+        "/v2/review/next",
+        Some(&agent),
+        Some("n-agent"),
+        Some(&json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{served}");
+    let (status, refused) = send(
+        &router,
+        "POST",
+        "/v2/review/verdicts",
+        Some(&agent),
+        Some("v-agent"),
+        Some(&json!({"serve_id": served["serve_id"], "verdict": "approve"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert_eq!(
+        refused["error"]["code"], "review.person_required",
+        "{refused}"
+    );
+    assert_eq!(
+        refused["error"]["details"],
+        json!({"reason": "instruction_needs_person", "kind": "guardrail"}),
+        "{refused}"
+    );
+    // Held still, so no rule is in force yet.
+    let (status, set) = send(
+        &router,
+        "GET",
+        "/v1/guardrails",
+        Some(&t.writer),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{set}");
+    assert_eq!(set["guardrails"], json!([]), "{set}");
 }
 
 /// The reviewer takes the next item and approves it; the served item.
@@ -420,7 +487,7 @@ async fn get_v1_guardrails_serves_the_promoted_set_under_the_keys_scope() {
     assert_eq!(verdicts.len(), 1, "{g}");
     // A verdict names its reviewer's attestation and time, never its key
     // (ADR-0037 d5, ADR-0025 d15).
-    assert_eq!(verdicts[0]["used_by"], "agent", "{g}");
+    assert_eq!(verdicts[0]["used_by"], "person", "{g}");
     assert!(verdicts[0].get("key_id").is_none(), "{g}");
     assert_eq!(set["own_held"], json!([]));
 }

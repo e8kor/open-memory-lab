@@ -136,13 +136,20 @@ fn fresh_key_name() -> Name {
     ))
 }
 
+/// A reviewer key is a person's, since only a person's verdict counts on a
+/// steering or guardrail version (ADR-0080 d16); every other key is an
+/// agent's.
 fn issue_req(role: Role, principal: &str, grants: Vec<GrantRequest>) -> IssueKeyRequest {
     IssueKeyRequest {
         profile: None,
         role,
         name: fresh_key_name(),
         principal: principal.to_owned(),
-        used_by: Some(UsedBy::Agent),
+        used_by: Some(if role == Role::Reviewer {
+            UsedBy::Person
+        } else {
+            UsedBy::Agent
+        }),
         default_workspace: None,
         crew: None,
         grants,
@@ -10300,6 +10307,270 @@ async fn guardrail_tenant(app: &TestApp) -> (BootstrapResult, Uuid, Uuid, Issued
     (boot, crew, team, writer, reviewer)
 }
 
+/// A reviewer key used by an agent, with reviewer and reader on `node`: a
+/// crew's reviewer.
+async fn agent_reviewer(app: &TestApp, admin: &str, principal: &str, node: Uuid) -> IssuedKey {
+    app.issue_key(
+        admin,
+        &IssueKeyRequest {
+            used_by: Some(UsedBy::Agent),
+            ..issue_req(
+                Role::Reviewer,
+                principal,
+                vec![grant(node, Role::Reviewer), grant(node, Role::Reader)],
+            )
+        },
+    )
+    .await
+    .expect("issue an agent reviewer key")
+}
+
+/// Whether `err` is the instruction class's refusal of `kind`.
+fn person_required(err: &AppError, kind: MemoryKind) -> bool {
+    matches!(
+        err,
+        AppError::Verdict(oml_app::domain::VerdictError::PersonRequired(k)) if *k == kind
+    )
+}
+
+#[tokio::test]
+async fn an_agent_reviewer_key_approves_a_memory_and_is_refused_on_a_guardrail() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew, _team, writer, _reviewer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let crew_reviewer = agent_reviewer(&app, admin, "crew-reviewer", crew).await;
+    // Agents approve knowledge (ADR-0080 d16).
+    promoted(
+        &app,
+        &writer.value,
+        &crew_reviewer.value,
+        &submit_into("m1", "The quote is valid for 30 days.", crew),
+    )
+    .await;
+    let rule = app
+        .submit_memory(
+            &writer.value,
+            &guardrail_req("g1", Severity::Never, "Never push to main.", crew),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let err = app
+        .post_verdict(&crew_reviewer.value, rule, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(person_required(&err, MemoryKind::Guardrail), "{err:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let row = store
+        .memory(boot.tenant_id, rule)
+        .await
+        .expect("memory")
+        .expect("row");
+    assert_eq!(row.status, MemoryStatus::Held, "the version stays held");
+}
+
+#[tokio::test]
+async fn an_agent_reviewer_key_is_refused_on_steering_with_instruction_needs_person_and_may_reject_it()
+ {
+    let app = app();
+    let (boot, crew, _team, writer, _reviewer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let crew_reviewer = agent_reviewer(&app, admin, "crew-reviewer", crew).await;
+    let steering = app
+        .submit_memory(
+            &writer.value,
+            &submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", crew),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let err = app
+        .post_verdict(&crew_reviewer.value, steering, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(person_required(&err, MemoryKind::Steering), "{err:?}");
+    // A reject promotes nothing, so any reviewer outside the lineage may
+    // give one (ADR-0074 d2: every other key may reject).
+    let rejected = app
+        .post_verdict(&crew_reviewer.value, steering, Verdict::Reject, None)
+        .await
+        .expect("an agent rejects");
+    assert_eq!(rejected.state, MemoryStatus::Rejected);
+}
+
+#[tokio::test]
+async fn an_agent_reviewers_approval_of_a_memory_successor_of_steering_is_refused_person_required()
+{
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew, _team, writer, reviewer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let steering = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", crew),
+    )
+    .await;
+    // A successor of another kind in the class supersession admits: it
+    // would retire the steering once approved.
+    let successor = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                kind: Some(MemoryKind::Memory),
+                ..supersede_req("s1-mem", steering, "Quotes are in USD/t.")
+            },
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    // The held listing marks it as needing a person.
+    let held = app
+        .review_held(
+            &reviewer.value,
+            &oml_app::types::HeldListingRequest {
+                limit: 50,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the held listing");
+    let item = held
+        .items
+        .iter()
+        .find(|i| i.served.memory.memory_id == successor)
+        .expect("the successor is listed");
+    assert!(item.served.needs_person());
+    let crew_reviewer = agent_reviewer(&app, admin, "crew-reviewer", crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let err = app
+        .post_verdict(&crew_reviewer.value, successor, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(person_required(&err, MemoryKind::Steering), "{err:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    // A person approves it, and the policy names the stricter class.
+    app.post_verdict(&reviewer.value, successor, Verdict::Approve, None)
+        .await
+        .expect("a person approves");
+    let events = journal(&store, boot.tenant_id).await;
+    let supersede = events
+        .iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_types::LIFECYCLE_SUPERSEDE)
+        .expect("the supersession");
+    assert_eq!(supersede.envelope.payload["policy"]["class"], "instruction");
+    assert_eq!(supersede.envelope.payload["policy"]["human_required"], true);
+}
+
+#[tokio::test]
+async fn a_person_key_with_a_crew_bulk_approves_a_memory_and_is_refused_a_guardrail() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew_wa, _team, writer, _reviewer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    metals_crew(&app, admin).await;
+    let crew_person = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                crew: Some(by_name("metals-crew")),
+                ..issue_req(
+                    Role::Reviewer,
+                    "crew/lead",
+                    vec![grant(crew_wa, Role::Reviewer), grant(crew_wa, Role::Reader)],
+                )
+            },
+        )
+        .await
+        .expect("a person's reviewer key in a crew");
+    let memory = app
+        .submit_memory(
+            &writer.value,
+            &submit_into("m1", "Quotes drift weekly.", crew_wa),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let rule = app
+        .submit_memory(
+            &writer.value,
+            &guardrail_req("g1", Severity::Never, "Never push to main.", crew_wa),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let items = app
+        .review_bulk(
+            &crew_person.value,
+            &oml_app::types::BulkVerdictRequest {
+                verdict: Verdict::Approve,
+                artifact_ids: vec![memory, rule],
+                reason: None,
+                idempotency_key: "bulk-1".to_owned(),
+            },
+        )
+        .await
+        .expect("a bulk verdict");
+    let outcome = |id: Uuid| items.iter().find(|i| i.memory_id == id).expect("an item");
+    assert_eq!(
+        outcome(memory).result.as_ref().expect("approved").state,
+        MemoryStatus::Promoted
+    );
+    let refused = outcome(rule).result.as_ref().unwrap_err();
+    assert!(
+        person_required(refused, MemoryKind::Guardrail),
+        "{refused:?}"
+    );
+    let row = store
+        .memory(boot.tenant_id, rule)
+        .await
+        .expect("memory")
+        .expect("row");
+    assert_eq!(row.status, MemoryStatus::Held);
+}
+
+#[tokio::test]
+async fn a_promotion_snapshots_the_versions_class_and_whether_a_person_was_required() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew, _team, writer, reviewer) = guardrail_tenant(&app).await;
+    let (w, d) = (&writer.value, &reviewer.value);
+    let steering = promoted(
+        &app,
+        w,
+        d,
+        &submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", crew),
+    )
+    .await;
+    let memory = promoted(&app, w, d, &submit_into("m1", "Quotes drift.", crew)).await;
+    let events = journal(&store, boot.tenant_id).await;
+    let policy_of = |id: Uuid| {
+        events
+            .iter()
+            .find(|e| {
+                e.envelope.event_type == event_types::LIFECYCLE_PROMOTE
+                    && e.envelope.payload["artifact_id"] == id.to_string()
+            })
+            .expect("the promotion")
+            .envelope
+            .payload["policy"]
+            .clone()
+    };
+    assert_eq!(policy_of(steering)["class"], "instruction");
+    assert_eq!(policy_of(steering)["human_required"], true);
+    assert_eq!(policy_of(memory)["class"], "knowledge");
+    assert_eq!(policy_of(memory)["human_required"], false);
+}
+
 #[tokio::test]
 async fn a_held_guardrail_is_never_served_as_a_rule_even_inside_an_in_progress_workspace() {
     let app = app();
@@ -10533,7 +10804,7 @@ async fn the_set_orders_by_severity_then_depth_then_promoted_at_then_artifact_id
         Some("universe.crew.team")
     );
     assert_eq!(set.guardrails[0].verdicts.len(), 1);
-    assert_eq!(set.guardrails[0].verdicts[0].used_by, UsedBy::Agent);
+    assert_eq!(set.guardrails[0].verdicts[0].used_by, UsedBy::Person);
     assert_eq!(
         set.guardrails[0].tokens,
         budget_tokens("A rule.".len() as u64)

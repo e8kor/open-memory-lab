@@ -893,6 +893,11 @@ pub struct HeldItem {
     memory: Memory,
     pub held_since: String,
     pub same_user: bool,
+    /// Whether only a person's verdict counts on this version, an
+    /// instruction's (ADR-0080 d16).
+    pub needs_person: bool,
+    /// `instruction_needs_person` when `needs_person`; `None` otherwise.
+    pub needs_person_reason: Option<String>,
 }
 
 impl HeldItem {
@@ -916,6 +921,10 @@ pub struct HeldPage {
 pub struct NamedHeld {
     pub id: String,
     pub item: Option<Memory>,
+    /// Whether only a person's verdict counts on the row: it, or the
+    /// version it replaces, is an instruction (ADR-0080 d16); false where
+    /// `item` is null.
+    pub needs_person: bool,
 }
 
 /// `GET /v2/review/held?ids=` (openapi.yaml `HeldNamed`).

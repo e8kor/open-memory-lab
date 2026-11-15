@@ -1198,7 +1198,7 @@ paths:
       tags: [review]
       operationId: postVerdict
       summary: Verdict against a valid serve; the journalled verdict records the served digests.
-      description: 'Requires: reviewer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and reviewer effective access on the row''s workspace, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role reviewer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a used_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor''s own workspace and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict applies to the one review item this key has claimed through review next, and with none or several it is refused with request.validation, details.field /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record (#130; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workspace, is looked up before the default resolves: a retry of a committed verdict replays its stored response with Idempotency-Replay: true and never applies to another item.'
+      description: 'Requires: reviewer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and reviewer effective access on the row''s workspace, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role reviewer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a used_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor''s own workspace and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). An approval of a steering or guardrail version, an instruction, or of a successor of another kind that replaces one, counts only from a person''s reviewer key (used_by person, no crew, no profile); any other key is refused 403 review.person_required, details.reason instruction_needs_person and details.kind the instruction''s kind, the replaced version''s for such a successor, nothing is journalled and the version stays held, while a reject from it is admitted (ADR-0080 d3, d16). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict applies to the one review item this key has claimed through review next, and with none or several it is refused with request.validation, details.field /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record (#130; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workspace, is looked up before the default resolves: a retry of a committed verdict replays its stored response with Idempotency-Replay: true and never applies to another item.'
       parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -1307,7 +1307,7 @@ paths:
       tags: [review]
       operationId: postBulkVerdict
       summary: One verdict per named held item, each judged, journalled and signed as a single verdict; outcomes per item.
-      description: 'Requires: a reviewer key used_by person (access.verb_ceiling, details.reason bulk_review_is_person_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct ids the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal''s code: review.author_in_lineage (R2), review.serve_invalid (no longer held), submission.tip_conflict, access.not_found, access.grant_refused, workspace.frozen; nothing already committed is undone (d5, d6). Each item records under the Idempotency-Key and its own id: a retry replays decided items with replayed true and judges the rest; another verdict or reason for a decided item is idempotency.digest_mismatch on that item (d12). reason is required to reject and journalled on each item (d8).'
+      description: 'Requires: a reviewer key used_by person (access.verb_ceiling, details.reason bulk_review_is_person_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct ids the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal''s code: review.author_in_lineage (R2), review.person_required (an approval of an instruction-class version, or of a successor that replaces one, by a key that is not a person''s reviewer key; details.kind is then the replaced version''s kind; ADR-0080 d16), review.serve_invalid (no longer held), submission.tip_conflict, access.not_found, access.grant_refused, workspace.frozen; nothing already committed is undone (d5, d6). Each item records under the Idempotency-Key and its own id: a retry replays decided items with replayed true and judges the rest; another verdict or reason for a decided item is idempotency.digest_mismatch on that item (d12). reason is required to reject and journalled on each item (d8).'
       parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -3543,6 +3543,7 @@ components:
         - workspace.admin_key_under_root
         - workspace.transition_refused
         - review.author_in_lineage
+        - review.person_required
         - review.ratifier_is_proposer
         - review.serve_invalid
         - simulation.audience_refused
@@ -4666,10 +4667,12 @@ components:
             allOf:
               - { $ref: '#/components/schemas/Memory' }
               - type: object
-                required: [held_since, same_user]
+                required: [held_since, same_user, needs_person, needs_person_reason]
                 properties:
                   held_since: { type: string, format: date-time, description: When the row entered the review queue. }
                   same_user: { type: boolean, description: "Whether the calling key and the authoring key name one user (ADR-0055 d7)." }
+                  needs_person: { type: boolean, description: "true for an instruction-class version (steering, guardrail), or a successor of another kind that replaces one: only a person's reviewer key approves it, and any other key is refused review.person_required (ADR-0080 d3, d16). Since v0.8.0." }
+                  needs_person_reason: { type: [string, 'null'], description: "instruction_needs_person when needs_person is true; null when it is false (ADR-0080 d16). Since v0.8.0." }
         next_cursor: { type: [string, 'null'] }
 
     BulkVerdictRequest:
@@ -5066,9 +5069,10 @@ components:
           type: array
           items:
             type: object
-            required: [id, item]
+            required: [id, item, needs_person]
             properties:
               id: { type: string, format: uuid }
+              needs_person: { type: boolean, description: "true when only a person's reviewer key approves the row: it, or the version it replaces, is steering or a guardrail (ADR-0080 d16); false when item is null. Since v0.8.0." }
               item:
                 description: The row as the held listing serves its text, or null when it is no longer held or no longer the key's to judge.
                 oneOf:

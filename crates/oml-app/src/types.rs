@@ -1391,6 +1391,9 @@ pub struct VersionRef {
 pub struct ServedMemory {
     pub memory: MemoryRecord,
     pub replaces: Option<VersionRef>,
+    /// The kind of the version `replaces` names, read with it; `None` where
+    /// `replaces` is.
+    pub replaces_kind: Option<MemoryKind>,
     /// On a held successor, the end approving it gives the version it
     /// replaces, so a reviewer sees it before the verdict; `None` otherwise
     /// (proposed ADR-0059 d4).
@@ -1411,6 +1414,16 @@ pub struct ServedMemory {
     /// d23); `None` where the surface does not read them, so an empty list
     /// always means the scan found nothing.
     pub scan_findings: Option<Vec<VersionFinding>>,
+}
+
+impl ServedMemory {
+    /// Whether only a person's verdict approves this version: it, or the
+    /// version it replaces, is an instruction (ADR-0080 d16).
+    #[must_use]
+    pub fn needs_person(&self) -> bool {
+        self.memory.kind.class().needs_person()
+            || self.replaces_kind.is_some_and(|k| k.class().needs_person())
+    }
 }
 
 /// What a stored finding does (ADR-0074 d1): a refuse-class finding is only

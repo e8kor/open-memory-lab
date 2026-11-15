@@ -265,7 +265,12 @@ async fn crew(router: &Router) -> Crew {
             "/v2/keys",
             Some(&admin),
             Some(idem),
-            Some(&json!({"role": role, "name": idem, "principal": principal, "grants": grants})),
+            // The reviewer is a person's, since only a person's verdict
+            // approves steering (ADR-0080 d16).
+            Some(
+                &json!({"role": role, "name": idem, "principal": principal, "grants": grants,
+                         "used_by": if role == "reviewer" { "person" } else { "agent" }}),
+            ),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{key}");

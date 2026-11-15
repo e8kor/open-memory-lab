@@ -119,7 +119,12 @@ nothing is journaled. The serve can still carry a reject.
 
 A **steering** memory has kind `steering`. Once approved, every recall in that workspace and below
 returns it first, unranked, and no budget cuts it. Read
-steering more strictly than a fact, because it shapes every later session in the subtree.
+steering more strictly than a fact, because it shapes every later session in the subtree. Steering
+and guardrails are instructions, so only a person's reviewer key approves them; an agent's
+reviewer key, or a person's key with a crew or a profile, is refused `review.person_required` and
+may still reject. A service key reviews nothing (`access.verb_ceiling`). For now a
+person's key is a reviewer key issued `--used-by person` with no crew and no profile, the CLI's
+included; a confirmed, fresh sign-in comes with #214.
 
 ## A worked session
 

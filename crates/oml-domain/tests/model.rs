@@ -172,3 +172,57 @@ fn guardrail_is_a_claim_kind_whose_name_parses_back() {
     assert_eq!(MemoryKind::parse("guardrail"), Some(MemoryKind::Guardrail));
     assert_eq!(MemoryKind::parse("Guardrail"), None, "names are exact");
 }
+
+#[test]
+fn every_kind_belongs_to_the_class_adr_0080_d16_names() {
+    use oml_domain::ClaimClass::{Instruction, Knowledge, Vocabulary};
+    for (kind, class) in [
+        (MemoryKind::Memory, Knowledge),
+        (MemoryKind::DerivedFact, Knowledge),
+        (MemoryKind::Steering, Instruction),
+        (MemoryKind::Guardrail, Instruction),
+        (MemoryKind::Term, Vocabulary),
+        (MemoryKind::TermMapping, Vocabulary),
+        (MemoryKind::VocabRelease, Vocabulary),
+    ] {
+        assert_eq!(kind.class(), class, "{}", kind.as_str());
+    }
+    assert!(Instruction.needs_person());
+    assert!(!Knowledge.needs_person() && !Vocabulary.needs_person());
+}
+
+#[test]
+fn an_approval_of_an_instruction_class_version_is_refused_from_every_key_but_a_persons_reviewer_key()
+ {
+    use oml_domain::{UsedBy, check_approval_class};
+    for kind in [MemoryKind::Steering, MemoryKind::Guardrail] {
+        assert_eq!(
+            check_approval_class(kind, Role::Reviewer, UsedBy::Person, false, false),
+            Ok(())
+        );
+        for (used_by, crew, profile) in [
+            (UsedBy::Agent, false, false),
+            (UsedBy::Service, false, false),
+            (UsedBy::Person, true, false),
+            (UsedBy::Person, false, true),
+        ] {
+            assert_eq!(
+                check_approval_class(kind, Role::Reviewer, used_by, crew, profile),
+                Err(VerdictError::PersonRequired(kind)),
+                "{} {used_by:?} crew {crew} profile {profile}",
+                kind.as_str()
+            );
+        }
+    }
+    // A crew's agent key still approves knowledge and vocabulary.
+    for kind in [
+        MemoryKind::Memory,
+        MemoryKind::DerivedFact,
+        MemoryKind::Term,
+    ] {
+        assert_eq!(
+            check_approval_class(kind, Role::Reviewer, UsedBy::Agent, true, false),
+            Ok(())
+        );
+    }
+}

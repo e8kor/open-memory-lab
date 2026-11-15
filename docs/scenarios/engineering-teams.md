@@ -59,7 +59,7 @@ The plugin loads promoted guardrails at session start and checks each rule befor
 
 **Skills. Designed** (ADR-0080). An agent stores a skill with `oml_write` and `kind: "skill"`: a name, a one-line description and a markdown body of at most 32 KiB. The MCP server offers each promoted skill as a prompt and a resource, loaded live, never copied to disk. The author key is offered its own held skill at once, marked unreviewed; a held edit of an approved skill appears beside it as `<name>-unreviewed`. The plugin asks before writing a file under `.claude/skills/`, since a file reaches one machine.
 
-**Who approves.** Built: one verdict by any `reviewer` key outside the version's lineage, a reviewer crew's agent key included; the recorded policy requires no person for any kind. Designed (ADR-0080 d16): every instruction kind, steering, guardrail and skill, counts only a person's verdict, since an agent follows it rather than weighing it.
+**Who approves.** One verdict by any `reviewer` key outside the version's lineage approves knowledge and vocabulary, a reviewer crew's agent key included. Steering and guardrails count only a person's verdict, since an agent follows them rather than weighing them: any other key's approval is refused `review.person_required`, and the promotion's recorded policy names the class (ADR-0080 d16). The skill kind follows the same rule once it is built.
 
 **Builder. Designed** ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md)). The workspace page in the console edits skills, guardrails and documents in forms; each save is a held version under the person's own key, and Preview writes nothing.
 

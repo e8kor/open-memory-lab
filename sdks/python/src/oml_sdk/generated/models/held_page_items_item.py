@@ -65,6 +65,11 @@ class HeldPageItemsItem:
             (ADR-0057 d5).
         held_since (datetime.datetime): When the row entered the review queue.
         same_user (bool): Whether the calling key and the authoring key name one user (ADR-0055 d7).
+        needs_person (bool): true for an instruction-class version (steering, guardrail), or a successor of another kind
+            that replaces one: only a person's reviewer key approves it, and any other key is refused review.person_required
+            (ADR-0080 d3, d16). Since v0.8.0.
+        needs_person_reason (None | str): instruction_needs_person when needs_person is true; null when it is false
+            (ADR-0080 d16). Since v0.8.0.
         severity (MemorySummarySeverity | Unset): On kind guardrail alone, except a retirement version (ADR-0037 d2).
         rule (Any | Unset): On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8).
         load_warning (str | Unset): On a held guardrail alone: every reader of it is told that every key reading its
@@ -135,6 +140,8 @@ class HeldPageItemsItem:
     source_checked: None | SourceChecked
     held_since: datetime.datetime
     same_user: bool
+    needs_person: bool
+    needs_person_reason: None | str
     retirement: bool = False
     severity: MemorySummarySeverity | Unset = UNSET
     rule: Any | Unset = UNSET
@@ -233,6 +240,11 @@ class HeldPageItemsItem:
         held_since = self.held_since.isoformat()
 
         same_user = self.same_user
+
+        needs_person = self.needs_person
+
+        needs_person_reason: None | str
+        needs_person_reason = self.needs_person_reason
 
         severity: str | Unset = UNSET
         if not isinstance(self.severity, Unset):
@@ -366,6 +378,8 @@ class HeldPageItemsItem:
                 "source_checked": source_checked,
                 "held_since": held_since,
                 "same_user": same_user,
+                "needs_person": needs_person,
+                "needs_person_reason": needs_person_reason,
             }
         )
         if severity is not UNSET:
@@ -556,6 +570,15 @@ class HeldPageItemsItem:
 
         same_user = d.pop("same_user")
 
+        needs_person = d.pop("needs_person")
+
+        def _parse_needs_person_reason(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        needs_person_reason = _parse_needs_person_reason(d.pop("needs_person_reason"))
+
         _severity = d.pop("severity", UNSET)
         severity: MemorySummarySeverity | Unset
         if isinstance(_severity, Unset):
@@ -741,6 +764,8 @@ class HeldPageItemsItem:
             source_checked=source_checked,
             held_since=held_since,
             same_user=same_user,
+            needs_person=needs_person,
+            needs_person_reason=needs_person_reason,
             severity=severity,
             rule=rule,
             load_warning=load_warning,

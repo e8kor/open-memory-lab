@@ -380,7 +380,10 @@ impl World {
             admin,
             json!({
                 "role": role, "name": name, "principal": format!("crew/{name}"),
-                "used_by": "agent", "default_workspace": root, "grants": grants,
+                // The reviewer is a person's, since only a person's
+                // verdict approves steering (ADR-0080 d16).
+                "used_by": if role == "reviewer" { "person" } else { "agent" },
+                "default_workspace": root, "grants": grants,
             }),
         )
         .await;
