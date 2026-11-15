@@ -6,6 +6,9 @@
 
 use std::sync::atomic::Ordering;
 
+use oml_app::domain::{
+    EventDraft, EventTime, KeySet, SignedEnvelope, event_types, next_envelope, sign,
+};
 use oml_app::ports::JournalStore;
 use oml_pg::{MIGRATOR, PgStore};
 use oml_test_pg::{DB_N, drop_db, mint_database, owner_url, run_tag, serving_url};
@@ -81,6 +84,74 @@ async fn former_names_in_catalog(conn: &mut PgConnection) -> Vec<String> {
         found.extend(rows);
     }
     found
+}
+
+/// The tenant's chain as v0.7 signed it: a genesis and a promotion whose
+/// `policy` names the role `dreamer` and whose payload says `workarea_id`,
+/// each stored with its signed bytes, and the chain head.
+async fn v0_7_signed_chain(conn: &mut PgConnection, tenant: Uuid, workspace: Uuid) {
+    let key = oml_port_contracts::test_signing_key();
+    let drafts = [
+        (
+            event_types::TENANT_GENESIS,
+            serde_json::json!({ "tenant_name": "acme" }),
+        ),
+        (
+            event_types::LIFECYCLE_PROMOTE,
+            serde_json::json!({
+                "artifact_id": Uuid::from_u128(0xC0DE).to_string(),
+                "version": 1,
+                "workarea_id": workspace.to_string(),
+                "claim_key": "quote",
+                "self_signed": false,
+                "same_user": false,
+                "policy": { "k": 1, "required_roles": ["dreamer"] },
+            }),
+        ),
+    ];
+    let mut head: Option<SignedEnvelope> = None;
+    for (n, (event_type, payload)) in drafts.into_iter().enumerate() {
+        let draft = EventDraft {
+            tenant_id: tenant,
+            event_id: Uuid::from_u128(0xF047 + n as u128),
+            event_type: event_type.to_owned(),
+            principal: "acme/admin".to_owned(),
+            api_key_id: None,
+            at: EventTime::parse(&format!("2026-11-01T09:00:0{n}.000000Z")).expect("time"),
+            payload,
+        };
+        let event =
+            sign(next_envelope(head.as_ref(), draft).expect("lawful"), &key).expect("signs");
+        let env = &event.envelope;
+        sqlx::query(
+            "INSERT INTO journal (tenant_id, seq, event_id, event_type, prev_hash, principal, \
+             api_key_id, at, payload, signed_bytes, signed_bytes_hash, sig) \
+             VALUES ($1, $2, $3, $4, $5, $6, NULL, ($7)::timestamptz, $8, $9, $10, $11)",
+        )
+        .bind(tenant)
+        .bind(i64::try_from(env.seq).expect("seq"))
+        .bind(env.event_id)
+        .bind(&env.event_type)
+        .bind(env.prev_hash.0.to_vec())
+        .bind(&env.principal)
+        .bind(env.at.as_str())
+        .bind(&env.payload)
+        .bind(&event.signed_bytes)
+        .bind(event.hash.0.to_vec())
+        .bind(event.sig.to_bytes().to_vec())
+        .execute(&mut *conn)
+        .await
+        .expect("journal row");
+        head = Some(event);
+    }
+    let last = head.expect("a head");
+    sqlx::query("INSERT INTO journal_chain_head (tenant_id, seq, head_hash) VALUES ($1, $2, $3)")
+        .bind(tenant)
+        .bind(i64::try_from(last.envelope.seq).expect("seq"))
+        .bind(last.hash.0.to_vec())
+        .execute(&mut *conn)
+        .await
+        .expect("chain head");
 }
 
 /// The catalog after every migration names no `workarea`, and no role,
@@ -182,6 +253,7 @@ async fn a_database_migrated_across_the_rename_holds_its_rows_in_the_new_names()
             .await
             .unwrap_or_else(|e| panic!("{statement}: {e}"));
     }
+    v0_7_signed_chain(&mut conn, tenant, child).await;
     let rename = MIGRATOR
         .iter()
         .find(|m| m.version == RENAME)
@@ -274,6 +346,34 @@ async fn a_database_migrated_across_the_rename_holds_its_rows_in_the_new_names()
         "an act's name is renamed; a client's own key keeps its text"
     );
     // The replaced checks hold the new values and refuse the former ones.
+    // The start's journal checks over the migrated database: the v0.7
+    // chain verifies as signed, and every event, the promotion whose policy
+    // names `dreamer` included, reads in full through the former-name map.
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut unmapped = Vec::new();
+    let mut read = 0;
+    store
+        .verify_stored_chain_reading(
+            tenant,
+            &KeySet::new(vec![oml_port_contracts::test_signing_key().verifying_key()]),
+            |event| {
+                read += 1;
+                unmapped.extend(oml_app::domain::former_names::unmapped_former_names(
+                    &event.envelope.event_type,
+                    &event.envelope.payload,
+                ));
+            },
+        )
+        .await
+        .expect("the v0.7 chain verifies after 0047");
+    assert_eq!(
+        unmapped,
+        Vec::<String>::new(),
+        "the former-names check passes"
+    );
     let refused = sqlx::query("UPDATE api_keys SET role = 'dreamer' WHERE tenant_id = $1")
         .bind(tenant)
         .execute(&mut conn)
