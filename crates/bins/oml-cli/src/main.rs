@@ -4995,13 +4995,13 @@ fn user_root_writes_doctor(
 /// that cap admitted, is named; it takes no further move, and the operator
 /// decides whether it stays. Nothing when every such node is
 /// `development`.
-fn user_root_ladder_doctor(nodes: &[Value]) -> Vec<String> {
+fn user_root_ladder_doctor(nodes: &[Value], incomplete: Option<&str>) -> Vec<String> {
     let roots: Vec<(&str, &str)> = nodes
         .iter()
         .filter(|n| n["user_root"] == true)
         .filter_map(|n| Some((n["path"].as_str()?, n["name"].as_str()?)))
         .collect();
-    nodes
+    let mut lines: Vec<String> = nodes
         .iter()
         .filter(|n| n["status"].as_str().is_some_and(|s| s != "development"))
         .filter_map(|n| {
@@ -5020,22 +5020,35 @@ fn user_root_ladder_doctor(nodes: &[Value]) -> Vec<String> {
                 n["status"].as_str().unwrap_or("not development"),
             ))
         })
-        .collect()
+        .collect();
+    if let Some(reason) = incomplete {
+        lines.push(format!(
+            "warn user_root_status: tree read incomplete after {} node(s) ({reason}), so a \
+             user-root node off development may be unnamed",
+            nodes.len()
+        ));
+    }
+    lines
 }
 
-/// Every node of the tree at `tree`, one page after another; the pages
-/// read before a refused or failed page, which doctor does not fail on.
-fn tree_pages(client: &Client, tree: &str) -> Vec<Value> {
+/// Every node of the tree at `tree`, one page after another, and why the
+/// read stopped early when a page was refused or failed: the nodes read
+/// before it, and the reason, which doctor reports and does not fail on.
+fn tree_pages(client: &Client, tree: &str) -> (Vec<Value>, Option<String>) {
     let mut nodes = Vec::new();
     let mut path = tree.to_owned();
-    while let Ok((_, page)) = client.get(&path) {
-        nodes.extend(page["items"].as_array().into_iter().flatten().cloned());
-        match page["next_cursor"].as_str() {
-            Some(cursor) => path = format!("{tree}?cursor={}", encode(cursor)),
-            None => break,
+    loop {
+        match client.get(&path) {
+            Ok((_, page)) => {
+                nodes.extend(page["items"].as_array().into_iter().flatten().cloned());
+                match page["next_cursor"].as_str() {
+                    Some(cursor) => path = format!("{tree}?cursor={}", encode(cursor)),
+                    None => return (nodes, None),
+                }
+            }
+            Err(e) => return (nodes, Some(unread_reason(e))),
         }
     }
-    nodes
 }
 
 /// The body `oml keys limit` sends: each limit it was told to set or to
@@ -5235,6 +5248,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     // Every node of the tenant's tree, read by an admin key for the
     // user-root lines (ADR-0085 d17).
     let mut tree_nodes: Vec<Value> = Vec::new();
+    let mut tree_incomplete: Option<String> = None;
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
         health = Some(keyless.probe("/healthz")?);
@@ -5315,7 +5329,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             // The tenant's search default, read by an admin key (ADR-0049
             // d8).
             if is_admin {
-                tree_nodes = tree_pages(&client, "/v2/workspaces/universe/tree");
+                (tree_nodes, tree_incomplete) = tree_pages(&client, "/v2/workspaces/universe/tree");
                 search_settings = client.get("/v2/search").ok().map(|(_, v)| v);
                 // The tenant's federation policy and its wide keys
                 // (ADR-0072 d12, Consequences).
@@ -5363,7 +5377,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         held_blocking,
     );
     let in_progress_warn = in_progress.iter().any(|line| line.starts_with("warn"));
-    let user_root_status = user_root_ladder_doctor(&tree_nodes);
+    let user_root_status = user_root_ladder_doctor(&tree_nodes, tree_incomplete.as_deref());
     let telemetry = telemetry_doctor(scrape.as_ref());
     let journal = former_names_doctor(ready.as_ref());
     let mut scan = scan_doctor(ready.as_ref(), scrape.as_ref());
@@ -6702,7 +6716,7 @@ mod tests {
             json!({"name": "alicea", "path": "universe.alicea", "status": "protected", "user_root": false}),
             json!({"name": "team", "path": "universe.team", "status": "frozen", "user_root": false}),
         ];
-        let lines = user_root_ladder_doctor(&nodes);
+        let lines = user_root_ladder_doctor(&nodes, None);
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(
             lines[0].starts_with(
@@ -6719,7 +6733,22 @@ mod tests {
             nodes[2].clone(),
             nodes[5].clone(),
         ];
-        assert!(user_root_ladder_doctor(&settled).is_empty());
+        assert!(user_root_ladder_doctor(&settled, None).is_empty());
+    }
+
+    #[test]
+    fn doctor_warns_when_the_tree_read_stops_before_its_last_page() {
+        let nodes = [
+            json!({"name": "alice", "path": "universe.alice", "status": "development", "user_root": true}),
+        ];
+        let lines = user_root_ladder_doctor(&nodes, Some("HTTP 503"));
+        assert_eq!(
+            lines,
+            [
+                "warn user_root_status: tree read incomplete after 1 node(s) (HTTP 503), so a \
+              user-root node off development may be unnamed"
+            ],
+        );
     }
 
     #[test]

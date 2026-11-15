@@ -1578,17 +1578,84 @@ async fn a_pending_protected_proposal_in_a_user_root_is_refused_at_ratification(
             ratifier_key_id: None,
         })
         .expect("a pending proposal");
+    let before = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
     let err = app
         .ratify_transition(&second.value, project.into(), transition_id)
         .await
         .unwrap_err();
     assert!(refused_as_user_root(&err), "{err:?}");
+    let after = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    assert_eq!(before, after, "a refused ratification journals nothing");
     let node = store
         .workspace(boot.tenant_id, project)
         .await
         .expect("read")
         .expect("the node");
     assert_eq!(node.status, oml_app::domain::WorkspaceStatus::Development);
+}
+
+/// Two session keys of one person act in a shared workspace: `<user>-admin`
+/// proposes and `<user>-review`, designated there, ratifies; the
+/// transition is journalled `same_user: true` (ADR-0055 d7; ADR-0046 d2),
+/// the one place left where a ladder move can be one person's.
+#[tokio::test]
+async fn two_session_keys_of_one_person_move_a_shared_workspace_marked_same_user() {
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    app.create_workspace(
+        admin,
+        &name("team"),
+        Some(boot.root_workspace_id.into()),
+        None,
+    )
+    .await
+    .expect("an admin creates a shared workspace");
+    let alice = signed_in(&app, admin, "alice", true).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    app.grant_review_capacity(&alice_admin, &name("alice"), by_name("team"))
+        .await
+        .expect("the review designation");
+    let alice_review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let proposal = app
+        .propose_transition(
+            Bearer::Session(&alice_admin),
+            by_name("team"),
+            oml_app::domain::WorkspaceStatus::Protected,
+        )
+        .await
+        .expect("alice-admin proposes");
+    app.ratify_transition(
+        Bearer::Session(&alice_review),
+        by_name("team"),
+        proposal.transition_id,
+    )
+    .await
+    .expect("alice-review ratifies");
+    let events = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal");
+    let ratified = events
+        .iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_types::WORKSPACE_STATUS_TRANSITION)
+        .expect("the ratification");
+    assert_eq!(ratified.envelope.payload["same_user"], true);
 }
 
 #[tokio::test]

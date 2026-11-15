@@ -111,8 +111,8 @@ pub enum LadderNode {
 }
 
 /// Whether a proposal of `current` → `to` is admitted on a node: the
-/// universe first, then the rung order, then a user root's ceiling, which
-/// admits no forward step at all, then the preconditions (ADR-0009 d3, d4;
+/// universe first, then a user root's ceiling, which admits no proposal at
+/// all, then the rung order, then the preconditions (ADR-0009 d3, d4;
 /// ADR-0085 d17).
 pub fn propose_check(
     node: LadderNode,
@@ -123,6 +123,11 @@ pub fn propose_check(
     if node == LadderNode::Universe {
         return Err(LadderRefusal::Universe);
     }
+    // Every proposal inside a user root answers its ceiling, before the
+    // rung order (ADR-0085 d17).
+    if node == LadderNode::UserRoot {
+        return Err(LadderRefusal::UserRoot);
+    }
     match to.rung().cmp(&current.rung()) {
         std::cmp::Ordering::Equal => return Err(LadderRefusal::Same),
         std::cmp::Ordering::Less => return Err(LadderRefusal::Backward),
@@ -130,9 +135,6 @@ pub fn propose_check(
             return Err(LadderRefusal::Skipped);
         }
         std::cmp::Ordering::Greater => {}
-    }
-    if node == LadderNode::UserRoot {
-        return Err(LadderRefusal::UserRoot);
     }
     transition_preconditions(current, to, children)
 }
