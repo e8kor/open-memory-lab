@@ -233,13 +233,6 @@ fn lineage(card: &Card, reviewer: &str, same_user: Option<bool>, needs_person: b
     )
 }
 
-/// Whether a version of this kind is an instruction, which only a
-/// person's verdict approves (ADR-0080 d16): the judge page reads a named
-/// row, which carries its kind and not the listing's `needs_person`.
-fn instruction_kind(kind: Option<&str>) -> bool {
-    matches!(kind, Some("steering" | "guardrail"))
-}
-
 /// What each verdict does, in one muted line, by the kind of decision
 /// (ReviewCard).
 fn verdict_line(card: &Card, reviewer: &str, roots: &Roots) -> String {
@@ -378,7 +371,11 @@ async fn item(
         .review_named(&call(&credential, &ids), &[memory_id])
         .await
         .map_err(|e| Box::new(outcome::page(&e, view.calls, view.side.path())))?;
-    let Some(item) = named.items.into_iter().find_map(|n| n.item) else {
+    let Some((item, needs_person)) = named
+        .items
+        .into_iter()
+        .find_map(|n| n.item.map(|item| (item, n.needs_person)))
+    else {
         return Ok((
             r#"<p class="oml-noact">That memory is no longer held, or this reviewer key may not judge it.</p>"#
                 .to_owned(),
@@ -416,12 +413,7 @@ async fn item(
     };
     let strip = format!(
         r#"<div class="oml-strip" aria-label="Review">{}{}{}</div>"#,
-        lineage(
-            &card,
-            &reviewer,
-            same_user,
-            instruction_kind(item.kind.as_deref()),
-        ),
+        lineage(&card, &reviewer, same_user, needs_person),
         verdict_line(&card, &reviewer, &roots),
         form(
             view.side.path(),

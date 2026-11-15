@@ -1644,6 +1644,9 @@ where
                 "items": named.iter().map(|(id, served)| json!({
                     "id": id,
                     "item": served.as_ref().map(|m| memory_json(m, true)),
+                    // Only a person's verdict counts on an instruction, or on
+                    // a successor that replaces one (ADR-0080 d16).
+                    "needs_person": served.as_ref().is_some_and(ServedMemory::needs_person),
                 })).collect::<Vec<_>>(),
             }),
         ))
