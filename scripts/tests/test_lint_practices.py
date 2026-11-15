@@ -380,3 +380,11 @@ class Vocabulary(unittest.TestCase):
         })
         flagged = {p.split(":")[0] for p in L.lint_vocabulary(root, False)}
         self.assertEqual(flagged, {"a.rs", "b.rs"})
+
+    def test_a_bare_human_in_a_shell_script_is_flagged(self):
+        # A holder value passed as a bare shell word, as quickstart.sh's issue()
+        # takes it, carries no quotes for the literal rule to see.
+        root = tree({"scripts/q.sh": 'reviewer="$(issue r reviewer human crew/r reviewer)"\n',
+                     "scripts/ok.sh": 'issue r reviewer person crew/r reviewer\n'})
+        flagged = {p.split(":")[0] for p in L.lint_vocabulary(root, False)}
+        self.assertEqual(flagged, {"scripts/q.sh"})

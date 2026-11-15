@@ -91,7 +91,7 @@ issue() { # key_name role used_by principal grant_role...
     jq -r .value <<<"$issued"
 }
 agent="$(issue quickstart-agent writer agent crew/agent writer reader)"
-reviewer="$(issue quickstart-reviewer reviewer human crew/reviewer reviewer)"
+reviewer="$(issue quickstart-reviewer reviewer person crew/reviewer reviewer)"
 
 rpc() { # id method params
     curl -fsS "$OML_URL/mcp" \

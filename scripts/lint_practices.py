@@ -466,8 +466,14 @@ def lint_vocabulary(root: Path, use_allow: bool = True) -> list[str]:
             text = p.read_text()
         except (UnicodeDecodeError, OSError):
             continue
+        shell = rel.endswith(".sh")
         for i, line in enumerate(text.splitlines(), 1):
             if any(n in line for n in needles):
+                continue
+            # A shell script passes a holder value as a bare word, with no quotes
+            # for the literal rule to see.
+            if shell and not line.lstrip().startswith("#") and re.search(r"(?<![\w-])human(?![\w-])", line):
+                problems.append(f"{rel}:{i}: former name 'human' (ADR-0091 d11)")
                 continue
             line = KEPT_FILE_NAMES.sub("", line)
             m = next((m for m in FORMER.finditer(line)
