@@ -4671,7 +4671,7 @@ components:
                 properties:
                   held_since: { type: string, format: date-time, description: When the row entered the review queue. }
                   same_user: { type: boolean, description: "Whether the calling key and the authoring key name one user (ADR-0055 d7)." }
-                  needs_person: { type: boolean, description: "true for an instruction-class version (steering, guardrail): only a person's reviewer key approves it, and any other key is refused review.person_required (ADR-0080 d3, d16). Since v0.8.0." }
+                  needs_person: { type: boolean, description: "true for an instruction-class version (steering, guardrail), or a successor of another kind that replaces one: only a person's reviewer key approves it, and any other key is refused review.person_required (ADR-0080 d3, d16). Since v0.8.0." }
                   needs_person_reason: { type: [string, 'null'], description: "instruction_needs_person when needs_person is true; null when it is false (ADR-0080 d16). Since v0.8.0." }
         next_cursor: { type: [string, 'null'] }
 

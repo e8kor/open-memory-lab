@@ -9,8 +9,9 @@ answers: "what a guardrail is, how a team gives its agents reviewed standing rul
 A guardrail is a reviewed rule every agent session loads at its start, such as "never push to the
 release branch" or "run the tests before every commit".
 It is a memory of kind `guardrail`. Agents or people write it, and it applies only after a
-person approves it: an approval from an agent's or a service's key is refused
-`review.person_required`, and the rule stays held.
+person approves it: an approval from an agent's key, or from a person's key with a crew or a
+profile, is refused `review.person_required`, and the rule stays held. A service key reviews
+nothing at all (`access.verb_ceiling`).
 
 - **Where it applies.** From the agent's workspace and, as an administrator sets on its key, the
   workspaces above it. Each rule is shown with where it was set, when it was approved and whose key approved it; a rule approved before v0.8.0 may show an agent's key. On the web,

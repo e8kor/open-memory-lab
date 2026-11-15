@@ -5135,10 +5135,12 @@ fn key_doctor(me: Option<&Result<Value, CliError>>) -> Vec<String> {
 
 /// Whether this key may review in bulk and approve instructions, for a
 /// reviewer key only (ADR-0055 d1, d13; ADR-0080 d16): a key a person holds
-/// may; one used by an agent or a service is refused both, which a person
-/// holding such a key otherwise learns mid-import, so the line warns and
-/// names the fix. A person's key with a crew or a profile reviews in bulk
-/// and is refused an instruction's approval.
+/// may; one used by an agent may not review in bulk and is refused an
+/// instruction's approval, and one used by a service reviews nothing at all
+/// (access.verb_ceiling, ADR-0025 d1). A person holding such a key otherwise
+/// learns it mid-import, so the line warns and names the fix. A person's key
+/// with a crew or a profile reviews in bulk and is refused an instruction's
+/// approval.
 fn review_doctor(me: Option<&Value>) -> Option<String> {
     let me = me?;
     if me["role"] != "reviewer" {
@@ -5149,6 +5151,10 @@ fn review_doctor(me: Option<&Value>) -> Option<String> {
     Some(match (person, instructions) {
         (true, true) => "ok bulk review: this key lists and judges held items in bulk (oml review list, oml review approve --ids), steering and guardrails included".to_owned(),
         (true, false) => "warn instructions: this key has a crew or a profile, so its approval of a steering or guardrail version is refused (review.person_required, instruction_needs_person); use a person's reviewer key with neither".to_owned(),
+        (false, _) if me["used_by"] == "service" => "warn review: this key is used by \
+             service, so it reviews nothing (access.verb_ceiling); use a reviewer key issued \
+             --used-by person or the admin page"
+            .to_owned(),
         (false, _) => format!(
             "warn bulk review: this key is used by {}, so it cannot review in bulk \
              (access.verb_ceiling, bulk_review_is_person_only) or approve a steering or \
@@ -6734,6 +6740,13 @@ mod tests {
         })))
         .expect("a line");
         assert!(person.starts_with("ok bulk review:"), "{person}");
+        let service = review_doctor(Some(&json!({"role": "reviewer", "used_by": "service"})))
+            .expect("a line");
+        assert!(
+            service.starts_with("warn review: this key is used by service, so it reviews nothing"),
+            "{service}"
+        );
+        assert!(!service.contains("person_required"), "{service}");
         assert_eq!(review_doctor(Some(&json!({"role": "writer"}))), None);
     }
 

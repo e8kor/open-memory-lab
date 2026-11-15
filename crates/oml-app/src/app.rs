@@ -161,12 +161,17 @@ fn review_policy() -> Value {
 }
 
 /// The policy a claim's ratification snapshots: [`review_policy`] with the
-/// version's class and whether only a person's verdict counts on it
-/// (ADR-0080 d16).
-fn claim_review_policy(kind: MemoryKind) -> Value {
+/// class whose rule the verdict met and whether only a person's verdict
+/// counts on it (ADR-0080 d16). A successor that replaces a version of
+/// another kind meets the stricter of the two classes.
+fn claim_review_policy(kind: MemoryKind, replaced: Option<MemoryKind>) -> Value {
+    let class = match replaced.map(MemoryKind::class) {
+        Some(other) if other.needs_person() => other,
+        _ => kind.class(),
+    };
     let mut policy = review_policy();
-    policy["class"] = json!(kind.class().as_str());
-    policy["human_required"] = json!(kind.class().needs_person());
+    policy["class"] = json!(class.as_str());
+    policy["human_required"] = json!(class.needs_person());
     policy
 }
 
@@ -2129,13 +2134,21 @@ where
         memory.derives_from = derives_from;
         let mut replaces = None;
         let mut replaces_valid_until = None;
-        if let Some(id) = memory.replaces
-            && let Some(m) = self.journal.memory(tenant_id, id).await?
+        let replaced = match memory.replaces {
+            Some(id) => self.journal.memory(tenant_id, id).await?,
+            None => None,
+        };
+        // Whether approving this successor needs a person depends on the
+        // replaced version's class, which the verdict's refusal names
+        // whether the caller reads that version or not (ADR-0080 d16); the
+        // version itself is named only where it is readable.
+        let replaces_kind = replaced.as_ref().map(|m| m.kind);
+        if let Some(m) = replaced
             && (!anonymous || m.workspace_id == memory.workspace_id)
             && self.readable(caller, &m).await?
         {
             replaces = Some(VersionRef {
-                artifact_id: id,
+                artifact_id: m.memory_id,
                 version: m.version,
             });
             // What approving a held successor does to the version it
@@ -2160,6 +2173,7 @@ where
         Ok(ServedMemory {
             memory,
             replaces,
+            replaces_kind,
             replaces_valid_until,
             workspace_path,
             anonymous,
@@ -6102,6 +6116,19 @@ where
             }
             _ => None,
         };
+        // A successor that changes kind inside the supersession class can
+        // retire an instruction: approving it then needs a person as well
+        // (ADR-0080 d16), and the policy names the stricter class.
+        let replaced_kind = replaced.as_ref().map(|t| t.kind);
+        if let Some(kind) = replaced_kind {
+            check_approval_class(
+                kind,
+                key.role,
+                key.used_by,
+                key.crew_id.is_some(),
+                key.profile.is_some(),
+            )?;
+        }
 
         let verdict_event = self.seal(
             prev.as_ref(),
@@ -6149,7 +6176,7 @@ where
                 // the approving verdict is the ratifying act, so
                 // ratification_event_id names it. Nothing is self-signed in
                 // the PoC (ADR-0025 d17).
-                let policy = claim_review_policy(memory.kind);
+                let policy = claim_review_policy(memory.kind, replaced_kind);
                 // What the promoted row keeps of this verdict: the reviewing
                 // key's attestation, the same-person mark and the verdict's
                 // own time, never the key (ADR-0077 d3, d6).

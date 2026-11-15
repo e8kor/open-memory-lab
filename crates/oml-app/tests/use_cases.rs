@@ -10430,6 +10430,23 @@ async fn an_agent_reviewers_approval_of_a_memory_successor_of_steering_is_refuse
         .expect("supersede")
         .receipt
         .memory_id;
+    // The held listing marks it as needing a person.
+    let held = app
+        .review_held(
+            &reviewer.value,
+            &oml_app::types::HeldListingRequest {
+                limit: 50,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the held listing");
+    let item = held
+        .items
+        .iter()
+        .find(|i| i.served.memory.memory_id == successor)
+        .expect("the successor is listed");
+    assert!(item.served.needs_person());
     let crew_reviewer = agent_reviewer(&app, admin, "crew-reviewer", crew).await;
     let before = journal(&store, boot.tenant_id).await.len();
     let err = app

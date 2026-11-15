@@ -3572,7 +3572,7 @@ pub fn held_page_json(page: &HeldPage) -> Value {
                 obj.insert("same_user".to_owned(), json!(item.same_user));
                 // Only a person's verdict counts on an instruction-class
                 // version (ADR-0080 d3, d16).
-                let needs_person = item.served.memory.kind.class().needs_person();
+                let needs_person = item.served.needs_person();
                 obj.insert("needs_person".to_owned(), json!(needs_person));
                 obj.insert(
                     "needs_person_reason".to_owned(),

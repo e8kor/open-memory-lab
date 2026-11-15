@@ -65,8 +65,9 @@ class HeldPageItemsItem:
             (ADR-0057 d5).
         held_since (datetime.datetime): When the row entered the review queue.
         same_user (bool): Whether the calling key and the authoring key name one user (ADR-0055 d7).
-        needs_person (bool): true for an instruction-class version (steering, guardrail): only a person's reviewer key
-            approves it, and any other key is refused review.person_required (ADR-0080 d3, d16). Since v0.8.0.
+        needs_person (bool): true for an instruction-class version (steering, guardrail), or a successor of another kind
+            that replaces one: only a person's reviewer key approves it, and any other key is refused review.person_required
+            (ADR-0080 d3, d16). Since v0.8.0.
         needs_person_reason (None | str): instruction_needs_person when needs_person is true; null when it is false
             (ADR-0080 d16). Since v0.8.0.
         severity (MemorySummarySeverity | Unset): On kind guardrail alone, except a retirement version (ADR-0037 d2).
