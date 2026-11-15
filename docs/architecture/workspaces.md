@@ -66,7 +66,7 @@ flowchart TD
 - **Recall.** A recall inside the root also searches `universe`. A memory shown from `universe` carries no author and no source.
 - **Only the keys start a memory in the root.** A reviewer granted there reads, reviews and proposes edits and retirements. Its new memory is refused with `submission.user_root_refused`, and so is putting a retired memory back. The keys of the web session belong to the user: the `<user>-review` key puts the user's retired memory back, and in another person's root it is a granted reviewer like any other.
 - **Curation.** `universe` holds only memories that curators place there. A second identity reviews each one like any write. No user key writes to it directly.
-- **Climbing the ladder.** A user root reaches `protected` and no further.
+- **The ladder.** A user root and every workspace under it stay `development`. A proposal moving any of them, and the ratification of one left pending, is refused `workspace.transition_refused` with reason `user_root` ([ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d17). `oml doctor`, under an admin key, names each node there that an earlier build moved off `development`.
 
 Workspaces and keys made before user roots existed stay where they are and belong to no person.
 

@@ -384,7 +384,7 @@ Requires: reviewer or admin.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `to` | `protected` \| `frozen` | yes | Forward only; backward transitions do not exist, and a user root climbs to protected at most. |
+| `to` | `protected` \| `frozen` | yes | Forward only; backward transitions do not exist, and a user root and every workspace under it stay development, so a proposal there is refused workspace.transition_refused, reason user_root. |
 
 **Responses.** `202` Pending transition.; `409` A 409-class conflict (idempotency.*, submission.tip_conflict, workspace.frozen, review.serve_invalid, …).; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 

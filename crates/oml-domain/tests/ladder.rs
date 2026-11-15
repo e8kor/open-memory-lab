@@ -257,8 +257,24 @@ fn development_and_committed_refuse_none_of_the_frozen_operations() {
 }
 
 #[test]
-fn a_user_root_climbs_to_committed_and_validated_is_refused_as_user_root() {
-    assert_eq!(propose_check(UserRoot, Development, Protected, &[]), Ok(()));
+fn a_user_root_is_refused_protected() {
+    // A user root and every node under it stay development (ADR-0085 d17):
+    // the ladder's one forward step from there is refused as user_root, at
+    // the proposal and again at ratification.
+    assert_eq!(
+        propose_check(UserRoot, Development, Protected, &[]),
+        Err(LadderRefusal::UserRoot)
+    );
+    assert_eq!(
+        ratify_check(Development, UserRoot, Development, Protected, &[]),
+        Err(LadderRefusal::UserRoot)
+    );
+    assert_eq!(LadderRefusal::UserRoot.reason(), "user_root");
+}
+
+#[test]
+fn a_user_root_already_protected_is_refused_frozen_as_user_root() {
+    // A root that climbed before the cap moves no further (ADR-0085 d17).
     assert_eq!(
         propose_check(UserRoot, Protected, Frozen, &[Frozen]),
         Err(LadderRefusal::UserRoot)
@@ -267,8 +283,20 @@ fn a_user_root_climbs_to_committed_and_validated_is_refused_as_user_root() {
         ratify_check(Protected, UserRoot, Protected, Frozen, &[]),
         Err(LadderRefusal::UserRoot)
     );
-    assert_eq!(LadderRefusal::UserRoot.reason(), "user_root");
-    // Its children climb freely, so a finished subtree inside it freezes.
+}
+
+#[test]
+fn a_backward_or_same_step_inside_a_user_root_keeps_its_own_reason() {
+    assert_eq!(
+        propose_check(UserRoot, Protected, Development, &[]),
+        Err(LadderRefusal::Backward)
+    );
+    assert_eq!(
+        propose_check(UserRoot, Development, Development, &[]),
+        Err(LadderRefusal::Same)
+    );
+    // A shared workspace still climbs and freezes (ADR-0009 d3).
+    assert_eq!(propose_check(Ordinary, Development, Protected, &[]), Ok(()));
     assert_eq!(propose_check(Ordinary, Protected, Frozen, &[]), Ok(()));
 }
 

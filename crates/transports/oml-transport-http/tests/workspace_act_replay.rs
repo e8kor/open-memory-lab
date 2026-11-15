@@ -75,6 +75,7 @@ struct World {
     router: Router,
     tenant: Uuid,
     admin: String,
+    admin_key_id: Uuid,
     ann: String,
     proj: Uuid,
     draft: Uuid,
@@ -142,6 +143,7 @@ async fn world() -> World {
         tenant: boot.tenant_id,
         store,
         admin,
+        admin_key_id: boot.admin_key.key_id,
         ann,
         proj: nodes[0],
         draft: nodes[1],
@@ -386,6 +388,7 @@ async fn world_at_one_request_a_minute() -> World {
         tenant: boot.tenant_id,
         store,
         admin,
+        admin_key_id: boot.admin_key.key_id,
         ann,
         proj: nodes[0],
         draft: nodes[1],
@@ -408,7 +411,9 @@ async fn the_minute_is_spent(w: &World) {
 }
 
 /// A proposal resolves its caller once, so at one request a minute the
-/// person's first request proposes (#253).
+/// person's first request is answered by the ladder, not the rate (#253):
+/// inside ann's root that answer is the `user_root` refusal (ADR-0085
+/// d17).
 #[tokio::test]
 async fn a_proposal_by_a_persons_key_costs_one_request_of_its_rate() {
     let w = world_at_one_request_a_minute().await;
@@ -421,26 +426,39 @@ async fn a_proposal_by_a_persons_key_costs_one_request_of_its_rate() {
         Some(json!({"to": "protected"})),
     )
     .await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
+    assert_eq!(status, StatusCode::CONFLICT, "{proposal}");
+    assert_eq!(
+        proposal["error"]["code"], "workspace.transition_refused",
+        "{proposal}"
+    );
+    assert_eq!(
+        proposal["error"]["details"]["reason"], "user_root",
+        "{proposal}"
+    );
     the_minute_is_spent(&w).await;
 }
 
 /// A ratification resolves its caller once, so at one request a minute
-/// the person's first request ratifies (#253).
+/// the person's first request is answered by the ladder, not the rate
+/// (#253): a proposal left pending inside ann's root is refused
+/// `user_root` there (ADR-0085 d17).
 #[tokio::test]
 async fn a_ratification_by_a_persons_key_costs_one_request_of_its_rate() {
     let w = world_at_one_request_a_minute().await;
-    let propose = format!("/v2/workspaces/{}/transitions", w.proj);
-    let (status, _, proposal) = send(
-        &w.router,
-        &propose,
-        &w.admin,
-        "p-1",
-        Some(json!({"to": "protected"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
-    let id = proposal["transition_id"].as_str().expect("an id");
+    let id = Uuid::from_u128(0x253);
+    w.store
+        .seed_pending_transition(oml_app::types::TransitionRecord {
+            transition_id: id,
+            tenant_id: w.tenant,
+            workspace_id: w.proj,
+            from: oml_app::domain::WorkspaceStatus::Development,
+            to: oml_app::domain::WorkspaceStatus::Protected,
+            state: oml_app::types::TransitionState::Pending,
+            proposer_key_id: w.admin_key_id,
+            proposer_principal: "acme-admin".to_owned(),
+            ratifier_key_id: None,
+        })
+        .expect("a pending proposal");
     let (status, _, ratified) = send(
         &w.router,
         &format!("/v2/workspaces/{}/transitions/{id}/ratify", w.proj),
@@ -449,7 +467,11 @@ async fn a_ratification_by_a_persons_key_costs_one_request_of_its_rate() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{ratified}");
+    assert_eq!(status, StatusCode::CONFLICT, "{ratified}");
+    assert_eq!(
+        ratified["error"]["details"]["reason"], "user_root",
+        "{ratified}"
+    );
     the_minute_is_spent(&w).await;
 }
 

@@ -34,8 +34,9 @@ oml workspaces status ratify project <transition-id>
 ```
 
 A frozen workspace stays readable and takes no new writes. The changes still allowed (removing a
-memory, updating the crew's recorded details) each leave a record. Today a person's own root climbs to
-`protected` at most; the design caps it at `development`, so production work happens in shared workspaces
+memory, updating the crew's recorded details) each leave a record. A person's own root and every
+workspace under it stay `development`: a proposal to move any of them is refused
+`workspace.transition_refused` with reason `user_root`, so production work happens in shared workspaces
 ([ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d17). There are no backward transitions.
 
 ## In-progress workspaces

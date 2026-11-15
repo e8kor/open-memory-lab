@@ -78,9 +78,9 @@ pub enum LadderRefusal {
     /// At ratification, the proposal's `from` is no longer the node's status.
     #[error("the proposal's from is no longer the node's status")]
     Stale,
-    /// To `frozen` on a user root, which climbs to `protected` at most
-    /// (ADR-0046 d1).
-    #[error("a user root climbs to protected and is never frozen")]
+    /// Off `development` on a user root or any node under one, which stays
+    /// `development` (ADR-0085 d17, amending ADR-0046 d1).
+    #[error("a user root and every workspace under it stay development")]
     UserRoot,
 }
 
@@ -101,8 +101,8 @@ impl LadderRefusal {
 }
 
 /// What a node is to the ladder: the universe root, which takes no
-/// transition; a user root, which climbs to `protected` at most (ADR-0044
-/// d1; ADR-0046 d1); or any other node.
+/// transition; a user root or any node under one, which stays
+/// `development` (ADR-0044 d1; ADR-0085 d17); or any other node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LadderNode {
     Universe,
@@ -111,8 +111,9 @@ pub enum LadderNode {
 }
 
 /// Whether a proposal of `current` → `to` is admitted on a node: the
-/// universe first, then the rung order, then a user root's ceiling, then
-/// the preconditions (ADR-0009 d3, d4; ADR-0046 d1).
+/// universe first, then the rung order, then a user root's ceiling, which
+/// admits no forward step at all, then the preconditions (ADR-0009 d3, d4;
+/// ADR-0085 d17).
 pub fn propose_check(
     node: LadderNode,
     current: WorkspaceStatus,
@@ -130,7 +131,7 @@ pub fn propose_check(
         }
         std::cmp::Ordering::Greater => {}
     }
-    if node == LadderNode::UserRoot && to == WorkspaceStatus::Frozen {
+    if node == LadderNode::UserRoot {
         return Err(LadderRefusal::UserRoot);
     }
     transition_preconditions(current, to, children)
