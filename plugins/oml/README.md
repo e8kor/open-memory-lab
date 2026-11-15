@@ -327,7 +327,7 @@ reads the same two settings first, so the exported variables can then leave the 
 unless the `oml` CLI or another client still reads them.
 
 Release 0.4.0 also replaces the eight 0.3 tools with these three. The `permissions.allow` rules
-written for the 0.3 read tools, `oml_recall`, `oml_get`, `oml_my_work`, `oml_workspace_info` and
+written for the 0.3 read tools, `oml_recall`, `oml_get`, `oml_my_work`, `oml_workarea_info` and
 `oml_events_tail`, allow nothing any more: replace them with the two rules above, or with
 `mcp__plugin_oml_oml`. Run `claude plugin update oml@open-memory-lab` and install the 0.4.0
 CLI, so the skill and the session-start hook name the new tools. The events tail is no longer a
