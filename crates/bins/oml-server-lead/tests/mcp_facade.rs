@@ -761,7 +761,7 @@ const V0_3_0_TOOL_NAMES: [&str; 8] = [
     "oml_get",
     "oml_supersede",
     "oml_my_work",
-    "oml_workspace_info",
+    "oml_workarea_info",
     "oml_events_tail",
 ];
 
@@ -963,7 +963,7 @@ async fn tools_list_names_no_designed_tool() {
         "oml_get",
         "oml_supersede",
         "oml_my_work",
-        "oml_workspace_info",
+        "oml_workarea_info",
         "oml_events_tail",
         "oml_attach",
         "oml_graph",

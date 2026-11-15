@@ -96,7 +96,7 @@ def sync_detailed(
     verification surface).
 
      Requires: reader effective access on workspace (access.not_found otherwise); omitted, the key's
-    default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workspace_id
+    default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workarea_id
     parameter and X-OML-Workarea header are request.validation naming workspace in details.renamed_to
     (ADR-0039 d7). Which events a key sees, what a served event names, and how next_after_seq is
     computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key
@@ -156,7 +156,7 @@ def sync(
     verification surface).
 
      Requires: reader effective access on workspace (access.not_found otherwise); omitted, the key's
-    default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workspace_id
+    default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workarea_id
     parameter and X-OML-Workarea header are request.validation naming workspace in details.renamed_to
     (ADR-0039 d7). Which events a key sees, what a served event names, and how next_after_seq is
     computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key
@@ -211,7 +211,7 @@ async def asyncio_detailed(
     verification surface).
 
      Requires: reader effective access on workspace (access.not_found otherwise); omitted, the key's
-    default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workspace_id
+    default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workarea_id
     parameter and X-OML-Workarea header are request.validation naming workspace in details.renamed_to
     (ADR-0039 d7). Which events a key sees, what a served event names, and how next_after_seq is
     computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key
@@ -269,7 +269,7 @@ async def asyncio(
     verification surface).
 
      Requires: reader effective access on workspace (access.not_found otherwise); omitted, the key's
-    default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workspace_id
+    default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workarea_id
     parameter and X-OML-Workarea header are request.validation naming workspace in details.renamed_to
     (ADR-0039 d7). Which events a key sees, what a served event names, and how next_after_seq is
     computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key

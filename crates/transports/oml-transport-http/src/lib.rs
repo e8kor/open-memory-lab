@@ -1867,7 +1867,7 @@ where
         let idem = idempotency_key(headers)?;
         let key = reference("key", key_id)?;
         let req: DenialBody = parse_json_renamed(headers, body, |body| {
-            refuse_renamed(body, "", &[("workspace_node_id", "workspace")])
+            refuse_renamed(body, "", &[("workarea_node_id", "workspace")])
         })?;
         let node = reference("/workspace", &req.workspace)?;
         // A session key cuts off one key on universe, as the pages do
@@ -2579,8 +2579,10 @@ where
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, None)?;
         refuse_workarea_header(headers, "workspace")?;
-        if params.contains_key("workspace_id") {
-            return Err(ApiError::renamed("workspace_id", "workspace"));
+        // v0.3.0's spelling keeps its refusal under its real name (ADR-0039
+        // d7; ADR-0091 implementation notes).
+        if params.contains_key("workarea_id") {
+            return Err(ApiError::renamed("workarea_id", "workspace"));
         }
         let after_seq: u64 = match params.get("after_seq") {
             None => 0,
@@ -4045,20 +4047,21 @@ fn refuse_renamed(body: &Value, pointer: &str, renames: &[(&str, &str)]) -> Resu
 }
 
 /// `POST /v2/keys`'s v0.3.0 spellings, at the top, in each grant and in
-/// each grant's deny entries (ADR-0039 d7).
+/// each grant's deny entries, refused under their real names and naming
+/// their v0.8.0 successors (ADR-0039 d7; ADR-0091 implementation notes).
 fn key_issue_renamed(body: &Value) -> Result<(), ApiError> {
     refuse_renamed(
         body,
         "",
         &[
-            ("default_workspace_id", "default_workspace"),
+            ("default_workarea_id", "default_workspace"),
             ("tenant_id", "tenant"),
         ],
     )?;
     let grants = body.get("grants").and_then(Value::as_array);
     for (i, grant) in grants.into_iter().flatten().enumerate() {
         let at = format!("/grants/{i}");
-        refuse_renamed(grant, &at, &[("workspace_node_id", "workspace")])?;
+        refuse_renamed(grant, &at, &[("workarea_node_id", "workspace")])?;
         let deny = grant.get("deny").and_then(Value::as_array);
         for (j, entry) in deny.into_iter().flatten().enumerate() {
             refuse_renamed(
@@ -4483,7 +4486,8 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
                 };
             }
             "workspace" => req.workspace = Some(reference("workspace", value)?),
-            "workspace_id" => return Err(ApiError::renamed("workspace_id", "workspace")),
+            // v0.3.0's spelling, refused under its real name (ADR-0039 d7).
+            "workarea_id" => return Err(ApiError::renamed("workarea_id", "workspace")),
             "claim_key" => req.claim_key = Some(value.clone()),
             "state" => req.state = Some(parse_state(value)?),
             "kind" => req.kind = Some(parse_kind(value)?),

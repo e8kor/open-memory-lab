@@ -1138,17 +1138,17 @@ async fn the_x_oml_workarea_header_is_refused_naming_workspace() {
 }
 
 #[tokio::test]
-async fn a_listing_naming_workspace_id_is_refused_naming_workspace() {
+async fn a_listing_naming_workarea_id_is_refused_naming_workspace() {
     let router = doubles_router();
     let crew = crew(&router).await;
     let token = crew.agent.token.as_str();
     for path in [
-        format!("/v1/memories?workspace_id={}", crew.workspace),
-        format!("/v1/memories?own=true&workspace_id={}", crew.workspace),
-        format!("/v2/events?workspace_id={}", crew.workspace),
+        format!("/v1/memories?workarea_id={}", crew.workspace),
+        format!("/v1/memories?own=true&workarea_id={}", crew.workspace),
+        format!("/v2/events?workarea_id={}", crew.workspace),
     ] {
         let (status, refused) = send(&router, "GET", &path, Some(token), None, None).await;
-        assert_renamed(status, &refused, "workspace_id", "workspace");
+        assert_renamed(status, &refused, "workarea_id", "workspace");
     }
     for path in [
         format!("/v1/memories?workspace={}", crew.workspace),
@@ -1157,6 +1157,20 @@ async fn a_listing_naming_workspace_id_is_refused_naming_workspace() {
     ] {
         let (status, page) = send(&router, "GET", &path, Some(token), None, None).await;
         assert_eq!(status, StatusCode::OK, "{path}: {page}");
+    }
+    // `workspace_id` was never a name on these routes: a listing takes it as
+    // any unknown query parameter, with no successor named (ADR-0091 d2).
+    for path in [
+        format!("/v1/memories?workspace_id={}", crew.workspace),
+        format!("/v1/memories?own=true&workspace_id={}", crew.workspace),
+    ] {
+        let (status, refused) = send(&router, "GET", &path, Some(token), None, None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}: {refused}");
+        assert_eq!(refused["error"]["code"], "request.validation", "{refused}");
+        assert!(
+            refused["error"]["details"]["renamed_to"].is_null(),
+            "{path}: {refused}"
+        );
     }
 }
 

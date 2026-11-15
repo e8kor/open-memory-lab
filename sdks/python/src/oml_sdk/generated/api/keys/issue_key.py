@@ -110,11 +110,11 @@ def sync_detailed(
     (Grant admissibility and refusal order), which also fixes grant admissibility, the default
     workspace, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every
     workspace, crew and tenant reference takes an id or a name, and the response carries ids under their
-    v0.3.0 names; a v0.3.0 request spelling (default_workspace_id, tenant_id, a grant's
-    workspace_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its
-    successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken,
-    checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly
-    the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
+    v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id,
+    a deny entry's subtree_node_id) is refused with request.validation naming its successor in
+    details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked
+    after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the
+    grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
     seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201
     carries connect_code, shown once, in the value's place; an admin or operator role, used_by service
     and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason.
@@ -188,11 +188,11 @@ def sync(
     (Grant admissibility and refusal order), which also fixes grant admissibility, the default
     workspace, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every
     workspace, crew and tenant reference takes an id or a name, and the response carries ids under their
-    v0.3.0 names; a v0.3.0 request spelling (default_workspace_id, tenant_id, a grant's
-    workspace_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its
-    successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken,
-    checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly
-    the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
+    v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id,
+    a deny entry's subtree_node_id) is refused with request.validation naming its successor in
+    details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked
+    after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the
+    grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
     seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201
     carries connect_code, shown once, in the value's place; an admin or operator role, used_by service
     and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason.
@@ -261,11 +261,11 @@ async def asyncio_detailed(
     (Grant admissibility and refusal order), which also fixes grant admissibility, the default
     workspace, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every
     workspace, crew and tenant reference takes an id or a name, and the response carries ids under their
-    v0.3.0 names; a v0.3.0 request spelling (default_workspace_id, tenant_id, a grant's
-    workspace_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its
-    successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken,
-    checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly
-    the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
+    v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id,
+    a deny entry's subtree_node_id) is refused with request.validation naming its successor in
+    details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked
+    after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the
+    grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
     seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201
     carries connect_code, shown once, in the value's place; an admin or operator role, used_by service
     and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason.
@@ -337,11 +337,11 @@ async def asyncio(
     (Grant admissibility and refusal order), which also fixes grant admissibility, the default
     workspace, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every
     workspace, crew and tenant reference takes an id or a name, and the response carries ids under their
-    v0.3.0 names; a v0.3.0 request spelling (default_workspace_id, tenant_id, a grant's
-    workspace_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its
-    successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken,
-    checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly
-    the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
+    v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id,
+    a deny entry's subtree_node_id) is refused with request.validation naming its successor in
+    details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked
+    after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the
+    grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
     seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201
     carries connect_code, shown once, in the value's place; an admin or operator role, used_by service
     and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason.

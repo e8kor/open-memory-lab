@@ -8272,13 +8272,13 @@ async fn assert_renamed(router: &Router, uri: &str, call: Call, field: &str, ren
     );
 }
 
-/// A key issuance sending v0.3.0's `default_workspace_id` is refused as
-/// `request.validation` naming `/default_workspace_id` and its successor
+/// A key issuance sending v0.3.0's `default_workarea_id` is refused as
+/// `request.validation` naming `/default_workarea_id` and its successor
 /// `/default_workspace`, never read as the default it meant nor dropped,
 /// and the same issuance under `default_workspace` is created with that
 /// default (ADR-0039 d7).
 #[tokio::test]
-async fn a_key_issue_naming_default_workspace_id_is_refused_naming_default_workspace() {
+async fn a_key_issue_naming_default_workarea_id_is_refused_naming_default_workspace() {
     let router = &doubles_router();
     let (admin, _, root) = bootstrap(router).await;
     let quarter = create_workspace(router, &admin, root, "q1-2027").await;
@@ -8290,9 +8290,9 @@ async fn a_key_issue_naming_default_workspace_id_is_refused_naming_default_works
             "role": "reader",
             "name": "agent-1",
             "grants": grants,
-            "default_workspace_id": quarter,
+            "default_workarea_id": quarter,
         })),
-        "/default_workspace_id",
+        "/default_workarea_id",
         "/default_workspace",
     )
     .await;
@@ -8319,8 +8319,8 @@ async fn a_key_issue_naming_default_workspace_id_is_refused_naming_default_works
 }
 
 /// Every other v0.3.0 spelling of a reference on the key routes, `tenant_id`,
-/// a grant's `workspace_node_id`, a deny entry's `subtree_node_id` and a
-/// denial's `workspace_node_id`, is refused naming its pointer and its
+/// a grant's `workarea_node_id`, a deny entry's `subtree_node_id` and a
+/// denial's `workarea_node_id`, is refused naming its pointer and its
 /// successor's (ADR-0039 d7).
 #[tokio::test]
 async fn every_v0_3_0_reference_spelling_on_the_key_routes_is_refused_naming_its_successor() {
@@ -8338,9 +8338,9 @@ async fn every_v0_3_0_reference_spelling_on_the_key_routes_is_refused_naming_its
             1,
             json!({ "role": "reader", "name": "agent-1", "grants": [
                 { "workspace": root, "role": "reader" },
-                { "workspace_node_id": root, "role": "writer" },
+                { "workarea_node_id": root, "role": "writer" },
             ] }),
-            "/grants/1/workspace_node_id",
+            "/grants/1/workarea_node_id",
             "/grants/1/workspace",
         ),
         (
@@ -8370,8 +8370,8 @@ async fn every_v0_3_0_reference_spelling_on_the_key_routes_is_refused_naming_its
         "/v2/keys/writer-agent-denied/denials",
         Call::auth(&admin)
             .idem("old-denial")
-            .body(json!({ "workspace_node_id": quarter })),
-        "/workspace_node_id",
+            .body(json!({ "workarea_node_id": quarter })),
+        "/workarea_node_id",
         "/workspace",
     )
     .await;

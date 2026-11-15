@@ -546,7 +546,7 @@ The per-tenant journal tail.
 
 The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a verification surface).
 
-Requires: reader effective access on workspace (access.not_found otherwise); omitted, the key's default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workspace_id parameter and X-OML-Workarea header are request.validation naming workspace in details.renamed_to.
+Requires: reader effective access on workspace (access.not_found otherwise); omitted, the key's default workspace, and request.workspace_unresolved for a key with none. v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in details.renamed_to.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
