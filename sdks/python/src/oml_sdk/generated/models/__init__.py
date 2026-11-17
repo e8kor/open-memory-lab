@@ -259,6 +259,13 @@ from .search_settings_valid_time import SearchSettingsValidTime
 from .serve import Serve
 from .served_digests import ServedDigests
 from .served_guardrail import ServedGuardrail
+from .served_guardrail_effect_inside_type_1 import ServedGuardrailEffectInsideType1
+from .served_guardrail_effect_inside_type_2_type_1 import (
+    ServedGuardrailEffectInsideType2Type1,
+)
+from .served_guardrail_effect_inside_type_3_type_1 import (
+    ServedGuardrailEffectInsideType3Type1,
+)
 from .served_guardrail_verdicts_item import ServedGuardrailVerdictsItem
 from .served_guardrail_verdicts_item_used_by import ServedGuardrailVerdictsItemUsedBy
 from .set_federation_policy_body import SetFederationPolicyBody
@@ -621,6 +628,9 @@ __all__ = (
     "Serve",
     "ServedDigests",
     "ServedGuardrail",
+    "ServedGuardrailEffectInsideType1",
+    "ServedGuardrailEffectInsideType2Type1",
+    "ServedGuardrailEffectInsideType3Type1",
     "ServedGuardrailVerdictsItem",
     "ServedGuardrailVerdictsItemUsedBy",
     "SetFederationPolicyBody",

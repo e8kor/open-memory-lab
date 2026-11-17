@@ -50,9 +50,12 @@ class RecallRequest:
             include_unreviewed (bool | Unset): When true, the calling key's own held rows (kind memory or derived_fact,
                 never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds
                 filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held
-                and unreviewed true; they count against k and max_tokens. Inside a workspace a person put in progress, every
-                author's held memories on the served nodes join too, and absent means true there; absent means false everywhere
-                else (ADR-0030 d3, d4). Rules: docs/architecture/retrieval.md.
+                and unreviewed true; they count against k and max_tokens. Inside a workspace a person put in progress, and in
+                every such workspace below the scope, every author's held memories join too, and absent means true when the
+                served workspaces hold one; absent means false everywhere else (ADR-0030 d3, d4; ADR-0080 d16). The steering
+                list carries held steering after the promoted rows, marked unreviewed: the key's own when this is true, and
+                every author's on a workspace in progress up the scope's chain (ADR-0080 d10, d14). Rules:
+                docs/architecture/retrieval.md.
             max_tokens (int | Unset): Recall budget in budget tokens (counter oml-tc/1), at most 2^53 - 1, the largest
                 integer the request digest canonicalizes exactly under RFC 8785. Steering is never cut; hits are the longest
                 rank prefix that fits. Refused with include_text false. Rules: docs/architecture/retrieval.md, Token budgets.

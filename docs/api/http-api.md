@@ -252,6 +252,7 @@ Requires: reader on the scope node.
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
 | `workspace` | query | string | no | The scope node, by id or name, within the key's grants; omitted, the key's default workspace. |
+| `include_own_held` | query | boolean | no | Serve the calling key's own held guardrails in the chain as rules too, each unreviewed with effect_inside ask. |
 
 **Responses.** `200` The set, its digest and the caller's own held guardrails.; `401` auth.missing or auth.invalid.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 

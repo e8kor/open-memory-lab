@@ -477,13 +477,25 @@ paths:
           required: false
           schema: { type: string }
           description: The scope node, by id or name, within the key's grants; omitted, the key's default workspace.
+        - name: include_own_held
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: >-
+            Serve the calling key's own held guardrails in the chain as rules too, each unreviewed
+            with effect_inside ask (ADR-0080 d14). The plugin's hooks and the guardrails prompt
+            send true.
       summary: The guardrails in force at the scope node, under the key's reader access and guardrail scope; never in recall.
       description: >-
         Requires: reader on the scope node. Serves the promoted guardrail tips on the node and,
         under guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's,
-        set at issuance, and any parameter other than workspace, guardrail_scope included, is
-        request.validation naming it (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5,
-        d7; since v0.5.1).
+        set at issuance, and any parameter other than workspace and include_own_held,
+        guardrail_scope included, is request.validation naming it. On a node inside a workspace
+        a person put in progress, every author's held guardrail is served too, and under
+        include_own_held the key's own held ones: each a line of its own after the promoted
+        rows, never a held retirement or a version the scan held, marked unreviewed with
+        effect_inside ask, so a held rule asks and never denies (docs/api/http-api.md,
+        Guardrails; ADR-0037 d4, d5, d7; ADR-0080 d10, d14, d16; since v0.5.1).
       responses:
         '200':
           description: The set, its digest and the caller's own held guardrails.
@@ -3928,7 +3940,10 @@ components:
             max_tokens. Inside a workspace a person put in progress, and in every such workspace
             below the scope, every author's held memories join too, and absent means true when the
             served workspaces hold one; absent means false everywhere else (ADR-0030 d3, d4;
-            ADR-0080 d16). Rules: docs/architecture/retrieval.md.
+            ADR-0080 d16). The steering list carries held steering after the promoted rows,
+            marked unreviewed: the key's own when this is true, and every author's on a
+            workspace in progress up the scope's chain (ADR-0080 d10, d14). Rules:
+            docs/architecture/retrieval.md.
         max_tokens:
           type: integer
           format: int64
@@ -5065,7 +5080,7 @@ components:
         guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
         set_digest: { type: string, description: "Opaque; a client only compares it." }
         over_cap: { type: boolean, description: "More than twelve apply; the set is still served whole." }
-        guardrails: { type: array, items: { $ref: '#/components/schemas/ServedGuardrail' }, description: "Ordered by severity, depth from the root, promoted_at and artifact_id; never by a query." }
+        guardrails: { type: array, items: { $ref: '#/components/schemas/ServedGuardrail' }, description: "Ordered by severity, depth from the root, promoted_at and artifact_id, a held version after the promoted rows of its severity and depth; never by a query." }
         own_held:
           type: array
           maxItems: 5
@@ -5080,7 +5095,7 @@ components:
 
     ServedGuardrail:
       type: object
-      required: [artifact_id, claim_key, version, workspace_id, workspace_path, depth, severity, text, rule, tokens, promoted_at, verdicts, conflict]
+      required: [artifact_id, claim_key, version, workspace_id, workspace_path, depth, severity, text, rule, tokens, promoted_at, unreviewed, effect_inside, verdicts, conflict]
       additionalProperties: false
       properties:
         artifact_id: { type: string }
@@ -5093,10 +5108,15 @@ components:
         text: { type: string }
         rule: { description: "Its oml-gr/1 rule, or null." }
         tokens: { type: integer, minimum: 0 }
-        promoted_at: { type: string, format: date-time }
+        promoted_at: { type: [string, 'null'], format: date-time, description: "Null for a held version." }
+        unreviewed: { type: boolean, description: "A held version, served to its author key or inside an in-progress workspace (ADR-0080 d10, d14)." }
+        effect_inside:
+          type: [string, 'null']
+          enum: [ask, null]
+          description: "The effect the hook applies in place of the rule's own: ask for every held version, null for a promoted one, which is never downgraded; the rule itself is unchanged (ADR-0080 d10)."
         verdicts:
           type: array
-          description: Each approving verdict's reviewer attestation and time, never the reviewer's key (ADR-0025 d15).
+          description: Each approving verdict's reviewer attestation and time, never the reviewer's key (ADR-0025 d15); empty for a held version.
           items:
             type: object
             required: [used_by, at]

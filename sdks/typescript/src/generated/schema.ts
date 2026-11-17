@@ -137,7 +137,7 @@ export interface paths {
         };
         /**
          * The guardrails in force at the scope node, under the key's reader access and guardrail scope; never in recall.
-         * @description Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance, and any parameter other than workspace, guardrail_scope included, is request.validation naming it (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
+         * @description Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance, and any parameter other than workspace and include_own_held, guardrail_scope included, is request.validation naming it. On a node inside a workspace a person put in progress, every author's held guardrail is served too, and under include_own_held the key's own held ones: each a line of its own after the promoted rows, never a held retirement or a version the scan held, marked unreviewed with effect_inside ask, so a held rule asks and never denies (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; ADR-0080 d10, d14, d16; since v0.5.1).
          */
         get: operations["getGuardrails"];
         put?: never;
@@ -1851,7 +1851,7 @@ export interface components {
             anchor_repo?: components["schemas"]["AnchorRepo"];
             anchor_path_prefix?: components["schemas"]["AnchorPathPrefix"];
             origin_kinds?: components["schemas"]["OriginKinds"];
-            /** @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held and unreviewed true; they count against k and max_tokens. Inside a workspace a person put in progress, every author's held memories on the served nodes join too, and absent means true there; absent means false everywhere else (ADR-0030 d3, d4). Rules: docs/architecture/retrieval.md. */
+            /** @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held and unreviewed true; they count against k and max_tokens. Inside a workspace a person put in progress, and in every such workspace below the scope, every author's held memories join too, and absent means true when the served workspaces hold one; absent means false everywhere else (ADR-0030 d3, d4; ADR-0080 d16). The steering list carries held steering after the promoted rows, marked unreviewed: the key's own when this is true, and every author's on a workspace in progress up the scope's chain (ADR-0080 d10, d14). Rules: docs/architecture/retrieval.md. */
             include_unreviewed?: boolean;
             /**
              * Format: int64
@@ -2884,7 +2884,7 @@ export interface components {
             set_digest: string;
             /** @description More than twelve apply; the set is still served whole. */
             over_cap: boolean;
-            /** @description Ordered by severity, depth from the root, promoted_at and artifact_id; never by a query. */
+            /** @description Ordered by severity, depth from the root, promoted_at and artifact_id, a held version after the promoted rows of its severity and depth; never by a query. */
             guardrails: components["schemas"]["ServedGuardrail"][];
             /** @description The caller's own held guardrails in the chain, by key and version, never by text. */
             own_held: {
@@ -2905,9 +2905,19 @@ export interface components {
             /** @description Its oml-gr/1 rule, or null. */
             rule: unknown;
             tokens: number;
-            /** Format: date-time */
-            promoted_at: string;
-            /** @description Each approving verdict's reviewer attestation and time, never the reviewer's key (ADR-0025 d15). */
+            /**
+             * Format: date-time
+             * @description Null for a held version.
+             */
+            promoted_at: string | null;
+            /** @description A held version, served to its author key or inside an in-progress workspace (ADR-0080 d10, d14). */
+            unreviewed: boolean;
+            /**
+             * @description The effect the hook applies in place of the rule's own: ask for every held version, null for a promoted one, which is never downgraded; the rule itself is unchanged (ADR-0080 d10).
+             * @enum {string|null}
+             */
+            effect_inside: "ask" | null;
+            /** @description Each approving verdict's reviewer attestation and time, never the reviewer's key (ADR-0025 d15); empty for a held version. */
             verdicts: {
                 /** @enum {string} */
                 used_by: "agent" | "person" | "service";
@@ -4034,6 +4044,8 @@ export interface operations {
             query?: {
                 /** @description The scope node, by id or name, within the key's grants; omitted, the key's default workspace. */
                 workspace?: string;
+                /** @description Serve the calling key's own held guardrails in the chain as rules too, each unreviewed with effect_inside ask (ADR-0080 d14). The plugin's hooks and the guardrails prompt send true. */
+                include_own_held?: boolean;
             };
             header?: {
                 /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
