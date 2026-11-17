@@ -101,14 +101,14 @@ pub(crate) const RULES: &[Rule] = &[
         r"-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----",
     ),
     // An age X25519 identity: the secret half of a bundle recipient
-    // (ADR-0084 d5; #453), in either case and glued to the word before it,
+    // (ADR-0084 d5; #453), in either case and glued to a word on either side,
     // and only when its bech32 checksum holds. Its public half, `age1…`,
     // passes. The post-quantum and plugin identities are not read (#461).
     checked(
         veto(
             "age-identity",
             "secret.private_key",
-            r"(?i-u:AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58})(?-u:\b)",
+            r"(?i-u:AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58})",
         ),
         Check::Bech32,
     ),

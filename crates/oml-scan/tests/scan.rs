@@ -467,6 +467,9 @@ fn an_age_secret_key_in_a_memory_is_vetoed() {
         identity.clone(),
         identity.to_ascii_lowercase(),
         format!("OML_EXPORT_{identity}"),
+        format!("{identity}_old"),
+        format!("{identity}9"),
+        format!("{identity}x"),
     ] {
         let text = format!("the export identity, keep safe:\n{pasted}\nend");
         match scanner.scan(&[("/body", "clean"), ("/anchor/fragment", &text)]) {

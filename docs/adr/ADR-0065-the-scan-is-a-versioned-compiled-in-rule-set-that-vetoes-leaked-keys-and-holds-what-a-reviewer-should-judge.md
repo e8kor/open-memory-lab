@@ -56,7 +56,7 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   characters), the secret half of a bundle recipient ([ADR-0084](ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d5). It adds a rule to an
   existing class, so it is a minor ([ADR-0074](ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings.md) d21); the public half, `age1…`, passes.
   The rule reads the identity in either case, since bech32 decodes both, and with no word edge
-  before it, so `OML_EXPORT_AGE-SECRET-KEY-1…` is read too. A match is a finding only when its
+  required before or after it, so `OML_EXPORT_AGE-SECRET-KEY-1…` and `AGE-SECRET-KEY-1…_old` are read too. A match is a finding only when its
   bech32 checksum holds (BIP-173): a placeholder such as `AGE-SECRET-KEY-1XXXX…` or a value with
   one character changed passes. A published test vector whose checksum holds is still vetoed: the
   scan cannot tell it from a live identity. Not covered: the post-quantum identity
