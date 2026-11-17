@@ -2330,19 +2330,6 @@ async fn a_linked_key_past_its_expiry_no_longer_acts_for_its_person() {
     assert!(link_refused(&err, "revoked"), "{err:?}");
 }
 
-// -- R2 by person (ADR-0001 d5; ADR-0082 d7; #392) ---------------------------
-
-/// A shared `team` workspace, alice signed in as an admin of it, and her
-/// tenant writer key `alice-team` linked to her, writer on `team`.
-async fn team_with_alices_linked_writer(
-    app: &TestApp,
-    admin: &str,
-) -> (WebSessionRecord, IssuedKey) {
-    app.create_workspace(admin, &name("team"), None, None)
-        .await
-        .expect("an admin creates a shared workspace");
-    let alice = signed_in(app, admin, "alice", true).await;
-
 /// The review's refusals of a link: a disabled person, a session key, a
 /// service key, an already linked key, the admin's own person, and an
 /// unlink by a key that is not an admin key (ADR-0085 d16, amended
@@ -2506,14 +2493,66 @@ async fn a_linked_key_writes_into_its_persons_root_and_an_unlinked_one_is_refuse
                 ..user_req(
                     Role::Writer,
                     "unused",
+                    "alice/desk",
+                    vec![grant(by_name("alice"), Role::Writer)],
+                )
+            },
+        )
+        .await
+        .expect("a tenant writer granted into alice's root");
+    let err = app
+        .submit_memory(&writer.value, &submit("w0", "Not hers yet.", Some("alice")))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::UserRootRefused), "{err:?}");
+    app.link_key_to_person(admin, writer.key_id.into(), &name("alice"))
+        .await
+        .expect("linked");
+    written(
+        &app,
+        &writer.value,
+        &submit("w1", "Hers now.", Some("alice")),
+    )
+    .await;
+    app.unlink_key_from_person(admin, writer.key_id.into())
+        .await
+        .expect("unlinked");
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &submit("w2", "Not hers again.", Some("alice")),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::UserRootRefused), "{err:?}");
+}
+
+// -- R2 by person (ADR-0001 d5; ADR-0082 d7; #392) ---------------------------
+
+/// A shared `team` workspace, alice signed in as an admin of it, and her
+/// tenant writer key `alice-team` linked to her, writer on `team`.
+async fn team_with_alices_linked_writer(
+    app: &TestApp,
+    admin: &str,
+) -> (WebSessionRecord, IssuedKey) {
+    app.create_workspace(admin, &name("team"), Some(by_name("universe")), None)
+        .await
+        .expect("an admin creates a shared workspace");
+    let alice = signed_in(app, admin, "alice", true).await;
+    let writer = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                ..user_req(
+                    Role::Writer,
+                    "unused",
                     "alice/team",
                     vec![
                         grant(by_name("team"), Role::Writer),
                         grant(by_name("team"), Role::Reader),
                     ],
-
-                    "alice/desk",
-                    vec![grant(by_name("alice"), Role::Writer)],
                 )
             },
         )
@@ -2691,31 +2730,4 @@ async fn inside_the_persons_root_their_linked_key_approves_their_user_keys_write
         .await
         .expect("approved inside the root");
     assert!(outcome.same_user);
-
-        .expect("a tenant writer granted into alice's root");
-    let err = app
-        .submit_memory(&writer.value, &submit("w0", "Not hers yet.", Some("alice")))
-        .await
-        .unwrap_err();
-    assert!(matches!(err, AppError::UserRootRefused), "{err:?}");
-    app.link_key_to_person(admin, writer.key_id.into(), &name("alice"))
-        .await
-        .expect("linked");
-    written(
-        &app,
-        &writer.value,
-        &submit("w1", "Hers now.", Some("alice")),
-    )
-    .await;
-    app.unlink_key_from_person(admin, writer.key_id.into())
-        .await
-        .expect("unlinked");
-    let err = app
-        .submit_memory(
-            &writer.value,
-            &submit("w2", "Not hers again.", Some("alice")),
-        )
-        .await
-        .unwrap_err();
-    assert!(matches!(err, AppError::UserRootRefused), "{err:?}");
 }
