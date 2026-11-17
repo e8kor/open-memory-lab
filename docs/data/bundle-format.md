@@ -74,10 +74,14 @@ attachments by digest, state, and an `author` of `{used_by, same_user, pseudonym
 
 A pseudonym is HMAC-SHA-256 of the source key id under a salt drawn for that bundle and never
 exported. One author is recognisable as one author inside a bundle, and never across bundles. No
-line names a key or a person.
+line of `workspaces.jsonl`, `versions.jsonl`, `verdicts.jsonl` or `edges.jsonl` names a key or a
+person.
 
 Only the exporter's own versions carry their signed source event. A signed event names its key
-and principal, so the events of other people's versions and of verdicts stay on the source
+and principal, so `events.jsonl` names the exporter's principal and `api_key_id`, and nobody
+else's. The reader enforces this. Every carried event has one `principal` and one `api_key_id`, is
+a write (`submission.remember` or `submission.learn`), and names no reviewer, ratifier or proposer
+key other than its own. The events of other people's versions and of verdicts stay on the source
 server, and their integrity rests on the manifest signature.
 
 An erased version travels as a marker, exactly `{"artifact_id": "…", "version": 1, "erased": true}`.
@@ -100,18 +104,18 @@ signatures. The first failure refuses the whole bundle.
 | `bundle.depth` | JSON nested deeper than 32 |
 | `bundle.duplicate` | an artifact id and version twice, a body twice, or an event id twice |
 | `bundle.unreferenced_body` | a body no line names |
-| `bundle.malformed` | a line that does not parse or breaks its closed shape, an erasure marker with content, or an event on another author's version |
+| `bundle.malformed` | a line that does not parse or breaks its closed shape, an `exported_at` outside `YYYY-MM-DDTHH:MM:SS.ffffffZ`, an erasure marker with content, an event on another author's version, or a foreign event |
 | `bundle.digest_mismatch` | a file, a body or a version's text that does not hash to what the manifest or its event states |
-| `bundle.signature_invalid` | the manifest or a carried event does not verify, or an event names another tenant |
+| `bundle.signature_invalid` | the manifest or a carried event does not verify (strict Ed25519), an event names another tenant, or the manifest names a tenant other than the expected one |
 | `bundle.signature_unexpected` | the manifest verifies under a key other than `--expect-key` |
-| `bundle.unencrypted` | an export to no recipient, or an import of a file that is not age-encrypted |
-| `bundle.decrypt_failed` | the identity is not a recipient of the file |
+| `bundle.unencrypted` | an export to no recipient or to a recipient that does not parse, or an import of a file that is not age-encrypted |
+| `bundle.decrypt_failed` | the identity does not parse or is not a recipient of the file, the file is passphrase-encrypted, or its ciphertext does not authenticate |
 
 The size limits follow the target's quota until measurement sets them. The CLI's defaults are
 1 GiB unpacked, 100,000 entries and 64 MiB per entry.
 
 Without `--expect-key`, a valid signature proves the bundle is intact and was made under the key it
-names, but not who holds that key.
+names, but not who holds that key. The plan says which applies.
 
 ## Import plan
 
@@ -127,6 +131,11 @@ the target before it writes:
 | `equivalent` | the claim's format finds the change equivalent | none |
 | `conflict` | the target tip changed on the target since the last import, or never came from it | held supersession marked `conflict` |
 
+A source's key is pinned at its first import. Once a target has imported from a source, a later
+bundle claiming that source is refused as `import.source_key_changed` in two cases: it is signed by
+another key, or it is read without `--expect-key`. A bundle cannot borrow a source's ids to retire
+what an earlier import wrote.
+
 A bundle older than the target's last import from that source is refused as `import.bundle_older`,
 unless the import passes `--allow-older`. An incremental bundle whose base is not the last release
 imported is refused as `import.since_mismatch`. An imported version's idempotency key is
@@ -135,6 +144,12 @@ importing the same bundle twice writes nothing the second time.
 
 ## Test vectors
 
-`crates/shared/oml-bundle/tests/vectors/` holds a small signed bundle, its age-encrypted form,
-the throwaway age identity that opens it, and the fingerprint of the test signing key (seed
-`[42; 32]`). These are test material only, never real keys.
+`crates/shared/oml-bundle/tests/vectors/` holds:
+
+- a small signed bundle;
+- its age-encrypted form;
+- `TEST-ONLY-age-identity.hex`, the 32 raw bytes of the throwaway identity that opens it, from
+  which the tests build the `AGE-SECRET-KEY-1…` string at run time;
+- the fingerprint of the test signing key (seed `[42; 32]`).
+
+These are test material only, never real keys.

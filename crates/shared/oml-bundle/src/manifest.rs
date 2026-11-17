@@ -1,6 +1,6 @@
 //! `manifest.json`: what the bundle holds, and the signature over it (d1, d5).
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -96,6 +96,9 @@ impl Manifest {
     /// The mode's rules on `release`, `since` and `dropped` (d2, d8).
     pub(crate) fn check_mode(&self) -> Result<(), BundleError> {
         let bad = |reason: &str| Err(BundleError::malformed(crate::MANIFEST, 1, reason));
+        if !is_chain_instant(&self.exported_at) {
+            return bad("exported_at is not YYYY-MM-DDTHH:MM:SS.ffffffZ");
+        }
         match self.mode {
             Mode::Release if self.release.is_none() => bad("release mode names no release"),
             Mode::History if self.release.is_some() || self.since.is_some() => {
@@ -107,6 +110,19 @@ impl Manifest {
             _ => Ok(()),
         }
     }
+}
+
+/// The chain's fixed instant form, `YYYY-MM-DDTHH:MM:SS.ffffffZ` (reading
+/// R14): in it, text order is time order, so the ledger compares as text.
+#[must_use]
+pub fn is_chain_instant(text: &str) -> bool {
+    const SHAPE: &[u8; 27] = b"dddd-dd-ddTdd:dd:dd.ddddddZ";
+    let bytes = text.as_bytes();
+    bytes.len() == SHAPE.len()
+        && bytes.iter().zip(SHAPE).all(|(b, shape)| match shape {
+            b'd' => b.is_ascii_digit(),
+            other => b == other,
+        })
 }
 
 /// Lowercase hex SHA-256 of a public key's 32 bytes: the journal key's
@@ -191,7 +207,7 @@ pub fn verify_manifest(
         .ok_or_else(|| BundleError::signature("the signature is not ed25519: and 128 hex"))?;
     let bytes = manifest_signed_bytes(manifest)?;
     public
-        .verify(&bytes, &signature)
+        .verify_strict(&bytes, &signature)
         .map_err(|_| BundleError::signature("the manifest signature does not verify"))?;
     if let Some(expected) = expect_key {
         let expected = expected.trim().to_ascii_lowercase();

@@ -5,8 +5,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::BundleError;
+use crate::archive::VerifiedBundle;
 use crate::lines::{State, VersionEntry, VersionLine};
-use crate::manifest::{Manifest, Mode};
+use crate::manifest::Mode;
 
 /// The target's latest version of one claim key, held versions included.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +30,9 @@ pub struct Ledger {
     pub exported_at: String,
     /// The digest of the newest release manifest imported, if any.
     pub release_manifest_digest: Option<String>,
+    /// The fingerprint of the key that signed the last import from this
+    /// source: the source's key, pinned at its first import (R11).
+    pub signer_fingerprint: String,
 }
 
 /// The caller's view of the target workspace, for one source.
@@ -98,6 +102,11 @@ pub struct Plan {
     pub erasure_notices: Vec<(String, u64)>,
     /// The import passed `allow_older` over a newer ledger (d8).
     pub allow_older_used: bool,
+    /// The signature was checked against `--expect-key` (d5); otherwise it
+    /// proves integrity only, and the plan says so.
+    pub authenticated: bool,
+    /// The signer's fingerprint, which the ledger pins for this source (R11).
+    pub signer_fingerprint: String,
 }
 
 impl Plan {
@@ -108,17 +117,37 @@ impl Plan {
     }
 }
 
-/// Plans an import of `manifest` and `versions` into the target `view`
-/// (d8). `equivalent` is the caller's format diff (ADR-0056 d11); this
-/// crate links no format adapter. Refuses `import.bundle_older` unless
-/// `allow_older`, and `import.since_mismatch`, before any key is planned.
+/// Plans an import of a verified bundle into the target `view` (d8, R11).
+/// `equivalent` is the caller's format diff (ADR-0056 d11); this crate links
+/// no format adapter. Refuses `import.source_key_changed`,
+/// `import.bundle_older` unless `allow_older`, and `import.since_mismatch`,
+/// before any key is planned.
 pub fn plan_import(
-    manifest: &Manifest,
-    versions: &[VersionEntry],
+    bundle: &VerifiedBundle,
     view: &TargetView,
     allow_older: bool,
     equivalent: &dyn Fn(&VersionLine, &TargetTip) -> bool,
 ) -> Result<Plan, BundleError> {
+    let manifest = &bundle.contents.manifest;
+    let versions = bundle.contents.versions.as_slice();
+    // R11: a source's key is pinned at its first import. Over a ledger, only
+    // an authenticated bundle under that same key may plan.
+    if let Some(ledger) = &view.ledger {
+        if !bundle.authenticated {
+            return Err(BundleError::SourceKeyChanged {
+                detail: "this source was imported before; name its key with --expect-key"
+                    .to_owned(),
+            });
+        }
+        if ledger.signer_fingerprint != bundle.signer_fingerprint {
+            return Err(BundleError::SourceKeyChanged {
+                detail: format!(
+                    "signed by {}, the ledger pins {}",
+                    bundle.signer_fingerprint, ledger.signer_fingerprint
+                ),
+            });
+        }
+    }
     let mut allow_older_used = false;
     if let Some(ledger) = &view.ledger
         && ledger.exported_at.as_str() > manifest.exported_at.as_str()
@@ -215,6 +244,8 @@ pub fn plan_import(
         keys: planned,
         erasure_notices,
         allow_older_used,
+        authenticated: bundle.authenticated,
+        signer_fingerprint: bundle.signer_fingerprint.clone(),
     })
 }
 

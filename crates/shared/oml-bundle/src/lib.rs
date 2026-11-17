@@ -32,8 +32,8 @@ pub use lines::{
     VersionEntry, VersionLine, WorkspaceLine, pseudonym,
 };
 pub use manifest::{
-    FileEntry, Manifest, ManifestSignature, Mode, ReleaseRef, Source, key_fingerprint,
-    manifest_signed_bytes, sign_manifest, sign_manifest_with, verify_manifest,
+    FileEntry, Manifest, ManifestSignature, Mode, ReleaseRef, Source, is_chain_instant,
+    key_fingerprint, manifest_signed_bytes, sign_manifest, sign_manifest_with, verify_manifest,
 };
 
 /// The one format this reader knows (d1).

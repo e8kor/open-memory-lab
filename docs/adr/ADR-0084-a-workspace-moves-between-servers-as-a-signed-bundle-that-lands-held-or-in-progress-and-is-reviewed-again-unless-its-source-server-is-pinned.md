@@ -489,6 +489,9 @@ the code follows it.
 - **R16 — `bundle.decrypt_failed` covers both decryption failures.** One is an identity that does
   not parse or is not a recipient. The other is ciphertext that does not authenticate. A recipient
   that does not parse is `bundle.unencrypted`, because nothing can be encrypted to it.
+- **R17 — The age crate is 0.11, not 0.12.** 0.12's post-quantum recipients pull `hpke` and `p256`,
+  and through them `crypto-bigint` 0.5 (RUSTSEC-2026-0387). The bundle needs only X25519 recipients
+  and the binary format, which 0.11 has. *Rejected:* an advisory ignore in `deny.toml`.
 - **Order of the work (the operator, 2026-11-17).** Resumable upload sessions, #451 (ADR-0004
   d3), come before import, #426. The import route takes the decrypted tar through such a session,
   not in one request body.

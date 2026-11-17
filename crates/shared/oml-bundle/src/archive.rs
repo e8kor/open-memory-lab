@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -50,6 +50,8 @@ pub struct VerifyOptions {
     pub limits: Limits,
     /// `--expect-key <fingerprint>` (d5).
     pub expect_key: Option<String>,
+    /// The source tenant id the caller expects (d5, reading R13).
+    pub expect_tenant: Option<String>,
 }
 
 /// A bundle's records, as the writer takes them and the reader returns them.
@@ -188,11 +190,28 @@ pub fn read_bundle<R: Read>(
     options: &VerifyOptions,
 ) -> Result<VerifiedBundle, BundleError> {
     let entries = read_entries(input, &options.limits)?;
+    // What the manifest must state of each file, taken before the bytes move
+    // into the records, so nothing is held twice (d7).
+    let facts: Vec<FileFact> = entries[1..]
+        .iter()
+        .map(|(path, bytes)| FileFact {
+            path: path.clone(),
+            bytes: bytes.len() as u64,
+            sha256: sha256_digest(bytes),
+            lines: path
+                .ends_with(".jsonl")
+                .then(|| bytes.iter().filter(|&&b| b == b'\n').count() as u64),
+        })
+        .collect();
+    let mut entries = entries.into_iter();
+    let (_, manifest_bytes) = entries
+        .next()
+        .ok_or_else(|| BundleError::layout(format!("{MANIFEST} is missing")))?;
     // The manifest first: an unknown format stops everything else (d1).
-    let manifest_bytes = &entries[0].1;
-    check_depth(manifest_bytes, MANIFEST, 1)?;
-    let manifest_value: Value = serde_json::from_slice(manifest_bytes)
+    check_depth(&manifest_bytes, MANIFEST, 1)?;
+    let manifest_value: Value = serde_json::from_slice(&manifest_bytes)
         .map_err(|e| BundleError::malformed(MANIFEST, 1, serde_reason(&e)))?;
+    drop(manifest_bytes);
     let format = manifest_value
         .get("format")
         .and_then(Value::as_str)
@@ -206,26 +225,19 @@ pub fn read_bundle<R: Read>(
         .map_err(|e| BundleError::malformed(MANIFEST, 1, serde_reason(&e)))?;
     manifest.check_mode()?;
 
-    let file = |name: &str| -> &[u8] {
-        entries
-            .iter()
-            .find(|(path, _)| path == name)
-            .map_or(&[][..], |(_, bytes)| bytes.as_slice())
-    };
-    let workspaces: Vec<WorkspaceLine> = parse_lines(LINE_FILES[0], file(LINE_FILES[0]), |v| {
-        serde_json::from_value(v).map_err(|e| serde_reason(&e))
-    })?;
+    let mut next_file = || entries.next().map(|(_, bytes)| bytes).unwrap_or_default();
+    let workspaces: Vec<WorkspaceLine> = parse_lines(LINE_FILES[0], &next_file(), from_value)?;
     let versions: Vec<VersionEntry> =
-        parse_lines(LINE_FILES[1], file(LINE_FILES[1]), VersionEntry::from_value)?;
-    let verdicts: Vec<VerdictLine> = parse_lines(LINE_FILES[2], file(LINE_FILES[2]), from_value)?;
-    let events: Vec<EventLine> = parse_lines(LINE_FILES[3], file(LINE_FILES[3]), from_value)?;
-    let edges: Vec<EdgeLine> = parse_lines(LINE_FILES[4], file(LINE_FILES[4]), from_value)?;
-    let mut bodies = BTreeMap::new();
-    for (path, bytes) in &entries {
-        if let Some(hex) = path.strip_prefix(BODIES_DIR) {
-            bodies.insert(hex.to_owned(), bytes.clone());
-        }
-    }
+        parse_lines(LINE_FILES[1], &next_file(), VersionEntry::from_value)?;
+    let verdicts: Vec<VerdictLine> = parse_lines(LINE_FILES[2], &next_file(), from_value)?;
+    let events: Vec<EventLine> = parse_lines(LINE_FILES[3], &next_file(), from_value)?;
+    let edges: Vec<EdgeLine> = parse_lines(LINE_FILES[4], &next_file(), from_value)?;
+    let bodies: BTreeMap<String, Vec<u8>> = entries
+        .filter_map(|(path, bytes)| {
+            path.strip_prefix(BODIES_DIR)
+                .map(|hex| (hex.to_owned(), bytes))
+        })
+        .collect();
     let contents = BundleContents {
         manifest,
         workspaces,
@@ -238,10 +250,17 @@ pub fn read_bundle<R: Read>(
     check_records(&contents)?;
 
     // The file digests (d7, first of the ordered checks).
-    check_files(&contents.manifest, &entries)?;
-    // The manifest signature and its source tenant.
+    check_files(&contents.manifest, &facts)?;
+    // The manifest signature and its source tenant (d5, R13).
     let signer_fingerprint =
         crate::verify_manifest(&contents.manifest, options.expect_key.as_deref())?;
+    if let Some(tenant) = &options.expect_tenant
+        && tenant != &contents.manifest.source.tenant_id
+    {
+        return Err(BundleError::signature(
+            "the manifest names a tenant other than the expected one",
+        ));
+    }
     // Each version's recomputed digest, against its line and its event.
     check_version_digests(&contents)?;
     // Each source event's signature.
@@ -252,6 +271,14 @@ pub fn read_bundle<R: Read>(
         signer_fingerprint,
         authenticated: options.expect_key.is_some(),
     })
+}
+
+/// What the manifest must state of one file after it.
+struct FileFact {
+    path: String,
+    bytes: u64,
+    sha256: String,
+    lines: Option<u64>,
 }
 
 fn from_value<T: DeserializeOwned>(value: Value) -> Result<T, String> {
@@ -275,12 +302,12 @@ fn read_entries<R: Read>(input: R, limits: &Limits) -> Result<Vec<(String, Vec<u
     let mut archive = tar::Archive::new(input);
     let entries = archive
         .entries()
-        .map_err(|e| BundleError::io(&e))?
+        .map_err(|_| BundleError::layout("unreadable tar"))?
         .raw(true);
     let mut out: Vec<(String, Vec<u8>)> = Vec::new();
     let mut total: u64 = 0;
     for entry in entries {
-        let mut entry = entry.map_err(|e| BundleError::layout(format!("unreadable tar: {e}")))?;
+        let mut entry = entry.map_err(|_| BundleError::layout("unreadable tar entry"))?;
         let path = String::from_utf8_lossy(&entry.header().path_bytes()).into_owned();
         let kind = entry.header().entry_type();
         if kind.is_symlink() || kind.is_hard_link() {
@@ -321,7 +348,7 @@ fn read_entries<R: Read>(input: R, limits: &Limits) -> Result<Vec<(String, Vec<u
             .by_ref()
             .take(limits.max_entry_bytes + 1)
             .read_to_end(&mut bytes)
-            .map_err(|e| BundleError::io(&e))?;
+            .map_err(|_| BundleError::layout(format!("entry {path:?} is truncated")))?;
         if bytes.len() as u64 != size {
             return Err(BundleError::layout(format!("entry {path:?} is truncated")));
         }
@@ -480,6 +507,7 @@ fn check_records(c: &BundleContents) -> Result<(), BundleError> {
             detail: "an event id twice".to_owned(),
         });
     }
+    check_event_authors(&c.events)?;
     let mut used_events = BTreeSet::new();
     for (i, entry) in c.versions.iter().enumerate() {
         let n = i + 1;
@@ -561,36 +589,67 @@ fn check_records(c: &BundleContents) -> Result<(), BundleError> {
     Ok(())
 }
 
-fn check_files(manifest: &Manifest, entries: &[(String, Vec<u8>)]) -> Result<(), BundleError> {
-    let actual = &entries[1..];
-    if manifest.files.len() != actual.len()
+/// The event types a carried event may have: a write (reading R12).
+const WRITE_EVENTS: [&str; 2] = ["submission.remember", "submission.learn"];
+
+/// The members that would name another key's act (reading R12).
+const OTHER_KEY_MEMBERS: [&str; 3] = ["reviewer_key_id", "ratifier_key_id", "proposer_key_id"];
+
+/// R1 and R12: the carried events are one key's writes, so only the
+/// exporter's own key id and principal leave the server.
+fn check_event_authors(events: &[EventLine]) -> Result<(), BundleError> {
+    let Some(first) = events.first() else {
+        return Ok(());
+    };
+    for (i, event) in events.iter().enumerate() {
+        let foreign = event.api_key_id.is_none()
+            || event.api_key_id != first.api_key_id
+            || event.principal != first.principal
+            || !WRITE_EVENTS.contains(&event.event_type.as_str())
+            || OTHER_KEY_MEMBERS.iter().any(|member| {
+                event
+                    .payload
+                    .get(*member)
+                    .is_some_and(|v| !v.is_null() && v.as_str() != event.api_key_id.as_deref())
+            });
+        if foreign {
+            return Err(BundleError::malformed(
+                LINE_FILES[3],
+                i + 1,
+                "foreign_event",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn check_files(manifest: &Manifest, facts: &[FileFact]) -> Result<(), BundleError> {
+    if manifest.files.len() != facts.len()
         || manifest
             .files
             .iter()
-            .zip(actual)
-            .any(|(f, (p, _))| &f.path != p)
+            .zip(facts)
+            .any(|(stated, fact)| stated.path != fact.path)
     {
         return Err(BundleError::layout(
             "the manifest's file list is not the bundle's entries",
         ));
     }
-    for (stated, (path, bytes)) in manifest.files.iter().zip(actual) {
-        if stated.bytes != bytes.len() as u64 || stated.sha256 != sha256_digest(bytes) {
+    for (stated, fact) in manifest.files.iter().zip(facts) {
+        let path = &fact.path;
+        if stated.bytes != fact.bytes || stated.sha256 != fact.sha256 {
             return Err(BundleError::digest(format!(
                 "{path} is not the file the manifest signed"
             )));
         }
         if let Some(hex) = path.strip_prefix(BODIES_DIR)
-            && sha256_digest(bytes) != format!("sha256:{hex}")
+            && fact.sha256 != format!("sha256:{hex}")
         {
             return Err(BundleError::digest(format!(
                 "{path} does not hash to its name"
             )));
         }
-        let lines = path
-            .ends_with(".jsonl")
-            .then(|| bytes.iter().filter(|&&b| b == b'\n').count() as u64);
-        if stated.lines != lines {
+        if stated.lines != fact.lines {
             return Err(BundleError::digest(format!("{path} line count differs")));
         }
     }
@@ -660,7 +719,7 @@ fn check_events(c: &BundleContents) -> Result<(), BundleError> {
         let sig = parse_signature(&event.sig).ok_or_else(|| {
             BundleError::signature(format!("{at}: sig is not ed25519: and 128 hex"))
         })?;
-        if !keys.iter().any(|k| k.verify(&bytes, &sig).is_ok()) {
+        if !keys.iter().any(|k| k.verify_strict(&bytes, &sig).is_ok()) {
             return Err(BundleError::signature(format!(
                 "{at}: signature verifies under no event key"
             )));

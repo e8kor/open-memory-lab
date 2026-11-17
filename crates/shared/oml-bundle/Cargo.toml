@@ -22,6 +22,9 @@ sha2 = { workspace = true }
 tar = { workspace = true }
 thiserror = { workspace = true }
 
+[dev-dependencies]
+bech32 = { workspace = true }
+
 [lints]
 workspace = true
 

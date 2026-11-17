@@ -48,11 +48,14 @@ pub enum BundleError {
     /// The manifest verifies under a key other than the expected one (d5).
     #[error("bundle.signature_unexpected: signed by {found}, expected {expected}")]
     SignatureUnexpected { found: String, expected: String },
-    /// No recipient to encrypt to, or input that is not an age file (d5).
+    /// No recipient to encrypt to, a recipient that does not parse, or input
+    /// that is not an age file (d5, R16).
     #[error("bundle.unencrypted: {detail}")]
     Unencrypted { detail: String },
-    /// A recipient that does not parse, or an age file the identity does not
-    /// open (reading of 2026-11-17). Never names the identity.
+    /// An identity that does not parse or is no recipient of the file, a
+    /// passphrase file, or ciphertext that does not authenticate (readings R6,
+    /// R16). Never names the identity. A recipient that does not parse is
+    /// `bundle.unencrypted`: nothing can be encrypted to it.
     #[error("bundle.decrypt_failed: {detail}")]
     DecryptFailed { detail: String },
     /// A bundle older than the target's ledger, without `allow_older` (d8).
@@ -64,6 +67,10 @@ pub enum BundleError {
     /// An incremental bundle whose base is not the last release imported (d8).
     #[error("import.since_mismatch: {detail}")]
     SinceMismatch { detail: String },
+    /// The bundle's signer is not the key the target's ledger pinned for this
+    /// source, or nothing authenticated it over an existing ledger (R11).
+    #[error("import.source_key_changed: {detail}")]
+    SourceKeyChanged { detail: String },
     /// An I/O failure of the reader or writer the caller handed in.
     #[error("bundle.io: {detail}")]
     Io { detail: String },
@@ -90,6 +97,7 @@ impl BundleError {
             Self::DecryptFailed { .. } => "bundle.decrypt_failed",
             Self::BundleOlder { .. } => "import.bundle_older",
             Self::SinceMismatch { .. } => "import.since_mismatch",
+            Self::SourceKeyChanged { .. } => "import.source_key_changed",
             Self::Io { .. } => "bundle.io",
         }
     }

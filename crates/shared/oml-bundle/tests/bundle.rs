@@ -175,6 +175,7 @@ fn an_oversized_member_is_refused_as_too_large() {
             ..oml_bundle::Limits::default()
         },
         expect_key: None,
+        expect_tenant: None,
     };
     let err = read_bundle(&tar_bytes()[..], &options).expect_err("refused");
     assert_eq!(err.code(), "bundle.too_large");
@@ -195,6 +196,7 @@ fn a_bundle_over_its_total_size_or_entry_count_is_refused_as_too_large() {
         let options = VerifyOptions {
             limits,
             expect_key: None,
+            expect_tenant: None,
         };
         let err = read_bundle(&tar_bytes()[..], &options).expect_err("refused");
         assert_eq!(err.code(), "bundle.too_large");
@@ -479,4 +481,208 @@ fn the_import_idempotency_key_names_target_source_artifact_and_version() {
         key,
         "import:ws-9:00000000-0000-4000-8000-0000000000f1:00000000-0000-4000-8000-0000000000aa:art-1:3"
     );
+}
+
+// --- Review of 2026-11-17: R11–R16 and the reader's crafted cases ---
+
+fn edit_line(file: &str, from: &str, to: &str) -> Vec<u8> {
+    let (from, to) = (from.to_owned(), to.to_owned());
+    with_entry(file, move |b| {
+        let text = String::from_utf8(b).unwrap();
+        assert!(text.contains(&from), "{from} not in {text}");
+        text.replace(&from, &to).into_bytes()
+    })
+}
+
+fn malformed_reason(tar: &[u8], reason: &str) {
+    let err = read(tar).expect_err("refused");
+    assert_eq!(err.code(), "bundle.malformed", "{err}");
+    assert!(err.to_string().contains(reason), "{err}");
+}
+
+#[test]
+fn a_crafted_event_on_another_persons_version_is_refused_by_the_reader() {
+    let ada = oml_bundle::pseudonym(SALT, "key-ada");
+    let bo = oml_bundle::pseudonym(SALT, "key-bo");
+    let versions = entries(&tar_bytes())
+        .into_iter()
+        .find(|(p, _)| p == "versions.jsonl")
+        .unwrap()
+        .1;
+    let first = String::from_utf8(versions)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap()
+        .to_owned();
+    let forged = first.replace(&ada, &bo);
+    malformed_reason(
+        &edit_line("versions.jsonl", &first, &forged),
+        "event_on_foreign_version",
+    );
+}
+
+/// The fixture with a second own version and its event, by the same key.
+fn two_events_contents() -> oml_bundle::BundleContents {
+    let mut c = contents();
+    let mut second = match &c.versions[2] {
+        VersionEntry::Version(v) => (**v).clone(),
+        VersionEntry::Erased(_) => unreachable!(),
+    };
+    second.author = author("key-ada");
+    second.source_event = Some("evt-2".to_owned());
+    c.events.push(event_for(&second, &test_key(), "evt-2"));
+    c.versions[2] = VersionEntry::Version(Box::new(second));
+    c
+}
+
+#[test]
+fn two_events_by_one_key_verify() {
+    let mut tar = Vec::new();
+    write_bundle(&two_events_contents(), &test_key(), &mut tar).expect("writes");
+    read(&tar).expect("verifies");
+}
+
+#[test]
+fn events_naming_two_principals_are_refused_as_foreign_events_by_the_reader() {
+    let mut tar = Vec::new();
+    write_bundle(&two_events_contents(), &test_key(), &mut tar).expect("writes");
+    let e: Vec<_> = entries(&tar)
+        .into_iter()
+        .map(|(p, b)| {
+            if p != "events.jsonl" {
+                return (p, b);
+            }
+            let text = String::from_utf8(b).unwrap();
+            let at = text.rfind("\"principal\":\"ada/laptop\"").unwrap();
+            let edited = format!(
+                "{}\"principal\":\"cy/reviewer\"{}",
+                &text[..at],
+                &text[at + "\"principal\":\"ada/laptop\"".len()..]
+            );
+            (p, edited.into_bytes())
+        })
+        .collect();
+    malformed_reason(&repack(&e), "foreign_event");
+}
+
+#[test]
+fn events_of_a_type_that_is_not_a_write_are_refused_as_foreign_events() {
+    malformed_reason(
+        &edit_line(
+            "events.jsonl",
+            "\"submission.remember\"",
+            "\"review.approve\"",
+        ),
+        "foreign_event",
+    );
+}
+
+#[test]
+fn an_event_payload_naming_another_reviewer_key_is_refused_as_a_foreign_event() {
+    malformed_reason(
+        &edit_line(
+            "events.jsonl",
+            "\"version\":1}",
+            "\"version\":1,\"reviewer_key_id\":\"00000000-0000-4000-8000-0000000000c9\"}",
+        ),
+        "foreign_event",
+    );
+}
+
+#[test]
+fn two_events_by_different_keys_are_refused_as_foreign_events() {
+    let mut c = two_events_contents();
+    let event = c.events.last_mut().unwrap();
+    event.api_key_id = Some("00000000-0000-4000-8000-0000000000c7".to_owned());
+    let bytes = event.signed_bytes().unwrap();
+    event.hash = oml_bundle::sha256_digest(&bytes);
+    event.sig = format!(
+        "ed25519:{}",
+        hex::encode(ed25519_dalek::Signer::sign(&test_key(), &bytes).to_bytes())
+    );
+    let err = write_bundle(&c, &test_key(), Vec::new()).expect_err("refused");
+    assert!(err.to_string().contains("foreign_event"), "{err}");
+}
+
+#[test]
+fn a_manifest_of_another_tenant_than_expected_is_refused_as_signature_invalid() {
+    let options = VerifyOptions {
+        expect_tenant: Some("00000000-0000-4000-8000-0000000000bb".to_owned()),
+        ..VerifyOptions::default()
+    };
+    let err = read_bundle(&tar_bytes()[..], &options).expect_err("refused");
+    assert_eq!(err.code(), "bundle.signature_invalid");
+    let options = VerifyOptions {
+        expect_tenant: Some(TENANT.to_owned()),
+        ..VerifyOptions::default()
+    };
+    read_bundle(&tar_bytes()[..], &options).expect("the expected tenant verifies");
+}
+
+#[test]
+fn an_export_instant_outside_the_chains_fixed_form_is_refused_as_malformed() {
+    for bad in [
+        "2026-11-17T09:00:00Z",
+        "2026-11-17 09:00:00.000000Z",
+        "2026-11-17T09:00:00.000000+00:00",
+    ] {
+        let mut c = contents();
+        c.manifest.exported_at = bad.to_owned();
+        let err = write_bundle(&c, &test_key(), Vec::new()).expect_err("refused");
+        assert_eq!(err.code(), "bundle.malformed", "{bad}");
+    }
+    let tar = edit_line(
+        "manifest.json",
+        "2026-11-17T09:00:00.000000Z",
+        "2026-11-17T9:00:00.000000Z",
+    );
+    assert_eq!(code(read(&tar)), "bundle.malformed");
+}
+
+#[test]
+fn a_dot_segment_or_a_backslash_is_refused_as_path_unsafe() {
+    for bad in ["./workspaces.jsonl", "bodies\\x", "bodies//x"] {
+        let mut e = entries(&tar_bytes());
+        e[1].0 = bad.to_owned();
+        assert_eq!(code(read(&repack(&e))), "bundle.path_unsafe", "{bad}");
+    }
+}
+
+#[test]
+fn a_pax_header_a_gnu_long_name_or_a_sparse_entry_is_refused_as_layout() {
+    for kind in [
+        tar::EntryType::XHeader,
+        tar::EntryType::XGlobalHeader,
+        tar::EntryType::GNULongName,
+        tar::EntryType::GNUSparse,
+    ] {
+        let mut e: Vec<_> = entries(&tar_bytes())
+            .into_iter()
+            .map(|(p, b)| (p, b, tar::EntryType::Regular))
+            .collect();
+        e.insert(1, ("pax".to_owned(), b"path=x\n".to_vec(), kind));
+        assert_eq!(code(read(&raw_tar(&e))), "bundle.layout", "{kind:?}");
+    }
+}
+
+#[test]
+fn a_truncated_tar_is_refused_as_layout() {
+    let tar = tar_bytes();
+    let cut = &tar[..tar.len() / 2];
+    assert_eq!(code(read(cut)), "bundle.layout");
+}
+
+#[test]
+fn an_entry_whose_header_overstates_its_size_is_refused_as_layout() {
+    let mut tar = tar_bytes();
+    // The first header's size field: offset 124, 12 octal bytes. Claim more
+    // than the whole archive holds, under every size limit.
+    let size = format!("{:011o}\0", tar.len() + 100_000);
+    tar[124..136].copy_from_slice(size.as_bytes());
+    let mut header = tar::Header::new_old();
+    header.as_mut_bytes().copy_from_slice(&tar[..512]);
+    header.set_cksum();
+    tar[..512].copy_from_slice(header.as_bytes());
+    assert_eq!(code(read(&tar)), "bundle.layout");
 }
