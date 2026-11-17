@@ -535,9 +535,9 @@ impl World {
     }
 }
 
-/// Law 3: the commit is refused while anything inside is held, and from it
-/// the promoted rows reach the parent; before it, a promoted row inside is
-/// not served outside either.
+/// Law 3: the commit is refused while anything inside is held; the
+/// promoted rows inside reach the parent before it and after it (ADR-0080
+/// d16).
 #[tokio::test]
 async fn the_commit_is_refused_while_unreviewed_rows_remain_and_then_releases_the_subtree() {
     let w = world().await;
@@ -560,11 +560,12 @@ async fn the_commit_is_refused_while_unreviewed_rows_remain_and_then_releases_th
         .post_verdict(w.person.value.as_str(), id, Verdict::Approve, None)
         .await
         .expect("approve");
-    assert!(
-        w.recall_with(&w.bob, "canary", w.crew, Some(false))
-            .await
-            .is_empty(),
-        "a promoted row inside stays inside until the commit"
+    // Since ADR-0080 d16 an ancestor's read serves the subtree's promoted
+    // rows before the commit; the commit changes nothing for it.
+    assert_eq!(
+        World::ids(&w.recall_with(&w.bob, "canary", w.crew, Some(false)).await),
+        vec![id],
+        "a promoted row inside is served to the ancestor as promoted"
     );
     // A transition inside waits for the commit.
     let err = w
@@ -598,7 +599,7 @@ async fn the_commit_is_refused_while_unreviewed_rows_remain_and_then_releases_th
     assert_eq!(
         World::ids(&w.recall_with(&w.bob, "canary", w.crew, Some(false)).await),
         vec![id],
-        "released to the parent"
+        "still served to the parent after the commit"
     );
 }
 
@@ -1818,4 +1819,52 @@ async fn federation_never_reads_an_in_progress_subtree() {
             .unwrap_or_default();
         assert!(!served.contains(&held), "{sources:?}: {served:?}");
     }
+}
+
+/// Every held kind inside an in-progress root is listed and read, marked
+/// held, by the in-progress audience, a held steering version included;
+/// recall's hits stay the knowledge kinds it ranks (ADR-0080 d10, d16,
+/// amending ADR-0030 d3).
+#[tokio::test]
+async fn every_held_kind_inside_is_listed_to_the_in_progress_audience() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let steering = w
+        .app
+        .submit_memory(
+            w.ann.value.as_str(),
+            &SubmitRequest {
+                origin: None,
+                on_similar: Default::default(),
+                valid_from: None,
+                valid_until: None,
+                anchor: None,
+                idempotency_key: "s1".to_owned(),
+                claim_key: Some("claim-s1".to_owned()),
+                verb: None,
+                kind: MemoryKind::Steering,
+                body: "Prefer the canary pool for rollouts.".to_owned(),
+                workspace: Some(w.proj.into()),
+                derives_from: Vec::new(),
+                severity: None,
+                rule: None,
+                kind_fields: None,
+                format: None,
+                title: None,
+            },
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    for scope in [w.proj, w.crew] {
+        assert_eq!(w.listed(&w.bob, scope).await, vec![steering], "at {scope}");
+    }
+    let got = w
+        .app
+        .get_memory(w.bob.value.as_str(), steering)
+        .await
+        .expect("read by id inside the audience");
+    assert_eq!(got.memory.status, MemoryStatus::Held);
+    assert!(w.listed(&w.bob, w.side).await.is_empty());
 }

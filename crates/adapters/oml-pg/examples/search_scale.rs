@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             promoted_nodes: uuids(&item["nodes"]),
             kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
             own_held: (!own_keys.is_empty()).then(|| OwnHeldScope {
-                any_author: false,
+                any_author_nodes: Vec::new(),
                 author_key_ids: own_keys,
                 nodes: uuids(&item["own_nodes"]),
                 current_scanner: None,

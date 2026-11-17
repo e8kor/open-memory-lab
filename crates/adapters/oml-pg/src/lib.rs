@@ -763,8 +763,9 @@ pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, \
      LIMIT $5";
 
 /// The own held recall statement `recall_own_held` runs, binding `$1` the
-/// tenant, `$2` the author keys (the own key set, and inside an in-progress
-/// scope the mark of the server's rule set), `$3` the readable nodes, `$4`
+/// tenant, `$2` the author keys (the own key set, and the mark of the
+/// server's rule set on each node inside an in-progress subtree,
+/// [`held_authors`]), `$3` the readable nodes, `$4`
 /// the query, `$5` the kinds and `$6` `k`; pruned to the tenant's partition
 /// as [`RECALL_FTS`] is (ADR-0034 d11).
 pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
@@ -773,7 +774,7 @@ pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
      FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
        AND (m.author_key_id = ANY($2::uuid[]) \
-         OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, ''), 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
+         OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, '') || '/' || m.workspace_id::text, 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
        AND NOT m.retirement AND m.kind = ANY($5::text[]) \
        AND m.workspace_id = ANY($3::uuid[]) /*anchor*/ \
        AND to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $4) \
@@ -850,29 +851,37 @@ const SEARCH_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
          OR (m.status = 'held' AND m.workspace_id = ANY($5::uuid[]) \
              AND (m.author_key_id = ANY($4::uuid[]) \
                OR (m.scan_finding IS NULL \
-                   AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, ''), 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($4::uuid[])))))";
+                   AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, '') || '/' || m.workspace_id::text, 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($4::uuid[])))))";
 
 /// The author keys a held search statement binds: the own key set, and,
-/// inside an in-progress scope, the mark of the server's rule set too
-/// ([`scanner_mark`]), which admits every author's held row the scan did
-/// not hold and last read under that rule set (ADR-0030 d3; ADR-0065 d15).
-/// The statements compare a row's own mark, computed from its
-/// `scanned_under`, only beside `m.scan_finding IS NULL`, so a row the
-/// scan held, or one an older rule set passed, stays its author's.
+/// for each node inside an in-progress subtree (`any_author_nodes`), the
+/// mark of the server's rule set on that node ([`scanner_mark`]), which
+/// admits every author's held row there the scan did not hold and last
+/// read under that rule set (ADR-0030 d3; ADR-0065 d15; ADR-0080 d16). The
+/// statements compare a row's own mark, computed from its `scanned_under`
+/// and its node, only beside `m.scan_finding IS NULL`, so a row the scan
+/// held, one an older rule set passed, or one on a node outside every
+/// subtree, stays its author's: one node array serves both sets, and no
+/// statement binds a second.
 fn held_authors(own: &OwnHeldScope) -> Vec<Uuid> {
     let mut keys = own.author_key_ids.clone();
-    if own.any_author {
-        keys.push(scanner_mark(own.current_scanner.as_deref()));
-    }
+    keys.extend(
+        own.any_author_nodes
+            .iter()
+            .map(|node| scanner_mark(own.current_scanner.as_deref(), *node)),
+    );
     keys
 }
 
-/// A rule-set version as an id the held statements' author array can carry:
-/// the first 16 bytes of SHA-256 over the version, the empty string for
-/// none, as the statements compute it from `m.scanned_under`. A key id
-/// equal to one is a 2^-122 chance at most (ids are minted v4 or v7).
-fn scanner_mark(version: Option<&str>) -> Uuid {
-    let digest = Sha256Hash::digest(version.unwrap_or("").as_bytes()).0;
+/// A rule-set version on a node as an id the held statements' author array
+/// can carry: the first 16 bytes of SHA-256 over the version, the empty
+/// string for none, then `/` and the node's id in its hyphenated lower-case
+/// text, as the statements compute it from `m.scanned_under` and
+/// `m.workspace_id::text`. A key id equal to one is a 2^-122 chance at most
+/// (ids are minted v4 or v7).
+fn scanner_mark(version: Option<&str>, node: Uuid) -> Uuid {
+    let marked = format!("{}/{}", version.unwrap_or(""), node.hyphenated());
+    let digest = Sha256Hash::digest(marked.as_bytes()).0;
     let mut first = [0_u8; 16];
     first.copy_from_slice(&digest[..16]);
     Uuid::from_bytes(first)
@@ -1264,7 +1273,7 @@ const REFERENCE_EXPIRED_TOKENS: &str = "SELECT DISTINCT p.memory_id, p.token_id 
 const POSTINGS_OWN_HELD: &str = "SELECT m.id, m.search_len FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
         AND (m.author_key_id = ANY($2::uuid[]) \
-          OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, ''), 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
+          OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, '') || '/' || m.workspace_id::text, 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
         AND m.workspace_id = ANY($3::uuid[]) AND m.kind = ANY($4::text[]) AND NOT m.retirement \
         AND (m.valid_until_us IS NULL OR m.valid_until_us > $5::int8)";
 
@@ -5720,10 +5729,10 @@ struct ScopeBinds<'a> {
     tenant_id: Uuid,
     nodes: &'a [Uuid],
     kinds: &'a [&'static str],
-    /// The held rows' author keys ([`held_authors`]): inside an in-progress
-    /// scope it names the server's rule-set mark too, every author's
-    /// unflagged held rows scanned under it on `held_nodes` (ADR-0030 d3;
-    /// ADR-0065 d15); empty, no held row.
+    /// The held rows' author keys ([`held_authors`]): on each node inside
+    /// an in-progress subtree it names the server's rule-set mark there
+    /// too, every author's unflagged held rows scanned under it on that
+    /// node (ADR-0030 d3; ADR-0065 d15; ADR-0080 d16); empty, no held row.
     authors: Option<&'a [Uuid]>,
     held_nodes: &'a [Uuid],
     /// How the origin filters narrow the candidates (ADR-0057 d4).

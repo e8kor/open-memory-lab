@@ -391,13 +391,12 @@ impl Caller {
     }
 }
 
-/// The served node set of a scoped read (ADR-0030 d2), the nodes of it
-/// inside the scope's in-progress root, where every author's held memories
-/// are served (d3), and that root.
+/// The served node set of a scoped read (ADR-0030 d2), and the nodes of it
+/// inside an in-progress subtree, the scope's own or one below it, where
+/// every author's held rows are served (d3; ADR-0080 d16).
 struct ServedNodes {
     nodes: Vec<Uuid>,
     inside: Vec<Uuid>,
-    scope_root: Option<Uuid>,
 }
 
 /// One text a version's scan reads: the envelope kind it is scanned as, the
@@ -2495,28 +2494,25 @@ where
         Ok(roots)
     }
 
-    /// The served node set of a read scoped at `scope` (ADR-0030 d2): the
-    /// nodes of subtree(scope) where the caller reads, less every node whose
-    /// in-progress root differs from the scope's; with the scope's root.
+    /// The served node set of a read scoped at `scope` (ADR-0030 d2, as
+    /// ADR-0080 d16 amends it): the nodes of subtree(scope) where the caller
+    /// reads, and of them the nodes inside an in-progress subtree, the
+    /// scope's own or one whose root lies below the scope, whose held rows
+    /// every reader there is served. A sibling's or another branch's
+    /// subtree is never under the scope, so never served.
     async fn served_nodes(&self, caller: &Caller, scope: Uuid) -> Result<ServedNodes, AppError> {
         let tenant_id = caller.key.tenant_id;
         let nodes = self.nodes_with(caller, scope, Role::Reader).await?;
         let roots = self.subtree_roots(tenant_id, scope).await?;
-        let scope_root = roots.get(&scope).copied().flatten();
         let mut served = ServedNodes {
             nodes: Vec::with_capacity(nodes.len()),
             inside: Vec::new(),
-            scope_root,
         };
         for node in nodes {
-            let root = roots.get(&node).copied().flatten();
-            if crosses_into(scope_root, root) {
-                continue;
-            }
-            // Inside the scope's root, every node of which is development;
-            // a protected or frozen node, and anything under one, never
-            // is (d3).
-            if root.is_some() {
+            // Inside a root, every node of which is development; a
+            // protected or frozen node, and anything under one, never is
+            // (d3).
+            if roots.get(&node).copied().flatten().is_some() {
                 served.inside.push(node);
             }
             served.nodes.push(node);
@@ -5349,7 +5345,7 @@ where
             own_held: Some(OwnHeldScope {
                 author_key_ids: vec![key.key_id],
                 nodes: readable.clone(),
-                any_author: false,
+                any_author_nodes: Vec::new(),
                 current_scanner: self.scanner.version().map(str::to_owned),
             }),
             // A copy is a copy even once its valid time has ended
@@ -6879,17 +6875,16 @@ where
             })
             .collect();
 
-        // The served node set leaves out every in-progress subtree the scope
-        // is not inside; inside one, `include_unreviewed` defaults to true
-        // and admits every author's held rows on the served nodes, all of
-        // which lie inside the scope's root (ADR-0030 d2, d3, d4).
+        // The served node set holds the scope's in-progress subtree and
+        // every one below it; where it holds one, `include_unreviewed`
+        // defaults to true and admits every author's held rows on the nodes
+        // inside, beside the key's own on every served node (ADR-0030 d2,
+        // d3, d4, as ADR-0080 d16 amends them).
         let ServedNodes {
             nodes: readable,
             inside,
-            scope_root,
         } = self.served_nodes(caller, scope).await?;
-        let include_unreviewed = req.include_unreviewed.unwrap_or(scope_root.is_some());
-        let any_author = include_unreviewed && scope_root.is_some();
+        let include_unreviewed = req.include_unreviewed.unwrap_or(!inside.is_empty());
         // A scope inside a user root also searches `universe`'s own claims
         // where the key reads that node, ranked with the scope's own; own
         // held rows never include them (ADR-0044 d10).
@@ -6960,14 +6955,10 @@ where
             kinds: kinds.clone(),
             own_held: include_unreviewed.then(|| OwnHeldScope {
                 author_key_ids: caller.own_key_ids(),
-                // Every author's held rows on the nodes inside alone; the
-                // key's own on every served node otherwise (ADR-0030 d3).
-                nodes: if any_author {
-                    inside.clone()
-                } else {
-                    readable.clone()
-                },
-                any_author,
+                // The key's own held rows on every served node, and every
+                // author's on the nodes inside (ADR-0030 d3; ADR-0080 d16).
+                nodes: readable.clone(),
+                any_author_nodes: inside.clone(),
                 current_scanner: self.scanner.version().map(str::to_owned),
             }),
             // An ended version is outside the scope unless asked for: a
@@ -7048,8 +7039,7 @@ where
                     include_unreviewed
                         && recorded(m)
                         && ((own.contains(&m.author_key_id) && readable.contains(&m.workspace_id))
-                            || (any_author
-                                && served_unreviewed(m, self.scanner.version())
+                            || (served_unreviewed(m, self.scanner.version())
                                 && inside.contains(&m.workspace_id)))
                 }
                 _ => false,

@@ -2658,11 +2658,11 @@ impl Retriever for MemStore {
             }
             scope.own_held.as_ref().is_some_and(|own| {
                 m.status == MemoryStatus::Held
+                    && own.nodes.contains(&m.workspace_id)
                     && (own.author_key_ids.contains(&m.author_key_id)
-                        || (own.any_author
+                        || (own.any_author_nodes.contains(&m.workspace_id)
                             && m.scan_finding.is_none()
                             && m.scanned_under == own.current_scanner))
-                    && own.nodes.contains(&m.workspace_id)
             })
         };
         if kind == RetrieverKind::Time {

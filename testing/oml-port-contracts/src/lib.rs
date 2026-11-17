@@ -1184,7 +1184,7 @@ pub trait KeywordAllReads: Retriever {
             promoted_nodes: Vec::new(),
             kinds: kinds.to_vec(),
             own_held: Some(OwnHeldScope {
-                any_author: false,
+                any_author_nodes: Vec::new(),
                 author_key_ids: author_key_ids.to_vec(),
                 nodes: readable.to_vec(),
                 current_scanner: None,
@@ -1796,8 +1796,8 @@ pub async fn held_rows_of_every_author_are_read_on_the_named_nodes_alone<S: Jour
         ],
         own_held: Some(OwnHeldScope {
             author_key_ids: Vec::new(),
+            any_author_nodes: nodes.clone(),
             nodes,
-            any_author: true,
             current_scanner: None,
         }),
         as_of: None,
@@ -12341,7 +12341,7 @@ fn scope_of(wa: Uuid, own: Option<Uuid>) -> CandidateScope {
         promoted_nodes: vec![wa],
         kinds: HIT_KINDS.to_vec(),
         own_held: own.map(|key| OwnHeldScope {
-            any_author: false,
+            any_author_nodes: Vec::new(),
             author_key_ids: vec![key],
             nodes: vec![wa],
             current_scanner: None,
@@ -14196,7 +14196,7 @@ pub async fn similar_candidates_are_the_scopes_served_tips_and_own_held_rows_hol
             MemoryKind::Steering,
         ],
         own_held: Some(OwnHeldScope {
-            any_author: false,
+            any_author_nodes: Vec::new(),
             author_key_ids: keys_,
             nodes,
             current_scanner: None,
