@@ -8498,4 +8498,45 @@ async fn the_console_judges_in_a_shared_workspace_with_the_linked_key() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+    // A judge posted with an unlinked key's id, or a forged one, records
+    // nothing: the lead refuses the acting key.
+    let other = agent_writes_in(&rig, &bot.value, "The team deploys on Mondays.", "team").await;
+    let head = rig.head().await;
+    for forged in [
+        bot.key_id.to_string(),
+        uuid::Uuid::from_u128(0xF0F0).to_string(),
+    ] {
+        let (status, headers, body) = act(
+            &rig,
+            &cookie,
+            "/web/review",
+            &[
+                ("action", "judge"),
+                ("artifact_id", &other.to_string()),
+                ("verdict", "approve"),
+                ("reason", ""),
+                ("as", &forged),
+            ],
+        )
+        .await;
+        let location = headers
+            .get(header::LOCATION)
+            .and_then(|l| l.to_str().ok())
+            .unwrap_or_default();
+        assert!(
+            !location.contains("done=verdict"),
+            "{status} {location} {body}"
+        );
+    }
+    let events = rig
+        .store
+        .events_range(rig.boot.tenant_id, head + 1, 500)
+        .await
+        .unwrap();
+    assert!(
+        events
+            .iter()
+            .all(|e| !e.envelope.event_type.starts_with("review.")),
+        "no verdict recorded"
+    );
 }

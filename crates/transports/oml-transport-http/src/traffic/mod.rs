@@ -71,6 +71,9 @@ struct Observed {
     auth: Option<Duration>,
     identity: Option<Identity>,
     workspace_id: Option<Uuid>,
+    /// The key id an `OML-Acting-Key` the gate refused named, or
+    /// `malformed` (ADR-0085 d16).
+    acting_key_refused: Option<String>,
     store: Duration,
     store_calls: u64,
     /// What a recall's reranking stage did, and why when it was skipped
@@ -193,6 +196,15 @@ pub fn acting(key: &KeyRecord, session_user: &str) {
                 ..Identity::of(key, None)
             });
         });
+    });
+}
+
+/// The gate refused `OML-Acting-Key`, which named `requested`: a key id,
+/// or `malformed` for a value that is not one; the line carries it beside
+/// the refusal (ADR-0085 d16).
+pub fn acting_refused(requested: &str) {
+    in_scope(|scope| {
+        scope.update(|o, _| o.acting_key_refused = Some(requested.to_owned()));
     });
 }
 
@@ -340,6 +352,9 @@ impl RequestObserver for ScopeObserver {
 pub struct Resolved {
     pub identity: Option<Identity>,
     pub workspace_id: Option<Uuid>,
+    /// The key id a refused `OML-Acting-Key` named, or `malformed`
+    /// (ADR-0085 d16).
+    pub acting_key_refused: Option<String>,
     /// The envelope's `error.code`, or the RFC `error` on an OAuth endpoint.
     pub error_code: Option<String>,
     /// `POST /oauth/token`'s `grant_type`, as the token metric labels it.
@@ -367,6 +382,7 @@ impl Resolved {
         Self {
             identity: observed.identity,
             workspace_id: observed.workspace_id,
+            acting_key_refused: observed.acting_key_refused,
             error_code: error_code.map(ToOwned::to_owned),
             grant_type: None,
             web: None,
@@ -794,6 +810,7 @@ macro_rules! write_line {
             key_id = identity.map(|i| tracing::field::display(i.key_id)),
             key_name = identity.and_then(|i| i.key_name.as_deref()),
             acting_for = identity.and_then(|i| i.acting_for.as_deref()),
+            acting_key_refused = line.resolved.acting_key_refused.as_deref(),
             principal = identity.map(|i| i.principal.as_str()),
             role = identity.map(|i| i.role),
             credential = identity

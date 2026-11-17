@@ -89,8 +89,9 @@ def sync_detailed(
      Requires: admin key role, in the key's own tenant; any other role is access.verb_ceiling, and no MCP
     tool reaches the route. A key without a link is request.validation with details.field key and
     details.reason not_linked. Journalled as key.unlinked_person; the console's next act with the key
-    answers auth.invalid with details.reason acting_key_not_linked. A revoked key may be unlinked. The
-    Idempotency-Key is required and not replayed (ADR-0085 d16). Since v0.8.0.
+    answers auth.invalid with details.reason acting_key_not_linked, and the key no longer writes into
+    the user's root. A revoked key is unlinked too. The Idempotency-Key is required and not replayed
+    (ADR-0085 d16). Since v0.8.0.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -137,8 +138,9 @@ def sync(
      Requires: admin key role, in the key's own tenant; any other role is access.verb_ceiling, and no MCP
     tool reaches the route. A key without a link is request.validation with details.field key and
     details.reason not_linked. Journalled as key.unlinked_person; the console's next act with the key
-    answers auth.invalid with details.reason acting_key_not_linked. A revoked key may be unlinked. The
-    Idempotency-Key is required and not replayed (ADR-0085 d16). Since v0.8.0.
+    answers auth.invalid with details.reason acting_key_not_linked, and the key no longer writes into
+    the user's root. A revoked key is unlinked too. The Idempotency-Key is required and not replayed
+    (ADR-0085 d16). Since v0.8.0.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -180,8 +182,9 @@ async def asyncio_detailed(
      Requires: admin key role, in the key's own tenant; any other role is access.verb_ceiling, and no MCP
     tool reaches the route. A key without a link is request.validation with details.field key and
     details.reason not_linked. Journalled as key.unlinked_person; the console's next act with the key
-    answers auth.invalid with details.reason acting_key_not_linked. A revoked key may be unlinked. The
-    Idempotency-Key is required and not replayed (ADR-0085 d16). Since v0.8.0.
+    answers auth.invalid with details.reason acting_key_not_linked, and the key no longer writes into
+    the user's root. A revoked key is unlinked too. The Idempotency-Key is required and not replayed
+    (ADR-0085 d16). Since v0.8.0.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -226,8 +229,9 @@ async def asyncio(
      Requires: admin key role, in the key's own tenant; any other role is access.verb_ceiling, and no MCP
     tool reaches the route. A key without a link is request.validation with details.field key and
     details.reason not_linked. Journalled as key.unlinked_person; the console's next act with the key
-    answers auth.invalid with details.reason acting_key_not_linked. A revoked key may be unlinked. The
-    Idempotency-Key is required and not replayed (ADR-0085 d16). Since v0.8.0.
+    answers auth.invalid with details.reason acting_key_not_linked, and the key no longer writes into
+    the user's root. A revoked key is unlinked too. The Idempotency-Key is required and not replayed
+    (ADR-0085 d16). Since v0.8.0.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
