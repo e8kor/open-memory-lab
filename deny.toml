@@ -25,7 +25,7 @@ ignore = [
     # operator-approved 2026-11-17: chrono is unmaintained (no vulnerability).
     # The workspace names it directly only in oml-lake and oml-lakewriter;
     # arrow and deltalake depend on it regardless. Revisit when those two
-    # crates move off direct chrono (tracked in an issue), which leaves it
+    # crates move off direct chrono (#445), which leaves it
     # transitive and reported, not failed, under `unmaintained = "workspace"`.
     { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, no vulnerability; direct use only in oml-lake and oml-lakewriter, to be replaced" },
 ]
