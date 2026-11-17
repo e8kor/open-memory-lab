@@ -16,6 +16,7 @@ mod rescan;
 mod search;
 mod signup;
 mod sparse;
+mod uploads;
 mod usage;
 mod widen;
 pub use auth::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
@@ -30,6 +31,7 @@ pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
 pub use signup::{DRAWS_MAX, Person, PersonAsk, SignupState, StartStatus, UserDisabled, UserRow};
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
+pub use uploads::{UploadConfig, UploadSweep};
 pub use usage::UsageSettings;
 pub use widen::{
     WIDEN_SIGNAL_BUILD_SECS, WIDEN_SIGNAL_MAX_AGE_SECS, WIDEN_SIGNAL_PAIRS_HELD,
@@ -277,6 +279,10 @@ pub struct App<J, S, C, I, Sc> {
     widen: widen::WidenSignals,
     /// The deployment's quota profiles (ADR-0071 d5).
     profiles: Arc<crate::types::QuotaProfiles>,
+    /// The upload sessions' object store and limits (ADR-0004 d3, as
+    /// amended 2026-11-17); no store until the composition gives one, and
+    /// then every upload answers `upload.storage_failed`.
+    uploads: uploads::UploadConfig,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -1709,6 +1715,7 @@ where
             wide_keys: std::sync::Mutex::default(),
             widen: widen::WidenSignals::default(),
             profiles: Arc::new(crate::types::QuotaProfiles::default()),
+            uploads: uploads::UploadConfig::default(),
         }
     }
 

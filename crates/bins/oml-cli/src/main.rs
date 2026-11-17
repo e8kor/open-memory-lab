@@ -5418,6 +5418,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let key_limits_warn = key_limits.iter().any(|line| line.starts_with("warn"));
     let handlers = handlers_doctor(scrape.as_ref());
     let handlers_warn = handlers.iter().any(|line| line.starts_with("warn"));
+    let uploads = uploads_doctor(scrape.as_ref());
+    let uploads_warn = uploads.iter().any(|line| line.starts_with("warn"));
     // The sync failures of ADR-0057 d17 that the clone alone answers; the
     // stale count and the waiting edges are the sources lines'.
     let sync = oml_cli::sync::doctor::lines(
@@ -5468,6 +5470,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || review_warn
         || telemetry_warn
         || handlers_warn
+        || uploads_warn
         || scan_warn
         || approvals_warn
         || sync_warn
@@ -5526,6 +5529,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "telemetry": telemetry,
             "journal": journal,
             "handlers": handlers,
+            "uploads": uploads,
             "scan": scan,
             "usage": usage,
             "key_limits": key_limits,
@@ -5660,6 +5664,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &handlers {
             println!("handlers    : {line}");
+        }
+        for line in &uploads {
+            println!("uploads     : {line}");
         }
         for line in &scan {
             println!("scan        : {line}");
@@ -5934,6 +5941,74 @@ fn handlers_doctor(scrape: Option<&Scrape>) -> Vec<String> {
         lines.push(format!(
             "warn idempotency_unsettled: {n} claimed act(s) (web console acts and key issues) since start left their Idempotency-Key claimed and unrecorded (the lead's log names each under event idempotency_unsettled with the act); a resubmission of that form answers 409 idempotency.in_progress and acts nothing, so nothing is repeated, and a fresh form acts under a fresh key. Look for Postgres errors at those times; operations/runbooks.md (a form answers idempotency.in_progress) lists the claims held and how old each is"
         ));
+    }
+    lines
+}
+
+/// The `uploads` doctor lines (ADR-0004 d3, as amended 2026-11-17; #451),
+/// from the metrics listener alone: the sessions by state and the bytes
+/// stored at the last sweep; a warn for sessions whose key is shredded and
+/// whose objects remain, for failed sweeps, and for the refusals by code
+/// that say something is wrong (a digest mismatch, a failing store, a
+/// limit reached). Nothing from a server before uploads.
+fn uploads_doctor(scrape: Option<&Scrape>) -> Vec<String> {
+    let Some(scrape) = scrape else {
+        return vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()];
+    };
+    if !scrape.0.contains("oml_upload_sessions") {
+        return vec!["off (this server keeps no upload sessions)".to_owned()];
+    }
+    let state = |s: &str| scrape.sum("oml_upload_sessions", &[("state", s)]);
+    let mut lines = vec![format!(
+        "{} open, {} completed and unbound, {} bound, {} expired, {} abandoned, {} failed; {} bytes declared unbound, {} bytes stored",
+        state("open"),
+        state("completed"),
+        state("bound"),
+        state("expired"),
+        state("abandoned"),
+        state("failed"),
+        scrape.sum("oml_upload_unbound_bytes", &[]),
+        scrape.sum("oml_upload_stored_bytes", &[]),
+    )];
+    if let n @ 1.. = scrape.sum("oml_upload_unswept", &[]) {
+        lines.push(format!(
+            "warn upload_unswept: {n} upload session(s) have their key shredded and their objects still at storage.url; the ciphertext opens under no key, and each sweep tries the removal again: check storage.url's directory is writable by the lead (event upload_sweep_failed names the reason)"
+        ));
+    }
+    if let n @ 1.. = scrape.sum("oml_upload_sweep_failures_total", &[]) {
+        lines.push(format!(
+            "warn upload_sweep_failed: {n} upload sweep step(s) failed since start; the lead's log names each under event upload_sweep_failed, and the next sweep retries"
+        ));
+    }
+    let mut refused = Vec::new();
+    for (set, n) in scrape.samples("oml_upload_refusals_total", &[]) {
+        if let Some(code) = set
+            .split(',')
+            .find_map(|pair| pair.strip_prefix("code=\"")?.strip_suffix('"'))
+        {
+            refused.push((code.to_owned(), n));
+        }
+    }
+    refused.sort();
+    if !refused.is_empty() {
+        let list = refused
+            .iter()
+            .map(|(code, n)| format!("{code} {n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let alarming = refused.iter().any(|(code, _)| {
+            matches!(
+                code.as_str(),
+                "upload.digest_mismatch" | "upload.storage_failed" | "upload.tenant_limit"
+            )
+        });
+        lines.push(if alarming {
+            format!(
+                "warn upload_refusals since start: {list}; a digest mismatch is bytes changed on the way, a storage failure is storage.url failing, and the tenant limit is uploads.tenant_max_bytes reached (docs/api/errors.md, upload)"
+            )
+        } else {
+            format!("upload_refusals since start: {list}")
+        });
     }
     lines
 }
@@ -7188,6 +7263,49 @@ mod tests {
         assert_eq!(
             approval_doctor(None),
             vec!["approval_unmatched: not read; an admin key reads it".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_uploads_doctor_counts_sessions_and_warns_on_unswept_objects_and_alarming_refusals() {
+        assert_eq!(
+            uploads_doctor(Some(&Scrape("oml_http_requests 1\n".to_owned()))),
+            vec!["off (this server keeps no upload sessions)".to_owned()]
+        );
+        let quiet = Scrape(
+            "oml_upload_sessions{state=\"open\"} 2\n\
+             oml_upload_sessions{state=\"completed\"} 1\n\
+             oml_upload_unbound_bytes 300\n\
+             oml_upload_stored_bytes 512\n\
+             oml_upload_unswept 0\n\
+             oml_upload_sweep_failures_total 0\n\
+             oml_upload_refusals_total{code=\"upload.incomplete\"} 3\n"
+                .to_owned(),
+        );
+        assert_eq!(
+            uploads_doctor(Some(&quiet)),
+            vec![
+                "2 open, 1 completed and unbound, 0 bound, 0 expired, 0 abandoned, 0 failed; 300 bytes declared unbound, 512 bytes stored".to_owned(),
+                "upload_refusals since start: upload.incomplete 3".to_owned(),
+            ]
+        );
+        let loud = Scrape(
+            "oml_upload_sessions{state=\"expired\"} 1\n\
+             oml_upload_unswept 1\n\
+             oml_upload_sweep_failures_total 2\n\
+             oml_upload_refusals_total{code=\"upload.digest_mismatch\"} 1\n"
+                .to_owned(),
+        );
+        let lines = uploads_doctor(Some(&loud));
+        assert!(lines[1].starts_with("warn upload_unswept: 1 "), "{lines:?}");
+        assert!(lines[2].starts_with("warn upload_sweep_failed: 2 "), "{lines:?}");
+        assert!(
+            lines[3].starts_with("warn upload_refusals since start: upload.digest_mismatch 1;"),
+            "{lines:?}"
+        );
+        assert_eq!(
+            uploads_doctor(None),
+            vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()]
         );
     }
 

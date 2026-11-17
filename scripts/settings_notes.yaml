@@ -96,6 +96,15 @@ server:
   brief.max_tokens:
     default: "`400`"
     note: The token budget a workspace's brief is cut to when an agent reads the workspace. The first member that does not fit ends the brief.
+  storage.url:
+    default: "`oml-objects`"
+    note: Where upload sessions keep their parts, a local directory as a path or a `file://` URL, created owner-only at start. Each part is stored encrypted under its session's own key, and the directory holds nothing once every session has ended. Any other scheme stops the server at start.
+  uploads.max_bytes:
+    default: "`1073741824` (1 GiB)"
+    note: The largest upload one session takes, in bytes. A larger declared size is refused as `upload.too_large`.
+  uploads.tenant_max_bytes:
+    default: "`4294967296` (4 GiB)"
+    note: The most bytes a tenant's open and unbound upload sessions may declare together. An opening past it is refused as `upload.tenant_limit`.
   search.enabled:
     default: "`keyword-any`, `bm25`, `bm25-postings`"
     note: The search pipelines the server offers, a TOML array in the file and comma-separated in the environment. A request naming a pipeline that is not listed is refused with `request.validation`.

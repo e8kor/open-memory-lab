@@ -22,6 +22,11 @@ Every number has a unit and a source. Where no figure exists, the page says so i
 | Brief size | 400 tokens | `brief.max_tokens` | none; the brief is cut | Raise the setting |
 | Rerank concurrency | 2 at a time; 1,000 ms deadline | `search.rerank.max_concurrent`, `search.rerank.timeout_ms` | none; recall serves the unreranked order | Raise concurrency or the deadline |
 | Web session life | 8 hours | build constant | sign in again | none |
+| Upload size | 1 GiB | `uploads.max_bytes` | `413 upload.too_large` | Raise the setting |
+| Upload part | 8 MiB exactly, the last part the remainder | build constant | `422 upload.part_size` | Send the length the part number takes |
+| Upload sessions a key holds open or unbound | 4 | build constant | `409 upload.session_limit` | Complete, abandon or let one expire |
+| Upload bytes a tenant holds open or unbound | 4 GiB | `uploads.tenant_max_bytes` | `409 upload.tenant_limit` | Raise the setting, or abandon sessions |
+| Upload session life | 24 hours after the last part, at most 72 hours after opening; 24 hours after an unbound completion | build constant | `410 upload.expired` | Open another session |
 
 Settings are on the [settings page](../operations/configuration.md). The request and error shapes are in the [HTTP API](../api/http-api.md) and [error codes](../api/errors.md).
 
@@ -44,6 +49,7 @@ From the maintainers' own runs on one 8-vCPU host with PostgreSQL:
 - Cold caches and an idle host.
 - Review throughput.
 - Per-tenant write ceiling under the chain lock.
+- Upload storage: part write and completion throughput at `storage.url`, and the disk 4 GiB of unbound uploads per tenant takes across tenants. A completion reads every part back and hashes it, so it takes time in step with the upload's size.
 - Lake writer lag under sustained load ([run the lake writer](../operations/lake.md)).
 
 ## Not verified against a live client

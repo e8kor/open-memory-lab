@@ -144,6 +144,30 @@ struct SparseLabels {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct CodeLabels {
+    code: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct StateLabels {
+    state: String,
+}
+
+/// One upload sweep's totals over every tenant, for the `uploads` doctor
+/// line (ADR-0004 d3, as amended 2026-11-17). No tenant label.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UploadTotals {
+    /// Sessions by state, by the state's spelling.
+    pub by_state: std::collections::BTreeMap<String, u64>,
+    /// Declared bytes of the open and unbound sessions.
+    pub unbound_bytes: u64,
+    /// Bytes the object store holds under `uploads/`.
+    pub stored_bytes: u64,
+    /// Sessions whose key is gone and whose objects remain.
+    pub unswept: u64,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct BulkLabels {
     outcome: String,
 }
@@ -192,6 +216,12 @@ pub struct Metrics {
     quality: Quality,
     sparse_encoded: Family<SparseLabels, Counter>,
     sparse_backlog: Gauge,
+    upload_refusals: Family<CodeLabels, Counter>,
+    upload_sessions: Family<StateLabels, Gauge>,
+    upload_unbound_bytes: Gauge,
+    upload_stored_bytes: Gauge,
+    upload_unswept: Gauge,
+    upload_sweep_failures: Counter,
     scan_findings: Family<ScanLabels, Counter>,
     scan_counts: std::sync::OnceLock<ScanCounts>,
     scan_refresh: std::sync::Mutex<()>,
@@ -344,6 +374,12 @@ impl Default for Metrics {
         let quota_refusals = Family::<QuotaLabels, Counter>::default();
         let sparse_encoded = Family::<SparseLabels, Counter>::default();
         let sparse_backlog = Gauge::default();
+        let upload_refusals = Family::<CodeLabels, Counter>::default();
+        let upload_sessions = Family::<StateLabels, Gauge>::default();
+        let upload_unbound_bytes = Gauge::default();
+        let upload_stored_bytes = Gauge::default();
+        let upload_unswept = Gauge::default();
+        let upload_sweep_failures = Counter::default();
         registry.register(
             "oml_http_request_duration_seconds",
             "API-listener request duration by route template and status; probes answered 200 are not counted",
@@ -467,6 +503,39 @@ impl Default for Metrics {
             "versions waiting for the learned sparse encoder across the deployment",
             sparse_backlog.clone(),
         );
+        // Upload sessions (ADR-0004 d3, as amended 2026-11-17): the
+        // refusals by their closed code, and what the last sweep counted
+        // over every tenant, with no tenant label.
+        registry.register(
+            "oml_upload_refusals",
+            "upload requests refused, by upload.* code",
+            upload_refusals.clone(),
+        );
+        registry.register(
+            "oml_upload_sessions",
+            "upload sessions at the last sweep, by state, across the deployment",
+            upload_sessions.clone(),
+        );
+        registry.register(
+            "oml_upload_unbound_bytes",
+            "declared bytes of open and unbound upload sessions at the last sweep",
+            upload_unbound_bytes.clone(),
+        );
+        registry.register(
+            "oml_upload_stored_bytes",
+            "bytes the object store held under uploads/ at the last sweep",
+            upload_stored_bytes.clone(),
+        );
+        registry.register(
+            "oml_upload_unswept",
+            "upload sessions whose key is shredded and whose objects remain, at the last sweep",
+            upload_unswept.clone(),
+        );
+        registry.register(
+            "oml_upload_sweep_failures",
+            "upload sweeps or object removals that failed since start; the next sweep retries",
+            upload_sweep_failures.clone(),
+        );
         registry.register(
             "oml_handler_panics",
             "requests whose handler panicked and were answered system.internal by the panic guard; every one is a defect, named in the lead's log under event handler_panic",
@@ -505,6 +574,12 @@ impl Default for Metrics {
             quality,
             sparse_encoded,
             sparse_backlog,
+            upload_refusals,
+            upload_sessions,
+            upload_unbound_bytes,
+            upload_stored_bytes,
+            upload_unswept,
+            upload_sweep_failures,
             scan_findings,
             scan_counts: std::sync::OnceLock::new(),
             scan_refresh: std::sync::Mutex::new(()),
@@ -544,6 +619,13 @@ impl Metrics {
         }
         if error_code.is_some_and(|c| c.starts_with("idempotency.")) {
             self.conflicts.inc();
+        }
+        if let Some(code) = error_code.filter(|c| c.starts_with("upload.")) {
+            self.upload_refusals
+                .get_or_create(&CodeLabels {
+                    code: code.to_owned(),
+                })
+                .inc();
         }
         if route == "/oauth/token" {
             self.oauth_tokens
@@ -755,6 +837,24 @@ impl Metrics {
                     .inc_by(n);
             }
         }
+    }
+
+    /// What the last upload sweep counted over every tenant, and the
+    /// removals or tenants it failed (ADR-0004 d3, as amended 2026-11-17).
+    /// Every state is set, a state with no session to zero.
+    pub fn upload_sweep(&self, totals: &UploadTotals, failures: u64) {
+        let gauge = |n: u64| i64::try_from(n).unwrap_or(i64::MAX);
+        for state in oml_app::domain::upload::UploadState::ALL {
+            self.upload_sessions
+                .get_or_create(&StateLabels {
+                    state: state.as_str().to_owned(),
+                })
+                .set(gauge(totals.by_state.get(state.as_str()).copied().unwrap_or(0)));
+        }
+        self.upload_unbound_bytes.set(gauge(totals.unbound_bytes));
+        self.upload_stored_bytes.set(gauge(totals.stored_bytes));
+        self.upload_unswept.set(gauge(totals.unswept));
+        self.upload_sweep_failures.inc_by(failures);
     }
 
     /// The entries waiting for the encoder (ADR-0052 d15).

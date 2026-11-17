@@ -6913,6 +6913,241 @@ impl PgStore {
 }
 
 impl JournalStore for PgStore {
+    async fn upload_open(
+        &self,
+        session: &oml_app::types::UploadSession,
+        per_key: u64,
+        tenant_max_bytes: u64,
+    ) -> Result<Result<(), oml_app::domain::upload::UploadRefusal>, StoreError> {
+        use oml_app::domain::upload::UploadRefusal;
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, session.tenant_id).await?;
+        // One opening at a time per tenant, so two concurrent ones cannot
+        // both pass a limit the other fills (ADR-0004 d3).
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('upload_sessions:' || $1::text, 0))")
+            .bind(session.tenant_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        let row = sqlx::query(
+            "SELECT count(*) FILTER (WHERE key_id = $2) AS by_key, \
+                    COALESCE(sum(size), 0)::bigint AS bytes \
+               FROM upload_sessions \
+              WHERE tenant_id = $1 AND state IN ('open', 'completed')",
+        )
+        .bind(session.tenant_id)
+        .bind(session.key_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let by_key: i64 = row.try_get("by_key").map_err(backend)?;
+        let bytes: i64 = row.try_get("bytes").map_err(backend)?;
+        if u64::try_from(by_key).unwrap_or(u64::MAX) >= per_key {
+            return Ok(Err(UploadRefusal::SessionLimit { limit: per_key }));
+        }
+        if u64::try_from(bytes).unwrap_or(u64::MAX).saturating_add(session.size) > tenant_max_bytes {
+            return Ok(Err(UploadRefusal::TenantLimit {
+                max_bytes: tenant_max_bytes,
+            }));
+        }
+        sqlx::query(
+            "INSERT INTO upload_sessions (tenant_id, id, key_id, purpose, size, sha256, state, \
+                 part_key, created_at, touched_at, expires_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, ($8)::timestamptz, ($8)::timestamptz, \
+                 ($9)::timestamptz)",
+        )
+        .bind(session.tenant_id)
+        .bind(session.upload_id)
+        .bind(session.key_id)
+        .bind(session.purpose.as_str())
+        .bind(i64::try_from(session.size).map_err(backend)?)
+        .bind(&session.sha256)
+        .bind(session.part_key.map(|k| k.to_vec()))
+        .bind(session.created_at.as_str())
+        .bind(session.expires_at.as_ref().map(EventTime::as_str))
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(Ok(()))
+    }
+
+    async fn upload_session(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+    ) -> Result<Option<oml_app::types::UploadSession>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row = sqlx::query(&format!(
+            "SELECT {UPLOAD_COLUMNS} FROM upload_sessions WHERE tenant_id = $1 AND id = $2"
+        ))
+        .bind(tenant_id)
+        .bind(upload_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref().map(upload_from_row).transpose()
+    }
+
+    async fn upload_part_received(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        n: u64,
+        at: &EventTime,
+        expires_at: &EventTime,
+    ) -> Result<Option<oml_app::types::UploadSession>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row = sqlx::query(&format!(
+            "UPDATE upload_sessions \
+                SET received = CASE WHEN $3 = ANY (received) THEN received \
+                                    ELSE array_append(received, $3) END, \
+                    touched_at = ($4)::timestamptz, expires_at = ($5)::timestamptz \
+              WHERE tenant_id = $1 AND id = $2 AND state = 'open' \
+          RETURNING {UPLOAD_COLUMNS}"
+        ))
+        .bind(tenant_id)
+        .bind(upload_id)
+        .bind(i64::try_from(n).map_err(backend)?)
+        .bind(at.as_str())
+        .bind(expires_at.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref().map(upload_from_row).transpose()
+    }
+
+    async fn upload_transition(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        from: &[oml_app::domain::upload::UploadState],
+        to: oml_app::domain::upload::UploadState,
+        at: &EventTime,
+        expires_at: Option<&EventTime>,
+        shred: bool,
+    ) -> Result<Option<oml_app::types::UploadSession>, StoreError> {
+        let from: Vec<&str> = from.iter().map(|s| s.as_str()).collect();
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row = sqlx::query(&format!(
+            "UPDATE upload_sessions \
+                SET state = $4, expires_at = ($6)::timestamptz, \
+                    completed_at = CASE WHEN $4 = 'completed' THEN ($5)::timestamptz \
+                                        ELSE completed_at END, \
+                    bound_at = CASE WHEN $4 = 'bound' THEN COALESCE(bound_at, ($5)::timestamptz) \
+                                    ELSE bound_at END, \
+                    part_key = CASE WHEN $7 THEN NULL ELSE part_key END \
+              WHERE tenant_id = $1 AND id = $2 AND state = ANY ($3) \
+          RETURNING {UPLOAD_COLUMNS}"
+        ))
+        .bind(tenant_id)
+        .bind(upload_id)
+        .bind(&from)
+        .bind(to.as_str())
+        .bind(at.as_str())
+        .bind(expires_at.map(EventTime::as_str))
+        .bind(shred)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref().map(upload_from_row).transpose()
+    }
+
+    async fn uploads_expire(&self, tenant_id: Uuid, at: &EventTime) -> Result<u64, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let expired = sqlx::query(
+            "UPDATE upload_sessions SET state = 'expired', part_key = NULL \
+              WHERE tenant_id = $1 AND state IN ('open', 'completed') \
+                AND expires_at <= ($2)::timestamptz",
+        )
+        .bind(tenant_id)
+        .bind(at.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?
+        .rows_affected();
+        tx.commit().await.map_err(backend)?;
+        Ok(expired)
+    }
+
+    async fn uploads_unswept(&self, tenant_id: Uuid, limit: u32) -> Result<Vec<Uuid>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM upload_sessions \
+              WHERE tenant_id = $1 AND part_key IS NULL AND objects_removed_at IS NULL \
+              ORDER BY id LIMIT $2",
+        )
+        .bind(tenant_id)
+        .bind(i64::from(limit))
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(ids)
+    }
+
+    async fn upload_objects_removed(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        at: &EventTime,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        sqlx::query(
+            "UPDATE upload_sessions SET objects_removed_at = ($3)::timestamptz \
+              WHERE tenant_id = $1 AND id = $2 AND part_key IS NULL \
+                AND objects_removed_at IS NULL",
+        )
+        .bind(tenant_id)
+        .bind(upload_id)
+        .bind(at.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn upload_stats(&self, tenant_id: Uuid) -> Result<oml_app::types::UploadStats, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(
+            "SELECT state, count(*) AS sessions, \
+                    COALESCE(sum(size) FILTER (WHERE state IN ('open', 'completed')), 0)::bigint \
+                        AS unbound_bytes, \
+                    count(*) FILTER (WHERE part_key IS NULL AND objects_removed_at IS NULL) \
+                        AS unswept \
+               FROM upload_sessions WHERE tenant_id = $1 GROUP BY state",
+        )
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let mut stats = oml_app::types::UploadStats::default();
+        for row in &rows {
+            let state: String = row.try_get("state").map_err(backend)?;
+            let sessions: i64 = row.try_get("sessions").map_err(backend)?;
+            let bytes: i64 = row.try_get("unbound_bytes").map_err(backend)?;
+            let unswept: i64 = row.try_get("unswept").map_err(backend)?;
+            stats
+                .by_state
+                .insert(state, u64::try_from(sessions).map_err(backend)?);
+            stats.unbound_bytes += u64::try_from(bytes).map_err(backend)?;
+            stats.unswept += u64::try_from(unswept).map_err(backend)?;
+        }
+        Ok(stats)
+    }
+
     async fn user_usage(
         &self,
         tenant_id: Uuid,
@@ -9223,6 +9458,54 @@ const CONNECTION_COLUMNS: &str = concat!(
     utc!("created_at"),
     " AS created_at_signed"
 );
+
+/// An upload session's columns, its times in the signed fixed-width form
+/// so `EventTime` round-trips exactly (ADR-0004 d3).
+const UPLOAD_COLUMNS: &str = "tenant_id, id, key_id, purpose, size, sha256, received, state, \
+     part_key, \
+     to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at_signed, \
+     to_char(touched_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS touched_at_signed, \
+     to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS expires_at_signed, \
+     to_char(completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+     AS completed_at_signed, \
+     to_char(bound_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS bound_at_signed";
+
+fn upload_from_row(row: &PgRow) -> Result<oml_app::types::UploadSession, StoreError> {
+    let purpose: String = row.try_get("purpose").map_err(backend)?;
+    let state: String = row.try_get("state").map_err(backend)?;
+    let size: i64 = row.try_get("size").map_err(backend)?;
+    let received: Vec<i64> = row.try_get("received").map_err(backend)?;
+    let part_key: Option<Vec<u8>> = row.try_get("part_key").map_err(backend)?;
+    let required = |column: &str| {
+        event_time_column(row, column)?
+            .ok_or_else(|| StoreError::Backend(format!("upload_sessions.{column} is null")))
+    };
+    Ok(oml_app::types::UploadSession {
+        tenant_id: row.try_get("tenant_id").map_err(backend)?,
+        upload_id: row.try_get("id").map_err(backend)?,
+        key_id: row.try_get("key_id").map_err(backend)?,
+        purpose: oml_app::domain::upload::UploadPurpose::parse(&purpose)
+            .ok_or_else(|| StoreError::Backend(format!("upload purpose {purpose:?}")))?,
+        size: u64::try_from(size).map_err(backend)?,
+        sha256: row.try_get("sha256").map_err(backend)?,
+        received: received
+            .into_iter()
+            .map(u64::try_from)
+            .collect::<Result<_, _>>()
+            .map_err(backend)?,
+        state: oml_app::domain::upload::UploadState::parse(&state)
+            .ok_or_else(|| StoreError::Backend(format!("upload state {state:?}")))?,
+        part_key: part_key
+            .map(|k| <[u8; 32]>::try_from(k.as_slice()))
+            .transpose()
+            .map_err(backend)?,
+        created_at: required("created_at_signed")?,
+        touched_at: required("touched_at_signed")?,
+        expires_at: event_time_column(row, "expires_at_signed")?,
+        completed_at: event_time_column(row, "completed_at_signed")?,
+        bound_at: event_time_column(row, "bound_at_signed")?,
+    })
+}
 
 fn event_time_column(row: &PgRow, column: &str) -> Result<Option<EventTime>, StoreError> {
     let at: Option<String> = row.try_get(column).map_err(backend)?;

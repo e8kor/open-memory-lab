@@ -112,6 +112,97 @@ impl<J: Retriever> Retriever for Timed<J> {
 }
 
 impl<J: JournalStore> JournalStore for Timed<J> {
+    fn upload_open(
+        &self,
+        session: &oml_app::types::UploadSession,
+        per_key: u64,
+        tenant_max_bytes: u64,
+    ) -> impl Future<Output = Result<Result<(), oml_app::domain::upload::UploadRefusal>, StoreError>> + Send
+    {
+        timed(
+            "upload_open",
+            self.inner.upload_open(session, per_key, tenant_max_bytes),
+        )
+    }
+
+    fn upload_session(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+    ) -> impl Future<Output = Result<Option<oml_app::types::UploadSession>, StoreError>> + Send {
+        timed(
+            "upload_session",
+            self.inner.upload_session(tenant_id, upload_id),
+        )
+    }
+
+    fn upload_part_received(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        n: u64,
+        at: &EventTime,
+        expires_at: &EventTime,
+    ) -> impl Future<Output = Result<Option<oml_app::types::UploadSession>, StoreError>> + Send {
+        timed(
+            "upload_part_received",
+            self.inner
+                .upload_part_received(tenant_id, upload_id, n, at, expires_at),
+        )
+    }
+
+    fn upload_transition(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        from: &[oml_app::domain::upload::UploadState],
+        to: oml_app::domain::upload::UploadState,
+        at: &EventTime,
+        expires_at: Option<&EventTime>,
+        shred: bool,
+    ) -> impl Future<Output = Result<Option<oml_app::types::UploadSession>, StoreError>> + Send {
+        timed(
+            "upload_transition",
+            self.inner
+                .upload_transition(tenant_id, upload_id, from, to, at, expires_at, shred),
+        )
+    }
+
+    fn uploads_expire(
+        &self,
+        tenant_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed("uploads_expire", self.inner.uploads_expire(tenant_id, at))
+    }
+
+    fn uploads_unswept(
+        &self,
+        tenant_id: Uuid,
+        limit: u32,
+    ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send {
+        timed("uploads_unswept", self.inner.uploads_unswept(tenant_id, limit))
+    }
+
+    fn upload_objects_removed(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
+        timed(
+            "upload_objects_removed",
+            self.inner.upload_objects_removed(tenant_id, upload_id, at),
+        )
+    }
+
+    fn upload_stats(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<oml_app::types::UploadStats, StoreError>> + Send {
+        timed("upload_stats", self.inner.upload_stats(tenant_id))
+    }
+
     fn user_usage(
         &self,
         tenant_id: Uuid,

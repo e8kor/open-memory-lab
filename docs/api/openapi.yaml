@@ -78,6 +78,7 @@ tags:
   - name: search
   - name: usage
   - name: account
+  - name: uploads
   - name: health
 
 paths:
@@ -3148,6 +3149,145 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/uploads:
+    post:
+      tags: [uploads]
+      operationId: openUpload
+      summary: Open a resumable upload session for bytes of a declared size and SHA-256.
+      description: 'Requires: a writer key; any other role is access.verb_ceiling (ADR-0004 d3, as amended 2026-11-17). purpose is import, the one purpose built; size is 1 byte to uploads.max_bytes (1 GiB by default), or 413 upload.too_large; sha256 is the plaintext''s SHA-256 as 64 lowercase hex digits. A key holding 4 sessions that are open, or completed and unbound, is upload.session_limit; a tenant whose open and unbound sessions would declare more than uploads.tenant_max_bytes (4 GiB by default) is upload.tenant_limit; an object store that fails is 503 upload.storage_failed. The session takes parts of 8 MiB, the last the remainder, and expires 24 hours after its opening or its last part and never later than 72 hours after it opened. Only this key is ever served it. Nothing is journalled, and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              purpose: import
+              size: 18874368
+              sha256: 9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b
+            schema: { $ref: '#/components/schemas/UploadOpenRequest' }
+      responses:
+        '201':
+          description: The open session.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadSession' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '503': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/uploads/{upload_id}:
+    get:
+      tags: [uploads]
+      operationId: getUpload
+      summary: Read an upload session's state, the parts received and missing, and its expiry.
+      description: 'Requires: the key that opened the session; any other key, and an id no session has, answers access.not_found (ADR-0004 d3, as amended 2026-11-17). A session past its expiry that no sweep has reached yet reads expired. The session''s key is never answered. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: upload_id, in: path, required: true, schema: { type: string }, description: 'The session id POST /v2/uploads answered.' }
+      responses:
+        '200':
+          description: The session.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadSession' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+    delete:
+      tags: [uploads]
+      operationId: abandonUpload
+      summary: Abandon an upload session, shredding its key and removing its parts.
+      description: 'Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17). An open, completed or failed session is abandoned: its key is nulled, then its parts are removed. One already abandoned or expired answers the same; a bound one belongs to the verb that bound it and is upload.session_invalid. Nothing is journalled. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: upload_id, in: path, required: true, schema: { type: string }, description: 'The session id POST /v2/uploads answered.' }
+      responses:
+        '204':
+          description: Abandoned.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/uploads/{upload_id}/parts/{part}:
+    put:
+      tags: [uploads]
+      operationId: putUploadPart
+      summary: Store one part of an open session; sending a part again replaces it.
+      description: 'Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17). part counts from 1; outside 1 to the part count is 422 upload.part_number. Every part is 8,388,608 bytes but the last, which is the remainder; another length is 422 upload.part_size. A session that is not open is upload.session_invalid with details.state, and one past its expiry 410 upload.expired. The part is stored as XChaCha20-Poly1305 ciphertext under the session''s own key, and the session''s expiry moves to 24 hours on, never past 72 hours after it opened. A part is addressed by its number, so no Idempotency-Key is taken: a retry after an interruption sends the parts GET /v2/uploads/{upload_id} names missing. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: upload_id, in: path, required: true, schema: { type: string }, description: 'The session id POST /v2/uploads answered.' }
+        - { name: part, in: path, required: true, schema: { type: integer, minimum: 1 }, description: 'The part number, from 1.' }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: The session with the part received.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadSession' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/uploads/{upload_id}/complete:
+    post:
+      tags: [uploads]
+      operationId: completeUpload
+      summary: Read the parts in order and check their SHA-256 against the declared one.
+      description: 'Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17). Parts missing are upload.incomplete with details.missing, the first 100. A digest that differs fails the session, nulls its key, removes its parts and answers 422 upload.digest_mismatch. A match completes it: it is unbound until a verb such as an import binds it, and expires 24 hours after completion. A session that is not open is upload.session_invalid; past its expiry, 410 upload.expired. Nothing is journalled. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: upload_id, in: path, required: true, schema: { type: string }, description: 'The session id POST /v2/uploads answered.' }
+      responses:
+        '200':
+          description: The completed session.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadSession' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/admin/usage:
     get:
       tags: [admin]
@@ -3625,6 +3765,14 @@ components:
         - vocab.inactive_curie
         - upload.session_invalid
         - upload.digest_mismatch
+        - upload.expired
+        - upload.too_large
+        - upload.part_size
+        - upload.part_number
+        - upload.incomplete
+        - upload.session_limit
+        - upload.tenant_limit
+        - upload.storage_failed
         - lifecycle.erased
         - name.taken
         - limit.rate
@@ -4898,6 +5046,35 @@ components:
       required: [user]
       properties:
         user: { type: string, description: "The user the key acts for in the console, by name (ADR-0085 d16)." }
+
+    UploadOpenRequest:
+      type: object
+      additionalProperties: false
+      required: [purpose, size, sha256]
+      description: "An upload session to open (ADR-0004 d3, as amended 2026-11-17)."
+      properties:
+        purpose: { type: string, enum: [import] }
+        size: { type: integer, minimum: 1, description: 'The plaintext''s size in bytes, at most uploads.max_bytes.' }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: 'The plaintext''s SHA-256, 64 lowercase hex digits.' }
+
+    UploadSession:
+      type: object
+      additionalProperties: false
+      required: [upload_id, purpose, size, sha256, part_size, parts, received, missing, state, created_at, expires_at, completed_at]
+      description: "An upload session as the key that opened it reads it; its key is never answered (ADR-0004 d3, as amended 2026-11-17)."
+      properties:
+        upload_id: { type: string }
+        purpose: { type: string, enum: [import] }
+        size: { type: integer }
+        sha256: { type: string }
+        part_size: { type: integer, description: 'Always 8388608.' }
+        parts: { type: integer }
+        received: { type: array, items: { type: integer } }
+        missing: { type: array, items: { type: integer } }
+        state: { type: string, enum: [open, completed, bound, failed, expired, abandoned] }
+        created_at: { type: string }
+        expires_at: { type: [string, 'null'], description: 'Null once bound: a bound upload ends with the verb that bound it.' }
+        completed_at: { type: [string, 'null'] }
 
     KeyLink:
       type: object

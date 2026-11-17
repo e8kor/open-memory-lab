@@ -4157,10 +4157,12 @@ dependencies = [
 name = "oml-app"
 version = "0.7.3"
 dependencies = [
+ "chacha20poly1305",
  "ed25519-dalek",
  "oml-domain",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.21",
  "tokio",
  "uuid",
@@ -4427,6 +4429,7 @@ dependencies = [
  "reqwest 0.13.5",
  "rustls",
  "serde_json",
+ "sha2 0.10.9",
  "sqlx",
  "thiserror 2.0.21",
  "tokio",

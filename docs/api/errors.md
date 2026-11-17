@@ -171,14 +171,22 @@ Refusals from vocabulary workspaces and their terms.
 | `vocab.unknown_curie` | 422 | A cited term does not exist or is not readable by the key. |
 | `vocab.inactive_curie` | 422 | A cited term is deprecated. `details.successors` and `details.relation` name the replacement. |
 
-## `upload` — attachment sessions
+## `upload` — upload sessions
 
-Reserved. This build serves no attachment uploads.
+The routes under `/v2/uploads` ([ADR-0004](../adr/ADR-0004-bodies-and-attachments.md) d3, as amended 2026-11-17). Nothing is journalled for any of them, and each is counted by code on the `uploads` line of `oml doctor`. A session another key opened answers `access.not_found`.
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `upload.session_invalid` | 409 | Reserved. |
-| `upload.digest_mismatch` | 422 | Reserved. |
+| `upload.session_invalid` | 409 | The session's state does not allow the act: a part or a completion on a session that is not open, or an abandonment of a bound one. `details.state` names the state. |
+| `upload.digest_mismatch` | 422 | The completed parts' SHA-256 is not the one the session declared. The session fails, its key is nulled and its parts are removed; open another. |
+| `upload.expired` | 410 | The session is past its expiry: 24 hours after its last part, 72 hours after it opened, or 24 hours after an unbound completion. Open another. |
+| `upload.too_large` | 413 | The declared size is over `uploads.max_bytes`. `details.max_bytes`. |
+| `upload.part_size` | 422 | A part's length is not 8,388,608 bytes, or the remainder for the last part. `details.expected`, `details.got`. |
+| `upload.part_number` | 422 | The part number is outside 1 to the session's part count. `details.parts`. |
+| `upload.incomplete` | 409 | A completion with parts missing. `details.missing` lists the first 100; send them and complete again. |
+| `upload.session_limit` | 409 | The key holds 4 sessions that are open, or completed and unbound. `details.limit`. Complete and use one, abandon one, or wait for one to expire. |
+| `upload.tenant_limit` | 409 | The tenant's open and unbound sessions would declare more than `uploads.tenant_max_bytes`. `details.max_bytes`. |
+| `upload.storage_failed` | 503 | The object store at `storage.url` failed a read or a write, or the server has none; nothing changed state. Retryable, with `Retry-After`. |
 
 ## `lifecycle` — erased content
 
@@ -220,13 +228,13 @@ Review unavailability is not an API error. When no reviewer can approve, writes 
 | 401 | `auth.missing`, `auth.invalid` |
 | 403 | `oauth.origin_refused`, `oauth.attach_refused`, `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.person_required`, `review.ratifier_is_proposer`, `simulation.audience_refused` |
 | 404 | `access.not_found` |
-| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `submission.user_root_refused`, `name.taken`, `workspace.frozen`, `workspace.transition_refused`, `workspace.in_progress_refused`, `workspace.held_remaining`, `workspace.admin_key_under_root`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `export.not_ready` |
-| 410 | `lifecycle.erased` |
-| 413 | `request.payload_too_large` |
+| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `submission.user_root_refused`, `name.taken`, `workspace.frozen`, `workspace.transition_refused`, `workspace.in_progress_refused`, `workspace.held_remaining`, `workspace.admin_key_under_root`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `upload.incomplete`, `upload.session_limit`, `upload.tenant_limit`, `export.not_ready` |
+| 410 | `lifecycle.erased`, `upload.expired` |
+| 413 | `request.payload_too_large`, `upload.too_large` |
 | 415 | `request.unsupported_media` |
-| 422 | `oauth.connect_refused`, `request.workspace_unresolved`, `submission.scan_veto`, `submission.format_invalid`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
+| 422 | `oauth.connect_refused`, `request.workspace_unresolved`, `submission.scan_veto`, `submission.format_invalid`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `upload.part_size`, `upload.part_number`, `settings.retired_key`, `settings.invalid` |
 | 429 | `limit.rate`, `limit.quota` |
 | 500 | `system.internal` |
-| 503 | `system.unavailable` |
+| 503 | `system.unavailable`, `upload.storage_failed` |
 
 `oauth.client_invalid` is also a 401, at `POST /oauth/token`, for a request that sent an `Authorization` header.

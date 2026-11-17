@@ -56,6 +56,7 @@ oml-web.workspace = true
 reqwest.workspace = true
 oml-guardrail.workspace = true
 oml-test-pg.workspace = true
+sha2.workspace = true
 tower.workspace = true
 
 [lints]

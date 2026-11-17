@@ -62,6 +62,12 @@ Histograms use bucket bounds that start at 1 ms and double sixteen times, to 32.
 | `oml_reranks_total` | counter | `outcome`, `reason` | Reranking stages: `applied` or `skipped`, with the reason `none`, `busy`, `timeout` or `failed`. |
 | `oml_sparse_encoded_total` | counter | `outcome` | Versions the learned sparse encoder wrote postings for, failed on, or parked as dead letters. |
 | `oml_sparse_backlog` | gauge | none | Versions waiting for the sparse encoder, across the deployment. |
+| `oml_upload_refusals_total` | counter | `code` | Upload requests refused, by `upload.*` code. |
+| `oml_upload_sessions` | gauge | `state` | Upload sessions at the last sweep, by state, across the deployment. |
+| `oml_upload_unbound_bytes` | gauge | none | Declared bytes of the open and unbound upload sessions at the last sweep. |
+| `oml_upload_stored_bytes` | gauge | none | Bytes the object store held under `uploads/` at the last sweep. |
+| `oml_upload_unswept` | gauge | none | Upload sessions whose key is shredded and whose parts remain, at the last sweep. |
+| `oml_upload_sweep_failures_total` | counter | none | Upload sweep steps that failed since start; the next sweep, 5 minutes on, retries. |
 | `oml_memories_unrecalled` | gauge | `promoted_for` | Served memories no recall in the last 30 days returned, by time since approval (`7d`, `30d`, `90d`, `older`). Refreshed every 10 minutes. |
 
 ### Recall telemetry

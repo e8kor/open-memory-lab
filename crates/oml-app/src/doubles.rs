@@ -288,6 +288,9 @@ struct UnnamedWorkspace {
 
 #[derive(Debug, Default, Clone)]
 struct TenantState {
+    /// Upload sessions, with whether their objects were recorded removed
+    /// (ADR-0004 d3, as amended 2026-11-17).
+    uploads: BTreeMap<Uuid, (crate::types::UploadSession, bool)>,
     events: Vec<crate::domain::SignedEnvelope>,
     memories: BTreeMap<Uuid, MemoryRecord>,
     /// The findings list, in the order recorded (ADR-0074 d23), as
@@ -2805,6 +2808,172 @@ impl Retriever for MemStore {
 }
 
 impl JournalStore for MemStore {
+    async fn upload_open(
+        &self,
+        session: &crate::types::UploadSession,
+        per_key: u64,
+        tenant_max_bytes: u64,
+    ) -> Result<Result<(), oml_domain::upload::UploadRefusal>, StoreError> {
+        use oml_domain::upload::UploadRefusal;
+        let state = self.tenant(session.tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        let live = || {
+            state
+                .uploads
+                .values()
+                .map(|(s, _)| s)
+                .filter(|s| s.state.counts_against_limits())
+        };
+        if live().filter(|s| s.key_id == session.key_id).count() as u64 >= per_key {
+            return Ok(Err(UploadRefusal::SessionLimit { limit: per_key }));
+        }
+        if live().map(|s| s.size).sum::<u64>() + session.size > tenant_max_bytes {
+            return Ok(Err(UploadRefusal::TenantLimit {
+                max_bytes: tenant_max_bytes,
+            }));
+        }
+        state
+            .uploads
+            .insert(session.upload_id, (session.clone(), false));
+        Ok(Ok(()))
+    }
+
+    async fn upload_session(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+    ) -> Result<Option<crate::types::UploadSession>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = state.lock().expect("tenant lock");
+        Ok(state.uploads.get(&upload_id).map(|(s, _)| s.clone()))
+    }
+
+    async fn upload_part_received(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        n: u64,
+        at: &EventTime,
+        expires_at: &EventTime,
+    ) -> Result<Option<crate::types::UploadSession>, StoreError> {
+        let state = self.tenant(tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        let Some((session, _)) = state.uploads.get_mut(&upload_id) else {
+            return Ok(None);
+        };
+        if session.state != oml_domain::upload::UploadState::Open {
+            return Ok(None);
+        }
+        session.received.insert(n);
+        session.touched_at = at.clone();
+        session.expires_at = Some(expires_at.clone());
+        Ok(Some(session.clone()))
+    }
+
+    async fn upload_transition(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        from: &[oml_domain::upload::UploadState],
+        to: oml_domain::upload::UploadState,
+        at: &EventTime,
+        expires_at: Option<&EventTime>,
+        shred: bool,
+    ) -> Result<Option<crate::types::UploadSession>, StoreError> {
+        use oml_domain::upload::UploadState;
+        let state = self.tenant(tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        let Some((session, _)) = state.uploads.get_mut(&upload_id) else {
+            return Ok(None);
+        };
+        if !from.contains(&session.state) {
+            return Ok(None);
+        }
+        session.state = to;
+        session.expires_at = expires_at.cloned();
+        match to {
+            UploadState::Completed => session.completed_at = Some(at.clone()),
+            UploadState::Bound => session.bound_at = session.bound_at.clone().or(Some(at.clone())),
+            _ => {}
+        }
+        if shred {
+            session.part_key = None;
+        }
+        Ok(Some(session.clone()))
+    }
+
+    async fn uploads_expire(&self, tenant_id: Uuid, at: &EventTime) -> Result<u64, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(0);
+        };
+        let mut state = state.lock().expect("tenant lock");
+        let mut count = 0;
+        for (session, _) in state.uploads.values_mut() {
+            if session.state.counts_against_limits()
+                && session
+                    .expires_at
+                    .as_ref()
+                    .is_some_and(|e| e.unix_micros() <= at.unix_micros())
+            {
+                session.state = oml_domain::upload::UploadState::Expired;
+                session.part_key = None;
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    async fn uploads_unswept(&self, tenant_id: Uuid, limit: u32) -> Result<Vec<Uuid>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        Ok(state
+            .uploads
+            .iter()
+            .filter(|(_, (s, removed))| s.part_key.is_none() && !removed)
+            .map(|(id, _)| *id)
+            .take(limit as usize)
+            .collect())
+    }
+
+    async fn upload_objects_removed(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        _at: &EventTime,
+    ) -> Result<(), StoreError> {
+        let state = self.tenant(tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        if let Some((_, removed)) = state.uploads.get_mut(&upload_id) {
+            *removed = true;
+        }
+        Ok(())
+    }
+
+    async fn upload_stats(&self, tenant_id: Uuid) -> Result<crate::types::UploadStats, StoreError> {
+        let mut stats = crate::types::UploadStats::default();
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(stats);
+        };
+        let state = state.lock().expect("tenant lock");
+        for (session, removed) in state.uploads.values() {
+            *stats
+                .by_state
+                .entry(session.state.as_str().to_owned())
+                .or_default() += 1;
+            if session.state.counts_against_limits() {
+                stats.unbound_bytes += session.size;
+            }
+            if session.part_key.is_none() && !removed {
+                stats.unswept += 1;
+            }
+        }
+        Ok(stats)
+    }
+
     async fn user_usage(
         &self,
         tenant_id: Uuid,
@@ -5876,4 +6045,90 @@ impl crate::ports::SparseEncoder for FakeSparseEncoder {
 fn last_admin(entries: &BTreeMap<[u8; 32], WebEntry>, hash: &Sha256Hash) -> bool {
     entries.get(&hash.0).is_some_and(|e| e.admin)
         && !entries.iter().any(|(h, e)| e.admin && h != &hash.0)
+}
+
+/// An object store in memory (ADR-0004 d3, as amended 2026-11-17): what an
+/// upload's parts are, and a switch that fails the next calls, so a law can
+/// hold what a failing store leaves behind.
+#[derive(Default)]
+pub struct MemObjects {
+    objects: Mutex<BTreeMap<String, Vec<u8>>>,
+    fail: AtomicBool,
+}
+
+impl MemObjects {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Every call fails while `fail` holds.
+    pub fn set_failing(&self, fail: bool) {
+        self.fail.store(fail, Ordering::SeqCst);
+    }
+
+    /// The names stored, in order.
+    #[must_use]
+    pub fn names(&self) -> Vec<String> {
+        self.objects.lock().expect("objects lock").keys().cloned().collect()
+    }
+
+    /// The stored bytes under `name`, as the store holds them.
+    #[must_use]
+    pub fn raw(&self, name: &str) -> Option<Vec<u8>> {
+        self.objects.lock().expect("objects lock").get(name).cloned()
+    }
+
+    fn check(&self) -> Result<(), String> {
+        if self.fail.load(Ordering::SeqCst) {
+            Err("the in-memory object store is set to fail".to_owned())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl crate::ports::ObjectStore for MemObjects {
+    fn put<'a>(&'a self, name: &'a str, bytes: Vec<u8>) -> crate::ports::ObjectFuture<'a, ()> {
+        Box::pin(async move {
+            self.check()?;
+            self.objects
+                .lock()
+                .expect("objects lock")
+                .insert(name.to_owned(), bytes);
+            Ok(())
+        })
+    }
+
+    fn get<'a>(&'a self, name: &'a str) -> crate::ports::ObjectFuture<'a, Option<Vec<u8>>> {
+        Box::pin(async move {
+            self.check()?;
+            Ok(self.raw(name))
+        })
+    }
+
+    fn delete_prefix<'a>(&'a self, prefix: &'a str) -> crate::ports::ObjectFuture<'a, ()> {
+        Box::pin(async move {
+            self.check()?;
+            self.objects
+                .lock()
+                .expect("objects lock")
+                .retain(|name, _| !name.starts_with(prefix));
+            Ok(())
+        })
+    }
+
+    fn stored_bytes<'a>(&'a self, prefix: &'a str) -> crate::ports::ObjectFuture<'a, u64> {
+        Box::pin(async move {
+            self.check()?;
+            Ok(self
+                .objects
+                .lock()
+                .expect("objects lock")
+                .iter()
+                .filter(|(name, _)| name.starts_with(prefix))
+                .map(|(_, bytes)| bytes.len() as u64)
+                .sum())
+        })
+    }
 }

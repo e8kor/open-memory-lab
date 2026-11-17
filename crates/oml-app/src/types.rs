@@ -3382,6 +3382,10 @@ pub enum AppError {
     /// (ADR-0085 d16).
     #[error("the key cannot be linked or unlinked: {reason} (ADR-0085 d16)")]
     KeyLinkRefused { reason: &'static str },
+    /// An upload act refused under one of the ten `upload.*` codes
+    /// (ADR-0004 d3, as amended 2026-11-17); nothing is journalled.
+    #[error("{0} (ADR-0004 d3)")]
+    Upload(oml_domain::upload::UploadRefusal),
     /// `OML-Acting-Key` names a key the session may not act as (ADR-0085
     /// d16, amended 2026-11-17; `auth.invalid`, `acting_key_not_linked`).
     #[error("the acting key is not a live key linked to this session's user")]
@@ -3890,4 +3894,53 @@ impl AdminState {
         .into_iter()
         .find(|s| s.as_str() == value)
     }
+}
+
+/// One upload session's row (ADR-0004 d3, as amended 2026-11-17): metadata
+/// only, the parts being objects at `storage.url`. `part_key` is the
+/// session's own key, `None` once shredded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UploadSession {
+    pub tenant_id: Uuid,
+    pub upload_id: Uuid,
+    /// The key that opened it, the only key any route serves it to.
+    pub key_id: Uuid,
+    pub purpose: oml_domain::upload::UploadPurpose,
+    /// The declared plaintext size in bytes.
+    pub size: u64,
+    /// The declared plaintext SHA-256, 64 lowercase hex digits.
+    pub sha256: String,
+    /// The part numbers stored, ascending.
+    pub received: std::collections::BTreeSet<u64>,
+    pub state: oml_domain::upload::UploadState,
+    pub part_key: Option<[u8; 32]>,
+    pub created_at: EventTime,
+    /// The opening or the last part.
+    pub touched_at: EventTime,
+    /// `None` once bound: a bound upload ends with the verb that bound it.
+    pub expires_at: Option<EventTime>,
+    pub completed_at: Option<EventTime>,
+    pub bound_at: Option<EventTime>,
+}
+
+impl UploadSession {
+    /// The part numbers not yet stored, ascending.
+    #[must_use]
+    pub fn missing(&self) -> Vec<u64> {
+        (1..=oml_domain::upload::part_count(self.size))
+            .filter(|n| !self.received.contains(n))
+            .collect()
+    }
+}
+
+/// A tenant's upload sessions at one sweep, for the `uploads` doctor line's
+/// metrics (ADR-0004 d3, "Doctor and limits").
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UploadStats {
+    /// Sessions per state, by the state's spelling.
+    pub by_state: std::collections::BTreeMap<String, u64>,
+    /// The declared bytes of the open and unbound sessions.
+    pub unbound_bytes: u64,
+    /// Sessions whose key is gone and whose objects remain.
+    pub unswept: u64,
 }

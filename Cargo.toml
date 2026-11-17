@@ -157,6 +157,9 @@ age = { version = "0.11.5", default-features = false }
 # The bundle container (ADR-0084 d1): ustar written and read entry by entry;
 # no xattr feature, so nothing is unpacked to disk by the library.
 tar = { version = "0.4.46", default-features = false }
+# An upload part's encryption at rest (ADR-0004 d3, as amended 2026-11-17):
+# XChaCha20-Poly1305 under the session's own key. Already in the graph via age.
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 # The bundle's per-bundle pseudonyms (ADR-0084 d4): HMAC-SHA-256 over sha2.
 hmac = "0.12"
 # Test-only: spells the bundle vectors' TEST-ONLY age identity from its raw

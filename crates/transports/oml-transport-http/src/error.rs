@@ -461,6 +461,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "after_seq {after_seq} is beyond head_seq {head_seq}: pass back a next_after_seq this tail served"
         )),
         AppError::NotFound => ApiError::not_found(),
+        AppError::Upload(refusal) => upload_error(&refusal),
         AppError::LineageUnknown(id) => ApiError::not_found().with_details(json!({
             // derives_from targets fail closed as absence, like CURIE
             // citations (errors.md vocab.unknown_curie rationale).
@@ -1606,5 +1607,43 @@ mod claim_edge_tests {
                 assert_eq!(wire.details, details, "{label}");
             }
         }
+    }
+}
+
+/// The ten upload refusals (ADR-0004 d3, as amended 2026-11-17): each its
+/// own code, status and rule; nothing is journalled for any of them.
+#[must_use]
+pub fn upload_error(refusal: &oml_app::domain::upload::UploadRefusal) -> ApiError {
+    use oml_app::domain::upload::UploadRefusal as R;
+    const RULE: &str = "An upload is the opening key's alone, verified at completion and never journalled (ADR-0004 d3).";
+    let status = match refusal {
+        R::SessionInvalid { .. } | R::Incomplete { .. } | R::SessionLimit { .. } | R::TenantLimit { .. } => {
+            StatusCode::CONFLICT
+        }
+        R::DigestMismatch | R::PartSize { .. } | R::PartNumber { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+        R::Expired => StatusCode::GONE,
+        R::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+        R::StorageFailed => StatusCode::SERVICE_UNAVAILABLE,
+    };
+    let details = match refusal {
+        R::SessionInvalid { state } => Some(json!({ "state": state.as_str() })),
+        R::TooLarge { max_bytes } | R::TenantLimit { max_bytes } => {
+            Some(json!({ "max_bytes": max_bytes }))
+        }
+        R::PartSize { expected, got } => Some(json!({ "expected": expected, "got": got })),
+        R::PartNumber { parts } => Some(json!({ "parts": parts })),
+        R::Incomplete { missing } => Some(json!({ "missing": missing })),
+        R::SessionLimit { limit } => Some(json!({ "limit": limit })),
+        R::DigestMismatch | R::Expired | R::StorageFailed => None,
+    };
+    let error = ApiError::new(status, refusal.code(), RULE, refusal.to_string());
+    let error = match details {
+        Some(details) => error.with_details(details),
+        None => error,
+    };
+    if matches!(refusal, R::StorageFailed) {
+        error.retry_after(1)
+    } else {
+        error
     }
 }

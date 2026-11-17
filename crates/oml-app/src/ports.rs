@@ -902,6 +902,91 @@ pub trait Retriever: Send + Sync {
 /// on another store, as an embedder's index would be, gets its own (ADR-0049
 /// d2).
 pub trait JournalStore: Retriever + Send + Sync {
+    /// Inserts an open upload session, in one transaction with the count
+    /// of the key's open and unbound sessions and the sum of the tenant's
+    /// declared bytes: the session's key holding `per_key` of them already
+    /// is [`UploadRefusal::SessionLimit`], and the tenant's passing
+    /// `tenant_max_bytes` with it is [`UploadRefusal::TenantLimit`]; either
+    /// writes nothing (ADR-0004 d3, as amended 2026-11-17).
+    ///
+    /// [`UploadRefusal::SessionLimit`]: oml_domain::upload::UploadRefusal::SessionLimit
+    /// [`UploadRefusal::TenantLimit`]: oml_domain::upload::UploadRefusal::TenantLimit
+    fn upload_open(
+        &self,
+        session: &crate::types::UploadSession,
+        per_key: u64,
+        tenant_max_bytes: u64,
+    ) -> impl Future<Output = Result<Result<(), oml_domain::upload::UploadRefusal>, StoreError>> + Send;
+
+    /// The session's row, whatever its state.
+    fn upload_session(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+    ) -> impl Future<Output = Result<Option<crate::types::UploadSession>, StoreError>> + Send;
+
+    /// Records part `n` as stored and the session touched at `at`, expiring
+    /// at `expires_at`, while the session is open; `None`, writing nothing,
+    /// when it is not.
+    fn upload_part_received(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        n: u64,
+        at: &EventTime,
+        expires_at: &EventTime,
+    ) -> impl Future<Output = Result<Option<crate::types::UploadSession>, StoreError>> + Send;
+
+    /// Moves the session from one of `from` to `to` at `at`, with
+    /// `expires_at` as its new expiry, and nulls its key when `shred`;
+    /// `None`, writing nothing, when its state is not in `from`. Reaching
+    /// `completed` sets `completed_at`, and `bound` sets `bound_at`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one compare-and-set over the session's row"
+    )]
+    fn upload_transition(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        from: &[oml_domain::upload::UploadState],
+        to: oml_domain::upload::UploadState,
+        at: &EventTime,
+        expires_at: Option<&EventTime>,
+        shred: bool,
+    ) -> impl Future<Output = Result<Option<crate::types::UploadSession>, StoreError>> + Send;
+
+    /// Marks every open or unbound session past its expiry at `at` as
+    /// `expired` and nulls its key, in one statement; the count marked.
+    fn uploads_expire(
+        &self,
+        tenant_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
+    /// Up to `limit` sessions whose key is gone and whose objects are not
+    /// yet recorded removed.
+    fn uploads_unswept(
+        &self,
+        tenant_id: Uuid,
+        limit: u32,
+    ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send;
+
+    /// Records the session's objects removed at `at`.
+    fn upload_objects_removed(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// The tenant's sessions counted by state, its unbound bytes and its
+    /// unswept sessions.
+    fn upload_stats(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<crate::types::UploadStats, StoreError>> + Send;
+
     /// The account's meters, read from its counters (ADR-0071 d2, d3): the
     /// four stocks and the flows of the UTC month `at` falls in.
     fn user_usage(
@@ -2137,6 +2222,29 @@ pub trait DocumentFetcher: Send + Sync {
         address: IpAddr,
         guard: FetchGuard,
     ) -> impl Future<Output = Result<FetchedDocument, DocumentFetchFailure>> + Send;
+}
+
+/// The future of one object store call: the value, or the store's reason.
+pub type ObjectFuture<'a, T> =
+    core::pin::Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
+
+/// The object store port (ADR-0004 d3, as amended 2026-11-17; ADR-0090
+/// d16): named bytes at `storage.url`, a local directory by default. It
+/// stores what it is given, ciphertext from every caller, and decides
+/// nothing. Held as `Arc<dyn ObjectStore>`, as the reranker is.
+pub trait ObjectStore: Send + Sync {
+    /// Stores `bytes` under `name`, replacing what was there.
+    fn put<'a>(&'a self, name: &'a str, bytes: Vec<u8>) -> ObjectFuture<'a, ()>;
+
+    /// The bytes under `name`, or `None` where there are none.
+    fn get<'a>(&'a self, name: &'a str) -> ObjectFuture<'a, Option<Vec<u8>>>;
+
+    /// Removes every object whose name starts with `prefix`; removing
+    /// nothing is not an error.
+    fn delete_prefix<'a>(&'a self, prefix: &'a str) -> ObjectFuture<'a, ()>;
+
+    /// The bytes stored under `prefix`, for the doctor line.
+    fn stored_bytes<'a>(&'a self, prefix: &'a str) -> ObjectFuture<'a, u64>;
 }
 
 /// The signer port — the lead/follower split as a trait: only the lead
