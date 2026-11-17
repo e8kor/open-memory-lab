@@ -10223,6 +10223,9 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
     assert_eq!(linked["linked_user"], "alice");
     let (status, linked) = link_key(&rig, "reviewer-bob", Some("bob")).await;
     assert_eq!(status, StatusCode::OK, "{linked}");
+    let (status, again) = link_key(&rig, "reviewer-bob", Some("alice")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{again}");
+    assert_eq!(again["error"]["details"]["reason"], "already_linked");
     let (status, refused) = link_key(&rig, "writer-payments-bot", Some("alice")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
     assert_envelope(&refused, "request.validation");
@@ -10287,10 +10290,66 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
             "not a key id",
             web_call(&web).header("oml-acting-key", "reviewer-alice"),
         ),
+        (
+            "the header twice",
+            web_call(&web)
+                .header("oml-acting-key", &id(&alices))
+                .header("oml-acting-key", &id(&alices)),
+        ),
+        (
+            "two ids in one value",
+            web_call(&web).header(
+                "oml-acting-key",
+                &format!("{},{}", id(&alices), id(&alices)),
+            ),
+        ),
+        (
+            "a connector's access token",
+            Call::auth("oml_at_0000000000000000000000000000000000000000000")
+                .header("oml-acting-key", &id(&alices)),
+        ),
     ] {
         let (status, _, body) = send(&rig.router, "GET", "/v2/whoami", call).await;
         not_linked(status, &body, case);
     }
+    // The header's name in any case, and the id in upper case, name the
+    // same key.
+    let (status, _, acting) = send(
+        &rig.router,
+        "GET",
+        "/v2/whoami",
+        web_call(&web).header("OML-Acting-Key", &id(&alices).to_uppercase()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{acting}");
+    assert_eq!(acting["name"], "reviewer-alice");
+    // Outside the console's acting routes the header runs nothing, here a
+    // write the linked key's grants would not even allow.
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories",
+        web_call(&web)
+            .header("oml-acting-key", &id(&alices))
+            .idem("acting-write")
+            .workspace("payments")
+            .body(json!({
+                "verb": "remember",
+                "claim_key": "acting-write",
+                "kind": "memory",
+                "body": "Written by no one.",
+            })),
+    )
+    .await;
+    not_linked(status, &body, "a write route");
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v2/keys/reviewer-alice",
+        web_call(&web).header("oml-acting-key", &id(&alices)),
+    )
+    .await;
+    not_linked(status, &body, "a key read");
     let (status, _, body) = send(
         &rig.router,
         "POST",

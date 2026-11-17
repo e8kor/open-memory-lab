@@ -3375,10 +3375,10 @@ pub enum AppError {
     /// naming `/body`).
     #[error("a skill body is at most 32,768 bytes after NFC (ADR-0080 d9)")]
     SkillBodyTooLarge,
-    /// A key link an admin may not make or end: `reason` one of `revoked`,
-    /// `admin_key`, `not_a_tenant_key`, `not_used_by_person`,
-    /// `user_unknown`, `user_disabled` or `not_linked` (ADR-0085 d16;
-    /// `key.link_refused`).
+    /// A key link an admin may not make or end, `request.validation` with
+    /// `details.reason` one of `revoked`, `already_linked`, `admin_key`,
+    /// `not_a_tenant_key`, `not_used_by_person`, `user_unknown`,
+    /// `user_disabled`, `self_link` or `not_linked` (ADR-0085 d16).
     #[error("the key cannot be linked or unlinked: {reason} (ADR-0085 d16)")]
     KeyLinkRefused { reason: &'static str },
     /// `OML-Acting-Key` names a key the session may not act as (ADR-0085

@@ -7,7 +7,8 @@
 -- workspaces it grants. linked_user_id names the person's user root, as
 -- user_root_id does on a user key (0014). It is NULL on every key written
 -- before this migration and on every key never linked; the check below keeps
--- it off session keys and user keys, which already name their person.
+-- it off session keys and user keys, which already name their person, and off
+-- admin keys, which act for no one but themselves.
 --
 -- No foreign key to workspaces: a user root is never deleted (ADR-0001 R4),
 -- and one would take a SHARE ROW EXCLUSIVE lock on workspaces. The store's
@@ -26,5 +27,6 @@ ALTER TABLE api_keys ADD COLUMN linked_user_id uuid;
 
 ALTER TABLE api_keys
     ADD CONSTRAINT api_keys_linked_user CHECK (
-        linked_user_id IS NULL OR (user_root_id IS NULL AND credential <> 'session')
+        linked_user_id IS NULL
+        OR (user_root_id IS NULL AND credential <> 'session' AND role <> 'admin')
     ) NOT VALID;

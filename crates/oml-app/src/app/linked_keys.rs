@@ -53,6 +53,14 @@ where
                 reason: "user_disabled",
             });
         }
+        // No self-link: the admin key's own person is its session user or
+        // its linked user (the operator, 2026-11-17: "No self-link only").
+        if admin.session_user.as_ref() == Some(user) || admin.linked_user == Some(root.workspace_id)
+        {
+            return Err(AppError::KeyLinkRefused {
+                reason: "self_link",
+            });
+        }
         target.linked_user = Some(root.workspace_id);
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
@@ -143,6 +151,10 @@ where
             .ok_or(AppError::NotFound)?;
         let reason = if target.revoked_at.is_some() || self.key_expired(&target) {
             Some("revoked")
+        } else if target.linked_user.is_some() {
+            // One link at a time: an unlink comes first, journalled
+            // (ADR-0085 d16, amended 2026-11-17).
+            Some("already_linked")
         } else if target.role == Role::Admin {
             Some("admin_key")
         } else if target.user.is_some() || target.credential != Credential::Bearer {
@@ -205,10 +217,15 @@ where
         };
         let owner = self.journal.workspace(tenant_id, root).await?;
         let linked_to_session = owner.is_some_and(|w| w.user_root && w.name == session.user);
+        // Every condition a link was made under is read again here: a key
+        // that is no longer one a link may name acts for no one.
         if !linked_to_session
             || key.revoked_at.is_some()
             || self.key_expired(&key)
             || key.used_by != UsedBy::Person
+            || key.role == Role::Admin
+            || key.credential != Credential::Bearer
+            || key.user.is_some()
         {
             return Err(AppError::ActingKeyNotLinked);
         }

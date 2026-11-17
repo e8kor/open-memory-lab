@@ -2342,6 +2342,161 @@ async fn team_with_alices_linked_writer(
         .await
         .expect("an admin creates a shared workspace");
     let alice = signed_in(app, admin, "alice", true).await;
+
+/// The review's refusals of a link: a disabled person, a session key, a
+/// service key, an already linked key, the admin's own person, and an
+/// unlink by a key that is not an admin key (ADR-0085 d16, amended
+/// 2026-11-17).
+#[tokio::test]
+async fn a_link_is_refused_for_a_disabled_person_a_session_key_a_service_key_a_linked_key_and_the_admins_own_person()
+ {
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", true).await;
+    signed_in(&app, admin, "bob", false).await;
+    signed_in(&app, admin, "carol", false).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    app.disable_web_user(&alice_admin, &name("carol"))
+        .await
+        .expect("carol is disabled");
+    let key = person_tenant_key(&app, admin, "bob/dev-review", Vec::new()).await;
+    let head = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    let err = app
+        .link_key_to_person(admin, key.key_id.into(), &name("carol"))
+        .await
+        .unwrap_err();
+    assert!(link_refused(&err, "user_disabled"), "{err:?}");
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let err = app
+        .link_key_to_person(admin, review.key().key_id.into(), &name("alice"))
+        .await
+        .unwrap_err();
+    assert!(link_refused(&err, "not_a_tenant_key"), "{err:?}");
+    let service = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Service),
+                ..user_req(Role::Reader, "unused", "svc/indexer", Vec::new())
+            },
+        )
+        .await
+        .expect("a service key");
+    let head = head + 1;
+    let err = app
+        .link_key_to_person(admin, service.key_id.into(), &name("bob"))
+        .await
+        .unwrap_err();
+    assert!(link_refused(&err, "not_used_by_person"), "{err:?}");
+    // alice-admin links bob's key to bob, never to alice herself.
+    let err = app
+        .link_key_to_person(
+            Bearer::Session(&alice_admin),
+            key.key_id.into(),
+            &name("alice"),
+        )
+        .await
+        .unwrap_err();
+    assert!(link_refused(&err, "self_link"), "{err:?}");
+    app.link_key_to_person(
+        Bearer::Session(&alice_admin),
+        key.key_id.into(),
+        &name("bob"),
+    )
+    .await
+    .expect("another person's key");
+    let err = app
+        .link_key_to_person(admin, key.key_id.into(), &name("alice"))
+        .await
+        .unwrap_err();
+    assert!(link_refused(&err, "already_linked"), "{err:?}");
+    let err = app
+        .unlink_key_from_person(key.value.as_str(), key.key_id.into())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+    let after = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    assert_eq!(after, head + 1, "only the link journals");
+}
+
+/// A linked key revoked after its link acts for no one, and is unlinked
+/// all the same; a key of another tenant is no key of this session's
+/// (ADR-0085 d16, amended 2026-11-17).
+#[tokio::test]
+async fn a_revoked_or_foreign_linked_key_acts_for_no_one_and_a_revoked_one_is_still_unlinked() {
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let key = person_tenant_key(&app, admin, "alice/dev-review", Vec::new()).await;
+    app.link_key_to_person(admin, key.key_id.into(), &name("alice"))
+        .await
+        .expect("linked");
+    store.set_key_revoked(
+        boot.tenant_id,
+        key.key_id,
+        EventTime::parse("2026-10-29T12:00:00.000000Z").expect("an instant"),
+    );
+    let err = app
+        .acting_caller(&review, &alice, key.key_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ActingKeyNotLinked), "{err:?}");
+    app.unlink_key_from_person(admin, key.key_id.into())
+        .await
+        .expect("a revoked key is unlinked");
+
+    // A second tenant on the same store, with a key linked to its person.
+    let other = app
+        .bootstrap_tenant(&BootstrapRequest {
+            tenant_name: name("globex"),
+            admin_key_name: name("globex-admin"),
+            admin_principal: "globex-admin".to_owned(),
+        })
+        .await
+        .expect("a second tenant");
+    let other_admin = other.admin_key.value.as_str();
+    signed_in(&app, other_admin, "dave", false).await;
+    let foreign = person_tenant_key(&app, other_admin, "dave/globex", Vec::new()).await;
+    app.link_key_to_person(other_admin, foreign.key_id.into(), &name("dave"))
+        .await
+        .expect("linked in its own tenant");
+    let err = app
+        .acting_caller(&review, &alice, foreign.key_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ActingKeyNotLinked), "{err:?}");
+}
+
+/// A linked tenant key writes into its person's root wherever its grants
+/// allow, as a user key does; unlinked, the same key is refused there
+/// (the operator, 2026-11-17: "Yes, allow it"; ADR-0044 d16).
+#[tokio::test]
+async fn a_linked_key_writes_into_its_persons_root_and_an_unlinked_one_is_refused() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    signed_in(&app, admin, "alice", false).await;
     let writer = app
         .issue_key(
             admin,
@@ -2356,6 +2511,9 @@ async fn team_with_alices_linked_writer(
                         grant(by_name("team"), Role::Writer),
                         grant(by_name("team"), Role::Reader),
                     ],
+
+                    "alice/desk",
+                    vec![grant(by_name("alice"), Role::Writer)],
                 )
             },
         )
@@ -2533,4 +2691,31 @@ async fn inside_the_persons_root_their_linked_key_approves_their_user_keys_write
         .await
         .expect("approved inside the root");
     assert!(outcome.same_user);
+
+        .expect("a tenant writer granted into alice's root");
+    let err = app
+        .submit_memory(&writer.value, &submit("w0", "Not hers yet.", Some("alice")))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::UserRootRefused), "{err:?}");
+    app.link_key_to_person(admin, writer.key_id.into(), &name("alice"))
+        .await
+        .expect("linked");
+    written(
+        &app,
+        &writer.value,
+        &submit("w1", "Hers now.", Some("alice")),
+    )
+    .await;
+    app.unlink_key_from_person(admin, writer.key_id.into())
+        .await
+        .expect("unlinked");
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &submit("w2", "Not hers again.", Some("alice")),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::UserRootRefused), "{err:?}");
 }
