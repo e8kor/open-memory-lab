@@ -3925,9 +3925,10 @@ components:
             or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by
             the kinds filter when one is sent as promoted hits are, join the hits, ranked in the
             same order, with memory.state held and unreviewed true; they count against k and
-            max_tokens. Inside a workspace a person put in progress, every author's held memories
-            on the served nodes join too, and absent means true there; absent means false
-            everywhere else (ADR-0030 d3, d4). Rules: docs/architecture/retrieval.md.
+            max_tokens. Inside a workspace a person put in progress, and in every such workspace
+            below the scope, every author's held memories join too, and absent means true when the
+            served workspaces hold one; absent means false everywhere else (ADR-0030 d3, d4;
+            ADR-0080 d16). Rules: docs/architecture/retrieval.md.
         max_tokens:
           type: integer
           format: int64
