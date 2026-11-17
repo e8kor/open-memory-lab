@@ -8317,6 +8317,8 @@ async fn the_console_judges_in_a_shared_workspace_with_the_linked_key() {
         &[Role::Reviewer, Role::Reader],
     )
     .await;
+    // Alice's first sign-in makes her root, which the link names.
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     rig.app
         .link_key_to_person(
             rig.boot.admin_key.value.as_str(),
@@ -8325,7 +8327,6 @@ async fn the_console_judges_in_a_shared_workspace_with_the_linked_key() {
         )
         .await
         .expect("the admin links alice's key");
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let as_linked = format!("/web/review?as={}", linked.key_id);
 
     let (status, _, keys) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
