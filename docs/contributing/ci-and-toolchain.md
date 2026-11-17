@@ -82,6 +82,7 @@ against it.
 | `sdk` | `sdks/` | the Python, TypeScript and generated-code SDK jobs, `SDK packages build, ship the right files and install`, `contract surfaces agree` |
 | `release` | `RELEASE-HOLD`, `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `deploy/`, `LICENSES/` (the image copies it) | the release image, `compose`, `chart` and `install-smoke` |
 | `spikes` | `testing/spikes/` | `spike 3, RLS hardening` |
+| `schema_page` | `migrations/`, `crates/bins/oml-lakewriter/src/source.rs`, `docs/data/postgres-schema.md`, `scripts/gen_postgres_schema.py` | `PostgreSQL schema page matches the migrations` |
 
 The Rust tests that read files outside `crates/` are the reason `docs` and `eval` keep a slice of
 the Rust suite: `oml-scan`'s `scan` (every page under `docs/`, and `eval/recall/corpus.json`), the

@@ -17,6 +17,6 @@ Exact facts, looked up rather than read. The CLI, HTTP API, MCP and settings pag
 | An error code | [Error codes](../api/errors.md) |
 | A size, rate or capacity bound | [Limits](limits.md) |
 | A metric | [Metrics](metrics.md) |
-| Event, chain and lake formats | [Event catalog](../data/event-catalog.md), [Chain format](../data/chain-format.md), [Lake tables](../data/delta-tables.md) |
+| Event, chain and lake formats | [Event catalog](../data/event-catalog.md), [Chain format](../data/chain-format.md), [Lake tables](../data/delta-tables.md), [PostgreSQL schema](../data/postgres-schema.md) |
 | A term | [Glossary](glossary.md) |
 | A decision and its status | [Design records](design-records.md) |
