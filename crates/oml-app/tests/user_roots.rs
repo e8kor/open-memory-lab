@@ -13,9 +13,10 @@ use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen}
 use oml_app::ports::JournalStore as _;
 use oml_app::types::{
     AppError, Bearer, BootstrapRequest, BootstrapResult, GrantRequest, GuardrailRequest,
-    GuardrailSet, IssueKeyRequest, IssuedKey, RecallRequest, SubmitRequest, SupersedeRequest,
-    Verdict, WebEmailRequest, WebSessionRecord,
+    GuardrailSet, IssueKeyRequest, IssuedKey, KeyLimitsChange, RecallRequest, SubmitRequest,
+    SupersedeRequest, Verdict, WebEmailRequest, WebSessionRecord,
 };
+use oml_app::domain::EventTime;
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 
@@ -2211,7 +2212,7 @@ async fn the_acting_key_resolves_only_for_a_live_key_linked_to_the_sessions_own_
     let boot = bootstrap(&app).await;
     let admin = boot.admin_key.value.as_str();
     let alice = signed_in(&app, admin, "alice", false).await;
-    signed_in(&app, admin, "bob", false).await;
+    let bob = signed_in(&app, admin, "bob", false).await;
     let review = app.web_caller(&alice, Capacity::Review).await.expect("alice-review");
     let alices = person_tenant_key(&app, admin, "alice/dev-review", Vec::new()).await;
     let bobs = person_tenant_key(&app, admin, "bob/dev-review", Vec::new()).await;
@@ -2227,4 +2228,59 @@ async fn the_acting_key_resolves_only_for_a_live_key_linked_to_the_sessions_own_
         let err = app.acting_caller(&review, &alice, key).await.unwrap_err();
         assert!(matches!(err, AppError::ActingKeyNotLinked), "{err:?}");
     }
+    // Unlinked, the key no longer acts, for the person it acted for.
+    let bob_review = app.web_caller(&bob, Capacity::Review).await.expect("bob-review");
+    app.acting_caller(&bob_review, &bob, bobs.key_id)
+        .await
+        .expect("bob's linked key");
+    app.unlink_key_from_person(admin, bobs.key_id.into())
+        .await
+        .expect("unlinked");
+    let err = app.acting_caller(&bob_review, &bob, bobs.key_id).await.unwrap_err();
+    assert!(matches!(err, AppError::ActingKeyNotLinked), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_linked_key_past_its_expiry_no_longer_acts_for_its_person() {
+    let store = MemStore::new();
+    let clock = FixedClock::new();
+    let app = App::new(
+        store,
+        MemSigner::new(TEST_SEED),
+        clock.clone(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    );
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let review = app.web_caller(&alice, Capacity::Review).await.expect("alice-review");
+    let key = person_tenant_key(&app, admin, "alice/dev-review", Vec::new()).await;
+    app.link_key_to_person(admin, key.key_id.into(), &name("alice"))
+        .await
+        .expect("linked");
+    app.set_key_limits(
+        admin,
+        key.key_id.into(),
+        KeyLimitsChange {
+            expiry: Some(Some(
+                EventTime::parse("2026-10-29T12:10:00.000000Z").expect("an instant"),
+            )),
+            requests_per_minute: None,
+        },
+    )
+    .await
+    .expect("an expiry");
+    app.acting_caller(&review, &alice, key.key_id)
+        .await
+        .expect("live until its expiry");
+    clock.advance(3_600);
+    let err = app.acting_caller(&review, &alice, key.key_id).await.unwrap_err();
+    assert!(matches!(err, AppError::ActingKeyNotLinked), "{err:?}");
+    // An expired key is not linked again.
+    let err = app
+        .link_key_to_person(admin, key.key_id.into(), &name("alice"))
+        .await
+        .unwrap_err();
+    assert!(link_refused(&err, "revoked"), "{err:?}");
 }

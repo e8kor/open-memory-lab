@@ -9,12 +9,12 @@ use oml_domain::name::{Name, NamedKind, Reference};
 use oml_domain::{Role, UsedBy, event_types};
 
 use super::{App, Caller, require_role};
-use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer};
+use crate::ports::{Clock, IdGen, MetadataFold, Scanner, Signer, WebStore};
 use crate::types::{AppError, Bearer, Credential, KeyRecord, WebSessionRecord};
 
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
 where
-    J: JournalStore,
+    J: WebStore,
     S: Signer,
     C: Clock,
     I: IdGen,

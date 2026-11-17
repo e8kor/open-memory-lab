@@ -41,14 +41,14 @@ use oml_page::web::{
     ADMIN_REVIEW_PATH, Bar, USER_MEMORIES_PATH, USER_REVIEW_PATH, attr, form, hidden, input,
     select, shell, short, text,
 };
-use oml_sdk::{HeldPage, Memory, encode};
+use oml_sdk::{HeldPage, LinkedKey, Memory, encode};
 
 use crate::acts::Refusal;
 use crate::card::{Card, View, change};
 use crate::keys::instant;
 use crate::pages::{Fields, refused};
 use crate::picker::{self, Browse, Chosen, Field, Names, Roots};
-use crate::session::{PageCalls, Session, call};
+use crate::session::{PageCalls, Session, call, call_as};
 use crate::{Capacity, Web, acts, outcome};
 
 /// The held listing's page size on the admin page (ADR-0055 d10).
@@ -154,9 +154,24 @@ struct ViewCtx<'a> {
     session: &'a Session,
     calls: &'a PageCalls,
     side: Side,
+    /// The tenant key an admin linked to the person that the user page
+    /// judges as, named by the view's `as` field; `None` judges as the
+    /// person's reviewer key (ADR-0085 d16).
+    acting: Option<LinkedKey>,
 }
 
 impl ViewCtx<'_> {
+    /// The acting key's id, which every reviewer call carries.
+    fn acting_id(&self) -> Option<&str> {
+        self.acting.as_ref().map(|k| k.id.as_str())
+    }
+
+    /// `&amp;as=<id>` for a link that keeps the acting key, else nothing.
+    fn kept_acting(&self) -> String {
+        self.acting_id()
+            .map_or_else(String::new, |id| format!("&amp;as={}", attr(&encode(id))))
+    }
+
     /// The kinds of top label of `paths`, as `capacity`'s key reads them:
     /// the person's own root, and one read of any other top label the
     /// paths name (design notes row 20).
@@ -176,8 +191,12 @@ impl ViewCtx<'_> {
             .await
     }
 
-    /// The person's reviewer key's name, `<user>-review` (ADR-0045 d6).
+    /// The name of the key the view judges as: the linked key it acts
+    /// as, else the person's reviewer key, `<user>-review` (ADR-0045 d6).
     fn reviewer(&self) -> String {
+        if let Some(acting) = &self.acting {
+            return acting.name.clone();
+        }
         self.session.whoami.user.as_ref().map_or_else(
             || "the reviewer key".to_owned(),
             |u| format!("{}-review", u.name),
@@ -285,9 +304,10 @@ fn review_row(
     // confirms instead (ADR-0055 d10 as amended).
     let open = if view.side == Side::User {
         format!(
-            r#"<p><a class="button" href="{}?memory={}">Open to judge</a></p>"#,
+            r#"<p><a class="button" href="{}?memory={}{}">Open to judge</a></p>"#,
             view.side.path(),
             attr(&encode(&m.artifact_id)),
+            view.kept_acting(),
         )
     } else {
         String::new()
@@ -335,7 +355,12 @@ async fn replaced_change(view: &ViewCtx<'_>, card: &Card) -> String {
     };
     let credential = view.session.credential(Capacity::Review);
     let ids = view.calls.next_ids();
-    match view.web.api.get_memory(&call(&credential, &ids), id).await {
+    match view
+        .web
+        .api
+        .get_memory(&call_as(&credential, &ids, view.acting_id()), id)
+        .await
+    {
         Ok(was) => change(
             was_version,
             was.text.as_deref().unwrap_or_default(),
@@ -368,7 +393,7 @@ async fn item(
     let named = view
         .web
         .api
-        .review_named(&call(&credential, &ids), &[memory_id])
+        .review_named(&call_as(&credential, &ids, view.acting_id()), &[memory_id])
         .await
         .map_err(|e| Box::new(outcome::page(&e, view.calls, view.side.path())))?;
     let Some((item, needs_person)) = named
@@ -407,7 +432,11 @@ async fn item(
         Act::Serve(serve_id) => ("verdict", hidden("serve_id", serve_id), acts::nonce_field()),
         Act::Judge => (
             "judge",
-            hidden("artifact_id", &item.artifact_id),
+            format!(
+                "{}{}",
+                hidden("artifact_id", &item.artifact_id),
+                view.acting_id().map_or_else(String::new, |id| hidden("as", id))
+            ),
             hidden("nonce", &judge_nonce(view.session, &item.artifact_id)),
         ),
     };
@@ -537,6 +566,9 @@ fn filters(
     let page = view.side.path();
     let value = |name: &str| fields.given(name).unwrap_or("");
     let mut keep: Vec<(&str, String)> = vec![("held", "1".to_owned())];
+    if let Some(id) = view.acting_id() {
+        keep.push(("as", id.to_owned()));
+    }
     for name in ["author_key", "claim_key_prefix"] {
         if let Some(v) = fields.given(name) {
             keep.push((name, v.to_owned()));
@@ -555,8 +587,9 @@ fn filters(
     }
     .html();
     format!(
-        r#"<form class="row filters" method="get" action="{page}">{field}{}{}{}<button type="submit">Filter</button></form>"#,
+        r#"<form class="row filters" method="get" action="{page}">{field}{}{}{}{}<button type="submit">Filter</button></form>"#,
         hidden("held", "1"),
+        view.acting_id().map_or_else(String::new, |id| hidden("as", id)),
         input("author_key", "author key", value("author_key"), false),
         input(
             "claim_key_prefix",
@@ -586,7 +619,7 @@ fn listing_filters<'a>(fields: &'a Fields, chosen: &'a Chosen) -> Vec<(&'a str, 
 
 /// The filters a link keeps, as typed.
 fn kept_filters(fields: &Fields) -> String {
-    ["workspace", "author_key", "claim_key_prefix"]
+    ["workspace", "author_key", "claim_key_prefix", "as"]
         .into_iter()
         .filter_map(|name| fields.given(name).map(|v| (name, v)))
         .map(|(k, v)| format!("&amp;{k}={}", attr(&encode(v))))
@@ -610,7 +643,7 @@ async fn listing(
         .web
         .api
         .review_held(
-            &call(&credential, &ids),
+            &call_as(&credential, &ids, view.acting_id()),
             &listing_filters(fields, chosen),
             limit,
             fields.given("cursor"),
@@ -707,8 +740,9 @@ async fn person_list(
     for (reference, n, oldest) in &groups {
         let _ = write!(
             body,
-            r#"<tr><td class="mono"><a href="{page}?workspace={}">{}</a></td><td>{n}</td><td class="mono">{}</td></tr>"#,
+            r#"<tr><td class="mono"><a href="{page}?workspace={}{}">{}</a></td><td>{n}</td><td class="mono">{}</td></tr>"#,
             attr(&encode(reference)),
+            view.kept_acting(),
             short(reference),
             instant(oldest)
         );
@@ -875,19 +909,46 @@ async fn view(
         Err(message) => return acts::invalid(&message, &calls),
     };
     let page = side.path();
+    // The user page judges as the key an admin linked to the person that
+    // its `as` field names, read only when named, so the person's own
+    // review spends no round on it (ADR-0085 d16; ADR-0070 d8). The Keys
+    // page links each linked key here.
+    let acting = match (fields.given("as"), side) {
+        (None, _) => None,
+        (Some(_), Side::Admin) => {
+            return acts::invalid("the admin page judges as the reviewer key alone", &calls);
+        }
+        (Some(id), Side::User) => match linked_keys(&web, &session, &calls)
+            .await
+            .map(|linked| linked.into_iter().find(|k| k.id == id))
+        {
+            Err(response) => return *response,
+            Ok(Some(key)) => Some(key),
+            Ok(None) => {
+                return refused(
+                    StatusCode::NOT_FOUND,
+                    "access.not_found",
+                    "no key linked to this account has that id",
+                    &calls,
+                );
+            }
+        },
+    };
     let ctx = ViewCtx {
         web: &web,
         session: &session,
         calls: &calls,
         side,
+        acting,
     };
     let reviewer = ctx.reviewer();
     let mut body = String::from(r#"<p class="label">Review</p><h1>Review</h1>"#);
     let _ = match side {
         Side::User => write!(
             body,
-            r#"<p class="desc">Judged as {}. A memory this reviewer key wrote, or that derives from one, is never listed. Held writes by this account's keys, whoever reviews them: <a href="{USER_MEMORIES_PATH}?state=held">Memories, state held</a>.</p>"#,
-            code(&reviewer)
+            r#"<p class="desc">Judged as {}. A memory this key wrote, or that derives from one, is never listed. Held writes by this account's keys, whoever reviews them: <a href="{USER_MEMORIES_PATH}?state=held">Memories, state held</a>.</p>{}"#,
+            code(&reviewer),
+            judge_as(&ctx)
         ),
         Side::Admin => write!(
             body,
@@ -922,10 +983,17 @@ async fn view(
             }
             Err(response) => return *response,
         }
-        body.push_str(&review_next(&ctx, &fields, false));
-        let _ = write!(body, r#"<p><a href="{page}">Back to the list</a></p>"#);
+        if ctx.acting.is_none() {
+            body.push_str(&review_next(&ctx, &fields, false));
+        }
+        let back = ctx
+            .acting_id()
+            .map_or_else(String::new, |id| format!("?as={}", attr(&encode(id))));
+        let _ = write!(body, r#"<p><a href="{page}{back}">Back to the list</a></p>"#);
     } else {
-        body.push_str(&review_next(&ctx, &fields, true));
+        if ctx.acting.is_none() {
+            body.push_str(&review_next(&ctx, &fields, true));
+        }
         // Browse, opened by the field's link: the counted tree as the
         // side's reading key, made only when asked (design notes row 14).
         // It runs beside the page's first read, in the same round.
@@ -976,6 +1044,43 @@ async fn view(
     response
 }
 
+/// The live tenant keys an admin linked to the person, as `<user>-web`
+/// reads its person block (`GET /v2/whoami`; ADR-0085 d16).
+async fn linked_keys(
+    web: &Web,
+    session: &Session,
+    calls: &PageCalls,
+) -> Result<Vec<LinkedKey>, Refusal> {
+    let credential = session.credential(Capacity::Web);
+    let ids = calls.next_ids();
+    match web.api.whoami_person(&call(&credential, &ids)).await {
+        Ok(onboarding) => Ok(onboarding
+            .person
+            .map(|p| p.linked_keys)
+            .unwrap_or_default()),
+        Err(e) => Err(Box::new(outcome::page(&e, calls, USER_REVIEW_PATH))),
+    }
+}
+
+/// Where the view judges as a linked key, the way back to the person's
+/// reviewer key; a linked key judges in the shared workspaces it is
+/// granted, and Review next serves the person's reviewer key alone
+/// (ADR-0085 d16).
+fn judge_as(view: &ViewCtx<'_>) -> String {
+    if view.acting.is_none() {
+        return String::new();
+    }
+    let own = view.session.whoami.user.as_ref().map_or_else(
+        || "the reviewer key".to_owned(),
+        |u| format!("{}-review", u.name),
+    );
+    format!(
+        r#"<p class="desc">An admin linked this key to this account; it judges in the shared workspaces it is granted. <a href="{}">Judge as {}</a></p>"#,
+        view.side.path(),
+        code(&own)
+    )
+}
+
 /// Any session but an admin entry's answers `access.not_found` on the
 /// admin page (ADR-0045 d10).
 fn admin_only(session: &Session, calls: &PageCalls) -> Option<Response> {
@@ -1023,7 +1128,7 @@ fn is_pick(name: &str) -> bool {
 fn defined(action: &str, name: &str) -> bool {
     match action {
         "verdict" => matches!(name, "serve_id" | "verdict" | "reason"),
-        "judge" => matches!(name, "artifact_id" | "verdict" | "reason"),
+        "judge" => matches!(name, "artifact_id" | "verdict" | "reason" | "as"),
         "bulk_confirm" => matches!(name, "verdict" | "reason") || is_pick(name),
         "bulk_verdict" => matches!(name, "verdict" | "reason" | "artifact_ids"),
         _ => false,
@@ -1267,12 +1372,25 @@ async fn judge(
         Ok(key) => key,
         Err(refusal) => return *refusal,
     };
+    // The linked key the item was opened as, which the lead checks is
+    // linked to this session's person (ADR-0085 d16).
+    let acting = match fields.given("as") {
+        None => None,
+        Some(id) if is_id(id) => Some(id),
+        Some(_) => return acts::invalid("as is a linked key's id", calls),
+    };
     let _in_flight = acts::hold(&key).await;
     let credential = session.credential(Capacity::Review);
     let ids = calls.next_ids();
     let result = match web
         .api
-        .post_bulk_verdict(&call(&credential, &ids), &key, verdict, &[id], reason)
+        .post_bulk_verdict(
+            &call_as(&credential, &ids, acting),
+            &key,
+            verdict,
+            &[id],
+            reason,
+        )
         .await
     {
         Ok(result) => result,
@@ -1302,9 +1420,10 @@ async fn judge(
         .as_deref()
         .filter(|s| matches!(*s, "promoted" | "rejected"))
         .unwrap_or("held");
+    let kept = acting.map_or_else(String::new, |id| format!("&as={}", encode(id)));
     acts::see_other(
         &format!(
-            "{page}?done=verdict&version={}&state={state}",
+            "{page}?done=verdict&version={}&state={state}{kept}",
             item.version.unwrap_or_default()
         ),
         &[],

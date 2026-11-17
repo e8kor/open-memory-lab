@@ -4125,6 +4125,31 @@ async fn apply_fold(
                 )));
             }
         }
+        MetadataFold::KeyLinked { key_id, user_root } => {
+            // The guard matches only a live tenant bearer key used by a
+            // person that is not an admin key, and a root that is a user
+            // root of this tenant, so anything else aborts the commit
+            // (ADR-0085 d16).
+            let set = sqlx::query(
+                "UPDATE api_keys SET linked_user_id = $3 \
+                 WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \
+                 AND credential = 'bearer' AND role <> 'admin' AND used_by = 'person' \
+                 AND user_root_id IS NULL \
+                 AND ($3::uuid IS NULL OR EXISTS (SELECT 1 FROM workspaces w \
+                      WHERE w.tenant_id = $1 AND w.id = $3 AND w.user_root))",
+            )
+            .bind(tenant_id)
+            .bind(key_id)
+            .bind(user_root)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if set.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live tenant key used by a person, or the root is not a user root"
+                )));
+            }
+        }
         MetadataFold::ConnectCodeIssued { code, voids } => {
             fold_code_issued(tx, tenant_id, seq, code, voids).await?;
         }
@@ -4972,6 +4997,7 @@ async fn meter_plan(
         // An expired key stays on its account's keys meter: its date can
         // be moved later (ADR-0079 d3).
         | MetadataFold::KeyLimitsSet { .. }
+        | MetadataFold::KeyLinked { .. }
         | MetadataFold::ConnectCodeIssued { .. }
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::SourceChecked { .. }
@@ -9701,6 +9727,15 @@ impl WebStore for PgStore {
         user_root: Uuid,
     ) -> Result<Vec<KeyRecord>, StoreError> {
         self.keys_where(tenant_id, "user_root_id = $2", |q| q.bind(user_root))
+            .await
+    }
+
+    async fn web_linked_keys(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> Result<Vec<KeyRecord>, StoreError> {
+        self.keys_where(tenant_id, "linked_user_id = $2", |q| q.bind(user_root))
             .await
     }
 

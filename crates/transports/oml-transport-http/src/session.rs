@@ -49,6 +49,13 @@ pub const FORWARDED_CERTIFICATE_HEADERS: [&str; 6] = [
 /// `details.reason` of a capacity credential refused outside `oml-web`.
 pub const SESSION_OUTSIDE_WEB: &str = "session_outside_web";
 
+/// The header `oml-web` names a linked tenant key in, to act as it beside
+/// the session's capacity credential (ADR-0085 d16, amended 2026-11-17).
+pub const ACTING_KEY_HEADER: &str = "oml-acting-key";
+
+/// `details.reason` of an `OML-Acting-Key` the gate does not honour.
+pub const ACTING_KEY_NOT_LINKED: &str = "acting_key_not_linked";
+
 /// How `oml-web` proves itself to the lead (ADR-0070 d2): the secret set
 /// on both processes (`web.client_secret`), or a client certificate under
 /// `web.client_ca` whose subject is `web.client_subject`. Without either,
@@ -230,9 +237,6 @@ where
     /// outside `oml-web`'s identity, and otherwise runs as its session
     /// key's caller.
     pub(crate) async fn session_gate(State(st): State<Self>, req: Request, next: Next) -> Response {
-        let Some(credential) = capacity_credential(req.headers()).map(str::to_owned) else {
-            return next.run(req).await;
-        };
         let rid = Rid(req
             .extensions()
             .get::<crate::traffic::RequestIds>()
@@ -241,6 +245,21 @@ where
         let path = req.uri().path();
         let mcp = path == "/mcp" || path.starts_with("/mcp/");
         let ring = path.starts_with("/v1/") || path.starts_with("/v2/");
+        let acting_key = req
+            .headers()
+            .get(ACTING_KEY_HEADER)
+            .map(|v| v.to_str().ok().and_then(|v| uuid::Uuid::parse_str(v.trim()).ok()));
+        // `OML-Acting-Key` is honoured only beside a capacity credential on
+        // `/v1` or `/v2`, never on `/mcp` (ADR-0085 d16, amended 2026-11-17).
+        if acting_key.is_some()
+            && (mcp || (ring && capacity_credential(req.headers()).is_none()))
+        {
+            crate::traffic::credential(None, None);
+            return finish(&rid, Err(ApiError::auth_invalid(ACTING_KEY_NOT_LINKED)));
+        }
+        let Some(credential) = capacity_credential(req.headers()).map(str::to_owned) else {
+            return next.run(req).await;
+        };
         if !mcp && !ring {
             // The probes, the OAuth routes and the pages read no key from
             // `Authorization`; each answers it as it answers any value.
@@ -269,6 +288,32 @@ where
         let bodiless = matches!(*req.method(), Method::GET | Method::HEAD);
         match st.app.web_credential_caller(&credential, bodiless).await {
             Ok((caller, session)) => {
+                // A linked tenant key named beside the credential: the
+                // request acts as it, or is refused and runs nothing
+                // (ADR-0085 d16, amended 2026-11-17).
+                let caller = match acting_key {
+                    None => caller,
+                    Some(None) => {
+                        return finish(&rid, Err(ApiError::auth_invalid(ACTING_KEY_NOT_LINKED)));
+                    }
+                    Some(Some(key_id)) => {
+                        match st.app.acting_caller(&caller, &session, key_id).await {
+                            Ok(acting) => {
+                                crate::traffic::acting(acting.key(), session.user.as_str());
+                                acting
+                            }
+                            Err(e @ (AppError::Store(_) | AppError::KeyRateLimited { .. })) => {
+                                return finish(&rid, Err(map_app_error(e, ErrorContext::Write)));
+                            }
+                            Err(_) => {
+                                return finish(
+                                    &rid,
+                                    Err(ApiError::auth_invalid(ACTING_KEY_NOT_LINKED)),
+                                );
+                            }
+                        }
+                    }
+                };
                 let resolved = Resolved {
                     caller: Arc::new(caller),
                     session: Arc::new(session),

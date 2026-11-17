@@ -1675,6 +1675,14 @@ pub trait WebStore: JournalStore {
         user_root: Uuid,
     ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
 
+    /// The tenant's keys linked to the person whose root is `user_root`,
+    /// revoked ones included, in name order (ADR-0085 d16).
+    fn web_linked_keys(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
+
     /// The tenant's session keys serving `session_user` (ADR-0045 d6).
     fn web_session_keys(
         &self,

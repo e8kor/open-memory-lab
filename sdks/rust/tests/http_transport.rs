@@ -15,6 +15,7 @@ const CALL: Call<'static> = Call {
     bearer: "omls_x",
     request_id: None,
     correlation_id: None,
+    acting_key: None,
 };
 
 /// A server answering `/v2/whoami` at once and `/v1/guardrails` after two

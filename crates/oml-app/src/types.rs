@@ -3322,6 +3322,16 @@ pub enum AppError {
     /// naming `/body`).
     #[error("a skill body is at most 32,768 bytes after NFC (ADR-0080 d9)")]
     SkillBodyTooLarge,
+    /// A key link an admin may not make or end: `reason` one of `revoked`,
+    /// `admin_key`, `not_a_tenant_key`, `not_used_by_person`,
+    /// `user_unknown`, `user_disabled` or `not_linked` (ADR-0085 d16;
+    /// `key.link_refused`).
+    #[error("the key cannot be linked or unlinked: {reason} (ADR-0085 d16)")]
+    KeyLinkRefused { reason: &'static str },
+    /// `OML-Acting-Key` names a key the session may not act as (ADR-0085
+    /// d16, amended 2026-11-17; `auth.invalid`, `acting_key_not_linked`).
+    #[error("the acting key is not a live key linked to this session's user")]
+    ActingKeyNotLinked,
     /// A valid end in no accepted form, an empty interval, or valid time on
     /// a kind or a retirement that takes none (proposed ADR-0059 d2,
     /// request.validation).

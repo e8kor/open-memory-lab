@@ -161,6 +161,9 @@ pub struct Identity {
     pub role: &'static str,
     pub credential: &'static str,
     pub connection_id: Option<Uuid>,
+    /// The session's user a linked key acts for through `OML-Acting-Key`
+    /// (ADR-0085 d16, amended 2026-11-17); `None` otherwise.
+    pub acting_for: Option<String>,
 }
 
 impl Identity {
@@ -173,8 +176,24 @@ impl Identity {
             role: key.role.as_str(),
             credential: key.credential.as_str(),
             connection_id,
+            acting_for: None,
         }
     }
+}
+
+/// The request acts as `key`, a tenant key linked to `session_user`, named
+/// in `OML-Acting-Key` beside the session's capacity credential: the
+/// request line names the key and, beside it, the session's user
+/// (ADR-0085 d16, amended 2026-11-17).
+pub fn acting(key: &KeyRecord, session_user: &str) {
+    in_scope(|scope| {
+        scope.update(|o, _| {
+            o.identity = Some(Identity {
+                acting_for: Some(session_user.to_owned()),
+                ..Identity::of(key, None)
+            });
+        });
+    });
 }
 
 /// A credential resolved to `key`, or, with `None`, to no key: the first
@@ -774,6 +793,7 @@ macro_rules! write_line {
                 .map(tracing::field::display),
             key_id = identity.map(|i| tracing::field::display(i.key_id)),
             key_name = identity.and_then(|i| i.key_name.as_deref()),
+            acting_for = identity.and_then(|i| i.acting_for.as_deref()),
             principal = identity.map(|i| i.principal.as_str()),
             role = identity.map(|i| i.role),
             credential = identity

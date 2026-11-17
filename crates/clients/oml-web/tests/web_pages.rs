@@ -8257,3 +8257,148 @@ async fn the_atlas_has_its_own_lede_and_the_admin_lists_name_the_key_that_reads(
         "{decision}"
     );
 }
+
+/// A key of `role` and `used_by` on the shared workspace `team`, with the
+/// grants `roles` there, under the tenant's admin key.
+async fn team_key(
+    rig: &Rig,
+    name: &str,
+    role: Role,
+    used_by: UsedBy,
+    roles: &[Role],
+) -> oml_app::types::IssuedKey {
+    rig.app
+        .issue_key(
+            &rig.boot.admin_key.value,
+            &IssueKeyRequest {
+                profile: None,
+                role,
+                name: Name::parse(name).expect("a name"),
+                principal: name.to_owned(),
+                used_by: Some(used_by),
+                default_workspace: None,
+                crew: None,
+                grants: roles
+                    .iter()
+                    .map(|role| GrantRequest {
+                        node: Name::parse("team").expect("a name").into(),
+                        role: *role,
+                        deny: Vec::new(),
+                        covers: oml_app::domain::access::Covers::Subtree,
+                    })
+                    .collect(),
+                connect_code: false,
+                user: None,
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("a key on team")
+}
+
+/// In a shared workspace the person's own reviewer key holds no grant, so
+/// the console judges there with the tenant key an admin linked to them:
+/// the Keys page links it to Review, Review lists what that key may judge,
+/// and the verdict is that key's, journalled under its id; a key not
+/// linked to the person is no page (ADR-0085 d16, amended 2026-11-17).
+#[tokio::test]
+async fn the_console_judges_in_a_shared_workspace_with_the_linked_key() {
+    let rig = rig().await;
+    shared_team(&rig).await;
+    let bot = team_key(&rig, "team-bot", Role::Writer, UsedBy::Agent, &[Role::Writer]).await;
+    let memory = agent_writes_in(&rig, &bot.value, "The team ships on Fridays.", "team").await;
+    let linked = team_key(
+        &rig,
+        "alice-team",
+        Role::Reviewer,
+        UsedBy::Person,
+        &[Role::Reviewer, Role::Reader],
+    )
+    .await;
+    rig.app
+        .link_key_to_person(
+            rig.boot.admin_key.value.as_str(),
+            linked.key_id.into(),
+            &Name::parse("alice").expect("a name"),
+        )
+        .await
+        .expect("the admin links alice's key");
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let as_linked = format!("/web/review?as={}", linked.key_id);
+
+    let (status, _, keys) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{keys}");
+    assert!(keys.contains("<h2>Linked keys</h2>"), "{keys}");
+    assert!(keys.contains("alice-team"), "{keys}");
+    assert!(keys.contains(&format!(r#"href="{as_linked}""#)), "{keys}");
+
+    // As alice-review the row is not hers to judge.
+    let (_, _, own) = send(&rig.router, get("/web/review", Some(&cookie))).await;
+    assert!(!own.contains("The team ships on Fridays."), "{own}");
+
+    let (status, _, page) = send(&rig.router, get(&as_linked, Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Judged as <code>alice-team</code>"), "{page}");
+    assert!(page.contains("The team ships on Fridays."), "{page}");
+    let open = format!(
+        r#"href="/web/review?memory={memory}&amp;as={}">Open to judge</a>"#,
+        linked.key_id
+    );
+    assert!(page.contains(&open), "{page}");
+    assert!(!page.contains("Review next"), "Review next is alice-review's: {page}");
+
+    let (status, _, item) = send(
+        &rig.router,
+        get(
+            &format!("/web/review?memory={memory}&as={}", linked.key_id),
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{item}");
+    assert_eq!(field_of(&item, "as"), linked.key_id.to_string());
+    let head = rig.head().await;
+    let (status, headers, body) = act(
+        &rig,
+        &cookie,
+        "/web/review",
+        &[
+            ("action", "judge"),
+            ("artifact_id", &memory.to_string()),
+            ("verdict", "approve"),
+            ("reason", ""),
+            ("nonce", &field_of(&item, "nonce")),
+            ("as", &linked.key_id.to_string()),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(
+        headers[header::LOCATION].to_str().unwrap(),
+        format!(
+            "/web/review?done=verdict&version=1&state=promoted&as={}",
+            linked.key_id
+        )
+    );
+    let events = rig
+        .store
+        .events_range(rig.boot.tenant_id, head + 1, 500)
+        .await
+        .unwrap();
+    let verdicts: Vec<_> = events
+        .iter()
+        .filter(|e| e.envelope.event_type == "review.approve")
+        .collect();
+    assert_eq!(verdicts.len(), 1, "one verdict");
+    assert_eq!(verdicts[0].envelope.api_key_id, Some(linked.key_id));
+
+    // A key not linked to alice is no page, and nothing is judged with it.
+    let (status, _, refused) = send(
+        &rig.router,
+        get(&format!("/web/review?as={}", bot.key_id), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+}

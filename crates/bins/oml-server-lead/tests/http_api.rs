@@ -10160,6 +10160,178 @@ async fn an_omls_credential_without_the_web_client_is_auth_invalid() {
     drop_db(&rig.db_name).await;
 }
 
+/// Links the key named `key` to `user` (`Some`) or ends its link (`None`)
+/// under the rig's admin key; the status and the body.
+async fn link_key(rig: &WebRig, key: &str, user: Option<&str>) -> (StatusCode, Value) {
+    let (verb, body) = match user {
+        Some(user) => ("link", json!({ "user": user })),
+        None => ("unlink", json!({})),
+    };
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        &format!("/v2/keys/{key}/{verb}"),
+        Call::auth(&rig.admin)
+            .idem(&format!("{verb}-{key}"))
+            .body(body),
+    )
+    .await;
+    (status, body)
+}
+
+/// A console request beside a person's capacity credential runs as the
+/// tenant key an admin linked to that person, named in `OML-Acting-Key`,
+/// with that key's grants; the header is refused, `auth.invalid`
+/// `acting_key_not_linked`, without a capacity credential, on `/mcp`, for
+/// a key linked to another person, a key linked to no one and a revoked
+/// one, and the credential without `oml-web`'s identity is refused as
+/// before (ADR-0085 d16, amended 2026-11-17).
+#[tokio::test]
+async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    rig.signed_in("bob@example.com", "bob", false).await;
+    let web = credential(&token, "web");
+    let payments = create_workspace(&rig.router, &rig.admin, rig.root, "payments").await;
+    let on_payments = json!([
+        { "workspace": payments, "role": "reviewer" },
+        { "workspace": payments, "role": "reader" },
+    ]);
+    let alices = issue_key_with(&rig.router, &rig.admin, "reviewer", "alice", on_payments.clone()).await;
+    let bobs = issue_key_with(&rig.router, &rig.admin, "reviewer", "bob", on_payments).await;
+    let agent = issue_key_with(
+        &rig.router,
+        &rig.admin,
+        "writer",
+        "payments-bot",
+        json!([{ "workspace": payments, "role": "writer" }]),
+    )
+    .await;
+    let id = |key: &Value| key["key_id"].as_str().expect("key id").to_owned();
+
+    let (status, linked) = link_key(&rig, "reviewer-alice", Some("alice")).await;
+    assert_eq!(status, StatusCode::OK, "{linked}");
+    assert_eq!(linked["linked_user"], "alice");
+    let (status, linked) = link_key(&rig, "reviewer-bob", Some("bob")).await;
+    assert_eq!(status, StatusCode::OK, "{linked}");
+    let (status, refused) = link_key(&rig, "writer-payments-bot", Some("alice")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_envelope(&refused, "request.validation");
+    assert_eq!(refused["error"]["details"]["reason"], "not_used_by_person");
+    // Only an admin key links.
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/reviewer-alice/link",
+        Call::auth(alices["value"].as_str().expect("value"))
+            .idem("self-link")
+            .body(json!({ "user": "alice" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert_envelope(&refused, "access.verb_ceiling");
+
+    // The person's block names the linked key, and the console acts as it.
+    let (status, _, me) = send(&rig.router, "GET", "/v2/whoami", web_call(&web)).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert_eq!(
+        me["person"]["linked_keys"],
+        json!([{ "id": id(&alices), "name": "reviewer-alice" }])
+    );
+    let (status, _, acting) = send(
+        &rig.router,
+        "GET",
+        "/v2/whoami",
+        web_call(&web).header("oml-acting-key", &id(&alices)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{acting}");
+    assert_eq!(acting["name"], "reviewer-alice");
+
+    let not_linked = |status: StatusCode, body: &Value, case: &str| {
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{case}: {body}");
+        assert_envelope(body, "auth.invalid");
+        assert_eq!(
+            body["error"]["details"]["reason"], "acting_key_not_linked",
+            "{case}: {body}"
+        );
+    };
+    let alices_value = alices["value"].as_str().expect("value");
+    for (case, call) in [
+        (
+            "a bearer key, no capacity credential",
+            Call::auth(alices_value).header("oml-acting-key", &id(&alices)),
+        ),
+        (
+            "another person's linked key",
+            web_call(&web).header("oml-acting-key", &id(&bobs)),
+        ),
+        (
+            "a key linked to no one",
+            web_call(&web).header("oml-acting-key", &id(&agent)),
+        ),
+        (
+            "no key at all",
+            web_call(&web).header("oml-acting-key", &Uuid::nil().to_string()),
+        ),
+        (
+            "not a key id",
+            web_call(&web).header("oml-acting-key", "reviewer-alice"),
+        ),
+    ] {
+        let (status, _, body) = send(&rig.router, "GET", "/v2/whoami", call).await;
+        not_linked(status, &body, case);
+    }
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/mcp",
+        web_call(&web)
+            .header("oml-acting-key", &id(&alices))
+            .body(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })),
+    )
+    .await;
+    not_linked(status, &body, "/mcp");
+    // Without oml-web's identity the credential itself is refused first.
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v2/whoami",
+        Call::auth(&web).header("oml-acting-key", &id(&alices)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(body["error"]["details"]["reason"], "session_outside_web");
+
+    // Unlinked, the key acts no more and leaves the person's block; a second
+    // unlink names why.
+    let (status, unlinked) = link_key(&rig, "reviewer-alice", None).await;
+    assert_eq!(status, StatusCode::OK, "{unlinked}");
+    assert_eq!(unlinked["linked_user"], Value::Null);
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v2/whoami",
+        web_call(&web).header("oml-acting-key", &id(&alices)),
+    )
+    .await;
+    not_linked(status, &body, "unlinked");
+    let (_, _, me) = send(&rig.router, "GET", "/v2/whoami", web_call(&web)).await;
+    assert_eq!(me["person"]["linked_keys"], json!([]), "{me}");
+    let (status, _, again) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/reviewer-alice/unlink",
+        Call::auth(&rig.admin).idem("unlink-again"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{again}");
+    assert_eq!(again["error"]["details"]["reason"], "not_linked");
+    drop_db(&rig.db_name).await;
+}
+
 /// A capacity credential lives exactly as long as its session: after
 /// `POST /v2/web/session/end` every credential of that session is
 /// `auth.invalid`, and a bearer key cannot end anyone's session

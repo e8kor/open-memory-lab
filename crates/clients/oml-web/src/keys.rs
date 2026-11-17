@@ -23,7 +23,8 @@ use axum::extract::{Form, State};
 use axum::response::Response;
 use http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use oml_page::web::{
-    ADMIN_KEYS_PATH, USER_KEYS_PATH, attr, form, hidden, input, select, shell, short, state_tag,
+    ADMIN_KEYS_PATH, USER_KEYS_PATH, USER_REVIEW_PATH, attr, form, hidden, input, select, shell,
+    short, state_tag,
     text,
 };
 use oml_sdk::{ListedKey, encode};
@@ -36,8 +37,9 @@ use crate::{Capacity, Web, acts, outcome, usage};
 /// The user page's acts, each the act of one documented operation.
 pub const USER_ACTIONS: &[&str] = &["issue_key", "connect_key", "connect_code", "cut_off"];
 
-/// The admin page's one act.
-pub const ADMIN_ACTIONS: &[&str] = &["cut_off"];
+/// The admin page's acts: the cut-off, and a tenant key's link to the
+/// listed person and its end (ADR-0085 d16).
+pub const ADMIN_ACTIONS: &[&str] = &["cut_off", "link_key", "unlink_key"];
 
 /// The most keys one listing call reads, the API's maximum.
 const KEY_PAGE: u32 = 200;
@@ -130,6 +132,8 @@ const EXPIRES_NOTE: &str = "A key's expiry date is optional; only an admin can c
 fn notice(done: Option<&str>) -> Option<&'static str> {
     match done? {
         "cut off" => Some("cut off"),
+        "linked" => Some("linked: the console acts with the key for this person"),
+        "unlinked" => Some("unlinked: the console no longer acts with the key"),
         _ => None,
     }
 }
@@ -501,11 +505,17 @@ async fn user_view(
         Ok(listed) => listed,
         Err(response) => return *response,
     };
-    let card = match person {
-        Ok(found) => found.person.as_ref().and_then(usage::card),
-        Err(_) => Some(usage::unavailable(
-            usage_ids.request_id.as_deref().unwrap_or_default(),
-        )),
+    let (card, linked) = match person {
+        Ok(found) => (
+            found.person.as_ref().and_then(usage::card),
+            found.person.map(|p| p.linked_keys).unwrap_or_default(),
+        ),
+        Err(_) => (
+            Some(usage::unavailable(
+                usage_ids.request_id.as_deref().unwrap_or_default(),
+            )),
+            Vec::new(),
+        ),
     };
     let csrf = session.csrf();
     // For a session whose key carries a denial the page opens on the
@@ -513,11 +523,12 @@ async fn user_view(
     // refuses each one for this session's key, now and for good.
     let denied = denied(session).then_some(session.whoami.key_id.as_str());
     let mut body = format!(
-        r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}{}{}"#,
+        r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}{}{}{}"#,
         short(&user),
         denied.map(|_| denied_notice()).unwrap_or_default(),
         card.unwrap_or_default(),
-        table(&listed, Side::User, &csrf, "", denied)
+        table(&listed, Side::User, &csrf, "", denied),
+        linked_section(&linked)
     );
     if denied.is_some() {
         return outcome::html(StatusCode::OK, user_shell(session, fields, &body));
@@ -549,6 +560,28 @@ async fn user_view(
         issue("connect_key", "Issue connector key", false)
     );
     outcome::html(StatusCode::OK, user_shell(session, fields, &body))
+}
+
+/// The tenant keys an admin linked to the person, each with the link that
+/// opens Review judging as it in the shared workspaces it is granted;
+/// nothing where none is linked (ADR-0085 d16).
+fn linked_section(linked: &[oml_sdk::LinkedKey]) -> String {
+    if linked.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        r#"<h2>Linked keys</h2><p class="desc">Tenant keys an admin linked to this account. Each judges in the shared workspaces it is granted.</p><ul>"#,
+    );
+    for key in linked {
+        let _ = write!(
+            out,
+            r#"<li><code>{}</code> · <a href="{USER_REVIEW_PATH}?as={}">Review as this key</a></li>"#,
+            short(&key.name),
+            attr(&encode(&key.id))
+        );
+    }
+    out.push_str("</ul>");
+    out
 }
 
 /// The user page's frame around `body`.
@@ -599,6 +632,7 @@ pub async fn admin_page(
             Err(response) => return *response,
         };
         body.push_str(&table(&listed, Side::Admin, &session.csrf(), user, None));
+        body.push_str(&link_forms(&session.csrf(), user));
     }
     outcome::html(
         StatusCode::OK,
@@ -612,6 +646,40 @@ pub async fn admin_page(
     )
 }
 
+/// The admin's link forms for the listed person: a tenant key the person
+/// holds, by name, linked so the console acts with it for them in shared
+/// workspaces, or its link ended (ADR-0085 d16). The API judges the key.
+fn link_forms(csrf: &str, user: &str) -> String {
+    let fields = |placeholder: &str| {
+        format!(
+            "{}{}{}",
+            input("key", placeholder, "", true),
+            hidden("user", user),
+            acts::nonce_field()
+        )
+    };
+    format!(
+        r#"<h2>Linked tenant key</h2><p class="desc">A live tenant key used by a person, not an admin key, that {} works with in shared workspaces. Linked, the console judges with it for them.</p>{}{}"#,
+        short(user),
+        form(
+            ADMIN_KEYS_PATH,
+            "link_key",
+            csrf,
+            &fields("tenant key name"),
+            "Link key",
+            false
+        ),
+        form(
+            ADMIN_KEYS_PATH,
+            "unlink_key",
+            csrf,
+            &fields("linked key name"),
+            "Unlink key",
+            false
+        )
+    )
+}
+
 /// The fields each action defines on `side`, beside `action`,
 /// `csrf_token` and `nonce`: the admin's cut-off also names the listed
 /// `user`.
@@ -619,6 +687,7 @@ fn defined(side: Side, action: &str, name: &str) -> bool {
     match action {
         "issue_key" | "connect_key" => matches!(name, "name" | "role" | "expires"),
         "cut_off" => matches!(name, "key" | "confirm") || (side == Side::Admin && name == "user"),
+        "link_key" | "unlink_key" => matches!(name, "key" | "user"),
         _ => name == "key",
     }
 }
@@ -714,6 +783,7 @@ async fn act(
     };
     let required: &[&str] = match action {
         "issue_key" | "connect_key" => &["name"],
+        "link_key" => &["key", "user"],
         _ => &["key"],
     };
     if let Some(missing) = required.iter().find(|n| fields.given(n).is_none()) {
@@ -802,6 +872,17 @@ async fn act(
                 Ok(_) => return no_secret(&calls),
                 Err(e) => return outcome::page(&e, &calls, page),
             }
+        }
+        "link_key" | "unlink_key" => {
+            let name = fields.given("key").unwrap_or_default();
+            let user = fields.given("user");
+            let linked_to = (action == "link_key").then_some(user).flatten();
+            let listed = user.map_or_else(String::new, |u| format!("user={}&", encode(u)));
+            let done = if linked_to.is_some() { "linked" } else { "unlinked" };
+            return match web.api.link_key(&call, &key, name, linked_to).await {
+                Ok(_) => acts::see_other(&format!("{page}?{listed}done={done}"), &[]),
+                Err(e) => outcome::page(&e, &calls, page),
+            };
         }
         _ => {
             let name = fields.given("key").unwrap_or_default();

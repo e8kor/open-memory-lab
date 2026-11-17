@@ -80,6 +80,9 @@ pub const OPERATIONS: [&str; 41] = [
 pub const REQUEST_ID: &str = "x-request-id";
 /// The correlation id header (ADR-0042 d4).
 pub const CORRELATION_ID: &str = "x-correlation-id";
+/// The tenant key a console request acts as, beside a capacity credential
+/// (ADR-0085 d16).
+pub const ACTING_KEY: &str = "oml-acting-key";
 /// The idempotency key every state-creating `POST` carries.
 pub const IDEMPOTENCY_KEY: &str = "idempotency-key";
 /// The header the API sets on an answer it replayed from a recorded
@@ -93,6 +96,10 @@ pub struct Call<'a> {
     pub bearer: &'a str,
     pub request_id: Option<&'a str>,
     pub correlation_id: Option<&'a str>,
+    /// The id of a tenant key linked to the session's person, which the
+    /// request acts as; sent only beside a capacity credential (ADR-0085
+    /// d16).
+    pub acting_key: Option<&'a str>,
 }
 
 /// No debug output prints the bearer value.
@@ -102,6 +109,7 @@ impl std::fmt::Debug for Call<'_> {
             .field("bearer", &"<redacted>")
             .field("request_id", &self.request_id)
             .field("correlation_id", &self.correlation_id)
+            .field("acting_key", &self.acting_key)
             .finish()
     }
 }
@@ -716,6 +724,26 @@ pub struct Person {
     pub deletion_requested_at: Option<String>,
     #[serde(default)]
     pub start: Option<StartStatus>,
+    /// The live tenant keys an admin linked to the person; empty from an
+    /// API before v0.8.0 (ADR-0085 d16).
+    #[serde(default)]
+    pub linked_keys: Vec<LinkedKey>,
+}
+
+/// `POST /v2/keys/{key}/link` and `/unlink`: the key and the user it acts
+/// for, `None` once unlinked (ADR-0085 d16).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct KeyLink {
+    pub key_id: String,
+    pub name: Option<String>,
+    pub linked_user: Option<String>,
+}
+
+/// A tenant key linked to a person, by id and name (ADR-0085 d16).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct LinkedKey {
+    pub id: String,
+    pub name: String,
 }
 
 /// `GET /v2/whoami` with its person block: the key's person, and with
@@ -1339,6 +1367,7 @@ impl<T: Transport> Client<T> {
         for (name, value) in [
             (REQUEST_ID, call.and_then(|c| c.request_id)),
             (CORRELATION_ID, call.and_then(|c| c.correlation_id)),
+            (ACTING_KEY, call.and_then(|c| c.acting_key)),
         ] {
             if let Some(value) = value.and_then(|v| HeaderValue::from_str(v).ok()) {
                 headers.insert(name, value);
@@ -1904,6 +1933,32 @@ impl<T: Transport> Client<T> {
         .await
     }
 
+    /// `POST /v2/keys/{key}/link`: an admin links a person's tenant key to
+    /// `user`, or `None`, `POST /v2/keys/{key}/unlink`, ends its link
+    /// (ADR-0085 d16).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn link_key(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        key: &str,
+        user: Option<&str>,
+    ) -> Result<KeyLink, Error> {
+        let (verb, body) = match user {
+            Some(user) => ("link", serde_json::json!({ "user": user })),
+            None => ("unlink", serde_json::json!({})),
+        };
+        self.post(
+            call,
+            format!("/v2/keys/{}/{verb}", encode(key)),
+            idempotency_key,
+            &body,
+        )
+        .await
+    }
+
     /// `GET /v1/memories/{artifact_id}`: one memory with its text, as the
     /// caller may read it.
     ///
@@ -2224,6 +2279,7 @@ mod tests {
         bearer: "omls_x",
         request_id: Some("page-1.1"),
         correlation_id: Some("page-1"),
+        acting_key: None,
     };
 
     /// Answers every request `201` with `body`, and `Idempotency-Replay:

@@ -1662,6 +1662,28 @@ fn apply_fold(
         // Both limits take the event's values; a key the tenant does not
         // hold, a revoked key, a session key and an admin key are refused,
         // as the store's guarded update refuses them (ADR-0079 d5).
+        // The link takes the event's root; a key that is not a live tenant
+        // bearer key used by a person, an admin key, or a root that is not a
+        // user root are refused, as the store's guarded update refuses them
+        // (ADR-0085 d16).
+        MetadataFold::KeyLinked { key_id, user_root } => {
+            let root_ok = user_root.is_none_or(|r| {
+                state.workspaces.get(&r).is_some_and(|w| w.user_root)
+            });
+            let Some(key) = state.keys.get_mut(&key_id).filter(|k| {
+                root_ok
+                    && k.revoked_at.is_none()
+                    && k.credential == Credential::Bearer
+                    && k.role != Role::Admin
+                    && k.used_by == oml_domain::UsedBy::Person
+                    && k.user.is_none()
+            }) else {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live tenant key used by a person, or the root is not a user root"
+                )));
+            };
+            key.linked_user = user_root;
+        }
         MetadataFold::KeyLimitsSet {
             key_id,
             expiry,
@@ -4478,6 +4500,14 @@ impl WebStore for MemStore {
         user_root: Uuid,
     ) -> Result<Vec<KeyRecord>, StoreError> {
         Ok(self.tenant_keys(tenant_id, |k| k.user == Some(user_root)))
+    }
+
+    async fn web_linked_keys(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> Result<Vec<KeyRecord>, StoreError> {
+        Ok(self.tenant_keys(tenant_id, |k| k.linked_user == Some(user_root)))
     }
 
     async fn web_session_keys(
