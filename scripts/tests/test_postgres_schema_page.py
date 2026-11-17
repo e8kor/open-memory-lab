@@ -5,13 +5,17 @@ the migrations to a real PostgreSQL, and runs only where OML_SCHEMA_DATABASE_URL
 URL; CI's "schema page matches the migrations" job runs the same check through the script itself.
 """
 
+import contextlib
 import copy
+import io
 import os
 import pathlib
 import random
 import re
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import gen_postgres_schema as G  # noqa: E402
@@ -109,10 +113,76 @@ class Rendering(unittest.TestCase):
             G.relabel(raw, {"m_owner": "owner"})
 
     def test_the_lake_writer_grants_are_read_from_its_source(self):
-        stmts = G.lake_grants()
-        self.assertTrue(stmts)
-        self.assertTrue(all(s.startswith("GRANT ") and s.endswith(" TO {role}") for s in stmts))
-        self.assertIn("GRANT SELECT ON SEQUENCE outbox_seq_seq TO {role}", stmts)
+        self.assertEqual([
+            "GRANT SELECT ON tenants, journal, outbox, memories, claim_edges, brief_edges, "
+            "recall_events, recall_outcomes TO {role}",
+            "GRANT SELECT, INSERT, UPDATE ON artifact_keys, lake_dead_letter TO {role}",
+            "GRANT SELECT ON SEQUENCE outbox_seq_seq TO {role}",
+        ], G.lake_grants())
+
+    def test_a_lake_writer_entry_that_is_not_a_format_call_stops_the_run(self):
+        src = G.LAKE_SOURCE.read_text().replace(
+            '            format!("GRANT SELECT ON SEQUENCE {} TO {role}", "outbox_seq_seq"),',
+            '            format!("GRANT SELECT ON SEQUENCE {} TO {role}", "outbox_seq_seq"),\n'
+            '            String::from("GRANT SELECT ON usage_daily TO r"),')
+        self.assertNotEqual(src, G.LAKE_SOURCE.read_text())
+        with tempfile.TemporaryDirectory() as d:
+            path = pathlib.Path(d) / "source.rs"
+            path.write_text(src)
+            with mock.patch.object(G, "LAKE_SOURCE", path), mock.patch.object(G.docgen, "ROOT", pathlib.Path(d)):
+                with self.assertRaisesRegex(SystemExit, "4 entries and 3 were read"):
+                    G.lake_grants()
+
+    def test_top_level_entries_ignore_commas_inside_strings_and_brackets(self):
+        self.assertEqual(['f("a, b", (1, 2))', "g([3, 4])", '"x,y"'],
+                         G.top_level_entries(' f("a, b", (1, 2)),\n g([3, 4]), "x,y", '))
+
+
+class Connection(unittest.TestCase):
+    def test_an_identifier_is_quoted_and_its_quotes_doubled(self):
+        self.assertEqual('"oml_x"', G.ident("oml_x"))
+        self.assertEqual('"a""b"', G.ident('a"b'))
+        self.assertEqual("'it''s'", G.literal("it's"))
+
+    def test_the_password_goes_to_pgpassword_and_never_into_the_url(self):
+        url, env = G.with_user("postgres://admin:s%40cret@127.0.0.1:5432/oml_dev", None, None)
+        self.assertEqual("postgres://admin@127.0.0.1:5432/oml_dev", url)
+        self.assertEqual("s@cret", env["PGPASSWORD"])
+        url, env = G.with_user("postgres://admin:s@127.0.0.1:5432/oml_dev", "minted", "db1", "run-pw")
+        self.assertEqual("postgres://minted@127.0.0.1:5432/db1", url)
+        self.assertEqual("run-pw", env["PGPASSWORD"])
+
+    def test_a_password_in_the_query_string_is_refused(self):
+        with self.assertRaisesRegex(RuntimeError, "query string"):
+            G.with_user("postgres://admin@127.0.0.1/oml_dev?password=s", None, None)
+
+    def test_database_url_alone_names_no_server(self):
+        with mock.patch.dict(os.environ, {"DATABASE_URL": "postgres://oml@127.0.0.1/oml_dev"}, clear=False):
+            os.environ.pop("OML_SCHEMA_DATABASE_URL", None)
+            with mock.patch.object(G, "snapshot") as snap, contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(2, G.main(["--check"]))
+            snap.assert_not_called()
+
+    def test_each_cleanup_step_runs_and_its_failure_is_named_after_the_original_error(self):
+        ran = []
+
+        def fake_psql(url, env, *args, sql=None):
+            ran.append(sql)
+            if sql.startswith("CREATE DATABASE"):
+                raise RuntimeError("no space left")
+            if sql.startswith("DROP ROLE") and "serving" in sql:
+                raise RuntimeError("role is in use")
+            return ""
+
+        with mock.patch.object(G, "psql", fake_psql):
+            with self.assertRaisesRegex(RuntimeError, "no space left") as caught:
+                G.snapshot("postgres://admin@127.0.0.1/oml_dev")
+        drops = [s for s in ran if s.startswith("DROP")]
+        self.assertEqual(3, len(drops))
+        self.assertFalse(any(s.startswith("DROP DATABASE") for s in drops))
+        self.assertEqual(1, len(caught.exception.__notes__))
+        self.assertIn("role is in use", caught.exception.__notes__[0])
+        self.assertNotIn("_owner", caught.exception.__notes__[0])
 
 
 def tables_the_migrations_leave() -> set[str]:

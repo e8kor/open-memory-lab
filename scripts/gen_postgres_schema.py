@@ -12,9 +12,11 @@ never reach the page: each role is shown as owner, serving or lake writer.
 It needs a PostgreSQL superuser URL and the `psql` client. CI runs it in the job that has a
 PostgreSQL service; the scripts' own tests render from a catalog snapshot and need neither.
 
-    python scripts/gen_postgres_schema.py [--database-url URL] [--check]
+    OML_SCHEMA_DATABASE_URL=postgres://... python scripts/gen_postgres_schema.py [--check]
 
-URL defaults to OML_SCHEMA_DATABASE_URL, then DATABASE_URL.
+The URL is OML_SCHEMA_DATABASE_URL or --database-url, and no other variable names a server, so the
+run reaches only one named for it. A password goes in the URL's user part or in PGPASSWORD,
+never in its query string. Each minted role gets a password made for the run.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ import json
 import os
 import pathlib
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -37,7 +40,6 @@ MIGRATIONS = docgen.ROOT / "migrations"
 LAKE_SOURCE = docgen.ROOT / "crates" / "bins" / "oml-lakewriter" / "src" / "source.rs"
 OUT = docgen.DOCS / "data" / "postgres-schema.md"
 SCRIPT = "scripts/gen_postgres_schema.py"
-PASSWORD = "oml_schema_page_only"
 ROLES = ("owner", "serving", "lake writer")
 SELF_LINK = re.compile(r"\s*Owning page: docs/data/postgres-schema\.md\.?")
 # The bookkeeping table sqlx creates before the first migration (sqlx-postgres 0.8, migrate.rs);
@@ -73,6 +75,7 @@ def lake_grants() -> list[str]:
     body = re.search(r"for stmt in \[(.*?)\]\s*\{", src, re.S)
     if not body:
         sys.exit(f"{LAKE_SOURCE.relative_to(docgen.ROOT)}: the lake writer's GRANT list was not found")
+    entries = top_level_entries(body.group(1))
     stmts = []
     for call in re.findall(r"format!\((.*?)\),\s*$", body.group(1), re.S | re.M):
         literals = re.findall(r'"((?:[^"\\]|\\[\s\S])*)"', call)
@@ -82,30 +85,71 @@ def lake_grants() -> list[str]:
         if not text.startswith("GRANT ") or "{role}" not in text:
             sys.exit(f"{LAKE_SOURCE.relative_to(docgen.ROOT)}: unexpected lake writer statement {text!r}")
         stmts.append(text)
-    if not stmts:
-        sys.exit(f"{LAKE_SOURCE.relative_to(docgen.ROOT)}: the lake writer's GRANT list is empty")
+    if not stmts or len(stmts) != len(entries):
+        sys.exit(f"{LAKE_SOURCE.relative_to(docgen.ROOT)}: the lake writer's GRANT list has {len(entries)} "
+                 f"entries and {len(stmts)} were read as format! statements; update lake_grants()")
     return stmts
 
 
-def with_user(url: str, user: str | None, database: str | None) -> tuple[str, dict]:
-    """`url` with its user and database replaced, and the environment psql needs for it."""
+def top_level_entries(array: str) -> list[str]:
+    """The comma-separated entries of a Rust array body, ignoring commas in strings and brackets."""
+    entries, depth, start, i = [], 0, 0, 0
+    while i < len(array):
+        ch = array[i]
+        if ch == '"':
+            i += 1
+            while i < len(array) and array[i] != '"':
+                i += 2 if array[i] == "\\" else 1
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            entries.append(array[start:i])
+            start = i + 1
+        i += 1
+    entries.append(array[start:])
+    return [e.strip() for e in entries if e.strip()]
+
+
+def ident(name: str) -> str:
+    """A quoted SQL identifier."""
+    return '"' + name.replace('"', '""') + '"'
+
+
+def literal(text: str) -> str:
+    """A quoted SQL string literal."""
+    return "'" + text.replace("'", "''") + "'"
+
+
+def with_user(url: str, user: str | None, database: str | None, password: str | None = None) -> tuple[str, dict]:
+    """`url` with its user and database replaced, and the environment psql needs for it.
+
+    The password travels in PGPASSWORD, never in the URL psql is given. A password in the query
+    string is refused: it would be passed on to psql's argument list, which other users can read.
+    """
     parts = urllib.parse.urlsplit(url)
+    if "password" in urllib.parse.parse_qs(parts.query):
+        raise RuntimeError("the database URL carries a password in its query string; "
+                           "put it in the user part (user:password@host) or in PGPASSWORD")
     host = parts.hostname or ""
     netloc = urllib.parse.quote(user or parts.username or "") + "@" + (f"[{host}]" if ":" in host else host)
     if parts.port:
         netloc += f":{parts.port}"
     path = "/" + (database if database is not None else parts.path.lstrip("/"))
     env = {k: v for k, v in os.environ.items() if not k.startswith("PG")}
-    password = PASSWORD if user else urllib.parse.unquote(parts.password or "")
+    if not user:
+        password = urllib.parse.unquote(parts.password or "") or os.environ.get("PGPASSWORD")
     if password:
         env["PGPASSWORD"] = password
     return urllib.parse.urlunsplit((parts.scheme, netloc, path, parts.query, "")), env
 
 
-def psql(url: str, env: dict, *args: str) -> str:
+def psql(url: str, env: dict, *args: str, sql: str | None = None) -> str:
+    """Run psql; `sql`, when given, goes in on standard input, never on the argument list."""
     run = subprocess.run(
         ["psql", "--no-psqlrc", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-At", "-d", url, *args],
-        env=env, capture_output=True, text=True,
+        env=env, capture_output=True, text=True, input=sql,
     )
     if run.returncode != 0:
         raise RuntimeError(run.stderr.strip() or f"psql exited {run.returncode}")
@@ -178,18 +222,20 @@ def snapshot(admin_url: str) -> dict:
     """Apply the migrations to a database minted for this run and return its catalog, roles relabelled."""
     tag = f"oml_schema_{os.getpid()}_{time.time_ns() & 0xFFFFFFFF:08x}"
     names = {"owner": f"{tag}_owner", "serving": f"{tag}_serving", "lake writer": f"{tag}_lake"}
+    password = secrets.token_urlsafe(24)
     admin, admin_env = with_user(admin_url, None, None)
     created_roles: list[str] = []
     created_db = False
     try:
         for role in names.values():
-            psql(admin, admin_env, "-c", f"CREATE ROLE {role} LOGIN PASSWORD '{PASSWORD}'")
+            psql(admin, admin_env, sql=f"CREATE ROLE {ident(role)} LOGIN PASSWORD {literal(password)}")
             created_roles.append(role)
-        psql(admin, admin_env, "-c", f"CREATE DATABASE {tag} OWNER {names['owner']}")
+        psql(admin, admin_env, sql=f"CREATE DATABASE {ident(tag)} OWNER {ident(names['owner'])}")
         created_db = True
-        owner, owner_env = with_user(admin_url, names["owner"], tag)
+        owner, owner_env = with_user(admin_url, names["owner"], tag, password)
+        # A role name the run minted: letters, digits and underscores only, so no option quoting.
         owner_env["PGOPTIONS"] = f"-c oml.serving_role={names['serving']}"
-        psql(owner, owner_env, "-c", SQLX_TABLE)
+        psql(owner, owner_env, sql=SQLX_TABLE)
         for path in migration_files():
             single = [] if path.read_text().startswith("-- no-transaction") else ["-1"]
             try:
@@ -197,16 +243,33 @@ def snapshot(admin_url: str) -> dict:
             except RuntimeError as e:
                 raise RuntimeError(f"{path.name} did not apply: {e}") from None
         for stmt in lake_grants():
-            psql(owner, owner_env, "-c", stmt.replace("{role}", names["lake writer"]))
+            psql(owner, owner_env, sql=stmt.replace("{role}", ident(names["lake writer"])))
         on_db, _ = with_user(admin_url, None, tag)
-        raw = json.loads(psql(on_db, admin_env, "-c", CATALOG_SQL))
-    finally:
-        if created_db:
-            psql(admin, admin_env, "-c", f"DROP DATABASE IF EXISTS {tag} WITH (FORCE)")
-        for role in created_roles:
-            psql(admin, admin_env, "-c", f"DROP ROLE IF EXISTS {role}")
+        raw = json.loads(psql(on_db, admin_env, sql=CATALOG_SQL))
+    except BaseException as error:
+        problems = cleanup(admin, admin_env, tag if created_db else None, created_roles)
+        if problems:
+            # After the original error, never in its place.
+            error.add_note("the cleanup failed too: " + "; ".join(problems))
+        raise
+    problems = cleanup(admin, admin_env, tag, created_roles)
+    if problems:
+        raise RuntimeError("the cleanup failed: " + "; ".join(problems))
     raw["last_migration"] = migration_files()[-1].name
     return relabel(raw, {v: k for k, v in names.items()})
+
+
+def cleanup(admin: str, env: dict, database: str | None, roles: list[str]) -> list[str]:
+    """Drop the run's database and roles, each on its own; the failures, by name, never raised."""
+    steps = ([f"DROP DATABASE IF EXISTS {ident(database)} WITH (FORCE)"] if database else [])
+    steps += [f"DROP ROLE IF EXISTS {ident(role)}" for role in roles]
+    problems = []
+    for stmt in steps:
+        try:
+            psql(admin, env, sql=stmt)
+        except Exception as e:  # noqa: BLE001 - each failure is reported, none stops the others
+            problems.append(f"{stmt}: {e}")
+    return problems
 
 
 def relabel(raw: dict, labels: dict[str, str]) -> dict:
@@ -392,17 +455,19 @@ def render(snap: dict) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true", help="fail if the page differs from the migrations")
-    ap.add_argument("--database-url", default=os.environ.get("OML_SCHEMA_DATABASE_URL") or os.environ.get("DATABASE_URL"),
+    ap.add_argument("--database-url", default=os.environ.get("OML_SCHEMA_DATABASE_URL"),
                     help="a PostgreSQL superuser URL; the run creates and drops its own database and roles")
     args = ap.parse_args(argv)
     if not args.database_url:
-        print("gen_postgres_schema.py needs a PostgreSQL superuser URL: --database-url, "
-              "OML_SCHEMA_DATABASE_URL or DATABASE_URL", file=sys.stderr)
+        print("gen_postgres_schema.py needs a PostgreSQL superuser URL: OML_SCHEMA_DATABASE_URL "
+              "or --database-url", file=sys.stderr)
         return 2
     try:
         snap = snapshot(args.database_url)
     except RuntimeError as e:
         print(f"gen_postgres_schema.py: {e}", file=sys.stderr)
+        for note in getattr(e, "__notes__", []):
+            print(f"gen_postgres_schema.py: {note}", file=sys.stderr)
         return 1
     text = render(snap)
     if args.check and OUT.exists() and OUT.read_text() != text.rstrip("\n") + "\n":

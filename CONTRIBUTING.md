@@ -34,11 +34,14 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 DATABASE_URL=postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev cargo test --workspace --locked
 PGPORT=5432 bash scripts/poc-demo.sh         # end-to-end walk through a throwaway database
+OML_SCHEMA_DATABASE_URL=postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev python scripts/gen_postgres_schema.py --check
 ```
 
 No suite or script has a default database: the Rust suites need `DATABASE_URL`, the SDK suites
-`OML_SDK_TEST_DATABASE_URL`, and the demo and the eval scripts `PGPORT`, each naming the compose
-database or another throwaway cluster, so none can reach a server you did not name.
+`OML_SDK_TEST_DATABASE_URL`, `scripts/gen_postgres_schema.py` and its tests
+`OML_SCHEMA_DATABASE_URL` (a superuser URL; the script mints and drops its own database and roles),
+and the demo and the eval scripts `PGPORT`, each naming the compose database or another throwaway
+cluster, so none can reach a server you did not name.
 
 The Postgres suites and the demo mint an owner and a serving role for each throwaway database,
 since the server migrates as one and serves as the other

@@ -43,6 +43,7 @@ jobs:
       eval: ${{ steps.paths.outputs.eval }}
       release: ${{ steps.paths.outputs.release }}
       spikes: ${{ steps.paths.outputs.spikes }}
+      schema_page: ${{ steps.paths.outputs.schema_page }}
       ci: ${{ steps.paths.outputs.ci }}
       cargo: ${{ steps.paths.outputs.cargo }}
       docs_tests: ${{ steps.paths.outputs.docs_tests }}
@@ -153,7 +154,7 @@ jobs:
   schema-page:
     name: PostgreSQL schema page matches the migrations
     needs: changes
-    if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.cargo == 'true'
+    if: needs.changes.outputs.schema_page == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:

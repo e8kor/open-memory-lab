@@ -36,6 +36,8 @@ CATEGORIES: dict[str, list[str]] = {
     "eval": ["eval/**", "bench/**"],
     "release": ["RELEASE-HOLD", "Dockerfile", ".dockerignore", "docker-compose.yml", "deploy/**", "LICENSES/**"],  # the image copies LICENSES/
     "spikes": ["testing/spikes/**"],
+    # What docs/data/postgres-schema.md is generated from, and the page itself.
+    "schema_page": ["migrations/**", "crates/bins/oml-lakewriter/src/source.rs", "docs/data/postgres-schema.md", "scripts/gen_postgres_schema.py"],
     # Runs everything: the workflows, the lockfile, the toolchain pin and the scripts the jobs run.
     "ci": [".github/**", "Cargo.lock", "rust-toolchain.toml", "scripts/**"],
 }
