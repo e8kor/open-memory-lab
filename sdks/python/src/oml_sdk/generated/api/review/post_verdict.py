@@ -116,7 +116,10 @@ def sync_detailed(
     nothing journalled; the default rests on the claimed queue row, not on a serve record (#130;
     ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workspace, is looked up
     before the default resolves: a retry of a committed verdict replays its stored response with
-    Idempotency-Replay: true and never applies to another item.
+    Idempotency-Replay: true and never applies to another item. Outside a person's own root, a verdict
+    from a key acting for the person whose key wrote the version, approve or reject, is
+    review.author_in_lineage with details.reason same_person; inside it the verdict counts, marked
+    same_user (ADR-0001 d5; ADR-0082 d7; since v0.8.0).
 
     Args:
         x_request_id (str | Unset):
@@ -177,7 +180,10 @@ def sync(
     nothing journalled; the default rests on the claimed queue row, not on a serve record (#130;
     ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workspace, is looked up
     before the default resolves: a retry of a committed verdict replays its stored response with
-    Idempotency-Replay: true and never applies to another item.
+    Idempotency-Replay: true and never applies to another item. Outside a person's own root, a verdict
+    from a key acting for the person whose key wrote the version, approve or reject, is
+    review.author_in_lineage with details.reason same_person; inside it the verdict counts, marked
+    same_user (ADR-0001 d5; ADR-0082 d7; since v0.8.0).
 
     Args:
         x_request_id (str | Unset):
@@ -233,7 +239,10 @@ async def asyncio_detailed(
     nothing journalled; the default rests on the claimed queue row, not on a serve record (#130;
     ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workspace, is looked up
     before the default resolves: a retry of a committed verdict replays its stored response with
-    Idempotency-Replay: true and never applies to another item.
+    Idempotency-Replay: true and never applies to another item. Outside a person's own root, a verdict
+    from a key acting for the person whose key wrote the version, approve or reject, is
+    review.author_in_lineage with details.reason same_person; inside it the verdict counts, marked
+    same_user (ADR-0001 d5; ADR-0082 d7; since v0.8.0).
 
     Args:
         x_request_id (str | Unset):
@@ -292,7 +301,10 @@ async def asyncio(
     nothing journalled; the default rests on the claimed queue row, not on a serve record (#130;
     ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workspace, is looked up
     before the default resolves: a retry of a committed verdict replays its stored response with
-    Idempotency-Replay: true and never applies to another item.
+    Idempotency-Replay: true and never applies to another item. Outside a person's own root, a verdict
+    from a key acting for the person whose key wrote the version, approve or reject, is
+    review.author_in_lineage with details.reason same_person; inside it the verdict counts, marked
+    same_user (ADR-0001 d5; ADR-0082 d7; since v0.8.0).
 
     Args:
         x_request_id (str | Unset):

@@ -3689,8 +3689,15 @@ impl JournalStore for MemStore {
         };
         let mut state = tenant.lock().expect("tenant lock");
         let TenantState {
-            queue, memories, ..
+            queue,
+            memories,
+            keys,
+            workspaces: nodes,
+            ..
         } = &mut *state;
+        let person_root = keys
+            .get(&reviewer_key_id)
+            .and_then(|k| person_root_in(nodes, k));
         // Every entry this reviewer may judge, in queue order, then the one
         // served: the first, or in the person lane the lowest turn, round-
         // robin across author keys, the older first within a turn (ADR-0074
@@ -3733,6 +3740,11 @@ impl JournalStore for MemStore {
                 continue;
             }
             if !lane.admits(needs_person_row(memories, memory)) {
+                continue;
+            }
+            // R2 by person: a row the reviewer's own person wrote is served
+            // only inside that person's root (ADR-0001 d5; ADR-0082 d7).
+            if same_person_outside_root(keys, nodes, person_root, memory) {
                 continue;
             }
             candidates.push((position, memory.author_key_id));
@@ -3815,6 +3827,10 @@ impl JournalStore for MemStore {
         };
         let state = tenant.lock().expect("tenant lock");
         let memories = &state.memories;
+        let person_root = state
+            .keys
+            .get(&reviewer_key_id)
+            .and_then(|k| person_root_in(&state.workspaces, k));
         // The double keeps no `held_since`: a row is held when it is
         // captured, so its `created_at` stands in for it.
         let mut rows: Vec<HeldRow> = state
@@ -3847,6 +3863,9 @@ impl JournalStore for MemStore {
                     .is_none_or(|p| m.claim_key.starts_with(p))
             })
             .filter(|m| filter.lane.admits(needs_person_row(memories, m)))
+            // R2 by person, as review_claim_next serves it (ADR-0001 d5;
+            // ADR-0082 d7).
+            .filter(|m| !same_person_outside_root(&state.keys, &state.workspaces, person_root, m))
             .filter(|m| {
                 after.is_none_or(|a| {
                     (m.created_at.as_str(), m.memory_id) > (a.created_at.as_str(), a.artifact_id)
@@ -4463,6 +4482,41 @@ impl MemStore {
         keys.sort_by(|a, b| a.name.cmp(&b.name));
         keys
     }
+}
+
+/// The user root of the person `key` acts for, as the Postgres store reads
+/// it: its user root, its linked root, or the user root named as its
+/// session key's person (ADR-0082 d7; ADR-0085 d16).
+fn person_root_in(nodes: &BTreeMap<Uuid, WorkspaceRecord>, key: &KeyRecord) -> Option<Uuid> {
+    key.user.or(key.linked_user).or_else(|| {
+        let user = key.session_user.as_ref()?;
+        nodes
+            .values()
+            .find(|w| w.user_root && &w.name == user)
+            .map(|w| w.workspace_id)
+    })
+}
+
+/// R2 by person over the double's rows: whether `memory`'s author key
+/// acts for the person whose user root is `person_root` (the reviewer's)
+/// and the row sits outside that root (ADR-0001 d5; ADR-0082 d7). A
+/// reviewer acting for no person is never narrowed.
+fn same_person_outside_root(
+    keys: &BTreeMap<Uuid, KeyRecord>,
+    nodes: &BTreeMap<Uuid, WorkspaceRecord>,
+    person_root: Option<Uuid>,
+    memory: &MemoryRecord,
+) -> bool {
+    let Some(root) = person_root else {
+        return false;
+    };
+    keys.get(&memory.author_key_id)
+        .and_then(|k| person_root_in(nodes, k))
+        == Some(root)
+        && nodes
+            .get(&memory.workspace_id)
+            .and_then(WorkspaceRecord::user)
+            != Some(root)
 }
 
 impl WebStore for MemStore {

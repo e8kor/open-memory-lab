@@ -2743,6 +2743,9 @@ async fn a_supersession_runs_as_the_curator_on_its_own_claim_and_as_the_reviewer
         assert_eq!(status, StatusCode::SEE_OTHER, "{action}: {body}");
     }
     let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    // Another person judges boss's curated claim: outside boss's own
+    // root no key of boss counts, boss-review included (ADR-0082 d7).
+    let carol = reviewer_on_universe(&rig, &admin).await;
     let (status, _, body) = act(
         &rig,
         &admin,
@@ -2773,10 +2776,10 @@ async fn a_supersession_runs_as_the_curator_on_its_own_claim_and_as_the_reviewer
         .items[0]
         .memory
         .memory_id;
-    // boss-review is outside the curated claim's lineage and approves it.
+    // carol-review is outside the curated claim's lineage and its person, and approves it.
     let (status, _, _) = act_and_follow(
         &rig,
-        &admin,
+        &carol,
         "/web/admin/review",
         &[
             ("action", "verdict"),
@@ -2812,6 +2815,26 @@ async fn a_supersession_runs_as_the_curator_on_its_own_claim_and_as_the_reviewer
         author_of(&rig, "the release train leaves on thursdays").await,
         curate
     );
+}
+
+/// carol, a second admin designated to review on `universe` by `admin`'s
+/// session: her signed-in cookie, a reviewer outside boss's person.
+async fn reviewer_on_universe(rig: &Rig, admin: &str) -> String {
+    rig.allow("carol@example.com", "carol", true).await;
+    signed_in(rig, "sub-carol", "carol@example.com").await;
+    let (status, _, body) = act(
+        rig,
+        admin,
+        "/web/admin/people",
+        &[
+            ("action", "grant_review"),
+            ("user", "carol"),
+            ("workspace", "universe"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    signed_in(rig, "sub-carol", "carol@example.com").await
 }
 
 /// Every memory whose text is `text`, by the admin read.
@@ -4259,6 +4282,9 @@ async fn a_curated_claim_is_held_until_a_key_outside_its_lineage_approves_and_th
     // capacity credentials are those its entry reached when it opened
     // (ADR-0070 d2 as built).
     let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    // Another person judges boss's curated claim: outside boss's own
+    // root no key of boss counts, boss-review included (ADR-0082 d7).
+    let carol = reviewer_on_universe(&rig, &admin).await;
     let (status, _, body) = act(
         &rig,
         &admin,
@@ -4288,10 +4314,21 @@ async fn a_curated_claim_is_held_until_a_key_outside_its_lineage_approves_and_th
     assert_eq!(curated.state.as_str(), "held", "held until reviewed");
     assert_eq!(curated.workspace_path, "universe");
     assert_eq!(curated.memory.author_key_id, curate.key_id);
-    // boss-review is outside the curated claim's lineage, so it is served.
-    let (_, _, page) = act_and_follow(
+    // boss-review acts for boss, whose key wrote the claim outside boss's
+    // root, so it is served nothing of it (ADR-0082 d7).
+    let (status, _, page) = act_and_follow(
         &rig,
         &admin,
+        "/web/admin/review",
+        &[("action", "review_next")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(!page.contains("Keys rotate quarterly."), "{page}");
+    // carol-review is outside the curated claim's lineage and its person, so it is served.
+    let (_, _, page) = act_and_follow(
+        &rig,
+        &carol,
         "/web/admin/review",
         &[("action", "review_next")],
     )
@@ -4300,7 +4337,7 @@ async fn a_curated_claim_is_held_until_a_key_outside_its_lineage_approves_and_th
     let serve_id = format!("srv_{}", curated.memory.memory_id.simple());
     let (status, _, page) = act_and_follow(
         &rig,
-        &admin,
+        &carol,
         "/web/admin/review",
         &[
             ("action", "verdict"),
@@ -4377,6 +4414,9 @@ async fn an_anonymous_universe_row_shows_no_scan_finding_to_a_reader_outside_its
     // capacity credentials are those its entry reached when it opened
     // (ADR-0070 d2 as built).
     let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    // Another person judges boss's curated claim: outside boss's own
+    // root no key of boss counts, boss-review included (ADR-0082 d7).
+    let carol = reviewer_on_universe(&rig, &admin).await;
     let (status, _, body) = act(
         &rig,
         &admin,
@@ -4406,10 +4446,10 @@ async fn an_anonymous_universe_row_shows_no_scan_finding_to_a_reader_outside_its
     assert_eq!(curated.state.as_str(), "held", "held until reviewed");
     assert_eq!(curated.workspace_path, "universe");
     assert_eq!(curated.memory.author_key_id, curate.key_id);
-    // boss-review is outside the curated claim's lineage, so it is served.
+    // carol-review is outside the curated claim's lineage and its person, so it is served.
     let (_, _, page) = act_and_follow(
         &rig,
-        &admin,
+        &carol,
         "/web/admin/review",
         &[("action", "review_next")],
     )
@@ -4418,7 +4458,7 @@ async fn an_anonymous_universe_row_shows_no_scan_finding_to_a_reader_outside_its
     let serve_id = format!("srv_{}", curated.memory.memory_id.simple());
     let (status, _, page) = act_and_follow(
         &rig,
-        &admin,
+        &carol,
         "/web/admin/review",
         &[
             ("action", "verdict"),
