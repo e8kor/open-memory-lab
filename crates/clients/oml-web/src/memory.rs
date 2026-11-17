@@ -45,6 +45,9 @@ use crate::{Capacity, Web, acts, outcome, render};
 /// The admin memory page's one act.
 pub const MEMORY_ACTIONS: &[&str] = &["supersede"];
 
+/// The user memory page's one act (ADR-0083 d13).
+pub const USER_MEMORY_ACTIONS: &[&str] = &["withdraw"];
+
 /// The Curate view's one act.
 pub const CURATE_ACTIONS: &[&str] = &["curate"];
 
@@ -57,6 +60,7 @@ fn notice(fields: &Fields) -> Option<&'static str> {
     match fields.get("done")? {
         "proposed" => Some("Proposed: held until reviewed."),
         "curated" => Some("Curated: held until someone outside its lineage approves it."),
+        "withdrawn" => Some("Withdrawn: kept with its text, in no review queue and never served."),
         _ => None,
     }
 }
@@ -144,7 +148,7 @@ pub async fn user_page(
         }
         None => String::new(),
     };
-    let body = format!(
+    let mut body = format!(
         r#"<p class="label">Memories</p><h1>One memory</h1><p><a href="{USER_MEMORIES_PATH}">Back to the list</a></p>{}"#,
         card.render(&View {
             open_link: false,
@@ -153,17 +157,99 @@ pub async fn user_page(
             ..View::page(false, &roots)
         })
     );
+    // Withdraw's confirmation, opened from a held row of the list: only a
+    // held version a key of this person wrote is offered it (ADR-0083 d13,
+    // note of 2026-11-17).
+    if fields.get("act") == Some("withdraw") {
+        let own = memory.state == "held"
+            && match crate::memories::written_by_own_key(
+                &web,
+                &credential,
+                &calls,
+                memory.author_key_id.as_deref(),
+                USER_MEMORY_PATH,
+            )
+            .await
+            {
+                Ok(own) => own,
+                Err(page) => return page,
+            };
+        if own {
+            body.push_str(r#"<h2>Withdraw it</h2><p class="desc">The version is kept with its text, leaves review and is never served. No one reviews a withdrawal, and it cannot be undone: a new version starts as a fresh write.</p>"#);
+            body.push_str(&form(
+                USER_MEMORY_PATH,
+                "withdraw",
+                &session.csrf(),
+                &format!(
+                    "{}{}{}",
+                    hidden("memory", &memory.artifact_id),
+                    input("reason", "reason (optional)", "", false),
+                    acts::nonce_field()
+                ),
+                "Withdraw",
+                false,
+            ));
+        } else {
+            body.push_str(r#"<p class="desc">Only a held version a key of this account wrote is withdrawn.</p>"#);
+        }
+    }
     page(
         &web,
         shell(
             "One memory",
             &session.personal(),
             USER_MEMORIES_PATH,
-            None,
+            notice(&fields),
             &body,
         ),
         drawing.is_some(),
     )
+}
+
+/// `POST /web/memory`: Withdraw, as the person's web key, which the API
+/// admits on a held version any key of the person wrote (ADR-0083 d13).
+pub async fn user_act(
+    State(web): State<Web>,
+    Extension(session): Extension<Session>,
+    Extension(calls): Extension<Arc<PageCalls>>,
+    form: Result<Form<Vec<(String, String)>>, FormRejection>,
+) -> Response {
+    let (fields, _) = match acts::read(
+        form,
+        USER_MEMORY_ACTIONS,
+        |_, n| matches!(n, "memory" | "reason"),
+        &calls,
+    ) {
+        Ok(read) => read,
+        Err(refusal) => return *refusal,
+    };
+    let target = match id_in(&fields, "memory", &calls) {
+        Ok(id) => id.to_owned(),
+        Err(refusal) => return *refusal,
+    };
+    let key = match acts::key(&session, &fields, &calls) {
+        Ok(key) => key,
+        Err(refusal) => return *refusal,
+    };
+    let _in_flight = acts::hold(&key).await;
+    let credential = session.credential(Capacity::Web);
+    let ids = calls.next_ids();
+    match web
+        .api
+        .withdraw(
+            &call(&credential, &ids),
+            &key,
+            &target,
+            fields.given("reason"),
+        )
+        .await
+    {
+        Ok(_) => acts::see_other(
+            &format!("{USER_MEMORY_PATH}?id={target}&done=withdrawn"),
+            &[],
+        ),
+        Err(e) => outcome::page(&e, &calls, USER_MEMORY_PATH),
+    }
 }
 
 /// The change of `now` against `was`, the version it replaces.

@@ -83,6 +83,7 @@ pub const PAGES: &[(&str, &str)] = &[
     ("GET", ADMIN_KEYS_PATH),
     ("POST", ADMIN_KEYS_PATH),
     ("GET", USER_MEMORY_PATH),
+    ("POST", USER_MEMORY_PATH),
     ("GET", ADMIN_MEMORY_PATH),
     ("POST", ADMIN_MEMORY_PATH),
     ("GET", ADMIN_CURATE_PATH),
@@ -302,7 +303,10 @@ pub fn router(web: Web) -> Router {
         )
         .route(USER_KEYS_PATH, get(keys::user_page).post(keys::user_act))
         .route(ADMIN_KEYS_PATH, get(keys::admin_page).post(keys::admin_act))
-        .route(USER_MEMORY_PATH, get(memory::user_page))
+        .route(
+            USER_MEMORY_PATH,
+            get(memory::user_page).post(memory::user_act),
+        )
         .route(
             ADMIN_MEMORY_PATH,
             get(memory::admin_page).post(memory::admin_act),

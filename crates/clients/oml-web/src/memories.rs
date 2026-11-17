@@ -25,7 +25,7 @@ use oml_page::web::{
     ADMIN_ATLAS_PATH, ADMIN_MEMORIES_PATH, USER_ATLAS_PATH, USER_MEMORIES_PATH, attr, input,
     select, shell, text,
 };
-use oml_sdk::{AdminSearch, CountedNode, MemoryQuery, RecallQuery};
+use oml_sdk::{AdminSearch, CountedNode, Memory, MemoryQuery, RecallQuery};
 use serde_json::{Value, json};
 
 use crate::atlas::{Counts, Tile, legend, lifebar, svg};
@@ -297,8 +297,9 @@ async fn user_cards(
             .api
             .list_memories(&call(&credential, &ids), &query)
             .await?;
+        let cards = with_withdraw(web, &credential, calls, &page.items, None).await?;
         return Ok(CardPage {
-            cards: page.items.iter().map(Card::of_memory).collect(),
+            cards,
             next: page.next_cursor,
         });
     };
@@ -339,7 +340,7 @@ async fn user_cards(
         _ => None,
     };
     let result = result?;
-    let cards = result
+    let rows: Vec<Memory> = result
         .steering
         .iter()
         .chain(result.hits.iter().map(|h| &h.memory))
@@ -353,9 +354,63 @@ async fn user_cards(
                 .as_deref()
                 .is_none_or(|a| m.author_key_id.as_deref() == Some(a))
         })
-        .map(Card::of_memory)
+        .cloned()
         .collect();
+    let cards = with_withdraw(web, &credential, calls, &rows, kinds.as_ref()).await?;
     Ok(CardPage { cards, next: None })
+}
+
+/// Whether a key of the signed-in person wrote the version `author` names,
+/// read from the person's keys as the list reads them; a failed read is
+/// the page that names it, never a guess (ADR-0083 d13).
+pub(crate) async fn written_by_own_key(
+    web: &Web,
+    credential: &str,
+    calls: &PageCalls,
+    author: Option<&str>,
+    next: &str,
+) -> Result<bool, Response> {
+    let Some(author) = author else {
+        return Ok(false);
+    };
+    match own_kinds(web, credential, calls).await {
+        Ok(kinds) => Ok(kinds.iter().any(|(id, _, _)| id == author)),
+        Err(failed) => Err(failed_page(failed, calls, next)),
+    }
+}
+
+/// The rows as cards, a held row a key of the signed-in person wrote
+/// offering Withdraw (ADR-0083 d13, note of 2026-11-17). The person's keys
+/// are read only where a row is held and `kinds` does not already hold
+/// them, so a page with no held row costs no read more.
+async fn with_withdraw(
+    web: &Web,
+    credential: &str,
+    calls: &PageCalls,
+    rows: &[Memory],
+    kinds: Option<&Kinds>,
+) -> Result<Vec<Card>, Failed> {
+    let read;
+    let kinds = match kinds {
+        Some(kinds) => Some(kinds),
+        None if rows.iter().any(|m| m.state == "held") => {
+            read = own_kinds(web, credential, calls).await?;
+            Some(&read)
+        }
+        None => None,
+    };
+    Ok(rows
+        .iter()
+        .map(|m| {
+            let card = Card::of_memory(m);
+            let own = kinds.is_some_and(|kinds| {
+                m.author_key_id
+                    .as_deref()
+                    .is_some_and(|a| kinds.iter().any(|(id, _, _)| id == a))
+            });
+            if own { card.withdrawable() } else { card }
+        })
+        .collect())
 }
 
 /// The admin page's page of the list, as `<user>-admin`: one admin read,
