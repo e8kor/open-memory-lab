@@ -895,26 +895,27 @@ const TIPS_TODAY: &str =
 const HELD_TODAY: &str = "OR (m.status = 'held' AND m.workspace_id = ANY($5::uuid[])";
 
 /// Whether `m` was its claim's tip at the instant `at`, an SQL
-/// `timestamptz` expression (ADR-0059 d15, d16, d20): promoted at or before
-/// it, and the greatest version of its `workspace_id` and `claim_key`, in any
-/// state today, promoted at or before it. Today's tip promoted by then was
-/// the tip then, since a tip moves only forward (ADR-0059 d16), so the
-/// probe runs only for a replaced version: correlated, once per such row,
-/// it reads `memories_tip_moves` by an index condition on the claim, never
-/// a join the planner could unparameterize. Exported so the suite plans
-/// the probe the adapter runs.
+/// `timestamptz` expression (ADR-0059 d15, d16, d20, d22): promoted at or
+/// before it, and the greatest version of its `workspace_id` and
+/// `claim_key`, in any state today but `demoted`, promoted at or before it.
+/// Today's tip promoted by then was the tip then, since it is the greatest
+/// non-demoted version promoted by any instant since its own promotion
+/// (d22), so the probe runs only for a replaced version: correlated, once
+/// per such row, it reads `memories_tip_moves` by an index condition on the
+/// claim, backwards, reading each entry's state from the heap and stopping
+/// at the first that is not demoted, never a join the planner could
+/// unparameterize. Exported so the suite plans the probe the adapter runs.
 #[must_use]
 pub fn tip_at_sql(at: &str) -> String {
-    // `m.is_tip` short-cuts the probe for today's tip: sound only while a
-    // tip moves forward alone. An act that makes a replaced version the tip
-    // again (a demotion returning it) must add ADR-0059 d16's interval fold
-    // and drop this short cut in the same change; the in-memory store's
-    // `tip_at` makes the same reading.
+    // `<>` on text is `textne`, leakproof, so row security still lets the
+    // index serve the probe (ADR-0059 d22). The in-memory store's `tip_at`
+    // makes the same reading.
     format!(
         "m.status = 'promoted' AND m.promoted_at <= {at} \
          AND (m.is_tip OR m.version = (SELECT max(s.version) FROM memories s \
            WHERE s.tenant_id = m.tenant_id AND s.workspace_id = m.workspace_id \
-             AND s.claim_key = m.claim_key AND s.promoted_at <= {at}))"
+             AND s.claim_key = m.claim_key AND s.promoted_at <= {at} \
+             AND s.status <> 'demoted'))"
     )
 }
 
@@ -2221,8 +2222,9 @@ fn hash32(bytes: &[u8]) -> Result<Sha256Hash, StoreError> {
     Ok(Sha256Hash(arr))
 }
 
-/// The states 0005's CHECK admits (postgres-schema.md `memories`); demote
-/// and erase are unbuilt, so no fold writes 'demoted' or 'erased' yet.
+/// The states `memories_status_check` admits (postgres-schema.md
+/// `memories`); `lifecycle.demote` writes 'demoted' and `lifecycle.erase`
+/// 'erased' (ADR-0089 d16).
 fn status_from_str(s: &str) -> Result<MemoryStatus, StoreError> {
     match s {
         "held" => Ok(MemoryStatus::Held),
@@ -3351,6 +3353,133 @@ async fn supersede_tip(
     promote_memory(tx, tenant_id, successor, at, approval).await
 }
 
+/// The fold of `lifecycle.demote` (ADR-0089 d16): the compare-and-set
+/// demotes `memory_id` only while it is promoted and, with `restored`, the
+/// tip whose greatest promoted version below is `restored`, not the tip;
+/// without, while it is not the tip or no promoted version lies below it.
+/// A zero row count refuses the commit, which rolls back. The postings and
+/// the similarity keys follow the state through their triggers; nothing is
+/// deleted (R4).
+async fn demote_memory(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    memory_id: Uuid,
+    restored: Option<Uuid>,
+) -> Result<(), StoreError> {
+    let moved = || StoreError::TipMoved {
+        replaced: memory_id,
+    };
+    // The promoted version directly below, read in the statement that
+    // demotes, so the check and the write see one row set.
+    let demoted = sqlx::query(
+        "WITH d AS (SELECT * FROM memories WHERE tenant_id = $1 AND id = $2 \
+                     AND status = 'promoted' FOR UPDATE), \
+              b AS (SELECT s.id, s.is_tip FROM memories s, d \
+                     WHERE s.tenant_id = $1 AND s.workspace_id = d.workspace_id \
+                       AND s.claim_key = d.claim_key AND s.version < d.version \
+                       AND s.status = 'promoted' \
+                     ORDER BY s.version DESC LIMIT 1) \
+         UPDATE memories m SET status = 'demoted', is_tip = false FROM d \
+          WHERE m.tenant_id = $1 AND m.id = d.id \
+            AND CASE WHEN $3::uuid IS NULL \
+                     THEN NOT d.is_tip OR NOT EXISTS (SELECT 1 FROM b) \
+                     ELSE d.is_tip AND EXISTS (SELECT 1 FROM b WHERE b.id = $3 AND NOT b.is_tip) \
+                END",
+    )
+    .bind(tenant_id)
+    .bind(memory_id)
+    .bind(restored)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    if demoted.rows_affected() != 1 {
+        return Err(moved());
+    }
+    if let Some(restored) = restored {
+        // `memories_served_tip` admits it: the demoted version left the tip
+        // in the statement above.
+        let back = sqlx::query(
+            "UPDATE memories SET is_tip = true \
+              WHERE tenant_id = $1 AND id = $2 AND status = 'promoted' AND NOT is_tip",
+        )
+        .bind(tenant_id)
+        .bind(restored)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+        if back.rows_affected() != 1 {
+            return Err(moved());
+        }
+    }
+    Ok(())
+}
+
+/// The fold of `lifecycle.erase` (ADR-0089 d16; ADR-0005 d2, amended
+/// 2026-11-17): the compare-and-set takes the ids only while they are every
+/// version of one claim; then each row is `erased`, off the tip, and its
+/// body and every column derived from it emptied, so the triggers drop its
+/// postings and similarity keys; its passages go, its recall telemetry is
+/// erased, and its data key, where the lake writer keyed it, is destroyed.
+/// The digest, the title, the attribution, the lineage and `body_bytes`
+/// stay (ADR-0005 d3, d5).
+async fn erase_claim(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    memory_ids: &[Uuid],
+) -> Result<(), StoreError> {
+    let first = memory_ids.first().copied().unwrap_or_default();
+    let moved = || StoreError::TipMoved { replaced: first };
+    // The claim's versions, locked, compared with the ids named.
+    let claim: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT m.id FROM memories m, memories n \
+          WHERE n.tenant_id = $1 AND n.id = $2 \
+            AND m.tenant_id = $1 AND m.workspace_id = n.workspace_id \
+            AND m.claim_key = n.claim_key \
+          ORDER BY m.id FOR UPDATE OF m",
+    )
+    .bind(tenant_id)
+    .bind(first)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(backend)?;
+    let mut named = memory_ids.to_vec();
+    named.sort_unstable();
+    named.dedup();
+    if claim.is_empty() || claim != named {
+        return Err(moved());
+    }
+    // `claim` and `search_vector` are NOT NULL: the body becomes empty, and
+    // `memories_search_vector` sets the empty lexeme set from it.
+    sqlx::query(
+        "UPDATE memories SET status = 'erased', is_tip = false, claim = '', terms = '{}', \
+                rule = NULL, search_text = NULL, search_text_by = NULL, \
+                skill_name = NULL, skill_description = NULL \
+          WHERE tenant_id = $1 AND id = ANY($2::uuid[])",
+    )
+    .bind(tenant_id)
+    .bind(&named)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    for sql in [
+        "DELETE FROM review_queue WHERE tenant_id = $1 AND memory_id = ANY($2::uuid[])",
+        "DELETE FROM document_passages WHERE tenant_id = $1 AND memory_id = ANY($2::uuid[])",
+        // Migration 0056's grant: the update that destroys a key, never a
+        // read of the wrapped key itself.
+        "UPDATE artifact_keys SET wrapped_dek = NULL, destroyed_at = now() \
+          WHERE tenant_id = $1 AND artifact_id = ANY($2::uuid[]) AND destroyed_at IS NULL",
+        "SELECT oml_telemetry_erase($1, $2::uuid[])",
+    ] {
+        sqlx::query(sql)
+            .bind(tenant_id)
+            .bind(&named)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+    }
+    Ok(())
+}
+
 /// The fold of `claim_edge.proposed`: the edge row, then the lineage
 /// widening, [`WIDEN_LINEAGE`], in the same transaction, so no edge is
 /// stored that the review queue's exclusion would not see (ADR-0001 d2).
@@ -4319,6 +4448,15 @@ async fn apply_fold(
         MetadataFold::MemoryRejected { memory_id } => {
             set_memory_status(tx, tenant_id, memory_id, MemoryStatus::Rejected).await?;
         }
+        MetadataFold::MemoryDemoted {
+            memory_id,
+            restored,
+        } => {
+            demote_memory(tx, tenant_id, memory_id, restored).await?;
+        }
+        MetadataFold::ClaimErased { memory_ids } => {
+            erase_claim(tx, tenant_id, &memory_ids).await?;
+        }
         MetadataFold::SourceChecked { memory_id, check } => {
             // The version's latest check; the journal keeps every one
             // (ADR-0057 d5). The application admitted a promoted tip.
@@ -5045,8 +5183,16 @@ async fn meter_plan(
             }
         }
         MetadataFold::MemoryPromoted { memory_id, .. }
-        | MetadataFold::MemoryRejected { memory_id } => {
+        | MetadataFold::MemoryRejected { memory_id }
+        | MetadataFold::MemoryDemoted { memory_id, .. } => {
             plan.chain = tracked_chain_of(tx, tenant_id, *memory_id).await?;
+        }
+        // An erasure takes the whole chain: it leaves the memories meter
+        // when no version of it is live any more (ADR-0071 d2).
+        MetadataFold::ClaimErased { memory_ids } => {
+            if let Some(first) = memory_ids.first() {
+                plan.chain = tracked_chain_of(tx, tenant_id, *first).await?;
+            }
         }
         MetadataFold::TipSuperseded { successor, .. } => {
             plan.chain = tracked_chain_of(tx, tenant_id, *successor).await?;
@@ -8222,6 +8368,31 @@ impl JournalStore for PgStore {
                     .map_err(|_| StoreError::Backend(format!("stored version {v} is negative")))
             })
             .transpose()
+    }
+
+    async fn claim_versions(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+        claim_key: &str,
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // `memories_claim_version` answers this lookup.
+        let sql = format!(
+            "SELECT {MEMORY_COLUMNS} FROM memories m \
+             WHERE m.tenant_id = $1 AND m.workspace_id = $2 AND m.claim_key = $3 \
+             ORDER BY m.version"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(tenant_id)
+            .bind(workspace_id)
+            .bind(claim_key)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(memory_from_row).collect()
     }
 
     async fn claim_tip(

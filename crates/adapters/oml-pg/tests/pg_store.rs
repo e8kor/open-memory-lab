@@ -6379,8 +6379,8 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 52,
-        "every migration through 0052_release_stranded_lane_claims"
+        applied, 56,
+        "every migration through 0056_serving_role_destroys_erased_keys"
     );
     drop(conn);
     drop_dbs(&created).await;
@@ -7836,8 +7836,8 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 52,
-        "every migration through 0052_release_stranded_lane_claims"
+        applied, 56,
+        "every migration through 0056_serving_role_destroys_erased_keys"
     );
     drop(conn);
 
@@ -8151,8 +8151,9 @@ async fn counts_from_postings(
     )
 }
 
-/// Runs `sql` as the owner under `tenant`'s row security: the demotion and
-/// erasure the folds do not build yet (ADR-0052 d7).
+/// Runs `sql` as the owner under `tenant`'s row security: a row's state set
+/// directly, so the postings laws reach every state without the fix acts
+/// (ADR-0052 d7).
 async fn as_owner(store: &PgStore, tenant: Uuid, sql: &str, id: Uuid) {
     let mut owner = owner_conn(store).await;
     let mut tx = owner.begin().await.expect("begin");
@@ -8720,8 +8721,8 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 52,
-        "every migration through 0052_release_stranded_lane_claims"
+        applied, 56,
+        "every migration through 0056_serving_role_destroys_erased_keys"
     );
     drop(conn);
 
@@ -10068,9 +10069,10 @@ async fn user_root_writes_pass_the_suite() {
 }
 
 /// An erased version is served at no instant, and no earlier version stands
-/// in for it: the tip probe reads promoted versions in every state
-/// (ADR-0059 d15, d20, d21). The erasure fold is not built, so the owner
-/// marks the row as it will.
+/// in for it: the tip probe reads promoted versions in every state but
+/// demoted (ADR-0059 d15, d20, d21, d22). The erasure fold takes a whole
+/// claim, so to probe one erased version among promoted ones the owner
+/// marks the row.
 #[tokio::test]
 async fn an_as_of_read_never_serves_a_version_erased_today_and_no_earlier_version_stands_in() {
     if !splits().await {
@@ -10111,9 +10113,9 @@ async fn an_as_of_read_never_serves_a_version_erased_today_and_no_earlier_versio
     drop_dbs(&created).await;
 }
 
-/// The tip probe compares only leakproof operators with the row, so under
-/// row security the serving role reads `memories_tip_moves` by an index
-/// condition (ADR-0059 d20).
+/// The tip probe compares only leakproof operators with the row, its
+/// state's `<>` included, so under row security the serving role reads
+/// `memories_tip_moves` by an index condition (ADR-0059 d20, d22).
 #[tokio::test]
 async fn the_tip_probe_is_an_index_condition_for_the_serving_role_under_row_security() {
     if !splits().await {
@@ -10148,18 +10150,19 @@ async fn the_tip_probe_is_an_index_condition_for_the_serving_role_under_row_secu
     tx.commit().await.expect("commit");
     let plan = plan.join("\n");
     eprintln!("tip probe plan as the serving role:\n{plan}");
-    // Only memories_tip_moves carries promoted_at, so an index-only probe
-    // keyed by the row's claim is that index (a partition created after
-    // 0041 names its own copy).
+    // The probe reads the state from the heap to skip a demoted version, so
+    // it is an index scan, no longer index-only, and the planner may take
+    // memories_tip_moves or the claim's version index: either is an index
+    // condition on the claim, read backwards (ADR-0059 d22).
     let probe = plan
         .lines()
-        .skip_while(|l| !l.contains("Index Only Scan Backward"))
+        .skip_while(|l| !l.contains("Index Scan Backward"))
         .take(2)
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
         probe.contains("claim_key = m.claim_key") && probe.contains("Index Cond"),
-        "the probe is an index condition on memories_tip_moves: {plan}"
+        "the probe is an index condition on the claim: {plan}"
     );
     drop_dbs(&created).await;
 }
@@ -12218,5 +12221,294 @@ async fn migration_0052_releases_a_lane_claim_a_crew_key_took_before_the_lane() 
         .expect("claim")
         .expect("released to the lane");
     assert!(ids.contains(&served.memory_id));
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// Demotion and erasure, the fix acts' primitives (ADR-0089 d16; ADR-0005 d2,
+// amended 2026-11-17; #454, #455)
+// ---------------------------------------------------------------------------
+
+/// A claim of two promoted versions over the serving role: (app, tenant,
+/// admin key value, writer key value, v1, v2 the tip).
+async fn two_promoted_pg(
+    store: &PgStore,
+    tenant: &str,
+) -> (PgApp, Uuid, String, String, Uuid, Uuid) {
+    let app = app_over_pg(store);
+    let boot = bootstrap_pg(&app, tenant).await;
+    let admin = boot.admin_key.value.clone();
+    let crew = workspace_pg(&app, &admin, "crew", boot.root_workspace_id).await;
+    let writer = writer_pg(&app, &admin, crew).await;
+    let reviewer = reviewer_pg(&app, &admin, "fix-reviewer", "fix/reviewer", crew).await;
+    let v1 = app
+        .submit_memory(
+            writer.as_str(),
+            &kind_submit(
+                "fx-1",
+                MemoryKind::Memory,
+                "The canary drains first.",
+                Some("canary"),
+                None,
+            ),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    app.post_verdict(&reviewer.value, v1, oml_app::types::Verdict::Approve, None)
+        .await
+        .expect("promote v1");
+    let v2 = app
+        .supersede(
+            writer.as_str(),
+            &oml_app::types::SupersedeRequest {
+                on_similar: Default::default(),
+                anchor: None,
+                origin: None,
+                expected_version: 1,
+                idempotency_key: "fx-2".to_owned(),
+                target_id: v1,
+                body: "The canary drains and settles first.".to_owned(),
+                kind: None,
+                retirement: false,
+                derives_from: Vec::new(),
+                reason: None,
+                workspace: None,
+                refuse_vocabulary_target: false,
+                severity: None,
+                rule: None,
+                kind_fields: None,
+                valid_from: None,
+                valid_until: None,
+                format: None,
+                title: None,
+            },
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    app.post_verdict(&reviewer.value, v2, oml_app::types::Verdict::Approve, None)
+        .await
+        .expect("ratify v2");
+    (app, boot.tenant_id, admin, writer, v1, v2)
+}
+
+/// One row of `sql` over `tenant`'s rows, as the owner, binding `id`.
+async fn owner_row(store: &PgStore, tenant: Uuid, sql: &str, id: Uuid) -> sqlx::postgres::PgRow {
+    let mut owner = owner_conn(store).await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let row = sqlx::query(sql)
+        .bind(tenant)
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("owner read");
+    tx.rollback().await.expect("rollback");
+    row
+}
+
+#[tokio::test]
+async fn a_demotion_returns_the_tip_and_keeps_the_text_in_postgres() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (app, tenant, admin, _writer, v1, v2) = two_promoted_pg(&store, "demote").await;
+    let demotion = app
+        .demote_version(admin.as_str(), v2)
+        .await
+        .expect("demote the tip");
+    assert_eq!(demotion.restored.map(|r| r.artifact_id), Some(v1));
+    let row = store.memory(tenant, v2).await.expect("read").expect("row");
+    assert_eq!(row.status, MemoryStatus::Demoted);
+    assert!(!row.is_tip);
+    assert_eq!(row.body, "The canary drains and settles first.", "R4");
+    let tip = store
+        .claim_tip(tenant, row.workspace_id, "canary")
+        .await
+        .expect("tip")
+        .expect("a tip");
+    assert_eq!(tip.memory_id, v1);
+    // The demoted version's postings are off, kept (ADR-0052 d7).
+    let state = owner_row(
+        &store,
+        tenant,
+        "SELECT count(*) FILTER (WHERE state = 2), count(*) FROM search_postings \
+          WHERE tenant_id = $1 AND memory_id = $2",
+        v2,
+    )
+    .await;
+    let (off, all): (i64, i64) = (state.get(0), state.get(1));
+    assert!(all > 0 && off == all, "{off} of {all} postings off");
+    // Demoting it again is refused before the store; its claim's version
+    // below, once demoted, returns no tip.
+    assert!(matches!(
+        app.demote_version(admin.as_str(), v2).await.unwrap_err(),
+        AppError::Transition(_)
+    ));
+    let last = app
+        .demote_version(admin.as_str(), v1)
+        .await
+        .expect("demote v1");
+    assert_eq!(last.restored, None);
+    assert!(
+        store
+            .claim_tip(tenant, row.workspace_id, "canary")
+            .await
+            .expect("tip")
+            .is_none()
+    );
+    drop_dbs(&created).await;
+}
+
+#[tokio::test]
+async fn an_erase_leaves_no_clear_body_in_the_live_row() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (app, tenant, admin, writer, v1, v2) = two_promoted_pg(&store, "erase").await;
+    let before = owner_row(
+        &store,
+        tenant,
+        "SELECT claim_digest, body_bytes FROM memories WHERE tenant_id = $1 AND id = $2",
+        v1,
+    )
+    .await;
+    let (digest, bytes): (Vec<u8>, i32) = (before.get(0), before.get(1));
+    let erasure = app.erase_claim(admin.as_str(), v2).await.expect("erase");
+    assert_eq!(erasure.erased.len(), 2, "every version of the claim");
+    for id in [v1, v2] {
+        let row = owner_row(
+            &store,
+            tenant,
+            "SELECT status, is_tip, claim, rule IS NULL, search_text IS NULL, \
+                    length(search_vector), cardinality(terms), \
+                    (SELECT count(*) FROM search_postings p \
+                      WHERE p.tenant_id = m.tenant_id AND p.memory_id = m.id), \
+                    (SELECT count(*) FROM similar_keys s \
+                      WHERE s.tenant_id = m.tenant_id AND s.memory_id = m.id) \
+               FROM memories m WHERE tenant_id = $1 AND id = $2",
+            id,
+        )
+        .await;
+        assert_eq!(row.get::<String, _>(0), "erased");
+        assert!(!row.get::<bool, _>(1));
+        assert_eq!(row.get::<String, _>(2), "", "no clear body");
+        assert!(row.get::<bool, _>(3));
+        assert!(row.get::<bool, _>(4));
+        assert_eq!(row.get::<i32, _>(5), 0, "no lexemes");
+        assert_eq!(row.get::<i32, _>(6), 0);
+        assert_eq!(row.get::<i64, _>(7), 0, "no postings");
+        assert_eq!(row.get::<i64, _>(8), 0, "no similarity keys");
+    }
+    let after = owner_row(
+        &store,
+        tenant,
+        "SELECT claim_digest, body_bytes FROM memories WHERE tenant_id = $1 AND id = $2",
+        v1,
+    )
+    .await;
+    assert_eq!(after.get::<Vec<u8>, _>(0), digest, "the digest stays (d5)");
+    assert_eq!(after.get::<i32, _>(1), bytes);
+    // Its author reads absence with provenance; no surface serves text.
+    let own = app.get_memory(writer.as_str(), v1).await.expect("own get");
+    assert_eq!(own.memory.status, MemoryStatus::Erased);
+    assert!(own.memory.body.is_empty());
+    let head = app
+        .verify_chain(admin.as_str())
+        .await
+        .expect("the chain verifies after an erase");
+    assert!(head.seq > 0);
+    drop_dbs(&created).await;
+}
+
+#[tokio::test]
+async fn an_erase_destroys_the_versions_data_key() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (app, tenant, admin, _writer, v1, v2) = two_promoted_pg(&store, "erasekey").await;
+    // The lake writer keyed v1; v2 it has not reached.
+    let mut owner = owner_conn(&store).await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query(
+        "INSERT INTO artifact_keys (tenant_id, artifact_id, wrapped_dek, kek_id) \
+         VALUES ($1, $2, '\\x0102'::bytea, 'kek-1')",
+    )
+    .bind(tenant)
+    .bind(v1)
+    .execute(&mut *tx)
+    .await
+    .expect("a live key");
+    tx.commit().await.expect("commit");
+    drop(owner);
+    app.erase_claim(admin.as_str(), v1).await.expect("erase");
+    let key = owner_row(
+        &store,
+        tenant,
+        "SELECT wrapped_dek IS NULL, destroyed_at IS NOT NULL FROM artifact_keys \
+          WHERE tenant_id = $1 AND artifact_id = $2",
+        v1,
+    )
+    .await;
+    assert!(key.get::<bool, _>(0), "the wrapped key is gone");
+    assert!(key.get::<bool, _>(1), "and its destruction stamped");
+    let unkeyed = owner_row(
+        &store,
+        tenant,
+        "SELECT count(*) FROM artifact_keys WHERE tenant_id = $1 AND artifact_id = $2",
+        v2,
+    )
+    .await;
+    assert_eq!(
+        unkeyed.get::<i64, _>(0),
+        0,
+        "the lake writer writes the destroyed row it never keyed"
+    );
+    drop_dbs(&created).await;
+}
+
+/// The serving role destroys a key and reads nothing of it (migration 0056).
+#[tokio::test]
+async fn the_serving_role_cannot_read_a_wrapped_data_key() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut tx = store.pool().begin().await.expect("begin");
+    let err = sqlx::query("SELECT wrapped_dek FROM artifact_keys LIMIT 1")
+        .execute(&mut *tx)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("permission denied"), "{err}");
+    drop(tx);
+    let mut tx = store.pool().begin().await.expect("begin");
+    let err = sqlx::query(
+        "INSERT INTO artifact_keys (tenant_id, artifact_id, wrapped_dek, kek_id) \
+         VALUES (gen_random_uuid(), gen_random_uuid(), NULL, 'k')",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("permission denied"), "{err}");
+    drop(tx);
     drop_dbs(&created).await;
 }

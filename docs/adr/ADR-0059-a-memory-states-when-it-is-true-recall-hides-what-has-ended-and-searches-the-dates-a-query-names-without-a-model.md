@@ -530,7 +530,9 @@ otherwise on 2026-11-17: "As-of reads skip a demoted version."
     - The probe's cost: `memories_tip_moves` (migration 0041) does not carry the state, so the
       probe reads each index entry's heap row to skip a demoted one. The plan stays an index
       condition on the claim, backwards, stopping at the first non-demoted version: an index
-      scan, no longer index-only. The state is compared with `textne`, which is leakproof
+      scan, no longer index-only, over `memories_tip_moves` or the claim's version index,
+      whichever the planner costs lower (PostgreSQL 18 took the latter on the suite's rows,
+      2026-11-18). The state is compared with `textne`, which is leakproof
       (`pg_proc.proleakproof`, PostgreSQL 18, checked 2026-11-17), so row security still lets the
       index serve it. The in-memory store reads the same rule.
     - Laws: `an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_it` over both

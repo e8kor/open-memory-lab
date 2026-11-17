@@ -170,7 +170,7 @@ store without conditional put is not a supported lake target.
 
 ## Retracts
 
-A demote or an erase is a Delta `MERGE` on `silver.claims`, applied in outbox order with materialization. Neither verb is built: no event demotes or erases, so the writer's handling below is designed and waits for them.
+A demote or an erase is a Delta `MERGE` on `silver.claims`, applied in outbox order with materialization. The writer folds `lifecycle.demote`, which also refreshes the version it returned as the tip, and `lifecycle.erase`, which names every version of a claim; a version silver never held, because it was never approved, gets only its destroyed key. The admin fix that journals them is designed ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d16).
 Merges are copy-on-write. They rewrite the files that hold matched rows and leave the old files unreferenced.
 
 | Retract | `silver.claims` | `bronze.events` |

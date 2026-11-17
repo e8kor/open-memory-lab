@@ -548,6 +548,19 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn claim_versions(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+        claim_key: &str,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send {
+        timed(
+            "claim_versions",
+            self.inner
+                .claim_versions(tenant_id, workspace_id, claim_key),
+        )
+    }
+
     fn claim_tip(
         &self,
         tenant_id: Uuid,

@@ -554,10 +554,29 @@ impl Writer {
             return Ok(Ok(()));
         }
         let erase = ty == "lifecycle.erase";
-        let ids: Vec<Uuid> = ["artifact_id", "new_artifact_id", "replaces_artifact_id"]
-            .iter()
-            .filter_map(|k| uuid_at(&e.payload, k))
-            .collect();
+        // A demotion names the version it returned as the tip, and an
+        // erasure every version of its claim (ADR-0089 d16).
+        let mut ids: Vec<Uuid> = [
+            "artifact_id",
+            "new_artifact_id",
+            "replaces_artifact_id",
+            "restored_artifact_id",
+        ]
+        .iter()
+        .filter_map(|k| uuid_at(&e.payload, k))
+        .collect();
+        for id in e
+            .payload
+            .get("artifact_ids")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().and_then(|s| Uuid::parse_str(s).ok()))
+        {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
         if ids.is_empty() {
             return Ok(Err("payload_names_no_version"));
         }
@@ -574,6 +593,12 @@ impl Writer {
                 return Ok(Err("version_missing"));
             };
             let Some(promoted_at) = m.promoted_at else {
+                // An erasure takes a claim's held, rejected and withdrawn
+                // versions too, which silver never held: their keys are
+                // destroyed above and nothing else is written.
+                if erase {
+                    continue;
+                }
                 return Ok(Err("version_not_promoted"));
             };
             if to_silver {

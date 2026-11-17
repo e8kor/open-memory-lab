@@ -582,6 +582,100 @@ pub async fn an_as_of_read_never_serves_a_version_erased_today<S, E, Fut>(
     );
 }
 
+/// `an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_it`
+/// (ADR-0059 d22, the operator's decision of 2026-11-17): a demoted
+/// version is served by no read at any instant, and the instants it was
+/// the tip serve the latest earlier promoted, non-demoted version; a
+/// demoted version below the tip leaves the instants it was the tip with
+/// none.
+pub async fn an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_it<
+    S: JournalStore + Clone,
+>(
+    store: S,
+    searches: &[&str],
+) {
+    let w = AsOfWorld::new(store, searches).await;
+    let v1 = w
+        .promote(w.home, "runbook", "the runbook lives in the wiki")
+        .await;
+    let t1 = w.instant();
+    let v2 = w
+        .supersede(v1, 1, "the runbook lives in the repository", false)
+        .await;
+    let t2 = w.instant();
+    let v3 = w
+        .supersede(v2, 2, "the runbook lives in the handbook", false)
+        .await;
+    let t3 = w.instant();
+    // A version below the tip goes: the instants it was the tip serve v1,
+    // and today's tip stays (the probe, not the short cut, answers t2).
+    w.app
+        .demote_version(w.admin.as_str(), v2)
+        .await
+        .expect("demote v2, below the tip");
+    for &search in &w.searches {
+        let at = |t| w.hits(&w.reader, "runbook lives", search, t, false);
+        assert_eq!(
+            at(Some(&t1)).await,
+            one(v1),
+            "{search}: v1 was the tip at t1"
+        );
+        assert_eq!(
+            at(Some(&t2)).await,
+            one(v1),
+            "{search}: v1 stands in for v2 at t2"
+        );
+        assert_eq!(
+            at(Some(&t3)).await,
+            one(v3),
+            "{search}: v3 was the tip at t3"
+        );
+        assert_eq!(at(None).await, one(v3), "{search}: v3 is today's tip");
+    }
+    assert_eq!(
+        w.list(&w.reader, Some("runbook"), Some(&t2), false)
+            .await
+            .expect("list"),
+        vec![v1]
+    );
+    assert!(w.get(&w.reader, v2, Some(&t2)).await.is_err());
+    assert!(w.get(&w.reader, v2, None).await.is_err());
+    // The tip goes: v1, the greatest promoted version below it that is not
+    // demoted, is the tip again and stands in at every instant.
+    let demotion = w
+        .app
+        .demote_version(w.admin.as_str(), v3)
+        .await
+        .expect("demote the tip");
+    assert_eq!(demotion.restored.map(|r| r.artifact_id), Some(v1));
+    for &search in &w.searches {
+        let at = |t| w.hits(&w.reader, "runbook lives", search, t, false);
+        assert_eq!(
+            at(Some(&t3)).await,
+            one(v1),
+            "{search}: v1 stands in for v3 at t3"
+        );
+        assert_eq!(at(Some(&t2)).await, one(v1), "{search}: and for v2 at t2");
+        assert_eq!(at(None).await, one(v1), "{search}: v1 is today's tip");
+    }
+    w.app
+        .demote_version(w.admin.as_str(), v1)
+        .await
+        .expect("demote the last");
+    for &search in &w.searches {
+        let at = |t| w.hits(&w.reader, "runbook lives", search, t, false);
+        for t in [&t1, &t2, &t3] {
+            assert!(at(Some(t)).await.is_empty(), "{search}: nothing stands in");
+        }
+    }
+    assert!(
+        w.list(&w.reader, Some("runbook"), Some(&t1), false)
+            .await
+            .expect("list")
+            .is_empty()
+    );
+}
+
 /// `a_retired_claim_serves_its_earlier_tip_before_the_retirement_and_nothing_after`.
 pub async fn a_retired_claim_serves_its_earlier_tip_before_the_retirement<
     S: JournalStore + Clone,
@@ -797,4 +891,6 @@ where
     inside_an_in_progress_scope_held_rows_at_an_instant_follow_todays_rules(make().await, searches)
         .await;
     an_as_of_after_the_leads_clock_is_refused(make().await, searches).await;
+    an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_it(make().await, searches)
+        .await;
 }

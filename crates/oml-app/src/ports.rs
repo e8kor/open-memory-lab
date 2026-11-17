@@ -62,7 +62,9 @@ pub enum StoreError {
     PrevHashConflict { seq: u64 },
     /// A ratification's compare-and-set found `replaced` no longer the
     /// promoted tip under its successor's workspace and `claim_key`: the
-    /// commit wrote nothing (ADR-0025 d10).
+    /// commit wrote nothing (ADR-0025 d10). A demotion's or an erasure's
+    /// compare-and-set refuses the same way, naming the version it found
+    /// changed since it read it (ADR-0089 d16).
     #[error("version {replaced} is no longer the served tip its successor replaces")]
     TipMoved { replaced: Uuid },
     /// A ratification's in-transaction re-check found its proposal no
@@ -373,6 +375,31 @@ pub enum MetadataFold {
     },
     MemoryRejected {
         memory_id: Uuid,
+    },
+    /// `lifecycle.demote`: `memory_id`, a promoted version, becomes
+    /// `demoted` and stops being the tip, and `restored`, when named,
+    /// becomes the tip again. The store compare-and-sets what the demotion
+    /// read: `memory_id` is promoted; with `restored`, it is the tip and
+    /// `restored` is the greatest promoted version of its claim below it,
+    /// not the tip; without, it is not the tip or no promoted version of its
+    /// claim lies below it. A lost compare-and-set writes nothing and
+    /// refuses with [`StoreError::TipMoved`] naming `memory_id`. The bytes
+    /// stay (ADR-0089 d16; ADR-0009 d5; ADR-0001 d4).
+    MemoryDemoted {
+        memory_id: Uuid,
+        restored: Option<Uuid>,
+    },
+    /// `lifecycle.erase`: every version of one claim, `memory_ids`, becomes
+    /// `erased`, no longer the tip, its body and every column derived from
+    /// it emptied, its passages and telemetry erased and its data key
+    /// destroyed where the lake writer keyed it; the digest, title,
+    /// attribution and lineage stay. The store compare-and-sets that the
+    /// ids are versions of one claim and that the claim holds no version
+    /// they do not name; a lost one writes nothing and refuses with
+    /// [`StoreError::TipMoved`] naming the first id (ADR-0089 d16; ADR-0005
+    /// d2, amended 2026-11-17).
+    ClaimErased {
+        memory_ids: Vec<Uuid>,
     },
     /// `source.checked`: the version's latest source check, set on its row
     /// (ADR-0057 d5, d18). The application admits only a promoted, anchored
@@ -1139,9 +1166,9 @@ pub trait JournalStore: Retriever + Send + Sync {
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
 
     /// [`Self::steering_in_force`] at the instant `as_of` (ADR-0059 d15,
-    /// d18): of kind `steering` on `nodes`, each claim's tip at `as_of`,
-    /// the version of greatest `version` among its versions whose
-    /// `promoted_at` is at or before it, served only when it is promoted
+    /// d18, d22): of kind `steering` on `nodes`, each claim's tip at
+    /// `as_of`, the version of greatest `version` among its versions not
+    /// demoted whose `promoted_at` is at or before it, served only when it is promoted
     /// today and no retirement version; ordered as `steering_in_force`
     /// orders, by node depth, then `promoted_at`, then `artifact_id`.
     fn steering_as_of(
@@ -1154,7 +1181,7 @@ pub trait JournalStore: Retriever + Send + Sync {
     /// Which of `memory_ids` were their claim's tip at `as_of`: promoted
     /// at or before it, with no later version of the claim (one
     /// `workspace_id` and `claim_key`) promoted at or before it, in any
-    /// state today (ADR-0059 d15, d16). The core's re-check of every
+    /// state today but `demoted` (ADR-0059 d15, d16, d22). The core's re-check of every
     /// promoted row an as-of read serves; an id no row has is absent.
     fn tips_as_of(
         &self,
@@ -1256,6 +1283,16 @@ pub trait JournalStore: Retriever + Send + Sync {
         own_key_ids: &[Uuid],
         reads_promoted: bool,
     ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send;
+
+    /// Every version of `claim_key` in the workspace, in any state, by
+    /// `version` ascending: what a demotion reads for the version it
+    /// returns and an erasure for the versions it takes (ADR-0089 d16).
+    fn claim_versions(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+        claim_key: &str,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
 
     /// The promoted served tip of `claim_key` in the workspace, if any
     /// (postgres-schema.md `memories_served_tip`; ADR-0025 d10).
