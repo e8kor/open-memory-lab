@@ -389,24 +389,6 @@ enum KeysCommand {
         #[arg(long)]
         no_rate_limit: bool,
     },
-    /// Link a person's tenant key to a user who signs in, so the web console
-    /// acts with it in shared workspaces; needs an admin key, and journals
-    /// key.linked_person.
-    Link {
-        /// Key id or name.
-        #[arg(value_name = "KEY")]
-        key_ref: String,
-        /// The user the key acts for, by name.
-        #[arg(long)]
-        user: String,
-    },
-    /// End a key's link to a user; needs an admin key, and journals
-    /// key.unlinked_person.
-    Unlink {
-        /// Key id or name.
-        #[arg(value_name = "KEY")]
-        key_ref: String,
-    },
     /// Revoke one connector-key connection and journal connection.revoked.
     Disconnect {
         /// Connector key id or name.
@@ -1769,49 +1751,6 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 if response["requests_per_minute"].is_null() {
                     println!("    rate     : none of its own");
                 }
-            }
-            Ok(ExitCode::SUCCESS)
-        }
-
-        Command::Keys {
-            command: KeysCommand::Link { key_ref, user },
-        } => {
-            let client = resolve(cli, &stored)?;
-            let (_, response) = client.post(
-                &format!("/v2/keys/{}/link", segment(key_ref)?),
-                &json!({ "user": user }),
-                &write_opts(),
-            )?;
-            if cli.json {
-                print_json(&response);
-            } else {
-                println!(
-                    "key.linked_person journalled — key {} ({}) acts for {}",
-                    field(&response, "name"),
-                    field(&response, "key_id"),
-                    field(&response, "linked_user")
-                );
-            }
-            Ok(ExitCode::SUCCESS)
-        }
-
-        Command::Keys {
-            command: KeysCommand::Unlink { key_ref },
-        } => {
-            let client = resolve(cli, &stored)?;
-            let (_, response) = client.post(
-                &format!("/v2/keys/{}/unlink", segment(key_ref)?),
-                &json!({}),
-                &write_opts(),
-            )?;
-            if cli.json {
-                print_json(&response);
-            } else {
-                println!(
-                    "key.unlinked_person journalled — key {} ({}) acts for no one",
-                    field(&response, "name"),
-                    field(&response, "key_id")
-                );
             }
             Ok(ExitCode::SUCCESS)
         }
