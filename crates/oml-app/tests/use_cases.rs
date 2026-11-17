@@ -16968,9 +16968,15 @@ async fn held_steering_follows_the_promoted_rows_prefixed_unreviewed() {
     let ask = |key: String| {
         let app = &app;
         async move {
-            app.recall(&key, &recall_at("canary", crew))
-                .await
-                .expect("recall")
+            app.recall(
+                &key,
+                &RecallRequest {
+                    include_unreviewed: None,
+                    ..recall_at("canary", crew)
+                },
+            )
+            .await
+            .expect("recall")
         }
     };
     assert_eq!(
@@ -16981,4 +16987,139 @@ async fn held_steering_follows_the_promoted_rows_prefixed_unreviewed() {
     let recall = ask(reader.value.clone()).await;
     assert_eq!(steering_ids(&recall), vec![approved, held]);
     assert_eq!(recall.steering[1].memory.status, MemoryStatus::Held);
+}
+
+/// Held guardrails never push the approved rules over the cap: the cap
+/// counts approved rules alone, held versions are capped apart at fifty and
+/// dropped first, and the approved rule keeps its line (ADR-0080 d10).
+#[tokio::test]
+async fn held_guardrails_never_hide_an_approved_rule_over_the_cap() {
+    let app = app();
+    let (boot, crew, _team, writer, reviewer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    put_in_progress(&app, &reviewer.value, crew).await;
+    let rail = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &guardrail_req("g0", Severity::Never, "Never push to main.", crew),
+    )
+    .await;
+    for i in 1..=52 {
+        app.submit_memory(
+            &writer.value,
+            &guardrail_req(
+                &format!("g{i}"),
+                Severity::Should,
+                &format!("Prefer plan {i}."),
+                crew,
+            ),
+        )
+        .await
+        .expect("a held guardrail");
+    }
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let set = guardrail_set(&app, &reader.value).await;
+    assert!(!set.over_cap, "52 held versions are not an over-cap set");
+    assert!(served_guardrail_ids(&set).contains(&rail));
+    assert_eq!(
+        set.guardrails.iter().filter(|g| g.unreviewed).count(),
+        50,
+        "held versions are capped apart"
+    );
+}
+
+/// `include_unreviewed: false` narrows the steering list to promoted rows
+/// inside an in-progress root too (ADR-0030 d4).
+#[tokio::test]
+async fn include_unreviewed_false_leaves_held_steering_out_inside_an_in_progress_root() {
+    let app = app();
+    let (boot, crew, _team, writer, reviewer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    put_in_progress(&app, &reviewer.value, crew).await;
+    let held = app
+        .submit_memory(
+            &writer.value,
+            &submit_kind("s1", MemoryKind::Steering, "prefer the blue pool", crew),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let ask = |include: Option<bool>| {
+        let (app, key) = (&app, reader.value.clone());
+        async move {
+            app.recall(
+                &key,
+                &RecallRequest {
+                    include_unreviewed: include,
+                    ..recall_at("blue", crew)
+                },
+            )
+            .await
+            .expect("recall")
+        }
+    };
+    assert_eq!(steering_ids(&ask(None).await), vec![held]);
+    assert!(steering_ids(&ask(Some(false)).await).is_empty());
+}
+
+/// Absent, `include_unreviewed` adds the key's own held rows on the nodes
+/// inside an in-progress subtree alone; outside it they need an explicit
+/// `true` (ADR-0030 d4; ADR-0080 d16).
+#[tokio::test]
+async fn the_default_adds_the_keys_own_held_rows_inside_in_progress_nodes_alone() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dev = workspace(&app, admin, "dev", crew).await;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
+    put_in_progress(&app, &reviewer.value, dev).await;
+    let outside_steering = app
+        .submit_memory(
+            &writer.value,
+            &submit_kind("s1", MemoryKind::Steering, "canary steering outside", crew),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let outside_memory = held(
+        &app,
+        &writer.value,
+        &submit_into("m1", "canary fact outside", crew),
+    )
+    .await;
+    let inside_memory = held(
+        &app,
+        &writer.value,
+        &submit_into("m2", "canary fact inside", dev),
+    )
+    .await;
+    let ask = |include: Option<bool>| {
+        let (app, key) = (&app, writer.value.clone());
+        async move {
+            app.recall(
+                &key,
+                &RecallRequest {
+                    include_unreviewed: include,
+                    ..recall_at("canary", crew)
+                },
+            )
+            .await
+            .expect("recall")
+        }
+    };
+    let by_default = ask(None).await;
+    assert_eq!(hit_ids_of(&by_default), vec![inside_memory]);
+    assert!(steering_ids(&by_default).is_empty());
+    let explicit = ask(Some(true)).await;
+    let mut hits = hit_ids_of(&explicit);
+    hits.sort();
+    let mut want = vec![inside_memory, outside_memory];
+    want.sort();
+    assert_eq!(hits, want);
+    assert_eq!(steering_ids(&explicit), vec![outside_steering]);
 }

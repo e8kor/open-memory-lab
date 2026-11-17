@@ -1649,8 +1649,8 @@ impl World {
 
 /// A read scoped at an ancestor of an in-progress root serves the root's
 /// held rows, every author's, marked held, by default and in the scoped
-/// listing; beside them the reader's own held rows on the ancestor's other
-/// nodes, which are not inside; and `include_unreviewed: false` narrows
+/// listing; the reader's own held rows on the ancestor's other nodes, which
+/// are not inside, only with `include_unreviewed: true`; and `false` narrows
 /// them away (ADR-0080 d16, amending ADR-0030 d2, d4).
 #[tokio::test]
 async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_root_marked_unreviewed() {
@@ -1666,17 +1666,28 @@ async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_root_marked_unrev
         .write(&w.ann, "a2", "the canary rotates weekly", w.crew)
         .await;
 
+    // Absent, the default adds the root's rows alone: bob's own row on the
+    // ancestor's other node needs the request's own `true` (ADR-0030 d4).
     let at_crew = w.recall(&w.bob, "canary", w.crew).await;
-    let mut ids = World::ids(&at_crew);
+    assert_eq!(
+        World::ids(&at_crew),
+        vec![inside],
+        "the root's row, not bob's own outside it, not ann's"
+    );
+    let explicit = w.recall_with(&w.bob, "canary", w.crew, Some(true)).await;
+    let mut ids = World::ids(&explicit);
     ids.sort();
     let mut expected = vec![inside, bobs_own];
     expected.sort();
     assert_eq!(
         ids, expected,
-        "the root's row and bob's own, not ann's outside one"
+        "true adds bob's own row, never ann's outside one"
     );
     assert!(
-        at_crew.iter().all(|h| h.1 == MemoryStatus::Held),
+        at_crew
+            .iter()
+            .chain(explicit.iter())
+            .all(|h| h.1 == MemoryStatus::Held),
         "each marked unreviewed"
     );
     assert!(!ids.contains(&anns_outside));

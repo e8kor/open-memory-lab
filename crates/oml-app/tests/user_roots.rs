@@ -3026,3 +3026,69 @@ async fn the_bulk_confirmation_names_no_row_the_reviewers_own_person_wrote_outsi
     assert_eq!(named[1].0, theirs);
     assert!(named[1].1.is_some(), "bob's row is");
 }
+
+/// Held steering reaches the key that wrote it and no other key of its
+/// person: the web key of a person whose curate key wrote the row is not
+/// served it, `include_unreviewed: true` or not (ADR-0080 d14).
+#[tokio::test]
+async fn held_steering_reaches_the_authoring_key_and_no_other_key_of_its_person() {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", true).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    app.grant_curation_capacity(&alice_admin, &name("alice"), by_name("alice"))
+        .await
+        .expect("the curation designation");
+    let curate = app
+        .web_caller(&alice, Capacity::Curate)
+        .await
+        .expect("alice-curate");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let held = app
+        .submit_memory(
+            Bearer::Session(&curate),
+            &SubmitRequest {
+                on_similar: Default::default(),
+                kind: MemoryKind::Steering,
+                ..submit("steer", "cite every source", Some("universe"))
+            },
+        )
+        .await
+        .expect("a held steering row")
+        .receipt
+        .memory_id;
+    let own_steering = app
+        .submit_memory(
+            Bearer::Session(&web),
+            &SubmitRequest {
+                on_similar: Default::default(),
+                kind: MemoryKind::Steering,
+                ..submit("own", "cite the source twice", Some("alice"))
+            },
+        )
+        .await
+        .expect("the web key's own held steering row")
+        .receipt
+        .memory_id;
+    let asked = RecallRequest {
+        include_unreviewed: Some(true),
+        ..recall("source", Some("alice"))
+    };
+    let served = app
+        .recall(Bearer::Session(&web), &asked)
+        .await
+        .expect("the web key's recall");
+    let ids: Vec<Uuid> = served.steering.iter().map(|m| m.memory.memory_id).collect();
+    assert_eq!(
+        ids,
+        vec![own_steering],
+        "the calling key's own row, not alice-curate's {held}"
+    );
+}
