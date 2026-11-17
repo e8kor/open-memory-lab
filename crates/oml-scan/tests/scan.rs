@@ -39,7 +39,13 @@ fn j(parts: &[&str]) -> String {
 
 /// BIP-173's checksum over `values`, bech32's generator.
 fn polymod(values: &[u8]) -> u32 {
-    const GEN: [u32; 5] = [0x3b6a_57b2, 0x2650_8e6d, 0x1ea1_19fa, 0x3d42_33dd, 0x2a14_62b3];
+    const GEN: [u32; 5] = [
+        0x3b6a_57b2,
+        0x2650_8e6d,
+        0x1ea1_19fa,
+        0x3d42_33dd,
+        0x2a14_62b3,
+    ];
     let mut chk = 1_u32;
     for &v in values {
         let top = chk >> 25;
@@ -84,7 +90,10 @@ fn age_identity(seed: u64) -> String {
     let sum = polymod(&values) ^ 1;
     data.extend((0..6).map(|i| u8::try_from((sum >> (5 * (5 - i))) & 31).expect("five bits")));
     let alphabet = BECH32_UPPER.as_bytes();
-    let tail: String = data.iter().map(|&v| char::from(alphabet[usize::from(v)])).collect();
+    let tail: String = data
+        .iter()
+        .map(|&v| char::from(alphabet[usize::from(v)]))
+        .collect();
     j(&["AGE-SECRET", "-KEY-1", &tail])
 }
 
@@ -504,7 +513,10 @@ fn an_age_public_recipient_is_not_vetoed() {
         format!("truncated: {short}"),
         format!("not bech32: {outside}"),
         format!("put the identity here: {placeholder}"),
-        format!("a placeholder in lower case: {}", placeholder.to_ascii_lowercase()),
+        format!(
+            "a placeholder in lower case: {}",
+            placeholder.to_ascii_lowercase()
+        ),
         format!("one character changed: {changed}"),
     ] {
         assert_eq!(scanner.scan(&[("/body", &text)]), Verdict::Pass, "{text}");

@@ -400,7 +400,13 @@ fn first_match(rule: &Rule, re: &Regex, text: &str) -> Option<(usize, usize)> {
 /// part and the data comes to 1. A placeholder such as a run of `X` fails.
 fn bech32_checksum(s: &str) -> bool {
     const ALPHABET: &[u8] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
-    const GEN: [u32; 5] = [0x3b6a_57b2, 0x2650_8e6d, 0x1ea1_19fa, 0x3d42_33dd, 0x2a14_62b3];
+    const GEN: [u32; 5] = [
+        0x3b6a_57b2,
+        0x2650_8e6d,
+        0x1ea1_19fa,
+        0x3d42_33dd,
+        0x2a14_62b3,
+    ];
     let lower = s.to_ascii_lowercase();
     let Some((hrp, data)) = lower.rsplit_once('1') else {
         return false;
