@@ -3403,9 +3403,10 @@ impl JournalStore for MemStore {
             .collect())
     }
 
-    async fn guardrail_rows(
+    async fn instruction_rows(
         &self,
         tenant_id: Uuid,
+        kind: MemoryKind,
         nodes: &[Uuid],
         author_key_id: Uuid,
         held_nodes: &[Uuid],
@@ -3417,7 +3418,7 @@ impl JournalStore for MemStore {
         Ok(state
             .memories
             .values()
-            .filter(|m| m.kind == MemoryKind::Guardrail && nodes.contains(&m.workspace_id))
+            .filter(|m| m.kind == kind && nodes.contains(&m.workspace_id))
             .filter(|m| {
                 served_tip(m)
                     || (m.status == MemoryStatus::Held

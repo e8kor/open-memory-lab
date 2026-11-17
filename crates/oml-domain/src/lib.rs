@@ -57,6 +57,7 @@ pub mod name;
 pub mod oauth;
 pub mod origin;
 pub mod signup;
+pub mod skills;
 pub mod similar;
 pub mod usage;
 pub mod valid_time;

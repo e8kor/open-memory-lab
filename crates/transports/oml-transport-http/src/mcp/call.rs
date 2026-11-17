@@ -16,11 +16,16 @@ use crate::traffic::{RequestIds, user_agent};
 pub const EVENT_MCP_CALL: &str = "mcp_call";
 
 /// The methods the line names; any other logs `unknown`.
-const RPC_METHODS: [&str; 8] = [
+const RPC_METHODS: [&str; 13] = [
     "initialize",
     "ping",
     "tools/list",
     "tools/call",
+    "prompts/list",
+    "prompts/get",
+    "resources/list",
+    "resources/read",
+    "resources/templates/list",
     "notifications/initialized",
     "notifications/cancelled",
     "notifications/progress",

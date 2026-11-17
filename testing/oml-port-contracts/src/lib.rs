@@ -51,7 +51,8 @@ use oml_app::types::{
     Approval, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord,
     ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectGrant,
     ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching,
-    GrantRecord, GuardrailFields, HeldFilter, HeldRow, KeyAccess, KeyRecord, ListingFilter,
+    GrantRecord, GuardrailFields, HeldFilter, HeldRow, KeyAccess, KeyRecord, KindFields,
+    ListingFilter,
     ListingPosition, ListingScope, MemoryRecord, MintedToken, OAuthClientRecord, RefreshFacts,
     RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
     TransitionState, UnnamedRows, WorkspaceRecord,
@@ -6979,12 +6980,12 @@ pub async fn every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_liste
     );
 }
 
-/// The guardrail rows over the nodes named: every promoted served tip of
-/// kind guardrail, never a retirement version nor a version it replaced,
-/// and the held guardrails the named key authored, never another key's; no
-/// row of another kind and none off the named nodes (proposed ADR-0037 d3,
-/// d4).
-pub async fn guardrail_rows_are_the_tips_in_force_the_named_keys_own_held_rows_and_every_held_row_inside<
+/// The instruction rows of one kind over the nodes named: every promoted
+/// served tip of that kind, never a retirement version nor a version it
+/// replaced, and the held rows of that kind the named key authored, never
+/// another key's; no row of another kind and none off the named nodes
+/// (proposed ADR-0037 d3, d4; ADR-0080 d4, d11).
+pub async fn instruction_rows_are_the_tips_in_force_the_named_keys_own_held_rows_and_every_held_row_inside<
     S: JournalStore,
 >(
     store: &S,
@@ -7025,7 +7026,19 @@ pub async fn guardrail_rows_are_the_tips_in_force_the_named_keys_own_held_rows_a
         guardrail: None,
         ..rail(wa, 0xC476, other)
     };
-    for row in [&in_force, &retired, &off_node, &memory] {
+    // A skill on the same node is another kind's row: the guardrail read
+    // never carries it, and the skill read carries it alone.
+    let skill = MemoryRecord {
+        kind: MemoryKind::Skill,
+        guardrail: None,
+        kind_fields: Some(Box::new(KindFields::Skill {
+            name: "deploy".to_owned(),
+            description: "Ships the service".to_owned(),
+        })),
+        claim_key: "skill/deploy".to_owned(),
+        ..rail(wa, 0xC477, other)
+    };
+    for row in [&in_force, &retired, &off_node, &memory, &skill] {
         hold_and_promote(&mut rig, store, row.clone()).await;
     }
     hold_and_ratify(&mut rig, store, retirement).await;
@@ -7034,7 +7047,7 @@ pub async fn guardrail_rows_are_the_tips_in_force_the_named_keys_own_held_rows_a
     }
 
     let mut rows = store
-        .guardrail_rows(rig.tenant_id, &[wa], author, &[])
+        .instruction_rows(rig.tenant_id, MemoryKind::Guardrail, &[wa], author, &[])
         .await
         .expect("guardrail rows");
     rows.sort_by_key(|m| m.memory_id);
@@ -7045,7 +7058,7 @@ pub async fn guardrail_rows_are_the_tips_in_force_the_named_keys_own_held_rows_a
     // On a node inside an in-progress subtree, every author's held rows
     // too (ADR-0080 d10, d16); the core judges which it serves.
     let mut inside = store
-        .guardrail_rows(rig.tenant_id, &[wa], author, &[wa])
+        .instruction_rows(rig.tenant_id, MemoryKind::Guardrail, &[wa], author, &[wa])
         .await
         .expect("guardrail rows");
     inside.sort_by_key(|m| m.memory_id);
@@ -7063,12 +7076,21 @@ pub async fn guardrail_rows_are_the_tips_in_force_the_named_keys_own_held_rows_a
     );
     assert!(
         store
-            .guardrail_rows(rig.tenant_id, &[], author, &[])
+            .instruction_rows(rig.tenant_id, MemoryKind::Guardrail, &[], author, &[])
             .await
             .expect("guardrail rows")
             .is_empty(),
         "no node, no row"
     );
+    let skills = store
+        .instruction_rows(rig.tenant_id, MemoryKind::Skill, &[wa], author, &[wa])
+        .await
+        .expect("skill rows");
+    assert_eq!(
+        skills.iter().map(|m| m.memory_id).collect::<Vec<_>>(),
+        vec![skill.memory_id]
+    );
+    assert_eq!(skills[0].kind_fields, skill.kind_fields, "the fields round-trip");
 }
 
 // ---------------------------------------------------------------------------
@@ -9337,7 +9359,7 @@ where
     )
     .await;
     Box::pin(
-        guardrail_rows_are_the_tips_in_force_the_named_keys_own_held_rows_and_every_held_row_inside(
+        instruction_rows_are_the_tips_in_force_the_named_keys_own_held_rows_and_every_held_row_inside(
             &new_store().await,
         ),
     )

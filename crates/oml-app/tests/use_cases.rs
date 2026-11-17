@@ -16982,3 +16982,361 @@ async fn held_steering_follows_the_promoted_rows_prefixed_unreviewed() {
     assert_eq!(steering_ids(&recall), vec![approved, held]);
     assert_eq!(recall.steering[1].memory.status, MemoryStatus::Held);
 }
+
+// -- the offered skill set (ADR-0080 d3, d4, d5, d9, d10, d11, d14) ---------
+
+fn skill_named(idem: &str, name: &str, body: &str, workspace_id: Uuid) -> SubmitRequest {
+    SubmitRequest {
+        kind_fields: Some(skill_fields(name)),
+        ..kind_req(idem, MemoryKind::Skill, body, workspace_id)
+    }
+}
+
+/// The offered commands at `node` for `key`, as (command, unreviewed).
+async fn offered_at(
+    app: &TestApp,
+    key: &str,
+    node: Uuid,
+    include_own_held: bool,
+) -> Vec<(String, bool)> {
+    app.skills(
+        key,
+        &oml_app::types::SkillRequest {
+            workspace: Some(node.into()),
+            include_own_held,
+            cursor: None,
+        },
+    )
+    .await
+    .expect("the skill read")
+    .skills
+    .iter()
+    .map(|s| (s.name.clone(), s.unreviewed))
+    .collect()
+}
+
+#[tokio::test]
+async fn an_agent_proposes_a_skill_over_oml_write_and_it_stays_held_until_a_person_approves() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    let crew_reviewer = agent_reviewer(&app, admin, "robo", crew).await;
+    let person = issue(&app, admin, Role::Reviewer, "dana", crew).await;
+    let reader = agent(&app, admin, "rita", crew).await;
+    let id = app
+        .submit_memory(
+            &writer.value,
+            &skill_named("s1", "deploy", "Run the deploy script.", crew),
+        )
+        .await
+        .expect("an agent proposes a skill")
+        .receipt
+        .memory_id;
+    let err = app
+        .post_verdict(&crew_reviewer.value, id, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(person_required(&err, MemoryKind::Skill), "{err:?}");
+    assert!(
+        offered_at(&app, &reader.value, crew, false).await.is_empty(),
+        "held: offered to nobody else"
+    );
+    app.post_verdict(&person.value, id, Verdict::Approve, None)
+        .await
+        .expect("a person approves");
+    let set = app
+        .skills(
+            &reader.value,
+            &oml_app::types::SkillRequest {
+                workspace: Some(crew.into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the skill read");
+    let skill = &set.skills[0];
+    assert_eq!(
+        (skill.name.as_str(), skill.unreviewed, skill.depth),
+        ("deploy", false, 0)
+    );
+    assert!(skill.approved_at.is_some());
+    assert_eq!(
+        skill.approver.as_ref().map(|a| a.used_by),
+        Some(UsedBy::Person)
+    );
+    assert_eq!(skill.uri, format!("oml://workspace/{}/skill/deploy", skill.workspace_name));
+    assert_eq!(set.next_cursor, None);
+}
+
+#[tokio::test]
+async fn a_skill_author_key_is_offered_its_held_skill_marked_unreviewed() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    let other = agent(&app, admin, "rita", crew).await;
+    app.submit_memory(
+        &writer.value,
+        &skill_named("s1", "deploy", "Run the deploy script.", crew),
+    )
+    .await
+    .expect("a skill");
+    assert_eq!(
+        offered_at(&app, &writer.value, crew, true).await,
+        vec![("deploy".to_owned(), true)]
+    );
+    assert!(
+        offered_at(&app, &writer.value, crew, false).await.is_empty(),
+        "only under include_own_held"
+    );
+    assert!(
+        offered_at(&app, &other.value, crew, true).await.is_empty(),
+        "never to another key"
+    );
+    // The body is served whole to the author under the same rule, and the
+    // one answer for anything else is none.
+    let body = app
+        .skill(
+            &writer.value,
+            Some(&crew.into()),
+            &oml_app::types::SkillRead {
+                command: "deploy".to_owned(),
+                workspace_name: None,
+                include_own_held: true,
+            },
+        )
+        .await
+        .expect("the read")
+        .expect("offered");
+    assert_eq!(body.body, "Run the deploy script.");
+    assert!(body.skill.unreviewed && body.skill.approver.is_none());
+    for key in [&writer.value, &other.value] {
+        assert!(
+            app.skill(
+                key,
+                Some(&crew.into()),
+                &oml_app::types::SkillRead {
+                    command: "deploy".to_owned(),
+                    workspace_name: None,
+                    include_own_held: false,
+                },
+            )
+            .await
+            .expect("the read")
+            .is_none()
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_skill_in_a_child_workspace_is_not_offered_at_its_parent_outside_in_progress() {
+    let app = app();
+    let (boot, crew, team, writer, reviewer) = guardrail_tenant(&app).await;
+    let reader = agent(&app, &boot.admin_key.value, "rita", crew).await;
+    promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &skill_named("s1", "child-only", "Below.", team),
+    )
+    .await;
+    promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &skill_named("s2", "parent", "Above.", crew),
+    )
+    .await;
+    assert_eq!(
+        offered_at(&app, &reader.value, crew, true).await,
+        vec![("parent".to_owned(), false)],
+        "a child's skill is not offered at its parent"
+    );
+    assert_eq!(
+        offered_at(&app, &reader.value, team, true).await,
+        vec![("child-only".to_owned(), false), ("parent".to_owned(), false)],
+        "an ancestor's skill is offered below it, nearest first"
+    );
+}
+
+#[tokio::test]
+async fn a_held_edit_of_a_promoted_skill_is_offered_as_name_unreviewed() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
+    let other = agent(&app, admin, "rita", crew).await;
+    let first = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &skill_named("s1", "deploy", "Run the deploy script.", crew),
+    )
+    .await;
+    let edit = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                kind_fields: Some(skill_fields("deploy")),
+                ..supersede_req("s1-2", first, "Run the deploy script, then check.")
+            },
+        )
+        .await
+        .expect("a held edit")
+        .receipt
+        .memory_id;
+    assert_eq!(
+        offered_at(&app, &writer.value, crew, true).await,
+        vec![
+            ("deploy".to_owned(), false),
+            ("deploy-unreviewed".to_owned(), true)
+        ]
+    );
+    assert_eq!(
+        offered_at(&app, &other.value, crew, true).await,
+        vec![("deploy".to_owned(), false)],
+        "another key keeps the approved command alone"
+    );
+    let read = |command: &str| oml_app::types::SkillRead {
+        command: command.to_owned(),
+        workspace_name: None,
+        include_own_held: true,
+    };
+    let approved = app
+        .skill(&writer.value, Some(&crew.into()), &read("deploy"))
+        .await
+        .expect("read")
+        .expect("offered");
+    assert_eq!(approved.skill.artifact_id, first);
+    let held = app
+        .skill(&writer.value, Some(&crew.into()), &read("deploy-unreviewed"))
+        .await
+        .expect("read")
+        .expect("offered");
+    assert_eq!(held.skill.artifact_id, edit);
+    assert_eq!(held.body, "Run the deploy script, then check.");
+}
+
+#[tokio::test]
+async fn a_skill_body_over_32_kib_is_refused_payload_too_large() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "wanda", crew).await;
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &skill_named("s1", "big", &"a".repeat(32_769), crew),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::SkillBodyTooLarge), "{err:?}");
+    app.submit_memory(
+        &writer.value,
+        &skill_named("s2", "fits", &"a".repeat(32_768), crew),
+    )
+    .await
+    .expect("32 KiB fits");
+}
+
+#[tokio::test]
+async fn a_shadowed_skill_is_readable_by_its_workspace_and_the_nearer_names_it_overridden() {
+    let app = app();
+    let (boot, crew, team, writer, reviewer) = guardrail_tenant(&app).await;
+    let reader = agent(&app, &boot.admin_key.value, "rita", crew).await;
+    let far = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &skill_named("s1", "deploy", "The org's deploy.", crew),
+    )
+    .await;
+    let near = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &skill_named("s2", "deploy", "The team's deploy.", team),
+    )
+    .await;
+    let set = app
+        .skills(
+            &reader.value,
+            &oml_app::types::SkillRequest {
+                workspace: Some(team.into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the skill read");
+    assert_eq!(set.skills.len(), 1);
+    assert_eq!(set.skills[0].artifact_id, near);
+    assert_eq!(set.skills[0].overrides.len(), 1);
+    let crew_name = app
+        .skill(
+            &reader.value,
+            Some(&team.into()),
+            &oml_app::types::SkillRead {
+                command: "deploy".to_owned(),
+                workspace_name: None,
+                include_own_held: false,
+            },
+        )
+        .await
+        .expect("read")
+        .expect("the nearer");
+    assert_eq!(crew_name.skill.artifact_id, near);
+    let far_name = set.skills[0].overrides[0]
+        .rsplit('.')
+        .next()
+        .expect("a path")
+        .to_owned();
+    let shadowed = app
+        .skill(
+            &reader.value,
+            Some(&team.into()),
+            &oml_app::types::SkillRead {
+                command: "deploy".to_owned(),
+                workspace_name: Some(far_name),
+                include_own_held: false,
+            },
+        )
+        .await
+        .expect("read")
+        .expect("the shadowed one by its workspace");
+    assert_eq!(shadowed.skill.artifact_id, far);
+    assert!(shadowed.skill.overrides.is_empty());
+}
+
+#[tokio::test]
+async fn the_skill_set_pages_by_fifty_with_one_digest() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    for i in 0..51 {
+        app.submit_memory(
+            &writer.value,
+            &skill_named(&format!("p{i}"), &format!("skill-{i:02}"), "Do it.", crew),
+        )
+        .await
+        .expect("a skill");
+    }
+    let req = |cursor: Option<String>| oml_app::types::SkillRequest {
+        workspace: Some(crew.into()),
+        include_own_held: true,
+        cursor,
+    };
+    let first = app.skills(&writer.value, &req(None)).await.expect("page 1");
+    assert_eq!(first.skills.len(), 50);
+    let second = app
+        .skills(&writer.value, &req(first.next_cursor.clone()))
+        .await
+        .expect("page 2");
+    assert_eq!(
+        second.skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+        vec!["skill-50"]
+    );
+    assert_eq!(second.next_cursor, None);
+    assert_eq!(first.set_digest, second.set_digest);
+}

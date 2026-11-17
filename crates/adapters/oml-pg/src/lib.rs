@@ -7876,23 +7876,24 @@ impl JournalStore for PgStore {
         Ok(ids)
     }
 
-    async fn guardrail_rows(
+    async fn instruction_rows(
         &self,
         tenant_id: Uuid,
+        kind: MemoryKind,
         nodes: &[Uuid],
         author_key_id: Uuid,
         held_nodes: &[Uuid],
     ) -> Result<Vec<MemoryRecord>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        // The promoted served tips of kind guardrail on the named nodes,
+        // The promoted served tips of the kind on the named nodes,
         // never a retirement version, the held versions the calling key
         // authored there, and every held version on the nodes inside an
         // in-progress subtree: the state and author predicates are this
         // statement's own (proposed ADR-0037 d3, d4; ADR-0080 d10, d16).
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM memories m \
-             WHERE m.tenant_id = $1 AND m.kind = 'guardrail' \
+             WHERE m.tenant_id = $1 AND m.kind = $5 \
                AND m.workspace_id = ANY($2::uuid[]) \
                AND ((m.status = 'promoted' AND m.is_tip AND NOT m.retirement) \
                     OR (m.status = 'held' AND (m.author_key_id = $3 \
@@ -7903,6 +7904,7 @@ impl JournalStore for PgStore {
             .bind(nodes)
             .bind(author_key_id)
             .bind(held_nodes)
+            .bind(kind.as_str())
             .fetch_all(&mut *tx)
             .await
             .map_err(backend)?;

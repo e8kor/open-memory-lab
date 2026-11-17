@@ -73,6 +73,7 @@ use oml_app::types::{
     AnchorFilter, AppError, Bearer, BootstrapRequest, BriefEdgeView, ClaimEdgeProposal,
     ClaimEdgeQuery, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
     EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest,
+    SkillRequest, SkillSet,
     IssuedKey, KeyDetail, KeyLimitsChange, KeyRecord, KindFields, ListRequest, MemoryRecord,
     NamedServe, OnSimilar, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory,
     SimilarItem, SourceCheck, SourceCheckRequest, SubmitRequest, SubmitVerb, SupersedeRequest,
@@ -106,6 +107,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/memories/{artifact_id}/source-check"),
     ("POST", "/v1/memories/{artifact_id}/withdraw"),
     ("GET", "/v1/guardrails"),
+    ("GET", "/v1/skills"),
     ("GET", "/v1/account/usage"),
     ("POST", "/v2/review/next"),
     ("POST", "/v2/review/verdicts"),
@@ -354,6 +356,7 @@ where
             ("POST", "/v1/memories/{artifact_id}/source-check") => post(Self::source_check),
             ("POST", "/v1/memories/{artifact_id}/withdraw") => post(Self::withdraw),
             ("GET", "/v1/guardrails") => get(Self::guardrails),
+            ("GET", "/v1/skills") => get(Self::skills),
             ("POST", "/v2/review/next") => post(Self::review_next),
             ("POST", "/v2/review/verdicts") => post(Self::review_verdicts),
             ("GET", "/v2/review/held") => get(Self::review_held),
@@ -1232,6 +1235,102 @@ where
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::OK, &guardrail_set_json(&set)))
+    }
+
+    /// `GET /v1/skills`: one page of the skills offered at the scope node,
+    /// the query's `workspace` or the key's default, under the key's reader
+    /// access and its `guardrail_scope`, without bodies (ADR-0080 d4, d11).
+    /// The query takes `workspace`, `include_own_held` and `cursor`; any
+    /// other parameter is refused naming it, so nothing the client sends
+    /// widens the scope.
+    async fn skills(
+        State(st): State<Self>,
+        rid: Rid,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let result = match query {
+            Ok(Query(params)) => Self::skills_inner(&st, &params, &headers, None)
+                .await
+                .map(|set| json_response(StatusCode::OK, &skill_set_json(&set))),
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
+    }
+
+    /// The skill read behind `GET /v1/skills`, which the MCP prompts and
+    /// resources call too, so the set is computed in one place (ADR-0080
+    /// d11).
+    pub(crate) async fn skills_inner(
+        st: &Self,
+        params: &[(String, String)],
+        headers: &HeaderMap,
+        connection: Option<&Caller>,
+    ) -> Result<SkillSet, ApiError> {
+        let acting = acting(headers, connection)?;
+        refuse_workarea_header(headers, "workspace")?;
+        let mut workspace = None;
+        let mut include_own_held = None;
+        let mut cursor = None;
+        for (name, value) in params {
+            match name.as_str() {
+                "workspace" if workspace.is_none() => {
+                    workspace = Some(reference("workspace", value)?);
+                }
+                "include_own_held" if include_own_held.is_none() => {
+                    include_own_held = Some(match value.as_str() {
+                        "true" => true,
+                        "false" => false,
+                        _ => {
+                            return Err(ApiError::validation("include_own_held is true or false")
+                                .with_details(json!({ "field": "include_own_held" })));
+                        }
+                    });
+                }
+                "cursor" if cursor.is_none() => cursor = Some(value.clone()),
+                "workspace" | "include_own_held" | "cursor" => {
+                    return Err(ApiError::validation(format!(
+                        "the query parameter {name} is given more than once"
+                    )));
+                }
+                other => {
+                    return Err(ApiError::validation(format!(
+                        "{other} is not a parameter of this read: it takes workspace, include_own_held and cursor, and the scope is the key's, set at issuance"
+                    ))
+                    .with_details(json!({ "field": other })));
+                }
+            }
+        }
+        st.app
+            .skills(
+                acting.bearer(),
+                &SkillRequest {
+                    workspace,
+                    include_own_held: include_own_held.unwrap_or(false),
+                    cursor,
+                },
+            )
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))
+    }
+
+    /// One offered skill with its body, for a prompt or a resource read
+    /// (ADR-0080 d6, d7): the caller is the author's own session, so its own
+    /// held skills are offered too (d14). `None` answers every name or URI
+    /// the key is not offered, alike (d6).
+    pub(crate) async fn skill_inner(
+        st: &Self,
+        headers: &HeaderMap,
+        connection: Option<&Caller>,
+        read: &oml_app::types::SkillRead,
+    ) -> Result<Option<oml_app::types::SkillBody>, ApiError> {
+        let acting = acting(headers, connection)?;
+        st.app
+            .skill(acting.bearer(), None, read)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))
     }
 
     async fn source_check(
@@ -5252,6 +5351,42 @@ pub(crate) fn guardrail_set_json(set: &GuardrailSet) -> Value {
             "claim_key": h.claim_key,
             "version": h.version,
         })).collect::<Vec<_>>(),
+    })
+}
+
+/// openapi.yaml `SkillSet`: one page of the offered skills, no bodies,
+/// each with its command, version, source workspace, depth, the paths it
+/// overrides, its approval (null while held) and its resource URI
+/// (ADR-0080 d11).
+pub(crate) fn skill_set_json(set: &SkillSet) -> Value {
+    json!({
+        "scope_node": set.scope_node,
+        "scope_path": set.scope_path,
+        "guardrail_scope": set.guardrail_scope.as_str(),
+        "set_digest": set.set_digest,
+        "skills": set.skills.iter().map(served_skill_json).collect::<Vec<_>>(),
+        "next_cursor": set.next_cursor,
+    })
+}
+
+/// openapi.yaml `ServedSkill` (ADR-0080 d11; ADR-0077 d1, d5).
+pub(crate) fn served_skill_json(s: &oml_app::types::ServedSkill) -> Value {
+    json!({
+        "artifact_id": s.artifact_id,
+        "claim_key": s.claim_key,
+        "name": s.name,
+        "description": s.description,
+        "version": s.version,
+        "workspace_path": s.workspace_path,
+        "depth": s.depth,
+        "overrides": s.overrides,
+        "approved_at": s.approved_at.as_ref().map(EventTime::as_str),
+        "approver": s.approver.as_ref().map(|a| json!({
+            "used_by": a.used_by.as_str(),
+            "same_user": a.same_user,
+        })),
+        "uri": s.uri,
+        "unreviewed": s.unreviewed,
     })
 }
 

@@ -16,7 +16,7 @@ use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::name::{Name, NamedKind, Naming};
 use oml_domain::oauth::{RefreshDecision, RevokedCause, TokenKind};
 use oml_domain::{
-    ChainHead, EventTime, Sha256Hash, SignedEnvelope, WorkspaceStatus, key_fingerprint,
+    ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, WorkspaceStatus, key_fingerprint,
 };
 
 use crate::types::{
@@ -1170,18 +1170,20 @@ pub trait JournalStore: Retriever + Send + Sync {
         as_of: &EventTime,
     ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send;
 
-    /// The guardrail rows on `nodes` (proposed ADR-0037 d3, d4): every
-    /// promoted served tip of kind `guardrail` whose workspace is one of them,
-    /// never a retirement version, and every held version of kind
-    /// `guardrail` on them that `author_key_id` authored, and on
+    /// The instruction rows of `kind` on `nodes`, a guardrail's or a
+    /// skill's (proposed ADR-0037 d3, d4; ADR-0080 d4, d11): every
+    /// promoted served tip of `kind` whose workspace is one of them,
+    /// never a retirement version, and every held version of `kind`
+    /// on them that `author_key_id` authored, and on
     /// `held_nodes`, the nodes inside an in-progress subtree, every
     /// author's held version (ADR-0080 d10, d16), whose serving the core
     /// judges. Unordered: the read orders the set (d4). The state and the
     /// author predicate are the store's own, as for the own held rows of
     /// [`Retriever::retrieve`].
-    fn guardrail_rows(
+    fn instruction_rows(
         &self,
         tenant_id: Uuid,
+        kind: MemoryKind,
         nodes: &[Uuid],
         author_key_id: Uuid,
         held_nodes: &[Uuid],

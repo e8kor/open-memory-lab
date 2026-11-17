@@ -1878,3 +1878,100 @@ async fn every_held_kind_inside_is_listed_to_the_in_progress_audience() {
     assert_eq!(got.memory.status, MemoryStatus::Held);
     assert!(w.listed(&w.bob, w.side).await.is_empty());
 }
+
+/// A `tip` key scoped at an ancestor of an in-progress root is offered the
+/// held skill below it, marked unreviewed, nearest first; a sibling of the
+/// root is offered nothing of it, and a key whose guardrail scope is
+/// `workspace` keeps its own node alone (ADR-0080 d4, d10, d16).
+#[tokio::test]
+async fn a_tip_key_at_an_in_progress_ancestor_is_offered_the_held_skill_below_it() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    w.app
+        .submit_memory(
+            w.ann.value.as_str(),
+            &SubmitRequest {
+                origin: None,
+                on_similar: Default::default(),
+                valid_from: None,
+                valid_until: None,
+                anchor: None,
+                idempotency_key: "s1".to_owned(),
+                claim_key: None,
+                verb: None,
+                kind: MemoryKind::Skill,
+                body: "Drain the canary.".to_owned(),
+                workspace: Some(w.proj.into()),
+                derives_from: Vec::new(),
+                severity: None,
+                rule: None,
+                kind_fields: Some(oml_app::types::KindFields::Skill {
+                    name: "canary".to_owned(),
+                    description: "Drain the canary before promotion.".to_owned(),
+                }),
+                format: None,
+                title: None,
+            },
+        )
+        .await
+        .expect("a held skill inside the root");
+    let offered = |key: &IssuedKey, node: Uuid| {
+        let (app, key) = (&w.app, key.value.clone());
+        async move {
+            app.skills(
+                key.as_str(),
+                &oml_app::types::SkillRequest {
+                    workspace: Some(node.into()),
+                    include_own_held: false,
+                    cursor: None,
+                },
+            )
+            .await
+            .expect("the skill read")
+            .skills
+            .into_iter()
+            .map(|s| (s.name, s.unreviewed, s.depth))
+            .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(
+        offered(&w.bob, w.crew).await,
+        vec![("canary".to_owned(), true, 1)],
+        "at the root's parent, marked, one level down"
+    );
+    assert_eq!(
+        offered(&w.bob, w.proj).await,
+        vec![("canary".to_owned(), true, 0)],
+        "inside the root"
+    );
+    assert!(
+        offered(&w.bob, w.side).await.is_empty(),
+        "a sibling is offered nothing below another branch"
+    );
+    let narrow = w
+        .app
+        .issue_key(
+            w.boot.admin_key.value.as_str(),
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Reader,
+                name: fresh_key_name(),
+                principal: "nora".to_owned(),
+                used_by: Some(UsedBy::Agent),
+                default_workspace: None,
+                crew: None,
+                grants: vec![grant(w.crew, Role::Reader)],
+                connect_code: false,
+                user: None,
+                guardrail_scope: Some(oml_app::domain::guardrail::GuardrailScope::Workspace),
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("a workspace-scoped key");
+    assert!(
+        offered(&narrow, w.crew).await.is_empty(),
+        "guardrail_scope workspace keeps the node's own alone"
+    );
+}
