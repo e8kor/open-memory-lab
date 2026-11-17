@@ -178,8 +178,8 @@ impl ClaimClass {
 /// A claim version's state: the design set of the `memories.state` column
 /// (admission.md lifecycle; postgres-schema.md). Supersession adds no state:
 /// a replaced version stays promoted and only stops being the tip
-/// (ADR-0025 d10). `Demoted` and `Erased` complete the set; demote and erase
-/// are unbuilt, so [`transition`] reaches neither.
+/// (ADR-0025 d10). `Demoted` and `Erased` complete the set, reached only by
+/// an admin's fix (ADR-0089 d16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MemoryStatus {
     Held,
@@ -215,18 +215,22 @@ pub struct TransitionError {
 }
 
 /// The pure transition function of the built lifecycle:
-/// held -> promoted | rejected | withdrawn. Everything else is refused — the
-/// gate changes visibility exactly once, at ratification (admission.md), and
-/// a withdrawal is the author retracting its own held version, which
-/// promotes nothing (ADR-0083 d13). The diagram's
-/// other edges (reopen, reassignment, dead letter, demote, erase) are
-/// unbuilt; a supersession is no edge, since the tip moves and the state
-/// does not (ADR-0025 d10).
+/// held -> promoted | rejected | withdrawn, promoted -> demoted, and any
+/// state but erased -> erased. The gate changes visibility at ratification
+/// (admission.md); a withdrawal is the author retracting its own held
+/// version, which promotes nothing (ADR-0083 d13). A demotion takes a
+/// promoted version, served or superseded, and never a held one; an erase
+/// takes every version of a claim whatever its state (ADR-0089 d16;
+/// ADR-0005 d2, amended 2026-11-17). Reopen, reassignment and dead letter
+/// are unbuilt; a supersession is no edge, since the tip moves and the
+/// state does not (ADR-0025 d10).
 pub fn transition(from: MemoryStatus, to: MemoryStatus) -> Result<MemoryStatus, TransitionError> {
     match (from, to) {
         (MemoryStatus::Held, MemoryStatus::Promoted)
         | (MemoryStatus::Held, MemoryStatus::Rejected)
-        | (MemoryStatus::Held, MemoryStatus::Withdrawn) => Ok(to),
+        | (MemoryStatus::Held, MemoryStatus::Withdrawn)
+        | (MemoryStatus::Promoted, MemoryStatus::Demoted) => Ok(to),
+        (from, MemoryStatus::Erased) if from != MemoryStatus::Erased => Ok(to),
         _ => Err(TransitionError { from, to }),
     }
 }

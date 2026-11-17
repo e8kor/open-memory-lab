@@ -58,7 +58,7 @@ fn the_claim_states_are_the_schema_set_and_none_is_superseded() {
 }
 
 #[test]
-fn transition_admits_held_to_promoted_or_rejected_promoted_to_demoted_and_any_unerased_state_to_erased() {
+fn the_lifecycle_admits_demote_from_promoted_and_erase_from_any_unerased_state() {
     // A supersession adds no state: the replaced version stays promoted and
     // only loses the tip (ADR-0025 d10). A demotion takes a promoted version
     // only, served or superseded, and never a held one (ADR-0089 d16); an
