@@ -73,8 +73,8 @@ against it.
 | `rust` | `crates/`, `sdks/rust/` (the workspace member `oml-sdk`), `Cargo.toml`, `deny.toml`, `testing/lake/`, `testing/oml-port-contracts/` | `cargo` |
 | `migrations` | `migrations/` | `cargo`, `spike 3, RLS hardening` |
 | `api` | `docs/api/*.yaml`, `docs/api/*.json` (the server compiles in and its tests read them) | `cargo`, `openapi.yaml validates`, `generated SDK code is current` |
-| `cargo` | `rust`, `migrations` or `api` | fmt, clippy and doc; `cargo test` with Postgres; `crate walls (oml-web)`; `cargo deny`; `demo and quickstart`; `oml CLI` on three targets; the SDK jobs; the recall eval; the release image, `compose` and `chart` |
-| `docs` | `docs/`, `design/`, `mkdocs.yml`, `requirements.txt`, `changes/`, root `*.md`, licences, `hooks/` (the mkdocs build hook) | `mkdocs build --strict`, benchmark pages, `contract surfaces agree`, generated references, chain-format vectors, and `docs_tests` |
+| `cargo` | `rust`, `migrations` or `api` | fmt, clippy and doc; `cargo test` with Postgres; `crate walls (oml-web)`; `cargo deny`; `demo and quickstart`; `oml CLI` on three targets; the SDK jobs; the recall eval; the release image, `compose` and `chart`; `PostgreSQL schema page matches the migrations` |
+| `docs` | `docs/`, `design/`, `mkdocs.yml`, `requirements.txt`, `changes/`, root `*.md`, licences, `hooks/` (the mkdocs build hook) | `mkdocs build --strict`, benchmark pages, `contract surfaces agree`, generated references, the PostgreSQL schema page, chain-format vectors, and `docs_tests` |
 | `docs_tests` | `docs` or `eval` | the Rust targets that read those files, unless `cargo` already runs the workspace |
 | `cli_ref` | `docs/cli/` | `CLI reference matches the oml binary's help` |
 | `eval` | `eval/`, `bench/` | the recall eval and its data check, remember eval data, benchmark pages, and `docs_tests` |
