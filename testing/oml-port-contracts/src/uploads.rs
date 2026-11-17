@@ -615,9 +615,13 @@ async fn every_upload_refusal_is_named<S: JournalStore + Clone>(store: S) {
         ),
         UploadRefusal::SessionLimit { limit: 4 }
     );
-    // Without an object store, nothing opens.
+}
+
+/// An app without an object store opens no upload: the refusal is
+/// `upload.storage_failed`, and nothing is stored.
+async fn without_an_object_store_no_upload_opens<S: JournalStore + Clone>(store: S) {
     let bare: TestApp<S> = App::new(
-        rig.store.clone(),
+        store,
         MemSigner::new(TEST_SEED),
         MovableClock::new(),
         SeqIdGen::new(),
@@ -726,5 +730,6 @@ where
     an_unbound_upload_expires_and_its_key_is_shredded_before_its_objects(make().await).await;
     an_open_session_slides_with_each_part_and_expires_72_hours_after_it_opened(make().await).await;
     every_upload_refusal_is_named(make().await).await;
+    without_an_object_store_no_upload_opens(make().await).await;
     an_abandoned_upload_is_shredded_and_abandoning_it_again_answers_the_same(make().await).await;
 }
