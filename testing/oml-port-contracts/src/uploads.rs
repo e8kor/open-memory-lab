@@ -616,8 +616,8 @@ async fn every_upload_refusal_is_named<S: JournalStore + Clone>(store: S) {
         UploadRefusal::SessionLimit { limit: 4 }
     );
     // Without an object store, nothing opens.
-    let bare: TestApp = App::new(
-        MemStore::new(),
+    let bare: TestApp<S> = App::new(
+        rig.store.clone(),
         MemSigner::new(TEST_SEED),
         MovableClock::new(),
         SeqIdGen::new(),
