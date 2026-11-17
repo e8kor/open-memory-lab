@@ -75,7 +75,7 @@ What exists today:
   2026-11-14).
 
 The decision has to say what a skill is, who sees which, how it is served without a local copy,
-and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md)'s R1 to R4 and restates none of them; d16 widens ADR-0001 d5's first exception, the in-progress workspace, as that exception's own text records. Decided. The class rule's person verdict is built for steering and guardrail in v0.8.0 (#391), and for skill once the kind lands (#400, #403); d16's in-progress audience is built for recall, the scoped listing and a read by id in v0.8.0 (#402), and d10's and d14's held guardrails and steering, to their author key and inside in-progress roots up the key's chain, in v0.8.0 (#407); the rest of this record is not built.
+and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md)'s R1 to R4 and restates none of them; d16 widens ADR-0001 d5's first exception, the in-progress workspace, as that exception's own text records. Decided. The class rule's person verdict is built for steering and guardrail in v0.8.0 (#391), and for skill once the kind lands (#400, #403); d16's in-progress audience is built for recall, the scoped listing and a read by id in v0.8.0 (#402), and d10's and d14's held guardrails and steering, to their author key and inside in-progress roots up the key's chain, in v0.8.0 (#407); the offered set and `GET /v1/skills` (d4, d5, d9, d11), the MCP prompts and skill resources (d5 to d7) and the session-start index, the local-skill rule and its doctor lines (d8, d15) in v0.8.0 (#403, #404, #408), under the readings of 2026-11-17 below; document resources wait for #405.
 
 ## Decision
 
@@ -451,6 +451,46 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
   listing takes `needs` too and names each author's count in the lane, and the console's review
   list shows the lane first. ADR-0074 d19's per-key cap, referral, dismissal and evasion check
   stay proposed under #214.
+
+## The build's readings of 2026-11-17
+
+The v0.8.0 build (#403, #404, #408) took the readings below where this record was silent. They
+are proposed: the operator confirms or changes them in one batch, and each line names the
+decision it reads.
+
+- **R1 (d4, d5).** A skill's depth is its workspace's tree distance from the scope node, up or
+  down: 0 on the scope node, 1 on its parent or on a child inside an in-progress subtree.
+- **R2 (d5).** Two workspaces at one distance that hold one name, which can happen only below
+  the scope node, go to the smaller path; an ancestor still wins a tie with a descendant.
+- **R3 (d10, d14).** The held version that answers `<name>-unreviewed`, or `<name>` where no
+  approved version exists, is the newest held version newer than the promoted tip; a held version
+  no newer than the tip answers nothing.
+- **R4 (d5, d11).** `overrides` in `GET /v1/skills` is an array of the shadowed workspaces'
+  paths, nearest first, and the listed description ends "(overrides p1, p2)".
+- **R5 (d5).** `prompts/list` page one is the guardrails prompt plus up to 50 skills, so it holds
+  at most 51 entries, and MCP's `cursor` is the `GET /v1/skills` cursor as served.
+- **R6 (d6, d10).** A held skill's header is "UNREVIEWED: not yet approved by a reviewer. OML
+  skill `<name>` from `<path>`, version `<n>`."
+- **R7 (d6).** The admin-fix wording of the header waits for ADR-0089's fix acts to be built;
+  until then every approved header names the reviewer kind.
+- **R8 (d3).** The scan's instruction-class rules are not built for any kind yet, so a skill is
+  scanned as steering is today; the build does not add a skill-only scan rule.
+- **R9 (d6).** The served artifact ids are carried on the read's answer as the guardrail read
+  carries them (`served_ids`); the read log records the MCP call line as every call does.
+- **R10 (d7; ADR-0081 d6).** Document resources wait for documents (#405): `resources/list` lists
+  skills only, the template list holds the skill template only, and a document URI answers
+  `-32002` as any URI the key is not served.
+- **R11 (d8).** The session-start index reads one page, as d8's one request allows: past 50
+  skills the last line reads "and at least N more", N counting the first page past the twenty
+  lines plus one. A scope that offers no skill prints no section.
+- **R12 (d15).** The project of the local-skill rule is the session's working directory and, when
+  Claude Code sets it, `CLAUDE_PROJECT_DIR`; a path is normalised lexically, so `..` cannot step
+  out of the match, and a match on a call a cached rule only asks on adds the skill reason to that
+  rule's reason.
+- **R13 (d15, Consequences).** `oml doctor` probes the `oml` on `PATH`, which the plugin's hooks
+  run, with a local skill write it only reads, and names one that does not ask. That line, the
+  skills kept on disk, a second page and a shadowing skill are informational; a server that does
+  not serve `GET /v1/skills` is a warning.
 
 ## Consequences
 
