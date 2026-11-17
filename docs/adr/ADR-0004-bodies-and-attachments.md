@@ -143,6 +143,20 @@ flowchart LR
     by state, the stored bytes, the sessions whose key is gone and whose objects remain, the last
     sweep's failure, and the refusals by code. Upload storage is a row on the limits page; its
     throughput is unmeasured.
+  - **Readings of 2026-11-17 (the coordinator, while #451 was built).**
+    - The declared `sha256` is 64 lowercase hexadecimal characters with no prefix; anything else
+      is `request.validation`.
+    - Any writer key may open a session. A verb that is a person's only, such as import
+      (ADR-0084 d11), checks that rule when it binds the session, not when the session opens.
+    - Deleting a session that is already `expired` or `abandoned` answers 204 and changes nothing;
+      deleting a `bound` session is `upload.session_invalid`.
+    - A session's row is kept after it ends, with its key nulled and its objects deleted, so the
+      doctor and an import's record can name it. Those rows grow by one per upload; the doctor's
+      `uploads` line counts them by state and the limits page carries the row as a bottleneck,
+      with no retention yet.
+    - The doctor line reads the metrics listener, so the routes stay five: no status route is
+      added for it.
+    - An import's staging key (ADR-0084 d11) is the bound session's `part_key` (ADR-0084 I4).
 
 - **d4 — Stored objects are ciphertext in an S3-compatible object store, encrypted per artifact,
   with both digests recorded.** The object is named by the SHA-256 of its plaintext

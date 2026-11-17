@@ -10,7 +10,7 @@ answers: what a workspace export carries and what it never carries; the bundle's
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its four questions decided at their
 recommendations and every other default as drafted · proposed the same day · the "unless its source server is
 pinned" of its file name is ADR-0088, which is deferred · the format built as the crate `oml-bundle`, with its readings and the
-operator's R1 decision of 2026-11-17 recorded at the end of this record; the routes and commands of d15 are not built
+operator's R1 decision of 2026-11-17 and the integration readings I1–I4 recorded at the end of this record; the routes and commands of d15 are not built
 
 **Release:** not scheduled; after ADR-0085, whose release manifest `release` mode exports. A
 trusted source server, the "unless" of the title, is the deferred ADR-0088.
@@ -504,3 +504,24 @@ the code follows it.
 - **Order of the work (the operator, 2026-11-17).** Resumable upload sessions, #451 (ADR-0004
   d3), come before import, #426. The import route takes the decrypted tar through such a session,
   not in one request body.
+
+### Integration readings of 2026-11-17 (#425, #426)
+
+The coordinator decided these while export and import were built.
+
+- **I1 — An agent or admin key exporting is refused `access.verb_ceiling`.** The refusal's
+  `details.reason` is `export_person_only`, naming d10's rule. *Rejected:* a separate code
+  `export.agent_key`, which would duplicate the ceiling every other verb uses.
+- **I2 — Policy `off` is refused `export.disabled` (403).** It is a new code with a row on the
+  errors page. A person exporting outside their own root under `own_root`, with no allowance in
+  force, is refused the same code with `details.reason: own_root`.
+- **I3 — `mode: release` and `since` are refused `request.validation`,** with `details.reason:
+  releases_unbuilt`, until releases (#414) are built. On a user root they stay refused under d2
+  after that, with `details.reason: user_root_history_only`. *Rejected:* leaving the fields out of
+  the contract until then, which would change it twice.
+- **I4 — Import staging is the bound upload session's own key (ADR-0004 d3).** The decrypted
+  bundle reaches the server only as the parts of one upload session, encrypted under that
+  session's `part_key`. The import binds the session; when the import ends or is abandoned the key
+  is nulled, which is d11's shred. The class "import staging" of ADR-0005 is that same row, so the
+  inventory names it once, as "upload staging". *Rejected:* drawing a second key for the import
+  and re-encrypting the staged bytes, which would hold the plaintext twice.
