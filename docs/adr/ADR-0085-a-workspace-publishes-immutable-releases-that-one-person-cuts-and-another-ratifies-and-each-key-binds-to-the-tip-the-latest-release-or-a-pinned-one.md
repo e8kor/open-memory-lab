@@ -331,6 +331,30 @@ Decided, not built.
     `POST /v2/keys/{key}/unlink`, admin key role only, journalled `key.linked_person` and
     `key.unlinked_person`; only a live tenant bearer key `used_by: person` is linked, to a user
     root of its tenant whose person is not disabled.
+  - **Who links, and what a link does** (the operator, 2026-11-17, after the security review of
+    the build).
+    - *No self-link.* An admin key links a tenant key to any person of its tenant but its own
+      person: the admin key's session user (`<user>-admin`), or its linked user. That link is
+      refused `request.validation` with `details.reason: self_link` ("No self-link only"). The
+      cost that remains: one admin can still link one person's key to another person, so the
+      link is as trustworthy as the tenant's admins, and `key.linked_person` names who made it.
+    - *One link at a time.* A key already linked is refused `already_linked`; an unlink comes
+      first, journalled. An unlink ends the link and nothing else, so a version a linked key
+      wrote before it is still read for `same_user` through the key's link as it stands at the
+      verdict. Recording the author's person on the version at its write, so an unlink cannot
+      clear the mark, is the follow-up this record leaves open. A revoked key may still be
+      unlinked.
+    - *Root writes* ("Yes, allow it"). A linked tenant key is its person's key for writing into
+      that person's root wherever its grants allow, with or without the console: the user-root
+      write rule reads the person as `same_user` does (ADR-0044 d16).
+    - *Where the header is honoured.* Only on the routes the console's Review acts through:
+      `GET /v2/whoami`, `GET /v2/review/held` (the listing and the named read, `?ids=`),
+      `GET /v1/memories/{artifact_id}` and `POST /v2/review/verdicts/bulk`. On any other route,
+      or sent twice, it answers `acting_key_not_linked` and runs nothing. A route joins this
+      list with the console act that uses it.
+    - *The one-request window.* The link is read once, at the gate, as the session is: an
+      unlink or a revocation that commits while a request is in flight takes effect from the
+      next request.
 
 - **d17 — A user root never leaves development** (the operator, 2026-11-14: "Cap at
   development"). A user root and every workspace under it stay `development`: a proposal moving
