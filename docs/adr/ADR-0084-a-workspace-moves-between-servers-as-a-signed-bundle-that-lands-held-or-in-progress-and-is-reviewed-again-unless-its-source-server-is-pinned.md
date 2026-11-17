@@ -452,3 +452,43 @@ that amends d1. The other nine are readings taken as recommended.
   - `import.bundle_older` (unless `allow_older`) and `import.since_mismatch` refuse the whole plan
     before any key is planned.
   - A marker for a version already imported is listed for `import.erasure_notice` (d13).
+
+### Review readings of 2026-11-17
+
+The independent review of the format at `ef3ece0b` found these gaps. Each is now a reading, and
+the code follows it.
+
+- **R11 — A source's key is pinned at its first import.** Without this, a bundle signed by any key
+  could claim the real `source.server_id` and `tenant_id`. It would then reach the ledger of an
+  earlier import and drive `removed` and `changed` against the keys that import wrote. So the
+  ledger keeps the fingerprint of the key that signed the last import from each source, and
+  `plan_import` takes the verified bundle. Where a ledger for the source exists, the plan refuses
+  `import.source_key_changed` in two cases: the bundle was signed by another key, or it was read
+  without `--expect-key`, so nothing authenticated it. A first import from a source has no ledger
+  and passes. Its plan carries `authenticated`, as d5 asks, and the server records the fingerprint
+  in the new ledger row. *Rejected:* trusting the manifest's source ids, which anyone can write;
+  and requiring `--expect-key` on every import, which the record does not ask for a first import
+  (d5).
+- **R12 — The carried events are one key's writes.** A pseudonym on a line is the exporter's own
+  claim. So the reader also requires these things of `events.jsonl`:
+  - every event names one `principal` and one `api_key_id`, the exporter's;
+  - its `event_type` is a write: `submission.remember` or `submission.learn` (a supersession
+    is a `submission.remember` naming `replaces`);
+  - its payload carries no `reviewer_key_id`, `ratifier_key_id` or `proposer_key_id` other than
+    the event's own `api_key_id`.
+
+  Anything else is `bundle.malformed` (`foreign_event`). That keeps R1's rule by construction: only
+  the exporter's own key id and principal leave the server.
+- **R13 — Verification checks the tenant (d5).** `VerifyOptions` takes `expect_tenant`. The server
+  passes the source tenant it expects, and the CLI passes `--expect-tenant` when one is given. A
+  manifest naming another tenant is `bundle.signature_invalid`.
+- **R14 — `exported_at` has the chain's fixed form, `YYYY-MM-DDTHH:MM:SS.ffffffZ`.** It is
+  compared as text only in that form. A manifest in any other form is `bundle.malformed`.
+- **R15 — Signatures are checked strictly.** The manifest and every event are verified with
+  Ed25519's strict verification, which refuses small-order keys and non-canonical signatures.
+- **R16 — `bundle.decrypt_failed` covers both decryption failures.** One is an identity that does
+  not parse or is not a recipient. The other is ciphertext that does not authenticate. A recipient
+  that does not parse is `bundle.unencrypted`, because nothing can be encrypted to it.
+- **Order of the work (the operator, 2026-11-17).** Resumable upload sessions, #451 (ADR-0004
+  d3), come before import, #426. The import route takes the decrypted tar through such a session,
+  not in one request body.
