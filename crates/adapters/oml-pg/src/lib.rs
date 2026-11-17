@@ -8065,8 +8065,17 @@ impl JournalStore for PgStore {
         // not counted, since recall serves none (ADR-0077 d6; #311, #332).
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        let (held, all, unlisted, unapproved): (i64, i64, i64, i64) = sqlx::query_as(
-            "SELECT count(*) FILTER (WHERE status = 'held' \
+        // The instruction class is read off the domain, as the queue read
+        // reads it; `approver_used_by` is the approving key's attestation,
+        // and a row with none is counted (ADR-0080 d16; #436).
+        let instructions: Vec<&str> = MemoryKind::ALL
+            .iter()
+            .filter(|k| k.class().needs_person())
+            .map(|k| k.as_str())
+            .collect();
+        let (held, all, unlisted, unapproved, unpersoned): (i64, i64, i64, i64, i64) =
+            sqlx::query_as(
+                "SELECT count(*) FILTER (WHERE status = 'held' \
                                        AND scanned_under IS DISTINCT FROM $2::text), \
                     count(*) FILTER (WHERE scanned_under IS DISTINCT FROM $2::text), \
                     count(*) FILTER (WHERE status = 'held' AND scan_finding IS NOT NULL \
@@ -8074,21 +8083,26 @@ impl JournalStore for PgStore {
                                                         WHERE f.tenant_id = m.tenant_id \
                                                           AND f.memory_id = m.id)), \
                     count(*) FILTER (WHERE status = 'promoted' AND is_tip \
-                                       AND NOT retirement AND approved_at IS NULL) \
+                                       AND NOT retirement AND approved_at IS NULL), \
+                    count(*) FILTER (WHERE status = 'promoted' AND is_tip \
+                                       AND NOT retirement AND kind = ANY($3::text[]) \
+                                       AND approver_used_by IS DISTINCT FROM 'person') \
              FROM memories m \
              WHERE tenant_id = $1 AND status <> 'erased'",
-        )
-        .bind(tenant_id)
-        .bind(current)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(backend)?;
+            )
+            .bind(tenant_id)
+            .bind(current)
+            .bind(&instructions)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(ScanBacklog {
             held_unrescanned: u64::try_from(held).map_err(backend)?,
             rescan_due: u64::try_from(all).map_err(backend)?,
             findings_unlisted: u64::try_from(unlisted).map_err(backend)?,
             promoted_unapproved: u64::try_from(unapproved).map_err(backend)?,
+            instructions_without_person_approval: u64::try_from(unpersoned).map_err(backend)?,
         })
     }
 

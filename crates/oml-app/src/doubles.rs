@@ -3567,11 +3567,23 @@ impl JournalStore for MemStore {
                     && m.approval.is_none()
             })
             .count();
+        let instructions = state
+            .memories
+            .values()
+            .filter(|m| {
+                m.status == MemoryStatus::Promoted
+                    && m.is_tip
+                    && !m.retirement
+                    && m.kind.class().needs_person()
+                    && m.approval.as_ref().map(|a| a.used_by) != Some(UsedBy::Person)
+            })
+            .count();
         Ok(crate::ports::ScanBacklog {
             held_unrescanned: held as u64,
             rescan_due: older.len() as u64,
             findings_unlisted: unlisted as u64,
             promoted_unapproved: unapproved as u64,
+            instructions_without_person_approval: instructions as u64,
         })
     }
 

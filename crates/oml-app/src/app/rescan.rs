@@ -75,6 +75,10 @@ pub struct RescanReport {
     /// promoted before migration 0044 can be: doctor's `approval_unmatched`
     /// (ADR-0077 d6). A superseded version is not counted.
     pub promoted_unapproved: u64,
+    /// After this call, served instruction-class tips approved by a key that
+    /// is not a person's, or by none: doctor's `instruction_approvals`
+    /// (ADR-0080 d16; #436). A superseded version is not counted.
+    pub instructions_without_person_approval: u64,
 }
 
 /// A finding as a version's `scan_finding` carries it, as admission's
@@ -347,6 +351,7 @@ where
             rescan_due: backlog.rescan_due,
             findings_unlisted: backlog.findings_unlisted,
             promoted_unapproved: backlog.promoted_unapproved,
+            instructions_without_person_approval: backlog.instructions_without_person_approval,
         })
     }
 }

@@ -5560,6 +5560,7 @@ components:
         rescan_due: { type: integer, minimum: 0, description: 'After this call, every stored version, erased ones aside, last scanned under another rule set: doctor''s scan_rescan_due (ADR-0074 d28).' }
         findings_unlisted: { type: integer, minimum: 0, description: 'After this call, held versions whose stored scan finding has no row in the findings list, written by a server older than migration 0043: doctor''s scan_findings_unlisted (ADR-0074 d23).' }
         promoted_unapproved: { type: integer, minimum: 0, description: 'After this call, served versions (promoted tips) with no approval: their approved_at is null because migration 0044''s fill could not match the verdict their promotion names. A version a ratified successor replaced is not counted. Doctor''s approval_unmatched (ADR-0077 d6). A count, never a list.' }
+        instructions_without_person_approval: { type: integer, minimum: 0, description: 'After this call, served instruction-class versions (promoted steering, guardrail and skill tips, retirements aside) whose approving key was not a person''s reviewer key, or that carry no approval: approved before an instruction became a person''s to approve. A person reviews one again by superseding it; the replaced version is then no tip and not counted. Read off the row''s approver_used_by, so a person''s key that had a crew is not counted. Doctor''s instruction_approvals (ADR-0080 d16, #436). Since v0.8.2.' }
 
     Build:
       type: object

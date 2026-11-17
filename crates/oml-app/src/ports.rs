@@ -2238,6 +2238,12 @@ pub struct ScanBacklog {
     /// took the tip from is not counted, and neither is a retirement tip,
     /// which recall does not serve.
     pub promoted_unapproved: u64,
+    /// Served instruction-class tips whose approving key was not a
+    /// person's, or that carry no approval: approved before #391 made an
+    /// instruction a person's to approve (ADR-0080 d16; #436). Read off the
+    /// row's `approver_used_by`, so a person's key that had a crew is not
+    /// counted.
+    pub instructions_without_person_approval: u64,
 }
 
 /// What a scanner says about itself, for `/readyz` and doctor's scan line

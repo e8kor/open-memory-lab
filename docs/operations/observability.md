@@ -99,7 +99,7 @@ It checks, among other things:
 - search: the pipeline, reranker skips, and postings completeness;
 - the scan rule set and findings since start;
 - usage, with an admin key: accounts whose counters differ from their rows, and accounts on a profile the configuration does not declare;
-- approvals, with an admin key: served versions with no approval (`approval_unmatched`), and each workspace holding steering or guardrail versions that no person's reviewer key can approve (`instructions_unreviewable`);
+- approvals, with an admin key: served versions with no approval (`approval_unmatched`), steering and guardrails in force on an approval that was not a person's (`instruction_approvals`), and each workspace holding steering or guardrail versions that no person's reviewer key can approve (`instructions_unreviewable`);
 - sign-in providers and OAuth discovery when `oauth.issuer` is set;
 - recall telemetry: dropped events, queue depth and a purge that is behind.
 

@@ -6088,21 +6088,40 @@ fn approval_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
         Some(Err(reason)) => return vec![format!("warn approval_unmatched: not read ({reason})")],
         Some(Ok(report)) => report,
     };
-    let Some(count) = report.get("promoted_unapproved") else {
-        return Vec::new();
-    };
+    let mut lines = Vec::new();
+    if let Some(count) = report.get("promoted_unapproved") {
+        lines.push(unmatched_line(count));
+    }
+    // The steering and guardrails in force on a non-person approval (ADR-0080
+    // d16; #436): nothing at zero, nothing from a server before the count.
+    if let Some(count) = report.get("instructions_without_person_approval") {
+        match count.as_u64() {
+            Some(0) => {}
+            Some(n) => lines.push(format!(
+                "warn instruction_approvals: {n} steering or guardrail version(s) in force were approved by a key that is not a person's; a person can review each again by superseding it (ADR-0080 d16)"
+            )),
+            None => lines.push(format!(
+                "warn instruction_approvals: the server's instructions_without_person_approval is {count}, not a count"
+            )),
+        }
+    }
+    lines
+}
+
+/// The `approval_unmatched` line for the server's `promoted_unapproved`.
+fn unmatched_line(count: &Value) -> String {
     let Some(unmatched) = count.as_u64() else {
-        return vec![format!(
+        return format!(
             "warn approval_unmatched: the server's promoted_unapproved is {count}, not a count"
-        )];
+        );
     };
-    vec![if unmatched > 0 {
+    if unmatched > 0 {
         format!(
             "warn approval_unmatched: {unmatched} served version(s) carry no approval, because migration 0044 found no verdict for their promotion in the journal; recall serves them with approver and approved_at null, and no command lists which they are; to clear one, supersede it with oml write --replaces, and it is no longer counted once a reviewer approves the successor; or leave it"
         )
     } else {
         "approval_unmatched: 0".to_owned()
-    }]
+    }
 }
 
 /// The unreviewable-instruction line (ADR-0080 d16; #435), from the admin's
