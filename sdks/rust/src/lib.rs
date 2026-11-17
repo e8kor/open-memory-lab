@@ -32,7 +32,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 41] = [
+pub const OPERATIONS: [&str; 42] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami query:person resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workspace resp:GuardrailSet",
@@ -62,6 +62,7 @@ pub const OPERATIONS: [&str; 41] = [
     "adminReadMemory GET /v2/admin/memories/{artifact_id} resp:AdminRead",
     "submitMemory POST /v1/memories body:verb,claim_key,body,workspace,derives_from resp:Accepted",
     "supersedeMemory POST /v1/memories/{artifact_id}/supersede body:body,expected_version,retirement resp:Accepted",
+    "withdrawMemory POST /v1/memories/{artifact_id}/withdraw body:reason resp:Withdrawn",
     "whoami GET /v2/whoami query:start resp:Onboarding",
     "listWebEmails GET /v2/web/emails query:limit,cursor resp:WebEmailPage",
     "allowWebEmail POST /v2/web/emails body:email,user,admin,keep_an_admin resp:WebEmail",
@@ -665,6 +666,16 @@ pub struct Accepted {
     pub claim_key: String,
     pub version: u32,
     pub state: String,
+}
+
+/// `POST /v1/memories/{artifact_id}/withdraw`: the held version its
+/// author withdrew (ADR-0083 d13).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Withdrawn {
+    pub artifact_id: String,
+    pub state: String,
+    pub at: String,
+    pub journal_seq: u64,
 }
 
 /// What [`Client::learn`] submits: the text, the workspace, the memories
@@ -2043,6 +2054,31 @@ impl<T: Transport> Client<T> {
                 "expected_version": expected_version,
                 "retirement": retirement,
             }),
+        )
+        .await
+    }
+
+    /// `POST /v1/memories/{artifact_id}/withdraw`: the author retracts its
+    /// own held version, kept as withdrawn and never served (ADR-0083 d13).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn withdraw(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        artifact_id: &str,
+        reason: Option<&str>,
+    ) -> Result<Withdrawn, Error> {
+        let mut body = serde_json::json!({});
+        if let Some(reason) = reason {
+            body["reason"] = Value::from(reason);
+        }
+        self.post(
+            call,
+            format!("/v1/memories/{}/withdraw", encode(artifact_id)),
+            idempotency_key,
+            &body,
         )
         .await
     }

@@ -116,6 +116,10 @@ class UploadError(ApiError):
     """`upload`: attachment sessions."""
 
 
+class MemoryStateError(ApiError):
+    """`memory`: a version's own state."""
+
+
 class LifecycleError(ApiError):
     """`lifecycle`: erased content."""
 
@@ -149,6 +153,7 @@ FAMILIES: dict[str, type[ApiError]] = {
     "simulation": SimulationError,
     "vocab": VocabError,
     "upload": UploadError,
+    "memory": MemoryStateError,
     "lifecycle": LifecycleError,
     "limit": LimitError,
     "export": ExportError,

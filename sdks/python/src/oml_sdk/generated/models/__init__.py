@@ -355,6 +355,9 @@ from .whoami_profile_type_3_type_1 import WhoamiProfileType3Type1
 from .whoami_ref import WhoamiRef
 from .whoami_used_by import WhoamiUsedBy
 from .whoami_workspace import WhoamiWorkspace
+from .withdraw_request import WithdrawRequest
+from .withdraw_result import WithdrawResult
+from .withdraw_result_state import WithdrawResultState
 from .workspace import Workspace
 from .workspace_counts import WorkspaceCounts
 from .workspace_counts_items_item import WorkspaceCountsItemsItem
@@ -706,6 +709,9 @@ __all__ = (
     "WhoamiRef",
     "WhoamiUsedBy",
     "WhoamiWorkspace",
+    "WithdrawRequest",
+    "WithdrawResult",
+    "WithdrawResultState",
     "Workspace",
     "WorkspaceCounts",
     "WorkspaceCountsItemsItem",

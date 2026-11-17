@@ -425,6 +425,45 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v1/memories/{artifact_id}/withdraw:
+    post:
+      tags: [memories]
+      operationId: withdrawMemory
+      summary: Withdraw a held version its author wrote; it is kept as withdrawn and never served (ADR-0083 d13).
+      description: 'Requires: the version''s author key, an agent''s included, or a person''s session web key for a held version any key of that same person wrote, read as same_user reads it; any workspace, a frozen one included. Another key that can read the version is 403 access.author_only, whatever its state, and a key that cannot read it is 404 access.not_found. A version not held is 409 memory.not_held. The version''s state becomes withdrawn: it is kept with its text, leaves every review queue and is never served (not in recall, not to others in a listing, not inside an in-progress workspace); it is listed to its author with state withdrawn. Journals memory.withdrawn {artifact_id, workspace_id, reason} under the withdrawing key; no verdict is recorded and nothing is promoted, signed, demoted or deleted (R1). The reason is scanned as a verdict''s is. The body may be empty. Idempotency-Key required, scoped to the key with a nil workspace.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/ArtifactId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            example:
+              reason: written to the wrong workspace
+            schema: { $ref: '#/components/schemas/WithdrawRequest' }
+      responses:
+        '200':
+          description: The version is withdrawn.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                artifact_id: 0193a8f2-7c41-7d2e-9b1a-3c5e7f9a1b2d
+                state: withdrawn
+                at: '2026-11-17T18:00:00Z'
+                journal_seq: 4302
+              schema: { $ref: '#/components/schemas/WithdrawResult' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v1/guardrails:
     get:
       tags: [memories]
@@ -3625,6 +3664,7 @@ components:
         - vocab.inactive_curie
         - upload.session_invalid
         - upload.digest_mismatch
+        - memory.not_held
         - lifecycle.erased
         - name.taken
         - limit.rate
@@ -4425,6 +4465,21 @@ components:
             - { $ref: '#/components/schemas/Stale' }
             - { type: 'null' }
         source_checked: { $ref: '#/components/schemas/SourceChecked' }
+        journal_seq: { type: integer }
+
+    WithdrawRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason: { type: string, description: 'Why the version is withdrawn; journalled with the act.' }
+
+    WithdrawResult:
+      type: object
+      required: [artifact_id, state, at, journal_seq]
+      properties:
+        artifact_id: { type: string }
+        state: { type: string, enum: [withdrawn] }
+        at: { type: string, format: date-time }
         journal_seq: { type: integer }
 
     Crew:

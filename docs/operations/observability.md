@@ -100,6 +100,7 @@ It checks, among other things:
 - the scan rule set and findings since start;
 - usage, with an admin key: accounts whose counters differ from their rows, and accounts on a profile the configuration does not declare;
 - approvals, with an admin key: served versions with no approval (`approval_unmatched`);
+- withdrawals, with an admin key: withdrawn versions still in a review queue (`memory.withdrawn_in_queue`), which fails the run;
 - sign-in providers and OAuth discovery when `oauth.issuer` is set;
 - recall telemetry: dropped events, queue depth and a purge that is behind.
 
