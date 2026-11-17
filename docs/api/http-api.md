@@ -798,7 +798,7 @@ Requires: admin key role, in the key's own tenant; any other role is access.verb
 
 Link a person's tenant key to the user who signs in, so the console acts with it in shared workspaces.
 
-Requires: admin key role, in the key's own tenant; any other role is access.verb_ceiling, and no MCP tool reaches the route. user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin key's own person (its session user or its linked user); otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link.
+Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin's own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
@@ -818,7 +818,7 @@ Requires: admin key role, in the key's own tenant; any other role is access.verb
 
 End a key's link to a person.
 
-Requires: admin key role, in the key's own tenant; any other role is access.verb_ceiling, and no MCP tool reaches the route.
+Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only").
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|

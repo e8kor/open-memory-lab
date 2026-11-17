@@ -328,16 +328,23 @@ Decided, not built.
     request. Rejected: a capacity credential minted per linked key at sign-in (one more
     credential per key to store and expire); a key value pasted into the console (the value would
     travel through the browser). Linking and unlinking are `POST /v2/keys/{key}/link {user}` and
-    `POST /v2/keys/{key}/unlink`, admin key role only, journalled `key.linked_person` and
+    `POST /v2/keys/{key}/unlink`, a console admin session only, journalled `key.linked_person` and
     `key.unlinked_person`; only a live tenant bearer key `used_by: person` is linked, to a user
-    root of its tenant whose person is not disabled.
+    root of its tenant whose person is not disabled; the console admin page is where an admin
+    does it (*Console only* below).
   - **Who links, and what a link does** (the operator, 2026-11-17, after the security review of
     the build).
-    - *No self-link.* An admin key links a tenant key to any person of its tenant but its own
-      person: the admin key's session user (`<user>-admin`), or its linked user. That link is
-      refused `request.validation` with `details.reason: self_link` ("No self-link only"). The
-      cost that remains: one admin can still link one person's key to another person, so the
-      link is as trustworthy as the tenant's admins, and `key.linked_person` names who made it.
+    - *Console only* (the operator, 2026-11-17, after the re-review). Only a signed-in console
+      admin, `<user>-admin` through its capacity credential, links or unlinks a key. A bearer
+      admin key names no person, so a self-link could not be refused for it: its link and unlink
+      are refused `request.validation` with `details.reason: session_admin_only`, and the CLI has
+      no link command. The cost: an operator with only a bearer admin key signs in to the console
+      to link one.
+    - *No self-link.* A console admin links a tenant key to any person of its tenant but its own
+      person, its session user. That link is refused `request.validation` with
+      `details.reason: self_link` ("No self-link only"). The cost that remains: one admin can
+      still link one person's key to another person, so the link is as trustworthy as the
+      tenant's admins, and `key.linked_person` names who made it.
     - *One link at a time.* A key already linked is refused `already_linked`; an unlink comes
       first, journalled. An unlink ends the link and nothing else, so a version a linked key
       wrote before it is still read for `same_user` through the key's link as it stands at the

@@ -10162,7 +10162,7 @@ async fn an_omls_credential_without_the_web_client_is_auth_invalid() {
 
 /// Links the key named `key` to `user` (`Some`) or ends its link (`None`)
 /// under the rig's admin key; the status and the body.
-async fn link_key(rig: &WebRig, key: &str, user: Option<&str>) -> (StatusCode, Value) {
+async fn link_key(rig: &WebRig, admin: &str, key: &str, user: Option<&str>) -> (StatusCode, Value) {
     let (verb, body) = match user {
         Some(user) => ("link", json!({ "user": user })),
         None => ("unlink", json!({})),
@@ -10171,9 +10171,7 @@ async fn link_key(rig: &WebRig, key: &str, user: Option<&str>) -> (StatusCode, V
         &rig.router,
         "POST",
         &format!("/v2/keys/{key}/{verb}"),
-        Call::auth(&rig.admin)
-            .idem(&format!("{verb}-{key}"))
-            .body(body),
+        web_call(admin).idem(&format!("{verb}-{key}")).body(body),
     )
     .await;
     (status, body)
@@ -10193,6 +10191,10 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
     };
     let token = rig.signed_in("alice@example.com", "alice", false).await;
     rig.signed_in("bob@example.com", "bob", false).await;
+    let ops = credential(
+        &rig.signed_in("ops@example.com", "ops", true).await,
+        "admin",
+    );
     let web = credential(&token, "web");
     let payments = create_workspace(&rig.router, &rig.admin, rig.root, "payments").await;
     let on_payments = json!([
@@ -10218,15 +10220,28 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
     .await;
     let id = |key: &Value| key["key_id"].as_str().expect("key id").to_owned();
 
-    let (status, linked) = link_key(&rig, "reviewer-alice", Some("alice")).await;
+    let (status, linked) = link_key(&rig, &ops, "reviewer-alice", Some("alice")).await;
     assert_eq!(status, StatusCode::OK, "{linked}");
     assert_eq!(linked["linked_user"], "alice");
-    let (status, linked) = link_key(&rig, "reviewer-bob", Some("bob")).await;
+    let (status, linked) = link_key(&rig, &ops, "reviewer-bob", Some("bob")).await;
     assert_eq!(status, StatusCode::OK, "{linked}");
-    let (status, again) = link_key(&rig, "reviewer-bob", Some("alice")).await;
+    // A bearer admin key names no person, so it links nothing (the
+    // operator, 2026-11-17: "Console only").
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/reviewer-bob/link",
+        Call::auth(&rig.admin)
+            .idem("bearer-link")
+            .body(json!({ "user": "alice" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(refused["error"]["details"]["reason"], "session_admin_only");
+    let (status, again) = link_key(&rig, &ops, "reviewer-bob", Some("alice")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{again}");
     assert_eq!(again["error"]["details"]["reason"], "already_linked");
-    let (status, refused) = link_key(&rig, "writer-payments-bot", Some("alice")).await;
+    let (status, refused) = link_key(&rig, &ops, "writer-payments-bot", Some("alice")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
     assert_envelope(&refused, "request.validation");
     assert_eq!(refused["error"]["details"]["reason"], "not_used_by_person");
@@ -10373,7 +10388,7 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
 
     // Unlinked, the key acts no more and leaves the person's block; a second
     // unlink names why.
-    let (status, unlinked) = link_key(&rig, "reviewer-alice", None).await;
+    let (status, unlinked) = link_key(&rig, &ops, "reviewer-alice", None).await;
     assert_eq!(status, StatusCode::OK, "{unlinked}");
     assert_eq!(unlinked["linked_user"], Value::Null);
     let (status, _, body) = send(
@@ -10390,7 +10405,7 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
         &rig.router,
         "POST",
         "/v2/keys/reviewer-alice/unlink",
-        Call::auth(&rig.admin).idem("unlink-again"),
+        web_call(&ops).idem("unlink-again"),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{again}");

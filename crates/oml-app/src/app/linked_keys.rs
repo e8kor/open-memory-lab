@@ -22,7 +22,8 @@ where
 {
     /// `POST /v2/keys/{key}/link` (ADR-0085 d16): the tenant key acts for
     /// `user` from this commit on, journalled as `key.linked_person`.
-    /// Admin key role only. Only a live tenant bearer key used by a person
+    /// A console admin session only (`<user>-admin`). Only a live tenant
+    /// bearer key used by a person
     /// that is not an admin key is linked, to a user root of the tenant
     /// whose person has a sign-in entry that is not disabled; anything else
     /// is [`AppError::KeyLinkRefused`] naming why, and journals nothing.
@@ -34,6 +35,7 @@ where
     ) -> Result<KeyRecord, AppError> {
         let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "link_key")?;
+        let own_person = console_admin_person(&admin)?;
         let tenant_id = admin.tenant_id;
         let mut target = self.linkable_key(&admin, &key).await?;
         let root = self
@@ -53,10 +55,9 @@ where
                 reason: "user_disabled",
             });
         }
-        // No self-link: the admin key's own person is its session user or
-        // its linked user (the operator, 2026-11-17: "No self-link only").
-        if admin.session_user.as_ref() == Some(user) || admin.linked_user == Some(root.workspace_id)
-        {
+        // No self-link: the console admin's own person, its session user
+        // (the operator, 2026-11-17: "No self-link only", "Console only").
+        if own_person == user {
             return Err(AppError::KeyLinkRefused {
                 reason: "self_link",
             });
@@ -99,6 +100,7 @@ where
     ) -> Result<KeyRecord, AppError> {
         let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "unlink_key")?;
+        console_admin_person(&admin)?;
         let tenant_id = admin.tenant_id;
         let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
         let mut target = self
@@ -231,5 +233,18 @@ where
         }
         self.admit_request(&key).await?;
         self.caller_of(key).await
+    }
+}
+
+/// The person of a console admin session key, `<user>-admin`, the one
+/// caller that links and unlinks a key: a bearer admin key names no
+/// person, so no self-link could be refused for it (the operator,
+/// 2026-11-17: "Console only"; ADR-0085 d16).
+fn console_admin_person(admin: &KeyRecord) -> Result<&Name, AppError> {
+    match (&admin.credential, &admin.session_user) {
+        (Credential::Session, Some(user)) => Ok(user),
+        _ => Err(AppError::KeyLinkRefused {
+            reason: "session_admin_only",
+        }),
     }
 }
