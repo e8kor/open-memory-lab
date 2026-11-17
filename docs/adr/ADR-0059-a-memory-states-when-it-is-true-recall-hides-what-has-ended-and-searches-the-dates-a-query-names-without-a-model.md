@@ -7,7 +7,7 @@ answers: which part of ADR-0036's valid time this slice builds and in what shape
 
 # ADR-0059 — A memory states when it is true, recall hides what has ended, and recall searches the dates a query names without a model
 
-**Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05 · amended 2026-11-11 with as-of reads, built in part from ADR-0036 d3 and narrowed ([the amendment](#the-amendment-of-2026-11-11-as-of-reads), d14–d21; #192)
+**Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05 · amended 2026-11-11 with as-of reads, built in part from ADR-0036 d3 and narrowed ([the amendment](#the-amendment-of-2026-11-11-as-of-reads), d14–d21; #192) · amended 2026-11-17 by the operator: an as-of read skips a demoted version ([the amendment](#the-amendment-of-2026-11-17-an-as-of-read-skips-a-demoted-version), d22; #454)
 
 **Release:** introduced in v0.6.0 ([releases](../changelog.md))
 
@@ -505,6 +505,38 @@ the reading is recorded here before the code.
   `as_of_reads_the_tip_at_an_instant_over_http`; over MCP,
   `oml_read_takes_as_of_in_every_mode_and_answers_as_http_does`.
 
+## The amendment of 2026-11-17: an as-of read skips a demoted version
+
+Demotion is built with #454 (ADR-0089 d16), and it is the first act that makes an earlier
+version the tip again. d15 and d20 said such an act adds d16's interval fold. The operator decided
+otherwise on 2026-11-17: "As-of reads skip a demoted version."
+
+- **d22 — A demoted version is served by no read at any instant, and the instants it was the tip
+  serve the latest earlier promoted, non-demoted version.** It narrows d15 and replaces d16's and
+  d20's interval-fold clause for demotion:
+    - The tip at an instant is the greatest `version` of the claim whose `promoted_at` is at or
+      before the instant and whose state today is not `demoted`. A demoted version itself is not
+      promoted today, so d15 already serves it at no instant; what changes is that the version
+      below it stands in for the instants the demoted one was the tip.
+    - Today's tip is still the greatest such version, so d20's short cut stays sound: a demotion
+      that returns an earlier version makes it today's tip, and it was the greatest non-demoted
+      version promoted at every instant since its own promotion. No interval table is built.
+    - The journal still records what was served: `lifecycle.demote` names the demoted version and
+      the version it returned (ADR-0089 d16), and the evidence export reads it. An as-of read
+      answers what OML serves of that instant today, not what it served then.
+    - An erased version keeps d15's reading: it is served at no instant and no earlier version
+      stands in for it. An erase takes every version of its claim (ADR-0089 d16), so there is
+      none to stand in.
+    - The probe's cost: `memories_tip_moves` (migration 0041) does not carry the state, so the
+      probe reads each index entry's heap row to skip a demoted one. The plan stays an index
+      condition on the claim, backwards, stopping at the first non-demoted version: an index
+      scan, no longer index-only. The state is compared with `textne`, which is leakproof
+      (`pg_proc.proleakproof`, PostgreSQL 18, checked 2026-11-17), so row security still lets the
+      index serve it. The in-memory store reads the same rule.
+    - Laws: `an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_it` over both
+      stores, and `the_tip_probe_is_an_index_condition_for_the_serving_role_under_row_security`
+      kept, reading an index scan.
+
 ## Rejected alternatives
 
 | Alternative | Why not |
@@ -526,7 +558,9 @@ the reading is recorded here before the code.
 | **d14 — A date accepted as its first or its last instant** | "As of 10 October" reads as the day's start to one reader and its end to another, and the two answers differ by a day of writes; refusing it costs one `T00:00:00Z`. |
 | **d14 — `tip_as_of` on every item** | Every promoted item an as-of listing or recall serves was the tip at the instant, so the flag would be constant there; get at an instant answers existence alone. |
 | **d15 — The grants the key held at the instant** | A revoked key's past would stay readable, and a denial issued for cause could be stepped around by naming an earlier instant. Today's grants make an as-of read a subset of today's get. |
-| **d15 — Serving the tip at the instant though it is demoted or erased today, or the version before it** | Demotion and erasure are journalled acts on what is served now (R4); the version before it was not what OML held at the instant. |
+| **d15 — Serving the tip at the instant though it is demoted or erased today, or the version before it** | Demotion and erasure are journalled acts on what is served now (R4); the version before it was not what OML held at the instant. *(Revised for demotion by d22, 2026-11-17: the version before a demoted one stands in for it.)* |
+| **d22 — An interval fold, so an as-of read serves a since-demoted version at the instants it was the tip** | The operator decided a demotion withdraws the version from every read, past instants included (2026-11-17); the journal keeps what was served. The fold would add two tables and their reconciliation for an answer no read now gives. |
+| **d22 — A new partial index that leaves demoted versions out, so the probe stays index-only** | A migration that rebuilds an index over every promoted version on a live database, partition by partition under a SHARE lock (d20's cost), for a probe that reads one heap row per replaced candidate and stops at the first non-demoted version. It returns if the as-of timing gate fails. |
 | **d19 — `as_of` on the own listing** | The own listing serves every state of the key's rows and has no tip to take; existence alone would be `until`, which it already takes. |
 | **d20 — `CREATE INDEX CONCURRENTLY` per partition** | It cannot run inside a `DO` block or a multi-statement string, the forms a sqlx migration runs, and the partitions are known only at run time; a build per partition, committed one at a time, bounds each tenant's wait to its own rows. |
 | **d20 — A gated p95 ratio** | Thirty unpaired samples on a shared runner make p95 one burst of load; the median of paired ratios moves with the code, not the host. |

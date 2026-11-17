@@ -59,9 +59,13 @@ commitment about the design, enforced by nothing until the conformance work the
   *(Amended 2026-11-17 by the operator: "Wipe row + key", and "All its versions". An erase names
   one version and erases every version of its claim in its workspace (ADR-0089 d16). In one
   transaction it journals `lifecycle.erase` naming each version, empties each live row's body and
-  the columns derived from it, which drops the postings, destroys each version's `artifact_keys`
-  row (writing it destroyed where the lake writer has not keyed the version yet), and calls
-  `oml_telemetry_erase`. The digest, the title, the attribution and the state stay (d3, d5).)*
+  the columns derived from it, which drops the postings, destroys each keyed version's
+  `artifact_keys` row, and calls `oml_telemetry_erase`. The digest, the title, the attribution
+  and the state stay (d3, d5). The serving role, which held no grant on `artifact_keys`, gains
+  only the update that destroys a key, and the reads that update needs, never `wrapped_dek`
+  (migration 0056). A version the lake writer has not keyed yet gets its destroyed row from the
+  lake writer when it folds the same `lifecycle.erase`, as it does today: the outbox is drained in
+  order, so it keys a version, if ever, before it reads that version's erase, and never after.)*
 
 - **d3 — The guarantee is scoped to body and attachment bytes, and the scope is stated wherever
   the guarantee is.** What DEK destruction makes unreadable is the plaintext of the body and the

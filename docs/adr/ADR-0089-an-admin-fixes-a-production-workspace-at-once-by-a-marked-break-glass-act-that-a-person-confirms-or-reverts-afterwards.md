@@ -10,7 +10,7 @@ answers: which acts an admin key may take on a workspace's content, on which tar
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its five questions decided at their
 recommendations and every other default as drafted, and its amendment of ADR-0001 d5 accepted with
 it · proposed the same day · amended 2026-11-17 by the operator (d16: demote's targets, the
-fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events)
+fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version)
 
 **Release:** not scheduled; with ADR-0085, whose releases a fix overlays
 
@@ -277,11 +277,13 @@ Decided, not built.
       promoted and not demoted; with none, the claim is served by no version.
     - Demoting a version that is not served moves no tip. It changes that version's state to
       `demoted`, its history (the `lifecycle.demote` event and the state every read reports), and
-      the as-of reads (ADR-0059's amendment of 2026-11-11): a demoted version is served by no
-      read at any instant, and for the instants it was the tip an as-of read serves the latest
-      earlier promoted, non-demoted version instead. The tip-at probe counts only promoted,
-      non-demoted versions, so today's tip is still the greatest of them and the probe's
-      short cut stays sound.
+      the as-of reads.
+    - **As-of reads skip a demoted version (the operator, 2026-11-17).** A demoted version is
+      served by no read at any instant, and for the instants it was the tip an as-of read serves
+      the latest earlier promoted, non-demoted version instead; the journal still records what
+      was actually served. The tip-at probe counts only promoted, non-demoted versions, so
+      today's tip is still the greatest of them and the probe's short cut stays sound
+      (ADR-0059 d22, which states the probe's cost).
     - A held version cannot be demoted (`admin.fix_target_not_promoted`): the author withdraws
       it (ADR-0083 d13) or a reviewer rejects it. A rejected, withdrawn or erased version cannot
       be demoted either.
