@@ -24,7 +24,7 @@ nothing at all (`access.verb_ceiling`).
 - **Severity.** `never`, `must` and `should`.
 - **Before approval.** A rule waiting for review loads only in the session of the key that wrote
   it and, in a workspace a person put [in progress](workspaces.md#in-progress-workspaces), in every
-  session working there or above it. It loads as a line of its own marked `[unreviewed]`, after
+  session working there, or in a workspace below one in progress. It loads as a line of its own marked `[unreviewed]`, after
   the approved rules, and its check asks where an approved one would refuse, so a rule nobody has
   judged can make the agent ask but never stops it. An approved rule it would replace stays in
   force with its own effect until a reviewer approves the change; a proposed retirement is not

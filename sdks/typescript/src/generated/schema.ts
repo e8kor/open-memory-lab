@@ -1851,7 +1851,7 @@ export interface components {
             anchor_repo?: components["schemas"]["AnchorRepo"];
             anchor_path_prefix?: components["schemas"]["AnchorPathPrefix"];
             origin_kinds?: components["schemas"]["OriginKinds"];
-            /** @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held and unreviewed true; they count against k and max_tokens. Inside a workspace a person put in progress, and in every such workspace below the scope, every author's held memories join too, and absent means true when the served workspaces hold one; absent means false everywhere else (ADR-0030 d3, d4; ADR-0080 d16). The steering list carries held steering after the promoted rows, marked unreviewed: the key's own when this is true, and every author's on a workspace in progress up the scope's chain (ADR-0080 d10, d14). Rules: docs/architecture/retrieval.md. */
+            /** @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held and unreviewed true; they count against k and max_tokens. Inside a workspace a person put in progress, and in every such workspace below the scope, every author's held memories join too, and absent means true when the served workspaces hold one; absent means false everywhere else (ADR-0030 d3, d4; ADR-0080 d16). False narrows every list to promoted rows. The steering list carries held steering after the promoted rows, marked unreviewed: the calling key's own when this is true, and, unless this is false, every author's on a workspace in progress up the scope's chain (ADR-0080 d10, d14). Rules: docs/architecture/retrieval.md. */
             include_unreviewed?: boolean;
             /**
              * Format: int64
@@ -2882,7 +2882,7 @@ export interface components {
             guardrail_scope: components["schemas"]["GuardrailScope"];
             /** @description Opaque; a client only compares it. */
             set_digest: string;
-            /** @description More than twelve apply; the set is still served whole. */
+            /** @description More than twelve approved rules apply, held versions not counted; the set is still served whole. */
             over_cap: boolean;
             /** @description Ordered by severity, depth from the root, promoted_at and artifact_id, a held version after the promoted rows of its severity and depth; never by a query. */
             guardrails: components["schemas"]["ServedGuardrail"][];

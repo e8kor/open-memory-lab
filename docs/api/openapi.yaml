@@ -3940,9 +3940,10 @@ components:
             max_tokens. Inside a workspace a person put in progress, and in every such workspace
             below the scope, every author's held memories join too, and absent means true when the
             served workspaces hold one; absent means false everywhere else (ADR-0030 d3, d4;
-            ADR-0080 d16). The steering list carries held steering after the promoted rows,
-            marked unreviewed: the key's own when this is true, and every author's on a
-            workspace in progress up the scope's chain (ADR-0080 d10, d14). Rules:
+            ADR-0080 d16). False narrows every list to promoted rows. The steering list carries
+            held steering after the promoted rows, marked unreviewed: the calling key's own when
+            this is true, and, unless this is false, every author's on a workspace in progress up
+            the scope's chain (ADR-0080 d10, d14). Rules:
             docs/architecture/retrieval.md.
         max_tokens:
           type: integer
@@ -5079,7 +5080,7 @@ components:
         scope_path: { type: string, description: "The scope node's derived path, root first; the hook's header names it." }
         guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
         set_digest: { type: string, description: "Opaque; a client only compares it." }
-        over_cap: { type: boolean, description: "More than twelve apply; the set is still served whole." }
+        over_cap: { type: boolean, description: "More than twelve approved rules apply, held versions not counted; the set is still served whole." }
         guardrails: { type: array, items: { $ref: '#/components/schemas/ServedGuardrail' }, description: "Ordered by severity, depth from the root, promoted_at and artifact_id, a held version after the promoted rows of its severity and depth; never by a query." }
         own_held:
           type: array
