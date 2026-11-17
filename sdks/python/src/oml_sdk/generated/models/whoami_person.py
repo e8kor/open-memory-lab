@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from ..models.whoami_person_quotas_type_0 import WhoamiPersonQuotasType0
     from ..models.whoami_person_start_type_0 import WhoamiPersonStartType0
     from ..models.whoami_person_usage_type_0 import WhoamiPersonUsageType0
+    from ..models.whoami_ref import WhoamiRef
 
 
 T = TypeVar("T", bound="WhoamiPerson")
@@ -28,6 +29,9 @@ class WhoamiPerson:
         quotas (None | WhoamiPersonQuotasType0):
         deletion_requested_at (datetime.datetime | None): When the person asked for deletion, while the request is
             pending (ADR-0068 d6).
+        linked_keys (list[WhoamiRef] | Unset): The live tenant keys an admin linked to the person (not revoked, not past
+            their expiry, used_by person), by id and name, in name order: the keys oml-web may name in OML-Acting-Key for
+            this person (ADR-0085 d16). Since v0.8.0.
         start (None | Unset | WhoamiPersonStartType0): With start=true, what the onboarding page waits for: whether one
             of the person's agent keys has connected, and the state of the newest memory of their root, held or promoted,
             else null (ADR-0068 d10; ADR-0070 d5). Absent otherwise. Since v0.7.0.
@@ -38,6 +42,7 @@ class WhoamiPerson:
     usage: None | WhoamiPersonUsageType0
     quotas: None | WhoamiPersonQuotasType0
     deletion_requested_at: datetime.datetime | None
+    linked_keys: list[WhoamiRef] | Unset = UNSET
     start: None | Unset | WhoamiPersonStartType0 = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -67,6 +72,13 @@ class WhoamiPerson:
         else:
             deletion_requested_at = self.deletion_requested_at
 
+        linked_keys: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.linked_keys, Unset):
+            linked_keys = []
+            for linked_keys_item_data in self.linked_keys:
+                linked_keys_item = linked_keys_item_data.to_dict()
+                linked_keys.append(linked_keys_item)
+
         start: dict[str, Any] | None | Unset
         if isinstance(self.start, Unset):
             start = UNSET
@@ -86,6 +98,8 @@ class WhoamiPerson:
                 "deletion_requested_at": deletion_requested_at,
             }
         )
+        if linked_keys is not UNSET:
+            field_dict["linked_keys"] = linked_keys
         if start is not UNSET:
             field_dict["start"] = start
 
@@ -96,6 +110,7 @@ class WhoamiPerson:
         from ..models.whoami_person_quotas_type_0 import WhoamiPersonQuotasType0
         from ..models.whoami_person_start_type_0 import WhoamiPersonStartType0
         from ..models.whoami_person_usage_type_0 import WhoamiPersonUsageType0
+        from ..models.whoami_ref import WhoamiRef
 
         d = dict(src_dict)
         user = d.pop("user")
@@ -149,6 +164,15 @@ class WhoamiPerson:
             d.pop("deletion_requested_at")
         )
 
+        _linked_keys = d.pop("linked_keys", UNSET)
+        linked_keys: list[WhoamiRef] | Unset = UNSET
+        if _linked_keys is not UNSET:
+            linked_keys = []
+            for linked_keys_item_data in _linked_keys:
+                linked_keys_item = WhoamiRef.from_dict(linked_keys_item_data)
+
+                linked_keys.append(linked_keys_item)
+
         def _parse_start(data: object) -> None | Unset | WhoamiPersonStartType0:
             if data is None:
                 return data
@@ -172,6 +196,7 @@ class WhoamiPerson:
             usage=usage,
             quotas=quotas,
             deletion_requested_at=deletion_requested_at,
+            linked_keys=linked_keys,
             start=start,
         )
 

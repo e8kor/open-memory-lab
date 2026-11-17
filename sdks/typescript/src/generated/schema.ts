@@ -660,6 +660,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/keys/{key}/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link a person's tenant key to the user who signs in, so the console acts with it in shared workspaces.
+         * @description Requires: admin key role, in the key's own tenant; any other role is access.verb_ceiling, and no MCP tool reaches the route. user names a user of the tenant with a user root and a web entry, none of it disabled; otherwise request.validation with details.field /user and details.reason user_unknown or user_disabled. The key is a live tenant bearer key used_by person; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), admin_key, not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. A key holds one link: linking it again moves the link. Journalled as key.linked_person. From then on oml-web may name the key in OML-Acting-Key beside that user's capacity credential, and the request runs as the key, with its grants and verb ceilings; a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. Since v0.8.0.
+         */
+        post: operations["linkKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/keys/{key}/unlink": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End a key's link to a person.
+         * @description Requires: admin key role, in the key's own tenant; any other role is access.verb_ceiling, and no MCP tool reaches the route. A key without a link is request.validation with details.field key and details.reason not_linked. Journalled as key.unlinked_person; the console's next act with the key answers auth.invalid with details.reason acting_key_not_linked. A revoked key may be unlinked. The Idempotency-Key is required and not replayed (ADR-0085 d16). Since v0.8.0.
+         */
+        post: operations["unlinkKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/keys/{key}/connect-codes": {
         parameters: {
             query?: never;
@@ -2687,6 +2727,16 @@ export interface components {
             expired: boolean;
             requests_per_minute: number | null;
         };
+        KeyLinkRequest: {
+            /** @description The user the key acts for in the console, by name (ADR-0085 d16). */
+            user: string;
+        };
+        /** @description A key and the user the console acts with it for, null when unlinked (ADR-0085 d16). */
+        KeyLink: {
+            key_id: string;
+            name: string | null;
+            linked_user: string | null;
+        };
         Key: {
             key_id: string;
             /** @description Unique in the key's namespace, never changed, never released (ADR-0026 d1, d10). */
@@ -2926,6 +2976,8 @@ export interface components {
              * @description When the person asked for deletion, while the request is pending (ADR-0068 d6).
              */
             deletion_requested_at: string | null;
+            /** @description The live tenant keys an admin linked to the person (not revoked, not past their expiry, used_by person), by id and name, in name order: the keys oml-web may name in OML-Acting-Key for this person (ADR-0085 d16). Since v0.8.0. */
+            linked_keys?: components["schemas"]["WhoamiRef"][];
             /** @description With start=true, what the onboarding page waits for: whether one of the person's agent keys has connected, and the state of the newest memory of their root, held or promoted, else null (ADR-0068 d10; ADR-0070 d5). Absent otherwise. Since v0.7.0. */
             start?: {
                 connected?: boolean;
@@ -5621,6 +5673,102 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    linkKey: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                key: components["parameters"]["KeyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "user": "alice"
+                 *     }
+                 */
+                "application/json": components["schemas"]["KeyLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description The key and the user it is linked to. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "name": "alice-payments",
+                     *       "linked_user": "alice"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["KeyLink"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    unlinkKey: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                key: components["parameters"]["KeyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The key, now linked to no one. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "name": "alice-payments",
+                     *       "linked_user": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["KeyLink"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];
         };
     };
