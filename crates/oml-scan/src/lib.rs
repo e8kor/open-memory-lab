@@ -388,7 +388,43 @@ fn first_match(rule: &Rule, re: &Regex, text: &str) -> Option<(usize, usize)> {
             })
             .and_then(|c| c.get(0))
             .map(|m| (m.start(), m.end())),
+        Check::Bech32 => re
+            .find_iter(text)
+            .find(|m| bech32_checksum(m.as_str()))
+            .map(|m| (m.start(), m.end())),
     }
+}
+
+/// Whether `s`, a human-readable part, `1` and the data in either case,
+/// carries a valid bech32 checksum: BIP-173's polymod over the expanded
+/// part and the data comes to 1. A placeholder such as a run of `X` fails.
+fn bech32_checksum(s: &str) -> bool {
+    const ALPHABET: &[u8] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+    const GEN: [u32; 5] = [0x3b6a_57b2, 0x2650_8e6d, 0x1ea1_19fa, 0x3d42_33dd, 0x2a14_62b3];
+    let lower = s.to_ascii_lowercase();
+    let Some((hrp, data)) = lower.rsplit_once('1') else {
+        return false;
+    };
+    let mut values: Vec<u8> = hrp.bytes().map(|c| c >> 5).collect();
+    values.push(0);
+    values.extend(hrp.bytes().map(|c| c & 31));
+    for c in data.bytes() {
+        match ALPHABET.iter().position(|&a| a == c) {
+            Some(v) => values.push(u8::try_from(v).unwrap_or(u8::MAX)),
+            None => return false,
+        }
+    }
+    let mut chk = 1_u32;
+    for v in values {
+        let top = chk >> 25;
+        chk = ((chk & 0x1ff_ffff) << 5) ^ u32::from(v);
+        for (i, g) in GEN.iter().enumerate() {
+            if (top >> i) & 1 == 1 {
+                chk ^= g;
+            }
+        }
+    }
+    chk == 1
 }
 
 fn code_finding(

@@ -37,6 +37,57 @@ fn j(parts: &[&str]) -> String {
     parts.concat()
 }
 
+/// BIP-173's checksum over `values`, bech32's generator.
+fn polymod(values: &[u8]) -> u32 {
+    const GEN: [u32; 5] = [0x3b6a_57b2, 0x2650_8e6d, 0x1ea1_19fa, 0x3d42_33dd, 0x2a14_62b3];
+    let mut chk = 1_u32;
+    for &v in values {
+        let top = chk >> 25;
+        chk = ((chk & 0x1ff_ffff) << 5) ^ u32::from(v);
+        for (i, g) in GEN.iter().enumerate() {
+            if (top >> i) & 1 == 1 {
+                chk ^= g;
+            }
+        }
+    }
+    chk
+}
+
+/// A fake age X25519 identity whose bech32 checksum holds: 32 bytes from
+/// the xorshift stream, encoded under `age-secret-key-` as age spells an
+/// identity, upper case (BIP-173). No key-shaped literal sits in the tree.
+fn age_identity(seed: u64) -> String {
+    let hrp = "age-secret-key-";
+    let bytes: Vec<u8> = fake("0123456789abcdef", 64, seed)
+        .as_bytes()
+        .chunks(2)
+        .map(|h| u8::from_str_radix(std::str::from_utf8(h).expect("hex"), 16).expect("hex"))
+        .collect();
+    let (mut acc, mut n, mut data) = (0_u32, 0_u32, Vec::new());
+    for b in bytes {
+        acc = (acc << 8) | u32::from(b);
+        n += 8;
+        while n >= 5 {
+            n -= 5;
+            data.push(u8::try_from((acc >> n) & 31).expect("five bits"));
+        }
+        acc &= (1 << n) - 1;
+    }
+    if n > 0 {
+        data.push(u8::try_from((acc << (5 - n)) & 31).expect("five bits"));
+    }
+    let mut values: Vec<u8> = hrp.bytes().map(|c| c >> 5).collect();
+    values.push(0);
+    values.extend(hrp.bytes().map(|c| c & 31));
+    values.extend(&data);
+    values.extend([0; 6]);
+    let sum = polymod(&values) ^ 1;
+    data.extend((0..6).map(|i| u8::try_from((sum >> (5 * (5 - i))) & 31).expect("five bits")));
+    let alphabet = BECH32_UPPER.as_bytes();
+    let tail: String = data.iter().map(|&v| char::from(alphabet[usize::from(v)])).collect();
+    j(&["AGE-SECRET", "-KEY-1", &tail])
+}
+
 /// One sample per rule id: (rule, text, the secret inside it or "").
 fn positives() -> Vec<(&'static str, String, String)> {
     let mut v = Vec::new();
@@ -48,7 +99,7 @@ fn positives() -> Vec<(&'static str, String, String)> {
         s.clone(),
         format!("the deploy key:\n{s}\n{}\n", fake(B64, 64, 1)),
     );
-    let s = j(&["AGE-SECRET", "-KEY-1", &fake(BECH32_UPPER, 58, 30)]);
+    let s = age_identity(30);
     add(
         "age-identity",
         s.clone(),
@@ -394,30 +445,40 @@ fn the_rule_set_after_the_age_identity_rule_is_oml_scan_1_3() {
     assert_eq!(RuleSet::new(Options::default()).version(), "oml-scan/1.3");
 }
 
-/// An age X25519 identity, `AGE-SECRET-KEY-1` and 58 bech32 characters, is
-/// the secret half of a bundle recipient (ADR-0084 d5): a memory that pastes
-/// one is refused, its finding named as the other private-key rules name
-/// theirs (#453).
+/// An age X25519 identity, `AGE-SECRET-KEY-1` and 58 bech32 characters whose
+/// checksum holds, is the secret half of a bundle recipient (ADR-0084 d5): a
+/// memory that pastes one is refused, its finding named as the other
+/// private-key rules name theirs, in either case, since bech32 reads both,
+/// and glued to a word before it (#453).
 #[test]
 fn an_age_secret_key_in_a_memory_is_vetoed() {
     let scanner = RuleSet::new(Options::default());
-    let identity = j(&["AGE-SECRET", "-KEY-1", &fake(BECH32_UPPER, 58, 31)]);
-    let text = format!("the export identity, keep safe:\n{identity}\nend");
-    match scanner.scan(&[("/body", "clean"), ("/anchor/fragment", &text)]) {
-        Verdict::Veto(f) => {
-            assert_eq!(f.len(), 1, "{f:?}");
-            assert_eq!(
-                (f[0].class, f[0].rule, f[0].field.as_str(), f[0].line),
-                ("secret.private_key", "age-identity", "/anchor/fragment", 2)
-            );
+    let identity = age_identity(31);
+    for pasted in [
+        identity.clone(),
+        identity.to_ascii_lowercase(),
+        format!("OML_EXPORT_{identity}"),
+    ] {
+        let text = format!("the export identity, keep safe:\n{pasted}\nend");
+        match scanner.scan(&[("/body", "clean"), ("/anchor/fragment", &text)]) {
+            Verdict::Veto(f) => {
+                assert_eq!(f.len(), 1, "{f:?}");
+                assert_eq!(
+                    (f[0].class, f[0].rule, f[0].field.as_str(), f[0].line),
+                    ("secret.private_key", "age-identity", "/anchor/fragment", 2),
+                    "{pasted}"
+                );
+            }
+            other => panic!("{pasted}: {other:?}"),
         }
-        other => panic!("{other:?}"),
     }
 }
 
 /// The public half, a recipient `age1` and 58 lower-case bech32 characters,
 /// is published on purpose and passes; so do the identity's prefix alone,
-/// a value too short, and one with a character outside bech32 (#453).
+/// a value too short, one with a character outside bech32, and an
+/// identity-shaped value whose bech32 checksum fails: a placeholder in a
+/// runbook, or a real one with a character changed (#453).
 #[test]
 fn an_age_public_recipient_is_not_vetoed() {
     let scanner = RuleSet::new(Options::default());
@@ -429,11 +490,22 @@ fn an_age_public_recipient_is_not_vetoed() {
         &fake(BECH32_UPPER, 57, 34),
         "B", // `B` is not in the bech32 alphabet
     ]);
+    let placeholder = j(&["AGE-SECRET", "-KEY-1", &"X".repeat(58)]);
+    let identity = age_identity(35);
+    let last = identity.chars().last().expect("a character");
+    let changed = format!(
+        "{}{}",
+        &identity[..identity.len() - 1],
+        if last == 'Q' { 'P' } else { 'Q' }
+    );
     for text in [
         format!("export with --recipient {recipient}"),
         "an identity starts with AGE-SECRET-KEY-1 and is read from a file".to_owned(),
         format!("truncated: {short}"),
         format!("not bech32: {outside}"),
+        format!("put the identity here: {placeholder}"),
+        format!("a placeholder in lower case: {}", placeholder.to_ascii_lowercase()),
+        format!("one character changed: {changed}"),
     ] {
         assert_eq!(scanner.scan(&[("/body", &text)]), Verdict::Pass, "{text}");
     }

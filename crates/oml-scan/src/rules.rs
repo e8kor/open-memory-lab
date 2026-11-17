@@ -44,6 +44,9 @@ pub(crate) enum Check {
     /// Capture groups 1 and 2 are a user and a password; the password must
     /// not be a placeholder, the user's own name or an environment reference.
     Password,
+    /// The match is a bech32 string whose checksum holds (BIP-173), in
+    /// either case: a placeholder or a mistyped value fails it.
+    Bech32,
 }
 
 /// One rule of the set.
@@ -98,11 +101,16 @@ pub(crate) const RULES: &[Rule] = &[
         r"-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----",
     ),
     // An age X25519 identity: the secret half of a bundle recipient
-    // (ADR-0084 d5; #453). Its public half, `age1…`, is lower case and passes.
-    veto(
-        "age-identity",
-        "secret.private_key",
-        r"(?-u:\b)AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58}(?-u:\b)",
+    // (ADR-0084 d5; #453), in either case and glued to the word before it,
+    // and only when its bech32 checksum holds. Its public half, `age1…`,
+    // passes. The post-quantum and plugin identities are not read (#461).
+    checked(
+        veto(
+            "age-identity",
+            "secret.private_key",
+            r"(?i-u:AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58})(?-u:\b)",
+        ),
+        Check::Bech32,
     ),
     veto(
         "putty-private-key",
