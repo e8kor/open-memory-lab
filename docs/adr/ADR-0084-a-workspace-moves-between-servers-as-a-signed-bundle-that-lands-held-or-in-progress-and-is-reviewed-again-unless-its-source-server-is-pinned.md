@@ -9,7 +9,8 @@ answers: what a workspace export carries and what it never carries; the bundle's
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its four questions decided at their
 recommendations and every other default as drafted · proposed the same day · the "unless its source server is
-pinned" of its file name is ADR-0088, which is deferred
+pinned" of its file name is ADR-0088, which is deferred · the format built as the crate `oml-bundle`, with its readings and the
+operator's R1 decision of 2026-11-17 recorded at the end of this record; the routes and commands of d15 are not built
 
 **Release:** not scheduled; after ADR-0085, whose release manifest `release` mode exports. A
 trusted source server, the "unless" of the title, is the deferred ADR-0088.
@@ -73,7 +74,8 @@ Decided, not built.
   workspaces.jsonl          one line per exported workspace: name, path, status, parent
   versions.jsonl           one line per claim version (d2, d3)
   verdicts.jsonl           one line per verdict on an exported version (d4)
-  events.jsonl             each exported version's and verdict's source journal event, as signed
+  events.jsonl             each of the exporter's own versions' source journal event, as signed
+                           (amended 2026-11-17, R1 below: no other version's and no verdict's)
   edges.jsonl              claim and brief edges whose two ends are exported
   bodies/<sha256>          a version's body over 64 KiB and every attachment, by plaintext digest
   ```
@@ -358,3 +360,147 @@ Decided, not built.
 | **A pseudonym stable across bundles** | Links one author across every bundle ever exported, building a profile no reader is entitled to. |
 | **Signing with a separate export key** | A second key per server to rotate, back up and pin, with no gain over domain separation. |
 | **An unencrypted bundle sent over TLS** | TLS protects the transfer, not the file at rest in a download folder. |
+
+## The format's readings of 2026-11-17
+
+The crate `crates/shared/oml-bundle` builds the format of d1, d4, d5, d7, d8 and d13. The server
+routes, the CLI verbs and the console pages of d15 remain designed, not built (#425, #426). The
+record left ten points open, and the operator decided them on 2026-11-17. The first is a decision
+that amends d1. The other nine are readings taken as recommended.
+
+- **R1 — Source events travel for the exporter's own versions only (the operator: "Own events
+  only"). Amends d1's "each exported version's and verdict's source journal event, as signed".**
+  A signed event carries `principal`, the key's name as journalled (`crew-redline/agent-3`,
+  `acme/admin-1`), and `api_key_id`. Its payload names `reviewer_key_id`, `ratifier_key_id` or
+  `proposer_key_id`. A principal can name a person, and a verdict's names the reviewer. That would
+  undo d4's per-bundle pseudonyms and ADR-0077 d2's rule that a reader never learns who the
+  reviewer was. So `events.jsonl` holds the signed source event of each version the exporting
+  principal wrote, and nothing else. Such a version names its event in `source_event`, and the
+  reader checks the event's signature, its tenant and that it signed the line's artifact, version
+  and plaintext digest. A version of another author, every verdict and every edge carries no
+  event. Their integrity rests on the manifest signature, which covers every file's digest. A
+  reader refuses an event on another author's version as `bundle.malformed`
+  (`event_on_foreign_version`), and refuses an event no version names. ADR-0077 is not amended.
+  - *Rejected: every event, verbatim.* The target could verify every version against its source
+    signature, but key ids and principal names would leave the server, and a principal can name
+    a person and a reviewer.
+  - *Rejected: every event with its identities redacted.* A redacted event no longer verifies
+    under its signature, so it would prove nothing the manifest does not already prove.
+- **R2 — Container.** The bundle is a POSIX ustar tar, written by the `tar` crate 0.4 with its
+  default features off, with no compression in `oml-bundle/1`, encrypted as a binary (not armored)
+  age file. Its file suffix is `.oml-bundle`. Every entry is a regular file, mode 0644, owner 0 and
+  mtime 0, so the same contents always make the same tar. *Rejected:* gzip, which adds a dependency
+  and a decompression bomb to defend against; zstd, which is a C library (ADR-0006); armor, which
+  adds a third to the size.
+- **R3 — Order.** The files follow d1's order: `manifest.json`, `workspaces.jsonl`,
+  `versions.jsonl`, `verdicts.jsonl`, `events.jsonl`, `edges.jsonl`. All six are present, even
+  when empty. `bodies/<64 lowercase hex>` follow, in ascending order. Lines are written in source
+  journal order, and a reader does not enforce line order. *Rejected:* leaving an empty file out,
+  because the layout check would then not be exact.
+- **R4 — The manifest.** The manifest is `{format, source {server_id, tenant_id, tenant_name},
+  workspaces, mode, release, since, dropped, exported_at, exporter_pseudonym, event_keys, files,
+  signature}`. Every member is present, with `null` or empty for an absent value.
+  - `release` and `since` are each `{label, manifest_digest}`.
+  - `files` lists each entry after the manifest as `{path, bytes, lines, sha256}`, with `lines`
+    null for a body.
+  - `event_keys` lists the journal public keys, in hex, that the carried events are signed with,
+    because a chain may span a key rotation.
+  - `signature` is `{alg: "ed25519", key_fingerprint, public_key, sig}`. The signed bytes are
+    `oml-bundle/1\n` followed by the RFC 8785 form of the manifest without `signature`. The
+    fingerprint is the lowercase hex SHA-256 of the 32-byte key, as `oml audit verify-chain` prints
+    it, and `--expect-key` matches it case-insensitively.
+  - Digests are spelled `sha256:<hex>`, as the API serves them.
+- **R5 — Lines.** Field names follow the API and the event catalog. Every object is closed.
+  - A version has `artifact_id`, `version`, `claim_key`, `workspace` (its path), `kind`,
+    `format`, `title`, `state` (held, promoted, demoted, rejected, withdrawn), `retirement`,
+    `replaces`, `simulation_id`, `text` or `body`, `plaintext_digest`, `anchor`, `valid_from`,
+    `valid_until`, `skill`, `document`, `test`, `derives_from`, `origin` (verbatim),
+    `attachments [{digest, media_type, size_bytes}]`, `author {used_by, same_user, pseudonym}`,
+    `created_at`, `promoted_at` and `source_event`.
+  - Text of 64 KiB or less is inline `text`. A larger text is `body`, its digest. A body that
+    would fit inline is refused, so each text has one form.
+  - A verdict has `artifact_id`, `version`, `verdict` (approve, reject), `reviewer`,
+    `approved_at` and `at`.
+  - An edge has `kind` (claim, brief), `src`, `dst` and `label`.
+  - In `release` mode, every version is promoted.
+- **R6 — `bundle.malformed {file, line, reason}`** is the refusal for a line that does not parse,
+  breaks a closed shape, or breaks a rule d1–d4 state. Its message names the field and never the
+  value. The same reading adds `bundle.decrypt_failed`, for an identity that is not a recipient of
+  the file or a passphrase file, never naming the identity; and `bundle.io`, for a failure of the
+  caller's reader or writer.
+- **R7 — An erasure marker is exactly `{artifact_id, version, erased: true}`.** It carries no
+  claim key and no event, because the source event signs the plaintext and ciphertext digests. A
+  marker with any other member is `bundle.malformed` (`erasure_marker_content`).
+- **R8 — A pseudonym** is the lowercase hex HMAC-SHA-256 of the source key id under the bundle's
+  salt (`hmac` 0.12). The caller draws the salt for each bundle; the crate never exports it.
+- **R9 — Limits.** d7's line limit (2 MiB) and depth limit (32) are fixed. The total unpacked
+  size, the entry count and the size of one entry are passed in by the caller from the target's
+  quota. Until measurement sets them, the CLI defaults to 1 GiB, 100,000 entries and 64 MiB per
+  entry.
+- **R10 — The plan** is a pure function of the manifest, the versions and the caller's view of
+  the target. The view gives each claim key's target tip, held versions included; whether the last
+  import from this source wrote that tip; and the ledger.
+  - The bundle's tip of a key is its newest promoted version, or failing that its newest held one.
+  - `removed`: the bundle tip is a retirement, or the key is in `dropped`, or a full release no
+    longer holds a key imported from this source.
+  - `unchanged`: the digest is equal. A key that is absent on the target and removed in the bundle
+    is also `unchanged`, since there is nothing to retire.
+  - `conflict`: a differing target tip that the last import from this source did not write. This
+    includes a key the target held on its own.
+  - `equivalent`: the caller's format diff says so.
+  - `changed`: every other case.
+  - `import.bundle_older` (unless `allow_older`) and `import.since_mismatch` refuse the whole plan
+    before any key is planned.
+  - A marker for a version already imported is listed for `import.erasure_notice` (d13).
+
+### Review readings of 2026-11-17
+
+The independent review of the format at `ef3ece0b` found these gaps. Each is now a reading, and
+the code follows it.
+
+- **R11 — A source's key is pinned at its first import.** Without this, a bundle signed by any key
+  could claim the real `source.server_id` and `tenant_id`. It would then reach the ledger of an
+  earlier import and drive `removed` and `changed` against the keys that import wrote. So the
+  ledger keeps the fingerprint of the key that signed the last import from each source, and
+  `plan_import` takes the verified bundle. Where a ledger for the source exists, the plan refuses
+  `import.source_key_changed` in two cases: the bundle was signed by another key, or it was read
+  without `--expect-key`, so nothing authenticated it. A first import from a source has no ledger
+  and passes. Its plan carries `authenticated`, as d5 asks, and the server records the fingerprint
+  in the new ledger row. *Rejected:* trusting the manifest's source ids, which anyone can write;
+  and requiring `--expect-key` on every import, which the record does not ask for a first import
+  (d5).
+  - *First import.* The first import from a source pins whichever key signed it. So the import
+    CLI (#426) requires `--expect-key` on a first import, and the pin is chosen deliberately, not
+    taken from whatever key the bundle names.
+  - *Key rotation.* A legitimate rotation of the source's journal key fails closed with
+    `import.source_key_changed`, because the ledger cannot tell a rotation from a forgery. Until
+    a re-pin act is designed, with #426 or with ADR-0088's trusted sources, the remedy is to
+    import into a new target workspace, which has no ledger for the source.
+- **R12 — The carried events are one key's writes.** A pseudonym on a line is the exporter's own
+  claim. So the reader also requires these things of `events.jsonl`:
+  - every event names one `principal` and one `api_key_id`, the exporter's;
+  - its `event_type` is a write: `submission.remember` or `submission.learn` (a supersession
+    is a `submission.remember` naming `replaces`);
+  - its payload carries no `reviewer_key_id`, `ratifier_key_id` or `proposer_key_id` other than
+    the event's own `api_key_id`.
+
+  Anything else is `bundle.malformed` (`foreign_event`). That keeps R1's rule by construction: only
+  the exporter's own key id and principal leave the server.
+  A version written through `simulation.write` (ADR-0025) travels without an event, even when it
+  is the exporter's own, so the server's export must not attach one to a simulation row.
+- **R13 — Verification checks the tenant (d5).** `VerifyOptions` takes `expect_tenant`. The server
+  passes the source tenant it expects, and the CLI passes `--expect-tenant` when one is given. A
+  manifest naming another tenant is `bundle.signature_invalid`.
+- **R14 — `exported_at` has the chain's fixed form, `YYYY-MM-DDTHH:MM:SS.ffffffZ`.** It is
+  compared as text only in that form. A manifest in any other form is `bundle.malformed`.
+- **R15 — Signatures are checked strictly.** The manifest and every event are verified with
+  Ed25519's strict verification, which refuses small-order keys and non-canonical signatures.
+- **R16 — `bundle.decrypt_failed` covers both decryption failures.** One is an identity that does
+  not parse or is not a recipient. The other is ciphertext that does not authenticate. A recipient
+  that does not parse is `bundle.unencrypted`, because nothing can be encrypted to it.
+- **R17 — The age crate is 0.11, not 0.12.** 0.12's post-quantum recipients pull `hpke` and `p256`,
+  and through them `crypto-bigint` 0.5 (RUSTSEC-2026-0387). The bundle needs only X25519 recipients
+  and the binary format, which 0.11 has. *Rejected:* an advisory ignore in `deny.toml`.
+- **Order of the work (the operator, 2026-11-17).** Resumable upload sessions, #451 (ADR-0004
+  d3), come before import, #426. The import route takes the decrypted tar through such a session,
+  not in one request body.

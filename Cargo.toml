@@ -6,6 +6,7 @@ members = [
     "crates/shared/oml-page",
     "crates/shared/oml-web-credential",
     "crates/shared/oml-former-names",
+    "crates/shared/oml-bundle",
     "sdks/rust",
     "crates/clients/oml-web",
     "crates/oml-guardrail",
@@ -37,6 +38,9 @@ license = "Apache-2.0"
 oml-page = { path = "crates/shared/oml-page" }
 oml-web-credential = { path = "crates/shared/oml-web-credential" }
 oml-former-names = { path = "crates/shared/oml-former-names" }
+# The workspace bundle format `oml-bundle/1` (ADR-0084): a leaf the server and
+# the CLI both link, so export, the CLI's pre-check and import verify alike.
+oml-bundle = { path = "crates/shared/oml-bundle" }
 oml-sdk = { path = "sdks/rust" }
 oml-web = { path = "crates/clients/oml-web" }
 oml-app = { path = "crates/oml-app" }
@@ -145,6 +149,19 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 ed25519-dalek = "2.2"
 hex = "0.4"
+# The bundle's recipient encryption (ADR-0084 d5): age's X25519 recipients,
+# pure Rust, default features off (no plugin, no ssh, no armor). Only
+# oml-bundle names it. 0.11, not 0.12: 0.12's post-quantum recipients pull
+# hpke and p256, and through them crypto-bigint 0.5 (RUSTSEC-2026-0387).
+age = { version = "0.11.5", default-features = false }
+# The bundle container (ADR-0084 d1): ustar written and read entry by entry;
+# no xattr feature, so nothing is unpacked to disk by the library.
+tar = { version = "0.4.46", default-features = false }
+# The bundle's per-bundle pseudonyms (ADR-0084 d4): HMAC-SHA-256 over sha2.
+hmac = "0.12"
+# Test-only: spells the bundle vectors' TEST-ONLY age identity from its raw
+# bytes, so no secret-key string is committed. Already in the graph via age.
+bech32 = "0.9"
 proptest = "1.6"
 # The deterministic scan's rule set (ADR-0065 d1): linear-time matching, no
 # backtracking, pure Rust; already in the graph through tokenizers.
