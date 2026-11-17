@@ -578,6 +578,7 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         reviewer_key_id: Uuid,
         workspaces: &[Uuid],
         lane: ReviewLane,
+        person_root: Option<Uuid>,
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send {
         timed(
             "review_claim_next",
@@ -587,6 +588,7 @@ impl<J: JournalStore> JournalStore for Timed<J> {
                 reviewer_key_id,
                 workspaces,
                 lane,
+                person_root,
             ),
         )
     }

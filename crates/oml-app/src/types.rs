@@ -3313,6 +3313,13 @@ pub enum AppError {
     /// closure (errors.md `review.author_in_lineage`; ADR-0012 R2).
     #[error("the ratifier is in an endpoint's lineage closure (review.author_in_lineage)")]
     AuthorInLineage,
+    /// The reviewing key acts for the person whose key wrote the version,
+    /// outside that person's own root (errors.md `review.author_in_lineage`,
+    /// `details.reason: same_person`; ADR-0001 d5; ADR-0082 d7).
+    #[error(
+        "a key acting for the author's person judges no version outside that person's root (review.author_in_lineage)"
+    )]
+    SamePerson,
     /// The edge is decided: ratified before this call, or by a commit that
     /// won the store's compare-and-set. Nothing was journalled.
     // reading: errors.md declares no edge-specific code; a verdict on a

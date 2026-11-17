@@ -1290,6 +1290,11 @@ pub trait JournalStore: Retriever + Send + Sync {
     /// not, and the lowest turn goes first, the older row first within a
     /// turn, so one key's flood does not bury another's item and no author
     /// waits behind newcomers (ADR-0074 d19; the operator, 2026-11-17).
+    /// `person_root` is the user root of the person the reviewer acts for:
+    /// a row whose author key acts for that same person is served only
+    /// inside that root (R2 by person; ADR-0001 d5; ADR-0082 d7). An
+    /// author key's person is its user root, its linked root, or the root
+    /// named as its session key's person.
     fn review_claim_next(
         &self,
         tenant_id: Uuid,
@@ -1297,6 +1302,7 @@ pub trait JournalStore: Retriever + Send + Sync {
         reviewer_key_id: Uuid,
         workspaces: &[Uuid],
         lane: ReviewLane,
+        person_root: Option<Uuid>,
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send;
 
     /// The memory ids of the queue entries this reviewer key has claimed in

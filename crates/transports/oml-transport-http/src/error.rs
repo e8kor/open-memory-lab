@@ -751,6 +751,13 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "R2: the reviewer is never the author — enforced against the full lineage closure.",
             "the ratifying key or principal is in an endpoint's lineage closure",
         ),
+        AppError::SamePerson => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "review.author_in_lineage",
+            "Outside a person's own root, no key acting for that person judges a version any of their keys wrote (ADR-0001 d5; ADR-0082 d7).",
+            "this key acts for the person whose key wrote the version, outside that person's root",
+        )
+        .with_details(json!({ "reason": "same_person" })),
         // A decided edge answers as a verdict on a decided row does: errors.md
         // declares no edge-specific code (ADR-0021 d5).
         AppError::EdgeConsumed { edge_id } => ApiError::serve_invalid("consumed")

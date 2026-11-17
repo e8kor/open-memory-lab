@@ -2329,3 +2329,208 @@ async fn a_linked_key_past_its_expiry_no_longer_acts_for_its_person() {
         .unwrap_err();
     assert!(link_refused(&err, "revoked"), "{err:?}");
 }
+
+// -- R2 by person (ADR-0001 d5; ADR-0082 d7; #392) ---------------------------
+
+/// A shared `team` workspace, alice signed in as an admin of it, and her
+/// tenant writer key `alice-team` linked to her, writer on `team`.
+async fn team_with_alices_linked_writer(
+    app: &TestApp,
+    admin: &str,
+) -> (WebSessionRecord, IssuedKey) {
+    app.create_workspace(admin, &name("team"), None, None)
+        .await
+        .expect("an admin creates a shared workspace");
+    let alice = signed_in(app, admin, "alice", true).await;
+    let writer = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                ..user_req(
+                    Role::Writer,
+                    "unused",
+                    "alice/team",
+                    vec![
+                        grant(by_name("team"), Role::Writer),
+                        grant(by_name("team"), Role::Reader),
+                    ],
+                )
+            },
+        )
+        .await
+        .expect("alice's tenant writer key");
+    app.link_key_to_person(admin, writer.key_id.into(), &name("alice"))
+        .await
+        .expect("linked");
+    (alice, writer)
+}
+
+fn same_person(err: &AppError) -> bool {
+    matches!(err, AppError::SamePerson)
+}
+
+/// Outside alice's root, alice's session reviewer key judges nothing her
+/// linked tenant key wrote, approve or reject; the row is neither listed
+/// to it nor served; another person's reviewer approves it.
+#[tokio::test]
+async fn a_persons_session_reviewer_key_is_refused_a_verdict_on_their_linked_keys_write_outside_their_root()
+ {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (alice, writer) = team_with_alices_linked_writer(&app, admin).await;
+    let id = written(
+        &app,
+        &writer.value,
+        &submit("t1", "The team ships on Fridays.", Some("team")),
+    )
+    .await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    app.grant_review_capacity(&alice_admin, &name("alice"), by_name("team"))
+        .await
+        .expect("the review designation");
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    for verdict in [Verdict::Approve, Verdict::Reject] {
+        let err = app
+            .post_verdict(Bearer::Session(&review), id, verdict, Some("no"))
+            .await
+            .unwrap_err();
+        assert!(same_person(&err), "{err:?}");
+    }
+    let listed = app
+        .review_held(
+            Bearer::Session(&review),
+            &oml_app::types::HeldListingRequest {
+                workspace: None,
+                author_key: None,
+                claim_key_prefix: None,
+                cursor: None,
+                limit: 50,
+                needs: None,
+            },
+        )
+        .await
+        .expect("the listing");
+    assert!(
+        listed.items.iter().all(|i| i.served.memory.memory_id != id),
+        "not listed to alice's reviewer"
+    );
+    assert!(
+        app.review_next(Bearer::Session(&review))
+            .await
+            .expect("serve")
+            .is_none(),
+        "not served to alice's reviewer"
+    );
+    let bob = person_tenant_key(
+        &app,
+        admin,
+        "bob/team-review",
+        vec![
+            grant(by_name("team"), Role::Reviewer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    let outcome = app
+        .post_verdict(&bob.value, id, Verdict::Approve, None)
+        .await
+        .expect("another person approves");
+    assert!(!outcome.same_user);
+}
+
+/// A linked tenant reviewer key judges nothing its person's session key
+/// wrote outside their root: `<user>-curate`'s write in `universe`.
+#[tokio::test]
+async fn a_persons_linked_reviewer_key_is_refused_a_verdict_on_their_session_keys_write() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", true).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    app.grant_curation_capacity(&alice_admin, &name("alice"), by_name("alice"))
+        .await
+        .expect("the curation designation");
+    let curate = app
+        .web_caller(&alice, Capacity::Curate)
+        .await
+        .expect("alice-curate");
+    let id = app
+        .submit_memory(
+            Bearer::Session(&curate),
+            &submit("u1", "Deploys pause on Fridays.", Some("universe")),
+        )
+        .await
+        .expect("curated")
+        .receipt
+        .memory_id;
+    let reviewer = person_tenant_key(
+        &app,
+        admin,
+        "alice/universe-review",
+        vec![
+            node_grant(by_name("universe"), Role::Reviewer),
+            node_grant(by_name("universe"), Role::Reader),
+        ],
+    )
+    .await;
+    app.link_key_to_person(admin, reviewer.key_id.into(), &name("alice"))
+        .await
+        .expect("linked");
+    let err = app
+        .post_verdict(&reviewer.value, id, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(same_person(&err), "{err:?}");
+    let other = universe_reviewer(&app, admin, "universe-review").await;
+    app.post_verdict(&other.value, id, Verdict::Approve, None)
+        .await
+        .expect("another identity approves");
+}
+
+/// Inside alice's root the rule does not apply: her linked tenant
+/// reviewer key approves her user key's write, marked same user.
+#[tokio::test]
+async fn inside_the_persons_root_their_linked_key_approves_their_user_keys_write_marked_same_user()
+{
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    signed_in(&app, admin, "alice", false).await;
+    let writer = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let reviewer = person_tenant_key(
+        &app,
+        admin,
+        "alice/root-review",
+        vec![
+            grant(by_name("alice"), Role::Reviewer),
+            grant(by_name("alice"), Role::Reader),
+        ],
+    )
+    .await;
+    app.link_key_to_person(admin, reviewer.key_id.into(), &name("alice"))
+        .await
+        .expect("linked");
+    let id = written(
+        &app,
+        &writer.value,
+        &submit("r1", "A note in the root.", None),
+    )
+    .await;
+    let outcome = app
+        .post_verdict(&reviewer.value, id, Verdict::Approve, None)
+        .await
+        .expect("approved inside the root");
+    assert!(outcome.same_user);
+}

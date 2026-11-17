@@ -4519,6 +4519,32 @@ where
         }
     }
 
+    /// The user root of the person `key` acts for, read as
+    /// [`Self::person_of`] reads the person: a user key's root, a linked
+    /// tenant key's, or the root named as a session key's person; `None`
+    /// for a key that acts for no person (ADR-0082 d7; ADR-0085 d16).
+    async fn person_root_of(&self, key: &KeyRecord) -> Result<Option<Uuid>, AppError> {
+        if let Some(root) = key.user.or(key.linked_user) {
+            return Ok(Some(root));
+        }
+        let Some(user) = &key.session_user else {
+            return Ok(None);
+        };
+        let Some(id) = self
+            .journal
+            .resolve_name(key.tenant_id, NamedKind::Workspace, user)
+            .await?
+        else {
+            return Ok(None);
+        };
+        Ok(self
+            .journal
+            .workspace(key.tenant_id, id)
+            .await?
+            .filter(|w| w.user_root)
+            .map(|w| w.workspace_id))
+    }
+
     /// Whether the proposing or authoring key and the ratifying key act for
     /// one person: the one `same_user` rule of a claim's approval, a
     /// transition's ratification and an edge's (ADR-0046 d2, ADR-0055 d7).
@@ -5823,7 +5849,14 @@ where
         let workspaces = self.reviewer_nodes(&caller).await?;
         match self
             .journal
-            .review_claim_next(key.tenant_id, &key.principal, key.key_id, &workspaces, lane)
+            .review_claim_next(
+                key.tenant_id,
+                &key.principal,
+                key.key_id,
+                &workspaces,
+                lane,
+                self.person_root_of(key).await?,
+            )
             .await?
         {
             None => Ok(None),
@@ -6014,6 +6047,7 @@ where
         });
         let mut ancestries = BTreeMap::new();
         let mut users: BTreeMap<Uuid, bool> = BTreeMap::new();
+        let person_root = self.person_root_of(key).await?;
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
             let m = &row.memory;
@@ -6033,6 +6067,22 @@ where
                     same
                 }
             };
+            // R2 by person: a row the reviewer's own person wrote outside
+            // that person's root is not theirs to judge, so it is not
+            // listed (ADR-0001 d5; ADR-0082 d7).
+            if same {
+                let in_root = match walked.get(&m.workspace_id) {
+                    Some(w) => w.user(),
+                    None => self
+                        .journal
+                        .workspace(tenant_id, m.workspace_id)
+                        .await?
+                        .and_then(|w| w.user()),
+                };
+                if in_root.is_none() || in_root != person_root {
+                    continue;
+                }
+            }
             if let Entry::Vacant(slot) = ancestries.entry(m.workspace_id)
                 && let Some(ancestry) = ancestry_of(&walked, m.workspace_id)
             {
@@ -6311,6 +6361,20 @@ where
         let same_user = self
             .same_person(key.tenant_id, memory.author_key_id, key)
             .await?;
+        // R2 by person: outside the author's person's own root, a key acting
+        // for that person counts no verdict, approve or reject (ADR-0001 d5;
+        // ADR-0082 d7). Inside the root the verdict stands, marked
+        // `same_user`.
+        if same_user {
+            let workspace_root = self
+                .journal
+                .workspace(key.tenant_id, memory.workspace_id)
+                .await?
+                .and_then(|w| w.user());
+            if workspace_root.is_none() || workspace_root != self.person_root_of(key).await? {
+                return Err(AppError::SamePerson);
+            }
+        }
 
         let (verdict_type, target_status) = match verdict {
             Verdict::Approve => (event_types::REVIEW_APPROVE, MemoryStatus::Promoted),

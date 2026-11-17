@@ -3666,13 +3666,18 @@ impl JournalStore for MemStore {
         reviewer_key_id: Uuid,
         workspaces: &[Uuid],
         lane: ReviewLane,
+        person_root: Option<Uuid>,
     ) -> Result<Option<MemoryRecord>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
         };
         let mut state = tenant.lock().expect("tenant lock");
         let TenantState {
-            queue, memories, ..
+            queue,
+            memories,
+            keys,
+            workspaces: nodes,
+            ..
         } = &mut *state;
         // Every entry this reviewer may judge, in queue order, then the one
         // served: the first, or in the person lane the lowest turn, round-
@@ -3716,6 +3721,20 @@ impl JournalStore for MemStore {
                 continue;
             }
             if !lane.admits(needs_person_row(memories, memory)) {
+                continue;
+            }
+            // R2 by person: a row the reviewer's own person wrote is served
+            // only inside that person's root (ADR-0001 d5; ADR-0082 d7).
+            if let Some(root) = person_root
+                && keys
+                    .get(&memory.author_key_id)
+                    .and_then(|k| person_root_in(nodes, k))
+                    == Some(root)
+                && nodes
+                    .get(&memory.workspace_id)
+                    .and_then(WorkspaceRecord::user)
+                    != Some(root)
+            {
                 continue;
             }
             candidates.push((position, memory.author_key_id));
@@ -4446,6 +4465,19 @@ impl MemStore {
         keys.sort_by(|a, b| a.name.cmp(&b.name));
         keys
     }
+}
+
+/// The user root of the person `key` acts for, as the Postgres store reads
+/// it: its user root, its linked root, or the user root named as its
+/// session key's person (ADR-0082 d7; ADR-0085 d16).
+fn person_root_in(nodes: &BTreeMap<Uuid, WorkspaceRecord>, key: &KeyRecord) -> Option<Uuid> {
+    key.user.or(key.linked_user).or_else(|| {
+        let user = key.session_user.as_ref()?;
+        nodes
+            .values()
+            .find(|w| w.user_root && &w.name == user)
+            .map(|w| w.workspace_id)
+    })
 }
 
 impl WebStore for MemStore {
