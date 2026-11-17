@@ -18,7 +18,7 @@
 -- Numbered 0052, after the linked tenant keys (0050, 0051).
 --
 -- What it costs a live database: one UPDATE of review_queue joined to its
--- memories and the holders' key rows, each tenant's rows under its row
+-- memories, probing each holder's key row, each tenant's rows under its row
 -- security as 0043 enumerates the tenants. A lock is waited for at most 5 s.
 
 SET LOCAL lock_timeout = '5s';
@@ -32,11 +32,16 @@ BEGIN
         PERFORM set_config('oml.tenant_id', t::text, true);
         UPDATE review_queue q
            SET held_by_key = NULL
-          FROM memories m, api_keys k
+          FROM memories m
          WHERE q.tenant_id = t AND m.tenant_id = t AND m.id = q.memory_id
-           AND k.tenant_id = t AND k.id = q.held_by_key
-           AND NOT (k.role = 'reviewer' AND k.used_by = 'person'
-                    AND k.crew_id IS NULL AND k.profile IS NULL)
+           AND q.held_by_key IS NOT NULL
+           -- A holder with no key row counts as one that cannot approve:
+           -- 0002 dropped the foreign key, so a join would miss it.
+           AND NOT EXISTS (
+               SELECT 1 FROM api_keys k
+                WHERE k.tenant_id = t AND k.id = q.held_by_key
+                  AND k.role = 'reviewer' AND k.used_by = 'person'
+                  AND k.crew_id IS NULL AND k.profile IS NULL)
            AND (m.kind IN ('steering', 'guardrail', 'skill')
                 OR (m.replaces_artifact_id IS NOT NULL AND EXISTS (
                     SELECT 1 FROM memories r

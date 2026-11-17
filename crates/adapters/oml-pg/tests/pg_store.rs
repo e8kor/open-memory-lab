@@ -12097,62 +12097,125 @@ async fn migration_0052_releases_a_lane_claim_a_crew_key_took_before_the_lane() 
     let crew = workspace_pg(&app, admin, "crew", boot.root_workspace_id).await;
     let writer = writer_pg(&app, admin, crew).await;
     let crew_key = reviewer_pg(&app, admin, "crew-reviewer", "crew/reviewer", crew).await;
-    let steering = app
-        .submit_memory(
-            writer.as_str(),
-            &kind_submit("s-1", MemoryKind::Steering, "Quote in USD/t.", None, None),
+    let person_key = app
+        .issue_key(
+            admin,
+            &oml_app::types::IssueKeyRequest {
+                profile: None,
+                role: Role::Reviewer,
+                name: name("person-reviewer"),
+                principal: "a-person".to_owned(),
+                used_by: Some(oml_app::domain::UsedBy::Person),
+                default_workspace: None,
+                crew: None,
+                connect_code: false,
+                user: None,
+                guardrail_scope: None,
+                grants: vec![oml_app::types::GrantRequest {
+                    node: crew.into(),
+                    role: Role::Reviewer,
+                    deny: Vec::new(),
+                    covers: oml_app::domain::access::Covers::Subtree,
+                }],
+                expiry: None,
+                requests_per_minute: None,
+            },
         )
         .await
-        .expect("steering")
-        .receipt
-        .memory_id;
-    // The claim a crew key took before the lane, as the store kept it.
-    let stranded = store
-        .review_claim_next(
-            boot.tenant_id,
-            "crew/reviewer",
-            crew_key.key_id,
-            &[crew],
-            oml_app::types::ReviewLane::Any,
-        )
-        .await
-        .expect("claim")
-        .expect("the steering");
-    assert_eq!(stranded.memory_id, steering);
-    let person = Uuid::from_u128(0xFEED);
-    assert!(
+        .expect("a person's reviewer key");
+    let mut ids = Vec::new();
+    for n in 0..3 {
+        ids.push(
+            app.submit_memory(
+                writer.as_str(),
+                &kind_submit(
+                    &format!("s-{n}"),
+                    MemoryKind::Steering,
+                    &format!("Quote rule {n} in USD/t."),
+                    None,
+                    None,
+                ),
+            )
+            .await
+            .expect("steering")
+            .receipt
+            .memory_id,
+        );
+    }
+    // Three claims taken before the lane, as the store kept them: one by a
+    // crew key, one by a person's reviewer key, one by a key with no row.
+    let ghost = Uuid::from_u128(0x6057);
+    for (principal, key) in [
+        ("crew/reviewer", crew_key.key_id),
+        ("a-person", person_key.key_id),
+        ("ghost", ghost),
+    ] {
         store
             .review_claim_next(
                 boot.tenant_id,
-                "a-person",
-                person,
+                principal,
+                key,
                 &[crew],
-                oml_app::types::ReviewLane::Person,
+                oml_app::types::ReviewLane::Any,
             )
             .await
             .expect("claim")
-            .is_none(),
-        "while the crew holds it, no person is served it"
-    );
-    let mut owner = admin_in(&db).await;
-    owner
-        .execute(include_str!(
-            "../../../../migrations/0052_release_stranded_lane_claims.sql"
-        ))
+            .expect("a steering row");
+    }
+    let holders = |db: String| async move {
+        let mut owner = admin_in(&db).await;
+        let rows: Vec<(Uuid, Option<Uuid>)> = sqlx::query_as(
+            "SELECT memory_id, held_by_key FROM review_queue ORDER BY held_since, memory_id",
+        )
+        .fetch_all(&mut owner)
         .await
-        .expect("0052 runs");
-    owner.close().await.expect("close");
+        .expect("the queue");
+        owner.close().await.expect("close");
+        rows
+    };
+    let before = holders(db.clone()).await;
+    assert_eq!(
+        before.iter().filter(|(_, h)| h.is_some()).count(),
+        3,
+        "{before:?}"
+    );
+    let run = |db: String| async move {
+        let mut owner = admin_in(&db).await;
+        owner
+            .execute(include_str!(
+                "../../../../migrations/0052_release_stranded_lane_claims.sql"
+            ))
+            .await
+            .expect("0052 runs");
+        owner.close().await.expect("close");
+    };
+    run(db.clone()).await;
+    let after = holders(db.clone()).await;
+    // The person's claim stands; the crew's and the ghost's are released.
+    let held: Vec<Option<Uuid>> = after.iter().map(|(_, h)| *h).collect();
+    assert_eq!(
+        held.iter()
+            .filter(|h| **h == Some(person_key.key_id))
+            .count(),
+        1,
+        "{after:?}"
+    );
+    assert_eq!(held.iter().filter(|h| h.is_none()).count(), 2, "{after:?}");
+    // A second run changes nothing.
+    run(db.clone()).await;
+    assert_eq!(holders(db.clone()).await, after);
+    // The released rows return to the lane for a person.
     let served = store
         .review_claim_next(
             boot.tenant_id,
-            "a-person",
-            person,
+            "another-person",
+            Uuid::from_u128(0xFEED),
             &[crew],
             oml_app::types::ReviewLane::Person,
         )
         .await
         .expect("claim")
         .expect("released to the lane");
-    assert_eq!(served.memory_id, steering);
+    assert!(ids.contains(&served.memory_id));
     drop_dbs(&created).await;
 }
