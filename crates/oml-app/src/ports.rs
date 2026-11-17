@@ -1173,8 +1173,10 @@ pub trait JournalStore: Retriever + Send + Sync {
     /// The guardrail rows on `nodes` (proposed ADR-0037 d3, d4): every
     /// promoted served tip of kind `guardrail` whose workspace is one of them,
     /// never a retirement version, and every held version of kind
-    /// `guardrail` on them that `author_key_id` authored, never another
-    /// key's. Unordered: the read orders the set (d4). The state and the
+    /// `guardrail` on them that `author_key_id` authored, and on
+    /// `held_nodes`, the nodes inside an in-progress subtree, every
+    /// author's held version (ADR-0080 d10, d16), whose serving the core
+    /// judges. Unordered: the read orders the set (d4). The state and the
     /// author predicate are the store's own, as for the own held rows of
     /// [`Retriever::retrieve`].
     fn guardrail_rows(
@@ -1182,6 +1184,7 @@ pub trait JournalStore: Retriever + Send + Sync {
         tenant_id: Uuid,
         nodes: &[Uuid],
         author_key_id: Uuid,
+        held_nodes: &[Uuid],
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
 
     /// One listing page (http-api.md search; ADR-0025 d13): the rows the

@@ -437,11 +437,14 @@ where
     /// The prompt `guardrails`: the hook's frame of the set at the key's
     /// default workspace, from the same read and the same renderer, with no
     /// line marked checked, since no cache stands behind it (proposed
-    /// ADR-0037 d11). A refusal of the read is the prompt's error.
+    /// ADR-0037 d11). The caller is the author's own session, so its own
+    /// held guardrails are read too, each line marked `[unreviewed]`
+    /// (ADR-0080 d14). A refusal of the read is the prompt's error.
     async fn guardrails_prompt(st: &Self, presented: Presented<'_>) -> Result<Value, String> {
         let headers = ring_headers(presented);
+        let own = [("include_own_held".to_owned(), "true".to_owned())];
         let set =
-            ring_outcome(Self::guardrails_inner(st, &[], &headers, presented.connection).await)
+            ring_outcome(Self::guardrails_inner(st, &own, &headers, presented.connection).await)
                 .await
                 .map_err(|refusal| {
                     refusal["error"]["message"]

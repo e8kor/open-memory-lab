@@ -1316,6 +1316,7 @@ async fn no_guardrail_of_another_users_root_is_ever_served() {
             alice.value.as_str(),
             &GuardrailRequest {
                 workspace: Some(Reference::Name(name("bob"))),
+                include_own_held: false,
             },
         )
         .await

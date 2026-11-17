@@ -3408,6 +3408,7 @@ impl JournalStore for MemStore {
         tenant_id: Uuid,
         nodes: &[Uuid],
         author_key_id: Uuid,
+        held_nodes: &[Uuid],
     ) -> Result<Vec<MemoryRecord>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Vec::new());
@@ -3419,7 +3420,9 @@ impl JournalStore for MemStore {
             .filter(|m| m.kind == MemoryKind::Guardrail && nodes.contains(&m.workspace_id))
             .filter(|m| {
                 served_tip(m)
-                    || (m.status == MemoryStatus::Held && m.author_key_id == author_key_id)
+                    || (m.status == MemoryStatus::Held
+                        && (m.author_key_id == author_key_id
+                            || held_nodes.contains(&m.workspace_id)))
             })
             .cloned()
             .collect())

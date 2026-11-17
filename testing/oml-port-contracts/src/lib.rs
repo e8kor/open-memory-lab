@@ -6984,7 +6984,7 @@ pub async fn every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_liste
 /// and the held guardrails the named key authored, never another key's; no
 /// row of another kind and none off the named nodes (proposed ADR-0037 d3,
 /// d4).
-pub async fn guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_rows<
+pub async fn guardrail_rows_are_the_tips_in_force_the_named_keys_own_held_rows_and_every_held_row_inside<
     S: JournalStore,
 >(
     store: &S,
@@ -7034,7 +7034,7 @@ pub async fn guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_ro
     }
 
     let mut rows = store
-        .guardrail_rows(rig.tenant_id, &[wa], author)
+        .guardrail_rows(rig.tenant_id, &[wa], author, &[])
         .await
         .expect("guardrail rows");
     rows.sort_by_key(|m| m.memory_id);
@@ -7042,13 +7042,28 @@ pub async fn guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_ro
         rows.iter().map(|m| m.memory_id).collect::<Vec<_>>(),
         vec![in_force.memory_id, own_held.memory_id]
     );
+    // On a node inside an in-progress subtree, every author's held rows
+    // too (ADR-0080 d10, d16); the core judges which it serves.
+    let mut inside = store
+        .guardrail_rows(rig.tenant_id, &[wa], author, &[wa])
+        .await
+        .expect("guardrail rows");
+    inside.sort_by_key(|m| m.memory_id);
+    assert_eq!(
+        inside.iter().map(|m| m.memory_id).collect::<Vec<_>>(),
+        vec![
+            in_force.memory_id,
+            own_held.memory_id,
+            others_held.memory_id
+        ]
+    );
     assert_eq!(
         rows[0].guardrail, in_force.guardrail,
         "the fields round-trip"
     );
     assert!(
         store
-            .guardrail_rows(rig.tenant_id, &[], author)
+            .guardrail_rows(rig.tenant_id, &[], author, &[])
             .await
             .expect("guardrail rows")
             .is_empty(),
@@ -9322,7 +9337,9 @@ where
     )
     .await;
     Box::pin(
-        guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_rows(&new_store().await),
+        guardrail_rows_are_the_tips_in_force_the_named_keys_own_held_rows_and_every_held_row_inside(
+            &new_store().await,
+        ),
     )
     .await;
     Box::pin(recall_own_held_never_returns_another_keys_row_whatever_the_query(&new_store().await))

@@ -56,7 +56,7 @@ use oml_app::domain::access::Covers;
 use oml_app::domain::anchor::{self as anchor_grammar, Anchor, CheckResult};
 use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
 use oml_app::domain::claim_kinds::TestShape;
-use oml_app::domain::guardrail::{GuardrailScope, Severity};
+use oml_app::domain::guardrail::{Effect, GuardrailScope, Severity};
 use oml_app::domain::in_progress::{KeyProfile, WorkspaceMode};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
 use oml_app::domain::name::{Name, Reference};
@@ -1191,19 +1191,30 @@ where
         let acting = acting(headers, connection)?;
         refuse_workarea_header(headers, "workspace")?;
         let mut workspace = None;
+        let mut include_own_held = None;
         for (name, value) in params {
             match name.as_str() {
                 "workspace" if workspace.is_none() => {
                     workspace = Some(reference("workspace", value)?)
                 }
-                "workspace" => {
-                    return Err(ApiError::validation(
-                        "the query parameter workspace is given more than once",
-                    ));
+                "include_own_held" if include_own_held.is_none() => {
+                    include_own_held = Some(match value.as_str() {
+                        "true" => true,
+                        "false" => false,
+                        _ => {
+                            return Err(ApiError::validation("include_own_held is true or false")
+                                .with_details(json!({ "field": "include_own_held" })));
+                        }
+                    });
+                }
+                "workspace" | "include_own_held" => {
+                    return Err(ApiError::validation(format!(
+                        "the query parameter {name} is given more than once"
+                    )));
                 }
                 other => {
                     return Err(ApiError::validation(format!(
-                        "{other} is not a parameter of this read: it takes workspace alone, and the guardrail scope is the key's, set at issuance"
+                        "{other} is not a parameter of this read: it takes workspace and include_own_held alone, and the guardrail scope is the key's, set at issuance"
                     ))
                     .with_details(json!({ "field": other })));
                 }
@@ -1211,7 +1222,13 @@ where
         }
         let set = st
             .app
-            .guardrails(acting.bearer(), &GuardrailRequest { workspace })
+            .guardrails(
+                acting.bearer(),
+                &GuardrailRequest {
+                    workspace,
+                    include_own_held: include_own_held.unwrap_or(false),
+                },
+            )
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::OK, &guardrail_set_json(&set)))
@@ -5200,9 +5217,10 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
 
 /// openapi.yaml `GuardrailSet`: the applicable set at the scope node, its
 /// digest and cap flag, each served guardrail with its text, rule, depth,
-/// verdicts (attestation and time, never a reviewer key) and conflicts, and
-/// the caller's own held guardrails by key and version (proposed ADR-0037
-/// d3, d5, d7).
+/// verdicts (attestation and time, never a reviewer key) and conflicts, a
+/// held one marked `unreviewed` with `effect_inside: ask` and a null
+/// `promoted_at`, and the caller's own held guardrails by key and version
+/// (proposed ADR-0037 d3, d5, d7; ADR-0080 d10, d14).
 pub(crate) fn guardrail_set_json(set: &GuardrailSet) -> Value {
     json!({
         "scope_node": set.scope_node,
@@ -5221,7 +5239,9 @@ pub(crate) fn guardrail_set_json(set: &GuardrailSet) -> Value {
             "text": g.body,
             "rule": g.rule,
             "tokens": g.tokens,
-            "promoted_at": g.promoted_at.as_str(),
+            "promoted_at": g.promoted_at.as_ref().map(EventTime::as_str),
+            "unreviewed": g.unreviewed,
+            "effect_inside": g.effect_inside.map(Effect::as_str),
             "verdicts": g.verdicts.iter().map(|v| json!({
                 "used_by": v.used_by.as_str(),
                 "at": v.at.as_str(),

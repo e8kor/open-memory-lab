@@ -896,3 +896,70 @@ async fn the_prompt_renders_the_hook_text() {
     assert_eq!(text, frame.text);
     assert_eq!(got["messages"][0]["role"], "user");
 }
+
+/// The author key reads its own held guardrail with `include_own_held`:
+/// served as a rule, `unreviewed` with `effect_inside: ask` and a null
+/// `promoted_at`, beside its signed `deny`; without it, listed by key and
+/// version alone; another key never gets it outside an in-progress
+/// workspace (ADR-0080 d10, d14).
+#[tokio::test]
+async fn the_author_key_reads_its_own_held_guardrail_with_include_own_held() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    let id = submit_guardrail(
+        &router,
+        &t,
+        "g-own",
+        json!({"kind": "guardrail", "severity": "never", "rule": deny_push(),
+               "body": "Never push to main.", "workspace": t.crew}),
+    )
+    .await;
+    let read = |key: String, own: &'static str| {
+        let router = router.clone();
+        let crew = t.crew.clone();
+        async move {
+            let (status, set) = send(
+                &router,
+                "GET",
+                &format!("/v1/guardrails?workspace={crew}&include_own_held={own}"),
+                Some(&key),
+                None,
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{set}");
+            set
+        }
+    };
+    let without = read(t.writer.clone(), "false").await;
+    assert_eq!(without["guardrails"], json!([]), "{without}");
+    assert_eq!(without["own_held"][0]["version"], 1, "{without}");
+    let with = read(t.writer.clone(), "true").await;
+    let served = with["guardrails"].as_array().expect("guardrails");
+    assert_eq!(served.len(), 1, "{with}");
+    let g = &served[0];
+    assert_eq!(g["artifact_id"], id.as_str());
+    assert_eq!(g["unreviewed"], true, "{g}");
+    assert_eq!(g["effect_inside"], "ask", "{g}");
+    assert_eq!(
+        g["rule"]["effect"], "deny",
+        "the stored rule is unchanged: {g}"
+    );
+    assert_eq!(g["promoted_at"], Value::Null, "{g}");
+    let other = read(t.reviewer.clone(), "true").await;
+    assert_eq!(other["guardrails"], json!([]), "{other}");
+    let (status, body) = send(
+        &router,
+        "GET",
+        &format!("/v1/guardrails?workspace={}&include_own_held=yes", t.crew),
+        Some(&t.writer),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        body["error"]["details"]["field"], "include_own_held",
+        "{body}"
+    );
+}
