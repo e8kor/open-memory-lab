@@ -6040,7 +6040,6 @@ where
         });
         let mut ancestries = BTreeMap::new();
         let mut users: BTreeMap<Uuid, bool> = BTreeMap::new();
-        let mut person_root: Option<Option<Uuid>> = None;
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
             let m = &row.memory;
@@ -6072,17 +6071,20 @@ where
                         .await?
                         .and_then(|w| w.user()),
                 };
-                // The reviewer's own root, read once and only when a row of
-                // its own person is on the page.
-                let own = match person_root {
-                    Some(own) => own,
-                    None => {
-                        let own = self.person_root_of(key).await?;
-                        person_root = Some(own);
-                        own
-                    }
+                // Whether the row's root is the reviewer's own person's,
+                // from the key row and the walk, without a read where the
+                // walk holds the root: a session key names its person by
+                // the root's name.
+                let own = match (key.user.or(key.linked_user), &key.session_user, in_root) {
+                    (_, _, None) => false,
+                    (Some(root), _, Some(r)) => root == r,
+                    (None, Some(user), Some(r)) => match walked.get(&r) {
+                        Some(w) => &w.name == user,
+                        None => self.person_root_of(key).await? == Some(r),
+                    },
+                    (None, None, Some(_)) => false,
                 };
-                if in_root.is_none() || in_root != own {
+                if !own {
                     continue;
                 }
             }
