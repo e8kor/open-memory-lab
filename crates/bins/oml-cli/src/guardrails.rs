@@ -263,9 +263,9 @@ fn cached_rules(set: &Value) -> Result<Vec<CachedRule>, String> {
         let mut served = g["rule"].clone();
         let mut body = g["text"].as_str().unwrap_or_default().to_owned();
         if g["unreviewed"] == true {
-            if let Some(effect) = g["effect_inside"].as_str() {
-                served["effect"] = json!(effect);
-            }
+            // A held rule never denies: the server's `effect_inside` where
+            // it names one, `ask` where it does not.
+            served["effect"] = json!(g["effect_inside"].as_str().unwrap_or("ask"));
             body = format!("[unreviewed] {body}");
         }
         let rule = Rule::parse(&served).map_err(|e| format!("a served rule is refused: {e}"))?;

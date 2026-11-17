@@ -61,7 +61,13 @@ pub fn render_frame(set: &Value, options: &FrameOptions<'_>) -> Result<Frame, &'
         options.origin
     )];
     let count = guardrails.len();
-    let over = set["over_cap"].as_bool().unwrap_or(false) || count > SET_CAP;
+    // The cap counts the promoted rules; held versions listed beside them
+    // never push an approved rule out (ADR-0080 d10).
+    let promoted = guardrails
+        .iter()
+        .filter(|g| g["unreviewed"] != true)
+        .count();
+    let over = set["over_cap"].as_bool().unwrap_or(false) || promoted > SET_CAP;
     if over && !options.whole_over_cap {
         lines.push(over_cap_sentence(count));
     } else if guardrails.is_empty() {
@@ -138,6 +144,7 @@ fn line(g: &Value, checked: bool) -> Result<String, &'static str> {
             "; checked: {} {} {}",
             g["effect_inside"]
                 .as_str()
+                .or_else(|| unreviewed.then_some("ask"))
                 .or_else(|| rule.get("effect").and_then(Value::as_str))
                 .unwrap_or("?"),
             rule.get("tool").and_then(Value::as_str).unwrap_or("?"),

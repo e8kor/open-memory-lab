@@ -1181,3 +1181,42 @@ fn a_session_id_outside_letters_digits_and_hyphens_names_no_cache_file() {
 // ---------------------------------------------------------------------------
 // The key's guardrail scope and the served set's digest (d4, d5)
 // ---------------------------------------------------------------------------
+
+/// Held versions listed beside the approved rules do not count toward the
+/// cap, so thirteen of them never replace an approved `never` line with the
+/// over-cap sentence (ADR-0080 d10).
+#[test]
+fn held_lines_never_push_an_approved_rule_over_the_cap() {
+    let mut guardrails = vec![json!({
+        "claim_key": "no-push", "version": 1, "workspace_path": "universe.alice",
+        "severity": "never", "text": "Never push to main.", "rule": null,
+        "promoted_at": "2026-11-09T10:11:12Z", "verdicts": [], "conflict": []
+    })];
+    for i in 0..13 {
+        guardrails.push(json!({
+            "claim_key": format!("held-{i}"), "version": 1, "workspace_path": "universe.alice",
+            "severity": "should", "text": format!("Prefer plan {i}."), "rule": null,
+            "promoted_at": null, "unreviewed": true, "effect_inside": "ask",
+            "verdicts": [], "conflict": []
+        }));
+    }
+    let set = json!({
+        "scope_node": "n", "scope_path": "universe.alice", "guardrail_scope": "ancestors",
+        "over_cap": false, "guardrails": guardrails, "own_held": []
+    });
+    let frame = oml_guardrail::render_frame(
+        &set,
+        &oml_guardrail::FrameOptions {
+            origin: "this server",
+            checked: false,
+            whole_over_cap: false,
+        },
+    )
+    .expect("a frame");
+    assert!(frame.over_cap.is_none(), "{}", frame.text);
+    assert!(
+        frame.text.contains("[never] Never push to main."),
+        "{}",
+        frame.text
+    );
+}
