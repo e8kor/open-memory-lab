@@ -2170,7 +2170,8 @@ pub async fn a_placeless_finding_stands_for_one_place_of_its_rule<S: JournalStor
 /// acting for a person is served no row a key of that same person wrote
 /// outside that person's root — a user key's, a linked tenant key's or a
 /// session key's — and is served such a row inside the root; a reviewer
-/// acting for no person is narrowed by nothing of this.
+/// acting for no person is narrowed by nothing of this. The store reads
+/// both persons off the key rows.
 pub async fn the_review_queue_serves_no_row_its_own_person_wrote_outside_their_root<
     S: JournalStore,
 >(
@@ -2267,46 +2268,44 @@ pub async fn the_review_queue_serves_no_row_its_own_person_wrote_outside_their_r
     }
     let nodes = [project.workspace_id, team.workspace_id];
     // Each claim by a fresh reviewer key serves the oldest row no other key
-    // holds, until none is left for that person.
+    // holds, until none is left for that key: alice's reviewer keys first,
+    // each a user key of her root, then keys that act for no person.
     let mut fresh = 0x6130_u128;
-    let mut drain = async |person: Option<Uuid>| {
-        let mut served = Vec::new();
+    let mut served = [Vec::new(), Vec::new()];
+    for (round, person) in [Some(alice.workspace_id), None].into_iter().enumerate() {
         loop {
             fresh += 1;
-            let principal = format!("reviewer-{fresh}");
+            let reviewer = KeyRecord {
+                user: person,
+                ..key_record(t, Uuid::from_u128(fresh), Role::Reviewer, None)
+            };
+            rig.issue_key(store, reviewer.clone()).await;
             match store
                 .review_claim_next(
                     t,
-                    &principal,
-                    Uuid::from_u128(fresh),
+                    &reviewer.principal,
+                    reviewer.key_id,
                     &nodes,
                     ReviewLane::Any,
-                    person,
                 )
                 .await
                 .expect("claim")
             {
-                Some(m) => served.push(m.memory_id),
-                None => break served,
+                Some(m) => served[round].push(m.memory_id),
+                None => break,
             }
         }
-    };
-    // Alice's reviewer keys: the row in her root and another person's,
-    // never her own keys' rows in `team`.
-    let mut served = drain(Some(alice.workspace_id)).await;
-    served.sort();
+        served[round].sort();
+    }
     assert_eq!(
-        served,
+        served[0],
         vec![Uuid::from_u128(0x6120), Uuid::from_u128(0x6123)],
-        "only the root's row and another person's"
+        "alice's reviewer keys: the root's row and another person's only"
     );
-    // A reviewer acting for no person is served alice's rows in `team`.
-    let mut rest = drain(None).await;
-    rest.sort();
     assert_eq!(
-        rest,
+        served[1],
         vec![Uuid::from_u128(0x6121), Uuid::from_u128(0x6122)],
-        "the rows alice's reviewer keys were not served"
+        "keys acting for no person: alice's rows in team"
     );
 }
 
@@ -2381,14 +2380,7 @@ pub async fn journal_review_lane_laws<S: JournalStore>(store: &S) {
     // The reviewer lane serves the memory alone.
     let agent = Uuid::from_u128(0xE0);
     let served = store
-        .review_claim_next(
-            rig.tenant_id,
-            "crew",
-            agent,
-            &[wa],
-            ReviewLane::Reviewer,
-            None,
-        )
+        .review_claim_next(rig.tenant_id, "crew", agent, &[wa], ReviewLane::Reviewer)
         .await
         .expect("claim")
         .expect("the memory");
@@ -2400,8 +2392,7 @@ pub async fn journal_review_lane_laws<S: JournalStore>(store: &S) {
                 "crew-2",
                 Uuid::from_u128(0xE9),
                 &[wa],
-                ReviewLane::Reviewer,
-                None
+                ReviewLane::Reviewer
             )
             .await
             .expect("claim")
@@ -2420,7 +2411,6 @@ pub async fn journal_review_lane_laws<S: JournalStore>(store: &S) {
                 Uuid::from_u128(0xF0 + n),
                 &[wa],
                 ReviewLane::Person,
-                None,
             )
             .await
             .expect("claim")
@@ -2494,7 +2484,6 @@ pub async fn journal_review_lane_starves_no_author_laws<S: JournalStore>(store: 
             Uuid::from_u128(0xF9),
             &[wa],
             ReviewLane::Person,
-            None,
         )
         .await
         .expect("claim")
@@ -2546,7 +2535,6 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
             Uuid::from_u128(0xE4),
             &[],
             ReviewLane::Any,
-            None,
         )
         .await
         .expect("claim");
@@ -2554,28 +2542,14 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
     // alice (in m1's lineage) is served m2, never her own row.
     let alice_key = Uuid::from_u128(0xE1);
     let served = store
-        .review_claim_next(
-            rig.tenant_id,
-            "alice",
-            alice_key,
-            &[wa],
-            ReviewLane::Any,
-            None,
-        )
+        .review_claim_next(rig.tenant_id, "alice", alice_key, &[wa], ReviewLane::Any)
         .await
         .expect("claim")
         .expect("m2 waits");
     assert_eq!(served.memory_id, m2, "lineage-excluded rows are skipped");
     // A re-claim by the same key returns the same item.
     let again = store
-        .review_claim_next(
-            rig.tenant_id,
-            "alice",
-            alice_key,
-            &[wa],
-            ReviewLane::Any,
-            None,
-        )
+        .review_claim_next(rig.tenant_id, "alice", alice_key, &[wa], ReviewLane::Any)
         .await
         .expect("claim")
         .expect("still hers");
@@ -2588,7 +2562,6 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
             Uuid::from_u128(0xE2),
             &[wa],
             ReviewLane::Any,
-            None,
         )
         .await
         .expect("claim")
@@ -2603,7 +2576,6 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
             Uuid::from_u128(0xE3),
             &[wa],
             ReviewLane::Any,
-            None,
         )
         .await
         .expect("claim");
@@ -2615,7 +2587,6 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
             Uuid::from_u128(0xE3),
             &[elsewhere],
             ReviewLane::Any,
-            None,
         )
         .await
         .expect("claim")
@@ -2692,7 +2663,6 @@ pub async fn journal_review_held_laws<S: JournalStore>(store: &S) {
             Uuid::from_u128(0xE2),
             &[wa],
             ReviewLane::Any,
-            None,
         )
         .await
         .expect("claim")

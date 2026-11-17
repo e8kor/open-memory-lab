@@ -3683,7 +3683,6 @@ impl JournalStore for MemStore {
         reviewer_key_id: Uuid,
         workspaces: &[Uuid],
         lane: ReviewLane,
-        person_root: Option<Uuid>,
     ) -> Result<Option<MemoryRecord>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
@@ -3696,6 +3695,9 @@ impl JournalStore for MemStore {
             workspaces: nodes,
             ..
         } = &mut *state;
+        let person_root = keys
+            .get(&reviewer_key_id)
+            .and_then(|k| person_root_in(nodes, k));
         // Every entry this reviewer may judge, in queue order, then the one
         // served: the first, or in the person lane the lowest turn, round-
         // robin across author keys, the older first within a turn (ADR-0074

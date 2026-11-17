@@ -12158,7 +12158,6 @@ async fn migration_0052_releases_a_lane_claim_a_crew_key_took_before_the_lane() 
                 key,
                 &[crew],
                 oml_app::types::ReviewLane::Any,
-                None,
             )
             .await
             .expect("claim")
@@ -12214,7 +12213,6 @@ async fn migration_0052_releases_a_lane_claim_a_crew_key_took_before_the_lane() 
             Uuid::from_u128(0xFEED),
             &[crew],
             oml_app::types::ReviewLane::Person,
-            None,
         )
         .await
         .expect("claim")

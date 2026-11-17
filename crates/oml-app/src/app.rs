@@ -5849,14 +5849,7 @@ where
         let workspaces = self.reviewer_nodes(&caller).await?;
         match self
             .journal
-            .review_claim_next(
-                key.tenant_id,
-                &key.principal,
-                key.key_id,
-                &workspaces,
-                lane,
-                self.person_root_of(key).await?,
-            )
+            .review_claim_next(key.tenant_id, &key.principal, key.key_id, &workspaces, lane)
             .await?
         {
             None => Ok(None),
@@ -6047,7 +6040,7 @@ where
         });
         let mut ancestries = BTreeMap::new();
         let mut users: BTreeMap<Uuid, bool> = BTreeMap::new();
-        let person_root = self.person_root_of(key).await?;
+        let mut person_root: Option<Option<Uuid>> = None;
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
             let m = &row.memory;
@@ -6079,7 +6072,17 @@ where
                         .await?
                         .and_then(|w| w.user()),
                 };
-                if in_root.is_none() || in_root != person_root {
+                // The reviewer's own root, read once and only when a row of
+                // its own person is on the page.
+                let own = match person_root {
+                    Some(own) => own,
+                    None => {
+                        let own = self.person_root_of(key).await?;
+                        person_root = Some(own);
+                        own
+                    }
+                };
+                if in_root.is_none() || in_root != own {
                     continue;
                 }
             }

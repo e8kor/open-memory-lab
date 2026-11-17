@@ -2288,20 +2288,24 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workspace_id, m.claim_key, m.
      to_char(m.approved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS approved_at_signed";
 
-/// R2 by person in SQL, over `m` and the reviewer's person root `$5`:
-/// true for a row whose author key acts for that person (its user root,
-/// its linked root, or the user root its session key names) in a
-/// workspace outside that root; NULL or false otherwise, so a reviewer
-/// acting for no person is never narrowed (ADR-0001 d5; ADR-0082 d7).
-const SAME_PERSON_OUTSIDE_ROOT: &str = "$5::uuid IS NOT NULL \
-    AND EXISTS (SELECT 1 FROM api_keys ak \
-        WHERE ak.tenant_id = $1 AND ak.id = m.author_key_id \
-          AND COALESCE(ak.user_root_id, ak.linked_user_id, \
-              (SELECT u.id FROM workspaces u \
-               WHERE u.tenant_id = $1 AND u.user_root AND u.name = ak.session_for)) = $5) \
-    AND NOT EXISTS (SELECT 1 FROM workspaces w \
-        WHERE w.tenant_id = $1 AND w.id = m.workspace_id \
-          AND (w.id = $5 OR w.namespace_root_id = $5))";
+/// R2 by person in SQL, over `m` and the reviewer key `$2`: true for a
+/// row whose author key acts for the person the reviewer key acts for (a
+/// key's user root, its linked root, or the user root its session key
+/// names), in a workspace outside that person's root; NULL or false
+/// otherwise, so a reviewer acting for no person is never narrowed
+/// (ADR-0001 d5; ADR-0082 d7).
+const SAME_PERSON_OUTSIDE_ROOT: &str = "EXISTS (SELECT 1 FROM api_keys rk \
+    JOIN api_keys ak ON ak.tenant_id = $1 AND ak.id = m.author_key_id \
+    CROSS JOIN LATERAL (SELECT COALESCE(rk.user_root_id, rk.linked_user_id, \
+        (SELECT u.id FROM workspaces u \
+         WHERE u.tenant_id = $1 AND u.user_root AND u.name = rk.session_for)) AS root) r \
+    CROSS JOIN LATERAL (SELECT COALESCE(ak.user_root_id, ak.linked_user_id, \
+        (SELECT u.id FROM workspaces u \
+         WHERE u.tenant_id = $1 AND u.user_root AND u.name = ak.session_for)) AS root) a \
+    WHERE rk.tenant_id = $1 AND rk.id = $2 AND r.root = a.root \
+      AND NOT EXISTS (SELECT 1 FROM workspaces w \
+          WHERE w.tenant_id = $1 AND w.id = m.workspace_id \
+            AND r.root IN (w.id, w.namespace_root_id)))";
 
 /// The held listing's predicate after `WHERE q.tenant_id = `:
 /// review_claim_next's, unclaimed by another key, narrowed by the filter's
@@ -8259,7 +8263,6 @@ impl JournalStore for PgStore {
         reviewer_key_id: Uuid,
         workspaces: &[Uuid],
         lane: ReviewLane,
-        person_root: Option<Uuid>,
     ) -> Result<Option<MemoryRecord>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
@@ -8314,7 +8317,7 @@ impl JournalStore for PgStore {
                      AND r.replaces_artifact_id = m.replaces_artifact_id \
                      AND r.workspace_id = m.workspace_id AND r.claim_key = m.claim_key \
                      AND (r.author_key_id = $2 OR r.author_principal = $3))) \
-               AND ({SAME_PERSON_OUTSIDE_ROOT}) IS NOT TRUE \
+               AND NOT {SAME_PERSON_OUTSIDE_ROOT} \
              {lane_filter} ORDER BY {order} \
              LIMIT 1 \
              FOR NO KEY UPDATE OF q SKIP LOCKED"
@@ -8324,7 +8327,6 @@ impl JournalStore for PgStore {
             .bind(reviewer_key_id)
             .bind(reviewer_principal)
             .bind(workspaces)
-            .bind(person_root)
             .fetch_optional(&mut *tx)
             .await
             .map_err(backend)?;

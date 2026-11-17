@@ -16582,7 +16582,6 @@ async fn a_lane_claim_a_crew_key_holds_is_not_counted_for_its_verdict_without_a_
             crew_reviewer.key_id,
             &[crew],
             oml_app::types::ReviewLane::Any,
-            None,
         )
         .await
         .expect("claim")
