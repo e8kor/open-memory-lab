@@ -94,6 +94,19 @@ from it. Feedback for a recall older than 24 hours, or naming an id that recall 
 serve you, is refused with `request.validation` naming the field, and the read does not run:
 drop `feedback` and call again.
 
+## Store a skill in OML, not on disk
+
+A skill is a named set of markdown instructions offered as a command. Save one with
+`oml_write`, `kind: "skill"`, a `skill` object `{name, description}` and the instructions as
+`text`, never as a file under `.claude/skills/`: a stored skill reaches every session in scope
+once a person approves it, and a file reaches one machine. The name is a lowercase label of at
+most 52 characters; the description is one line saying what it does and when to use it; the
+text has no front matter and is at most 32,768 bytes. Update a skill with `replaces`, the
+`expected_version` you last read and the `skill` object again, with the same name. Your own
+key is offered the held skill at once as `/oml:<name>`, marked unreviewed, and an edit as
+`/oml:<name>-unreviewed`; other sessions get it once a person approves it. The plugin asks
+before a write under `.claude/skills/`.
+
 ## See what became of your writes
 
 Call `oml_read` with neither `query` nor `artifact_id` to list what your key wrote, newest

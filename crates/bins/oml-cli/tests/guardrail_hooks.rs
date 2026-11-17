@@ -600,3 +600,79 @@ async fn a_held_deny_rule_inside_an_in_progress_root_asks() {
         "deny"
     );
 }
+
+// --- ADR-0080 d15: a local skill file write asks -------------------------
+
+fn skill_write(file_path: &str) -> Value {
+    tool(
+        "Write",
+        json!({"file_path": file_path, "content": "# a skill\n"}),
+    )
+}
+
+/// A `Write` under the project's or the home's `.claude/skills/` asks with
+/// OML's reason, with no rule cache loaded and with one that does not match;
+/// a write anywhere else decides nothing (ADR-0080 d15).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_write_under_claude_skills_asks_with_the_oml_reason() {
+    let dir = scratch("skill-ask");
+    let home = dir.to_str().expect("utf-8").to_owned();
+    for path in [
+        ".claude/skills/x/SKILL.md".to_owned(),
+        "/work/repo/.claude/skills/x/SKILL.md".to_owned(),
+        "~/.claude/skills/x/SKILL.md".to_owned(),
+        format!("{home}/.claude/skills/x/SKILL.md"),
+        "/work/repo/src/../.claude/skills/y/SKILL.md".to_owned(),
+    ] {
+        let doc = stdout_json(&hook("pre-tool-use", &dir, None, &skill_write(&path)));
+        let decision = &doc["hookSpecificOutput"];
+        assert_eq!(decision["permissionDecision"], "ask", "{path}: {doc}");
+        assert_eq!(
+            decision["permissionDecisionReason"],
+            "OML keeps skills: store this one with oml_write and kind skill (replaces to update it); allow this call to write the local file anyway.",
+            "{path}"
+        );
+    }
+    write_cache(&dir, &[(DENY_ID, "Never push to main.", deny_push())]);
+    let doc = stdout_json(&hook(
+        "pre-tool-use",
+        &dir,
+        None,
+        &skill_write(".claude/skills/x/SKILL.md"),
+    ));
+    assert_eq!(
+        doc["hookSpecificOutput"]["permissionDecision"], "ask",
+        "{doc}"
+    );
+    let out = hook(
+        "pre-tool-use",
+        &dir,
+        None,
+        &skill_write("/work/repo/.claude/skillset/SKILL.md"),
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "",
+        "no match, no decision"
+    );
+}
+
+/// A guardrail's deny on the same call wins over the skill rule's ask, as
+/// deny wins over ask (ADR-0080 d15; ADR-0037 d9).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_guardrail_deny_on_a_local_skill_write_wins_over_the_ask() {
+    let dir = scratch("skill-deny");
+    let deny_edits =
+        json!({"rule": "oml-gr/1", "tool": "edit", "path": "/work/**", "effect": "deny"});
+    write_cache(&dir, &[(DENY_ID, "Never edit the work tree.", deny_edits)]);
+    let doc = stdout_json(&hook(
+        "pre-tool-use",
+        &dir,
+        None,
+        &skill_write(".claude/skills/x/SKILL.md"),
+    ));
+    assert_eq!(
+        doc["hookSpecificOutput"]["permissionDecision"], "deny",
+        "{doc}"
+    );
+}

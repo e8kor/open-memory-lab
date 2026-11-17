@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use oml_guardrail::{
-    CACHE_MAX_AGE_DAYS, CacheState, CachedRule, FrameOptions, Rule, ToolCall, Verdict,
+    CACHE_MAX_AGE_DAYS, CacheState, CachedRule, Effect, FrameOptions, Rule, ToolCall, Verdict,
     cache_file_name, decide, decode_cache, encode_cache, over_cap_sentence, render_frame,
 };
 use serde_json::{Map, Value, json};
@@ -96,9 +96,32 @@ pub fn pre_tool_use(
         .and_then(Path::to_str)
         .unwrap_or_default()
         .to_owned();
+    let local_skill = local_skill_write(&call, var("HOME").as_deref(), var(PROJECT_DIR).as_deref());
+    let ask = |reason: String| {
+        json!({
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "ask",
+            "permissionDecisionReason": reason,
+        })
+    };
     Ok(match decide(&state, &call, &dir_text) {
+        // The built-in skill rule needs no cache, so it asks with or
+        // without one; a guardrail's deny on the same call wins, as deny
+        // wins over ask (ADR-0080 d15; ADR-0037 d9).
+        Verdict::Nothing if local_skill => {
+            json!({ "hookSpecificOutput": ask(LOCAL_SKILL_REASON.to_owned()) }).to_string()
+        }
         Verdict::Nothing => String::new(),
+        Verdict::Warn(message) if local_skill => json!({
+            "systemMessage": message,
+            "hookSpecificOutput": ask(LOCAL_SKILL_REASON.to_owned()),
+        })
+        .to_string(),
         Verdict::Warn(message) => json!({ "systemMessage": message }).to_string(),
+        Verdict::Decide(decision) if local_skill && decision.effect != Effect::Deny => json!({
+            "hookSpecificOutput": ask(format!("{} {LOCAL_SKILL_REASON}", decision.reason())),
+        })
+        .to_string(),
         Verdict::Decide(decision) => json!({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -108,6 +131,67 @@ pub fn pre_tool_use(
         })
         .to_string(),
     })
+}
+
+/// The variable Claude Code sets to the session's project directory.
+const PROJECT_DIR: &str = "CLAUDE_PROJECT_DIR";
+
+/// Why a local skill file write asks (ADR-0080 d15).
+pub const LOCAL_SKILL_REASON: &str = "OML keeps skills: store this one with oml_write and kind skill (replaces to update it); allow this call to write the local file anyway.";
+
+/// Whether `call` writes a file under a project's `.claude/skills/` or
+/// `$HOME/.claude/skills/` (ADR-0080 d15): a `Write`, `Edit`, `MultiEdit`
+/// or `NotebookEdit` whose path, after `~` expansion and resolution against
+/// the session's working directory, lies there. The project is the
+/// session's working directory and, when Claude Code names one, its project
+/// directory. The path is normalised lexically, so `..` cannot step out of
+/// the match and no file is read.
+#[must_use]
+pub fn local_skill_write(call: &ToolCall<'_>, home: Option<&str>, project: Option<&str>) -> bool {
+    let field = match call.tool_name {
+        "Write" | "Edit" | "MultiEdit" => "file_path",
+        "NotebookEdit" => "notebook_path",
+        _ => return false,
+    };
+    let Some(raw) = call.tool_input.get(field).and_then(Value::as_str) else {
+        return false;
+    };
+    let home = home.filter(|h| Path::new(h).is_absolute());
+    let expanded = match (raw.strip_prefix('~'), home) {
+        (Some(""), Some(h)) => PathBuf::from(h),
+        (Some(rest), Some(h)) if rest.starts_with('/') => {
+            PathBuf::from(h).join(rest.trim_start_matches('/'))
+        }
+        _ => PathBuf::from(raw),
+    };
+    let resolved = match call.cwd.filter(|_| expanded.is_relative()) {
+        Some(cwd) => Path::new(cwd).join(&expanded),
+        None => expanded,
+    };
+    if !resolved.is_absolute() {
+        return false;
+    }
+    let path = normalise(&resolved);
+    [call.cwd, project, home]
+        .into_iter()
+        .flatten()
+        .filter(|base| Path::new(base).is_absolute())
+        .any(|base| path.starts_with(normalise(Path::new(base)).join(".claude").join("skills")))
+}
+
+/// `path` with `.` and `..` folded away, lexically.
+fn normalise(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// `oml hook guardrails`: one `GET /v1/guardrails` under the agent's own

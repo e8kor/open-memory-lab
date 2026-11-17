@@ -148,10 +148,18 @@ pub fn session_start(
     // needs; a failure here costs the brief alone, never the context
     // (ADR-0046 d9).
     let brief = default_brief(&client);
+    // The offered skills' index, read last; a failure here costs the index
+    // alone, never the context (ADR-0080 d8; ADR-0029 d5).
+    let skills = offered_skills(
+        client
+            .get("/v1/skills?include_own_held=true")
+            .map(|(_, v)| v),
+    );
 
     let context = render(&Rendered {
         server: client.server(),
         brief: &brief,
+        skills: skills.as_ref(),
         own,
         steering,
         hits,
@@ -190,6 +198,17 @@ fn default_brief(client: &Client) -> Vec<Value> {
         .ok()
         .and_then(|(_, node)| node["brief"]["items"].as_array().cloned())
         .unwrap_or_default()
+}
+
+/// The most skill lines the session-start index prints before "and N more"
+/// (ADR-0080 d8, d13).
+pub const SKILL_INDEX_LINES: usize = 20;
+
+/// `GET /v1/skills`'s answer when it is the read's shape, else `None`: the
+/// index is left out and the rest of the context is printed (ADR-0080 d8;
+/// ADR-0029 d5).
+fn offered_skills(answer: Result<Value, CliError>) -> Option<Value> {
+    answer.ok().filter(|set| set["skills"].is_array())
 }
 
 /// The server and the agent's key the hook sends to it, from one source.
@@ -332,6 +351,9 @@ struct Rendered<'a> {
     /// The default workspace's brief, empty when it has none or it could not
     /// be read (ADR-0046 d9).
     brief: &'a [Value],
+    /// `GET /v1/skills`'s first page, `None` when it could not be read
+    /// (ADR-0080 d8).
+    skills: Option<&'a Value>,
     own: &'a [Value],
     steering: &'a [Value],
     hits: &'a [Value],
@@ -477,7 +499,47 @@ fn render(r: &Rendered<'_>) -> String {
             r.budget["hits_omitted"], r.budget["max_tokens"]
         ));
     }
+    if let Some(set) = r.skills {
+        skill_index(r, set, &mut out);
+    }
     out.join("\n")
+}
+
+/// The offered skills' index after the recall (ADR-0080 d8, d10): one line
+/// per skill in the read's order, names and descriptions only and never a
+/// body, at most [`SKILL_INDEX_LINES`], then "and N more" with no partial
+/// line. N counts the first page past the cap; a further page makes it "at
+/// least N more", since the hook makes one request. No section when nothing
+/// is offered.
+fn skill_index(r: &Rendered<'_>, set: &Value, out: &mut Vec<String>) {
+    let skills = set["skills"].as_array().map_or(&[][..], Vec::as_slice);
+    if skills.is_empty() {
+        return;
+    }
+    out.push(String::new());
+    out.push(format!(
+        "OML skills at {}:",
+        r.name(set["scope_path"].as_str().unwrap_or("?"))
+    ));
+    for s in skills.iter().take(SKILL_INDEX_LINES) {
+        let name = r.name(s["name"].as_str().unwrap_or("?"));
+        let mark = if s["unreviewed"] == true {
+            " (unreviewed)"
+        } else {
+            ""
+        };
+        out.push(format!(
+            "- {name}: {} (read {}, or run /oml:{name}){mark}",
+            r.text(s, "description"),
+            r.name(s["uri"].as_str().unwrap_or("?")),
+        ));
+    }
+    let more = skills.len().saturating_sub(SKILL_INDEX_LINES);
+    if set["next_cursor"].is_string() {
+        out.push(format!("and at least {} more", more + 1));
+    } else if more > 0 {
+        out.push(format!("and {more} more"));
+    }
 }
 
 fn push_or_none(out: &mut Vec<String>, lines: Vec<String>, none: &str) {
@@ -1696,6 +1758,7 @@ mod tests {
         let context = render(&Rendered {
             server: "https://oml.example",
             brief: &[],
+            skills: None,
             own: &[],
             steering: std::slice::from_ref(&item),
             hits: &[json!({ "memory": item })],
@@ -1714,6 +1777,89 @@ mod tests {
         );
     }
 
+    fn skill_set(count: usize, held_last: bool) -> Value {
+        let skills: Vec<Value> = (0..count)
+            .map(|i| {
+                json!({
+                    "name": format!("skill-{i:02}"),
+                    "description": format!("Does task {i}."),
+                    "uri": format!("oml://workspace/metals/skill/skill-{i:02}"),
+                    "unreviewed": held_last && i + 1 == count,
+                })
+            })
+            .collect();
+        json!({ "scope_path": "acme.metals", "skills": skills, "next_cursor": null })
+    }
+
+    fn context_with_skills(set: Option<&Value>) -> String {
+        let redact = |text: &str| text.to_owned();
+        render(&Rendered {
+            server: "https://oml.example",
+            brief: &[],
+            skills: set,
+            own: &[],
+            steering: &[],
+            hits: &[],
+            budget: &Value::Null,
+            query: "metals",
+            compacted: false,
+            redact: &redact,
+        })
+    }
+
+    /// The index prints at most twenty skill lines, names and descriptions
+    /// only, then "and N more" with no partial line (ADR-0080 d8).
+    #[test]
+    fn session_start_lists_at_most_twenty_skills_then_and_n_more() {
+        let set = skill_set(25, false);
+        let context = context_with_skills(Some(&set));
+        let at = context
+            .find("OML skills at acme.metals:")
+            .expect("the index section");
+        let lines: Vec<&str> = context[at..].lines().skip(1).collect();
+        assert_eq!(lines.len(), 21, "{context}");
+        assert_eq!(
+            lines[0],
+            "- skill-00: Does task 0. (read oml://workspace/metals/skill/skill-00, or run /oml:skill-00)"
+        );
+        assert!(lines[19].starts_with("- skill-19: "), "{context}");
+        assert_eq!(lines[20], "and 5 more");
+    }
+
+    /// A held skill's index line ends "(unreviewed)", and a second page
+    /// the hook did not read makes the count a lower bound (ADR-0080 d8,
+    /// d10).
+    #[test]
+    fn a_held_skill_index_line_ends_unreviewed_and_a_second_page_is_at_least() {
+        let set = skill_set(3, true);
+        let context = context_with_skills(Some(&set));
+        assert!(context.contains("/oml:skill-02) (unreviewed)"), "{context}");
+        let mut paged = skill_set(50, false);
+        paged["next_cursor"] = json!("c1");
+        let context = context_with_skills(Some(&paged));
+        assert!(context.ends_with("and at least 31 more"), "{context}");
+    }
+
+    /// A skills read that fails, or answers in another shape, leaves the
+    /// index out and the rest of the context in (ADR-0080 d8; ADR-0029 d5);
+    /// a scope that offers nothing prints no section.
+    #[test]
+    fn session_start_fails_open_when_the_skills_read_fails() {
+        let failed = offered_skills(Err(CliError::local("connection refused".to_owned())));
+        assert_eq!(failed, None);
+        let shapeless = offered_skills(Ok(json!({ "error": "not found" })));
+        assert_eq!(shapeless, None);
+        let context = context_with_skills(failed.as_ref());
+        assert!(
+            context.starts_with("OML memory for this session"),
+            "{context}"
+        );
+        assert!(context.contains("Steering in force:"), "{context}");
+        assert!(!context.contains("OML skills at"), "{context}");
+        let empty = skill_set(0, false);
+        assert!(!context_with_skills(Some(&empty)).contains("OML skills at"));
+    }
+
     /// Held steering, served marked `unreviewed`, prints after the
     /// promoted rows prefixed `[unreviewed]` (ADR-0080 d10).
     #[test]
@@ -1727,6 +1873,7 @@ mod tests {
         let context = render(&Rendered {
             server: "https://oml.example",
             brief: &[],
+            skills: None,
             own: &[],
             steering: &steering,
             hits: &[],
