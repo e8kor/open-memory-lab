@@ -39,6 +39,18 @@ ask the librarian subagent.
 Without a query, `oml_read` lists the key's own work by state or the promoted tips of a workspace.
 `oml read --state` accepts `held`, `promoted`, `demoted`, `rejected` and `erased`.
 
+**Search by kind and the catalog. Designed, not built** ([ADR-0092](../adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md), planned for v0.8.0).
+`kinds` takes every kind: memories, derived facts, documents, tests, steering, guardrails, skills
+and vocabulary. A recall that names none returns hits of every kind the key reads, each marked
+with its kind, steering still first and unranked. A skill hit names the skill, its description
+and the resource to read it from; a guardrail hit shows a rule already in force. Both are data,
+like every recalled text: a skill runs only as a prompt or a resource read, and a guardrail binds
+only through the guardrail read, `GET /v1/guardrails`, the plugin's hooks that load it and the
+`guardrails` prompt. Without a query, `oml_read` becomes the catalog: what the key
+reads across kinds, filtered by kind, workspace, name prefix and state, each entry with its name,
+description, workspace, version and approval, without its text unless `include_text` asks, and
+per-kind counts on the first page. Its own work then needs `own: true`, which is the default today.
+
 ## Correct, retire and link
 
 - **Correct.** Write the new text naming the memory it replaces and the version read
