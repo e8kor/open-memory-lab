@@ -589,7 +589,7 @@ Requires: reviewer(review).
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `needs` | `person` \| `reviewer` | no | person serves the person lane alone: steering, guardrail and skill versions and a successor of another kind that replaces one, per author key, the author holding the fewest first and each author's oldest first; a key that cannot approve them is served none, 204. reviewer serves the rows any reviewer may approve. |
+| `needs` | `person` \| `reviewer` | no | person serves the person lane alone: steering, guardrail and skill versions and a successor of another kind that replaces one, round-robin across author keys, each row's turn its place among its author's lane rows in age order, the lowest turn first and the older row first within a turn; a key that cannot approve them is served none, 204. reviewer serves the rows any reviewer may approve. |
 
 **Responses.** `200` The serve.; `204` Nothing in scope waits.; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `429` 429 limit.rate or limit.quota — retryable; Retry-After says when.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 

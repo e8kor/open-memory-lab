@@ -16425,7 +16425,7 @@ async fn needs_person_serves_only_the_person_lane() {
 }
 
 #[tokio::test]
-async fn the_person_lane_is_ordered_per_author_oldest_first() {
+async fn the_person_lane_is_served_round_robin_across_author_keys() {
     let app = app();
     let (boot, crew, _team, flood, reviewer) = guardrail_tenant(&app).await;
     let admin = &boot.admin_key.value;
@@ -16475,22 +16475,20 @@ async fn the_person_lane_is_ordered_per_author_oldest_first() {
         counts.iter().map(|(_, n)| *n).collect::<Vec<_>>(),
         vec![1, 3]
     );
-    // Per author key, the author with the fewest held items first and each
-    // author's oldest first: the other author's one is served before the
-    // flood, though it was written last.
+    // Round-robin across author keys (the operator, 2026-11-17): each
+    // reviewer key claims one, and the other author's one row comes second,
+    // after the flood's oldest, though it was written last.
     let mut order = Vec::new();
-    while let Some(served) = app
-        .review_next_needing(&reviewer.value, lane)
-        .await
-        .expect("next")
-    {
-        let id = served.memory.memory_id;
-        order.push(id);
-        app.post_verdict(&reviewer.value, id, Verdict::Reject, Some("not now"))
+    for n in 0..4 {
+        let person = issue(&app, admin, Role::Reviewer, &format!("person-{n}"), crew).await;
+        let served = app
+            .review_next_needing(&person.value, lane)
             .await
-            .expect("a reject");
+            .expect("next")
+            .expect("a lane row");
+        order.push(served.memory.memory_id);
     }
-    assert_eq!(order, vec![lone, flooded[0], flooded[1], flooded[2]]);
+    assert_eq!(order, vec![flooded[0], lone, flooded[1], flooded[2]]);
 }
 
 #[tokio::test]
@@ -16557,4 +16555,58 @@ async fn a_documents_heading_title_past_200_characters_is_stored_cut_to_200() {
         panic!("a document's title");
     };
     assert_eq!(title.chars().count(), 200);
+}
+
+#[tokio::test]
+async fn a_lane_claim_a_crew_key_holds_is_not_counted_for_its_verdict_without_a_serve_id() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew, _team, writer, _reviewer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let crew_reviewer = agent_reviewer(&app, admin, "crew-reviewer", crew).await;
+    let steering = app
+        .submit_memory(
+            &writer.value,
+            &submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", crew),
+        )
+        .await
+        .expect("steering")
+        .receipt
+        .memory_id;
+    // A claim taken before the lane, as the store kept it.
+    let stranded = store
+        .review_claim_next(
+            boot.tenant_id,
+            "crew-reviewer",
+            crew_reviewer.key_id,
+            &[crew],
+            oml_app::types::ReviewLane::Any,
+        )
+        .await
+        .expect("claim")
+        .expect("the steering");
+    assert_eq!(stranded.memory_id, steering);
+    let memory = app
+        .submit_memory(&writer.value, &submit_into("m1", "Quotes drift.", crew))
+        .await
+        .expect("a memory")
+        .receipt
+        .memory_id;
+    app.review_next(&crew_reviewer.value)
+        .await
+        .expect("next")
+        .expect("the memory");
+    let outcome = app
+        .review_verdict(
+            &crew_reviewer.value,
+            &oml_app::types::VerdictRequest {
+                serve: None,
+                verdict: Verdict::Approve,
+                reason: None,
+                idempotency_key: "v-no-serve".to_owned(),
+            },
+        )
+        .await
+        .expect("the one claim it may judge");
+    assert_eq!(outcome.memory_id, memory);
 }

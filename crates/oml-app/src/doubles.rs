@@ -3653,9 +3653,9 @@ impl JournalStore for MemStore {
             queue, memories, ..
         } = &mut *state;
         // Every entry this reviewer may judge, in queue order, then the one
-        // served: the first, or in the person lane the oldest of the author
-        // key holding the fewest, ties to the author whose oldest is older
-        // (ADR-0074 d19).
+        // served: the first, or in the person lane the lowest turn, round-
+        // robin across author keys, the older first within a turn (ADR-0074
+        // d19; the operator, 2026-11-17).
         let mut candidates: Vec<(usize, Uuid)> = Vec::new();
         for (position, entry) in queue.iter().enumerate() {
             if entry.claimed_by.is_some_and(|k| k != reviewer_key_id) {
@@ -3699,9 +3699,10 @@ impl JournalStore for MemStore {
             candidates.push((position, memory.author_key_id));
         }
         let chosen = if lane == ReviewLane::Person {
-            // Each author's backlog: its held rows in the lane in these
-            // workspaces, claimed or not, as the store's count reads them.
-            let mut authors: BTreeMap<Uuid, (usize, usize)> = BTreeMap::new();
+            // Each lane row's turn: its place among its author's lane rows
+            // in these workspaces, claimed or not, in queue (age) order.
+            let mut seen: BTreeMap<Uuid, usize> = BTreeMap::new();
+            let mut turns: BTreeMap<usize, usize> = BTreeMap::new();
             for (position, entry) in queue.iter().enumerate() {
                 let Some(memory) = memories.get(&entry.memory_id) else {
                     continue;
@@ -3711,18 +3712,20 @@ impl JournalStore for MemStore {
                 {
                     continue;
                 }
-                let (count, first) = authors.entry(memory.author_key_id).or_insert((0, position));
-                *count += 1;
-                *first = (*first).min(position);
+                let turn = seen.entry(memory.author_key_id).or_default();
+                *turn += 1;
+                turns.insert(position, *turn);
             }
             candidates
                 .iter()
-                .map(|(position, author)| {
-                    let (count, first) = authors[author];
-                    (count, first, *position)
+                .map(|(position, _)| {
+                    (
+                        turns.get(position).copied().unwrap_or(usize::MAX),
+                        *position,
+                    )
                 })
                 .min()
-                .map(|(_, _, position)| position)
+                .map(|(_, position)| position)
         } else {
             candidates.first().map(|(position, _)| *position)
         };
@@ -3738,6 +3741,7 @@ impl JournalStore for MemStore {
         &self,
         tenant_id: Uuid,
         reviewer_key_id: Uuid,
+        lane: ReviewLane,
     ) -> Result<Vec<Uuid>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Vec::new());
@@ -3747,6 +3751,12 @@ impl JournalStore for MemStore {
             .queue
             .iter()
             .filter(|e| e.claimed_by == Some(reviewer_key_id))
+            .filter(|e| {
+                state
+                    .memories
+                    .get(&e.memory_id)
+                    .is_some_and(|m| lane.admits(needs_person_row(&state.memories, m)))
+            })
             .map(|e| e.memory_id)
             .take(2)
             .collect())

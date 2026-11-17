@@ -132,8 +132,8 @@ reviewer key, or a person's key with a crew or a profile, is refused `review.per
 may still reject. A service key reviews nothing (`access.verb_ceiling`). For now a
 person's key is a reviewer key issued `--used-by person` with no crew and no profile, the CLI's
 included; a confirmed, fresh sign-in comes with #214. `oml review next` never hands such a version to a key
-that cannot approve it, and `oml review next --needs person` takes only those, the author with the
-fewest waiting first.
+that cannot approve it, and `oml review next --needs person` takes only those, round-robin across
+authors, each author's oldest first.
 
 ## A worked session
 

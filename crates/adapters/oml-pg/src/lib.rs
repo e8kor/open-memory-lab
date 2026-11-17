@@ -8225,27 +8225,25 @@ impl JournalStore for PgStore {
         // successor, so a first version never costs an anti-join over every
         // held row (ADR-0055 d9).
         // The person lane narrows by who may approve, and serves its rows
-        // per author key, the author holding the fewest first, ties to the
-        // author whose oldest is older, and each author's oldest first, so
-        // one key's flood does not bury another's item (ADR-0074 d19;
-        // ADR-0080 d16). The counts are taken in a subquery: a locking
-        // clause and a window function never share a query level.
+        // round-robin across author keys: a row's turn is its place among
+        // its author's lane rows in age order, claimed or not, the lowest
+        // turn first and the older row first within a turn (ADR-0074 d19;
+        // the operator, 2026-11-17). The turn is taken in a subquery: a
+        // locking clause and a window function never share a query level.
         let lane_filter = lane_sql(lane, "m").map_or_else(String::new, |p| format!(" AND {p}"));
         let lane_turns = lane_sql(lane, "m2").map_or_else(String::new, |p| format!(" AND {p}"));
         let (turns, order) = if lane == ReviewLane::Person {
             (
                 format!(
-                    "JOIN (SELECT q2.memory_id, \
-                         count(*) OVER (PARTITION BY m2.author_key_id) AS backlog, \
-                         min(q2.held_since) OVER (PARTITION BY m2.author_key_id) AS first_held \
+                    "JOIN (SELECT q2.memory_id, row_number() OVER ( \
+                         PARTITION BY m2.author_key_id ORDER BY q2.held_since, q2.memory_id) AS turn \
                        FROM review_queue q2 \
                        JOIN memories m2 ON m2.tenant_id = q2.tenant_id AND m2.id = q2.memory_id \
                        WHERE q2.tenant_id = $1 AND m2.tenant_id = $1 \
                          AND m2.workspace_id = ANY($4::uuid[]){lane_turns}) c \
                      ON c.memory_id = q.memory_id "
                 ),
-                "c.backlog ASC, c.first_held ASC, m.author_key_id ASC, q.held_since ASC, \
-                 q.memory_id ASC",
+                "c.turn ASC, q.held_since ASC, q.memory_id ASC",
             )
         } else {
             (String::new(), "q.held_since ASC, q.memory_id ASC")
@@ -8299,17 +8297,21 @@ impl JournalStore for PgStore {
         &self,
         tenant_id: Uuid,
         reviewer_key_id: Uuid,
+        lane: ReviewLane,
     ) -> Result<Vec<Uuid>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        // The rows this key claimed, in the order review next serves them;
-        // two tell one open item from several (ADR-0039 d10).
-        let ids: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT memory_id FROM review_queue \
-             WHERE tenant_id = $1 AND held_by_key = $2 \
-             ORDER BY held_since ASC, memory_id ASC \
+        // The rows this key claimed in its lane, in the order review next
+        // serves them; two tell one open item from several (ADR-0039 d10;
+        // ADR-0074 d19).
+        let lane_filter = lane_sql(lane, "m").map_or_else(String::new, |p| format!(" AND {p}"));
+        let ids: Vec<Uuid> = sqlx::query_scalar(&format!(
+            "SELECT q.memory_id FROM review_queue q \
+             JOIN memories m ON m.tenant_id = q.tenant_id AND m.id = q.memory_id \
+             WHERE q.tenant_id = $1 AND m.tenant_id = $1 AND q.held_by_key = $2{lane_filter} \
+             ORDER BY q.held_since ASC, q.memory_id ASC \
              LIMIT 2",
-        )
+        ))
         .bind(tenant_id)
         .bind(reviewer_key_id)
         .fetch_all(&mut *tx)

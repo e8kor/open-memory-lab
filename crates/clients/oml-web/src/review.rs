@@ -601,6 +601,7 @@ async fn listing(
     chosen: &Chosen,
     limit: u32,
     needs: Option<&str>,
+    cursor: Option<&str>,
 ) -> Result<Option<HeldPage>, Refusal> {
     if chosen.refused() {
         return Ok(None);
@@ -614,12 +615,7 @@ async fn listing(
     match view
         .web
         .api
-        .review_held(
-            &call(&credential, &ids),
-            &filters,
-            limit,
-            fields.given("cursor"),
-        )
+        .review_held(&call(&credential, &ids), &filters, limit, cursor)
         .await
     {
         Ok(page) => Ok(Some(page)),
@@ -722,7 +718,7 @@ async fn person_list(
     }
     body.push_str("</table>");
     if let Some(lane) = lane.filter(|l| !l.items.is_empty()) {
-        body.push_str(&lane_section(view, &lane, &roots));
+        body.push_str(&lane_section(view, fields, &lane, &roots));
     }
     let _ = write!(
         body,
@@ -751,9 +747,12 @@ async fn person_list(
         body.push_str("</ul>");
     }
     if let Some(next) = &listing.next_cursor {
+        let lane = fields.given("lane_cursor").map_or(String::new(), |c| {
+            format!("&amp;lane_cursor={}", attr(&encode(c)))
+        });
         let _ = write!(
             body,
-            r#"<p><a href="{page}?held=1{}&amp;cursor={}">Next page</a></p>"#,
+            r#"<p><a href="{page}?held=1{}{lane}&amp;cursor={}">Next page</a></p>"#,
             kept_filters(fields),
             attr(&encode(next))
         );
@@ -763,10 +762,10 @@ async fn person_list(
 
 /// The person lane's section (ADR-0074 d19): what only a person's verdict
 /// approves, each author key with its count, then the rows as review
-/// cards, the author holding the fewest first.
-fn lane_section(view: &ViewCtx<'_>, lane: &HeldPage, roots: &Roots) -> String {
+/// cards in the listing's order, oldest first.
+fn lane_section(view: &ViewCtx<'_>, fields: &Fields, lane: &HeldPage, roots: &Roots) -> String {
     let mut body = String::from(
-        r#"<h2>Needs a person</h2><p class="desc">Steering, guardrails and skills, and a change that would replace one: only a person's reviewer key approves them. Each author's count, the fewest first.</p><table><tr><th>Author key</th><th>Waiting</th></tr>"#,
+        r#"<h2>Needs a person</h2><p class="desc">Steering, guardrails and skills, and a change that would replace one: only a person's reviewer key approves them. Each author's count.</p><table><tr><th>Author key</th><th>Waiting</th></tr>"#,
     );
     let mut authors: Vec<(&str, u64)> = lane
         .lane_authors
@@ -804,6 +803,18 @@ fn lane_section(view: &ViewCtx<'_>, lane: &HeldPage, roots: &Roots) -> String {
         );
     }
     body.push_str("</ul>");
+    if let Some(next) = &lane.next_cursor {
+        let rest = fields.given("cursor").map_or(String::new(), |c| {
+            format!("&amp;cursor={}", attr(&encode(c)))
+        });
+        let _ = write!(
+            body,
+            r#"<p><a href="{}?held=1{}{rest}&amp;lane_cursor={}">Next page of these</a></p>"#,
+            view.side.path(),
+            kept_filters(fields),
+            attr(&encode(next))
+        );
+    }
     body
 }
 
@@ -819,7 +830,15 @@ async fn held(
 ) -> Result<String, Refusal> {
     let page = view.side.path();
     let chosen = names.resolve(Chosen::of(fields.get("workspace")));
-    let read = listing(view, fields, &chosen, HELD_PAGE, None).await?;
+    let read = listing(
+        view,
+        fields,
+        &chosen,
+        HELD_PAGE,
+        None,
+        fields.given("cursor"),
+    )
+    .await?;
     let (listing, chosen) = settled(read, chosen, names);
     // The queue's kinds, and a read of any top label the listing names
     // beyond them, as the admin key, which reads every node.
@@ -999,23 +1018,25 @@ async fn view(
         let listed = match side {
             Side::User => {
                 let chosen = Chosen::of(fields.get("workspace"));
-                // The person lane first, on the list's first page: what only
-                // a person's verdict approves, per author key, then every
-                // other held row (ADR-0074 d19; ADR-0080 d16).
-                let first_page = fields.given("cursor").is_none();
-                let lane = async {
-                    if first_page {
-                        listing(&ctx, &fields, &chosen, WAITING_PAGE, Some("person")).await
-                    } else {
-                        Ok(None)
-                    }
-                };
+                // The person lane first, what only a person's verdict
+                // approves, then every other held row, each listing with a
+                // cursor of its own, so neither page holds the other's rows
+                // (ADR-0074 d19; ADR-0080 d16).
+                let lane = listing(
+                    &ctx,
+                    &fields,
+                    &chosen,
+                    WAITING_PAGE,
+                    Some("person"),
+                    fields.given("lane_cursor"),
+                );
                 let rest = listing(
                     &ctx,
                     &fields,
                     &chosen,
                     WAITING_PAGE,
-                    first_page.then_some("reviewer"),
+                    Some("reviewer"),
+                    fields.given("cursor"),
                 );
                 let (browse, lane, read) = tokio::join!(browse, lane, rest);
                 let lane = lane.ok().flatten();

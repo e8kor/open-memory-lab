@@ -331,7 +331,7 @@ async fn review_next_with_needs_person_serves_the_lane_and_the_listing_counts_it
     assert_eq!(refused["error"]["details"]["field"], "/needs", "{refused}");
 }
 
-/// The reviewer takes the next item and approves it; the served item./// The reviewer takes the next item and approves it; the served item.
+/// The reviewer takes the next item and approves it; the served item.
 async fn approve_next(router: &Router, t: &Tenant, n: u32) -> Value {
     let (status, served) = send(
         router,

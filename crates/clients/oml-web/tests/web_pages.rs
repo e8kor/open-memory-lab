@@ -568,6 +568,73 @@ async fn the_review_list_shows_the_person_lane_first_with_each_authors_count() {
 }
 
 #[tokio::test]
+async fn the_review_lists_second_page_holds_only_the_rest_and_never_a_lane_row() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    agent_guardrail(&rig, &value, "Never push to main.").await;
+    for n in 0..201 {
+        agent_writes_in(
+            &rig,
+            &value,
+            &format!("Quote rule {n} holds for supplier {n}."),
+            "alice",
+        )
+        .await;
+    }
+    let (_, _, first) = send(&rig.router, get("/web/review", Some(&cookie))).await;
+    let marker = "&amp;cursor=";
+    let at = first.rfind(marker).expect("a next page of the rest") + marker.len();
+    let cursor = &first[at..at + first[at..].find('"').expect("a quote")];
+    let (status, _, second) = send(
+        &rig.router,
+        get(
+            &format!("/web/review?held=1&cursor={cursor}"),
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    let held = second.find("<h2>Held memories</h2>").expect("the rest");
+    // The rest's second page holds the 201st memory and no lane row.
+    assert!(second[held..].contains("Quote rule"), "{second}");
+    assert!(!second[held..].contains("Never push to main."), "{second}");
+}
+
+#[tokio::test]
+async fn the_person_lane_pages_with_a_cursor_of_its_own() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    for n in 0..201 {
+        agent_guardrail(
+            &rig,
+            &value,
+            &format!("Rule {n}: run check {n} before commit."),
+        )
+        .await;
+    }
+    let (_, _, first) = send(&rig.router, get("/web/review", Some(&cookie))).await;
+    let marker = "&amp;lane_cursor=";
+    let at = first.find(marker).expect("a next page of the lane") + marker.len();
+    let cursor = &first[at..at + first[at..].find('"').expect("a quote")];
+    let (status, _, second) = send(
+        &rig.router,
+        get(
+            &format!("/web/review?held=1&lane_cursor={cursor}"),
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    let lane = second.find("<h2>Needs a person</h2>").expect("the lane");
+    let held = second.find("<h2>Held memories</h2>").expect("the rest");
+    // One lane row is left for the second page, and the rest holds none.
+    assert_eq!(second[lane..held].matches("Rule ").count(), 1, "{second}");
+    assert!(!second[held..].contains("Rule "), "{second}");
+}
+
+#[tokio::test]
 async fn the_judge_page_marks_a_memory_successor_of_steering_as_needing_a_person() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;

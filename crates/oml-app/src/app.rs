@@ -5800,8 +5800,8 @@ where
     }
 
     /// [`App::review_next`] narrowed by `needs`: `person` serves the person
-    /// lane alone, per author key, the author holding the fewest first and
-    /// each author's oldest first, and serves a key that cannot approve it
+    /// lane alone, round-robin across author keys, each author's oldest
+    /// first, and serves a key that cannot approve it
     /// nothing; `reviewer` serves the rows any reviewer may approve
     /// (ADR-0074 d19; ADR-0080 d16).
     pub async fn review_next_needing(
@@ -5903,9 +5903,10 @@ where
                 // held_by_key), not on a serve record: the serve binding
                 // stays #130 (ADR-0039 Consequences, "The serve binding is
                 // not fixed here").
+                let lane = review_lane(key, None).unwrap_or(ReviewLane::Reviewer);
                 let claimed = self
                     .journal
-                    .review_claimed(key.tenant_id, key.key_id)
+                    .review_claimed(key.tenant_id, key.key_id, lane)
                     .await?;
                 let [memory_id] = claimed[..] else {
                     return Err(AppError::ServeIdUnresolved {

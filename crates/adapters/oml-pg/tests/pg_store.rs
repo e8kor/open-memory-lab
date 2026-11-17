@@ -6378,8 +6378,8 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 49,
-        "every migration through 0049_claim_kinds_validate"
+        applied, 52,
+        "every migration through 0052_release_stranded_lane_claims"
     );
     drop(conn);
     drop_dbs(&created).await;
@@ -7835,8 +7835,8 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 49,
-        "every migration through 0049_claim_kinds_validate"
+        applied, 52,
+        "every migration through 0052_release_stranded_lane_claims"
     );
     drop(conn);
 
@@ -8719,8 +8719,8 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 49,
-        "every migration through 0049_claim_kinds_validate"
+        applied, 52,
+        "every migration through 0052_release_stranded_lane_claims"
     );
     drop(conn);
 
@@ -12077,5 +12077,82 @@ async fn the_kind_field_check_refuses_a_skill_name_on_another_kind() {
         "{refused}"
     );
     owner.close().await.expect("close");
+    drop_dbs(&created).await;
+}
+
+#[tokio::test]
+async fn migration_0052_releases_a_lane_claim_a_crew_key_took_before_the_lane() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let db: String = sqlx::query_scalar("SELECT current_database()::text")
+        .fetch_one(store.pool())
+        .await
+        .expect("database name");
+    let app = app_over_pg(&store);
+    let boot = bootstrap_pg(&app, "stranded").await;
+    let admin = boot.admin_key.value.as_str();
+    let crew = workspace_pg(&app, admin, "crew", boot.root_workspace_id).await;
+    let writer = writer_pg(&app, admin, crew).await;
+    let crew_key = reviewer_pg(&app, admin, "crew-reviewer", "crew/reviewer", crew).await;
+    let steering = app
+        .submit_memory(
+            writer.as_str(),
+            &kind_submit("s-1", MemoryKind::Steering, "Quote in USD/t.", None, None),
+        )
+        .await
+        .expect("steering")
+        .receipt
+        .memory_id;
+    // The claim a crew key took before the lane, as the store kept it.
+    let stranded = store
+        .review_claim_next(
+            boot.tenant_id,
+            "crew/reviewer",
+            crew_key.key_id,
+            &[crew],
+            oml_app::types::ReviewLane::Any,
+        )
+        .await
+        .expect("claim")
+        .expect("the steering");
+    assert_eq!(stranded.memory_id, steering);
+    let person = Uuid::from_u128(0xFEED);
+    assert!(
+        store
+            .review_claim_next(
+                boot.tenant_id,
+                "a-person",
+                person,
+                &[crew],
+                oml_app::types::ReviewLane::Person,
+            )
+            .await
+            .expect("claim")
+            .is_none(),
+        "while the crew holds it, no person is served it"
+    );
+    let mut owner = admin_in(&db).await;
+    owner
+        .execute(include_str!(
+            "../../../../migrations/0052_release_stranded_lane_claims.sql"
+        ))
+        .await
+        .expect("0052 runs");
+    owner.close().await.expect("close");
+    let served = store
+        .review_claim_next(
+            boot.tenant_id,
+            "a-person",
+            person,
+            &[crew],
+            oml_app::types::ReviewLane::Person,
+        )
+        .await
+        .expect("claim")
+        .expect("released to the lane");
+    assert_eq!(served.memory_id, steering);
     drop_dbs(&created).await;
 }

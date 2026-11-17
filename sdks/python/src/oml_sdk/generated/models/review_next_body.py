@@ -19,10 +19,11 @@ class ReviewNextBody:
 
         Attributes:
             needs (ReviewNextBodyNeeds | Unset): person serves the person lane alone: steering, guardrail and skill versions
-                and a successor of another kind that replaces one, per author key, the author holding the fewest first and each
-                author's oldest first; a key that cannot approve them is served none, 204. reviewer serves the rows any reviewer
-                may approve. Omitted, a person's reviewer key is served every row and any other key the rows it may approve
-                (ADR-0074 d19; ADR-0080 d16). Since v0.8.0.
+                and a successor of another kind that replaces one, round-robin across author keys, each row's turn its place
+                among its author's lane rows in age order, the lowest turn first and the older row first within a turn; a key
+                that cannot approve them is served none, 204. reviewer serves the rows any reviewer may approve. Omitted, a
+                person's reviewer key is served every row and any other key the rows it may approve (ADR-0074 d19; ADR-0080
+                d16). Since v0.8.0.
     """
 
     needs: ReviewNextBodyNeeds | Unset = UNSET

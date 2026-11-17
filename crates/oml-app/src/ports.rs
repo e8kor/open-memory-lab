@@ -1276,10 +1276,11 @@ pub trait JournalStore: Retriever + Send + Sync {
     /// the R2 check proper still runs at verdict time in the use-case). An
     /// empty set serves nothing.
     /// `lane` narrows the rows by who may approve them; in the person lane
-    /// the rows are served per author key, the author holding the fewest
-    /// first, ties to the author whose oldest is older, and each author's
-    /// oldest first, so one key's flood does not bury another's item
-    /// (ADR-0074 d19; ADR-0080 d16).
+    /// the rows are served round-robin across author keys: each row's turn
+    /// is its place among its author's lane rows in age order, claimed or
+    /// not, and the lowest turn goes first, the older row first within a
+    /// turn, so one key's flood does not bury another's item and no author
+    /// waits behind newcomers (ADR-0074 d19; the operator, 2026-11-17).
     fn review_claim_next(
         &self,
         tenant_id: Uuid,
@@ -1289,14 +1290,16 @@ pub trait JournalStore: Retriever + Send + Sync {
         lane: ReviewLane,
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send;
 
-    /// The memory ids of the queue entries this reviewer key has claimed,
-    /// oldest first and at most two, enough to tell one open item from
-    /// several: the default of a verdict sent without `serve_id`
-    /// (ADR-0039 d10).
+    /// The memory ids of the queue entries this reviewer key has claimed in
+    /// `lane`, oldest first and at most two, enough to tell one open item
+    /// from several: the default of a verdict sent without `serve_id`
+    /// (ADR-0039 d10). A claim in the person lane a key that cannot approve
+    /// it took before the lane is not its to judge (ADR-0074 d19).
     fn review_claimed(
         &self,
         tenant_id: Uuid,
         reviewer_key_id: Uuid,
+        lane: ReviewLane,
     ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send;
 
     /// The held listing (ADR-0055 d2): the queue entries

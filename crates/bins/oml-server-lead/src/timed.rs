@@ -595,10 +595,11 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         &self,
         tenant_id: Uuid,
         reviewer_key_id: Uuid,
+        lane: ReviewLane,
     ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send {
         timed(
             "review_claimed",
-            self.inner.review_claimed(tenant_id, reviewer_key_id),
+            self.inner.review_claimed(tenant_id, reviewer_key_id, lane),
         )
     }
 
