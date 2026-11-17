@@ -96,6 +96,7 @@ use oml_domain::{
     sha256_digest_string, transition, withdraw,
 };
 
+use crate::cursor::SkillCursor;
 use crate::cursor::{ClaimEdgeCursor, ListingCursor, NameCursor, PathCursor};
 use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
@@ -128,14 +129,11 @@ use crate::types::{
     WithdrawReceipt, WithdrawRequest, WorkspaceInfo, WorkspaceRecord, WorkspaceStatusView,
 };
 use crate::types::{
-    ServedSkill, SkillBody, SkillRead, SkillRequest, SkillSet,
-};
-use oml_domain::skills::{SKILL_PAGE, SkillCandidate, offer, skill_uri};
-use crate::cursor::SkillCursor;
-use crate::types::{
     BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX,
     HeldFilter, HeldItem, HeldListingRequest, HeldPage, ReviewLane, VersionFinding,
 };
+use crate::types::{ServedSkill, SkillBody, SkillRead, SkillRequest, SkillSet};
+use oml_domain::skills::{SKILL_PAGE, SkillCandidate, offer, skill_uri};
 
 use crate::search::{
     Access, CandidateScope, DID_YOU_MEAN_BELOW, Fused, Fusion, MatchMode, OwnHeldScope, Pipeline,
@@ -2394,9 +2392,7 @@ where
         }
         let load_warning = match (memory.kind, memory.status) {
             (MemoryKind::Guardrail, MemoryStatus::Held) => Some(LOAD_WARNING),
-            (MemoryKind::Skill, MemoryStatus::Held) => {
-                Some(oml_domain::skills::SKILL_LOAD_WARNING)
-            }
+            (MemoryKind::Skill, MemoryStatus::Held) => Some(oml_domain::skills::SKILL_LOAD_WARNING),
             _ => None,
         };
         Ok(ServedMemory {
@@ -7452,7 +7448,13 @@ where
             .collect();
         let rows = self
             .journal
-            .instruction_rows(tenant_id, MemoryKind::Guardrail, &listed, key.key_id, &inside)
+            .instruction_rows(
+                tenant_id,
+                MemoryKind::Guardrail,
+                &listed,
+                key.key_id,
+                &inside,
+            )
             .await?;
 
         // R3 defense in depth: a served rule is a readable promoted tip in
@@ -7596,8 +7598,14 @@ where
         caller: &Caller,
         workspace: Option<&Reference>,
         include_own_held: bool,
-    ) -> Result<(SkillScope, oml_domain::skills::Offer, BTreeMap<Uuid, MemoryRecord>), AppError>
-    {
+    ) -> Result<
+        (
+            SkillScope,
+            oml_domain::skills::Offer,
+            BTreeMap<Uuid, MemoryRecord>,
+        ),
+        AppError,
+    > {
         let key = &caller.key;
         require_admissible(key, Role::Reader, "skills")?;
         let scope_node = self.target_workspace(key, workspace).await?;
@@ -7801,7 +7809,10 @@ where
             None => offer.offered.iter().find(|o| o.command == req.command),
             Some(name) => offer.all.iter().find(|o| {
                 o.command == req.command
-                    && scope.names.get(&o.candidate.node).is_some_and(|n| n == name)
+                    && scope
+                        .names
+                        .get(&o.candidate.node)
+                        .is_some_and(|n| n == name)
             }),
         };
         let Some(found) = found else {

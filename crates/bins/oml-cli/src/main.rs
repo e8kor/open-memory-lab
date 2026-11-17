@@ -103,6 +103,11 @@ enum Command {
         #[command(subcommand)]
         command: GuardrailsCommand,
     },
+    /// List the skills offered at this key's scope.
+    Skills {
+        #[command(subcommand)]
+        command: SkillsCommand,
+    },
     /// Manage keys and connections.
     Keys {
         #[command(subcommand)]
@@ -275,6 +280,19 @@ enum GuardrailsCommand {
         /// Scope workspace by id or name; omitted, the key's default.
         #[arg(long)]
         workspace: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillsCommand {
+    /// Print every offered skill: command, version, source workspace and description.
+    List {
+        /// Scope workspace by id or name; omitted, the key's default.
+        #[arg(long)]
+        workspace: Option<String>,
+        /// Also list this key's own held skills, marked unreviewed.
+        #[arg(long)]
+        include_own_held: bool,
     },
 }
 
@@ -2027,6 +2045,13 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         } => run_verify_chain(cli, &stored, args),
 
         Command::Guardrails { command } => run_guardrails(cli, &stored, command),
+        Command::Skills {
+            command:
+                SkillsCommand::List {
+                    workspace,
+                    include_own_held,
+                },
+        } => run_skills_list(cli, &stored, workspace.as_deref(), *include_own_held),
         Command::Login { target } => run_login(cli, target),
         Command::Doctor => run_doctor(cli, &stored),
         Command::Sync(args) => run_sync(cli, &stored, args),
@@ -2131,6 +2156,133 @@ fn run_guardrails(
             })
         }
     }
+}
+
+/// `oml skills list`: `GET /v1/skills` under the stored key, every page,
+/// one line per offered skill in the read's order, no bodies (ADR-0080
+/// d11). With `--json`, the scope and every page's skills as one document.
+fn run_skills_list(
+    cli: &Cli,
+    stored: &Credentials,
+    workspace: Option<&str>,
+    include_own_held: bool,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let mut query = Vec::new();
+    if let Some(w) = workspace {
+        query.push(format!("workspace={}", encode(w)));
+    }
+    if include_own_held {
+        query.push("include_own_held=true".to_owned());
+    }
+    let mut skills: Vec<Value> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let first = loop {
+        let mut params = query.clone();
+        if let Some(c) = &cursor {
+            params.push(format!("cursor={}", encode(c)));
+        }
+        let path = if params.is_empty() {
+            "/v1/skills".to_owned()
+        } else {
+            format!("/v1/skills?{}", params.join("&"))
+        };
+        let (_, page) = client.get(&path)?;
+        skills.extend(page["skills"].as_array().cloned().unwrap_or_default());
+        match page["next_cursor"].as_str() {
+            Some(next) => cursor = Some(next.to_owned()),
+            None => break page,
+        }
+    };
+    if cli.json {
+        println!(
+            "{}",
+            json!({
+                "scope_path": first["scope_path"],
+                "guardrail_scope": first["guardrail_scope"],
+                "set_digest": first["set_digest"],
+                "skills": skills,
+            })
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+    println!(
+        "skills offered at {} (guardrail scope {}): {}",
+        first["scope_path"].as_str().unwrap_or("?"),
+        first["guardrail_scope"].as_str().unwrap_or("?"),
+        skills.len()
+    );
+    for s in &skills {
+        let mark = if s["unreviewed"] == true {
+            " [unreviewed]"
+        } else {
+            ""
+        };
+        let overrides = s["overrides"]
+            .as_array()
+            .filter(|o| !o.is_empty())
+            .map(|o| {
+                let paths: Vec<&str> = o.iter().filter_map(Value::as_str).collect();
+                format!(" (overrides {})", paths.join(", "))
+            })
+            .unwrap_or_default();
+        println!(
+            "{} v{} {}{mark}: {}{overrides}",
+            s["name"].as_str().unwrap_or("?"),
+            s["version"],
+            s["workspace_path"].as_str().unwrap_or("?"),
+            s["description"].as_str().unwrap_or(""),
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The doctor's local skill lines (ADR-0080 d15): whether the `oml` on
+/// `PATH`, which the plugin's hooks run, asks before a `Write` under
+/// `~/.claude/skills/` (probed with a call it only reads), and how many
+/// skills the current project's and the home's `.claude/skills/` keep on
+/// disk.
+fn local_skill_lines() -> Vec<String> {
+    use std::io::Write as _;
+    let home = std::env::var("HOME")
+        .ok()
+        .filter(|h| Path::new(h).is_absolute());
+    let mut lines = Vec::new();
+    if let Some(home) = &home {
+        let probe = json!({
+            "session_id": "oml-doctor-skill-probe",
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Write",
+            "tool_input": { "file_path": format!("{home}/.claude/skills/oml-doctor/SKILL.md"), "content": "" },
+            "cwd": home,
+        });
+        let output = std::process::Command::new("oml")
+            .args(["hook", "pre-tool-use"])
+            .env_remove("OML_API_KEY")
+            .env_remove("OML_URL")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .and_then(|mut child| {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(probe.to_string().as_bytes());
+                }
+                child.wait_with_output()
+            })
+            .ok();
+        let stdout = output.map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        lines.extend(oml_cli::skills::hook_probe_line(stdout.as_deref()));
+    }
+    let mut roots = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        roots.push(cwd.join(".claude").join("skills"));
+    }
+    if let Some(home) = home {
+        roots.push(PathBuf::from(home).join(".claude").join("skills"));
+    }
+    lines.extend(oml_cli::skills::disk_lines(&roots));
+    lines
 }
 
 /// One `oml hook` verb: the variables and stdin in, the hook document or
@@ -5315,6 +5467,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     // The chat workspace's path and whether the server takes origin_kinds
     // (ADR-0063 d13).
     let mut chat_server: Vec<String> = Vec::new();
+    // The skill lines from the key's offered set (ADR-0080 Consequences).
+    let mut skills: Vec<String> = Vec::new();
     let mut held_blocking: Option<usize> = None;
     // Every node of the tenant's tree, read by an admin key for the
     // user-root lines (ADR-0085 d17).
@@ -5328,6 +5482,11 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             let client = Client::new(url.clone(), Some(key.clone()));
             me = Some(client.whoami());
             chat_server = chat_doctor(&client, me.as_ref().and_then(|m| m.as_ref().ok()));
+            skills = oml_cli::skills::server_lines(
+                &client
+                    .get("/v1/skills?include_own_held=true")
+                    .map(|(_, page)| page),
+            );
             if let Some(Ok(v)) = &me
                 && v["user"].is_object()
             {
@@ -5482,6 +5641,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut chat = oml_cli::chat::doctor_lines(&|name: &str| std::env::var(name).ok());
     chat.extend(chat_server);
     let chat_warn = chat.iter().any(|line| line.starts_with("warn"));
+    skills.extend(local_skill_lines());
+    let skills_warn = skills.iter().any(|line| line.starts_with("warn"));
     let sources = sources_doctor(
         server_version(ready.as_ref()).as_deref(),
         default_node.as_ref(),
@@ -5523,6 +5684,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || withdrawals_warn
         || sync_warn
         || chat_warn
+        || skills_warn
         || sources_warn
         || in_progress_warn
         || !user_root_status.is_empty()
@@ -5574,6 +5736,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "review": review,
             "sync": sync,
             "chat": chat,
+            "skills": skills,
             "telemetry": telemetry,
             "journal": journal,
             "handlers": handlers,
@@ -5730,6 +5893,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &chat {
             println!("chat        : {line}");
+        }
+        for line in &skills {
+            println!("skills      : {line}");
         }
         for line in &sources {
             println!("sources     : {line}");

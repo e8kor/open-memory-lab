@@ -140,7 +140,7 @@ fn a_resource_uri_with_a_percent_or_a_reserved_character_is_refused_as_escaped()
 fn a_resource_uri_outside_the_grammar_is_not_found() {
     for uri in [
         "https://workspace/team/skill/deploy",
-        "oml://workarea/team/skill/deploy",
+        "oml://tenant/team/skill/deploy",
         "oml://workspace/team/skill/",
         "oml://workspace/team/skill/a/b",
         "oml://workspace//skill/deploy",

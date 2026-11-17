@@ -508,6 +508,57 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v1/skills:
+    get:
+      tags: [memories]
+      operationId: getSkills
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - name: workspace
+          in: query
+          required: false
+          schema: { type: string }
+          description: The scope node, by id or name, within the key's grants; omitted, the key's default workspace.
+        - name: include_own_held
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: >-
+            Offer the calling key's own held skills too, each unreviewed, a held edit of an approved
+            skill as <name>-unreviewed (ADR-0080 d10, d14). The MCP prompts and resources and the
+            plugin's session-start hook send true.
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+          description: A next_cursor this key was served; the next page follows its position.
+      summary: The skills offered at the scope node, 50 a page, without bodies.
+      description: >-
+        Requires: reader on the scope node. Offers the promoted skill tips on the node and, under
+        guardrail_scope ancestors, on each ancestor the key reads and, inside a workspace a
+        person put in progress, on each node below the scope node in that subtree; never a
+        skill in a child workspace outside one. Inside an in-progress subtree every author's
+        held skill is offered too, and under include_own_held the key's own: marked unreviewed,
+        never a held retirement or a version the scan held. A name held in two workspaces goes
+        to the one nearer the scope node by tree distance, an ancestor winning a tie and then
+        the smaller path; the nearer names the farther in overrides. Ordered by depth, then
+        name; any parameter other than workspace, include_own_held and cursor is
+        request.validation naming it. Serving the set is a read, not a recall
+        (docs/api/http-api.md, Skills; ADR-0080 d4, d5, d10, d11, d12, d14, d16; since v0.8.0).
+      responses:
+        '200':
+          description: One page of the offered set and the digest of the whole set.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SkillSet' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v1/account/usage:
     get:
       tags: [account]
@@ -5092,6 +5143,40 @@ components:
             properties:
               claim_key: { type: string }
               version: { type: integer }
+
+    SkillSet:
+      type: object
+      description: One page of the skills offered at the scope node, without bodies (ADR-0080 d11).
+      required: [scope_node, scope_path, guardrail_scope, set_digest, skills, next_cursor]
+      additionalProperties: false
+      properties:
+        scope_node: { type: string }
+        scope_path: { type: string, description: "The scope node's derived path, root first." }
+        guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
+        set_digest: { type: string, description: "Opaque, over the whole offered set, every page alike; a client only compares it." }
+        skills: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/ServedSkill' }, description: "Ordered by depth from the scope node, then name." }
+        next_cursor: { type: [string, 'null'], description: "Null on the last page." }
+
+    ServedSkill:
+      type: object
+      required: [artifact_id, claim_key, name, description, version, workspace_path, depth, overrides, approved_at, approver, uri, unreviewed]
+      additionalProperties: false
+      properties:
+        artifact_id: { type: string, description: "GET /v1/memories/{artifact_id} serves the body." }
+        claim_key: { type: string, description: "skill/<name>." }
+        name: { type: string, description: "The command: the skill's name, or <name>-unreviewed for a held edit of an approved skill (ADR-0080 d10)." }
+        description: { type: string }
+        version: { type: integer }
+        workspace_path: { type: string }
+        depth: { type: integer, minimum: 0, description: "The tree distance from the scope node, up or down: 0 on the scope node." }
+        overrides: { type: array, items: { type: string }, description: "The farther workspaces' paths whose skill of this name it shadows, nearest first." }
+        approved_at: { type: [string, 'null'], format: date-time, description: "Null for a held version (ADR-0077 d5)." }
+        approver:
+          oneOf:
+            - { $ref: '#/components/schemas/Approver' }
+            - { type: 'null' }
+        uri: { type: string, description: "The skill's MCP resource, oml://workspace/<workspace>/skill/<name> (ADR-0080 d7)." }
+        unreviewed: { type: boolean, description: "A held version, offered to its author key or inside an in-progress workspace (ADR-0080 d10, d14)." }
 
     ServedGuardrail:
       type: object

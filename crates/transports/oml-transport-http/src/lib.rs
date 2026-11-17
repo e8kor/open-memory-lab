@@ -73,11 +73,11 @@ use oml_app::types::{
     AnchorFilter, AppError, Bearer, BootstrapRequest, BriefEdgeView, ClaimEdgeProposal,
     ClaimEdgeQuery, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
     EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest,
-    SkillRequest, SkillSet,
     IssuedKey, KeyDetail, KeyLimitsChange, KeyRecord, KindFields, ListRequest, MemoryRecord,
     NamedServe, OnSimilar, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory,
-    SimilarItem, SourceCheck, SourceCheckRequest, SubmitRequest, SubmitVerb, SupersedeRequest,
-    TailedEvent, Verdict, VerdictRequest, Whoami, WithdrawRequest, WorkspaceInfo, WorkspaceRecord,
+    SimilarItem, SkillRequest, SkillSet, SourceCheck, SourceCheckRequest, SubmitRequest,
+    SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami, WithdrawRequest,
+    WorkspaceInfo, WorkspaceRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage, ReviewLane,

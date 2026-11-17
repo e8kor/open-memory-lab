@@ -52,9 +52,8 @@ use oml_app::types::{
     ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectGrant,
     ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching,
     GrantRecord, GuardrailFields, HeldFilter, HeldRow, KeyAccess, KeyRecord, KindFields,
-    ListingFilter,
-    ListingPosition, ListingScope, MemoryRecord, MintedToken, OAuthClientRecord, RefreshFacts,
-    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
+    ListingFilter, ListingPosition, ListingScope, MemoryRecord, MintedToken, OAuthClientRecord,
+    RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
     TransitionState, UnnamedRows, WorkspaceRecord,
 };
 use oml_app::types::{FindingVerdict, FoundBy, VersionFinding};
@@ -7090,7 +7089,10 @@ pub async fn instruction_rows_are_the_tips_in_force_the_named_keys_own_held_rows
         skills.iter().map(|m| m.memory_id).collect::<Vec<_>>(),
         vec![skill.memory_id]
     );
-    assert_eq!(skills[0].kind_fields, skill.kind_fields, "the fields round-trip");
+    assert_eq!(
+        skills[0].kind_fields, skill.kind_fields,
+        "the fields round-trip"
+    );
 }
 
 // ---------------------------------------------------------------------------

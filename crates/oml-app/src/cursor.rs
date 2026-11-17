@@ -567,8 +567,7 @@ impl SkillCursor {
     /// [`CursorError::Malformed`].
     pub fn decode(text: &str) -> Result<Self, CursorError> {
         let bytes = decode_b64url(text).ok_or(CursorError::Malformed)?;
-        let wire: SkillWire =
-            serde_json::from_slice(&bytes).map_err(|_| CursorError::Malformed)?;
+        let wire: SkillWire = serde_json::from_slice(&bytes).map_err(|_| CursorError::Malformed)?;
         Ok(Self {
             key_id: wire.key_id,
             after: (wire.after_depth, wire.after_command),

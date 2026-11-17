@@ -17039,7 +17039,9 @@ async fn an_agent_proposes_a_skill_over_oml_write_and_it_stays_held_until_a_pers
         .unwrap_err();
     assert!(person_required(&err, MemoryKind::Skill), "{err:?}");
     assert!(
-        offered_at(&app, &reader.value, crew, false).await.is_empty(),
+        offered_at(&app, &reader.value, crew, false)
+            .await
+            .is_empty(),
         "held: offered to nobody else"
     );
     app.post_verdict(&person.value, id, Verdict::Approve, None)
@@ -17065,7 +17067,10 @@ async fn an_agent_proposes_a_skill_over_oml_write_and_it_stays_held_until_a_pers
         skill.approver.as_ref().map(|a| a.used_by),
         Some(UsedBy::Person)
     );
-    assert_eq!(skill.uri, format!("oml://workspace/{}/skill/deploy", skill.workspace_name));
+    assert_eq!(
+        skill.uri,
+        format!("oml://workspace/{}/skill/deploy", skill.workspace_name)
+    );
     assert_eq!(set.next_cursor, None);
 }
 
@@ -17087,7 +17092,9 @@ async fn a_skill_author_key_is_offered_its_held_skill_marked_unreviewed() {
         vec![("deploy".to_owned(), true)]
     );
     assert!(
-        offered_at(&app, &writer.value, crew, false).await.is_empty(),
+        offered_at(&app, &writer.value, crew, false)
+            .await
+            .is_empty(),
         "only under include_own_held"
     );
     assert!(
@@ -17155,7 +17162,10 @@ async fn a_skill_in_a_child_workspace_is_not_offered_at_its_parent_outside_in_pr
     );
     assert_eq!(
         offered_at(&app, &reader.value, team, true).await,
-        vec![("child-only".to_owned(), false), ("parent".to_owned(), false)],
+        vec![
+            ("child-only".to_owned(), false),
+            ("parent".to_owned(), false)
+        ],
         "an ancestor's skill is offered below it, nearest first"
     );
 }
@@ -17211,7 +17221,11 @@ async fn a_held_edit_of_a_promoted_skill_is_offered_as_name_unreviewed() {
         .expect("offered");
     assert_eq!(approved.skill.artifact_id, first);
     let held = app
-        .skill(&writer.value, Some(&crew.into()), &read("deploy-unreviewed"))
+        .skill(
+            &writer.value,
+            Some(&crew.into()),
+            &read("deploy-unreviewed"),
+        )
         .await
         .expect("read")
         .expect("offered");
@@ -17334,7 +17348,11 @@ async fn the_skill_set_pages_by_fifty_with_one_digest() {
         .await
         .expect("page 2");
     assert_eq!(
-        second.skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+        second
+            .skills
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>(),
         vec!["skill-50"]
     );
     assert_eq!(second.next_cursor, None);
