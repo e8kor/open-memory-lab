@@ -1396,6 +1396,19 @@ mod tests {
         );
     }
 
+    /// A verdict refused by R2 by person answers the lineage code with
+    /// `details.reason: same_person`, on the single verdict and as a bulk
+    /// item alike (ADR-0082 d7; errors.md).
+    #[test]
+    fn a_same_person_verdict_is_author_in_lineage_naming_same_person() {
+        for ctx in [ErrorContext::Write, ErrorContext::Review] {
+            let refusal = map_app_error(AppError::SamePerson, ctx);
+            assert_eq!(refusal.status, StatusCode::FORBIDDEN);
+            assert_eq!(refusal.code, "review.author_in_lineage");
+            assert_eq!(refusal.details, Some(json!({ "reason": "same_person" })));
+        }
+    }
+
     /// A global denial on an admin key is refused naming `key`, the field
     /// v0.4.0 sends, and the architecture page that declares the rule names
     /// the same field (roles-and-keys.md footnote 6; ADR-0026 d15, ADR-0039 d7).
