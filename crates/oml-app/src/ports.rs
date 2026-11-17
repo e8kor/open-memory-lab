@@ -1297,6 +1297,11 @@ pub trait JournalStore: Retriever + Send + Sync {
     /// not, and the lowest turn goes first, the older row first within a
     /// turn, so one key's flood does not bury another's item and no author
     /// waits behind newcomers (ADR-0074 d19; the operator, 2026-11-17).
+    /// A row whose author key acts for the person the reviewer key acts
+    /// for is served only inside that person's root (R2 by person;
+    /// ADR-0001 d5; ADR-0082 d7). A key's person is its user root, its
+    /// linked root, or the user root its session key names; the store reads
+    /// both from the key rows, so the check costs no call of its own.
     fn review_claim_next(
         &self,
         tenant_id: Uuid,

@@ -763,6 +763,13 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "R2: the reviewer is never the author — enforced against the full lineage closure.",
             "the ratifying key or principal is in an endpoint's lineage closure",
         ),
+        AppError::SamePerson => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "review.author_in_lineage",
+            "Outside a person's own root, no key acting for that person judges a version any of their keys wrote (ADR-0001 d5; ADR-0082 d7).",
+            "this key acts for the person whose key wrote the version, outside that person's root",
+        )
+        .with_details(json!({ "reason": "same_person" })),
         // A decided edge answers as a verdict on a decided row does: errors.md
         // declares no edge-specific code (ADR-0021 d5).
         AppError::EdgeConsumed { edge_id } => ApiError::serve_invalid("consumed")
@@ -1399,6 +1406,19 @@ mod tests {
             refusal.error_object()["details"]["renamed_to"],
             "/include_unreviewed"
         );
+    }
+
+    /// A verdict refused by R2 by person answers the lineage code with
+    /// `details.reason: same_person`, on the single verdict and as a bulk
+    /// item alike (ADR-0082 d7; errors.md).
+    #[test]
+    fn a_same_person_verdict_is_author_in_lineage_naming_same_person() {
+        for ctx in [ErrorContext::Write, ErrorContext::Review] {
+            let refusal = map_app_error(AppError::SamePerson, ctx);
+            assert_eq!(refusal.status, StatusCode::FORBIDDEN);
+            assert_eq!(refusal.code, "review.author_in_lineage");
+            assert_eq!(refusal.details, Some(json!({ "reason": "same_person" })));
+        }
     }
 
     /// A global denial on an admin key is refused naming `key`, the field

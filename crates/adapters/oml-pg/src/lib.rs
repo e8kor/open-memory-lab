@@ -2288,6 +2288,31 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workspace_id, m.claim_key, m.
      to_char(m.approved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS approved_at_signed";
 
+/// R2 by person in SQL, over `m` and the reviewer key `{key}`: true for a
+/// row whose author key acts for the person the reviewer key acts for (a
+/// key's user root, its linked root, or the user root its session key
+/// names), in a workspace outside that person's root; NULL or false
+/// otherwise, so a reviewer acting for no person is never narrowed
+/// (ADR-0001 d5; ADR-0082 d7). The tenant is read off `m`, so the serve
+/// queue and the held listing, which bind their parameters differently,
+/// share one text; `key` is the reviewer key's placeholder, split at
+/// [`REVIEWER_KEY`] where the caller binds it.
+const SAME_PERSON_OUTSIDE_ROOT: &str = "EXISTS (SELECT 1 FROM api_keys rk \
+    JOIN api_keys ak ON ak.tenant_id = m.tenant_id AND ak.id = m.author_key_id \
+    CROSS JOIN LATERAL (SELECT COALESCE(rk.user_root_id, rk.linked_user_id, \
+        (SELECT u.id FROM workspaces u \
+         WHERE u.tenant_id = m.tenant_id AND u.user_root AND u.name = rk.session_for)) AS root) r \
+    CROSS JOIN LATERAL (SELECT COALESCE(ak.user_root_id, ak.linked_user_id, \
+        (SELECT u.id FROM workspaces u \
+         WHERE u.tenant_id = m.tenant_id AND u.user_root AND u.name = ak.session_for)) AS root) a \
+    WHERE rk.tenant_id = m.tenant_id AND rk.id = {key} AND r.root = a.root \
+      AND NOT EXISTS (SELECT 1 FROM workspaces w \
+          WHERE w.tenant_id = m.tenant_id AND w.id = m.workspace_id \
+            AND r.root IN (w.id, w.namespace_root_id)))";
+
+/// The reviewer key's placeholder in [`SAME_PERSON_OUTSIDE_ROOT`].
+const REVIEWER_KEY: &str = "{key}";
+
 /// The held listing's predicate after `WHERE q.tenant_id = `:
 /// review_claim_next's, unclaimed by another key, narrowed by the filter's
 /// nodes, author, claim-key prefix and lane (ADR-0055 d2; ADR-0074 d19).
@@ -2324,6 +2349,15 @@ fn push_held_predicates(
         .push(" OR r.author_principal = ")
         .push_bind(reviewer_principal.to_owned())
         .push(")))");
+    // R2 by person, as review_claim_next serves it (ADR-0001 d5; ADR-0082
+    // d7): the listing and its counts hold no row the reviewer may not judge.
+    let (before, after) = SAME_PERSON_OUTSIDE_ROOT
+        .split_once(REVIEWER_KEY)
+        .expect("the predicate names the reviewer key once");
+    sql.push(" AND NOT ")
+        .push(before)
+        .push_bind(reviewer_key_id)
+        .push(after);
     if let Some(author) = filter.author_key_id {
         sql.push(" AND m.author_key_id = ").push_bind(author);
     }
@@ -8294,6 +8328,7 @@ impl JournalStore for PgStore {
         } else {
             (String::new(), "q.held_since ASC, q.memory_id ASC")
         };
+        let same_person = SAME_PERSON_OUTSIDE_ROOT.replace(REVIEWER_KEY, "$2");
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM review_queue q \
              JOIN memories m ON m.tenant_id = q.tenant_id AND m.id = q.memory_id \
@@ -8308,6 +8343,7 @@ impl JournalStore for PgStore {
                      AND r.replaces_artifact_id = m.replaces_artifact_id \
                      AND r.workspace_id = m.workspace_id AND r.claim_key = m.claim_key \
                      AND (r.author_key_id = $2 OR r.author_principal = $3))) \
+               AND NOT {same_person} \
              {lane_filter} ORDER BY {order} \
              LIMIT 1 \
              FOR NO KEY UPDATE OF q SKIP LOCKED"
