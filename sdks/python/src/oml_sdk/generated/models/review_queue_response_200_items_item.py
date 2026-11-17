@@ -18,12 +18,18 @@ class ReviewQueueResponse200ItemsItem:
         workspace_id (UUID):
         path (str):
         held (int):
+        held_instructions (int): The held steering, guardrail and other instruction-class versions among held; only a
+            person's reviewer key approves one (ADR-0080 d16).
+        person_reviewers (int): The live person's reviewer keys whose effective access confers reviewer on the
+            workspace. A count, never a key.
         oldest_at (datetime.datetime):
     """
 
     workspace_id: UUID
     path: str
     held: int
+    held_instructions: int
+    person_reviewers: int
     oldest_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -34,6 +40,10 @@ class ReviewQueueResponse200ItemsItem:
 
         held = self.held
 
+        held_instructions = self.held_instructions
+
+        person_reviewers = self.person_reviewers
+
         oldest_at = self.oldest_at.isoformat()
 
         field_dict: dict[str, Any] = {}
@@ -43,6 +53,8 @@ class ReviewQueueResponse200ItemsItem:
                 "workspace_id": workspace_id,
                 "path": path,
                 "held": held,
+                "held_instructions": held_instructions,
+                "person_reviewers": person_reviewers,
                 "oldest_at": oldest_at,
             }
         )
@@ -58,12 +70,18 @@ class ReviewQueueResponse200ItemsItem:
 
         held = d.pop("held")
 
+        held_instructions = d.pop("held_instructions")
+
+        person_reviewers = d.pop("person_reviewers")
+
         oldest_at = datetime.datetime.fromisoformat(d.pop("oldest_at"))
 
         review_queue_response_200_items_item = cls(
             workspace_id=workspace_id,
             path=path,
             held=held,
+            held_instructions=held_instructions,
+            person_reviewers=person_reviewers,
             oldest_at=oldest_at,
         )
 
