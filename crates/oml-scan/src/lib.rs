@@ -1,4 +1,4 @@
-//! The deterministic content scan, rule set `oml-scan/1.2` (ADR-0065; `/1` before the 2026-11-10 amendment, `/1.1` before #226).
+//! The deterministic content scan, rule set `oml-scan/1.3` (ADR-0065; `/1` before the 2026-11-10 amendment, `/1.1` before #226, `/1.2` before the age identity rule of #453).
 //!
 //! Rules, not a model: the same text gives the same findings under the same
 //! rule-set version (admission.md). A finding names its class, its rule and
@@ -28,7 +28,7 @@ pub use rules::Action;
 use rules::{Check, LETTER_PHRASES, PLACEHOLDERS, RULES, Rule, Tail};
 
 /// The rule-set version every verdict is journalled under (ADR-0065 d1).
-pub const RULESET: &str = "oml-scan/1.2";
+pub const RULESET: &str = "oml-scan/1.3";
 
 /// The largest text one scan reads: 1 MiB. A longer field is vetoed as
 /// `format.scan_bound` rather than scanned in part (d9).
@@ -124,7 +124,7 @@ pub struct Options {
 static COMPILED: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     RULES
         .iter()
-        .map(|r| Regex::new(r.pattern).expect("the oml-scan/1.2 patterns compile"))
+        .map(|r| Regex::new(r.pattern).expect("the oml-scan/1.3 patterns compile"))
         .collect()
 });
 
@@ -164,7 +164,7 @@ pub fn rule_ids() -> Vec<(&'static str, &'static str, Action)> {
     out
 }
 
-/// The scanner: the compiled `oml-scan/1.2` set, the deployment's options,
+/// The scanner: the compiled `oml-scan/1.3` set, the deployment's options,
 /// and the findings counted by rule since start (d11).
 #[derive(Debug, Default)]
 pub struct RuleSet {

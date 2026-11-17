@@ -51,6 +51,10 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   stored version records the rule set it was scanned under, `memories.scanned_under` (migration
   0038): admission's, or the recording rescan's (d13). The migration reads every row stored
   before it as `oml-scan/1`.
+  Amended 2026-11-17 (#453): `oml-scan/1.3` adds the veto rule `age-identity`, class
+  `secret.private_key`, for an age X25519 identity (`AGE-SECRET-KEY-1` and 58 bech32
+  characters), the secret half of a bundle recipient ([ADR-0084](ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d5). It adds a rule to an
+  existing class, so it is a minor ([ADR-0074](ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings.md) d21); the public half, `age1…`, passes.
 
 - **d2 — Each rule names a finding class, a rule id and one action.** Classes keep admission's
   `family.condition` vocabulary, so a review policy's `human_required_classes` can name them. The
@@ -58,7 +62,7 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
 
     | Class | Rules | Action |
     |---|---|---|
-    | `secret.private_key` | `private-key-block`, `putty-private-key` | veto |
+    | `secret.private_key` | `private-key-block`, `putty-private-key`, `age-identity` (from `oml-scan/1.3`) | veto |
     | `secret.api_token` | `aws-access-key-id`, `github-token`, `github-fine-grained-pat`, `gitlab-token`, `slack-token`, `slack-app-token`, `slack-webhook`, `stripe-key`, `google-api-key`, `openai-key`, `anthropic-key`, `npm-token`, `pypi-token`, `huggingface-token`, `jwt`, `oml-key`, `oml-connection-token`, `authorization-header` | veto |
     | `secret.credential_pair` | `url-credentials`, `curl-user` | veto |
     | `secret.assignment` | `aws-secret-access-key`, `aws-secret-near-id`, `keyword-assignment` | veto |

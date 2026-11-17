@@ -421,10 +421,7 @@ fn an_age_secret_key_in_a_memory_is_vetoed() {
 #[test]
 fn an_age_public_recipient_is_not_vetoed() {
     let scanner = RuleSet::new(Options::default());
-    let recipient = j(&[
-        "age1",
-        &fake(BECH32_UPPER, 58, 32).to_ascii_lowercase(),
-    ]);
+    let recipient = j(&["age1", &fake(BECH32_UPPER, 58, 32).to_ascii_lowercase()]);
     let short = j(&["AGE-SECRET", "-KEY-1", &fake(BECH32_UPPER, 40, 33)]);
     let outside = j(&[
         "AGE-SECRET",

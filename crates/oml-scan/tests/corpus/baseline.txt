@@ -1,4 +1,4 @@
-redteam: oml-scan/1.2 over the corpus of ADR-0074 d15, 874 samples
+redteam: oml-scan/1.3 over the corpus of ADR-0074 d15, 876 samples
 a rate needs 50 malicious samples and 50 twins in its family (d15); below that only counts print
 
 family     malicious  twins  caught  exact   recall   twin-fp  precision
@@ -8,7 +8,7 @@ exfil             10     10       0      0     n<50      n<50       n<50
 injection        136    136      79     79    58.1%      0.0%     100.0%
 phish             10     10       0      0     n<50      n<50       n<50
 poison            10     10       0      0     n<50      n<50       n<50
-secret            70     70      70     70   100.0%      0.0%     100.0%
+secret            71     71      71     71   100.0%      0.0%     100.0%
 ssrf              10     10       0      0     n<50      n<50       n<50
 unicode           60     60      50     50    83.3%      0.0%     100.0%
 
@@ -24,29 +24,29 @@ held-out benign: 56 samples, 0 flagged, 0.0% [Wilson 95%: 0.0%-6.4%]
 hidden by Markdown, caught: 6 of 6
 benign security prose, flagged: 0 of 20
 
-mutations over 366 malicious samples; plain recall 59.8% (219 caught); invariance asks each transform for at least the plain recall less 5 points (d15)
+mutations over 367 malicious samples; plain recall 59.9% (220 caught); invariance asks each transform for at least the plain recall less 5 points (d15)
   zero-width-in-word        80.9%  +21.0 points  holds
-  fullwidth                 59.8%  +0.0 points  holds
-  mixed-case                46.4%  -13.4 points  below
-  homoglyph                 22.7%  -37.2 points  below
-  joined-underscore         55.7%  -4.1 points  holds
-  joined-slash              55.7%  -4.1 points  holds
-  letters-dash              26.8%  -33.1 points  below
-  letters-dot               26.5%  -33.3 points  below
-  letters-space             26.5%  -33.3 points  below
-  title-body-split          56.0%  -3.8 points  holds
-  base64-depth-1             6.6%  -53.3 points  below
-  base64-depth-2            10.1%  -49.7 points  below
-  base64-depth-3            12.6%  -47.3 points  below
-  base64-zero-width-split   59.6%  -0.3 points  holds
-  base64-entity-split        0.0%  -59.8 points  below
-  base64-fullwidth           6.6%  -53.3 points  below
-  percent-fullwidth          0.0%  -59.8 points  below
-  percent-double             0.0%  -59.8 points  below
-  entity-double              0.0%  -59.8 points  below
-  partial-percent           19.7%  -40.2 points  below
-  partial-entity            17.5%  -42.3 points  below
-  budget-padding             6.6%  -53.3 points  below
+  fullwidth                 59.9%  +0.0 points  holds
+  mixed-case                46.3%  -13.6 points  below
+  homoglyph                 22.9%  -37.1 points  below
+  joined-underscore         55.9%  -4.1 points  holds
+  joined-slash              55.9%  -4.1 points  holds
+  letters-dash              26.7%  -33.2 points  below
+  letters-dot               26.4%  -33.5 points  below
+  letters-space             26.4%  -33.5 points  below
+  title-body-split          56.1%  -3.8 points  holds
+  base64-depth-1             6.5%  -53.4 points  below
+  base64-depth-2            10.1%  -49.9 points  below
+  base64-depth-3            12.8%  -47.1 points  below
+  base64-zero-width-split   59.7%  -0.3 points  holds
+  base64-entity-split        0.0%  -59.9 points  below
+  base64-fullwidth           6.5%  -53.4 points  below
+  percent-fullwidth          0.0%  -59.9 points  below
+  percent-double             0.0%  -59.9 points  below
+  entity-double              0.0%  -59.9 points  below
+  partial-percent           19.6%  -40.3 points  below
+  partial-entity            17.4%  -42.5 points  below
+  budget-padding             6.5%  -53.4 points  below
 
 per sample: id expected actual rules
 prose-own-001 pass pass -
@@ -783,6 +783,8 @@ sec-url-009 refuse refuse aws-access-key-id
 sec-url-009-twin pass pass -
 sec-url-010 refuse refuse aws-access-key-id
 sec-url-010-twin pass pass -
+sec-age-001 refuse refuse age-identity
+sec-age-001-twin pass pass -
 ssrf-001 hold pass -
 ssrf-001-twin pass pass -
 ssrf-002 hold pass -
