@@ -522,21 +522,19 @@ where
                 Ok(page) => {
                     let resources: Vec<Value> =
                         page.set.skills.iter().map(skill_resource_listing).collect();
-                    rpc_result(
-                        &id,
-                        &with_cursor(json!({ "resources": resources }), &page),
-                    )
+                    rpc_result(&id, &with_cursor(json!({ "resources": resources }), &page))
                 }
                 Err(message) => {
                     call.rpc_error(INVALID_PARAMS);
                     rpc_error(&id, INVALID_PARAMS, &message)
                 }
             },
-            "resources/templates/list" => rpc_result(
-                &id,
-                &json!({ "resourceTemplates": resource_templates() }),
-            ),
-            "resources/read" => Self::resource_read(st, presented, &id, &request.params, call).await,
+            "resources/templates/list" => {
+                rpc_result(&id, &json!({ "resourceTemplates": resource_templates() }))
+            }
+            "resources/read" => {
+                Self::resource_read(st, presented, &id, &request.params, call).await
+            }
             "prompts/get" => {
                 let Some(name) = request.params.get("name").and_then(Value::as_str) else {
                     call.rpc_error(INVALID_PARAMS);
@@ -654,8 +652,8 @@ where
             workspace_name: None,
             include_own_held: true,
         };
-        let served = Self::skill_inner(st, &ring_headers(presented), presented.connection, &read)
-            .await;
+        let served =
+            Self::skill_inner(st, &ring_headers(presented), presented.connection, &read).await;
         let Ok(Some(skill)) = served else {
             call.rpc_error(INVALID_PARAMS);
             return rpc_error(
@@ -697,7 +695,12 @@ where
         };
         let not_found = |call: &mut McpCall| {
             call.rpc_error(RESOURCE_NOT_FOUND);
-            rpc_error_data(id, RESOURCE_NOT_FOUND, "Resource not found", &json!({ "uri": uri }))
+            rpc_error_data(
+                id,
+                RESOURCE_NOT_FOUND,
+                "Resource not found",
+                &json!({ "uri": uri }),
+            )
         };
         let (workspace, command) = match parse_resource_uri(uri) {
             Ok(ResourceUri::Skill { workspace, name }) => (workspace, name),
@@ -719,8 +722,8 @@ where
             workspace_name: Some(workspace),
             include_own_held: true,
         };
-        let served = Self::skill_inner(st, &ring_headers(presented), presented.connection, &read)
-            .await;
+        let served =
+            Self::skill_inner(st, &ring_headers(presented), presented.connection, &read).await;
         let Ok(Some(skill)) = served else {
             return not_found(call);
         };
