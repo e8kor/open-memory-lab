@@ -401,7 +401,8 @@ mod tests {
             assert!(serves("GET", path), "{path}");
         }
         assert!(serves("POST", "/web/admin/memory") && serves("POST", "/web/admin/curate"));
-        assert!(!serves("POST", "/web/memory"));
+        // The user memory page's one act, Withdraw (ADR-0083 d13).
+        assert!(serves("POST", "/web/memory"));
         assert!(serves("GET", "/web/render/0a1b") && serves("GET", "/web/assets/mermaid-0.js"));
         assert!(!serves("GET", "/web/render/") && !serves("GET", "/web/render/a/b"));
         assert!(!serves("POST", "/web/render/0a1b"));

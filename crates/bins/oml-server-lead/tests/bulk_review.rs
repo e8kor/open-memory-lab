@@ -447,7 +447,7 @@ async fn an_agent_key_cannot_list_or_bulk_approve_on_any_transport() {
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     assert_eq!(error_code(&body), "access.verb_ceiling", "{body}");
 
-    // MCP: the catalog is the three agent tools, no bulk or review tool is
+    // MCP: the catalog is the four agent tools, no bulk or review tool is
     // served, and a call naming one is an unknown tool.
     let listed = mcp(r, &w.agent, "tools/list", json!({})).await;
     let mut names: Vec<&str> = listed["result"]["tools"]
@@ -457,7 +457,10 @@ async fn an_agent_key_cannot_list_or_bulk_approve_on_any_transport() {
         .map(|t| t["name"].as_str().expect("name"))
         .collect();
     names.sort_unstable();
-    assert_eq!(names, ["oml_read", "oml_workspace", "oml_write"]);
+    assert_eq!(
+        names,
+        ["oml_read", "oml_withdraw", "oml_workspace", "oml_write"]
+    );
     // Every key an agent may hold, the writer and the crew's reviewer, and
     // the person's own reviewer key too: /mcp names no review tool for any
     // of them, and a call naming one is an unknown tool.

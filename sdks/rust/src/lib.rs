@@ -2562,6 +2562,11 @@ mod tests {
                     .supersede(&CALL, "idem-11", "m-1", "new text", 1, false)
                     .await,
             ),
+            decodes(
+                &client
+                    .withdraw(&CALL, "idem-11w", "m-1", Some("by mistake"))
+                    .await,
+            ),
             decodes(&client.whoami_start(&CALL).await),
             decodes(&client.list_web_emails(&CALL, 200, None).await),
             decodes(
