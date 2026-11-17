@@ -4285,6 +4285,9 @@ async fn apply_fold(
         MetadataFold::MemoryRejected { memory_id } => {
             set_memory_status(tx, tenant_id, memory_id, MemoryStatus::Rejected).await?;
         }
+        MetadataFold::MemoryWithdrawn { memory_id } => {
+            set_memory_status(tx, tenant_id, memory_id, MemoryStatus::Withdrawn).await?;
+        }
         MetadataFold::SourceChecked { memory_id, check } => {
             // The version's latest check; the journal keeps every one
             // (ADR-0057 d5). The application admitted a promoted tip.
@@ -5011,7 +5014,8 @@ async fn meter_plan(
             }
         }
         MetadataFold::MemoryPromoted { memory_id, .. }
-        | MetadataFold::MemoryRejected { memory_id } => {
+        | MetadataFold::MemoryRejected { memory_id }
+        | MetadataFold::MemoryWithdrawn { memory_id } => {
             plan.chain = tracked_chain_of(tx, tenant_id, *memory_id).await?;
         }
         MetadataFold::TipSuperseded { successor, .. } => {
@@ -8031,8 +8035,9 @@ impl JournalStore for PgStore {
         // not counted, since recall serves none (ADR-0077 d6; #311, #332).
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        let (held, all, unlisted, unapproved): (i64, i64, i64, i64) = sqlx::query_as(
-            "SELECT count(*) FILTER (WHERE status = 'held' \
+        let (held, all, unlisted, unapproved, withdrawn): (i64, i64, i64, i64, i64) =
+            sqlx::query_as(
+                "SELECT count(*) FILTER (WHERE status = 'held' \
                                        AND scanned_under IS DISTINCT FROM $2::text), \
                     count(*) FILTER (WHERE scanned_under IS DISTINCT FROM $2::text), \
                     count(*) FILTER (WHERE status = 'held' AND scan_finding IS NOT NULL \
@@ -8040,21 +8045,26 @@ impl JournalStore for PgStore {
                                                         WHERE f.tenant_id = m.tenant_id \
                                                           AND f.memory_id = m.id)), \
                     count(*) FILTER (WHERE status = 'promoted' AND is_tip \
-                                       AND NOT retirement AND approved_at IS NULL) \
+                                       AND NOT retirement AND approved_at IS NULL), \
+                    count(*) FILTER (WHERE status = 'withdrawn' \
+                                       AND EXISTS (SELECT 1 FROM review_queue q \
+                                                    WHERE q.tenant_id = m.tenant_id \
+                                                      AND q.memory_id = m.id)) \
              FROM memories m \
              WHERE tenant_id = $1 AND status <> 'erased'",
-        )
-        .bind(tenant_id)
-        .bind(current)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(backend)?;
+            )
+            .bind(tenant_id)
+            .bind(current)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(ScanBacklog {
             held_unrescanned: u64::try_from(held).map_err(backend)?,
             rescan_due: u64::try_from(all).map_err(backend)?,
             findings_unlisted: u64::try_from(unlisted).map_err(backend)?,
             promoted_unapproved: u64::try_from(unapproved).map_err(backend)?,
+            withdrawn_in_queue: u64::try_from(withdrawn).map_err(backend)?,
         })
     }
 

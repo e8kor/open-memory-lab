@@ -2661,6 +2661,24 @@ pub struct SourceCheckRequest {
     pub fragment: Option<String>,
 }
 
+/// `POST /v1/memories/{artifact_id}/withdraw` and `oml_withdraw` (ADR-0083
+/// d13): the author retracts its own held version, with an optional reason.
+#[derive(Debug, Clone)]
+pub struct WithdrawRequest {
+    pub idempotency_key: String,
+    pub memory_id: Uuid,
+    pub reason: Option<String>,
+}
+
+/// A recorded withdrawal: the version, its new state and the event's seq.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WithdrawReceipt {
+    pub memory_id: Uuid,
+    pub state: String,
+    pub at: String,
+    pub journal_seq: u64,
+}
+
 /// A recorded source check: the version's new mark and the event's seq.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceCheckReceipt {
@@ -3242,6 +3260,10 @@ pub enum AppError {
         "a writer may supersede only the claims its own key authored (roles-and-keys.md#own, access.author_only)"
     )]
     AuthorOnly,
+    /// A refused withdrawal: not the version's author (`access.author_only`)
+    /// or not held (`memory.not_held`; ADR-0083 d13).
+    #[error("{0}")]
+    Withdraw(oml_domain::WithdrawRefusal),
     /// The target is not the current served tip, at supersede or at the
     /// ratifying verdict; `current_tip` only when the caller can read it
     /// (errors.md `submission.tip_conflict`; ADR-0025 d10, d16).

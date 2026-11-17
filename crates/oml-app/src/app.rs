@@ -90,9 +90,10 @@ use oml_domain::vocab_edges::{EdgeState, TermEdge, check_acyclic, edge_transitio
 use oml_domain::{
     ChainHead, DERIVED_CLAIM_KEY_PREFIX, Envelope, EventDraft, EventTime, FrozenOp, KeySet,
     LadderNode, LadderRefusal, LineageClosure, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, UsedBy, WorkspaceStatus, canonical_bytes, check_approval_class, check_reviewer,
-    derive_claim_key, event_types, frozen_refuses, is_person_reviewer, next_envelope, nfc,
-    propose_check, ratifier_is_proposer, ratify_check, same_user, sha256_digest_string, transition,
+    SignedEnvelope, UsedBy, Withdrawer, WorkspaceStatus, canonical_bytes, check_approval_class,
+    check_reviewer, derive_claim_key, event_types, frozen_refuses, is_person_reviewer,
+    next_envelope, nfc, propose_check, ratifier_is_proposer, ratify_check, same_user,
+    sha256_digest_string, transition, withdraw,
 };
 
 use crate::cursor::{ClaimEdgeCursor, ListingCursor, NameCursor, PathCursor};
@@ -124,7 +125,7 @@ use crate::types::{
     SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage,
     TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode,
     TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
-    WorkspaceInfo, WorkspaceRecord, WorkspaceStatusView,
+    WithdrawReceipt, WithdrawRequest, WorkspaceInfo, WorkspaceRecord, WorkspaceStatusView,
 };
 use crate::types::{
     BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX,
@@ -8042,6 +8043,109 @@ where
                     moved_to: body.moved_to,
                     at,
                 },
+            },
+            idempotency,
+        )
+        .await?;
+        Ok((receipt, false))
+    }
+
+    /// Withdraw a held version (ADR-0083 d13): the author key on its own
+    /// held version, an agent's included, or a person's session key on a
+    /// held version any key of that person wrote, read the one way
+    /// `same_user` reads it; any workspace, frozen ones included. The
+    /// idempotency record, scoped to the key with a nil workspace, is
+    /// looked up first and replayed whatever the version's state now; then a
+    /// version the key cannot read is told nothing, another key is
+    /// `access.author_only`, and a version not held is `memory.not_held`.
+    /// The reason is scanned as a verdict's is. Journals `memory.withdrawn
+    /// {artifact_id, reason}` under the withdrawing key and folds the state,
+    /// leaving every review queue, in one commit with the idempotency
+    /// record. No verdict is recorded: R1 is untouched, since nothing is
+    /// promoted, signed, demoted or deleted.
+    pub async fn withdraw(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        req: &WithdrawRequest,
+    ) -> Result<(WithdrawReceipt, bool), AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let key = &caller.key;
+        let reason = req.reason.as_deref().filter(|r| !r.is_empty());
+        let scope = IdempotencyScope {
+            tenant_id: key.tenant_id,
+            key_id: key.key_id,
+            workspace_id: Uuid::nil(),
+            idem_key: req.idempotency_key.clone(),
+        };
+        let request_digest = sha256_digest_string(&canonical_bytes(&json!({
+            "method": "POST",
+            "route": "/v1/memories/{artifact_id}/withdraw",
+            "path_params": { "artifact_id": req.memory_id.to_string() },
+            "body": { "reason": reason },
+        }))?);
+        if let Some(record) = self.journal.idempotency_get(&scope).await? {
+            if record.request_digest != request_digest {
+                return Err(AppError::IdempotencyDigestMismatch);
+            }
+            let receipt: WithdrawReceipt = serde_json::from_value(record.response)
+                .map_err(|e| AppError::StoredResponse(e.to_string()))?;
+            return Ok((receipt, true));
+        }
+        let prev = self.head_event(key.tenant_id).await?;
+        let target = self
+            .journal
+            .memory(key.tenant_id, req.memory_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        if !self.readable(&caller, &target).await? {
+            return Err(AppError::NotFound);
+        }
+        let by = if target.author_key_id == key.key_id {
+            Withdrawer::AuthorKey
+        } else if key.credential == Credential::Session
+            && self
+                .same_person(key.tenant_id, target.author_key_id, key)
+                .await?
+        {
+            Withdrawer::PersonSession
+        } else {
+            Withdrawer::Other
+        };
+        let state = withdraw(target.status, by).map_err(AppError::Withdraw)?;
+        if let Some(reason) = reason {
+            self.scan_veto_only(key.tenant_id, "reason", reason)?;
+        }
+        let at = self.clock.now();
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::MEMORY_WITHDRAWN,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "artifact_id": target.memory_id.to_string(),
+                "workspace_id": target.workspace_id.to_string(),
+                "reason": reason,
+            }),
+        )?;
+        let receipt = WithdrawReceipt {
+            memory_id: target.memory_id,
+            state: state.as_str().to_owned(),
+            at: at.as_str().to_owned(),
+            journal_seq: event.envelope.seq,
+        };
+        let idempotency = Some(IdempotencyPut {
+            scope,
+            record: IdempotencyRecord {
+                request_digest,
+                response: serde_json::to_value(&receipt)
+                    .map_err(|e| AppError::StoredResponse(e.to_string()))?,
+            },
+        });
+        self.commit(
+            event,
+            MetadataFold::MemoryWithdrawn {
+                memory_id: target.memory_id,
             },
             idempotency,
         )

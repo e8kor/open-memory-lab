@@ -374,6 +374,13 @@ pub enum MetadataFold {
     MemoryRejected {
         memory_id: Uuid,
     },
+    /// `memory.withdrawn`: the held version's state becomes `withdrawn` and
+    /// it leaves every review queue, in the commit that journals the act;
+    /// its row and text are kept (ADR-0083 d13). The application admits
+    /// only the author's own held version.
+    MemoryWithdrawn {
+        memory_id: Uuid,
+    },
     /// `source.checked`: the version's latest source check, set on its row
     /// (ADR-0057 d5, d18). The application admits only a promoted, anchored
     /// served tip; the store writes the check and nothing else.
@@ -2225,6 +2232,10 @@ pub struct ScanBacklog {
     /// took the tip from is not counted, and neither is a retirement tip,
     /// which recall does not serve.
     pub promoted_unapproved: u64,
+    /// Withdrawn versions still in a review queue, which the withdrawal's
+    /// own transaction rules out: doctor's `memory.withdrawn_in_queue`
+    /// (ADR-0083 d13).
+    pub withdrawn_in_queue: u64,
 }
 
 /// What a scanner says about itself, for `/readyz` and doctor's scan line

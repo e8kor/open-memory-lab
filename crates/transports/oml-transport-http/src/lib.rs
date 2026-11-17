@@ -76,7 +76,7 @@ use oml_app::types::{
     IssuedKey, KeyDetail, KeyLimitsChange, KeyRecord, KindFields, ListRequest, MemoryRecord,
     NamedServe, OnSimilar, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory,
     SimilarItem, SourceCheck, SourceCheckRequest, SubmitRequest, SubmitVerb, SupersedeRequest,
-    TailedEvent, Verdict, VerdictRequest, Whoami, WorkspaceInfo, WorkspaceRecord,
+    TailedEvent, Verdict, VerdictRequest, Whoami, WithdrawRequest, WorkspaceInfo, WorkspaceRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage, ReviewLane,
@@ -104,6 +104,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v1/memories/{artifact_id}"),
     ("POST", "/v1/memories/{artifact_id}/supersede"),
     ("POST", "/v1/memories/{artifact_id}/source-check"),
+    ("POST", "/v1/memories/{artifact_id}/withdraw"),
     ("GET", "/v1/guardrails"),
     ("GET", "/v1/account/usage"),
     ("POST", "/v2/review/next"),
@@ -351,6 +352,7 @@ where
             ("GET", "/v1/memories/{artifact_id}") => get(Self::get_memory),
             ("POST", "/v1/memories/{artifact_id}/supersede") => post(Self::supersede),
             ("POST", "/v1/memories/{artifact_id}/source-check") => post(Self::source_check),
+            ("POST", "/v1/memories/{artifact_id}/withdraw") => post(Self::withdraw),
             ("GET", "/v1/guardrails") => get(Self::guardrails),
             ("POST", "/v2/review/next") => post(Self::review_next),
             ("POST", "/v2/review/verdicts") => post(Self::review_verdicts),
@@ -1278,6 +1280,66 @@ where
                 "artifact_id": receipt.memory_id,
                 "stale": stale,
                 "source_checked": check,
+                "journal_seq": receipt.journal_seq,
+            }),
+        );
+        if replayed {
+            response
+                .headers_mut()
+                .insert("idempotency-replay", HeaderValue::from_static("true"));
+        }
+        Ok(response)
+    }
+
+    async fn withdraw(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(artifact_id): Path<String>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::withdraw_inner(&st, &artifact_id, &headers, &body, None).await,
+        )
+    }
+
+    /// `POST /v1/memories/{artifact_id}/withdraw`: the author retracts its
+    /// own held version, kept as `withdrawn` and out of every review queue
+    /// (ADR-0083 d13). The body is closed; an empty body is no reason.
+    pub(crate) async fn withdraw_inner(
+        st: &Self,
+        artifact_id: &str,
+        headers: &HeaderMap,
+        body: &Bytes,
+        connection: Option<&Caller>,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let acting = acting(headers, connection)?;
+        let idem_key = idempotency_key(headers)?;
+        let memory_id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
+        let req: WithdrawBody = if body.is_empty() {
+            WithdrawBody::default()
+        } else {
+            parse_json(headers, body)?
+        };
+        let app_req = WithdrawRequest {
+            idempotency_key: idem_key,
+            memory_id,
+            reason: req.reason,
+        };
+        let (receipt, replayed) = retry_chain(|| st.app.withdraw(acting.bearer(), &app_req))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        if !replayed {
+            st.traffic.metrics().withdrawn();
+        }
+        let mut response = json_response(
+            StatusCode::OK,
+            &json!({
+                "artifact_id": receipt.memory_id,
+                "state": receipt.state,
+                "at": receipt.at,
                 "journal_seq": receipt.journal_seq,
             }),
         );
@@ -3486,6 +3548,13 @@ struct SourceCheckBody {
     hash: Option<String>,
     path: Option<String>,
     fragment: Option<String>,
+}
+
+/// openapi.yaml `WithdrawRequest`, closed (ADR-0083 d13).
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WithdrawBody {
+    reason: Option<String>,
 }
 
 /// openapi.yaml `SupersedeRequest`, closed: it declares every submission

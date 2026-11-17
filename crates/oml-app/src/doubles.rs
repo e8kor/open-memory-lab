@@ -2002,6 +2002,12 @@ fn apply_fold(
             }
             state.queue.retain(|e| e.memory_id != memory_id);
         }
+        MetadataFold::MemoryWithdrawn { memory_id } => {
+            if let Some(memory) = state.memories.get_mut(&memory_id) {
+                memory.status = MemoryStatus::Withdrawn;
+            }
+            state.queue.retain(|e| e.memory_id != memory_id);
+        }
         MetadataFold::SourceChecked { memory_id, check } => {
             if let Some(memory) = state.memories.get_mut(&memory_id) {
                 memory.source_check = Some(Box::new(check));
@@ -3572,6 +3578,16 @@ impl JournalStore for MemStore {
             rescan_due: older.len() as u64,
             findings_unlisted: unlisted as u64,
             promoted_unapproved: unapproved as u64,
+            withdrawn_in_queue: state
+                .queue
+                .iter()
+                .filter(|e| {
+                    state
+                        .memories
+                        .get(&e.memory_id)
+                        .is_some_and(|m| m.status == MemoryStatus::Withdrawn)
+                })
+                .count() as u64,
         })
     }
 
