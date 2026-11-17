@@ -469,6 +469,13 @@ the code follows it.
   in the new ledger row. *Rejected:* trusting the manifest's source ids, which anyone can write;
   and requiring `--expect-key` on every import, which the record does not ask for a first import
   (d5).
+  - *First import.* The first import from a source pins whichever key signed it. So the import
+    CLI (#426) requires `--expect-key` on a first import, and the pin is chosen deliberately, not
+    taken from whatever key the bundle names.
+  - *Key rotation.* A legitimate rotation of the source's journal key fails closed with
+    `import.source_key_changed`, because the ledger cannot tell a rotation from a forgery. Until
+    a re-pin act is designed, with #426 or with ADR-0088's trusted sources, the remedy is to
+    import into a new target workspace, which has no ledger for the source.
 - **R12 — The carried events are one key's writes.** A pseudonym on a line is the exporter's own
   claim. So the reader also requires these things of `events.jsonl`:
   - every event names one `principal` and one `api_key_id`, the exporter's;
@@ -479,6 +486,8 @@ the code follows it.
 
   Anything else is `bundle.malformed` (`foreign_event`). That keeps R1's rule by construction: only
   the exporter's own key id and principal leave the server.
+  A version written through `simulation.write` (ADR-0025) travels without an event, even when it
+  is the exporter's own, so the server's export must not attach one to a simulation row.
 - **R13 — Verification checks the tenant (d5).** `VerifyOptions` takes `expect_tenant`. The server
   passes the source tenant it expects, and the CLI passes `--expect-tenant` when one is given. A
   manifest naming another tenant is `bundle.signature_invalid`.
