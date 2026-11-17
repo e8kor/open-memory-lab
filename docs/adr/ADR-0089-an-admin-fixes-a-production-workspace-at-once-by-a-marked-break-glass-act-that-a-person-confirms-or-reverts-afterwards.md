@@ -9,7 +9,8 @@ answers: which acts an admin key may take on a workspace's content, on which tar
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its five questions decided at their
 recommendations and every other default as drafted, and its amendment of ADR-0001 d5 accepted with
-it · proposed the same day
+it · proposed the same day · amended 2026-11-17 by the operator (d16: demote's targets, the
+fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events)
 
 **Release:** not scheduled; with ADR-0085, whose releases a fix overlays
 
@@ -266,6 +267,42 @@ Decided, not built.
     - `oml_admin_fixes_unconfirmed`;
     - `oml_admin_fix_oldest_unconfirmed_seconds`;
     - `oml_admin_reads_total`.
+
+- **d16 — Readings the build takes, decided 2026-11-17.** The operator decided c3 and c4 of the
+  v0.8.3 plan and accepted c1 and c12 as recommended, before the code.
+  - **Demote targets any promoted version (the operator, 2026-11-17: "Any approved version").**
+    - An admin may demote the served tip, or an earlier promoted version that a later version
+      superseded and that is no longer served.
+    - Demoting the served tip serves again the latest earlier version of the claim that is
+      promoted and not demoted; with none, the claim is served by no version.
+    - Demoting a version that is not served moves no tip. It changes that version's state to
+      `demoted`, its history (the `lifecycle.demote` event and the state every read reports), and
+      the as-of reads (ADR-0059's amendment of 2026-11-11): a demoted version is served by no
+      read at any instant, and for the instants it was the tip an as-of read serves the latest
+      earlier promoted, non-demoted version instead. The tip-at probe counts only promoted,
+      non-demoted versions, so today's tip is still the greatest of them and the probe's
+      short cut stays sound.
+    - A held version cannot be demoted (`admin.fix_target_not_promoted`): the author withdraws
+      it (ADR-0083 d13) or a reviewer rejects it. A rejected, withdrawn or erased version cannot
+      be demoted either.
+    - The cost: an as-of read no longer reports what was served at that instant when a version
+      served then was later demoted; the journal still does, and the version keeps its bytes
+      (R4). A demotion of a superseded version is an act on history a reader of today's tip never
+      sees, and the doctor's fix lines count it like any other fix.
+  - **One surface (accepted 2026-11-17, recommended in the plan).** Demote and erase are reached
+    only as fix acts through `POST /v2/admin/fixes` (d15), never as routes of their own. The
+    designed `POST /v2/memories/{id}/demote` and `/erase` leave `openapi-designed.yaml`. An unmarked,
+    unqueued demotion or erasure would be the "unmarked fixes" alternative this record rejects.
+  - **Erase takes a claim (the operator, 2026-11-17: "All its versions").** An erase names one
+    version and erases every version of its `claim_key` in its workspace, held, rejected,
+    withdrawn and demoted ones included, since a supersession's text overlaps its predecessor's.
+    The mechanism, while PostgreSQL holds bodies in clear, is ADR-0005's amendment of 2026-11-17.
+  - **A fix's events (accepted 2026-11-17).** Each fix journals `admin.fix` and, in the same
+    transaction, the lifecycle event it causes: `lifecycle.demote` (naming the version, and the
+    version it served again as `restored_artifact_id`, or null), `lifecycle.erase` (naming every
+    erased version), or an edit's or retirement's supersession and promotion. `admin.fix` names
+    those events' ids, so the PostgreSQL fold and the lake writer read the lifecycle events they
+    already read.
 
 ## Consequences
 
