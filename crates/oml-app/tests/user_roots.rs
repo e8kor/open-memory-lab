@@ -2084,3 +2084,147 @@ async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key
         );
     }
 }
+
+// -- linked tenant keys (ADR-0085 d16, amended 2026-11-17; ADR-0082 d7) -----
+
+/// A tenant reviewer key a person holds, with `grants`.
+async fn person_tenant_key(app: &TestApp, admin: &str, principal: &str, grants: Vec<GrantRequest>) -> IssuedKey {
+    app.issue_key(
+        admin,
+        &IssueKeyRequest {
+            user: None,
+            used_by: Some(UsedBy::Person),
+            ..user_req(Role::Reviewer, "unused", principal, grants)
+        },
+    )
+    .await
+    .expect("issue a person's tenant key")
+}
+
+fn link_refused(err: &AppError, reason: &str) -> bool {
+    matches!(err, AppError::KeyLinkRefused { reason: r } if *r == reason)
+}
+
+#[tokio::test]
+async fn an_admin_links_a_person_tenant_key_and_the_link_is_journalled() {
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    signed_in(&app, admin, "alice", false).await;
+    let key = person_tenant_key(&app, admin, "alice/dev-review", Vec::new()).await;
+    let linked = app
+        .link_key_to_person(admin, key.key_id.into(), &name("alice"))
+        .await
+        .expect("linked");
+    let root = app
+        .user_root(admin, &name("alice"))
+        .await
+        .expect("a read")
+        .expect("alice's root")
+        .workspace_id;
+    assert_eq!(linked.linked_user, Some(root));
+    let events = store.events_range(boot.tenant_id, 1, 10_000).await.expect("journal");
+    let event = events
+        .iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_types::KEY_LINKED_PERSON)
+        .expect("key.linked_person");
+    assert_eq!(event.envelope.payload["key_id"], key.key_id.to_string());
+    assert_eq!(event.envelope.payload["user"], "alice");
+    // Unlinked, journalled, and the key acts for no one again.
+    let unlinked = app
+        .unlink_key_from_person(admin, key.key_id.into())
+        .await
+        .expect("unlinked");
+    assert_eq!(unlinked.linked_user, None);
+    let events = store.events_range(boot.tenant_id, 1, 10_000).await.expect("journal");
+    assert_eq!(
+        events.last().expect("an event").envelope.event_type,
+        event_types::KEY_UNLINKED_PERSON
+    );
+}
+
+#[tokio::test]
+async fn linking_an_agent_held_key_is_refused() {
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    signed_in(&app, admin, "alice", false).await;
+    let agent = tenant_key(&app, admin, Role::Writer, "alice/agent", Vec::new()).await;
+    let user_key = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let head = store.events_range(boot.tenant_id, 1, 10_000).await.expect("journal").len();
+    for (key, reason) in [
+        (agent.key_id, "not_used_by_person"),
+        (user_key.key_id, "not_a_tenant_key"),
+        (boot.admin_key.key_id, "admin_key"),
+    ] {
+        let err = app
+            .link_key_to_person(admin, key.into(), &name("alice"))
+            .await
+            .unwrap_err();
+        assert!(link_refused(&err, reason), "{reason}: {err:?}");
+    }
+    let person = person_tenant_key(&app, admin, "alice/dev-review", Vec::new()).await;
+    let err = app
+        .link_key_to_person(admin, person.key_id.into(), &name("nobody"))
+        .await
+        .unwrap_err();
+    assert!(link_refused(&err, "user_unknown"), "{err:?}");
+    // Only an admin key links.
+    let err = app
+        .link_key_to_person(person.value.as_str(), person.key_id.into(), &name("alice"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+    let after = store.events_range(boot.tenant_id, 1, 10_000).await.expect("journal").len();
+    assert_eq!(head + 1, after, "only the person key's issuance; no refusal journals");
+}
+
+#[tokio::test]
+async fn a_linked_keys_approval_of_its_persons_agent_write_is_marked_same_user() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    signed_in(&app, admin, "alice", false).await;
+    let writer = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let reviewer = person_tenant_key(
+        &app,
+        admin,
+        "alice/dev-review",
+        vec![grant(by_name("alice"), Role::Reviewer), grant(by_name("alice"), Role::Reader)],
+    )
+    .await;
+    app.link_key_to_person(admin, reviewer.key_id.into(), &name("alice"))
+        .await
+        .expect("linked");
+    let id = written(&app, &writer.value, &submit("l1", "A linked review.", None)).await;
+    let outcome = app
+        .post_verdict(&reviewer.value, id, Verdict::Approve, None)
+        .await
+        .expect("approve");
+    assert!(outcome.same_user, "the linked key acts for alice");
+}
+
+#[tokio::test]
+async fn the_acting_key_resolves_only_for_a_live_key_linked_to_the_sessions_own_user() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    signed_in(&app, admin, "bob", false).await;
+    let review = app.web_caller(&alice, Capacity::Review).await.expect("alice-review");
+    let alices = person_tenant_key(&app, admin, "alice/dev-review", Vec::new()).await;
+    let bobs = person_tenant_key(&app, admin, "bob/dev-review", Vec::new()).await;
+    let unlinked = person_tenant_key(&app, admin, "alice/spare", Vec::new()).await;
+    app.link_key_to_person(admin, alices.key_id.into(), &name("alice")).await.expect("linked");
+    app.link_key_to_person(admin, bobs.key_id.into(), &name("bob")).await.expect("linked");
+    let acting = app
+        .acting_caller(&review, &alice, alices.key_id)
+        .await
+        .expect("alice's linked key");
+    assert_eq!(acting.key().key_id, alices.key_id);
+    for key in [bobs.key_id, unlinked.key_id, Uuid::from_u128(0xDEAD)] {
+        let err = app.acting_caller(&review, &alice, key).await.unwrap_err();
+        assert!(matches!(err, AppError::ActingKeyNotLinked), "{err:?}");
+    }
+}
