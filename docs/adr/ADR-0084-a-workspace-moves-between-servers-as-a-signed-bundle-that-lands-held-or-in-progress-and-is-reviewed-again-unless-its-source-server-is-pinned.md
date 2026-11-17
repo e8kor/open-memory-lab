@@ -525,3 +525,32 @@ The coordinator decided these while export and import were built.
   is nulled, which is d11's shred. The class "import staging" of ADR-0005 is that same row, so the
   inventory names it once, as "upload staging". *Rejected:* drawing a second key for the import
   and re-encrypting the staged bytes, which would hold the plaintext twice.
+
+### Export readings of 2026-11-18 (#425)
+
+The coordinator confirmed these while history-mode export was built.
+
+- **I5 — The source server id is the journal key's fingerprint.** `manifest.source.server_id` is the
+  lowercase hex SHA-256 of the deployment's journal public key (ADR-0073 d1), the value
+  `--expect-key` names. No other server identity exists. A key rotation therefore makes the server
+  read as a new source, which overlaps R11: a rotation already fails closed against an existing
+  ledger, and the remedy is the same, an import into a new target workspace. *Rejected:* a new
+  `server.id` setting, one more value an operator must set and keep unique; the public URL, which
+  changes when the host does.
+- **I6 — The exporter's own versions are those of the person's own keys.** Held, rejected,
+  demoted and withdrawn versions travel when a key of the exporting person's own key set wrote them
+  (the set a session key reads its own rows by, ADR-0045 d16). A linked key acting for another
+  person is not in it. A signed event travels only for a version the exporting key itself wrote
+  (R12). *Rejected:* the exporting key alone, which would leave a person's console writes out of
+  their own export.
+- **I7 — `same_user` is what the source journal recorded, never recomputed.** A version's
+  `author.same_user` is its promotion's mark; a verdict's `reviewer.same_user` is the same mark on
+  the approving verdict that promoted the version. Without a mark either is `false`. `approved_at`
+  is set on that approving verdict only.
+- **I8 — Only ratified edges travel, and only when both ends are exported.** A brief edge's ends
+  are its artifact and its workspace, which must lie in the exported subtree. A pending proposal
+  is another key's unratified act and stays.
+- **I9 — The admin routes for the policy and allowances come later.** The tenant's policy is the
+  default, `own_root`, until `PUT /v2/tenant/export-policy` and the allowance route are built; the
+  migration adds the column, the allowance table and the `exports` meter, and the doctor names the
+  policy.
