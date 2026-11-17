@@ -488,8 +488,9 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
         .await;
 
     // 6. include_unreviewed: the author's held memories join the hits,
-    // flagged held; held steering is not in force, and no other key sees
-    // them, the same principal's included (d3, d4; ADR-0039 d4).
+    // flagged held; its own held steering joins the steering list, marked
+    // unreviewed (ADR-0080 d14); no other key sees them, the same
+    // principal's included (d3, d4; ADR-0039 d4).
     let own = agent
         .ok(
             "oml_read",
@@ -497,7 +498,10 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
         )
         .await;
     assert_eq!(own["mode"], "recall", "{own}");
-    assert_eq!(own["steering"], json!([]), "{own}");
+    let held_steering = own["steering"].as_array().expect("steering");
+    assert_eq!(held_steering.len(), 1, "{own}");
+    assert_eq!(held_steering[0]["claim_key"], STEERING_KEY, "{own}");
+    assert_eq!(held_steering[0]["unreviewed"], true, "{own}");
     assert_eq!(set(ids(&own["hits"])), set([&quote, &alloy]), "{own}");
     for hit in own["hits"].as_array().expect("hits") {
         assert_eq!(hit["state"], "held", "{hit}");

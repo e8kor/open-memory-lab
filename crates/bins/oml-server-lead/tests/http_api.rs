@@ -5239,7 +5239,7 @@ async fn own_held_rows_count_against_k_and_the_budget() {
 }
 
 #[tokio::test]
-async fn own_held_steering_and_retirement_rows_never_enter_recall() {
+async fn own_held_steering_joins_the_steering_list_and_a_retirement_never_enters_recall() {
     let Some((rig, _admin, _crew, agent, reviewer, _reader)) = own_held_rig().await else {
         return;
     };
@@ -5270,7 +5270,9 @@ async fn own_held_steering_and_retirement_rows_never_enter_recall() {
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{retirement}");
 
-    // Neither is in force, so neither is recalled; the promoted tip stays.
+    // Neither is a hit; the promoted tip stays. The key's own held steering
+    // joins the steering list, marked unreviewed (ADR-0080 d14); the
+    // retirement never enters recall.
     let recall = recall_ok(
         router,
         &agent,
@@ -5278,7 +5280,13 @@ async fn own_held_steering_and_retirement_rows_never_enter_recall() {
     )
     .await;
     assert_eq!(hit_ids(&recall), vec![json!(target)], "{recall}");
-    assert_eq!(recall["steering"], json!([]), "{recall}");
+    let served = recall["steering"].as_array().expect("steering");
+    assert_eq!(served.len(), 1, "{recall}");
+    assert_eq!(
+        served[0]["artifact_id"], steering["artifact_id"],
+        "{recall}"
+    );
+    assert_eq!(served[0]["unreviewed"], true, "{recall}");
     // Get reaches both: they are the key's own (ADR-0025 d3).
     for row in [&steering, &retirement] {
         let id = row["artifact_id"].as_str().expect("id");
