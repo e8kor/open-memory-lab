@@ -6596,6 +6596,7 @@ async fn the_session_start_hook_prints_the_default_workspaces_brief_before_the_s
             "POST /v1/memories/recall".to_owned(),
             "GET /v2/whoami".to_owned(),
             format!("GET /v2/workspaces/{}", crew.wa),
+            "GET /v1/skills".to_owned(),
         ]
     );
     let context = context_of(&stdout);
@@ -6616,14 +6617,16 @@ async fn the_session_start_hook_prints_the_default_workspaces_brief_before_the_s
 }
 
 /// The requests one session start sends under the crew's agent key: the
-/// own listing, the recall, then whoami and the default workspace's read for
-/// its brief (ADR-0029 d2; ADR-0046 d9).
+/// own listing, the recall, whoami and the default workspace's read for
+/// its brief, then the offered skills for the index (ADR-0029 d2; ADR-0046
+/// d9; ADR-0080 d8).
 fn session_start_routes(crew: &Crew) -> Vec<String> {
     vec![
         "GET /v1/memories".to_owned(),
         "POST /v1/memories/recall".to_owned(),
         "GET /v2/whoami".to_owned(),
         format!("GET /v2/workspaces/{}", crew.wa),
+        "GET /v1/skills".to_owned(),
     ]
 }
 
