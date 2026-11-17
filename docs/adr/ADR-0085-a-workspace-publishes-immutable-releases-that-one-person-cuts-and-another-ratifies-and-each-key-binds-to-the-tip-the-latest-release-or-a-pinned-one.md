@@ -8,7 +8,7 @@ answers: what a workspace release is, when its manifest is fixed and what it may
 # ADR-0085 — A workspace publishes immutable releases that one person cuts and another ratifies, and each key binds to the tip, the latest release or a pinned one
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its three questions decided at their
-recommendations and every other default as drafted · proposed the same day · amended 2026-11-17 (d16: how the console acts with a linked key, the operator)
+recommendations and every other default as drafted · proposed the same day · amended 2026-11-17 (d16: how the console acts with a linked key, accepted the same day by the operator, "Session + named key")
 
 **Release:** not scheduled; the first record of the workspace lifecycle
 ([review](https://github.com/e8kor/open-memory-lab/blob/main/design/workspace-lifecycle.md)), before
@@ -315,7 +315,7 @@ Decided, not built.
   - An admin links a tenant key `used_by: person` to a signed-in person, journalled as
     `key.linked_person`. The console then offers that key for acts in the workspaces it grants, one
     key per act, named on the page (the operator, 2026-11-14).
-  - **How the console acts with it** (amended 2026-11-17; the operator: "Session + named key").
+  - **How the console acts with it** (amended and accepted 2026-11-17, by the operator: "Session + named key").
     `oml-web` sends `OML-Acting-Key: <key id>` beside the session's capacity credential. The lead's
     session gate honours the header only with a capacity credential, only from `oml-web`'s proven
     identity (ADR-0070 d2), and never on `/mcp`. The named key must be of the session's tenant,
