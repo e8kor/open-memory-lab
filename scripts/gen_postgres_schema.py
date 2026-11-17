@@ -410,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
         # server can be read and fixed without a local run.
         sys.stderr.writelines(difflib.unified_diff(
             OUT.read_text().splitlines(keepends=True), (text.rstrip("\n") + "\n").splitlines(keepends=True),
-            "committed", "generated"))
+            str(OUT.relative_to(docgen.ROOT)), "generated"))
     return docgen.finish(OUT, text, args.check)
 
 
