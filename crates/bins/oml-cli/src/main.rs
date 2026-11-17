@@ -6098,7 +6098,7 @@ fn approval_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
         match count.as_u64() {
             Some(0) => {}
             Some(n) => lines.push(format!(
-                "warn instruction_approvals: {n} steering or guardrail version(s) in force were approved by a key that is not a person's; a person can review each again by superseding it (ADR-0080 d16)"
+                "warn instruction_approvals: {n} instruction (steering, guardrail or skill) version(s) in force were approved by a key that is not a person's; a person can review each again by superseding it (ADR-0080 d16)"
             )),
             None => lines.push(format!(
                 "warn instruction_approvals: the server's instructions_without_person_approval is {count}, not a count"
@@ -6153,7 +6153,7 @@ fn instructions_unreviewable_doctor(read: Option<&Result<Value, String>>) -> Vec
         match (held.as_u64(), people.as_u64()) {
             (Some(0), Some(_)) | (Some(_), Some(1..)) => {}
             (Some(held), Some(0)) => lines.push(format!(
-                "warn instructions_unreviewable: {path} holds {held} steering or guardrail version(s) and no person's reviewer key reads it; issue a reviewer key with --used-by person and a reviewer grant there, or approve in the console (review.person_required, instruction_needs_person)"
+                "warn instructions_unreviewable: {path} holds {held} instruction (steering, guardrail or skill) version(s) and no person's reviewer key reads it; issue a reviewer key with --used-by person and a reviewer grant there, or approve in the console (review.person_required, instruction_needs_person)"
             )),
             _ => lines.push(format!(
                 "warn instructions_unreviewable: the server's counts for {path} are {held} and {people}, not counts"
@@ -7268,7 +7268,7 @@ mod tests {
             approval_doctor(Some(&Ok(report))),
             vec![
                 "approval_unmatched: 0".to_owned(),
-                "warn instruction_approvals: 2 steering or guardrail version(s) in force were approved by a key that is not a person's; a person can review each again by superseding it (ADR-0080 d16)".to_owned(),
+                "warn instruction_approvals: 2 instruction (steering, guardrail or skill) version(s) in force were approved by a key that is not a person's; a person can review each again by superseding it (ADR-0080 d16)".to_owned(),
             ]
         );
         // Nothing at zero, nothing from a server before the count, and an
@@ -7299,7 +7299,7 @@ mod tests {
         ]});
         assert_eq!(
             instructions_unreviewable_doctor(Some(&Ok(queue))),
-            vec!["warn instructions_unreviewable: universe.crew holds 2 steering or guardrail version(s) and no person's reviewer key reads it; issue a reviewer key with --used-by person and a reviewer grant there, or approve in the console (review.person_required, instruction_needs_person)".to_owned()]
+            vec!["warn instructions_unreviewable: universe.crew holds 2 instruction (steering, guardrail or skill) version(s) and no person's reviewer key reads it; issue a reviewer key with --used-by person and a reviewer grant there, or approve in the console (review.person_required, instruction_needs_person)".to_owned()]
         );
         // Every workspace has a person who can approve: no line.
         let clean = json!({ "items": [
