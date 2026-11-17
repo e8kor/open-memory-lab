@@ -113,7 +113,7 @@ branch that reserved later renumbers.
 | adr | 0089 | `main` |  | an admin fixes a production workspace at once by a marked break glass  | used |
 | adr | 0090 | `main` |  | the lake is a replayable twin of postgresql that holds every signed ev | used |
 | adr | 0091 | `main` |  | workareas become workspaces and the dreamer role becomes reviewer on e | used |
-| adr | 0092 | `design/search-by-kind-and-catalog` |  | search filters by every claim kind and read without a query is the catalog of what a key may read | reserved |
+| adr | 0092 | `main` |  | search filters by every claim kind and ranks skills and guardrails as  | used |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |
@@ -162,3 +162,4 @@ branch that reserved later renumbers.
 | migration | 0048 | `main` |  | claim kinds and withdrawn | used |
 | migration | 0049 | `feat/claim-kinds-and-withdrawn` | #438 | claim kinds validate | open |
 | migration | 0049 | `main` |  | claim kinds validate | used |
+| migration | 0050 | `feat/linked-tenant-keys` |  | linked tenant keys (ADR-0085 d16) | reserved |
