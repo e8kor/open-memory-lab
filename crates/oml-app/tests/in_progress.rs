@@ -1569,3 +1569,36 @@ async fn an_edge_to_a_flagged_held_row_is_not_listed_to_a_sibling_in_progress() 
         "the flagged endpoint's author still does"
     );
 }
+
+/// A withdrawn version is never served inside an in-progress workspace:
+/// another reader there neither recalls, lists nor reads it, as a held one
+/// was before the withdrawal (ADR-0083 d13).
+#[tokio::test]
+async fn a_withdrawn_version_is_never_served_inside_an_in_progress_workspace() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let id = w
+        .write(&w.ann, "a1", "the canary drains before promotion", w.proj)
+        .await;
+    assert_eq!(
+        World::ids(&w.recall(&w.bob, "canary", w.proj).await),
+        vec![id]
+    );
+    w.app
+        .withdraw(
+            w.ann.value.as_str(),
+            &oml_app::types::WithdrawRequest {
+                idempotency_key: "w1".to_owned(),
+                memory_id: id,
+                reason: Some("written to the wrong workspace".to_owned()),
+            },
+        )
+        .await
+        .expect("ann withdraws her held version");
+    assert!(w.recall(&w.bob, "canary", w.proj).await.is_empty());
+    assert!(w.listed(&w.bob, w.proj).await.is_empty());
+    assert!(matches!(
+        w.app.get_memory(w.bob.value.as_str(), id).await,
+        Err(AppError::NotFound)
+    ));
+}

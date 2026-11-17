@@ -8551,3 +8551,63 @@ async fn the_console_judges_in_a_shared_workspace_with_the_linked_key() {
         "no verdict recorded"
     );
 }
+
+/// A held row a key of the signed-in person wrote offers Withdraw on the
+/// Memories list; its confirmation withdraws it as the person's web key,
+/// and the version is kept as withdrawn (ADR-0083 d13, note of 2026-11-17).
+#[tokio::test]
+async fn a_person_withdraws_their_agents_held_write_from_the_memories_list_after_a_confirmation() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (_, _, page) = act_and_follow(
+        &rig,
+        &cookie,
+        "/web/keys",
+        &[
+            ("action", "issue_key"),
+            ("name", "laptop"),
+            ("role", "writer"),
+        ],
+    )
+    .await;
+    let value = value_of(&page);
+    let id = agent_writes(&rig, &value, "a note written by mistake").await;
+    let (status, _, list) = send(&rig.router, get("/web/memories", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK);
+    let link = format!("/web/memory?id={id}&amp;act=withdraw");
+    assert!(list.contains(&link), "{list}");
+    let (status, _, confirm) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={id}&act=withdraw"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(confirm.contains("<h2>Withdraw it</h2>"), "{confirm}");
+    let nonce = field_of(&confirm, "nonce");
+    let (status, _, done) = act_and_follow(
+        &rig,
+        &cookie,
+        "/web/memory",
+        &[
+            ("action", "withdraw"),
+            ("memory", &id.to_string()),
+            ("reason", "written by mistake"),
+            ("nonce", &nonce),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    assert!(
+        done.contains("Withdrawn: kept with its text, in no review queue and never served."),
+        "{done}"
+    );
+    let row = rig
+        .app
+        .get_memory(value.as_str(), id)
+        .await
+        .expect("kept, and read by its author");
+    assert_eq!(row.memory.status, oml_app::domain::MemoryStatus::Withdrawn);
+    // Withdrawn, the row offers Withdraw no more.
+    let (_, _, list) = send(&rig.router, get("/web/memories", Some(&cookie))).await;
+    assert!(!list.contains(&link), "{list}");
+}

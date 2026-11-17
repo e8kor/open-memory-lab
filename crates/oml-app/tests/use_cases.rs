@@ -16611,3 +16611,153 @@ async fn a_lane_claim_a_crew_key_holds_is_not_counted_for_its_verdict_without_a_
         .expect("the one claim it may judge");
     assert_eq!(outcome.memory_id, memory);
 }
+
+// -- Withdraw (ADR-0083 d13; #401) -------------------------------------------
+
+fn withdraw_req(idem: &str, id: Uuid, reason: Option<&str>) -> oml_app::types::WithdrawRequest {
+    oml_app::types::WithdrawRequest {
+        idempotency_key: idem.to_owned(),
+        memory_id: id,
+        reason: reason.map(str::to_owned),
+    }
+}
+
+/// An agent's key withdraws its own held version: the version is kept as
+/// `withdrawn`, leaves the review queue, is journalled `memory.withdrawn`
+/// with its reason, and a retry replays the receipt.
+#[tokio::test]
+async fn an_agent_withdraws_its_own_held_version_and_it_leaves_the_review_queue() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
+    let id = app
+        .submit_memory(
+            &writer.value,
+            &submit_req("i1", "a fact written by mistake"),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let req = withdraw_req("w1", id, Some("written by mistake"));
+    let (receipt, replayed) = app
+        .withdraw(writer.value.as_str(), &req)
+        .await
+        .expect("the author withdraws");
+    assert!(!replayed);
+    assert_eq!(receipt.memory_id, id);
+    assert_eq!(receipt.state, "withdrawn");
+    let (again, replayed) = app
+        .withdraw(writer.value.as_str(), &req)
+        .await
+        .expect("the retry replays");
+    assert!(replayed);
+    assert_eq!(again, receipt);
+    let row = app
+        .get_memory(writer.value.as_str(), id)
+        .await
+        .expect("kept, and read by its author");
+    assert_eq!(row.memory.status, MemoryStatus::Withdrawn);
+    let own = app
+        .list_memories(
+            writer.value.as_str(),
+            &ListRequest {
+                own: true,
+                workspace: None,
+                claim_key: None,
+                state: Some(MemoryStatus::Withdrawn),
+                kind: None,
+                since: None,
+                until: None,
+                limit: 50,
+                cursor: None,
+                anchor: oml_app::types::AnchorFilter::default(),
+                author: None,
+                tip: None,
+                as_of: None,
+            },
+        )
+        .await
+        .expect("the author's own listing");
+    assert_eq!(
+        own.items
+            .iter()
+            .map(|m| m.memory.memory_id)
+            .collect::<Vec<_>>(),
+        vec![id],
+        "listed to its author under state withdrawn"
+    );
+    assert!(
+        app.review_next(reviewer.value.as_str())
+            .await
+            .expect("serve")
+            .is_none(),
+        "no review queue serves it"
+    );
+    let err = app
+        .post_verdict(&reviewer.value, id, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(!matches!(err, AppError::Withdraw(_)), "{err:?}");
+    let withdrawn: Vec<SignedEnvelope> = journal(&store, boot.tenant_id)
+        .await
+        .into_iter()
+        .filter(|e| e.envelope.event_type == event_types::MEMORY_WITHDRAWN)
+        .collect();
+    assert_eq!(withdrawn.len(), 1, "journalled once, the retry included");
+    let event = &withdrawn[0].envelope;
+    assert_eq!(event.payload["artifact_id"], id.to_string());
+    assert_eq!(event.payload["reason"], "written by mistake");
+    assert_eq!(event.api_key_id, Some(writer.key_id));
+}
+
+/// A promoted version is refused `memory.not_held` to its author, and
+/// another key that reads it is refused `access.author_only` first.
+#[tokio::test]
+async fn withdrawing_a_promoted_version_is_refused_memory_not_held() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    let other = agent(&app, admin, "walt", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
+    let id = app
+        .submit_memory(&writer.value, &submit_req("i1", "a reviewed fact"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    app.post_verdict(&reviewer.value, id, Verdict::Approve, None)
+        .await
+        .expect("promote");
+    let err = app
+        .withdraw(writer.value.as_str(), &withdraw_req("w1", id, None))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::Withdraw(oml_app::domain::WithdrawRefusal::NotHeld)
+        ),
+        "{err:?}"
+    );
+    let err = app
+        .withdraw(other.value.as_str(), &withdraw_req("w2", id, None))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::Withdraw(oml_app::domain::WithdrawRefusal::AuthorOnly)
+        ),
+        "{err:?}"
+    );
+    let row = app
+        .get_memory(other.value.as_str(), id)
+        .await
+        .expect("still served");
+    assert_eq!(row.memory.status, MemoryStatus::Promoted);
+}

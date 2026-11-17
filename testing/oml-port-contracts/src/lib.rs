@@ -634,6 +634,106 @@ pub async fn reject<S: JournalStore>(
     .await
 }
 
+/// A withdrawal (ADR-0083 d13): the fold sets the version's state to
+/// `withdrawn` in the commit that journals it and takes it out of every
+/// review queue, so no reviewer is served or listed it and doctor's
+/// `withdrawn_in_queue` reads zero; the row is kept with its text.
+pub async fn a_withdrawn_version_leaves_every_review_queue_and_is_kept<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(62);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workspace_record(t, Uuid::from_u128(0x6201), None, "universe");
+    let workspace = workspace_record(
+        t,
+        Uuid::from_u128(0x6200),
+        Some(universe.workspace_id),
+        "team",
+    );
+    for w in [universe, workspace.clone()] {
+        rig.create_workspace(store, w).await;
+    }
+    let author = key_record(t, Uuid::from_u128(0x6210), Role::Writer, None);
+    let reviewer = key_record(t, Uuid::from_u128(0x6211), Role::Reviewer, None);
+    for key in [author.clone(), reviewer.clone()] {
+        rig.issue_key(store, key).await;
+    }
+    let id = Uuid::from_u128(0x6220);
+    let memory = held_memory(
+        t,
+        workspace.workspace_id,
+        id,
+        &author.principal,
+        author.key_id,
+        "a mistaken write",
+    );
+    rig.commit(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": id.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory,
+            enqueue: true,
+            findings: Box::default(),
+        },
+        None,
+    )
+    .await
+    .expect("held");
+    rig.commit(
+        store,
+        event_types::MEMORY_WITHDRAWN,
+        json!({ "artifact_id": id.to_string(), "reason": null }),
+        MetadataFold::MemoryWithdrawn { memory_id: id },
+        None,
+    )
+    .await
+    .expect("the withdrawal commits");
+    let row = store
+        .memory(t, id)
+        .await
+        .expect("memory")
+        .expect("the version is kept");
+    assert_eq!(row.status, MemoryStatus::Withdrawn);
+    assert_eq!(row.body, "a mistaken write", "kept with its text");
+    let nodes = [workspace.workspace_id];
+    assert!(
+        store
+            .review_claim_next(
+                t,
+                &reviewer.principal,
+                reviewer.key_id,
+                &nodes,
+                ReviewLane::Any
+            )
+            .await
+            .expect("claim")
+            .is_none(),
+        "no queue serves it"
+    );
+    let all = HeldFilter {
+        nodes: nodes.to_vec(),
+        author_key_id: None,
+        claim_key_prefix: None,
+        lane: ReviewLane::Any,
+    };
+    assert!(
+        store
+            .review_held(t, &reviewer.principal, reviewer.key_id, &all, None, 10)
+            .await
+            .expect("review_held")
+            .is_empty(),
+        "no listing holds it"
+    );
+    assert_eq!(
+        store
+            .scan_backlog(t, None)
+            .await
+            .expect("backlog")
+            .withdrawn_in_queue,
+        0
+    );
+}
+
 /// A fixture name; one the creation grammar refuses fails the fixture
 /// (ADR-0026 d2).
 #[must_use]
@@ -2001,6 +2101,7 @@ pub async fn a_recording_rescan_adds_only_the_findings_a_held_versions_list_lack
             rescan_due: 2,
             findings_unlisted: 1,
             promoted_unapproved: 0,
+            withdrawn_in_queue: 0,
         }
     );
     let again = finding(
@@ -9008,6 +9109,10 @@ where
     .await;
     Box::pin(journal_review_claim_laws(&new_store().await)).await;
     Box::pin(journal_review_lane_laws(&new_store().await)).await;
+    Box::pin(a_withdrawn_version_leaves_every_review_queue_and_is_kept(
+        &new_store().await,
+    ))
+    .await;
     Box::pin(journal_review_lane_starves_no_author_laws(
         &new_store().await,
     ))

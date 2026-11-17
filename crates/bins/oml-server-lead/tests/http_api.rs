@@ -11642,3 +11642,67 @@ async fn the_widen_hint_is_the_same_over_http_and_mcp_once_the_lead_builds_its_s
     assert_eq!(settings["widen_signal"]["failed"], 0, "{settings}");
     drop_db(&rig.db_name).await;
 }
+
+/// `POST /v1/memories/{artifact_id}/withdraw` (ADR-0083 d13): an empty body
+/// withdraws the author's held version under its Idempotency-Key, which a
+/// retry replays; a key without one, a closed body's stray field and a
+/// version no longer held are refused by name; a key that cannot read the
+/// version is told nothing.
+#[tokio::test]
+async fn the_author_withdraws_its_held_version_over_http_and_the_route_refuses_by_name() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _, root) = bootstrap(router).await;
+    let team = create_workspace(router, &admin, root, "team").await;
+    let writer = agent_on(router, &admin, "agent/withdraw", team).await;
+    let stranger = agent_on(router, &admin, "agent/stranger", team).await;
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        submit_into(&writer, "w-1", &team.to_string(), "mistake"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let id = body["artifact_id"].as_str().expect("id").to_owned();
+    let path = format!("/v1/memories/{id}/withdraw");
+
+    let (status, _, body) = send(router, "POST", &path, Call::auth(&writer)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_envelope(&body, "request.idempotency_key_required");
+    let (status, _, body) = send(
+        router,
+        "POST",
+        &path,
+        Call::auth(&writer)
+            .idem("wd-1")
+            .body(json!({ "why": "a stray field" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_envelope(&body, "request.validation");
+    // A held row is its author's alone: another key is told nothing.
+    let (status, _, body) = send(router, "POST", &path, Call::auth(&stranger).idem("wd-s")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_envelope(&body, "access.not_found");
+
+    let (status, headers, body) =
+        send(router, "POST", &path, Call::auth(&writer).idem("wd-2")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["artifact_id"], id);
+    assert_eq!(body["state"], "withdrawn");
+    assert!(body["journal_seq"].is_u64(), "{body}");
+    assert!(!headers.contains_key("idempotency-replay"));
+    let (status, headers, again) =
+        send(router, "POST", &path, Call::auth(&writer).idem("wd-2")).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again, body, "the replay is the stored answer");
+    assert_eq!(headers["idempotency-replay"], "true");
+    let (status, _, body) = send(router, "POST", &path, Call::auth(&writer).idem("wd-3")).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_envelope(&body, "memory.not_held");
+
+    drop_db(&rig.db_name).await;
+}
