@@ -90,8 +90,8 @@ use oml_domain::{
     ChainHead, DERIVED_CLAIM_KEY_PREFIX, Envelope, EventDraft, EventTime, FrozenOp, KeySet,
     LadderNode, LadderRefusal, LineageClosure, MemoryKind, MemoryStatus, Role, Sha256Hash,
     SignedEnvelope, UsedBy, WorkspaceStatus, canonical_bytes, check_approval_class, check_reviewer,
-    derive_claim_key, event_types, frozen_refuses, next_envelope, nfc, propose_check,
-    ratifier_is_proposer, ratify_check, same_user, sha256_digest_string, transition,
+    derive_claim_key, event_types, frozen_refuses, is_person_reviewer, next_envelope, nfc,
+    propose_check, ratifier_is_proposer, ratify_check, same_user, sha256_digest_string, transition,
 };
 
 use crate::cursor::{ClaimEdgeCursor, ListingCursor, NameCursor, PathCursor};
@@ -127,7 +127,7 @@ use crate::types::{
 };
 use crate::types::{
     BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX,
-    HeldFilter, HeldItem, HeldListingRequest, HeldPage, VersionFinding,
+    HeldFilter, HeldItem, HeldListingRequest, HeldPage, ReviewLane, VersionFinding,
 };
 
 use crate::search::{
@@ -582,6 +582,26 @@ fn require_person_reviewer(key: &KeyRecord) -> Result<(), AppError> {
             role: key.role,
             used_by: key.used_by,
         })
+    }
+}
+
+/// The rows a review read serves `key` under `needs`: a key that cannot
+/// approve an instruction (until #214, one that is not a reviewer key
+/// `used_by: person` with no crew and no profile) reads only the rows any
+/// reviewer may approve, and asking for the person lane it reads none,
+/// `None`; any other key reads what it asks for, every row when it asks
+/// nothing (ADR-0074 d19; ADR-0080 d16).
+fn review_lane(key: &KeyRecord, needs: Option<ReviewLane>) -> Option<ReviewLane> {
+    let person = is_person_reviewer(
+        key.role,
+        key.used_by,
+        key.crew_id.is_some(),
+        key.profile.is_some(),
+    );
+    match (needs, person) {
+        (Some(ReviewLane::Person), false) => None,
+        (_, false) => Some(ReviewLane::Reviewer),
+        (needs, true) => Some(needs.unwrap_or_default()),
     }
 }
 
@@ -5769,18 +5789,37 @@ where
     /// Serve the next reviewable held item to this reviewer, claiming it,
     /// from the rows within its reviewer effective access only; a
     /// `used_by: service` key is refused before any lookup (ADR-0025 d1).
+    /// A key that cannot approve an instruction is never served one, nor a
+    /// successor that replaces one (ADR-0074 d19's lane, accepted for the
+    /// instruction class by ADR-0080 d16).
     pub async fn review_next(
         &self,
         bearer: impl Into<Bearer<'_>>,
+    ) -> Result<Option<ServedMemory>, AppError> {
+        self.review_next_needing(bearer, None).await
+    }
+
+    /// [`App::review_next`] narrowed by `needs`: `person` serves the person
+    /// lane alone, round-robin across author keys, each author's oldest
+    /// first, and serves a key that cannot approve it
+    /// nothing; `reviewer` serves the rows any reviewer may approve
+    /// (ADR-0074 d19; ADR-0080 d16).
+    pub async fn review_next_needing(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        needs: Option<ReviewLane>,
     ) -> Result<Option<ServedMemory>, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reviewer, "review")?;
         refuse_service(key, "review")?;
+        let Some(lane) = review_lane(key, needs) else {
+            return Ok(None);
+        };
         let workspaces = self.reviewer_nodes(&caller).await?;
         match self
             .journal
-            .review_claim_next(key.tenant_id, &key.principal, key.key_id, &workspaces)
+            .review_claim_next(key.tenant_id, &key.principal, key.key_id, &workspaces, lane)
             .await?
         {
             None => Ok(None),
@@ -5864,9 +5903,10 @@ where
                 // held_by_key), not on a serve record: the serve binding
                 // stays #130 (ADR-0039 Consequences, "The serve binding is
                 // not fixed here").
+                let lane = review_lane(key, None).unwrap_or(ReviewLane::Reviewer);
                 let claimed = self
                     .journal
-                    .review_claimed(key.tenant_id, key.key_id)
+                    .review_claimed(key.tenant_id, key.key_id, lane)
                     .await?;
                 let [memory_id] = claimed[..] else {
                     return Err(AppError::ServeIdUnresolved {
@@ -5928,10 +5968,20 @@ where
             .as_deref()
             .map(|cursor| ListingCursor::resume(cursor, key.key_id, &now))
             .transpose()?;
+        // A key that cannot approve an instruction is listed none, as review
+        // next serves it none (ADR-0074 d19; ADR-0080 d16).
+        let Some(lane) = review_lane(key, req.needs) else {
+            return Ok(HeldPage {
+                items: Vec::new(),
+                next_cursor: None,
+                lane_authors: Some(Vec::new()),
+            });
+        };
         let filter = HeldFilter {
             nodes,
             author_key_id,
             claim_key_prefix: req.claim_key_prefix.clone(),
+            lane,
         };
         // One row past the page says whether another page exists.
         let mut rows = self
@@ -5992,7 +6042,21 @@ where
         }
         let mut served: Vec<&mut ServedMemory> = items.iter_mut().map(|i| &mut i.served).collect();
         self.with_findings(tenant_id, &mut served).await?;
-        Ok(HeldPage { items, next_cursor })
+        // The lane's count per author key, beside its page (ADR-0074 d19).
+        let lane_authors = if lane == ReviewLane::Person {
+            Some(
+                self.journal
+                    .review_held_authors(tenant_id, &key.principal, key.key_id, &filter)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        Ok(HeldPage {
+            items,
+            next_cursor,
+            lane_authors,
+        })
     }
 
     /// The named held rows as the listing would show them to this key, for

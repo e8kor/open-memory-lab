@@ -585,7 +585,11 @@ Requires: reviewer(review).
 |---|---|---|---|---|
 | `Idempotency-Key` | header | string | yes | Claims an idempotency record (key_id, workspace, idem_key) before side effects. |
 
-**Request body** (`application/json`): object
+**Request body** (`application/json`)
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `needs` | `person` \| `reviewer` | no | person serves the person lane alone: steering, guardrail and skill versions and a successor of another kind that replaces one, round-robin across author keys, each row's turn its place among its author's lane rows in age order, the lowest turn first and the older row first within a turn; a key that cannot approve them is served none, 204. reviewer serves the rows any reviewer may approve. |
 
 **Responses.** `200` The serve.; `204` Nothing in scope waits.; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `429` 429 limit.rate or limit.quota — retryable; Retry-After says when.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
@@ -622,6 +626,7 @@ Requires: a reviewer key used_by person; any other key, a reviewer key used by a
 | `workspace` | query | WorkspaceRef | no | Subtree filter, by id or name. |
 | `author_key` | query | string | no | The authoring key, by id or name. |
 | `claim_key_prefix` | query | string | no | A literal prefix of the claim key. |
+| `needs` | query | `person` \| `reviewer` | no | person lists the person lane alone and counts it per author key in lane_authors; reviewer the rows any reviewer may approve. |
 | `limit` | query | integer | no | Page size, at most 200. |
 | `cursor` | query | string | no | Opaque, from the previous page's next_cursor. |
 | `ids` | query | array of string | no | Comma-separated memory ids: each named row as this listing serves it while it is still held and still the key's to judge, else null, in the order named; the bulk confirmation reads it. |

@@ -51,9 +51,10 @@ use oml_app::types::{
     DenialRecord, DocumentCaching, FormatFields, GrantRecord, GuardrailFields, HIT_KINDS,
     HeldFilter, HeldRow, KeyAccess, KeyRecord, KeyReferences, KindFields, ListingFilter,
     ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT,
-    PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow,
-    TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows, VersionFinding,
-    WebCredentialKey, WebCredentialRows, WebEntry, WebSessionRecord, WorkspaceRecord, WorkspaceRef,
+    PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome, ReviewLane, SourceCheck, SweepReport,
+    TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
+    VersionFinding, WebCredentialKey, WebCredentialRows, WebEntry, WebSessionRecord,
+    WorkspaceRecord, WorkspaceRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -2286,6 +2287,79 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workspace_id, m.claim_key, m.
      m.approver_used_by, m.approver_same_user, \
      to_char(m.approved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS approved_at_signed";
+
+/// The held listing's predicate after `WHERE q.tenant_id = `:
+/// review_claim_next's, unclaimed by another key, narrowed by the filter's
+/// nodes, author, claim-key prefix and lane (ADR-0055 d2; ADR-0074 d19).
+fn push_held_predicates(
+    sql: &mut QueryBuilder<'_, Postgres>,
+    tenant_id: Uuid,
+    reviewer_principal: &str,
+    reviewer_key_id: Uuid,
+    filter: &HeldFilter,
+) {
+    sql.push_bind(tenant_id)
+        .push(" AND m.tenant_id = ")
+        .push_bind(tenant_id)
+        .push(" AND m.workspace_id = ANY(")
+        .push_bind(filter.nodes.clone())
+        .push("::uuid[]) AND (q.held_by_key IS NULL OR q.held_by_key = ")
+        .push_bind(reviewer_key_id)
+        .push(") AND NOT (m.lineage_principals @> ARRAY[")
+        .push_bind(reviewer_principal.to_owned())
+        .push("]::text[]) AND NOT (m.lineage_key_ids @> ARRAY[")
+        .push_bind(reviewer_key_id)
+        .push(
+            "]::uuid[]) AND (m.replaces_artifact_id IS NULL OR NOT EXISTS ( \
+         SELECT 1 FROM memories r WHERE r.tenant_id = ",
+        )
+        .push_bind(tenant_id)
+        .push(
+            " AND r.id <> m.id AND r.status = 'held' \
+         AND r.replaces_artifact_id = m.replaces_artifact_id \
+         AND r.workspace_id = m.workspace_id AND r.claim_key = m.claim_key \
+         AND (r.author_key_id = ",
+        )
+        .push_bind(reviewer_key_id)
+        .push(" OR r.author_principal = ")
+        .push_bind(reviewer_principal.to_owned())
+        .push(")))");
+    if let Some(author) = filter.author_key_id {
+        sql.push(" AND m.author_key_id = ").push_bind(author);
+    }
+    // A literal prefix: no LIKE, so `_` and `%` match only themselves.
+    if let Some(prefix) = &filter.claim_key_prefix {
+        sql.push(" AND left(m.claim_key, char_length(")
+            .push_bind(prefix.clone())
+            .push(")) = ")
+            .push_bind(prefix.clone());
+    }
+    if let Some(lane) = lane_sql(filter.lane, "m") {
+        sql.push(" AND ").push(lane);
+    }
+}
+
+/// The person lane's predicate on the memories row aliased `m`: an instruction-class version, or a
+/// successor that replaces one (ADR-0080 d16), the kinds spelled from the
+/// domain's class table. `None` for the lane that admits every row.
+fn lane_sql(lane: ReviewLane, m: &str) -> Option<String> {
+    let kinds = MemoryKind::ALL
+        .iter()
+        .filter(|k| k.class().needs_person())
+        .map(|k| format!("'{}'", k.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let needs = format!(
+        "({m}.kind IN ({kinds}) OR ({m}.replaces_artifact_id IS NOT NULL AND EXISTS ( \
+         SELECT 1 FROM memories t WHERE t.tenant_id = {m}.tenant_id \
+         AND t.id = {m}.replaces_artifact_id AND t.kind IN ({kinds}))))"
+    );
+    match lane {
+        ReviewLane::Any => None,
+        ReviewLane::Person => Some(needs),
+        ReviewLane::Reviewer => Some(format!("NOT {needs}")),
+    }
+}
 
 fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
     let status: String = row.try_get("status").map_err(backend)?;
@@ -8133,6 +8207,7 @@ impl JournalStore for PgStore {
         reviewer_principal: &str,
         reviewer_key_id: Uuid,
         workspaces: &[Uuid],
+        lane: ReviewLane,
     ) -> Result<Option<MemoryRecord>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
@@ -8149,10 +8224,34 @@ impl JournalStore for PgStore {
         // this reviewer may judge; the rival check runs only for a
         // successor, so a first version never costs an anti-join over every
         // held row (ADR-0055 d9).
+        // The person lane narrows by who may approve, and serves its rows
+        // round-robin across author keys: a row's turn is its place among
+        // its author's lane rows in age order, claimed or not, the lowest
+        // turn first and the older row first within a turn (ADR-0074 d19;
+        // the operator, 2026-11-17). The turn is taken in a subquery: a
+        // locking clause and a window function never share a query level.
+        let lane_filter = lane_sql(lane, "m").map_or_else(String::new, |p| format!(" AND {p}"));
+        let lane_turns = lane_sql(lane, "m2").map_or_else(String::new, |p| format!(" AND {p}"));
+        let (turns, order) = if lane == ReviewLane::Person {
+            (
+                format!(
+                    "JOIN (SELECT q2.memory_id, row_number() OVER ( \
+                         PARTITION BY m2.author_key_id ORDER BY q2.held_since, q2.memory_id) AS turn \
+                       FROM review_queue q2 \
+                       JOIN memories m2 ON m2.tenant_id = q2.tenant_id AND m2.id = q2.memory_id \
+                       WHERE q2.tenant_id = $1 AND m2.tenant_id = $1 \
+                         AND m2.workspace_id = ANY($4::uuid[]){lane_turns}) c \
+                     ON c.memory_id = q.memory_id "
+                ),
+                "c.turn ASC, q.held_since ASC, q.memory_id ASC",
+            )
+        } else {
+            (String::new(), "q.held_since ASC, q.memory_id ASC")
+        };
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM review_queue q \
              JOIN memories m ON m.tenant_id = q.tenant_id AND m.id = q.memory_id \
-             WHERE q.tenant_id = $1 AND m.tenant_id = $1 \
+             {turns}WHERE q.tenant_id = $1 AND m.tenant_id = $1 \
                AND m.workspace_id = ANY($4::uuid[]) \
                AND (q.held_by_key IS NULL OR q.held_by_key = $2) \
                AND NOT (m.lineage_principals @> ARRAY[$3]::text[]) \
@@ -8163,7 +8262,7 @@ impl JournalStore for PgStore {
                      AND r.replaces_artifact_id = m.replaces_artifact_id \
                      AND r.workspace_id = m.workspace_id AND r.claim_key = m.claim_key \
                      AND (r.author_key_id = $2 OR r.author_principal = $3))) \
-             ORDER BY q.held_since ASC, q.memory_id ASC \
+             {lane_filter} ORDER BY {order} \
              LIMIT 1 \
              FOR NO KEY UPDATE OF q SKIP LOCKED"
         );
@@ -8198,17 +8297,21 @@ impl JournalStore for PgStore {
         &self,
         tenant_id: Uuid,
         reviewer_key_id: Uuid,
+        lane: ReviewLane,
     ) -> Result<Vec<Uuid>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        // The rows this key claimed, in the order review next serves them;
-        // two tell one open item from several (ADR-0039 d10).
-        let ids: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT memory_id FROM review_queue \
-             WHERE tenant_id = $1 AND held_by_key = $2 \
-             ORDER BY held_since ASC, memory_id ASC \
+        // The rows this key claimed in its lane, in the order review next
+        // serves them; two tell one open item from several (ADR-0039 d10;
+        // ADR-0074 d19).
+        let lane_filter = lane_sql(lane, "m").map_or_else(String::new, |p| format!(" AND {p}"));
+        let ids: Vec<Uuid> = sqlx::query_scalar(&format!(
+            "SELECT q.memory_id FROM review_queue q \
+             JOIN memories m ON m.tenant_id = q.tenant_id AND m.id = q.memory_id \
+             WHERE q.tenant_id = $1 AND m.tenant_id = $1 AND q.held_by_key = $2{lane_filter} \
+             ORDER BY q.held_since ASC, q.memory_id ASC \
              LIMIT 2",
-        )
+        ))
         .bind(tenant_id)
         .bind(reviewer_key_id)
         .fetch_all(&mut *tx)
@@ -8242,42 +8345,13 @@ impl JournalStore for PgStore {
              JOIN memories m ON m.tenant_id = q.tenant_id AND m.id = q.memory_id \
              WHERE q.tenant_id = "
         ));
-        sql.push_bind(tenant_id)
-            .push(" AND m.tenant_id = ")
-            .push_bind(tenant_id)
-            .push(" AND m.workspace_id = ANY(")
-            .push_bind(filter.nodes.clone())
-            .push("::uuid[]) AND (q.held_by_key IS NULL OR q.held_by_key = ")
-            .push_bind(reviewer_key_id)
-            .push(") AND NOT (m.lineage_principals @> ARRAY[")
-            .push_bind(reviewer_principal.to_owned())
-            .push("]::text[]) AND NOT (m.lineage_key_ids @> ARRAY[")
-            .push_bind(reviewer_key_id)
-            .push(
-                "]::uuid[]) AND (m.replaces_artifact_id IS NULL OR NOT EXISTS ( \
-                 SELECT 1 FROM memories r WHERE r.tenant_id = ",
-            )
-            .push_bind(tenant_id)
-            .push(
-                " AND r.id <> m.id AND r.status = 'held' \
-                 AND r.replaces_artifact_id = m.replaces_artifact_id \
-                 AND r.workspace_id = m.workspace_id AND r.claim_key = m.claim_key \
-                 AND (r.author_key_id = ",
-            )
-            .push_bind(reviewer_key_id)
-            .push(" OR r.author_principal = ")
-            .push_bind(reviewer_principal.to_owned())
-            .push(")))");
-        if let Some(author) = filter.author_key_id {
-            sql.push(" AND m.author_key_id = ").push_bind(author);
-        }
-        // A literal prefix: no LIKE, so `_` and `%` match only themselves.
-        if let Some(prefix) = &filter.claim_key_prefix {
-            sql.push(" AND left(m.claim_key, char_length(")
-                .push_bind(prefix.clone())
-                .push(")) = ")
-                .push_bind(prefix.clone());
-        }
+        push_held_predicates(
+            &mut sql,
+            tenant_id,
+            reviewer_principal,
+            reviewer_key_id,
+            filter,
+        );
         if let Some(after) = after {
             sql.push(" AND (q.held_since, q.memory_id) > ((")
                 .push_bind(after.created_at.as_str().to_owned())
@@ -8299,6 +8373,44 @@ impl JournalStore for PgStore {
                         StoreError::Backend("review_queue.held_since is null".to_owned())
                     })?,
                 })
+            })
+            .collect()
+    }
+
+    async fn review_held_authors(
+        &self,
+        tenant_id: Uuid,
+        reviewer_principal: &str,
+        reviewer_key_id: Uuid,
+        filter: &HeldFilter,
+    ) -> Result<Vec<(Uuid, u64)>, StoreError> {
+        if filter.nodes.is_empty() {
+            return Ok(Vec::new());
+        }
+        // The held listing's rows, counted per author key: the person
+        // lane's counts beside its page (ADR-0074 d19).
+        let mut sql = QueryBuilder::<Postgres>::new(
+            "SELECT m.author_key_id, count(*) AS held FROM review_queue q \
+             JOIN memories m ON m.tenant_id = q.tenant_id AND m.id = q.memory_id \
+             WHERE q.tenant_id = ",
+        );
+        push_held_predicates(
+            &mut sql,
+            tenant_id,
+            reviewer_principal,
+            reviewer_key_id,
+            filter,
+        );
+        sql.push(" GROUP BY m.author_key_id ORDER BY m.author_key_id");
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sql.build().fetch_all(&mut *tx).await.map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter()
+            .map(|row| {
+                let author: Uuid = row.try_get("author_key_id").map_err(backend)?;
+                let held: i64 = row.try_get("held").map_err(backend)?;
+                Ok((author, u64::try_from(held).map_err(backend)?))
             })
             .collect()
     }

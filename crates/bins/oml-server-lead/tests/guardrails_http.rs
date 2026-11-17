@@ -217,7 +217,7 @@ async fn an_agent_reviewers_approval_of_a_guardrail_is_refused_person_required_a
         .as_str()
         .expect("agent reviewer value")
         .to_owned();
-    submit_guardrail(
+    let rule = submit_guardrail(
         &router,
         &t,
         "g-agent",
@@ -225,6 +225,8 @@ async fn an_agent_reviewers_approval_of_a_guardrail_is_refused_person_required_a
                "workspace": t.crew}),
     )
     .await;
+    // Review next never serves it this key: it is in the person lane
+    // (ADR-0074 d19; ADR-0080 d16).
     let (status, served) = send(
         &router,
         "POST",
@@ -234,14 +236,19 @@ async fn an_agent_reviewers_approval_of_a_guardrail_is_refused_person_required_a
         Some(&json!({})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{served}");
+    assert_eq!(status, StatusCode::NO_CONTENT, "{served}");
+    // A verdict that names it anyway is refused at the verdict.
+    let serve_id = format!(
+        "srv_{}",
+        uuid::Uuid::parse_str(&rule).expect("an id").simple()
+    );
     let (status, refused) = send(
         &router,
         "POST",
         "/v2/review/verdicts",
         Some(&agent),
         Some("v-agent"),
-        Some(&json!({"serve_id": served["serve_id"], "verdict": "approve"})),
+        Some(&json!({"serve_id": serve_id, "verdict": "approve"})),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
@@ -266,6 +273,62 @@ async fn an_agent_reviewers_approval_of_a_guardrail_is_refused_person_required_a
     .await;
     assert_eq!(status, StatusCode::OK, "{set}");
     assert_eq!(set["guardrails"], json!([]), "{set}");
+}
+
+#[tokio::test]
+async fn review_next_with_needs_person_serves_the_lane_and_the_listing_counts_it_per_author() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    let rule = submit_guardrail(
+        &router,
+        &t,
+        "g-lane",
+        json!({"kind": "guardrail", "severity": "never", "body": "Never push to main.",
+               "workspace": t.crew}),
+    )
+    .await;
+    submit_guardrail(
+        &router,
+        &t,
+        "m-lane",
+        json!({"kind": "memory", "body": "Quotes drift.", "workspace": t.crew}),
+    )
+    .await;
+    let (status, page) = send(
+        &router,
+        "GET",
+        "/v2/review/held?needs=person&limit=50",
+        Some(&t.reviewer),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["items"].as_array().map(Vec::len), Some(1), "{page}");
+    assert_eq!(page["items"][0]["artifact_id"], rule.as_str());
+    assert_eq!(page["lane_authors"][0]["held"], 1, "{page}");
+    let (status, served) = send(
+        &router,
+        "POST",
+        "/v2/review/next",
+        Some(&t.reviewer),
+        Some("n-lane"),
+        Some(&json!({"needs": "person"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{served}");
+    assert_eq!(served["item"]["artifact_id"], rule.as_str());
+    let (status, refused) = send(
+        &router,
+        "POST",
+        "/v2/review/next",
+        Some(&t.reviewer),
+        Some("n-bad"),
+        Some(&json!({"needs": "admin"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(refused["error"]["details"]["field"], "/needs", "{refused}");
 }
 
 /// The reviewer takes the next item and approves it; the served item.

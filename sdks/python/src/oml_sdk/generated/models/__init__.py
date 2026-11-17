@@ -136,6 +136,7 @@ from .held_named import HeldNamed
 from .held_named_items_item import HeldNamedItemsItem
 from .held_page import HeldPage
 from .held_page_items_item import HeldPageItemsItem
+from .held_page_lane_authors_type_0_item import HeldPageLaneAuthorsType0Item
 from .journal_event import JournalEvent
 from .journal_event_payload import JournalEventPayload
 from .key import Key
@@ -240,7 +241,9 @@ from .rescan_report_by_rule_item_action import RescanReportByRuleItemAction
 from .rescan_report_findings_item import RescanReportFindingsItem
 from .rescan_report_findings_item_action import RescanReportFindingsItemAction
 from .rescan_report_scanned_by_origin import RescanReportScannedByOrigin
+from .review_held_needs import ReviewHeldNeeds
 from .review_next_body import ReviewNextBody
+from .review_next_body_needs import ReviewNextBodyNeeds
 from .review_policy import ReviewPolicy
 from .review_queue_response_200 import ReviewQueueResponse200
 from .review_queue_response_200_items_item import ReviewQueueResponse200ItemsItem
@@ -496,6 +499,7 @@ __all__ = (
     "HeldNamedItemsItem",
     "HeldPage",
     "HeldPageItemsItem",
+    "HeldPageLaneAuthorsType0Item",
     "JournalEvent",
     "JournalEventPayload",
     "Key",
@@ -594,7 +598,9 @@ __all__ = (
     "RescanReportFindingsItem",
     "RescanReportFindingsItemAction",
     "RescanReportScannedByOrigin",
+    "ReviewHeldNeeds",
     "ReviewNextBody",
+    "ReviewNextBodyNeeds",
     "ReviewPolicy",
     "ReviewQueueResponse200",
     "ReviewQueueResponse200ItemsItem",

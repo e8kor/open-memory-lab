@@ -46,9 +46,9 @@ use crate::types::{
     CrewRecord, DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, HeldFilter, HeldRow,
     KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
     MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome, ProviderAnswer,
-    ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, SIMILAR_KINDS, SourceCheck,
-    SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
-    WebEntry, WebSessionRecord, WorkspaceRecord, WorkspaceRef,
+    ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, ReviewLane, SIMILAR_KINDS,
+    SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState,
+    UnnamedRows, WebEntry, WebSessionRecord, WorkspaceRecord, WorkspaceRef,
 };
 use oml_domain::web::Provider;
 
@@ -1154,6 +1154,15 @@ fn one_rung(from: WorkspaceStatus, to: WorkspaceStatus) -> bool {
 /// principal other than the one that key's row holds, a step other than
 /// one rung forward, a record that is not pending, and an id already held
 /// (0017_workarea_transitions.sql; ADR-0010 R2).
+/// Whether only a person's verdict approves `m`: it, or the version it
+/// replaces, is an instruction (ADR-0080 d16).
+fn needs_person_row(memories: &BTreeMap<Uuid, MemoryRecord>, m: &MemoryRecord) -> bool {
+    m.kind.class().needs_person()
+        || m.replaces
+            .and_then(|id| memories.get(&id))
+            .is_some_and(|t| t.kind.class().needs_person())
+}
+
 fn propose_transition_fold(
     state: &mut TenantState,
     seq: u64,
@@ -3634,6 +3643,7 @@ impl JournalStore for MemStore {
         reviewer_principal: &str,
         reviewer_key_id: Uuid,
         workspaces: &[Uuid],
+        lane: ReviewLane,
     ) -> Result<Option<MemoryRecord>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
@@ -3642,7 +3652,12 @@ impl JournalStore for MemStore {
         let TenantState {
             queue, memories, ..
         } = &mut *state;
-        for entry in queue.iter_mut() {
+        // Every entry this reviewer may judge, in queue order, then the one
+        // served: the first, or in the person lane the lowest turn, round-
+        // robin across author keys, the older first within a turn (ADR-0074
+        // d19; the operator, 2026-11-17).
+        let mut candidates: Vec<(usize, Uuid)> = Vec::new();
+        for (position, entry) in queue.iter().enumerate() {
             if entry.claimed_by.is_some_and(|k| k != reviewer_key_id) {
                 continue;
             }
@@ -3678,16 +3693,55 @@ impl JournalStore for MemStore {
             {
                 continue;
             }
-            entry.claimed_by = Some(reviewer_key_id);
-            return Ok(Some(memory.clone()));
+            if !lane.admits(needs_person_row(memories, memory)) {
+                continue;
+            }
+            candidates.push((position, memory.author_key_id));
         }
-        Ok(None)
+        let chosen = if lane == ReviewLane::Person {
+            // Each lane row's turn: its place among its author's lane rows
+            // in these workspaces, claimed or not, in queue (age) order.
+            let mut seen: BTreeMap<Uuid, usize> = BTreeMap::new();
+            let mut turns: BTreeMap<usize, usize> = BTreeMap::new();
+            for (position, entry) in queue.iter().enumerate() {
+                let Some(memory) = memories.get(&entry.memory_id) else {
+                    continue;
+                };
+                if !workspaces.contains(&memory.workspace_id)
+                    || !lane.admits(needs_person_row(memories, memory))
+                {
+                    continue;
+                }
+                let turn = seen.entry(memory.author_key_id).or_default();
+                *turn += 1;
+                turns.insert(position, *turn);
+            }
+            candidates
+                .iter()
+                .map(|(position, _)| {
+                    (
+                        turns.get(position).copied().unwrap_or(usize::MAX),
+                        *position,
+                    )
+                })
+                .min()
+                .map(|(_, position)| position)
+        } else {
+            candidates.first().map(|(position, _)| *position)
+        };
+        let Some(position) = chosen else {
+            return Ok(None);
+        };
+        let entry = &mut queue[position];
+        entry.claimed_by = Some(reviewer_key_id);
+        Ok(memories.get(&entry.memory_id).cloned())
     }
 
     async fn review_claimed(
         &self,
         tenant_id: Uuid,
         reviewer_key_id: Uuid,
+        lane: ReviewLane,
     ) -> Result<Vec<Uuid>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Vec::new());
@@ -3697,6 +3751,12 @@ impl JournalStore for MemStore {
             .queue
             .iter()
             .filter(|e| e.claimed_by == Some(reviewer_key_id))
+            .filter(|e| {
+                state
+                    .memories
+                    .get(&e.memory_id)
+                    .is_some_and(|m| lane.admits(needs_person_row(&state.memories, m)))
+            })
             .map(|e| e.memory_id)
             .take(2)
             .collect())
@@ -3747,6 +3807,7 @@ impl JournalStore for MemStore {
                     .as_deref()
                     .is_none_or(|p| m.claim_key.starts_with(p))
             })
+            .filter(|m| filter.lane.admits(needs_person_row(memories, m)))
             .filter(|m| {
                 after.is_none_or(|a| {
                     (m.created_at.as_str(), m.memory_id) > (a.created_at.as_str(), a.artifact_id)
@@ -3763,6 +3824,30 @@ impl JournalStore for MemStore {
         });
         rows.truncate(limit);
         Ok(rows)
+    }
+
+    async fn review_held_authors(
+        &self,
+        tenant_id: Uuid,
+        reviewer_principal: &str,
+        reviewer_key_id: Uuid,
+        filter: &HeldFilter,
+    ) -> Result<Vec<(Uuid, u64)>, StoreError> {
+        let rows = self
+            .review_held(
+                tenant_id,
+                reviewer_principal,
+                reviewer_key_id,
+                filter,
+                None,
+                usize::MAX,
+            )
+            .await?;
+        let mut counts: BTreeMap<Uuid, u64> = BTreeMap::new();
+        for row in rows {
+            *counts.entry(row.memory.author_key_id).or_default() += 1;
+        }
+        Ok(counts.into_iter().collect())
     }
 
     async fn key_by_hash(&self, key_hash: &str) -> Result<Option<KeyRecord>, StoreError> {

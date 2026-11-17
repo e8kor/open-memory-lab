@@ -29,9 +29,9 @@ use oml_app::types::{
     ClaimEdgeSelection, ClaimKeyState, ClientDescription, ConnectCodeRecord, ConnectGrant,
     ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, HeldFilter, HeldRow, KeyAccess,
     KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord,
-    PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair,
-    TokenRecord, TransitionRecord, UnnamedRows, WebCredentialRows, WebEntry, WebSessionRecord,
-    WorkspaceRecord,
+    PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome, ReviewLane, SweepReport, TenantRow,
+    TokenPair, TokenRecord, TransitionRecord, UnnamedRows, WebCredentialRows, WebEntry,
+    WebSessionRecord, WorkspaceRecord,
 };
 use oml_transport_http::traffic::store_call;
 
@@ -577,6 +577,7 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         reviewer_principal: &str,
         reviewer_key_id: Uuid,
         workspaces: &[Uuid],
+        lane: ReviewLane,
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send {
         timed(
             "review_claim_next",
@@ -585,6 +586,7 @@ impl<J: JournalStore> JournalStore for Timed<J> {
                 reviewer_principal,
                 reviewer_key_id,
                 workspaces,
+                lane,
             ),
         )
     }
@@ -593,10 +595,11 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         &self,
         tenant_id: Uuid,
         reviewer_key_id: Uuid,
+        lane: ReviewLane,
     ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send {
         timed(
             "review_claimed",
-            self.inner.review_claimed(tenant_id, reviewer_key_id),
+            self.inner.review_claimed(tenant_id, reviewer_key_id, lane),
         )
     }
 
@@ -619,6 +622,20 @@ impl<J: JournalStore> JournalStore for Timed<J> {
                 after,
                 limit,
             ),
+        )
+    }
+
+    fn review_held_authors(
+        &self,
+        tenant_id: Uuid,
+        reviewer_principal: &str,
+        reviewer_key_id: Uuid,
+        filter: &HeldFilter,
+    ) -> impl Future<Output = Result<Vec<(Uuid, u64)>, StoreError>> + Send {
+        timed(
+            "review_held_authors",
+            self.inner
+                .review_held_authors(tenant_id, reviewer_principal, reviewer_key_id, filter),
         )
     }
 

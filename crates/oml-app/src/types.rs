@@ -1926,6 +1926,10 @@ pub struct HeldListingRequest {
     pub claim_key_prefix: Option<String>,
     pub cursor: Option<String>,
     pub limit: usize,
+    /// `person` lists the person lane alone and counts it per author key;
+    /// `reviewer` the rows any reviewer may approve (ADR-0074 d19; ADR-0080
+    /// d16).
+    pub needs: Option<ReviewLane>,
 }
 
 /// The store's half of the held listing's filter: the nodes the rows may
@@ -1935,6 +1939,45 @@ pub struct HeldFilter {
     pub nodes: Vec<Uuid>,
     pub author_key_id: Option<Uuid>,
     pub claim_key_prefix: Option<String>,
+    /// Which rows by who may approve them (ADR-0074 d19's lane, accepted for
+    /// the instruction class by ADR-0080 d16).
+    pub lane: ReviewLane,
+}
+
+/// The rows a review read serves by who may approve them: every row, the
+/// rows any reviewer may approve, or the person lane alone, the rows only
+/// a person's verdict approves (an instruction-class version, or a
+/// successor of another kind that replaces one; ADR-0074 d19, accepted for
+/// the instruction class by ADR-0080 d16).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ReviewLane {
+    #[default]
+    Any,
+    Reviewer,
+    Person,
+}
+
+impl ReviewLane {
+    /// Whether the lane admits a row, given whether only a person's verdict
+    /// approves it.
+    #[must_use]
+    pub fn admits(self, needs_person: bool) -> bool {
+        match self {
+            ReviewLane::Any => true,
+            ReviewLane::Reviewer => !needs_person,
+            ReviewLane::Person => needs_person,
+        }
+    }
+
+    /// The `needs` word on the wire: `person` or `reviewer`.
+    #[must_use]
+    pub fn parse(word: &str) -> Option<Self> {
+        match word {
+            "person" => Some(ReviewLane::Person),
+            "reviewer" => Some(ReviewLane::Reviewer),
+            _ => None,
+        }
+    }
 }
 
 /// One held row the listing serves, with the time it entered the queue.
@@ -1957,6 +2000,9 @@ pub struct HeldItem {
 pub struct HeldPage {
     pub items: Vec<HeldItem>,
     pub next_cursor: Option<String>,
+    /// With `needs: person`, the lane's rows per author key, the author
+    /// keys in id order (ADR-0074 d19); `None` otherwise.
+    pub lane_authors: Option<Vec<(Uuid, u64)>>,
 }
 
 /// A serve as a verdict sent it: `serve_id` as written, digested as sent,

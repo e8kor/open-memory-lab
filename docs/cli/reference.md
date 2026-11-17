@@ -902,6 +902,10 @@ Take one held item for this key and serve it
 oml review next [OPTIONS]
 ```
 
+| Option | Meaning |
+|---|---|
+| `--needs <NEEDS>` | `person`: only steering, guardrails and skills, and a change that would replace one, which only a person approves. `reviewer`: only what any reviewer may approve [possible values: person, reviewer] |
+
 ### `oml review list`
 
 List held items this key may judge, with text, oldest first, without taking them. Reviewer keys used by a person only

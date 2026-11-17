@@ -8,6 +8,7 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.held_named import HeldNamed
 from ...models.held_page import HeldPage
+from ...models.review_held_needs import ReviewHeldNeeds
 from ...types import UNSET, Response, Unset
 
 
@@ -16,6 +17,7 @@ def _get_kwargs(
     workspace: str | Unset = UNSET,
     author_key: str | Unset = UNSET,
     claim_key_prefix: str | Unset = UNSET,
+    needs: ReviewHeldNeeds | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     ids: list[UUID] | Unset = UNSET,
@@ -45,6 +47,12 @@ def _get_kwargs(
     params["author_key"] = author_key
 
     params["claim_key_prefix"] = claim_key_prefix
+
+    json_needs: str | Unset = UNSET
+    if not isinstance(needs, Unset):
+        json_needs = needs.value
+
+    params["needs"] = json_needs
 
     params["limit"] = limit
 
@@ -127,6 +135,7 @@ def sync_detailed(
     workspace: str | Unset = UNSET,
     author_key: str | Unset = UNSET,
     claim_key_prefix: str | Unset = UNSET,
+    needs: ReviewHeldNeeds | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     ids: list[UUID] | Unset = UNSET,
@@ -154,6 +163,7 @@ def sync_detailed(
             universe, is neither, and is refused (request.validation).
         author_key (str | Unset):
         claim_key_prefix (str | Unset):
+        needs (ReviewHeldNeeds | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         ids (list[UUID] | Unset):
@@ -173,6 +183,7 @@ def sync_detailed(
         workspace=workspace,
         author_key=author_key,
         claim_key_prefix=claim_key_prefix,
+        needs=needs,
         limit=limit,
         cursor=cursor,
         ids=ids,
@@ -194,6 +205,7 @@ def sync(
     workspace: str | Unset = UNSET,
     author_key: str | Unset = UNSET,
     claim_key_prefix: str | Unset = UNSET,
+    needs: ReviewHeldNeeds | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     ids: list[UUID] | Unset = UNSET,
@@ -221,6 +233,7 @@ def sync(
             universe, is neither, and is refused (request.validation).
         author_key (str | Unset):
         claim_key_prefix (str | Unset):
+        needs (ReviewHeldNeeds | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         ids (list[UUID] | Unset):
@@ -241,6 +254,7 @@ def sync(
         workspace=workspace,
         author_key=author_key,
         claim_key_prefix=claim_key_prefix,
+        needs=needs,
         limit=limit,
         cursor=cursor,
         ids=ids,
@@ -256,6 +270,7 @@ async def asyncio_detailed(
     workspace: str | Unset = UNSET,
     author_key: str | Unset = UNSET,
     claim_key_prefix: str | Unset = UNSET,
+    needs: ReviewHeldNeeds | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     ids: list[UUID] | Unset = UNSET,
@@ -283,6 +298,7 @@ async def asyncio_detailed(
             universe, is neither, and is refused (request.validation).
         author_key (str | Unset):
         claim_key_prefix (str | Unset):
+        needs (ReviewHeldNeeds | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         ids (list[UUID] | Unset):
@@ -302,6 +318,7 @@ async def asyncio_detailed(
         workspace=workspace,
         author_key=author_key,
         claim_key_prefix=claim_key_prefix,
+        needs=needs,
         limit=limit,
         cursor=cursor,
         ids=ids,
@@ -321,6 +338,7 @@ async def asyncio(
     workspace: str | Unset = UNSET,
     author_key: str | Unset = UNSET,
     claim_key_prefix: str | Unset = UNSET,
+    needs: ReviewHeldNeeds | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     ids: list[UUID] | Unset = UNSET,
@@ -348,6 +366,7 @@ async def asyncio(
             universe, is neither, and is refused (request.validation).
         author_key (str | Unset):
         claim_key_prefix (str | Unset):
+        needs (ReviewHeldNeeds | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         ids (list[UUID] | Unset):
@@ -369,6 +388,7 @@ async def asyncio(
             workspace=workspace,
             author_key=author_key,
             claim_key_prefix=claim_key_prefix,
+            needs=needs,
             limit=limit,
             cursor=cursor,
             ids=ids,

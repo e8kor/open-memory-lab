@@ -46,6 +46,7 @@ use oml_app::search::{
     Access, Candidate, CandidateScope, MatchMode, OwnHeldScope, PostingsHealth, RetrievalQuery,
     Retrieved, RetrieverKind, SparsePending,
 };
+use oml_app::types::ReviewLane;
 use oml_app::types::{
     Approval, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord,
     ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectGrant,
@@ -2158,6 +2159,197 @@ pub async fn a_placeless_finding_stands_for_one_place_of_its_rule<S: JournalStor
     assert_eq!(fields, vec![None, Some("/title".to_owned())]);
 }
 
+/// The person lane (ADR-0074 d19, accepted for the instruction class by
+/// ADR-0080 d16): an instruction-class version, or a successor that
+/// replaces one, is served only in the person lane, never in the reviewer
+/// lane; the person lane serves per author key, the author holding the
+/// fewest first, ties to the author whose oldest is older, and each
+/// author's oldest first; and the held listing narrows and counts alike.
+pub async fn journal_review_lane_laws<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(6);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB3);
+    let (a, b, c, d) = (
+        Uuid::from_u128(0xD1),
+        Uuid::from_u128(0xD2),
+        Uuid::from_u128(0xD3),
+        Uuid::from_u128(0xD4),
+    );
+    let target = Uuid::from_u128(0xC0);
+    let (s1, s2, s3, m, succ) = (
+        Uuid::from_u128(0xC1),
+        Uuid::from_u128(0xC2),
+        Uuid::from_u128(0xC3),
+        Uuid::from_u128(0xC4),
+        Uuid::from_u128(0xC5),
+    );
+    // A steering version a successor of kind memory will replace; it is
+    // not queued.
+    let rows = [
+        (target, a, "ann", MemoryKind::Steering, None, false),
+        (s1, a, "ann", MemoryKind::Steering, None, true),
+        (s2, a, "ann", MemoryKind::Steering, None, true),
+        (s3, b, "bea", MemoryKind::Guardrail, None, true),
+        (m, c, "cal", MemoryKind::Memory, None, true),
+        (succ, d, "dot", MemoryKind::Memory, Some(target), true),
+    ];
+    for (id, key, principal, kind, replaces, enqueue) in rows {
+        let mut memory = held_memory(rig.tenant_id, wa, id, principal, key, "body");
+        memory.kind = kind;
+        memory.claim_key = format!("lane-{id}");
+        memory.replaces = replaces;
+        if kind == MemoryKind::Guardrail {
+            memory.guardrail = Some(Box::new(GuardrailFields {
+                severity: oml_app::domain::guardrail::Severity::Never,
+                rule: None,
+            }));
+        }
+        rig.commit(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory,
+                enqueue,
+                findings: Box::default(),
+            },
+            None,
+        )
+        .await
+        .expect("commit");
+    }
+    // The listing narrows by the lane and counts it per author key, before
+    // any lane row is claimed by another key.
+    let filter = HeldFilter {
+        nodes: vec![wa],
+        author_key_id: None,
+        claim_key_prefix: None,
+        lane: ReviewLane::Person,
+    };
+    let fresh = Uuid::from_u128(0xFA);
+    let mut counts = store
+        .review_held_authors(rig.tenant_id, "fresh", fresh, &filter)
+        .await
+        .expect("counts");
+    counts.sort();
+    assert_eq!(counts, vec![(a, 2), (b, 1), (d, 1)]);
+    // The reviewer lane serves the memory alone.
+    let agent = Uuid::from_u128(0xE0);
+    let served = store
+        .review_claim_next(rig.tenant_id, "crew", agent, &[wa], ReviewLane::Reviewer)
+        .await
+        .expect("claim")
+        .expect("the memory");
+    assert_eq!(served.memory_id, m);
+    assert!(
+        store
+            .review_claim_next(
+                rig.tenant_id,
+                "crew-2",
+                Uuid::from_u128(0xE9),
+                &[wa],
+                ReviewLane::Reviewer
+            )
+            .await
+            .expect("claim")
+            .is_none(),
+        "no instruction and no successor of one in the reviewer lane"
+    );
+    // The person lane, one reviewer key a claim, round-robin across author
+    // keys (the operator, 2026-11-17): each author's first in age order,
+    // then each author's second: ann's first, bea's, dot's, ann's second.
+    let mut order = Vec::new();
+    for n in 1..=5u128 {
+        if let Some(served) = store
+            .review_claim_next(
+                rig.tenant_id,
+                &format!("person-{n}"),
+                Uuid::from_u128(0xF0 + n),
+                &[wa],
+                ReviewLane::Person,
+            )
+            .await
+            .expect("claim")
+        {
+            order.push(served.memory_id);
+        }
+    }
+    assert_eq!(order, vec![s1, s3, succ, s2]);
+    // A claim a key that cannot approve holds in the lane is not its claim
+    // to judge: the reviewer lane does not count it (ADR-0074 d19).
+    assert_eq!(
+        store
+            .review_claimed(rig.tenant_id, Uuid::from_u128(0xF1), ReviewLane::Reviewer)
+            .await
+            .expect("claimed"),
+        Vec::<Uuid>::new()
+    );
+    assert_eq!(
+        store
+            .review_claimed(rig.tenant_id, Uuid::from_u128(0xF1), ReviewLane::Any)
+            .await
+            .expect("claimed"),
+        vec![s1]
+    );
+}
+
+/// No author waits forever behind newcomers in the person lane: an author's
+/// oldest row keeps its first turn, so rows by new authors written after it
+/// are served after it (ADR-0074 d19, round-robin as the operator decided
+/// on 2026-11-17).
+pub async fn journal_review_lane_starves_no_author_laws<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(6);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB3);
+    let old = Uuid::from_u128(0xC1);
+    // The old author holds two rows: with the fewest-first order every
+    // newcomer would go first, and keep going first as more arrive.
+    let mut rows = vec![
+        (old, Uuid::from_u128(0xD1), "old-author"),
+        (Uuid::from_u128(0xC0), Uuid::from_u128(0xD1), "old-author"),
+    ];
+    for n in 0..4u128 {
+        rows.push((
+            Uuid::from_u128(0xC2 + n),
+            Uuid::from_u128(0xD2 + n),
+            "newcomer",
+        ));
+    }
+    for (id, key, principal) in rows {
+        let mut memory = held_memory(rig.tenant_id, wa, id, principal, key, "body");
+        memory.kind = MemoryKind::Steering;
+        memory.claim_key = format!("starve-{id}");
+        rig.commit(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory,
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+        )
+        .await
+        .expect("commit");
+    }
+    let first = store
+        .review_claim_next(
+            rig.tenant_id,
+            "person",
+            Uuid::from_u128(0xF9),
+            &[wa],
+            ReviewLane::Person,
+        )
+        .await
+        .expect("claim")
+        .expect("a row");
+    assert_eq!(
+        first.memory_id, old,
+        "the oldest author's first turn comes first"
+    );
+}
+
 /// The review queue serves each item to one reviewer, only from the
 /// workspace set it is handed — the reviewer's reviewer effective access
 /// (ADR-0025 d1) — skips rows the reviewer's lineage excludes, and
@@ -2193,28 +2385,40 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
 
     // A reviewer with no reviewer node is served nothing, never the tenant.
     let none = store
-        .review_claim_next(rig.tenant_id, "erin", Uuid::from_u128(0xE4), &[])
+        .review_claim_next(
+            rig.tenant_id,
+            "erin",
+            Uuid::from_u128(0xE4),
+            &[],
+            ReviewLane::Any,
+        )
         .await
         .expect("claim");
     assert!(none.is_none(), "an empty workspace set serves nothing");
     // alice (in m1's lineage) is served m2, never her own row.
     let alice_key = Uuid::from_u128(0xE1);
     let served = store
-        .review_claim_next(rig.tenant_id, "alice", alice_key, &[wa])
+        .review_claim_next(rig.tenant_id, "alice", alice_key, &[wa], ReviewLane::Any)
         .await
         .expect("claim")
         .expect("m2 waits");
     assert_eq!(served.memory_id, m2, "lineage-excluded rows are skipped");
     // A re-claim by the same key returns the same item.
     let again = store
-        .review_claim_next(rig.tenant_id, "alice", alice_key, &[wa])
+        .review_claim_next(rig.tenant_id, "alice", alice_key, &[wa], ReviewLane::Any)
         .await
         .expect("claim")
         .expect("still hers");
     assert_eq!(again.memory_id, m2);
     // An independent reviewer gets the remaining item, not alice's claim.
     let served = store
-        .review_claim_next(rig.tenant_id, "carol", Uuid::from_u128(0xE2), &[wa])
+        .review_claim_next(
+            rig.tenant_id,
+            "carol",
+            Uuid::from_u128(0xE2),
+            &[wa],
+            ReviewLane::Any,
+        )
         .await
         .expect("claim")
         .expect("m1 waits");
@@ -2222,12 +2426,24 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
     // Everything in the set is claimed: m3 waits outside it and is never
     // served from it.
     let none = store
-        .review_claim_next(rig.tenant_id, "dave", Uuid::from_u128(0xE3), &[wa])
+        .review_claim_next(
+            rig.tenant_id,
+            "dave",
+            Uuid::from_u128(0xE3),
+            &[wa],
+            ReviewLane::Any,
+        )
         .await
         .expect("claim");
     assert!(none.is_none(), "a row outside the set is never served");
     let served = store
-        .review_claim_next(rig.tenant_id, "dave", Uuid::from_u128(0xE3), &[elsewhere])
+        .review_claim_next(
+            rig.tenant_id,
+            "dave",
+            Uuid::from_u128(0xE3),
+            &[elsewhere],
+            ReviewLane::Any,
+        )
         .await
         .expect("claim")
         .expect("m3 waits");
@@ -2242,7 +2458,7 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
     ] {
         assert_eq!(
             store
-                .review_claimed(rig.tenant_id, key)
+                .review_claimed(rig.tenant_id, key, ReviewLane::Any)
                 .await
                 .expect("claimed"),
             claimed,
@@ -2297,7 +2513,13 @@ pub async fn journal_review_held_laws<S: JournalStore>(store: &S) {
     }
     // Another key claims C6 through review next; the listing then skips it.
     let claimed = store
-        .review_claim_next(rig.tenant_id, "carol", Uuid::from_u128(0xE2), &[wa])
+        .review_claim_next(
+            rig.tenant_id,
+            "carol",
+            Uuid::from_u128(0xE2),
+            &[wa],
+            ReviewLane::Any,
+        )
         .await
         .expect("claim")
         .expect("a row waits");
@@ -2306,6 +2528,7 @@ pub async fn journal_review_held_laws<S: JournalStore>(store: &S) {
         nodes: vec![wa],
         author_key_id: None,
         claim_key_prefix: None,
+        lane: ReviewLane::Any,
     };
     let listed = ids(store
         .review_held(rig.tenant_id, "eugene", reviewer, &all, None, 10)
@@ -2330,7 +2553,7 @@ pub async fn journal_review_held_laws<S: JournalStore>(store: &S) {
     assert_eq!(again, expected, "a listing claims nothing");
     assert!(
         store
-            .review_claimed(rig.tenant_id, reviewer)
+            .review_claimed(rig.tenant_id, reviewer, ReviewLane::Any)
             .await
             .expect("claimed")
             .is_empty(),
@@ -2353,6 +2576,7 @@ pub async fn journal_review_held_laws<S: JournalStore>(store: &S) {
         nodes: vec![wa],
         author_key_id: Some(loader),
         claim_key_prefix: Some("adr-0001-".to_owned()),
+        lane: ReviewLane::Any,
     };
     assert_eq!(
         ids(store
@@ -8780,6 +9004,11 @@ where
     ))
     .await;
     Box::pin(journal_review_claim_laws(&new_store().await)).await;
+    Box::pin(journal_review_lane_laws(&new_store().await)).await;
+    Box::pin(journal_review_lane_starves_no_author_laws(
+        &new_store().await,
+    ))
+    .await;
     Box::pin(journal_review_held_laws(&new_store().await)).await;
     Box::pin(a_versions_findings_list_reads_back_in_order_under_its_event_seq(&new_store().await))
         .await;
