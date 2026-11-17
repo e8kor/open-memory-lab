@@ -163,5 +163,11 @@ branch that reserved later renumbers.
 | migration | 0049 | `feat/claim-kinds-and-withdrawn` | #438 | claim kinds validate | open |
 | migration | 0049 | `main` |  | claim kinds validate | used |
 | migration | 0050 | `feat/linked-tenant-keys` | #447 | linked tenant keys (ADR-0085 d16) | open |
+| migration | 0050 | `main` |  | linked tenant keys | used |
 | migration | 0051 | `feat/linked-tenant-keys` | #447 | validate the linked tenant key check | open |
-| migration | 0052 | `feat/instruction-person-lane` |  | release lane claims held by keys that cannot approve them (ADR-0074 d19) | reserved |
+| migration | 0051 | `main` |  | linked tenant keys validate | used |
+| migration | 0052 | `main` |  | release stranded lane claims | used |
+| migration | 0053 | `bulk/v082-b` |  | upload sessions (ADR-0004 d3, #451) | reserved |
+| migration | 0054 | `bulk/v082-b` |  | workspace export policy and allowances (ADR-0084 d10, #425) | reserved |
+| migration | 0055 | `bulk/v082-b` |  | workspace imports and the import ledger (ADR-0084 d6-d11, #426) | reserved |
+| migration | 0056 | `bulk/v083-1` |  | the serving role destroys a version's data key when it erases it | reserved |
