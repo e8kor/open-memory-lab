@@ -106,7 +106,8 @@ def sync_detailed(
     the instruction class by ADR-0080 d16). A used_by: service key is refused with access.verb_ceiling
     before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve
     bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on
-    lineage collision (review.author_in_lineage).
+    lineage collision (review.author_in_lineage). Never serves a key acting for a person a row any key
+    of that person wrote outside that person's own root (ADR-0082 d7; since v0.8.0).
 
     Args:
         x_request_id (str | Unset):
@@ -159,7 +160,8 @@ def sync(
     the instruction class by ADR-0080 d16). A used_by: service key is refused with access.verb_ceiling
     before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve
     bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on
-    lineage collision (review.author_in_lineage).
+    lineage collision (review.author_in_lineage). Never serves a key acting for a person a row any key
+    of that person wrote outside that person's own root (ADR-0082 d7; since v0.8.0).
 
     Args:
         x_request_id (str | Unset):
@@ -207,7 +209,8 @@ async def asyncio_detailed(
     the instruction class by ADR-0080 d16). A used_by: service key is refused with access.verb_ceiling
     before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve
     bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on
-    lineage collision (review.author_in_lineage).
+    lineage collision (review.author_in_lineage). Never serves a key acting for a person a row any key
+    of that person wrote outside that person's own root (ADR-0082 d7; since v0.8.0).
 
     Args:
         x_request_id (str | Unset):
@@ -258,7 +261,8 @@ async def asyncio(
     the instruction class by ADR-0080 d16). A used_by: service key is refused with access.verb_ceiling
     before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve
     bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on
-    lineage collision (review.author_in_lineage).
+    lineage collision (review.author_in_lineage). Never serves a key acting for a person a row any key
+    of that person wrote outside that person's own root (ADR-0082 d7; since v0.8.0).
 
     Args:
         x_request_id (str | Unset):
