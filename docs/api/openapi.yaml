@@ -1269,7 +1269,7 @@ paths:
       tags: [review]
       operationId: reviewQueue
       summary: The review queue's depth and oldest held row per workspace, tenant-wide; no content.
-      description: 'Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending ADR-0026 d15). One item per workspace holding a held row: its id, path, held count and the oldest held row''s time, by path. No memory id, text or author. Journals nothing. Since v0.6.4.'
+      description: 'Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending ADR-0026 d15). One item per workspace holding a held row: its id, path, held count, the held instruction-class versions among them (held_instructions), the live person''s reviewer keys whose grants and denials confer reviewer there (person_reviewers: reviewer keys used_by person with no crew and no profile, not revoked or expired, the only keys that approve an instruction; ADR-0080 d16, #435) and the oldest held row''s time, by path. No memory id, text, author or key. Journals nothing. Since v0.6.4; the two counts since v0.8.2.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -1287,6 +1287,8 @@ paths:
                 - workspace_id: fbbb41c5-9630-4274-ae53-166f562f5286
                   path: universe.alice
                   held: 3
+                  held_instructions: 1
+                  person_reviewers: 1
                   oldest_at: '2026-11-09T08:12:44.000000Z'
               schema:
                 type: object
@@ -1296,11 +1298,13 @@ paths:
                     type: array
                     items:
                       type: object
-                      required: [workspace_id, path, held, oldest_at]
+                      required: [workspace_id, path, held, held_instructions, person_reviewers, oldest_at]
                       properties:
                         workspace_id: { type: string, format: uuid }
                         path: { type: string }
                         held: { type: integer, minimum: 1 }
+                        held_instructions: { type: integer, minimum: 0, description: "The held steering, guardrail and other instruction-class versions among held; only a person's reviewer key approves one (ADR-0080 d16)." }
+                        person_reviewers: { type: integer, minimum: 0, description: "The live person's reviewer keys whose effective access confers reviewer on the workspace. A count, never a key." }
                         oldest_at: { type: string, format: date-time }
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }

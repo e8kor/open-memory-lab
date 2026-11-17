@@ -24,10 +24,10 @@ use crate::types::{
     ClaimEdgeSelection, ClaimKeyState, ClientDescription, ConnectCode, ConnectCodeRecord,
     ConnectGrant, ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, HeldFilter,
     HeldRow, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord,
-    OAuthClientRecord, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts,
-    RefreshOutcome, ReviewLane, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord,
-    TransitionRecord, UnnamedRows, VersionFinding, WebCredentialKey, WebCredentialRows, WebEntry,
-    WebSessionRecord, WorkspaceRecord,
+    OAuthClientRecord, PersonReviewer, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth,
+    RefreshFacts, RefreshOutcome, ReviewLane, SourceCheck, SweepReport, TenantRow, TokenPair,
+    TokenRecord, TransitionRecord, UnnamedRows, VersionFinding, WebCredentialKey,
+    WebCredentialRows, WebEntry, WebSessionRecord, WorkspaceRecord,
 };
 use oml_domain::web::Provider;
 
@@ -1721,6 +1721,14 @@ pub trait WebStore: JournalStore {
         &self,
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<Vec<QueueDepth>, StoreError>> + Send;
+
+    /// The tenant's live person's reviewer keys, each with its grants and
+    /// the denials in force, in name order: keys only, never a memory
+    /// (ADR-0080 d16; #435).
+    fn web_person_reviewers(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<PersonReviewer>, StoreError>> + Send;
 
     /// Every memory of the tenant the search names, any state, newest
     /// first (ADR-0045 d21).

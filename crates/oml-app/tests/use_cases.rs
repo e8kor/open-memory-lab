@@ -16611,3 +16611,111 @@ async fn a_lane_claim_a_crew_key_holds_is_not_counted_for_its_verdict_without_a_
         .expect("the one claim it may judge");
     assert_eq!(outcome.memory_id, memory);
 }
+
+// --- #435: the queue names held instructions no person can approve -------
+
+/// The admin's queue row for `node`, read through `GET /v2/review/queue`'s
+/// use case.
+async fn queue_row(app: &TestApp, admin: &str, node: Uuid) -> Option<oml_app::app::QueueRow> {
+    let caller = app.caller(Bearer::Key(admin)).await.expect("the admin");
+    app.review_queue(&caller)
+        .await
+        .expect("the queue")
+        .into_iter()
+        .find(|r| r.depth.workspace_id == node)
+}
+
+#[tokio::test]
+async fn the_queue_counts_held_instructions_and_the_person_reviewers_that_may_approve_them() {
+    let app = app();
+    // `dana` is a person's reviewer key on `crew`, covering `crew.team`.
+    let (boot, crew, team, writer, _dana) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let bots = workspace(&app, admin, "bots", boot.root_workspace_id).await;
+    let bot_writer = issue(&app, admin, Role::Writer, "bot-writer", bots).await;
+    agent_reviewer(&app, admin, "bot-reviewer", bots).await;
+    for (writer, req) in [
+        (
+            &writer,
+            submit_into("m1", "The quote is valid for 30 days.", crew),
+        ),
+        (
+            &writer,
+            submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", crew),
+        ),
+        (
+            &writer,
+            guardrail_req("g1", Severity::Never, "Never push to main.", team),
+        ),
+        (
+            &bot_writer,
+            submit_kind("s2", MemoryKind::Steering, "Answer in English.", bots),
+        ),
+    ] {
+        app.submit_memory(&writer.value, &req)
+            .await
+            .expect("submit");
+    }
+
+    let row = queue_row(&app, admin, crew).await.expect("crew holds rows");
+    assert_eq!(
+        (
+            row.depth.held,
+            row.depth.held_instructions,
+            row.person_reviewers
+        ),
+        (2, 1, 1)
+    );
+    // `dana`'s grant on the ancestor covers the subtree.
+    let row = queue_row(&app, admin, team)
+        .await
+        .expect("team holds a row");
+    assert_eq!(
+        (
+            row.depth.held,
+            row.depth.held_instructions,
+            row.person_reviewers
+        ),
+        (1, 1, 1)
+    );
+    // An agent's reviewer key judges knowledge, never an instruction.
+    let row = queue_row(&app, admin, bots)
+        .await
+        .expect("bots holds a row");
+    assert_eq!(
+        (
+            row.depth.held,
+            row.depth.held_instructions,
+            row.person_reviewers
+        ),
+        (1, 1, 0)
+    );
+}
+
+#[tokio::test]
+async fn a_denied_or_revoked_person_key_is_not_counted_as_a_reviewer() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew, team, writer, dana) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let erin = issue(&app, admin, Role::Reviewer, "erin", team).await;
+    app.submit_memory(
+        &writer.value,
+        &submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", team),
+    )
+    .await
+    .expect("submit");
+    let counted =
+        |row: Option<oml_app::app::QueueRow>| row.expect("team holds a row").person_reviewers;
+    assert_eq!(counted(queue_row(&app, admin, team).await), 2);
+
+    // A denial on the ancestor masks `dana` on the whole subtree.
+    app.deny_key(admin, dana.key_id.into(), crew.into())
+        .await
+        .expect("deny dana");
+    assert_eq!(counted(queue_row(&app, admin, team).await), 1);
+
+    // A revoked key approves nothing.
+    revoke_key(&store, boot.tenant_id, erin.key_id).await;
+    assert_eq!(counted(queue_row(&app, admin, team).await), 0);
+}
