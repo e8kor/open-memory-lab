@@ -6924,11 +6924,13 @@ impl JournalStore for PgStore {
         set_tenant(&mut tx, session.tenant_id).await?;
         // One opening at a time per tenant, so two concurrent ones cannot
         // both pass a limit the other fills (ADR-0004 d3).
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('upload_sessions:' || $1::text, 0))")
-            .bind(session.tenant_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(backend)?;
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock(hashtextextended('upload_sessions:' || $1::text, 0))",
+        )
+        .bind(session.tenant_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
         let row = sqlx::query(
             "SELECT count(*) FILTER (WHERE key_id = $2) AS by_key, \
                     COALESCE(sum(size), 0)::bigint AS bytes \
@@ -6945,7 +6947,11 @@ impl JournalStore for PgStore {
         if u64::try_from(by_key).unwrap_or(u64::MAX) >= per_key {
             return Ok(Err(UploadRefusal::SessionLimit { limit: per_key }));
         }
-        if u64::try_from(bytes).unwrap_or(u64::MAX).saturating_add(session.size) > tenant_max_bytes {
+        if u64::try_from(bytes)
+            .unwrap_or(u64::MAX)
+            .saturating_add(session.size)
+            > tenant_max_bytes
+        {
             return Ok(Err(UploadRefusal::TenantLimit {
                 max_bytes: tenant_max_bytes,
             }));
@@ -7117,7 +7123,10 @@ impl JournalStore for PgStore {
         Ok(())
     }
 
-    async fn upload_stats(&self, tenant_id: Uuid) -> Result<oml_app::types::UploadStats, StoreError> {
+    async fn upload_stats(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<oml_app::types::UploadStats, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         let rows = sqlx::query(

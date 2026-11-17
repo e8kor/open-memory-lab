@@ -117,8 +117,8 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         session: &oml_app::types::UploadSession,
         per_key: u64,
         tenant_max_bytes: u64,
-    ) -> impl Future<Output = Result<Result<(), oml_app::domain::upload::UploadRefusal>, StoreError>> + Send
-    {
+    ) -> impl Future<Output = Result<Result<(), oml_app::domain::upload::UploadRefusal>, StoreError>>
+    + Send {
         timed(
             "upload_open",
             self.inner.upload_open(session, per_key, tenant_max_bytes),
@@ -129,7 +129,8 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         &self,
         tenant_id: Uuid,
         upload_id: Uuid,
-    ) -> impl Future<Output = Result<Option<oml_app::types::UploadSession>, StoreError>> + Send {
+    ) -> impl Future<Output = Result<Option<oml_app::types::UploadSession>, StoreError>> + Send
+    {
         timed(
             "upload_session",
             self.inner.upload_session(tenant_id, upload_id),
@@ -143,7 +144,8 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         n: u64,
         at: &EventTime,
         expires_at: &EventTime,
-    ) -> impl Future<Output = Result<Option<oml_app::types::UploadSession>, StoreError>> + Send {
+    ) -> impl Future<Output = Result<Option<oml_app::types::UploadSession>, StoreError>> + Send
+    {
         timed(
             "upload_part_received",
             self.inner
@@ -160,7 +162,8 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         at: &EventTime,
         expires_at: Option<&EventTime>,
         shred: bool,
-    ) -> impl Future<Output = Result<Option<oml_app::types::UploadSession>, StoreError>> + Send {
+    ) -> impl Future<Output = Result<Option<oml_app::types::UploadSession>, StoreError>> + Send
+    {
         timed(
             "upload_transition",
             self.inner
@@ -181,7 +184,10 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         tenant_id: Uuid,
         limit: u32,
     ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send {
-        timed("uploads_unswept", self.inner.uploads_unswept(tenant_id, limit))
+        timed(
+            "uploads_unswept",
+            self.inner.uploads_unswept(tenant_id, limit),
+        )
     }
 
     fn upload_objects_removed(

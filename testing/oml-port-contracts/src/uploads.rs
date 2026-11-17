@@ -1,5 +1,6 @@
-//! Upload sessions (ADR-0004 d3, as amended 2026-11-17; #451), over the
-//! in-memory doubles: a bundle of several parts uploads, resumes after an
+//! Upload sessions (ADR-0004 d3, as amended 2026-11-17; #451), stated over
+//! the application and run identically over every store, the in-memory
+//! double and PostgreSQL: a bundle of several parts uploads, resumes after an
 //! interruption and verifies at completion; an unbound upload expires;
 //! another key can neither read nor bind it; every refusal is named.
 
@@ -14,8 +15,8 @@ use oml_app::domain::access::Covers;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::upload::{PART_SIZE, UploadPurpose, UploadRefusal, UploadState};
 use oml_app::domain::{EventTime, Role, UsedBy};
-use oml_app::doubles::{MarkerScanner, MemObjects, MemSigner, MemStore, SeqIdGen};
-use oml_app::ports::{Clock, JournalStore as _};
+use oml_app::doubles::{MarkerScanner, MemObjects, MemSigner, SeqIdGen};
+use oml_app::ports::{Clock, JournalStore};
 use oml_app::types::{AppError, BootstrapRequest, GrantRequest, IssueKeyRequest};
 
 const TEST_SEED: [u8; 32] = [7; 32];
@@ -46,19 +47,22 @@ impl Clock for MovableClock {
     }
 }
 
-type TestApp = App<MemStore, MemSigner, MovableClock, SeqIdGen, MarkerScanner>;
+type TestApp<S> = App<S, MemSigner, MovableClock, SeqIdGen, MarkerScanner>;
 
-struct Rig {
-    app: TestApp,
-    store: MemStore,
+struct Rig<S> {
+    app: TestApp<S>,
+    store: S,
     objects: Arc<MemObjects>,
     clock: MovableClock,
     tenant_id: Uuid,
     admin: String,
 }
 
-async fn rig_with(max_bytes: u64, tenant_max_bytes: u64) -> Rig {
-    let store = MemStore::new();
+async fn rig_with<S: JournalStore + Clone>(
+    store: S,
+    max_bytes: u64,
+    tenant_max_bytes: u64,
+) -> Rig<S> {
     let objects = Arc::new(MemObjects::new());
     let clock = MovableClock::new();
     let app = App::new(
@@ -87,8 +91,9 @@ async fn rig_with(max_bytes: u64, tenant_max_bytes: u64) -> Rig {
     }
 }
 
-async fn rig() -> Rig {
+async fn rig<S: JournalStore + Clone>(store: S) -> Rig<S> {
     rig_with(
+        store,
         oml_app::domain::upload::DEFAULT_MAX_BYTES,
         oml_app::domain::upload::DEFAULT_TENANT_MAX_BYTES,
     )
@@ -99,7 +104,7 @@ fn name(value: &str) -> Name {
     Name::parse(value).expect("a fixture name")
 }
 
-async fn key(rig: &Rig, key_name: &str, role: Role) -> String {
+async fn key<S: JournalStore + Clone>(rig: &Rig<S>, key_name: &str, role: Role) -> String {
     rig.app
         .issue_key(
             &rig.admin,
@@ -131,7 +136,9 @@ async fn key(rig: &Rig, key_name: &str, role: Role) -> String {
 
 /// `len` bytes no two parts of which are alike.
 fn bundle(len: u64) -> Vec<u8> {
-    (0..len).map(|i| (i % 251) as u8 ^ (i / 8_388_608) as u8).collect()
+    (0..len)
+        .map(|i| (i % 251) as u8 ^ (i / 8_388_608) as u8)
+        .collect()
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -154,15 +161,22 @@ fn refusal(result: Result<impl std::fmt::Debug, AppError>) -> UploadRefusal {
     }
 }
 
-#[tokio::test]
-async fn a_bundle_of_several_parts_uploads_resumes_after_an_interruption_and_verifies_at_completion()
-{
-    let rig = rig().await;
+async fn a_bundle_of_several_parts_uploads_resumes_after_an_interruption_and_verifies_at_completion<
+    S: JournalStore + Clone,
+>(
+    store: S,
+) {
+    let rig = rig(store).await;
     let alice = key(&rig, "alice-writer", Role::Writer).await;
     let bytes = bundle(2 * PART_SIZE + 4_000);
     let opened = rig
         .app
-        .open_upload(alice.as_str(), UploadPurpose::Import, bytes.len() as u64, &sha256_hex(&bytes))
+        .open_upload(
+            alice.as_str(),
+            UploadPurpose::Import,
+            bytes.len() as u64,
+            &sha256_hex(&bytes),
+        )
         .await
         .expect("open");
     assert_eq!(opened.state, UploadState::Open);
@@ -178,11 +192,19 @@ async fn a_bundle_of_several_parts_uploads_resumes_after_an_interruption_and_ver
     // session still says what is missing.
     rig.objects.set_failing(true);
     assert_eq!(
-        refusal(rig.app.put_upload_part(alice.as_str(), id, 2, part(&bytes, 2)).await),
+        refusal(
+            rig.app
+                .put_upload_part(alice.as_str(), id, 2, part(&bytes, 2))
+                .await
+        ),
         UploadRefusal::StorageFailed
     );
     rig.objects.set_failing(false);
-    let status = rig.app.upload_status(alice.as_str(), id).await.expect("status");
+    let status = rig
+        .app
+        .upload_status(alice.as_str(), id)
+        .await
+        .expect("status");
     assert_eq!(status.missing(), vec![2, 3]);
 
     // The retry resumes where the status says, and part 1 sent again
@@ -193,26 +215,42 @@ async fn a_bundle_of_several_parts_uploads_resumes_after_an_interruption_and_ver
             .await
             .expect("resumed part");
     }
-    let done = rig.app.complete_upload(alice.as_str(), id).await.expect("complete");
+    let done = rig
+        .app
+        .complete_upload(alice.as_str(), id)
+        .await
+        .expect("complete");
     assert_eq!(done.state, UploadState::Completed);
     assert!(done.missing().is_empty());
     // An unbound completed upload expires 24 hours after completion.
-    let completed = done.completed_at.as_ref().expect("completed at").unix_micros();
+    let completed = done
+        .completed_at
+        .as_ref()
+        .expect("completed at")
+        .unix_micros();
     assert_eq!(
         done.expires_at.as_ref().expect("an expiry").unix_micros(),
         completed + 24 * HOUR
     );
 }
 
-#[tokio::test]
-async fn a_part_is_stored_as_ciphertext_and_nothing_about_an_upload_is_journalled() {
-    let rig = rig().await;
+async fn a_part_is_stored_as_ciphertext_and_nothing_about_an_upload_is_journalled<
+    S: JournalStore + Clone,
+>(
+    store: S,
+) {
+    let rig = rig(store).await;
     let alice = key(&rig, "alice-writer", Role::Writer).await;
     let head = rig.store.chain_head(rig.tenant_id).await.expect("head");
     let bytes = b"a decrypted bundle, in plaintext".to_vec();
     let id = rig
         .app
-        .open_upload(alice.as_str(), UploadPurpose::Import, bytes.len() as u64, &sha256_hex(&bytes))
+        .open_upload(
+            alice.as_str(),
+            UploadPurpose::Import,
+            bytes.len() as u64,
+            &sha256_hex(&bytes),
+        )
         .await
         .expect("open")
         .upload_id;
@@ -220,9 +258,15 @@ async fn a_part_is_stored_as_ciphertext_and_nothing_about_an_upload_is_journalle
         .put_upload_part(alice.as_str(), id, 1, &bytes)
         .await
         .expect("part");
-    rig.app.complete_upload(alice.as_str(), id).await.expect("complete");
+    rig.app
+        .complete_upload(alice.as_str(), id)
+        .await
+        .expect("complete");
     let names = rig.objects.names();
-    assert_eq!(names, vec![format!("uploads/{}/{id}/000001", rig.tenant_id)]);
+    assert_eq!(
+        names,
+        vec![format!("uploads/{}/{id}/000001", rig.tenant_id)]
+    );
     let stored = rig.objects.raw(&names[0]).expect("stored");
     assert!(
         !stored.windows(bytes.len()).any(|w| w == bytes.as_slice()),
@@ -235,15 +279,19 @@ async fn a_part_is_stored_as_ciphertext_and_nothing_about_an_upload_is_journalle
     );
 }
 
-#[tokio::test]
-async fn another_key_can_neither_read_nor_touch_an_upload() {
-    let rig = rig().await;
+async fn another_key_can_neither_read_nor_touch_an_upload<S: JournalStore + Clone>(store: S) {
+    let rig = rig(store).await;
     let alice = key(&rig, "alice-writer", Role::Writer).await;
     let bob = key(&rig, "bob-writer", Role::Writer).await;
     let bytes = b"alice's bundle".to_vec();
     let id = rig
         .app
-        .open_upload(alice.as_str(), UploadPurpose::Import, bytes.len() as u64, &sha256_hex(&bytes))
+        .open_upload(
+            alice.as_str(),
+            UploadPurpose::Import,
+            bytes.len() as u64,
+            &sha256_hex(&bytes),
+        )
         .await
         .expect("open")
         .upload_id;
@@ -270,37 +318,58 @@ async fn another_key_can_neither_read_nor_touch_an_upload() {
     ));
     // Alice's own session is untouched.
     assert_eq!(
-        rig.app.upload_status(alice.as_str(), id).await.expect("status").state,
+        rig.app
+            .upload_status(alice.as_str(), id)
+            .await
+            .expect("status")
+            .state,
         UploadState::Open
     );
 }
 
-#[tokio::test]
-async fn only_a_writer_key_opens_an_upload() {
-    let rig = rig().await;
+async fn only_a_writer_key_opens_an_upload<S: JournalStore + Clone>(store: S) {
+    let rig = rig(store).await;
     let reviewer = key(&rig, "carol-reviewer", Role::Reviewer).await;
     assert!(matches!(
         rig.app
-            .open_upload(reviewer.as_str(), UploadPurpose::Import, 10, &"a".repeat(64))
+            .open_upload(
+                reviewer.as_str(),
+                UploadPurpose::Import,
+                10,
+                &"a".repeat(64)
+            )
             .await,
         Err(AppError::VerbCeiling { .. })
     ));
     assert!(matches!(
         rig.app
-            .open_upload(rig.admin.as_str(), UploadPurpose::Import, 10, &"a".repeat(64))
+            .open_upload(
+                rig.admin.as_str(),
+                UploadPurpose::Import,
+                10,
+                &"a".repeat(64)
+            )
             .await,
         Err(AppError::VerbCeiling { .. })
     ));
 }
 
-#[tokio::test]
-async fn an_unbound_upload_expires_and_its_key_is_shredded_before_its_objects() {
-    let rig = rig().await;
+async fn an_unbound_upload_expires_and_its_key_is_shredded_before_its_objects<
+    S: JournalStore + Clone,
+>(
+    store: S,
+) {
+    let rig = rig(store).await;
     let alice = key(&rig, "alice-writer", Role::Writer).await;
     let bytes = b"a bundle nobody imports".to_vec();
     let id = rig
         .app
-        .open_upload(alice.as_str(), UploadPurpose::Import, bytes.len() as u64, &sha256_hex(&bytes))
+        .open_upload(
+            alice.as_str(),
+            UploadPurpose::Import,
+            bytes.len() as u64,
+            &sha256_hex(&bytes),
+        )
         .await
         .expect("open")
         .upload_id;
@@ -308,7 +377,10 @@ async fn an_unbound_upload_expires_and_its_key_is_shredded_before_its_objects() 
         .put_upload_part(alice.as_str(), id, 1, &bytes)
         .await
         .expect("part");
-    rig.app.complete_upload(alice.as_str(), id).await.expect("complete");
+    rig.app
+        .complete_upload(alice.as_str(), id)
+        .await
+        .expect("complete");
 
     // 23 hours on, the sweep leaves it.
     rig.clock.advance_hours(23);
@@ -343,19 +415,43 @@ async fn an_unbound_upload_expires_and_its_key_is_shredded_before_its_objects() 
     assert_eq!(sweep.stats.unswept, 0);
     assert!(rig.objects.names().is_empty());
     assert_eq!(
-        rig.app.upload_status(alice.as_str(), id).await.expect("status").state,
+        rig.app
+            .upload_status(alice.as_str(), id)
+            .await
+            .expect("status")
+            .state,
+        UploadState::Expired
+    );
+    rig.app
+        .abandon_upload(alice.as_str(), id)
+        .await
+        .expect("abandoning an expired upload answers as abandoned and changes nothing");
+    assert_eq!(
+        rig.app
+            .upload_status(alice.as_str(), id)
+            .await
+            .expect("status")
+            .state,
         UploadState::Expired
     );
 }
 
-#[tokio::test]
-async fn an_open_session_slides_with_each_part_and_expires_72_hours_after_it_opened() {
-    let rig = rig().await;
+async fn an_open_session_slides_with_each_part_and_expires_72_hours_after_it_opened<
+    S: JournalStore + Clone,
+>(
+    store: S,
+) {
+    let rig = rig(store).await;
     let alice = key(&rig, "alice-writer", Role::Writer).await;
     let bytes = bundle(4 * PART_SIZE);
     let id = rig
         .app
-        .open_upload(alice.as_str(), UploadPurpose::Import, bytes.len() as u64, &sha256_hex(&bytes))
+        .open_upload(
+            alice.as_str(),
+            UploadPurpose::Import,
+            bytes.len() as u64,
+            &sha256_hex(&bytes),
+        )
         .await
         .expect("open")
         .upload_id;
@@ -371,14 +467,17 @@ async fn an_open_session_slides_with_each_part_and_expires_72_hours_after_it_ope
     // last part.
     rig.clock.advance_hours(13);
     assert_eq!(
-        refusal(rig.app.put_upload_part(alice.as_str(), id, 4, part(&bytes, 4)).await),
+        refusal(
+            rig.app
+                .put_upload_part(alice.as_str(), id, 4, part(&bytes, 4))
+                .await
+        ),
         UploadRefusal::Expired
     );
 }
 
-#[tokio::test]
-async fn every_upload_refusal_is_named() {
-    let rig = rig_with(3 * PART_SIZE, 5 * PART_SIZE).await;
+async fn every_upload_refusal_is_named<S: JournalStore + Clone>(store: S) {
+    let rig = rig_with(store, 3 * PART_SIZE, 5 * PART_SIZE).await;
     let alice = key(&rig, "alice-writer", Role::Writer).await;
     let bob = key(&rig, "bob-writer", Role::Writer).await;
     let digest = |b: &[u8]| sha256_hex(b);
@@ -387,7 +486,12 @@ async fn every_upload_refusal_is_named() {
     assert_eq!(
         refusal(
             rig.app
-                .open_upload(alice.as_str(), UploadPurpose::Import, 3 * PART_SIZE + 1, &"a".repeat(64))
+                .open_upload(
+                    alice.as_str(),
+                    UploadPurpose::Import,
+                    3 * PART_SIZE + 1,
+                    &"a".repeat(64)
+                )
                 .await
         ),
         UploadRefusal::TooLarge {
@@ -398,24 +502,41 @@ async fn every_upload_refusal_is_named() {
     let bytes = bundle(PART_SIZE + 10);
     let id = rig
         .app
-        .open_upload(alice.as_str(), UploadPurpose::Import, bytes.len() as u64, &digest(&bytes))
+        .open_upload(
+            alice.as_str(),
+            UploadPurpose::Import,
+            bytes.len() as u64,
+            &digest(&bytes),
+        )
         .await
         .expect("open")
         .upload_id;
     // A part of the wrong length, and a part number past the count.
     assert_eq!(
-        refusal(rig.app.put_upload_part(alice.as_str(), id, 2, &bytes[..9]).await),
+        refusal(
+            rig.app
+                .put_upload_part(alice.as_str(), id, 2, &bytes[..9])
+                .await
+        ),
         UploadRefusal::PartSize {
             expected: 10,
             got: 9
         }
     );
     assert_eq!(
-        refusal(rig.app.put_upload_part(alice.as_str(), id, 3, &bytes[..10]).await),
+        refusal(
+            rig.app
+                .put_upload_part(alice.as_str(), id, 3, &bytes[..10])
+                .await
+        ),
         UploadRefusal::PartNumber { parts: 2 }
     );
     assert_eq!(
-        refusal(rig.app.put_upload_part(alice.as_str(), id, 0, &bytes[..10]).await),
+        refusal(
+            rig.app
+                .put_upload_part(alice.as_str(), id, 0, &bytes[..10])
+                .await
+        ),
         UploadRefusal::PartNumber { parts: 2 }
     );
     // Completion with a part missing names it.
@@ -438,13 +559,21 @@ async fn every_upload_refusal_is_named() {
         refusal(rig.app.complete_upload(alice.as_str(), id).await),
         UploadRefusal::DigestMismatch
     );
-    let failed = rig.app.upload_status(alice.as_str(), id).await.expect("status");
+    let failed = rig
+        .app
+        .upload_status(alice.as_str(), id)
+        .await
+        .expect("status");
     assert_eq!(failed.state, UploadState::Failed);
     assert_eq!(failed.part_key, None);
     assert!(rig.objects.names().is_empty());
     // A failed session takes no part.
     assert_eq!(
-        refusal(rig.app.put_upload_part(alice.as_str(), id, 1, part(&bytes, 1)).await),
+        refusal(
+            rig.app
+                .put_upload_part(alice.as_str(), id, 1, part(&bytes, 1))
+                .await
+        ),
         UploadRefusal::SessionInvalid {
             state: UploadState::Failed
         }
@@ -453,7 +582,12 @@ async fn every_upload_refusal_is_named() {
     // The tenant's 5 parts' worth: Alice holds 3, so Bob's 3 more pass it.
     let three = 3 * PART_SIZE;
     rig.app
-        .open_upload(alice.as_str(), UploadPurpose::Import, three, &"b".repeat(64))
+        .open_upload(
+            alice.as_str(),
+            UploadPurpose::Import,
+            three,
+            &"b".repeat(64),
+        )
         .await
         .expect("open within the tenant's bytes");
     assert_eq!(
@@ -528,14 +662,22 @@ async fn every_upload_refusal_is_named() {
     );
 }
 
-#[tokio::test]
-async fn an_abandoned_upload_is_shredded_and_abandoning_it_again_answers_the_same() {
-    let rig = rig().await;
+async fn an_abandoned_upload_is_shredded_and_abandoning_it_again_answers_the_same<
+    S: JournalStore + Clone,
+>(
+    store: S,
+) {
+    let rig = rig(store).await;
     let alice = key(&rig, "alice-writer", Role::Writer).await;
     let bytes = b"second thoughts".to_vec();
     let id = rig
         .app
-        .open_upload(alice.as_str(), UploadPurpose::Import, bytes.len() as u64, &sha256_hex(&bytes))
+        .open_upload(
+            alice.as_str(),
+            UploadPurpose::Import,
+            bytes.len() as u64,
+            &sha256_hex(&bytes),
+        )
         .await
         .expect("open")
         .upload_id;
@@ -543,8 +685,15 @@ async fn an_abandoned_upload_is_shredded_and_abandoning_it_again_answers_the_sam
         .put_upload_part(alice.as_str(), id, 1, &bytes)
         .await
         .expect("part");
-    rig.app.abandon_upload(alice.as_str(), id).await.expect("abandon");
-    let row = rig.app.upload_status(alice.as_str(), id).await.expect("status");
+    rig.app
+        .abandon_upload(alice.as_str(), id)
+        .await
+        .expect("abandon");
+    let row = rig
+        .app
+        .upload_status(alice.as_str(), id)
+        .await
+        .expect("status");
     assert_eq!(row.state, UploadState::Abandoned);
     assert_eq!(row.part_key, None);
     assert!(rig.objects.names().is_empty());
@@ -558,4 +707,24 @@ async fn an_abandoned_upload_is_shredded_and_abandoning_it_again_answers_the_sam
             state: UploadState::Abandoned
         }
     );
+}
+
+/// Every law of upload sessions.
+pub async fn run_upload_suite<S, F, Fut>(make: F)
+where
+    S: JournalStore + Clone,
+    F: Fn() -> Fut,
+    Fut: core::future::Future<Output = S>,
+{
+    a_bundle_of_several_parts_uploads_resumes_after_an_interruption_and_verifies_at_completion(
+        make().await,
+    )
+    .await;
+    a_part_is_stored_as_ciphertext_and_nothing_about_an_upload_is_journalled(make().await).await;
+    another_key_can_neither_read_nor_touch_an_upload(make().await).await;
+    only_a_writer_key_opens_an_upload(make().await).await;
+    an_unbound_upload_expires_and_its_key_is_shredded_before_its_objects(make().await).await;
+    an_open_session_slides_with_each_part_and_expires_72_hours_after_it_opened(make().await).await;
+    every_upload_refusal_is_named(make().await).await;
+    an_abandoned_upload_is_shredded_and_abandoning_it_again_answers_the_same(make().await).await;
 }

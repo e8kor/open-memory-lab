@@ -422,7 +422,9 @@ where
             // One part and a little over: the default body limit is 2 MB
             // (ADR-0004 d3, as amended 2026-11-17).
             ("PUT", "/v2/uploads/{upload_id}/parts/{part}") => put(Self::put_upload_part_route)
-                .layer(axum::extract::DefaultBodyLimit::max(uploads::PART_BODY_LIMIT)),
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    uploads::PART_BODY_LIMIT,
+                )),
             ("GET", "/v2/uploads/{upload_id}") => get(Self::upload_status_route),
             ("POST", "/v2/uploads/{upload_id}/complete") => post(Self::complete_upload_route),
             ("DELETE", "/v2/uploads/{upload_id}") => delete(Self::abandon_upload_route),

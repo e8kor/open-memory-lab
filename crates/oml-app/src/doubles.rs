@@ -6070,13 +6070,22 @@ impl MemObjects {
     /// The names stored, in order.
     #[must_use]
     pub fn names(&self) -> Vec<String> {
-        self.objects.lock().expect("objects lock").keys().cloned().collect()
+        self.objects
+            .lock()
+            .expect("objects lock")
+            .keys()
+            .cloned()
+            .collect()
     }
 
     /// The stored bytes under `name`, as the store holds them.
     #[must_use]
     pub fn raw(&self, name: &str) -> Option<Vec<u8>> {
-        self.objects.lock().expect("objects lock").get(name).cloned()
+        self.objects
+            .lock()
+            .expect("objects lock")
+            .get(name)
+            .cloned()
     }
 
     fn check(&self) -> Result<(), String> {

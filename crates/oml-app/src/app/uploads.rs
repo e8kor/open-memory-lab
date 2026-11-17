@@ -11,9 +11,7 @@ use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use oml_domain::upload::{
-    self, MAX_SESSIONS_PER_KEY, UploadPurpose, UploadRefusal, UploadState,
-};
+use oml_domain::upload::{self, MAX_SESSIONS_PER_KEY, UploadPurpose, UploadRefusal, UploadState};
 use oml_domain::{EventTime, Role};
 
 use super::{App, require_role};
@@ -163,7 +161,11 @@ where
             bound_at: None,
         };
         self.journal
-            .upload_open(&session, MAX_SESSIONS_PER_KEY, self.uploads.tenant_max_bytes)
+            .upload_open(
+                &session,
+                MAX_SESSIONS_PER_KEY,
+                self.uploads.tenant_max_bytes,
+            )
             .await?
             .map_err(AppError::Upload)?;
         Ok(session)
@@ -309,7 +311,11 @@ where
             .upload_transition(
                 session.tenant_id,
                 upload_id,
-                &[UploadState::Open, UploadState::Completed, UploadState::Failed],
+                &[
+                    UploadState::Open,
+                    UploadState::Completed,
+                    UploadState::Failed,
+                ],
                 UploadState::Abandoned,
                 &now,
                 None,
@@ -381,12 +387,21 @@ where
     /// The bytes the object store holds under `uploads/`, for the doctor
     /// line; `None` without a store or when it cannot say.
     pub async fn uploads_stored_bytes(&self) -> Option<u64> {
-        self.uploads.objects.as_ref()?.stored_bytes("uploads/").await.ok()
+        self.uploads
+            .objects
+            .as_ref()?
+            .stored_bytes("uploads/")
+            .await
+            .ok()
     }
 
     /// The session `upload_id` names, when `key` opened it; any other key,
     /// and a session that does not exist, is `access.not_found`.
-    async fn own_upload(&self, key: &KeyRecord, upload_id: Uuid) -> Result<UploadSession, AppError> {
+    async fn own_upload(
+        &self,
+        key: &KeyRecord,
+        upload_id: Uuid,
+    ) -> Result<UploadSession, AppError> {
         self.journal
             .upload_session(key.tenant_id, upload_id)
             .await?

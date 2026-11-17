@@ -538,3 +538,9 @@ const AS_OF_SEARCHES: &[&str] = &[
     "bm25",
     "bm25-postings-time",
 ];
+
+/// Upload sessions over the double (ADR-0004 d3, as amended 2026-11-17).
+#[tokio::test]
+async fn upload_sessions_double_passes_the_suite() {
+    contracts::uploads::run_upload_suite(|| async { MemStore::new() }).await;
+}

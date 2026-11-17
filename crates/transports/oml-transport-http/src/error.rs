@@ -1617,10 +1617,13 @@ pub fn upload_error(refusal: &oml_app::domain::upload::UploadRefusal) -> ApiErro
     use oml_app::domain::upload::UploadRefusal as R;
     const RULE: &str = "An upload is the opening key's alone, verified at completion and never journalled (ADR-0004 d3).";
     let status = match refusal {
-        R::SessionInvalid { .. } | R::Incomplete { .. } | R::SessionLimit { .. } | R::TenantLimit { .. } => {
-            StatusCode::CONFLICT
+        R::SessionInvalid { .. }
+        | R::Incomplete { .. }
+        | R::SessionLimit { .. }
+        | R::TenantLimit { .. } => StatusCode::CONFLICT,
+        R::DigestMismatch | R::PartSize { .. } | R::PartNumber { .. } => {
+            StatusCode::UNPROCESSABLE_ENTITY
         }
-        R::DigestMismatch | R::PartSize { .. } | R::PartNumber { .. } => StatusCode::UNPROCESSABLE_ENTITY,
         R::Expired => StatusCode::GONE,
         R::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
         R::StorageFailed => StatusCode::SERVICE_UNAVAILABLE,

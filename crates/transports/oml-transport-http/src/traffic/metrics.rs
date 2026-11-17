@@ -849,7 +849,9 @@ impl Metrics {
                 .get_or_create(&StateLabels {
                     state: state.as_str().to_owned(),
                 })
-                .set(gauge(totals.by_state.get(state.as_str()).copied().unwrap_or(0)));
+                .set(gauge(
+                    totals.by_state.get(state.as_str()).copied().unwrap_or(0),
+                ));
         }
         self.upload_unbound_bytes.set(gauge(totals.unbound_bytes));
         self.upload_stored_bytes.set(gauge(totals.stored_bytes));

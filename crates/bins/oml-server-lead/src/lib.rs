@@ -151,15 +151,23 @@ fn upload_settings(lookup: &dyn Fn(&str) -> Option<String>) -> Result<UploadSett
     .map_err(ConfigError::Invalid)?;
     let bytes = |key: &str, default: u64| match lookup(key) {
         None => Ok(default),
-        Some(value) => value.trim().parse::<u64>().ok().filter(|n| *n > 0).ok_or_else(|| {
-            ConfigError::Invalid(format!(
-                "{key} {value:?} is not a positive whole number of bytes (configuration.md)"
-            ))
-        }),
+        Some(value) => value
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .filter(|n| *n > 0)
+            .ok_or_else(|| {
+                ConfigError::Invalid(format!(
+                    "{key} {value:?} is not a positive whole number of bytes (configuration.md)"
+                ))
+            }),
     };
     Ok(UploadSettings {
         storage_dir,
-        max_bytes: bytes(KEY_UPLOADS_MAX_BYTES, oml_app::domain::upload::DEFAULT_MAX_BYTES)?,
+        max_bytes: bytes(
+            KEY_UPLOADS_MAX_BYTES,
+            oml_app::domain::upload::DEFAULT_MAX_BYTES,
+        )?,
         tenant_max_bytes: bytes(
             KEY_UPLOADS_TENANT_MAX_BYTES,
             oml_app::domain::upload::DEFAULT_TENANT_MAX_BYTES,
@@ -1943,7 +1951,15 @@ pub const EVENT_UPLOAD_SWEEP_FAILED: &str = "upload_sweep_failed";
 pub async fn sweep_uploads(
     app: &LeadApp,
     store: &PgStore,
-) -> Result<(oml_transport_http::traffic::metrics::UploadTotals, u64, u64, Vec<String>), String> {
+) -> Result<
+    (
+        oml_transport_http::traffic::metrics::UploadTotals,
+        u64,
+        u64,
+        Vec<String>,
+    ),
+    String,
+> {
     let tenants = enumerate_tenants(store.pool())
         .await
         .map_err(|e| format!("tenant enumeration: {e}"))?;
@@ -2472,7 +2488,11 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     let enrollment_token = (tenants.is_empty() && fork_check.is_ok()).then(mint_enrollment_token);
     let app = Arc::new(app);
     if uploads.is_some() {
-        let _sweep = spawn_upload_sweep(Arc::clone(&app), store.clone(), Arc::clone(traffic.metrics()));
+        let _sweep = spawn_upload_sweep(
+            Arc::clone(&app),
+            store.clone(),
+            Arc::clone(traffic.metrics()),
+        );
     }
     let state = composed(
         app,
@@ -3385,7 +3405,8 @@ mod tests {
     }
 
     #[test]
-    fn uploads_keep_parts_in_oml_objects_under_1_gib_and_4_gib_by_default_and_refuse_another_scheme() {
+    fn uploads_keep_parts_in_oml_objects_under_1_gib_and_4_gib_by_default_and_refuse_another_scheme()
+     {
         let base = [
             ("OML_POSTGRES__URL", "postgres://serving@env/db"),
             ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
@@ -3400,7 +3421,10 @@ mod tests {
         let cfg = Config::from_sources(Some(file), &|k| env_of(&base).get(k).cloned())
             .expect("a file value loads");
         assert_eq!(cfg.uploads.storage_dir, PathBuf::from("/srv/oml/objects"));
-        assert_eq!((cfg.uploads.max_bytes, cfg.uploads.tenant_max_bytes), (1000, 5000));
+        assert_eq!(
+            (cfg.uploads.max_bytes, cfg.uploads.tenant_max_bytes),
+            (1000, 5000)
+        );
         let mut env = env_of(&base);
         env.insert("OML_STORAGE__URL".to_owned(), "s3://bucket".to_owned());
         let err = Config::from_sources(None, &|k| env.get(k).cloned()).expect_err("refused");

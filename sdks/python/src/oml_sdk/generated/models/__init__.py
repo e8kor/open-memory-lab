@@ -307,6 +307,11 @@ from .transition_proposal import TransitionProposal
 from .transition_proposal_to import TransitionProposalTo
 from .transition_state import TransitionState
 from .transition_to import TransitionTo
+from .upload_open_request import UploadOpenRequest
+from .upload_open_request_purpose import UploadOpenRequestPurpose
+from .upload_session import UploadSession
+from .upload_session_purpose import UploadSessionPurpose
+from .upload_session_state import UploadSessionState
 from .usage_drift import UsageDrift
 from .usage_drift_drift_item import UsageDriftDriftItem
 from .usage_drift_drift_item_meter import UsageDriftDriftItemMeter
@@ -664,6 +669,11 @@ __all__ = (
     "TransitionProposalTo",
     "TransitionState",
     "TransitionTo",
+    "UploadOpenRequest",
+    "UploadOpenRequestPurpose",
+    "UploadSession",
+    "UploadSessionPurpose",
+    "UploadSessionState",
     "UsageDrift",
     "UsageDriftDriftItem",
     "UsageDriftDriftItemMeter",

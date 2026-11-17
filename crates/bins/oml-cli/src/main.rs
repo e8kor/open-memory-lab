@@ -7298,7 +7298,10 @@ mod tests {
         );
         let lines = uploads_doctor(Some(&loud));
         assert!(lines[1].starts_with("warn upload_unswept: 1 "), "{lines:?}");
-        assert!(lines[2].starts_with("warn upload_sweep_failed: 2 "), "{lines:?}");
+        assert!(
+            lines[2].starts_with("warn upload_sweep_failed: 2 "),
+            "{lines:?}"
+        );
         assert!(
             lines[3].starts_with("warn upload_refusals since start: upload.digest_mismatch 1;"),
             "{lines:?}"

@@ -9,6 +9,7 @@ description = "Port-law contract suites: written against the in-memory doubles f
 [dependencies]
 oml-app.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

@@ -29,7 +29,10 @@ pub fn storage_dir(url: &str) -> Result<PathBuf, String> {
         }
     };
     if path.is_empty() {
-        return Err("storage.url is empty: a local directory is a path or a file:// URL (ADR-0004 d3)".to_owned());
+        return Err(
+            "storage.url is empty: a local directory is a path or a file:// URL (ADR-0004 d3)"
+                .to_owned(),
+        );
     }
     Ok(PathBuf::from(path))
 }
@@ -171,7 +174,10 @@ mod tests {
     #[test]
     fn storage_url_is_a_path_or_a_file_url_and_any_other_scheme_is_refused() {
         assert_eq!(storage_dir("oml-objects"), Ok(PathBuf::from("oml-objects")));
-        assert_eq!(storage_dir("/srv/oml/objects"), Ok(PathBuf::from("/srv/oml/objects")));
+        assert_eq!(
+            storage_dir("/srv/oml/objects"),
+            Ok(PathBuf::from("/srv/oml/objects"))
+        );
         assert_eq!(
             storage_dir("file:///srv/oml/objects"),
             Ok(PathBuf::from("/srv/oml/objects"))

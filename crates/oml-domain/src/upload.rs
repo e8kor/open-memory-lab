@@ -214,7 +214,10 @@ impl std::fmt::Display for UploadRefusal {
             }
             Self::Expired => f.write_str("the upload session expired"),
             Self::TooLarge { max_bytes } => {
-                write!(f, "an upload is at most {max_bytes} bytes (uploads.max_bytes)")
+                write!(
+                    f,
+                    "an upload is at most {max_bytes} bytes (uploads.max_bytes)"
+                )
             }
             Self::PartSize { expected, got } => {
                 write!(f, "this part is {expected} bytes long, not {got}")

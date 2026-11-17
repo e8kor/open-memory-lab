@@ -280,13 +280,32 @@ async fn a_bundle_of_several_parts_uploads_over_http_resumes_and_verifies_and_an
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], "completed");
-    let (status, body) = call(r, "GET", &format!("/v2/uploads/{id}"), Some(&alice), None, Vec::new()).await;
+    let (status, body) = call(
+        r,
+        "GET",
+        &format!("/v2/uploads/{id}"),
+        Some(&alice),
+        None,
+        Vec::new(),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], "completed");
-    assert!(body.get("part_key").is_none(), "the key is never answered: {body}");
+    assert!(
+        body.get("part_key").is_none(),
+        "the key is never answered: {body}"
+    );
 
     // Abandoning shreds it; nothing about the upload was journalled.
-    let (status, _) = call(r, "DELETE", &format!("/v2/uploads/{id}"), Some(&alice), None, Vec::new()).await;
+    let (status, _) = call(
+        r,
+        "DELETE",
+        &format!("/v2/uploads/{id}"),
+        Some(&alice),
+        None,
+        Vec::new(),
+    )
+    .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let row = rig
         .store
@@ -305,13 +324,23 @@ async fn upload_refusals_carry_their_codes_and_statuses_over_http() {
     let r = &rig.router;
     let (admin, _) = bootstrap(r).await;
     let alice = writer(r, &admin, "alice-writer").await;
-    let open = |size: u64, sha: String| {
-        json!({ "purpose": "import", "size": size, "sha256": sha })
-    };
+    let open = |size: u64, sha: String| json!({ "purpose": "import", "size": size, "sha256": sha });
     let refusals = [
-        (open(3 * PART_SIZE + 1, "a".repeat(64)), StatusCode::PAYLOAD_TOO_LARGE, "upload.too_large"),
-        (open(0, "a".repeat(64)), StatusCode::BAD_REQUEST, "request.validation"),
-        (open(5, "A".repeat(64)), StatusCode::BAD_REQUEST, "request.validation"),
+        (
+            open(3 * PART_SIZE + 1, "a".repeat(64)),
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "upload.too_large",
+        ),
+        (
+            open(0, "a".repeat(64)),
+            StatusCode::BAD_REQUEST,
+            "request.validation",
+        ),
+        (
+            open(5, "A".repeat(64)),
+            StatusCode::BAD_REQUEST,
+            "request.validation",
+        ),
         (
             json!({ "purpose": "attachment", "size": 5, "sha256": "a".repeat(64) }),
             StatusCode::BAD_REQUEST,
@@ -322,49 +351,136 @@ async fn upload_refusals_carry_their_codes_and_statuses_over_http() {
         let (got, answer) = json_call(r, "POST", "/v2/uploads", Some(&alice), body).await;
         assert_eq!((got, code(&answer)), (status, expected), "{answer}");
     }
-    let (status, body) = json_call(r, "POST", "/v2/uploads", Some(&admin), open(5, "a".repeat(64))).await;
-    assert_eq!((status, code(&body)), (StatusCode::FORBIDDEN, "access.verb_ceiling"), "{body}");
+    let (status, body) = json_call(
+        r,
+        "POST",
+        "/v2/uploads",
+        Some(&admin),
+        open(5, "a".repeat(64)),
+    )
+    .await;
+    assert_eq!(
+        (status, code(&body)),
+        (StatusCode::FORBIDDEN, "access.verb_ceiling"),
+        "{body}"
+    );
 
     let bytes = b"0123456789".to_vec();
-    let (_, opened) = json_call(r, "POST", "/v2/uploads", Some(&alice), open(10, sha256_hex(&bytes))).await;
+    let (_, opened) = json_call(
+        r,
+        "POST",
+        "/v2/uploads",
+        Some(&alice),
+        open(10, sha256_hex(&bytes)),
+    )
+    .await;
     let id = opened["upload_id"].as_str().expect("an id").to_owned();
     let put = |n: &str, body: Vec<u8>| {
-        call(
-            r,
-            "PUT",
-            &format!("/v2/uploads/{id}/parts/{n}"),
-            Some(&alice),
-            Some("application/octet-stream"),
-            body,
-        )
+        let path = format!("/v2/uploads/{id}/parts/{n}");
+        let alice = alice.clone();
+        async move {
+            call(
+                r,
+                "PUT",
+                &path,
+                Some(&alice),
+                Some("application/octet-stream"),
+                body,
+            )
+            .await
+        }
     };
     let (status, body) = put("1", bytes[..9].to_vec()).await;
-    assert_eq!((status, code(&body)), (StatusCode::UNPROCESSABLE_ENTITY, "upload.part_size"), "{body}");
+    assert_eq!(
+        (status, code(&body)),
+        (StatusCode::UNPROCESSABLE_ENTITY, "upload.part_size"),
+        "{body}"
+    );
     let (status, body) = put("2", bytes.clone()).await;
-    assert_eq!((status, code(&body)), (StatusCode::UNPROCESSABLE_ENTITY, "upload.part_number"), "{body}");
+    assert_eq!(
+        (status, code(&body)),
+        (StatusCode::UNPROCESSABLE_ENTITY, "upload.part_number"),
+        "{body}"
+    );
     let (status, body) = put("x", bytes.clone()).await;
-    assert_eq!((status, code(&body)), (StatusCode::UNPROCESSABLE_ENTITY, "upload.part_number"), "{body}");
+    assert_eq!(
+        (status, code(&body)),
+        (StatusCode::UNPROCESSABLE_ENTITY, "upload.part_number"),
+        "{body}"
+    );
     let mut wrong = bytes.clone();
     wrong[0] = b'9';
     let (status, _) = put("1", wrong).await;
     assert_eq!(status, StatusCode::OK);
-    let (status, body) = call(r, "POST", &format!("/v2/uploads/{id}/complete"), Some(&alice), None, Vec::new()).await;
-    assert_eq!((status, code(&body)), (StatusCode::UNPROCESSABLE_ENTITY, "upload.digest_mismatch"), "{body}");
+    let (status, body) = call(
+        r,
+        "POST",
+        &format!("/v2/uploads/{id}/complete"),
+        Some(&alice),
+        None,
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(
+        (status, code(&body)),
+        (StatusCode::UNPROCESSABLE_ENTITY, "upload.digest_mismatch"),
+        "{body}"
+    );
     let (status, body) = put("1", bytes.clone()).await;
-    assert_eq!((status, code(&body)), (StatusCode::CONFLICT, "upload.session_invalid"), "{body}");
+    assert_eq!(
+        (status, code(&body)),
+        (StatusCode::CONFLICT, "upload.session_invalid"),
+        "{body}"
+    );
     assert_eq!(body["error"]["details"]["state"], "failed");
 
     // The tenant's 4 parts' worth, then the key's fourth session.
-    let (status, body) = json_call(r, "POST", "/v2/uploads", Some(&alice), open(3 * PART_SIZE, "b".repeat(64))).await;
+    let (status, body) = json_call(
+        r,
+        "POST",
+        "/v2/uploads",
+        Some(&alice),
+        open(3 * PART_SIZE, "b".repeat(64)),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
-    let (status, body) = json_call(r, "POST", "/v2/uploads", Some(&alice), open(2 * PART_SIZE, "c".repeat(64))).await;
-    assert_eq!((status, code(&body)), (StatusCode::CONFLICT, "upload.tenant_limit"), "{body}");
+    let (status, body) = json_call(
+        r,
+        "POST",
+        "/v2/uploads",
+        Some(&alice),
+        open(2 * PART_SIZE, "c".repeat(64)),
+    )
+    .await;
+    assert_eq!(
+        (status, code(&body)),
+        (StatusCode::CONFLICT, "upload.tenant_limit"),
+        "{body}"
+    );
     for _ in 0..3 {
-        let (status, body) = json_call(r, "POST", "/v2/uploads", Some(&alice), open(1, "d".repeat(64))).await;
+        let (status, body) = json_call(
+            r,
+            "POST",
+            "/v2/uploads",
+            Some(&alice),
+            open(1, "d".repeat(64)),
+        )
+        .await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
     }
-    let (status, body) = json_call(r, "POST", "/v2/uploads", Some(&alice), open(1, "d".repeat(64))).await;
-    assert_eq!((status, code(&body)), (StatusCode::CONFLICT, "upload.session_limit"), "{body}");
+    let (status, body) = json_call(
+        r,
+        "POST",
+        "/v2/uploads",
+        Some(&alice),
+        open(1, "d".repeat(64)),
+    )
+    .await;
+    assert_eq!(
+        (status, code(&body)),
+        (StatusCode::CONFLICT, "upload.session_limit"),
+        "{body}"
+    );
     assert_eq!(body["error"]["details"]["limit"], 4);
     finish(rig).await;
 }

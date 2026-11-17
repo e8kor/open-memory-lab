@@ -1426,6 +1426,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open a resumable upload session for bytes of a declared size and SHA-256.
+         * @description Requires: a writer key; any other role is access.verb_ceiling (ADR-0004 d3, as amended 2026-11-17). purpose is import, the one purpose built; size is 1 byte to uploads.max_bytes (1 GiB by default), or 413 upload.too_large; sha256 is the plaintext's SHA-256 as 64 lowercase hex digits. A key holding 4 sessions that are open, or completed and unbound, is upload.session_limit; a tenant whose open and unbound sessions would declare more than uploads.tenant_max_bytes (4 GiB by default) is upload.tenant_limit; an object store that fails is 503 upload.storage_failed. The session takes parts of 8 MiB, the last the remainder, and expires 24 hours after its opening or its last part and never later than 72 hours after it opened. Only this key is ever served it. Nothing is journalled, and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.2.
+         */
+        post: operations["openUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/uploads/{upload_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read an upload session's state, the parts received and missing, and its expiry.
+         * @description Requires: the key that opened the session; any other key, and an id no session has, answers access.not_found (ADR-0004 d3, as amended 2026-11-17). A session past its expiry that no sweep has reached yet reads expired. The session's key is never answered. Since v0.8.2.
+         */
+        get: operations["getUpload"];
+        put?: never;
+        post?: never;
+        /**
+         * Abandon an upload session, shredding its key and removing its parts.
+         * @description Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17). An open, completed or failed session is abandoned: its key is nulled, then its parts are removed. One already abandoned or expired answers the same; a bound one belongs to the verb that bound it and is upload.session_invalid. Nothing is journalled. Since v0.8.2.
+         */
+        delete: operations["abandonUpload"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/uploads/{upload_id}/parts/{part}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Store one part of an open session; sending a part again replaces it.
+         * @description Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17). part counts from 1; outside 1 to the part count is 422 upload.part_number. Every part is 8,388,608 bytes but the last, which is the remainder; another length is 422 upload.part_size. A session that is not open is upload.session_invalid with details.state, and one past its expiry 410 upload.expired. The part is stored as XChaCha20-Poly1305 ciphertext under the session's own key, and the session's expiry moves to 24 hours on, never past 72 hours after it opened. A part is addressed by its number, so no Idempotency-Key is taken: a retry after an interruption sends the parts GET /v2/uploads/{upload_id} names missing. Since v0.8.2.
+         */
+        put: operations["putUploadPart"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/uploads/{upload_id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read the parts in order and check their SHA-256 against the declared one.
+         * @description Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17). Parts missing are upload.incomplete with details.missing, the first 100. A digest that differs fails the session, nulls its key, removes its parts and answers 422 upload.digest_mismatch. A match completes it: it is unbound until a verb such as an import binds it, and expires 24 hours after completion. A session that is not open is upload.session_invalid; past its expiry, 410 upload.expired. Nothing is journalled. Since v0.8.2.
+         */
+        post: operations["completeUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/admin/usage": {
         parameters: {
             query?: never;
@@ -1571,7 +1655,7 @@ export interface components {
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ErrorEnvelope: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -2736,6 +2820,34 @@ export interface components {
         KeyLinkRequest: {
             /** @description The user the key acts for in the console, by name (ADR-0085 d16). */
             user: string;
+        };
+        /** @description An upload session to open (ADR-0004 d3, as amended 2026-11-17). */
+        UploadOpenRequest: {
+            /** @enum {string} */
+            purpose: "import";
+            /** @description The plaintext's size in bytes, at most uploads.max_bytes. */
+            size: number;
+            /** @description The plaintext's SHA-256, 64 lowercase hex digits. */
+            sha256: string;
+        };
+        /** @description An upload session as the key that opened it reads it; its key is never answered (ADR-0004 d3, as amended 2026-11-17). */
+        UploadSession: {
+            upload_id: string;
+            /** @enum {string} */
+            purpose: "import";
+            size: number;
+            sha256: string;
+            /** @description Always 8388608. */
+            part_size: number;
+            parts: number;
+            received: number[];
+            missing: number[];
+            /** @enum {string} */
+            state: "open" | "completed" | "bound" | "failed" | "expired" | "abandoned";
+            created_at: string;
+            /** @description Null once bound: a bound upload ends with the verb that bound it. */
+            expires_at: string | null;
+            completed_at: string | null;
         };
         /** @description A key and the user the console acts with it for, null when unlinked (ADR-0085 d16). */
         KeyLink: {
@@ -7873,6 +7985,202 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    openUpload: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "purpose": "import",
+                 *       "size": 18874368,
+                 *       "sha256": "9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b"
+                 *     }
+                 */
+                "application/json": components["schemas"]["UploadOpenRequest"];
+            };
+        };
+        responses: {
+            /** @description The open session. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadSession"];
+                };
+            };
+            400: components["responses"]["Error"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["UnsupportedMedia"];
+            503: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getUpload: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                /** @description The session id POST /v2/uploads answered. */
+                upload_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The session. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadSession"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    abandonUpload: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                /** @description The session id POST /v2/uploads answered. */
+                upload_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Abandoned. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    putUploadPart: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                /** @description The session id POST /v2/uploads answered. */
+                upload_id: string;
+                /** @description The part number, from 1. */
+                part: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description The session with the part received. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadSession"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["Gone"];
+            415: components["responses"]["UnsupportedMedia"];
+            422: components["responses"]["Unprocessable"];
+            503: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    completeUpload: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                /** @description The session id POST /v2/uploads answered. */
+                upload_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The completed session. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadSession"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["Gone"];
+            422: components["responses"]["Unprocessable"];
+            503: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };
     };

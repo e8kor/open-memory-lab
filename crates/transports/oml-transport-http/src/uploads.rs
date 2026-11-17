@@ -103,10 +103,8 @@ where
                     .with_details(json!({ "field": "/size" })));
             }
             if !upload::is_sha256_hex(&req.sha256) {
-                return Err(
-                    ApiError::validation("sha256 is 64 lowercase hex digits")
-                        .with_details(json!({ "field": "/sha256" })),
-                );
+                return Err(ApiError::validation("sha256 is 64 lowercase hex digits")
+                    .with_details(json!({ "field": "/sha256" })));
             }
             let session = st
                 .app
