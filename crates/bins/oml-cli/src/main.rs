@@ -7241,6 +7241,35 @@ mod tests {
     }
 
     #[test]
+    fn the_approval_doctor_names_instructions_approved_by_a_key_that_is_not_a_persons() {
+        let report = json!({
+            "promoted_unapproved": 0, "instructions_without_person_approval": 2,
+        });
+        assert_eq!(
+            approval_doctor(Some(&Ok(report))),
+            vec![
+                "approval_unmatched: 0".to_owned(),
+                "warn instruction_approvals: 2 steering or guardrail version(s) in force were approved by a key that is not a person's; a person can review each again by superseding it (ADR-0080 d16)".to_owned(),
+            ]
+        );
+        // Nothing at zero, nothing from a server before the count, and an
+        // odd value is named, never read as zero.
+        let zero = json!({ "promoted_unapproved": 0, "instructions_without_person_approval": 0 });
+        assert_eq!(
+            approval_doctor(Some(&Ok(zero))),
+            vec!["approval_unmatched: 0".to_owned()]
+        );
+        let odd = json!({ "promoted_unapproved": 0, "instructions_without_person_approval": "x" });
+        assert_eq!(
+            approval_doctor(Some(&Ok(odd))),
+            vec![
+                "approval_unmatched: 0".to_owned(),
+                "warn instruction_approvals: the server's instructions_without_person_approval is \"x\", not a count".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
     fn a_crews_workspace_with_held_steering_and_no_person_reviewer_is_named_by_doctor() {
         let queue = json!({ "items": [
             { "path": "universe.crew", "held": 4, "held_instructions": 2, "person_reviewers": 0 },

@@ -16719,3 +16719,49 @@ async fn a_denied_or_revoked_person_key_is_not_counted_as_a_reviewer() {
     revoke_key(&store, boot.tenant_id, erin.key_id).await;
     assert_eq!(counted(queue_row(&app, admin, team).await), 0);
 }
+
+// --- #436: instructions in force on an approval that was not a person's ---
+
+/// A steering version in force whose approval is not a person's is counted,
+/// as one migration 0044 could not match is; superseding it with the same
+/// text under a person's approval takes the tip, and the count falls to zero
+/// (ADR-0080 d16; #436).
+#[tokio::test]
+async fn a_steering_version_superseded_under_a_persons_approval_leaves_the_count() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew, _team, writer, dana) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let count = || async {
+        app.rescan(admin.as_str(), 0, 1)
+            .await
+            .expect("the backlog")
+            .instructions_without_person_approval
+    };
+    let steering = promoted(
+        &app,
+        &writer.value,
+        &dana.value,
+        &submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", crew),
+    )
+    .await;
+    assert_eq!(count().await, 0, "a person approved it");
+    // As a version promoted before #391 on no person's verdict reads.
+    store.forget_approval(boot.tenant_id, steering);
+    assert_eq!(count().await, 1);
+
+    let successor = app
+        .supersede(
+            &writer.value,
+            &supersede_req("s1-again", steering, "Quote in USD/t."),
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    assert_eq!(count().await, 1, "a held successor does not take the tip");
+    app.post_verdict(&dana.value, successor, Verdict::Approve, None)
+        .await
+        .expect("a person approves the successor");
+    assert_eq!(count().await, 0);
+}

@@ -8411,6 +8411,86 @@ pub async fn the_unapproved_count_is_of_served_tips_and_a_ratified_successor_bri
     );
 }
 
+/// The backlog's `instructions_without_person_approval` counts the served
+/// instruction-class tips whose approving verdict was not a person's key's,
+/// or that carry none: a knowledge version an agent approved is not counted,
+/// nor a held instruction, and superseding the version under a person's
+/// approval brings the count down by one (ADR-0080 d16; #436).
+pub async fn the_scan_backlog_counts_promoted_instructions_whose_approver_is_not_a_person<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(436);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let key = Uuid::from_u128(0xE5);
+    let version = |id: u128, kind: MemoryKind, claim: &str| MemoryRecord {
+        claim_key: claim.to_owned(),
+        kind,
+        ..held_memory(tenant, wa, Uuid::from_u128(id), "rita", key, claim)
+    };
+    let count = || async {
+        store
+            .scan_backlog(tenant, None)
+            .await
+            .expect("backlog")
+            .instructions_without_person_approval
+    };
+    async fn promote_by<S: JournalStore>(
+        rig: &mut ChainRig,
+        store: &S,
+        m: MemoryRecord,
+        used_by: UsedBy,
+    ) {
+        let id = m.memory_id;
+        hold(rig, store, m).await.expect("hold");
+        rig.commit(
+            store,
+            event_types::LIFECYCLE_PROMOTE,
+            json!({ "artifact_id": id.to_string() }),
+            MetadataFold::MemoryPromoted {
+                memory_id: id,
+                approval: Some(Box::new(Approval {
+                    used_by,
+                    ..*fixture_approval()
+                })),
+            },
+            None,
+        )
+        .await
+        .expect("promote");
+    }
+    let by_person = version(0x4361, MemoryKind::Steering, "quote in USD per tonne");
+    let by_agent = version(0x4362, MemoryKind::Steering, "answer in English");
+    let by_service = version(0x4363, MemoryKind::Steering, "cite the runbook");
+    let knowledge = version(0x4364, MemoryKind::Memory, "the crane lifts ten tonnes");
+    let waiting = version(0x4365, MemoryKind::Steering, "never deploy on Friday");
+    promote_by(&mut rig, store, by_person.clone(), UsedBy::Person).await;
+    promote_by(&mut rig, store, by_agent.clone(), UsedBy::Agent).await;
+    promote_by(&mut rig, store, by_service.clone(), UsedBy::Service).await;
+    promote_by(&mut rig, store, knowledge, UsedBy::Agent).await;
+    hold(&mut rig, store, waiting).await.expect("hold");
+    assert_eq!(
+        count().await,
+        2,
+        "the agent's and the service's steering; never a person's, knowledge, or a held row"
+    );
+
+    // The remedy: a successor a person approves takes the tip.
+    supersede(
+        &mut rig,
+        store,
+        &by_agent,
+        Uuid::from_u128(0x4372),
+        "answer in English",
+        false,
+    )
+    .await;
+    assert_eq!(count().await, 1, "the replaced version is no served tip");
+}
+
 /// A promotion stores the approving verdict that ratified the version on
 /// its row, read back exactly, a first version's and a successor's alike;
 /// a held version holds none, a successor's ratification leaves the
@@ -9286,6 +9366,12 @@ where
     Box::pin(grants_and_denials_round_trip_through_their_folds_and_key_access(&new_store().await))
         .await;
     Box::pin(a_grant_epoch_is_its_event_seq(&new_store().await)).await;
+    Box::pin(
+        the_scan_backlog_counts_promoted_instructions_whose_approver_is_not_a_person(
+            &new_store().await,
+        ),
+    )
+    .await;
     Box::pin(a_grant_or_denial_the_schema_refuses_commits_nothing(
         &new_store().await,
     ))
