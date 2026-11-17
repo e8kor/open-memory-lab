@@ -41,6 +41,7 @@ jobs:
       eval: ${{ steps.paths.outputs.eval }}
       release: ${{ steps.paths.outputs.release }}
       spikes: ${{ steps.paths.outputs.spikes }}
+      schema_page: ${{ steps.paths.outputs.schema_page }}
       ci: ${{ steps.paths.outputs.ci }}
       cargo: ${{ steps.paths.outputs.cargo }}
       docs_tests: ${{ steps.paths.outputs.docs_tests }}

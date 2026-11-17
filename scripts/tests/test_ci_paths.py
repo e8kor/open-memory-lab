@@ -47,7 +47,12 @@ class Selection(unittest.TestCase):
         self.assertEqual(got, {"rust", "cargo"})
 
     def test_a_migration_selects_the_build_and_the_migrations(self):
-        self.assertEqual(on(["migrations/0042_x.sql"]), {"migrations", "cargo"})
+        self.assertEqual(on(["migrations/0042_x.sql"]), {"migrations", "cargo", "schema_page"})
+
+    def test_the_schema_page_and_the_lake_writers_grants_select_the_schema_page_check(self):
+        self.assertEqual(on(["docs/data/postgres-schema.md"]), {"docs", "docs_tests", "schema_page"})
+        self.assertEqual(on(["crates/bins/oml-lakewriter/src/source.rs"]), {"rust", "cargo", "schema_page"})
+        self.assertNotIn("schema_page", on(["crates/bins/oml-lakewriter/src/main.rs", "docs/data/delta-tables.md"]))
 
     def test_the_openapi_document_is_a_page_and_a_compiled_input(self):
         got = on(["docs/api/openapi.yaml"])

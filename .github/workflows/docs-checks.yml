@@ -4,8 +4,8 @@ name: Docs checks
 # the generated benchmark pages must match the committed results, the three
 # API contract surfaces (errors.md, openapi.yaml, http-api.md) must agree, and
 # openapi.yaml must be a valid OpenAPI document, and the reference pages generated from
-# the code and the contracts (CLI, HTTP API, MCP tools, settings, design records) must match
-# their sources. Deploy stays in
+# the code and the contracts (CLI, HTTP API, MCP tools, settings, design records, the
+# PostgreSQL schema) must match their sources. Deploy stays in
 # pages.yml; this workflow never publishes anything.
 
 on:
@@ -43,6 +43,7 @@ jobs:
       eval: ${{ steps.paths.outputs.eval }}
       release: ${{ steps.paths.outputs.release }}
       spikes: ${{ steps.paths.outputs.spikes }}
+      schema_page: ${{ steps.paths.outputs.schema_page }}
       ci: ${{ steps.paths.outputs.ci }}
       cargo: ${{ steps.paths.outputs.cargo }}
       docs_tests: ${{ steps.paths.outputs.docs_tests }}
@@ -150,6 +151,41 @@ jobs:
       - run: python scripts/gen_settings_reference.py --check
       - run: python scripts/gen_design_records.py --check
 
+  schema-page:
+    name: PostgreSQL schema page matches the migrations
+    needs: changes
+    if: needs.changes.outputs.schema_page == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        # The deployment pin (docs/operations/deployment.md), as in ci.yml's Postgres jobs.
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: oml
+          POSTGRES_PASSWORD: oml_dev_only
+          POSTGRES_DB: oml_dev
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U oml -d oml_dev"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      # Standard library and the runner's psql: the page is read from the catalog after
+      # migrations/ ran, so a page that differs prints the difference into this log.
+      - run: psql --version
+      # POSTGRES_USER is the container's superuser; the script mints and drops its own
+      # database and roles, as the Postgres suites do (ADR-0034 d8).
+      - run: python scripts/gen_postgres_schema.py --check
+        env:
+          OML_SCHEMA_DATABASE_URL: postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev
+      - run: python -m unittest scripts/tests/test_postgres_schema_page.py
+        env:
+          OML_SCHEMA_DATABASE_URL: postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev
+
   cli-reference:
     name: CLI reference matches the oml binary's help
     needs: changes
@@ -171,7 +207,7 @@ jobs:
   ci-ok:
     name: ci ok (docs)
     if: always()
-    needs: [changes, build-strict, bench-pages, contract-sync, openapi-valid, remember-eval-data, generated-references, cli-reference]
+    needs: [changes, build-strict, bench-pages, contract-sync, openapi-valid, remember-eval-data, generated-references, schema-page, cli-reference]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
