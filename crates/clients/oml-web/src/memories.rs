@@ -369,13 +369,13 @@ pub(crate) async fn written_by_own_key(
     calls: &PageCalls,
     author: Option<&str>,
     next: &str,
-) -> Result<bool, Response> {
+) -> Result<bool, crate::acts::Refusal> {
     let Some(author) = author else {
         return Ok(false);
     };
     match own_kinds(web, credential, calls).await {
         Ok(kinds) => Ok(kinds.iter().any(|(id, _, _)| id == author)),
-        Err(failed) => Err(failed_page(failed, calls, next)),
+        Err(failed) => Err(Box::new(failed_page(failed, calls, next))),
     }
 }
 

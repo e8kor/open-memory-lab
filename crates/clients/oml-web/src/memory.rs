@@ -172,7 +172,7 @@ pub async fn user_page(
             .await
             {
                 Ok(own) => own,
-                Err(page) => return page,
+                Err(page) => return *page,
             };
         if own {
             body.push_str(r#"<h2>Withdraw it</h2><p class="desc">The version is kept with its text, leaves review and is never served. No one reviews a withdrawal, and it cannot be undone: a new version starts as a fresh write.</p>"#);
