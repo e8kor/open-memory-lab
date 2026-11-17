@@ -2160,18 +2160,13 @@ pub async fn a_placeless_finding_stands_for_one_place_of_its_rule<S: JournalStor
     assert_eq!(fields, vec![None, Some("/title".to_owned())]);
 }
 
-/// The person lane (ADR-0074 d19, accepted for the instruction class by
-/// ADR-0080 d16): an instruction-class version, or a successor that
-/// replaces one, is served only in the person lane, never in the reviewer
-/// lane; the person lane serves per author key, the author holding the
-/// fewest first, ties to the author whose oldest is older, and each
-/// author's oldest first; and the held listing narrows and counts alike.
-/// R2 by person in the serve queue (ADR-0001 d5; ADR-0082 d7): a reviewer
-/// acting for a person is served no row a key of that same person wrote
-/// outside that person's root — a user key's, a linked tenant key's or a
-/// session key's — and is served such a row inside the root; a reviewer
-/// acting for no person is narrowed by nothing of this. The store reads
-/// both persons off the key rows.
+/// R2 by person in the serve queue and the held listing (ADR-0001 d5;
+/// ADR-0082 d7): a reviewer acting for a person — through a user key, a
+/// linked tenant key or a session key — is served, listed and counted no
+/// row a key of that same person wrote outside that person's root, and is
+/// served, listed and counted such a row inside the root; a reviewer acting
+/// for no person is narrowed by nothing of this. The store reads both
+/// persons off the key rows.
 pub async fn the_review_queue_serves_no_row_its_own_person_wrote_outside_their_root<
     S: JournalStore,
 >(
@@ -2231,18 +2226,19 @@ pub async fn the_review_queue_serves_no_row_its_own_person_wrote_outside_their_r
     ] {
         rig.issue_key(store, key).await;
     }
-    rig.commit(
-        store,
-        event_types::KEY_LINKED_PERSON,
-        json!({ "key_id": linked.key_id.to_string() }),
-        MetadataFold::KeyLinked {
-            key_id: linked.key_id,
-            user_root: Some(alice.workspace_id),
-        },
-        None,
-    )
-    .await
-    .expect("the link commits");
+    let link = |key_id: Uuid| {
+        (
+            json!({ "key_id": key_id.to_string() }),
+            MetadataFold::KeyLinked {
+                key_id,
+                user_root: Some(alice.workspace_id),
+            },
+        )
+    };
+    let (payload, fold) = link(linked.key_id);
+    rig.commit(store, event_types::KEY_LINKED_PERSON, payload, fold, None)
+        .await
+        .expect("the link commits");
     let rows = [
         (Uuid::from_u128(0x6120), project.workspace_id, &user_key),
         (Uuid::from_u128(0x6121), team.workspace_id, &linked),
@@ -2267,48 +2263,137 @@ pub async fn the_review_queue_serves_no_row_its_own_person_wrote_outside_their_r
         .expect("commit");
     }
     let nodes = [project.workspace_id, team.workspace_id];
+    let all = HeldFilter {
+        nodes: nodes.to_vec(),
+        author_key_id: None,
+        claim_key_prefix: None,
+        lane: ReviewLane::Any,
+    };
+    let mine = vec![Uuid::from_u128(0x6120), Uuid::from_u128(0x6123)];
+    let theirs = vec![Uuid::from_u128(0x6121), Uuid::from_u128(0x6122)];
+    // A fresh reviewer key acting for alice, by the n-th of her three ways:
+    // a user key of her root, a tenant key linked to it, a session key
+    // naming her.
+    let mut fresh = 0x6130_u128;
+    let mut alice_reviewer = async |n: usize| {
+        fresh += 1;
+        let base = key_record(t, Uuid::from_u128(fresh), Role::Reviewer, None);
+        let reviewer = match n % 3 {
+            0 => KeyRecord {
+                user: Some(alice.workspace_id),
+                ..base
+            },
+            1 => KeyRecord {
+                used_by: UsedBy::Person,
+                ..base
+            },
+            _ => KeyRecord {
+                credential: Credential::Session,
+                key_hash: None,
+                session_user: Some(name("alice")),
+                ..base
+            },
+        };
+        rig.issue_key(store, reviewer.clone()).await;
+        if n % 3 == 1 {
+            let (payload, fold) = link(reviewer.key_id);
+            rig.commit(store, event_types::KEY_LINKED_PERSON, payload, fold, None)
+                .await
+                .expect("the reviewer's link commits");
+        }
+        reviewer
+    };
+    // The listing and its per-author counts, before anything is claimed:
+    // each of alice's ways lists and counts only the root's row and another
+    // person's.
+    for n in 0..3 {
+        let reviewer = alice_reviewer(n).await;
+        let listed: Vec<Uuid> = store
+            .review_held(t, &reviewer.principal, reviewer.key_id, &all, None, 10)
+            .await
+            .expect("review_held")
+            .into_iter()
+            .map(|r| r.memory.memory_id)
+            .collect();
+        assert_eq!(listed, mine, "way {n}: alice's listing");
+        let counts = store
+            .review_held_authors(t, &reviewer.principal, reviewer.key_id, &all)
+            .await
+            .expect("review_held_authors");
+        let mut expected = vec![(user_key.key_id, 1), (other.key_id, 1)];
+        expected.sort();
+        assert_eq!(counts, expected, "way {n}: alice's counts per author");
+    }
     // Each claim by a fresh reviewer key serves the oldest row no other key
     // holds, until none is left for that key: alice's reviewer keys first,
-    // each a user key of her root, then keys that act for no person.
-    let mut fresh = 0x6130_u128;
+    // by her three ways in turn, then keys that act for no person.
     let mut served = [Vec::new(), Vec::new()];
-    for (round, person) in [Some(alice.workspace_id), None].into_iter().enumerate() {
-        loop {
-            fresh += 1;
-            let reviewer = KeyRecord {
-                user: person,
-                ..key_record(t, Uuid::from_u128(fresh), Role::Reviewer, None)
-            };
-            rig.issue_key(store, reviewer.clone()).await;
-            match store
-                .review_claim_next(
-                    t,
-                    &reviewer.principal,
-                    reviewer.key_id,
-                    &nodes,
-                    ReviewLane::Any,
-                )
-                .await
-                .expect("claim")
-            {
-                Some(m) => served[round].push(m.memory_id),
-                None => break,
-            }
+    let mut n = 0;
+    loop {
+        let reviewer = alice_reviewer(n).await;
+        n += 1;
+        match store
+            .review_claim_next(
+                t,
+                &reviewer.principal,
+                reviewer.key_id,
+                &nodes,
+                ReviewLane::Any,
+            )
+            .await
+            .expect("claim")
+        {
+            Some(m) => served[0].push(m.memory_id),
+            None => break,
         }
-        served[round].sort();
     }
+    loop {
+        fresh += 1;
+        let reviewer = key_record(t, Uuid::from_u128(fresh), Role::Reviewer, None);
+        rig.issue_key(store, reviewer.clone()).await;
+        let listed: Vec<Uuid> = store
+            .review_held(t, &reviewer.principal, reviewer.key_id, &all, None, 10)
+            .await
+            .expect("review_held")
+            .into_iter()
+            .map(|r| r.memory.memory_id)
+            .collect();
+        match store
+            .review_claim_next(
+                t,
+                &reviewer.principal,
+                reviewer.key_id,
+                &nodes,
+                ReviewLane::Any,
+            )
+            .await
+            .expect("claim")
+        {
+            Some(m) => {
+                assert!(listed.contains(&m.memory_id), "no person: listed as served");
+                served[1].push(m.memory_id);
+            }
+            None => break,
+        }
+    }
+    served[0].sort();
+    served[1].sort();
     assert_eq!(
-        served[0],
-        vec![Uuid::from_u128(0x6120), Uuid::from_u128(0x6123)],
+        served[0], mine,
         "alice's reviewer keys: the root's row and another person's only"
     );
     assert_eq!(
-        served[1],
-        vec![Uuid::from_u128(0x6121), Uuid::from_u128(0x6122)],
+        served[1], theirs,
         "keys acting for no person: alice's rows in team"
     );
 }
 
+/// The person lane (ADR-0074 d19, accepted for the instruction class by
+/// ADR-0080 d16): an instruction-class version, or a successor that
+/// replaces one, is served only in the person lane, never in the reviewer
+/// lane; the person lane serves per author key, the author holding the
+/// fewest first, ties to the author whose oldest is older, and each
+/// author's oldest first; and the held listing narrows and counts alike.
 pub async fn journal_review_lane_laws<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(6);
     rig.seed_chain(store, 0).await;

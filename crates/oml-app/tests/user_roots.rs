@@ -2818,3 +2818,143 @@ async fn inside_the_persons_root_their_linked_key_approves_their_user_keys_write
         .expect("approved inside the root");
     assert!(outcome.same_user);
 }
+
+/// Alice's session reviewer of `team`, her linked tenant writer, and bob's
+/// unlinked tenant writer, all on `team` (ADR-0082 d7; #392).
+async fn team_with_alices_reviewer_and_bobs_writer(
+    app: &TestApp,
+    admin: &str,
+) -> (oml_app::app::Caller, IssuedKey, IssuedKey) {
+    let ops = console_admin(app, admin, "ops").await;
+    let (alice, writer) = team_with_alices_linked_writer(app, admin, &ops).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    app.grant_review_capacity(&alice_admin, &name("alice"), by_name("team"))
+        .await
+        .expect("the review designation");
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let bob = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                ..user_req(
+                    Role::Writer,
+                    "unused",
+                    "bob/team",
+                    vec![
+                        grant(by_name("team"), Role::Writer),
+                        grant(by_name("team"), Role::Reader),
+                    ],
+                )
+            },
+        )
+        .await
+        .expect("bob's tenant writer key");
+    (review, writer, bob)
+}
+
+fn held_request(limit: usize, needs: Option<oml_app::types::ReviewLane>) -> oml_app::types::HeldListingRequest {
+    oml_app::types::HeldListingRequest {
+        workspace: None,
+        author_key: None,
+        claim_key_prefix: None,
+        cursor: None,
+        limit,
+        needs,
+    }
+}
+
+/// A page whose first rows are all the reviewer's own person's, outside
+/// their root, gives way to the next rows the reviewer may judge: no
+/// empty page with a cursor, no short page.
+#[tokio::test]
+async fn a_held_page_skips_the_reviewers_own_persons_rows_and_serves_the_next_eligible_rows() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (review, alice, bob) = team_with_alices_reviewer_and_bobs_writer(&app, admin).await;
+    for n in 0..3 {
+        written(
+            &app,
+            &alice.value,
+            &submit(&format!("a{n}"), &format!("Alice's note {n}."), Some("team")),
+        )
+        .await;
+    }
+    let mut bobs = Vec::new();
+    for n in 0..2 {
+        bobs.push(
+            written(
+                &app,
+                &bob.value,
+                &submit(&format!("b{n}"), &format!("Bob's note {n}."), Some("team")),
+            )
+            .await,
+        );
+    }
+    let page = app
+        .review_held(Bearer::Session(&review), &held_request(2, None))
+        .await
+        .expect("the listing");
+    let listed: Vec<Uuid> = page.items.iter().map(|i| i.served.memory.memory_id).collect();
+    assert_eq!(listed, bobs, "bob's rows fill the page");
+    assert!(page.next_cursor.is_none(), "nothing past bob's rows");
+}
+
+/// The person lane's per-author counts hold no author key of the
+/// reviewer's own person outside their root.
+#[tokio::test]
+async fn the_person_lanes_counts_omit_the_reviewers_own_persons_author_keys() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (review, alice, bob) = team_with_alices_reviewer_and_bobs_writer(&app, admin).await;
+    for (key, idem) in [(&alice, "sa"), (&bob, "sb")] {
+        written(
+            &app,
+            &key.value,
+            &SubmitRequest {
+                kind: MemoryKind::Steering,
+                ..submit(idem, "Cite every source.", Some("team"))
+            },
+        )
+        .await;
+    }
+    let page = app
+        .review_held(
+            Bearer::Session(&review),
+            &held_request(10, Some(oml_app::types::ReviewLane::Person)),
+        )
+        .await
+        .expect("the person lane's listing");
+    assert_eq!(page.items.len(), 1, "bob's steering alone");
+    assert_eq!(page.lane_authors, Some(vec![(bob.key_id, 1)]));
+}
+
+/// The bulk confirmation shows none of the reviewer's own person's rows
+/// outside their root, since the verdict would refuse them.
+#[tokio::test]
+async fn the_bulk_confirmation_names_no_row_the_reviewers_own_person_wrote_outside_their_root() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (review, alice, bob) = team_with_alices_reviewer_and_bobs_writer(&app, admin).await;
+    let mine = written(&app, &alice.value, &submit("n1", "Alice's note.", Some("team"))).await;
+    let theirs = written(&app, &bob.value, &submit("n2", "Bob's note.", Some("team"))).await;
+    let named = app
+        .review_named(Bearer::Session(&review), &[mine, theirs])
+        .await
+        .expect("the confirmation");
+    assert_eq!(named.len(), 2);
+    assert_eq!(named[0].0, mine);
+    assert!(named[0].1.is_none(), "alice's own row is not confirmable");
+    assert_eq!(named[1].0, theirs);
+    assert!(named[1].1.is_some(), "bob's row is");
+}
