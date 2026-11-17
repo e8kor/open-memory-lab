@@ -24,8 +24,7 @@ use axum::response::Response;
 use http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use oml_page::web::{
     ADMIN_KEYS_PATH, USER_KEYS_PATH, USER_REVIEW_PATH, attr, form, hidden, input, select, shell,
-    short, state_tag,
-    text,
+    short, state_tag, text,
 };
 use oml_sdk::{ListedKey, encode};
 
@@ -878,7 +877,11 @@ async fn act(
             let user = fields.given("user");
             let linked_to = (action == "link_key").then_some(user).flatten();
             let listed = user.map_or_else(String::new, |u| format!("user={}&", encode(u)));
-            let done = if linked_to.is_some() { "linked" } else { "unlinked" };
+            let done = if linked_to.is_some() {
+                "linked"
+            } else {
+                "unlinked"
+            };
             return match web.api.link_key(&call, &key, name, linked_to).await {
                 Ok(_) => acts::see_other(&format!("{page}?{listed}done={done}"), &[]),
                 Err(e) => outcome::page(&e, &calls, page),

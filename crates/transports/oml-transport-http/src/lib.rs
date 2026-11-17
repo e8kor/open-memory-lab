@@ -73,10 +73,10 @@ use oml_app::types::{
     AnchorFilter, AppError, Bearer, BootstrapRequest, BriefEdgeView, ClaimEdgeProposal,
     ClaimEdgeQuery, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
     EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest,
-    IssuedKey, KeyDetail, KeyLimitsChange, KeyRecord, KindFields, ListRequest, MemoryRecord, NamedServe,
-    OnSimilar, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory, SimilarItem,
-    SourceCheck, SourceCheckRequest, SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent,
-    Verdict, VerdictRequest, Whoami, WorkspaceInfo, WorkspaceRecord,
+    IssuedKey, KeyDetail, KeyLimitsChange, KeyRecord, KindFields, ListRequest, MemoryRecord,
+    NamedServe, OnSimilar, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory,
+    SimilarItem, SourceCheck, SourceCheckRequest, SubmitRequest, SubmitVerb, SupersedeRequest,
+    TailedEvent, Verdict, VerdictRequest, Whoami, WorkspaceInfo, WorkspaceRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage,
@@ -1951,7 +1951,10 @@ where
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
-        finish(&rid, Self::link_key_inner(&st, &key_id, &headers, &body).await)
+        finish(
+            &rid,
+            Self::link_key_inner(&st, &key_id, &headers, &body).await,
+        )
     }
 
     /// `POST /v2/keys/{key}/link {user}`: an admin key links a live tenant
@@ -1976,10 +1979,16 @@ where
         let user = Name::parse(&req.user).map_err(|_| {
             ApiError::validation("user is a user's name").with_details(json!({ "field": "/user" }))
         })?;
-        let linked = retry_chain(|| st.app.link_key_to_person(acting.bearer(), key.clone(), &user))
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(StatusCode::OK, &linked_key_json(&linked, Some(&user))))
+        let linked = retry_chain(|| {
+            st.app
+                .link_key_to_person(acting.bearer(), key.clone(), &user)
+        })
+        .await
+        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &linked_key_json(&linked, Some(&user)),
+        ))
     }
 
     async fn unlink_key(
@@ -2005,7 +2014,10 @@ where
         let unlinked = retry_chain(|| st.app.unlink_key_from_person(acting.bearer(), key.clone()))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(StatusCode::OK, &linked_key_json(&unlinked, None)))
+        Ok(json_response(
+            StatusCode::OK,
+            &linked_key_json(&unlinked, None),
+        ))
     }
 
     async fn create_workspace(

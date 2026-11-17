@@ -8307,7 +8307,14 @@ async fn team_key(
 async fn the_console_judges_in_a_shared_workspace_with_the_linked_key() {
     let rig = rig().await;
     shared_team(&rig).await;
-    let bot = team_key(&rig, "team-bot", Role::Writer, UsedBy::Agent, &[Role::Writer]).await;
+    let bot = team_key(
+        &rig,
+        "team-bot",
+        Role::Writer,
+        UsedBy::Agent,
+        &[Role::Writer],
+    )
+    .await;
     let memory = agent_writes_in(&rig, &bot.value, "The team ships on Fridays.", "team").await;
     let linked = team_key(
         &rig,
@@ -8348,7 +8355,10 @@ async fn the_console_judges_in_a_shared_workspace_with_the_linked_key() {
         linked.key_id
     );
     assert!(page.contains(&open), "{page}");
-    assert!(!page.contains("Review next"), "Review next is alice-review's: {page}");
+    assert!(
+        !page.contains("Review next"),
+        "Review next is alice-review's: {page}"
+    );
 
     let (status, _, item) = send(
         &rig.router,

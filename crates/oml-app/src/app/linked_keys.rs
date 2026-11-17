@@ -130,7 +130,11 @@ where
 
     /// The key `key` names, if a link may name it: a live tenant bearer key
     /// used by a person that is not an admin key.
-    async fn linkable_key(&self, admin: &KeyRecord, key: &Reference) -> Result<KeyRecord, AppError> {
+    async fn linkable_key(
+        &self,
+        admin: &KeyRecord,
+        key: &Reference,
+    ) -> Result<KeyRecord, AppError> {
         let key_id = self.resolve(admin, NamedKind::Key, key).await?;
         let target = self
             .journal
@@ -160,7 +164,10 @@ where
         let mut after = None;
         let mut found = false;
         loop {
-            let page = self.journal.web_entries(tenant_id, after.as_ref(), 500).await?;
+            let page = self
+                .journal
+                .web_entries(tenant_id, after.as_ref(), 500)
+                .await?;
             for entry in page.iter().filter(|e| &e.user == user) {
                 if entry.disabled_at.is_some() {
                     return Ok(false);

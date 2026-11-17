@@ -5,6 +5,7 @@
 
 use oml_app::App;
 use oml_app::app::Capacity;
+use oml_app::domain::EventTime;
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::{Name, NamedKind, Reference};
 use oml_app::domain::web::Email;
@@ -16,7 +17,6 @@ use oml_app::types::{
     GuardrailSet, IssueKeyRequest, IssuedKey, KeyLimitsChange, RecallRequest, SubmitRequest,
     SupersedeRequest, Verdict, WebEmailRequest, WebSessionRecord,
 };
-use oml_app::domain::EventTime;
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 
@@ -2089,7 +2089,12 @@ async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key
 // -- linked tenant keys (ADR-0085 d16, amended 2026-11-17; ADR-0082 d7) -----
 
 /// A tenant reviewer key a person holds, with `grants`.
-async fn person_tenant_key(app: &TestApp, admin: &str, principal: &str, grants: Vec<GrantRequest>) -> IssuedKey {
+async fn person_tenant_key(
+    app: &TestApp,
+    admin: &str,
+    principal: &str,
+    grants: Vec<GrantRequest>,
+) -> IssuedKey {
     app.issue_key(
         admin,
         &IssueKeyRequest {
@@ -2124,7 +2129,10 @@ async fn an_admin_links_a_person_tenant_key_and_the_link_is_journalled() {
         .expect("alice's root")
         .workspace_id;
     assert_eq!(linked.linked_user, Some(root));
-    let events = store.events_range(boot.tenant_id, 1, 10_000).await.expect("journal");
+    let events = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal");
     let event = events
         .iter()
         .rev()
@@ -2138,7 +2146,10 @@ async fn an_admin_links_a_person_tenant_key_and_the_link_is_journalled() {
         .await
         .expect("unlinked");
     assert_eq!(unlinked.linked_user, None);
-    let events = store.events_range(boot.tenant_id, 1, 10_000).await.expect("journal");
+    let events = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal");
     assert_eq!(
         events.last().expect("an event").envelope.event_type,
         event_types::KEY_UNLINKED_PERSON
@@ -2153,7 +2164,11 @@ async fn linking_an_agent_held_key_is_refused() {
     signed_in(&app, admin, "alice", false).await;
     let agent = tenant_key(&app, admin, Role::Writer, "alice/agent", Vec::new()).await;
     let user_key = user_writer(&app, admin, "alice", "alice/laptop").await;
-    let head = store.events_range(boot.tenant_id, 1, 10_000).await.expect("journal").len();
+    let head = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
     for (key, reason) in [
         (agent.key_id, "not_used_by_person"),
         (user_key.key_id, "not_a_tenant_key"),
@@ -2177,8 +2192,16 @@ async fn linking_an_agent_held_key_is_refused() {
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
-    let after = store.events_range(boot.tenant_id, 1, 10_000).await.expect("journal").len();
-    assert_eq!(head + 1, after, "only the person key's issuance; no refusal journals");
+    let after = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    assert_eq!(
+        head + 1,
+        after,
+        "only the person key's issuance; no refusal journals"
+    );
 }
 
 #[tokio::test]
@@ -2192,7 +2215,10 @@ async fn a_linked_keys_approval_of_its_persons_agent_write_is_marked_same_user()
         &app,
         admin,
         "alice/dev-review",
-        vec![grant(by_name("alice"), Role::Reviewer), grant(by_name("alice"), Role::Reader)],
+        vec![
+            grant(by_name("alice"), Role::Reviewer),
+            grant(by_name("alice"), Role::Reader),
+        ],
     )
     .await;
     app.link_key_to_person(admin, reviewer.key_id.into(), &name("alice"))
@@ -2213,12 +2239,19 @@ async fn the_acting_key_resolves_only_for_a_live_key_linked_to_the_sessions_own_
     let admin = boot.admin_key.value.as_str();
     let alice = signed_in(&app, admin, "alice", false).await;
     let bob = signed_in(&app, admin, "bob", false).await;
-    let review = app.web_caller(&alice, Capacity::Review).await.expect("alice-review");
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
     let alices = person_tenant_key(&app, admin, "alice/dev-review", Vec::new()).await;
     let bobs = person_tenant_key(&app, admin, "bob/dev-review", Vec::new()).await;
     let unlinked = person_tenant_key(&app, admin, "alice/spare", Vec::new()).await;
-    app.link_key_to_person(admin, alices.key_id.into(), &name("alice")).await.expect("linked");
-    app.link_key_to_person(admin, bobs.key_id.into(), &name("bob")).await.expect("linked");
+    app.link_key_to_person(admin, alices.key_id.into(), &name("alice"))
+        .await
+        .expect("linked");
+    app.link_key_to_person(admin, bobs.key_id.into(), &name("bob"))
+        .await
+        .expect("linked");
     let acting = app
         .acting_caller(&review, &alice, alices.key_id)
         .await
@@ -2229,14 +2262,20 @@ async fn the_acting_key_resolves_only_for_a_live_key_linked_to_the_sessions_own_
         assert!(matches!(err, AppError::ActingKeyNotLinked), "{err:?}");
     }
     // Unlinked, the key no longer acts, for the person it acted for.
-    let bob_review = app.web_caller(&bob, Capacity::Review).await.expect("bob-review");
+    let bob_review = app
+        .web_caller(&bob, Capacity::Review)
+        .await
+        .expect("bob-review");
     app.acting_caller(&bob_review, &bob, bobs.key_id)
         .await
         .expect("bob's linked key");
     app.unlink_key_from_person(admin, bobs.key_id.into())
         .await
         .expect("unlinked");
-    let err = app.acting_caller(&bob_review, &bob, bobs.key_id).await.unwrap_err();
+    let err = app
+        .acting_caller(&bob_review, &bob, bobs.key_id)
+        .await
+        .unwrap_err();
     assert!(matches!(err, AppError::ActingKeyNotLinked), "{err:?}");
 }
 
@@ -2254,7 +2293,10 @@ async fn a_linked_key_past_its_expiry_no_longer_acts_for_its_person() {
     let boot = bootstrap(&app).await;
     let admin = boot.admin_key.value.as_str();
     let alice = signed_in(&app, admin, "alice", false).await;
-    let review = app.web_caller(&alice, Capacity::Review).await.expect("alice-review");
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
     let key = person_tenant_key(&app, admin, "alice/dev-review", Vec::new()).await;
     app.link_key_to_person(admin, key.key_id.into(), &name("alice"))
         .await
@@ -2275,7 +2317,10 @@ async fn a_linked_key_past_its_expiry_no_longer_acts_for_its_person() {
         .await
         .expect("live until its expiry");
     clock.advance(3_600);
-    let err = app.acting_caller(&review, &alice, key.key_id).await.unwrap_err();
+    let err = app
+        .acting_caller(&review, &alice, key.key_id)
+        .await
+        .unwrap_err();
     assert!(matches!(err, AppError::ActingKeyNotLinked), "{err:?}");
     // An expired key is not linked again.
     let err = app

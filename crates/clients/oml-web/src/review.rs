@@ -435,7 +435,8 @@ async fn item(
             format!(
                 "{}{}",
                 hidden("artifact_id", &item.artifact_id),
-                view.acting_id().map_or_else(String::new, |id| hidden("as", id))
+                view.acting_id()
+                    .map_or_else(String::new, |id| hidden("as", id))
             ),
             hidden("nonce", &judge_nonce(view.session, &item.artifact_id)),
         ),
@@ -589,7 +590,8 @@ fn filters(
     format!(
         r#"<form class="row filters" method="get" action="{page}">{field}{}{}{}{}<button type="submit">Filter</button></form>"#,
         hidden("held", "1"),
-        view.acting_id().map_or_else(String::new, |id| hidden("as", id)),
+        view.acting_id()
+            .map_or_else(String::new, |id| hidden("as", id)),
         input("author_key", "author key", value("author_key"), false),
         input(
             "claim_key_prefix",
@@ -989,7 +991,10 @@ async fn view(
         let back = ctx
             .acting_id()
             .map_or_else(String::new, |id| format!("?as={}", attr(&encode(id))));
-        let _ = write!(body, r#"<p><a href="{page}{back}">Back to the list</a></p>"#);
+        let _ = write!(
+            body,
+            r#"<p><a href="{page}{back}">Back to the list</a></p>"#
+        );
     } else {
         if ctx.acting.is_none() {
             body.push_str(&review_next(&ctx, &fields, true));
@@ -1054,10 +1059,7 @@ async fn linked_keys(
     let credential = session.credential(Capacity::Web);
     let ids = calls.next_ids();
     match web.api.whoami_person(&call(&credential, &ids)).await {
-        Ok(onboarding) => Ok(onboarding
-            .person
-            .map(|p| p.linked_keys)
-            .unwrap_or_default()),
+        Ok(onboarding) => Ok(onboarding.person.map(|p| p.linked_keys).unwrap_or_default()),
         Err(e) => Err(Box::new(outcome::page(&e, calls, USER_REVIEW_PATH))),
     }
 }

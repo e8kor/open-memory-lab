@@ -20,8 +20,7 @@ use crate::ports::{
 };
 use crate::types::{
     AdminSearch, AppError, Bearer, Credential, DeletionRequest, KeyRecord, NamedRef, SignupPolicy,
-    UserUsage,
-    Whoami,
+    UserUsage, Whoami,
 };
 use oml_domain::MemoryStatus;
 
@@ -680,12 +679,7 @@ where
                 .filter(|k| {
                     k.revoked_at.is_none() && !self.key_expired(k) && k.used_by == UsedBy::Person
                 })
-                .filter_map(|k| {
-                    k.name.map(|name| NamedRef {
-                        id: k.key_id,
-                        name,
-                    })
-                })
+                .filter_map(|k| k.name.map(|name| NamedRef { id: k.key_id, name }))
                 .collect(),
             None => Vec::new(),
         };

@@ -245,15 +245,14 @@ where
         let path = req.uri().path();
         let mcp = path == "/mcp" || path.starts_with("/mcp/");
         let ring = path.starts_with("/v1/") || path.starts_with("/v2/");
-        let acting_key = req
-            .headers()
-            .get(ACTING_KEY_HEADER)
-            .map(|v| v.to_str().ok().and_then(|v| uuid::Uuid::parse_str(v.trim()).ok()));
+        let acting_key = req.headers().get(ACTING_KEY_HEADER).map(|v| {
+            v.to_str()
+                .ok()
+                .and_then(|v| uuid::Uuid::parse_str(v.trim()).ok())
+        });
         // `OML-Acting-Key` is honoured only beside a capacity credential on
         // `/v1` or `/v2`, never on `/mcp` (ADR-0085 d16, amended 2026-11-17).
-        if acting_key.is_some()
-            && (mcp || (ring && capacity_credential(req.headers()).is_none()))
-        {
+        if acting_key.is_some() && (mcp || (ring && capacity_credential(req.headers()).is_none())) {
             crate::traffic::credential(None, None);
             return finish(&rid, Err(ApiError::auth_invalid(ACTING_KEY_NOT_LINKED)));
         }

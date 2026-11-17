@@ -10199,7 +10199,14 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
         { "workspace": payments, "role": "reviewer" },
         { "workspace": payments, "role": "reader" },
     ]);
-    let alices = issue_key_with(&rig.router, &rig.admin, "reviewer", "alice", on_payments.clone()).await;
+    let alices = issue_key_with(
+        &rig.router,
+        &rig.admin,
+        "reviewer",
+        "alice",
+        on_payments.clone(),
+    )
+    .await;
     let bobs = issue_key_with(&rig.router, &rig.admin, "reviewer", "bob", on_payments).await;
     let agent = issue_key_with(
         &rig.router,

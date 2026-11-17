@@ -1667,9 +1667,8 @@ fn apply_fold(
         // user root are refused, as the store's guarded update refuses them
         // (ADR-0085 d16).
         MetadataFold::KeyLinked { key_id, user_root } => {
-            let root_ok = user_root.is_none_or(|r| {
-                state.workspaces.get(&r).is_some_and(|w| w.user_root)
-            });
+            let root_ok =
+                user_root.is_none_or(|r| state.workspaces.get(&r).is_some_and(|w| w.user_root));
             let Some(key) = state.keys.get_mut(&key_id).filter(|k| {
                 root_ok
                     && k.revoked_at.is_none()
