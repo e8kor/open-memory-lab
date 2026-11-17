@@ -3020,11 +3020,12 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // as ancestors (proposed ADR-0037 d4); 0028 adds profile, null
             // for every key it finds (ADR-0030 d14); 0046 adds expires_at
             // and requests_per_minute, null for every key it finds
-            // (ADR-0079).
+            // (ADR-0079); 0050 adds linked_user_id, null for every key it
+            // finds (ADR-0085 d16).
             (true, "api_keys") => {
                 "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'user_root_id' \
                  - 'session_for' - 'guardrail_scope' - 'profile' - 'expires_at' \
-                 - 'requests_per_minute'"
+                 - 'requests_per_minute' - 'linked_user_id'"
             }
             // 0014 adds covers, subtree for every grant it finds (ADR-0044
             // d12).
@@ -6378,8 +6379,8 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 51,
-        "every migration through 0051_linked_tenant_keys_validate"
+        applied, 52,
+        "every migration through 0052_release_stranded_lane_claims"
     );
     drop(conn);
     drop_dbs(&created).await;
@@ -7835,8 +7836,8 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 51,
-        "every migration through 0051_linked_tenant_keys_validate"
+        applied, 52,
+        "every migration through 0052_release_stranded_lane_claims"
     );
     drop(conn);
 
@@ -8719,8 +8720,8 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 51,
-        "every migration through 0051_linked_tenant_keys_validate"
+        applied, 52,
+        "every migration through 0052_release_stranded_lane_claims"
     );
     drop(conn);
 
@@ -12077,5 +12078,145 @@ async fn the_kind_field_check_refuses_a_skill_name_on_another_kind() {
         "{refused}"
     );
     owner.close().await.expect("close");
+    drop_dbs(&created).await;
+}
+
+#[tokio::test]
+async fn migration_0052_releases_a_lane_claim_a_crew_key_took_before_the_lane() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let db: String = sqlx::query_scalar("SELECT current_database()::text")
+        .fetch_one(store.pool())
+        .await
+        .expect("database name");
+    let app = app_over_pg(&store);
+    let boot = bootstrap_pg(&app, "stranded").await;
+    let admin = boot.admin_key.value.as_str();
+    let crew = workspace_pg(&app, admin, "crew", boot.root_workspace_id).await;
+    let writer = writer_pg(&app, admin, crew).await;
+    let crew_key = reviewer_pg(&app, admin, "crew-reviewer", "crew/reviewer", crew).await;
+    let person_key = app
+        .issue_key(
+            admin,
+            &oml_app::types::IssueKeyRequest {
+                profile: None,
+                role: Role::Reviewer,
+                name: name("person-reviewer"),
+                principal: "a-person".to_owned(),
+                used_by: Some(oml_app::domain::UsedBy::Person),
+                default_workspace: None,
+                crew: None,
+                connect_code: false,
+                user: None,
+                guardrail_scope: None,
+                grants: vec![oml_app::types::GrantRequest {
+                    node: crew.into(),
+                    role: Role::Reviewer,
+                    deny: Vec::new(),
+                    covers: oml_app::domain::access::Covers::Subtree,
+                }],
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("a person's reviewer key");
+    let mut ids = Vec::new();
+    for n in 0..3 {
+        ids.push(
+            app.submit_memory(
+                writer.as_str(),
+                &kind_submit(
+                    &format!("s-{n}"),
+                    MemoryKind::Steering,
+                    &format!("Quote rule {n} in USD/t."),
+                    None,
+                    None,
+                ),
+            )
+            .await
+            .expect("steering")
+            .receipt
+            .memory_id,
+        );
+    }
+    // Three claims taken before the lane, as the store kept them: one by a
+    // crew key, one by a person's reviewer key, one by a key with no row.
+    let ghost = Uuid::from_u128(0x6057);
+    for (principal, key) in [
+        ("crew/reviewer", crew_key.key_id),
+        ("a-person", person_key.key_id),
+        ("ghost", ghost),
+    ] {
+        store
+            .review_claim_next(
+                boot.tenant_id,
+                principal,
+                key,
+                &[crew],
+                oml_app::types::ReviewLane::Any,
+            )
+            .await
+            .expect("claim")
+            .expect("a steering row");
+    }
+    let holders = |db: String| async move {
+        let mut owner = admin_in(&db).await;
+        let rows: Vec<(Uuid, Option<Uuid>)> = sqlx::query_as(
+            "SELECT memory_id, held_by_key FROM review_queue ORDER BY held_since, memory_id",
+        )
+        .fetch_all(&mut owner)
+        .await
+        .expect("the queue");
+        owner.close().await.expect("close");
+        rows
+    };
+    let before = holders(db.clone()).await;
+    assert_eq!(
+        before.iter().filter(|(_, h)| h.is_some()).count(),
+        3,
+        "{before:?}"
+    );
+    let run = |db: String| async move {
+        let mut owner = admin_in(&db).await;
+        owner
+            .execute(include_str!(
+                "../../../../migrations/0052_release_stranded_lane_claims.sql"
+            ))
+            .await
+            .expect("0052 runs");
+        owner.close().await.expect("close");
+    };
+    run(db.clone()).await;
+    let after = holders(db.clone()).await;
+    // The person's claim stands; the crew's and the ghost's are released.
+    let held: Vec<Option<Uuid>> = after.iter().map(|(_, h)| *h).collect();
+    assert_eq!(
+        held.iter()
+            .filter(|h| **h == Some(person_key.key_id))
+            .count(),
+        1,
+        "{after:?}"
+    );
+    assert_eq!(held.iter().filter(|h| h.is_none()).count(), 2, "{after:?}");
+    // A second run changes nothing.
+    run(db.clone()).await;
+    assert_eq!(holders(db.clone()).await, after);
+    // The released rows return to the lane for a person.
+    let served = store
+        .review_claim_next(
+            boot.tenant_id,
+            "another-person",
+            Uuid::from_u128(0xFEED),
+            &[crew],
+            oml_app::types::ReviewLane::Person,
+        )
+        .await
+        .expect("claim")
+        .expect("released to the lane");
+    assert!(ids.contains(&served.memory_id));
     drop_dbs(&created).await;
 }

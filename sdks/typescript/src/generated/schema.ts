@@ -467,7 +467,7 @@ export interface paths {
         put?: never;
         /**
          * Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under an expiring serve_id.
-         * @description Requires: reviewer(review). Serves only rows within the key's reviewer effective access on the row's workspace; 204 when nothing in scope waits. A used_by: service key is refused with access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on lineage collision (review.author_in_lineage).
+         * @description Requires: reviewer(review). Serves only rows within the key's reviewer effective access on the row's workspace; 204 when nothing in scope waits. Never serves a steering, guardrail or skill version, or a successor of another kind that replaces one, to a key that cannot approve it: until #214, a key that is not a reviewer key used_by person with no crew and no profile (ADR-0074 d19, accepted for the instruction class by ADR-0080 d16). A used_by: service key is refused with access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on lineage collision (review.author_in_lineage).
          */
         post: operations["reviewNext"];
         delete?: never;
@@ -2583,6 +2583,12 @@ export interface components {
                 needs_person_reason: string | null;
             })[];
             next_cursor: string | null;
+            /** @description With needs=person, the lane's rows per author key, in author key id order; null otherwise (ADR-0074 d19). Since v0.8.0. */
+            lane_authors?: {
+                /** Format: uuid */
+                author_key_id: string;
+                held: number;
+            }[] | null;
         };
         BulkVerdictRequest: {
             /** @enum {string} */
@@ -4990,7 +4996,13 @@ export interface operations {
         requestBody?: {
             content: {
                 /** @example {} */
-                "application/json": Record<string, never>;
+                "application/json": {
+                    /**
+                     * @description person serves the person lane alone: steering, guardrail and skill versions and a successor of another kind that replaces one, round-robin across author keys, each row's turn its place among its author's lane rows in age order, the lowest turn first and the older row first within a turn; a key that cannot approve them is served none, 204. reviewer serves the rows any reviewer may approve. Omitted, a person's reviewer key is served every row and any other key the rows it may approve (ADR-0074 d19; ADR-0080 d16). Since v0.8.0.
+                     * @enum {string}
+                     */
+                    needs?: "person" | "reviewer";
+                };
             };
         };
         responses: {
@@ -5121,6 +5133,8 @@ export interface operations {
                 author_key?: string;
                 /** @description A literal prefix of the claim key. */
                 claim_key_prefix?: string;
+                /** @description person lists the person lane alone and counts it per author key in lane_authors; reviewer the rows any reviewer may approve. A key that cannot approve an instruction is listed none of the lane (ADR-0074 d19; ADR-0080 d16). Since v0.8.0. */
+                needs?: "person" | "reviewer";
                 /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
                 limit?: components["parameters"]["Limit"];
                 /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */

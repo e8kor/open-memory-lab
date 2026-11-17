@@ -41,7 +41,7 @@ use oml_page::web::{
     ADMIN_REVIEW_PATH, Bar, USER_MEMORIES_PATH, USER_REVIEW_PATH, attr, form, hidden, input,
     select, shell, short, text,
 };
-use oml_sdk::{HeldPage, LinkedKey, Memory, encode};
+use oml_sdk::{HeldItem, HeldPage, LinkedKey, Memory, encode};
 
 use crate::acts::Refusal;
 use crate::card::{Card, View, change};
@@ -635,20 +635,26 @@ async fn listing(
     fields: &Fields,
     chosen: &Chosen,
     limit: u32,
+    needs: Option<&str>,
+    cursor: Option<&str>,
 ) -> Result<Option<HeldPage>, Refusal> {
     if chosen.refused() {
         return Ok(None);
     }
     let credential = view.session.credential(Capacity::Review);
     let ids = view.calls.next_ids();
+    let mut filters = listing_filters(fields, chosen);
+    if let Some(needs) = needs {
+        filters.push(("needs", needs));
+    }
     match view
         .web
         .api
         .review_held(
             &call_as(&credential, &ids, view.acting_id()),
-            &listing_filters(fields, chosen),
+            &filters,
             limit,
-            fields.given("cursor"),
+            cursor,
         )
         .await
     {
@@ -688,6 +694,7 @@ fn settled(listing: Option<HeldPage>, chosen: Chosen, names: &Names) -> (HeldPag
                 HeldPage {
                     items: Vec::new(),
                     next_cursor: None,
+                    lane_authors: None,
                 },
                 chosen,
             )
@@ -704,6 +711,7 @@ async fn person_list(
     fields: &Fields,
     chosen: Chosen,
     read: Result<Option<HeldPage>, Refusal>,
+    lane: Option<HeldPage>,
     browse: Option<&Browse>,
 ) -> Result<String, Refusal> {
     let page = view.side.path();
@@ -750,6 +758,9 @@ async fn person_list(
         );
     }
     body.push_str("</table>");
+    if let Some(lane) = lane.filter(|l| !l.items.is_empty()) {
+        body.push_str(&lane_section(view, fields, &lane, &roots));
+    }
     let _ = write!(
         body,
         r#"<h2>Held memories</h2><p class="desc">Oldest first, {WAITING_PAGE} a page.</p>{}"#,
@@ -777,14 +788,75 @@ async fn person_list(
         body.push_str("</ul>");
     }
     if let Some(next) = &listing.next_cursor {
+        let lane = fields.given("lane_cursor").map_or(String::new(), |c| {
+            format!("&amp;lane_cursor={}", attr(&encode(c)))
+        });
         let _ = write!(
             body,
-            r#"<p><a href="{page}?held=1{}&amp;cursor={}">Next page</a></p>"#,
+            r#"<p><a href="{page}?held=1{}{lane}&amp;cursor={}">Next page</a></p>"#,
             kept_filters(fields),
             attr(&encode(next))
         );
     }
     Ok(body)
+}
+
+/// The person lane's section (ADR-0074 d19): what only a person's verdict
+/// approves, each author key with its count, then the rows as review
+/// cards in the listing's order, oldest first.
+fn lane_section(view: &ViewCtx<'_>, fields: &Fields, lane: &HeldPage, roots: &Roots) -> String {
+    let mut body = String::from(
+        r#"<h2>Needs a person</h2><p class="desc">Steering, guardrails and skills, and a change that would replace one: only a person's reviewer key approves them. Each author's count.</p><table><tr><th>Author key</th><th>Waiting</th></tr>"#,
+    );
+    let mut authors: Vec<(&str, u64)> = lane
+        .lane_authors
+        .iter()
+        .flatten()
+        .map(|a| (a.author_key_id.as_str(), a.held))
+        .collect();
+    authors.sort_by_key(|(_, held)| *held);
+    for (author, held) in authors {
+        let named = lane
+            .items
+            .iter()
+            .map(HeldItem::memory)
+            .find(|m| m.author_key_id.as_deref() == Some(author))
+            .and_then(|m| m.principal.as_deref())
+            .unwrap_or(author);
+        let _ = write!(
+            body,
+            r#"<tr><td class="mono">{}</td><td>{held}</td></tr>"#,
+            text(named)
+        );
+    }
+    body.push_str(r#"</table><ul class="oml-mcs">"#);
+    for item in &lane.items {
+        let _ = write!(
+            body,
+            "<li>{}</li>",
+            review_row(
+                view,
+                item.memory(),
+                item.same_user,
+                item.needs_person,
+                roots
+            )
+        );
+    }
+    body.push_str("</ul>");
+    if let Some(next) = &lane.next_cursor {
+        let rest = fields.given("cursor").map_or(String::new(), |c| {
+            format!("&amp;cursor={}", attr(&encode(c)))
+        });
+        let _ = write!(
+            body,
+            r#"<p><a href="{}?held=1{}{rest}&amp;lane_cursor={}">Next page of these</a></p>"#,
+            view.side.path(),
+            kept_filters(fields),
+            attr(&encode(next))
+        );
+    }
+    body
 }
 
 /// The bulk listing (AdminReviewScreen): the rows the reviewer key may
@@ -799,7 +871,15 @@ async fn held(
 ) -> Result<String, Refusal> {
     let page = view.side.path();
     let chosen = names.resolve(Chosen::of(fields.get("workspace")));
-    let read = listing(view, fields, &chosen, HELD_PAGE).await?;
+    let read = listing(
+        view,
+        fields,
+        &chosen,
+        HELD_PAGE,
+        None,
+        fields.given("cursor"),
+    )
+    .await?;
     let (listing, chosen) = settled(read, chosen, names);
     // The queue's kinds, and a read of any top label the listing names
     // beyond them, as the admin key, which reads every node.
@@ -1016,9 +1096,29 @@ async fn view(
         let listed = match side {
             Side::User => {
                 let chosen = Chosen::of(fields.get("workspace"));
-                let (browse, read) =
-                    tokio::join!(browse, listing(&ctx, &fields, &chosen, WAITING_PAGE));
-                person_list(&ctx, &fields, chosen, read, browse.as_ref()).await
+                // The person lane first, what only a person's verdict
+                // approves, then every other held row, each listing with a
+                // cursor of its own, so neither page holds the other's rows
+                // (ADR-0074 d19; ADR-0080 d16).
+                let lane = listing(
+                    &ctx,
+                    &fields,
+                    &chosen,
+                    WAITING_PAGE,
+                    Some("person"),
+                    fields.given("lane_cursor"),
+                );
+                let rest = listing(
+                    &ctx,
+                    &fields,
+                    &chosen,
+                    WAITING_PAGE,
+                    Some("reviewer"),
+                    fields.given("cursor"),
+                );
+                let (browse, lane, read) = tokio::join!(browse, lane, rest);
+                let lane = lane.ok().flatten();
+                person_list(&ctx, &fields, chosen, read, lane, browse.as_ref()).await
             }
             Side::Admin => match tokio::join!(browse, queue(&ctx)) {
                 (browse, Ok(queue)) => {

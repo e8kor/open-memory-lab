@@ -941,6 +941,17 @@ impl HeldItem {
 pub struct HeldPage {
     pub items: Vec<HeldItem>,
     pub next_cursor: Option<String>,
+    /// With `needs=person`, the lane's rows per author key (ADR-0074 d19);
+    /// absent from an API before v0.8.0 and `None` otherwise.
+    #[serde(default)]
+    pub lane_authors: Option<Vec<LaneAuthor>>,
+}
+
+/// One author key's rows in the person lane (ADR-0074 d19).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct LaneAuthor {
+    pub author_key_id: String,
+    pub held: u64,
 }
 
 /// One id named to `GET /v2/review/held?ids=`, with its row, or `None` when
@@ -1751,10 +1762,12 @@ impl<T: Transport> Client<T> {
         cursor: Option<&str>,
     ) -> Result<HeldPage, Error> {
         let mut path = format!("/v2/review/held?limit={limit}");
-        for (name, value) in filters
-            .iter()
-            .filter(|(n, _)| matches!(*n, "workspace" | "author_key" | "claim_key_prefix"))
-        {
+        for (name, value) in filters.iter().filter(|(n, _)| {
+            matches!(
+                *n,
+                "workspace" | "author_key" | "claim_key_prefix" | "needs"
+            )
+        }) {
             path.push_str(&format!("&{name}={}", encode(value)));
         }
         if let Some(cursor) = cursor {

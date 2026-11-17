@@ -164,3 +164,4 @@ branch that reserved later renumbers.
 | migration | 0049 | `main` |  | claim kinds validate | used |
 | migration | 0050 | `feat/linked-tenant-keys` |  | linked tenant keys (ADR-0085 d16) | reserved |
 | migration | 0051 | `feat/linked-tenant-keys` |  | validate the linked tenant key check | reserved |
+| migration | 0052 | `feat/instruction-person-lane` |  | release lane claims held by keys that cannot approve them (ADR-0074 d19) | reserved |

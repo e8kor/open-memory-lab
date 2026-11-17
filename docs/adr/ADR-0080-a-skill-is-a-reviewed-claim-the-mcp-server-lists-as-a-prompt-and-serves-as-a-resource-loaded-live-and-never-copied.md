@@ -438,6 +438,20 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
   This amends ADR-0037 d10 (a guardrail needs a person's verdict) and supersedes ADR-0074 d24 (a steering version from a person
   session needs a person's verdict too).
 
+  **The instruction lane** (amended 2026-11-15; the operator: "Move person only review into
+  0.8.0", scope "Instruction lane only"). ADR-0074 d19's person lane is accepted for this class:
+  an instruction-class version, or a successor of another kind that replaces one, is in the lane.
+  `POST /v2/review/next` never serves it to a key that cannot approve it (until #214, a key that
+  is not a reviewer key `used_by: person` with no crew and no profile), so a crew is never handed
+  an item it can only reject. `needs: person` on review next serves only the lane, round-robin across author keys (the
+  operator, 2026-11-17, replacing "the author holding the fewest first"): each row's turn is its
+  place among its author's lane rows in age order, and the lowest turn goes first, the older row
+  first within a turn, so one key's flood does not bury another's item and no author waits behind
+  newcomers. The held
+  listing takes `needs` too and names each author's count in the lane, and the console's review
+  list shows the lane first. ADR-0074 d19's per-key cap, referral, dismissal and evasion check
+  stay proposed under #214.
+
 ## Consequences
 
 - `MemoryKind` gains `Skill`; the submission and supersession bodies gain `skill`; the

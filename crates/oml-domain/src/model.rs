@@ -114,6 +114,20 @@ impl MemoryKind {
         }
     }
 
+    /// Every kind, in the order the submit enum lists them.
+    pub const ALL: [MemoryKind; 10] = [
+        MemoryKind::Memory,
+        MemoryKind::DerivedFact,
+        MemoryKind::Steering,
+        MemoryKind::Term,
+        MemoryKind::TermMapping,
+        MemoryKind::VocabRelease,
+        MemoryKind::Guardrail,
+        MemoryKind::Skill,
+        MemoryKind::Document,
+        MemoryKind::Test,
+    ];
+
     /// The class whose rules the kind follows (ADR-0080 d16): knowledge is
     /// read as data, an instruction is followed by the agent that loads it,
     /// and vocabulary changes how queries match.
