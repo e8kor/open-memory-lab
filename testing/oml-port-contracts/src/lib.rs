@@ -703,6 +703,7 @@ pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<U
         guardrail_scope: GuardrailScope::Ancestors,
         expiry: None,
         requests_per_minute: None,
+        linked_user: None,
     }
 }
 
@@ -2647,6 +2648,7 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
         guardrail_scope: GuardrailScope::Ancestors,
         expiry: None,
         requests_per_minute: None,
+        linked_user: None,
     };
     rig.commit(
         store,
@@ -2744,6 +2746,7 @@ pub async fn a_keys_limits_fold_with_its_issuance_and_are_replaced_by_key_limits
     let key = KeyRecord {
         expiry: Some(lapsed.clone()),
         requests_per_minute: Some(30),
+        linked_user: None,
         ..key_record(rig.tenant_id, Uuid::from_u128(0xE0), Role::Reader, None)
     };
     rig.issue_key(store, key.clone()).await;

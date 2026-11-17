@@ -1626,6 +1626,72 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/keys/{key}/link:
+    post:
+      tags: [keys]
+      operationId: linkKey
+      summary: Link a person's tenant key to the user who signs in, so the console acts with it in shared workspaces.
+      description: 'Requires: a console admin session, <user>-admin through its capacity credential, in the key''s own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin''s own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), already_linked (unlink it first), admin_key, not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. Journalled as key.linked_person. From then on the key writes into that user''s root as their key wherever its grants allow, and oml-web may name it in OML-Acting-Key beside that user''s capacity credential on the console''s acting routes (GET /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without a capacity credential, or naming a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. Since v0.8.0.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/KeyId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              user: alice
+            schema: { $ref: '#/components/schemas/KeyLinkRequest' }
+      responses:
+        '200':
+          description: The key and the user it is linked to.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                key_id: d405428e-4c99-426d-8826-76d28436e423
+                name: alice-payments
+                linked_user: alice
+              schema: { $ref: '#/components/schemas/KeyLink' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/keys/{key}/unlink:
+    post:
+      tags: [keys]
+      operationId: unlinkKey
+      summary: End a key's link to a person.
+      description: 'Requires: a console admin session, <user>-admin through its capacity credential, in the key''s own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). A key without a link is request.validation with details.field key and details.reason not_linked. Journalled as key.unlinked_person; the console''s next act with the key answers auth.invalid with details.reason acting_key_not_linked, and the key no longer writes into the user''s root. A revoked key is unlinked too. The Idempotency-Key is required and not replayed (ADR-0085 d16). Since v0.8.0.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/KeyId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200':
+          description: The key, now linked to no one.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                key_id: d405428e-4c99-426d-8826-76d28436e423
+                name: alice-payments
+                linked_user: null
+              schema: { $ref: '#/components/schemas/KeyLink' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/keys/{key}/connect-codes:
     post:
       tags: [keys]
@@ -4826,6 +4892,23 @@ components:
         expired: { type: boolean, description: "Whether the expiry has come on the server's clock." }
         requests_per_minute: { type: [integer, 'null'] }
 
+    KeyLinkRequest:
+      type: object
+      additionalProperties: false
+      required: [user]
+      properties:
+        user: { type: string, description: "The user the key acts for in the console, by name (ADR-0085 d16)." }
+
+    KeyLink:
+      type: object
+      additionalProperties: false
+      required: [key_id, name, linked_user]
+      description: "A key and the user the console acts with it for, null when unlinked (ADR-0085 d16)."
+      properties:
+        key_id: { type: string }
+        name: { type: [string, 'null'] }
+        linked_user: { type: [string, 'null'] }
+
     Key:
       type: object
       required: [key_id, name, role, default_workspace_id, used_by]
@@ -5069,6 +5152,10 @@ components:
             connections: { type: integer }
             requests_per_minute: { type: integer }
         deletion_requested_at: { type: [string, 'null'], format: date-time, description: "When the person asked for deletion, while the request is pending (ADR-0068 d6)." }
+        linked_keys:
+          description: "The live tenant keys an admin linked to the person (not revoked, not past their expiry, used_by person), by id and name, in name order: the keys oml-web may name in OML-Acting-Key for this person (ADR-0085 d16). Since v0.8.0."
+          type: array
+          items: { $ref: '#/components/schemas/WhoamiRef' }
         start:
           description: "With start=true, what the onboarding page waits for: whether one of the person's agent keys has connected, and the state of the newest memory of their root, held or promoted, else null (ADR-0068 d10; ADR-0070 d5). Absent otherwise. Since v0.7.0."
           type: [object, 'null']

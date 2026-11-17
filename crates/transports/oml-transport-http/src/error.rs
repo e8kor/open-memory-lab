@@ -548,6 +548,18 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         .with_details(json!({ "field": format!("/{field}") })),
         AppError::KindField(refusal) => ApiError::validation(refusal.reason)
             .with_details(json!({ "field": refusal.field })),
+        AppError::KeyLinkRefused { reason } => {
+            // ADR-0085 d16: the refusal names the member at fault, as a
+            // limit's refusal does (ADR-0079 d5).
+            let field = if matches!(reason, "user_unknown" | "user_disabled" | "self_link") {
+                "/user"
+            } else {
+                "key"
+            };
+            ApiError::validation(format!("the key cannot be linked or unlinked: {reason}"))
+                .with_details(json!({ "field": field, "reason": reason }))
+        }
+        AppError::ActingKeyNotLinked => ApiError::auth_invalid("acting_key_not_linked"),
         AppError::SkillBodyTooLarge => ApiError::payload_too_large("a skill body past 32,768 bytes")
             .with_details(json!({ "field": "/body" })),
         AppError::ValidTime(err) => ApiError::validation(err.to_string())

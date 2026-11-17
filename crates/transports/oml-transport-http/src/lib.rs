@@ -73,10 +73,10 @@ use oml_app::types::{
     AnchorFilter, AppError, Bearer, BootstrapRequest, BriefEdgeView, ClaimEdgeProposal,
     ClaimEdgeQuery, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
     EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest,
-    IssuedKey, KeyDetail, KeyLimitsChange, KindFields, ListRequest, MemoryRecord, NamedServe,
-    OnSimilar, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory, SimilarItem,
-    SourceCheck, SourceCheckRequest, SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent,
-    Verdict, VerdictRequest, Whoami, WorkspaceInfo, WorkspaceRecord,
+    IssuedKey, KeyDetail, KeyLimitsChange, KeyRecord, KindFields, ListRequest, MemoryRecord,
+    NamedServe, OnSimilar, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory,
+    SimilarItem, SourceCheck, SourceCheckRequest, SubmitRequest, SubmitVerb, SupersedeRequest,
+    TailedEvent, Verdict, VerdictRequest, Whoami, WorkspaceInfo, WorkspaceRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage, ReviewLane,
@@ -116,6 +116,8 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v2/keys/{key}"),
     ("POST", "/v2/keys/{key}/denials"),
     ("POST", "/v2/keys/{key}/limits"),
+    ("POST", "/v2/keys/{key}/link"),
+    ("POST", "/v2/keys/{key}/unlink"),
     ("POST", "/v2/keys/{key}/connect-codes"),
     ("POST", "/v2/keys/{key}/connections/{connection_id}/revoke"),
     ("GET", "/v2/whoami"),
@@ -360,6 +362,8 @@ where
             ("GET", "/v2/keys/{key}") => get(Self::get_key),
             ("POST", "/v2/keys/{key}/denials") => post(Self::deny_key),
             ("POST", "/v2/keys/{key}/limits") => post(Self::set_key_limits),
+            ("POST", "/v2/keys/{key}/link") => post(Self::link_key),
+            ("POST", "/v2/keys/{key}/unlink") => post(Self::unlink_key),
             ("POST", "/v2/keys/{key}/connect-codes") => post(Self::mint_connect_code),
             ("POST", "/v2/keys/{key}/connections/{connection_id}/revoke") => {
                 post(Self::revoke_connection)
@@ -1940,6 +1944,82 @@ where
                 "expired": st.app.key_expired(&set),
                 "requests_per_minute": set.requests_per_minute,
             }),
+        ))
+    }
+
+    async fn link_key(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(key_id): Path<String>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::link_key_inner(&st, &key_id, &headers, &body).await,
+        )
+    }
+
+    /// `POST /v2/keys/{key}/link {user}`: an admin key links a live tenant
+    /// key a person holds to that person, journalled as `key.linked_person`
+    /// (ADR-0085 d16, amended 2026-11-17).
+    async fn link_key_inner(
+        st: &Self,
+        key_id: &str,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct LinkBody {
+            user: String,
+        }
+        st.require_writes_open()?;
+        let acting = acting(headers, None)?;
+        idempotency_key(headers)?;
+        let key = reference("key", key_id)?;
+        let req: LinkBody = parse_json(headers, body)?;
+        let user = Name::parse(&req.user).map_err(|_| {
+            ApiError::validation("user is a user's name").with_details(json!({ "field": "/user" }))
+        })?;
+        let linked = retry_chain(|| {
+            st.app
+                .link_key_to_person(acting.bearer(), key.clone(), &user)
+        })
+        .await
+        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &linked_key_json(&linked, Some(&user)),
+        ))
+    }
+
+    async fn unlink_key(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(key_id): Path<String>,
+        headers: HeaderMap,
+    ) -> Response {
+        finish(&rid, Self::unlink_key_inner(&st, &key_id, &headers).await)
+    }
+
+    /// `POST /v2/keys/{key}/unlink`: an admin key ends a key's link,
+    /// journalled as `key.unlinked_person` (ADR-0085 d16).
+    async fn unlink_key_inner(
+        st: &Self,
+        key_id: &str,
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let acting = acting(headers, None)?;
+        idempotency_key(headers)?;
+        let key = reference("key", key_id)?;
+        let unlinked = retry_chain(|| st.app.unlink_key_from_person(acting.bearer(), key.clone()))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &linked_key_json(&unlinked, None),
         ))
     }
 
@@ -4424,6 +4504,11 @@ fn person_json(person: &oml_app::app::Person) -> Value {
         "usage": usage,
         "quotas": quotas,
         "deletion_requested_at": person.deletion_requested_at.as_ref().map(|t| t.as_str()),
+        "linked_keys": person
+            .linked_keys
+            .iter()
+            .map(|k| json!({ "id": k.id, "name": k.name.as_str() }))
+            .collect::<Vec<_>>(),
     });
     // The onboarding status, only when asked (`start=true`): every page's
     // session check calls whoami (ADR-0070 d5, d8).
@@ -5144,6 +5229,16 @@ fn crew_json(crew: &CrewRecord) -> Value {
         "name": crew.name.as_str(),
         "charter_uri": crew.charter_uri,
         "external_manager": crew.external_manager,
+    })
+}
+
+/// openapi.yaml `KeyLink`: the key and the user it acts for, or `null`
+/// once unlinked (ADR-0085 d16).
+fn linked_key_json(key: &KeyRecord, user: Option<&Name>) -> Value {
+    json!({
+        "key_id": key.key_id,
+        "name": key.name.as_ref().map(Name::as_str),
+        "linked_user": user.map(Name::as_str),
     })
 }
 

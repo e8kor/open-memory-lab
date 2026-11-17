@@ -91,6 +91,7 @@ pub async fn secret_line(api: &crate::Api, api_url: &str) -> (Level, String) {
         bearer: oml_web_credential::DOCTOR_PROBE_CREDENTIAL,
         request_id: None,
         correlation_id: None,
+        acting_key: None,
     };
     match api.whoami(&call).await {
         Err(oml_sdk::Error::Api(e))
@@ -99,7 +100,7 @@ pub async fn secret_line(api: &crate::Api, api_url: &str) -> (Level, String) {
             (
                 Level::Fail,
                 format!(
-                    "api: {api_url} refuses oml-web's web.client_secret: the lead holds a different value, or no web.client_secret, or a proxy between them adds a client-certificate header; set the same value on the lead (keep the old one there as web.client_secret_previous while oml-web restarts) and strip that header at the proxy"
+                    "api: {api_url} refuses oml-web's web.client_secret: the lead holds a different value, or no web.client_secret, or a proxy between them adds a client-certificate header; set the same value on the lead (keep the old one there as web.client_secret_previous while oml-web restarts) and strip that header at the proxy; until then no page acts with a person's linked key either (ADR-0085 d16)"
                 ),
             )
         }

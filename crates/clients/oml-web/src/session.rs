@@ -265,6 +265,18 @@ pub fn call<'a>(credential: &'a str, ids: &'a CallIds) -> Call<'a> {
         bearer: credential,
         request_id: ids.request_id.as_deref(),
         correlation_id: Some(&ids.correlation_id),
+        acting_key: None,
+    }
+}
+
+/// [`call`] acting as `acting`, the id of a tenant key an admin linked to
+/// the session's person: the lead runs the request as that key, with its
+/// grants, or refuses it `acting_key_not_linked` (ADR-0085 d16).
+#[must_use]
+pub fn call_as<'a>(credential: &'a str, ids: &'a CallIds, acting: Option<&'a str>) -> Call<'a> {
+    Call {
+        acting_key: acting,
+        ..call(credential, ids)
     }
 }
 

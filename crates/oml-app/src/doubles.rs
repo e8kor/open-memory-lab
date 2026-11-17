@@ -820,6 +820,17 @@ impl MemStore {
         }
     }
 
+    /// Marks a key row revoked at `at`, as only the issuance's own cleanup
+    /// does: a fixture for a linked key revoked after its link (ADR-0085
+    /// d16).
+    pub fn set_key_revoked(&self, tenant_id: Uuid, key_id: Uuid, at: EventTime) {
+        let tenant = self.tenant(tenant_id);
+        let mut state = tenant.lock().expect("tenant lock");
+        if let Some(key) = state.keys.get_mut(&key_id) {
+            key.revoked_at = Some(at);
+        }
+    }
+
     /// Makes `key` answer `key_id` absent from now on while
     /// `web_user_keys` still lists it: a key gone since a use case listed
     /// its user root's keys, which no verb does (ADR-0068 d8, #277).
@@ -983,6 +994,7 @@ fn fold_poc_event(
                     guardrail_scope: oml_domain::guardrail::GuardrailScope::ISSUANCE_DEFAULT,
                     expiry: None,
                     requests_per_minute: None,
+                    linked_user: None,
                 },
             );
         }
@@ -1670,6 +1682,33 @@ fn apply_fold(
         // Both limits take the event's values; a key the tenant does not
         // hold, a revoked key, a session key and an admin key are refused,
         // as the store's guarded update refuses them (ADR-0079 d5).
+        // The link takes the event's root; a key that is not a live tenant
+        // bearer key used by a person, an admin key, or a root that is not a
+        // user root are refused, as the store's guarded update refuses them
+        // (ADR-0085 d16).
+        MetadataFold::KeyLinked { key_id, user_root } => {
+            // As the Postgres guard: a link names a live unlinked tenant
+            // key and a user root; an unlink any linked key (ADR-0085 d16).
+            let root_ok =
+                user_root.is_none_or(|r| state.workspaces.get(&r).is_some_and(|w| w.user_root));
+            let Some(key) = state.keys.get_mut(&key_id).filter(|k| match user_root {
+                Some(_) => {
+                    root_ok
+                        && k.revoked_at.is_none()
+                        && k.credential == Credential::Bearer
+                        && k.role != Role::Admin
+                        && k.used_by == oml_domain::UsedBy::Person
+                        && k.user.is_none()
+                        && k.linked_user.is_none()
+                }
+                None => k.linked_user.is_some(),
+            }) else {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} cannot take this link: not a live unlinked tenant key used by a person, the root is not a user root, or there is no link to end"
+                )));
+            };
+            key.linked_user = user_root;
+        }
         MetadataFold::KeyLimitsSet {
             key_id,
             expiry,
@@ -4562,6 +4601,14 @@ impl WebStore for MemStore {
         user_root: Uuid,
     ) -> Result<Vec<KeyRecord>, StoreError> {
         Ok(self.tenant_keys(tenant_id, |k| k.user == Some(user_root)))
+    }
+
+    async fn web_linked_keys(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> Result<Vec<KeyRecord>, StoreError> {
+        Ok(self.tenant_keys(tenant_id, |k| k.linked_user == Some(user_root)))
     }
 
     async fn web_session_keys(

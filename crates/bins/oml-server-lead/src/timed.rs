@@ -1094,6 +1094,17 @@ impl<J: WebStore> WebStore for Timed<J> {
         )
     }
 
+    fn web_linked_keys(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send {
+        timed(
+            "web_linked_keys",
+            self.inner.web_linked_keys(tenant_id, user_root),
+        )
+    }
+
     fn web_user_keys(
         &self,
         tenant_id: Uuid,

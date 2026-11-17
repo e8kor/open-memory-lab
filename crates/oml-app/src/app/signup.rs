@@ -12,15 +12,15 @@ use uuid::Uuid;
 
 use oml_domain::name::{Name, NamedKind, Reference, UNIVERSE};
 use oml_domain::signup::{QUOTA_LIMIT_MAX, Quota, Quotas};
-use oml_domain::{Role, event_types};
+use oml_domain::{Role, UsedBy, event_types};
 
 use super::{App, Caller, Head, require_role};
 use crate::ports::{
     Clock, ConnectionStore, IdGen, MetadataFold, Scanner, Signer, StoreError, WebStore,
 };
 use crate::types::{
-    AdminSearch, AppError, Bearer, Credential, DeletionRequest, KeyRecord, SignupPolicy, UserUsage,
-    Whoami,
+    AdminSearch, AppError, Bearer, Credential, DeletionRequest, KeyRecord, NamedRef, SignupPolicy,
+    UserUsage, Whoami,
 };
 use oml_domain::MemoryStatus;
 
@@ -125,6 +125,9 @@ pub struct Person {
     pub deletion_requested_at: Option<oml_domain::EventTime>,
     /// The onboarding status, read only when asked (ADR-0070 d5).
     pub start: Option<StartStatus>,
+    /// The live tenant keys an admin linked to the person, by id and name,
+    /// with which the console acts in shared workspaces (ADR-0085 d16).
+    pub linked_keys: Vec<NamedRef>,
 }
 
 /// The least per-minute request rate a person's session keys get, whatever
@@ -667,11 +670,25 @@ where
         } else {
             None
         };
+        let linked_keys = match key.user {
+            Some(root) => self
+                .journal
+                .web_linked_keys(key.tenant_id, root)
+                .await?
+                .into_iter()
+                .filter(|k| {
+                    k.revoked_at.is_none() && !self.key_expired(k) && k.used_by == UsedBy::Person
+                })
+                .filter_map(|k| k.name.map(|name| NamedRef { id: k.key_id, name }))
+                .collect(),
+            None => Vec::new(),
+        };
         Ok(Person {
             user,
             limits,
             deletion_requested_at,
             start,
+            linked_keys,
         })
     }
 

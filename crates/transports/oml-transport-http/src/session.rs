@@ -49,6 +49,38 @@ pub const FORWARDED_CERTIFICATE_HEADERS: [&str; 6] = [
 /// `details.reason` of a capacity credential refused outside `oml-web`.
 pub const SESSION_OUTSIDE_WEB: &str = "session_outside_web";
 
+/// The header `oml-web` names a linked tenant key in, to act as it beside
+/// the session's capacity credential (ADR-0085 d16, amended 2026-11-17).
+pub const ACTING_KEY_HEADER: &str = "oml-acting-key";
+
+/// `details.reason` of an `OML-Acting-Key` the gate does not honour.
+pub const ACTING_KEY_NOT_LINKED: &str = "acting_key_not_linked";
+
+/// The routes the console's Review acts on as a linked key, the only ones
+/// that honour `OML-Acting-Key` (ADR-0085 d16, amended 2026-11-17): a
+/// route joins with the console act that uses it.
+fn acts_as_linked_key(method: &Method, path: &str) -> bool {
+    match *method {
+        Method::GET => {
+            matches!(path, "/v2/whoami" | "/v2/review/held")
+                || path
+                    .strip_prefix("/v1/memories/")
+                    .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+        }
+        Method::POST => path == "/v2/review/verdicts/bulk",
+        _ => false,
+    }
+}
+
+/// The refusal of an `OML-Acting-Key` the gate does not honour; the
+/// request line names the key it asked for, or `malformed` (ADR-0085 d16).
+fn acting_refused(rid: &Rid, requested: Option<uuid::Uuid>) -> Response {
+    crate::traffic::acting_refused(
+        &requested.map_or_else(|| "malformed".to_owned(), |id| id.to_string()),
+    );
+    finish(rid, Err(ApiError::auth_invalid(ACTING_KEY_NOT_LINKED)))
+}
+
 /// How `oml-web` proves itself to the lead (ADR-0070 d2): the secret set
 /// on both processes (`web.client_secret`), or a client certificate under
 /// `web.client_ca` whose subject is `web.client_subject`. Without either,
@@ -230,9 +262,6 @@ where
     /// outside `oml-web`'s identity, and otherwise runs as its session
     /// key's caller.
     pub(crate) async fn session_gate(State(st): State<Self>, req: Request, next: Next) -> Response {
-        let Some(credential) = capacity_credential(req.headers()).map(str::to_owned) else {
-            return next.run(req).await;
-        };
         let rid = Rid(req
             .extensions()
             .get::<crate::traffic::RequestIds>()
@@ -241,6 +270,25 @@ where
         let path = req.uri().path();
         let mcp = path == "/mcp" || path.starts_with("/mcp/");
         let ring = path.starts_with("/v1/") || path.starts_with("/v2/");
+        let sent = req.headers().get_all(ACTING_KEY_HEADER).iter().count();
+        let acting_key = req
+            .headers()
+            .get(ACTING_KEY_HEADER)
+            .map(|v| v.to_str().ok().and_then(|v| uuid::Uuid::parse_str(v).ok()));
+        // `OML-Acting-Key` is honoured once, beside a capacity credential,
+        // on the console's acting routes alone (ADR-0085 d16, amended
+        // 2026-11-17); anything else runs nothing.
+        if acting_key.is_some()
+            && (sent > 1
+                || !acts_as_linked_key(req.method(), path)
+                || capacity_credential(req.headers()).is_none())
+        {
+            crate::traffic::credential(None, None);
+            return acting_refused(&rid, acting_key.flatten());
+        }
+        let Some(credential) = capacity_credential(req.headers()).map(str::to_owned) else {
+            return next.run(req).await;
+        };
         if !mcp && !ring {
             // The probes, the OAuth routes and the pages read no key from
             // `Authorization`; each answers it as it answers any value.
@@ -269,6 +317,25 @@ where
         let bodiless = matches!(*req.method(), Method::GET | Method::HEAD);
         match st.app.web_credential_caller(&credential, bodiless).await {
             Ok((caller, session)) => {
+                // A linked tenant key named beside the credential: the
+                // request acts as it, or is refused and runs nothing
+                // (ADR-0085 d16, amended 2026-11-17).
+                let caller = match acting_key {
+                    None => caller,
+                    Some(None) => return acting_refused(&rid, None),
+                    Some(Some(key_id)) => {
+                        match st.app.acting_caller(&caller, &session, key_id).await {
+                            Ok(acting) => {
+                                crate::traffic::acting(acting.key(), session.user.as_str());
+                                acting
+                            }
+                            Err(e @ (AppError::Store(_) | AppError::KeyRateLimited { .. })) => {
+                                return finish(&rid, Err(map_app_error(e, ErrorContext::Write)));
+                            }
+                            Err(_) => return acting_refused(&rid, Some(key_id)),
+                        }
+                    }
+                };
                 let resolved = Resolved {
                     caller: Arc::new(caller),
                     session: Arc::new(session),

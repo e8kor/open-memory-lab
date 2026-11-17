@@ -3020,11 +3020,12 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // as ancestors (proposed ADR-0037 d4); 0028 adds profile, null
             // for every key it finds (ADR-0030 d14); 0046 adds expires_at
             // and requests_per_minute, null for every key it finds
-            // (ADR-0079).
+            // (ADR-0079); 0050 adds linked_user_id, null for every key it
+            // finds (ADR-0085 d16).
             (true, "api_keys") => {
                 "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'user_root_id' \
                  - 'session_for' - 'guardrail_scope' - 'profile' - 'expires_at' \
-                 - 'requests_per_minute'"
+                 - 'requests_per_minute' - 'linked_user_id'"
             }
             // 0014 adds covers, subtree for every grant it finds (ADR-0044
             // d12).

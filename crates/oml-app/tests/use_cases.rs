@@ -6300,6 +6300,7 @@ async fn operator_key(store: &MemStore, tenant: Uuid) -> String {
         guardrail_scope: GuardrailScope::Ancestors,
         expiry: None,
         requests_per_minute: None,
+        linked_user: None,
     };
     seal_onto(
         store,

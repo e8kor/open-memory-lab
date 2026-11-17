@@ -220,6 +220,7 @@ Kind: table.
 | `profile` | `text` | null |  |  |
 | `expires_at` | `timestamp(6) with time zone` | null |  | The instant from which the key authenticates nothing; NULL never. |
 | `requests_per_minute` | `integer` | null |  | The key's own requests per UTC minute; NULL none of its own. |
+| `linked_user_id` | `uuid` | null |  |  |
 
 Checks:
 
@@ -227,6 +228,7 @@ Checks:
 - `api_keys_connector_has_no_hash`: `CHECK (credential = 'bearer'::text OR hash IS NULL)`
 - `api_keys_credential_check`: `CHECK (credential = ANY (ARRAY['bearer'::text, 'connection'::text, 'session'::text]))`
 - `api_keys_guardrail_scope_check`: `CHECK (guardrail_scope = ANY (ARRAY['workspace'::text, 'ancestors'::text]))`
+- `api_keys_linked_user`: `CHECK (linked_user_id IS NULL OR user_root_id IS NULL AND credential <> 'session'::text AND role <> 'admin'::text)`
 - `api_keys_profile`: `CHECK (profile IS NULL OR profile = 'curator'::text AND role = 'reviewer'::text AND used_by = 'agent'::text)`
 - `api_keys_requests_per_minute_check`: `CHECK (requests_per_minute >= 1 AND requests_per_minute <= 1000000)`
 - `api_keys_role_check`: `CHECK (role = ANY (ARRAY['reader'::text, 'writer'::text, 'reviewer'::text, 'admin'::text, 'operator'::text]))`

@@ -9,6 +9,7 @@ mod auth;
 mod emails;
 mod federation;
 mod key_limits;
+mod linked_keys;
 mod metering;
 mod pages;
 mod rescan;
@@ -2765,6 +2766,7 @@ where
                 .unwrap_or(GuardrailScope::ISSUANCE_DEFAULT),
             expiry: req.expiry.clone(),
             requests_per_minute: req.requests_per_minute,
+            linked_user: None,
         };
         (record, value)
     }
@@ -4505,7 +4507,9 @@ where
         if let Some(user) = &key.session_user {
             return Ok(Some(user.clone()));
         }
-        match key.user {
+        // A tenant key linked to a person acts for them as a user key does
+        // (ADR-0085 d16; ADR-0082 d7).
+        match key.user.or(key.linked_user) {
             Some(root) => Ok(self
                 .journal
                 .workspace(key.tenant_id, root)
