@@ -2580,7 +2580,7 @@ fn workspace_from_row(row: &PgRow) -> Result<WorkspaceRecord, StoreError> {
 /// as a memory's `promoted_at` does, so `EventTime` round-trips exactly.
 const KEY_COLUMNS: &str = "id, tenant_id, role, principal, used_by, default_workspace_id, \
      issued_by, hash, credential, name, crew_id, user_root_id, session_for, guardrail_scope, \
-     profile, requests_per_minute, \
+     profile, requests_per_minute, linked_user_id, \
      to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS revoked_at_signed, \
      to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -2709,6 +2709,7 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
             .transpose()
             .map_err(backend)?,
         requests_per_minute: rate.map(u32::try_from).transpose().map_err(backend)?,
+        linked_user: row.try_get("linked_user_id").map_err(backend)?,
     })
 }
 

@@ -279,6 +279,15 @@ pub enum MetadataFold {
         expiry: Option<EventTime>,
         requests_per_minute: Option<u32>,
     },
+    /// `key.linked_person` (`Some`) or `key.unlinked_person` (`None`): the
+    /// tenant key acts for the person whose user root is named from this
+    /// commit on, or for no one. The store refuses a key it does not hold,
+    /// a revoked key, a key that is not a tenant bearer key used by a
+    /// person, and a root that is not a user root (ADR-0085 d16).
+    KeyLinked {
+        key_id: Uuid,
+        user_root: Option<Uuid>,
+    },
     /// `connection.code_issued`: the code's row, its `issued_seq` this
     /// commit's seq. The commit voids every code of the key from which no
     /// connection has opened, spent or not, their `voided_seq` this seq.

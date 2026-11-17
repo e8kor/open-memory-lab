@@ -2745,6 +2745,7 @@ where
                 .unwrap_or(GuardrailScope::ISSUANCE_DEFAULT),
             expiry: req.expiry.clone(),
             requests_per_minute: req.requests_per_minute,
+            linked_user: None,
         };
         (record, value)
     }

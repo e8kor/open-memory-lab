@@ -8,7 +8,7 @@ answers: what a workspace release is, when its manifest is fixed and what it may
 # ADR-0085 — A workspace publishes immutable releases that one person cuts and another ratifies, and each key binds to the tip, the latest release or a pinned one
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its three questions decided at their
-recommendations and every other default as drafted · proposed the same day
+recommendations and every other default as drafted · proposed the same day · amended 2026-11-17 (d16: how the console acts with a linked key, the operator)
 
 **Release:** not scheduled; the first record of the workspace lifecycle
 ([review](https://github.com/e8kor/open-memory-lab/blob/main/design/workspace-lifecycle.md)), before
@@ -315,6 +315,22 @@ Decided, not built.
   - An admin links a tenant key `used_by: person` to a signed-in person, journalled as
     `key.linked_person`. The console then offers that key for acts in the workspaces it grants, one
     key per act, named on the page (the operator, 2026-11-14).
+  - **How the console acts with it** (amended 2026-11-17; the operator: "Session + named key").
+    `oml-web` sends `OML-Acting-Key: <key id>` beside the session's capacity credential. The lead's
+    session gate honours the header only with a capacity credential, only from `oml-web`'s proven
+    identity (ADR-0070 d2), and never on `/mcp`. The named key must be of the session's tenant,
+    linked to the session's own user (`api_keys.linked_user_id`), live (not revoked, not past its
+    expiry) and `used_by: person`. Then the request's caller is that tenant key, and its grants and
+    verb ceilings apply as if it had sent its own bearer value. Any condition that fails answers
+    `auth.invalid`, `details.reason: acting_key_not_linked`, and runs nothing; a header sent with
+    no capacity credential, or on `/mcp`, answers the same. The request log records the acting key
+    beside the session's user. The cost: one more key read and one link check on each such
+    request. Rejected: a capacity credential minted per linked key at sign-in (one more
+    credential per key to store and expire); a key value pasted into the console (the value would
+    travel through the browser). Linking and unlinking are `POST /v2/keys/{key}/link {user}` and
+    `POST /v2/keys/{key}/unlink`, admin key role only, journalled `key.linked_person` and
+    `key.unlinked_person`; only a live tenant bearer key `used_by: person` is linked, to a user
+    root of its tenant whose person is not disabled.
 
 - **d17 — A user root never leaves development** (the operator, 2026-11-14: "Cap at
   development"). A user root and every workspace under it stay `development`: a proposal moving

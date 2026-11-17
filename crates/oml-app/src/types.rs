@@ -132,6 +132,11 @@ pub struct KeyRecord {
     /// beside any its account's quota sets; `None` for none of its own
     /// (postgres `api_keys.requests_per_minute`; ADR-0079 d4).
     pub requests_per_minute: Option<u32>,
+    /// The user root of the person a tenant key is linked to, set by
+    /// `key.linked_person` and cleared by `key.unlinked_person`; the key
+    /// then acts for that person as a user key does (ADR-0085 d16; ADR-0082
+    /// d7). `None` for every other key.
+    pub linked_user: Option<Uuid>,
 }
 
 impl KeyRecord {

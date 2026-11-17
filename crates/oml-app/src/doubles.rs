@@ -983,6 +983,7 @@ fn fold_poc_event(
                     guardrail_scope: oml_domain::guardrail::GuardrailScope::ISSUANCE_DEFAULT,
                     expiry: None,
                     requests_per_minute: None,
+                    linked_user: None,
                 },
             );
         }
