@@ -1671,7 +1671,10 @@ async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_root_marked_unrev
     ids.sort();
     let mut expected = vec![inside, bobs_own];
     expected.sort();
-    assert_eq!(ids, expected, "the root's row and bob's own, not ann's outside one");
+    assert_eq!(
+        ids, expected,
+        "the root's row and bob's own, not ann's outside one"
+    );
     assert!(
         at_crew.iter().all(|h| h.1 == MemoryStatus::Held),
         "each marked unreviewed"
@@ -1738,7 +1741,14 @@ async fn a_held_retirement_is_never_served_to_the_in_progress_audience() {
         .promoted(&w.ann, "a1", "the canary drains before promotion", w.proj)
         .await;
     let retirement = w
-        .successor(&w.ann, "a1-r", tip, 1, "the canary drains before promotion", true)
+        .successor(
+            &w.ann,
+            "a1-r",
+            tip,
+            1,
+            "the canary drains before promotion",
+            true,
+        )
         .await;
     for scope in [w.proj, w.crew] {
         let hits = World::ids(&w.recall_with(&w.bob, "canary", scope, Some(true)).await);

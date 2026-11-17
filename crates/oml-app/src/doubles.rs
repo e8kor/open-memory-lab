@@ -3454,8 +3454,7 @@ impl JournalStore for MemStore {
                         && m.status == MemoryStatus::Held
                         && !m.retirement
                         && m.scan_finding.is_none()
-                        && &m.scanned_under == current_scanner
-                        && HIT_KINDS.contains(&m.kind)))
+                        && &m.scanned_under == current_scanner))
             }
         };
         let position = |m: &MemoryRecord| (m.created_at.as_str().to_owned(), m.memory_id);
@@ -4430,7 +4429,6 @@ impl JournalStore for MemStore {
                             && !m.retirement
                             && m.scan_finding.is_none()
                             && m.scanned_under == selection.current_scanner
-                            && HIT_KINDS.contains(&m.kind)
                             && selection.held_nodes.contains(&m.workspace_id)))
             })
         };

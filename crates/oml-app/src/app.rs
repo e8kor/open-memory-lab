@@ -478,17 +478,17 @@ pub(crate) fn version_finding(
 }
 
 /// Whether a held version may be served unreviewed inside an in-progress
-/// subtree: a memory or derived fact, never a retirement version, never one
-/// the scan held, which stays its author's until a reviewer reads it, and
-/// only one last scanned under `current`, the server's rule set: a version
-/// an older rule set passed stays its author's until a rescan re-evaluates
-/// it (ADR-0030 d3; ADR-0065 d15).
+/// subtree: a version of any kind (ADR-0080 d16, amending ADR-0030 d3),
+/// never a retirement version, never one the scan held, which stays its
+/// author's until a reviewer reads it, and only one last scanned under
+/// `current`, the server's rule set: a version an older rule set passed
+/// stays its author's until a rescan re-evaluates it (ADR-0030 d3; ADR-0065
+/// d15; ADR-0074 d20).
 fn served_unreviewed(m: &MemoryRecord, current: Option<&str>) -> bool {
     m.status == MemoryStatus::Held
         && !m.retirement
         && m.scan_finding.is_none()
         && m.scanned_under.as_deref() == current
-        && matches!(m.kind, MemoryKind::Memory | MemoryKind::DerivedFact)
 }
 
 /// How an issuance runs once its issuer is known (ADR-0045 d6, d16).
@@ -2201,8 +2201,8 @@ where
         let reader = caller.effective(&ancestry).contains(&Role::Reader);
         if memory.status == MemoryStatus::Held && reader {
             // Inside an in-progress subtree a reader reads another author's
-            // held memory, never a steering, guardrail or retirement version
-            // (ADR-0030 d3).
+            // held version of any kind, never a retirement version (ADR-0030
+            // d3; ADR-0080 d16).
             return Ok(served_unreviewed(memory, self.scanner.version())
                 && self
                     .in_progress_root(caller.key.tenant_id, memory.workspace_id)

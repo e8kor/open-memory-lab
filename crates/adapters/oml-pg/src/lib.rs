@@ -7945,7 +7945,7 @@ impl JournalStore for PgStore {
                 };
                 if !held.is_empty() {
                     // A version the scan held stays its author's (ADR-0065
-                    // d5, amended 2026-11-10).
+                    // d5, amended 2026-11-10); any kind else (ADR-0080 d16).
                     sql.push(" OR (");
                     if let Some(at) = &filter.as_of {
                         sql.push("m.created_at <= (")
@@ -7955,7 +7955,7 @@ impl JournalStore for PgStore {
                     sql.push(
                         "m.status = 'held' AND NOT m.retirement \
                          AND m.scan_finding IS NULL \
-                         AND m.kind IN ('memory', 'derived_fact') AND m.workspace_id = ANY(",
+                         AND m.workspace_id = ANY(",
                     )
                     .push_bind(held.clone())
                     .push("::uuid[]) AND m.scanned_under IS NOT DISTINCT FROM ")
@@ -9137,13 +9137,13 @@ impl JournalStore for PgStore {
                     "::uuid[]) AND ({row}.status = 'promoted' OR {row}.author_key_id = "
                 ))
                 .push_bind(selection.reader_key_id)
-                // Inside an in-progress scope, any author's held memory or
-                // derived fact the scan did not hold (ADR-0030 d3; ADR-0065
-                // d5, amended 2026-11-10).
+                // Inside an in-progress scope, any author's held version
+                // the scan did not hold (ADR-0030 d3; ADR-0065 d5, amended
+                // 2026-11-10; ADR-0080 d16).
                 .push(format!(
                     " OR ({row}.status = 'held' AND NOT {row}.retirement \
                      AND {row}.scan_finding IS NULL \
-                     AND {row}.kind IN ('memory', 'derived_fact') AND {row}.workspace_id = ANY("
+                     AND {row}.workspace_id = ANY("
                 ))
                 .push_bind(selection.held_nodes.clone())
                 .push(format!(

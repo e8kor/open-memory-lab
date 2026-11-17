@@ -778,7 +778,11 @@ pub async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_subtree_besid
     let root = child("wip").await;
     let sibling = child("sib").await;
     w.app
-        .set_workspace_mode(w.reviewer.value.as_str(), root.into(), WorkspaceMode::InProgress)
+        .set_workspace_mode(
+            w.reviewer.value.as_str(),
+            root.into(),
+            WorkspaceMode::InProgress,
+        )
         .await
         .expect("mark the child in progress");
     let second = issue(
@@ -793,15 +797,36 @@ pub async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_subtree_besid
         .hold_kind(root, "wip-a", MemoryKind::Memory, "a ledger draft inside")
         .await;
     let own = w
-        .hold_by(&second, w.home, "draft-b", MemoryKind::Memory, "a ledger draft at home")
+        .hold_by(
+            &second,
+            w.home,
+            "draft-b",
+            MemoryKind::Memory,
+            "a ledger draft at home",
+        )
         .await;
     let outside = w
-        .hold_kind(w.home, "draft-c", MemoryKind::Memory, "a ledger draft by another")
+        .hold_kind(
+            w.home,
+            "draft-c",
+            MemoryKind::Memory,
+            "a ledger draft by another",
+        )
         .await;
     let approved = w.promote(root, "wip-d", "a ledger draft approved").await;
     let t1 = w.instant();
     let late = w
         .hold_kind(root, "wip-e", MemoryKind::Memory, "a ledger draft late")
+        .await;
+    // A held version of an instruction kind is listed as every kind is,
+    // and never a recall hit (ADR-0080 d16).
+    let steering = w
+        .hold_kind(
+            root,
+            "wip-f",
+            MemoryKind::Steering,
+            "prefer the ledger pool",
+        )
         .await;
     let at_sibling = w.reader_of(sibling).await;
     let set = |ids: &[Uuid]| ids.iter().copied().collect::<BTreeSet<Uuid>>();
@@ -828,9 +853,8 @@ pub async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_subtree_besid
             "{search}: by default at the ancestor, the root's rows and the key's own, never {outside}"
         );
         assert!(
-            by_default
-                .iter()
-                .all(|(id, status)| (*id == approved) == (*status == oml_app::domain::MemoryStatus::Promoted)),
+            by_default.iter().all(|(id, status)| (*id == approved)
+                == (*status == oml_app::domain::MemoryStatus::Promoted)),
             "{search}: every held row served as held"
         );
         assert_eq!(
@@ -844,7 +868,9 @@ pub async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_subtree_besid
             "{search}: a reader of the ancestor alone"
         );
         assert!(
-            hits(&at_sibling, sibling, None, Some(true)).await.is_empty(),
+            hits(&at_sibling, sibling, None, Some(true))
+                .await
+                .is_empty(),
             "{search}: a sibling reads nothing of the root"
         );
         let then = ids(&hits(&second, w.home, Some(&t1), Some(true)).await);
@@ -863,8 +889,8 @@ pub async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_subtree_besid
         .collect();
     assert_eq!(
         listed,
-        set(&[inside, approved, late]),
-        "the scoped listing at the ancestor"
+        set(&[inside, approved, late, steering]),
+        "the scoped listing at the ancestor, every held kind"
     );
 }
 
