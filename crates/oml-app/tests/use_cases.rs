@@ -16720,6 +16720,48 @@ async fn a_denied_or_revoked_person_key_is_not_counted_as_a_reviewer() {
     assert_eq!(counted(queue_row(&app, admin, team).await), 0);
 }
 
+/// A person's key whose expiry has come approves nothing, so the queue stops
+/// counting it on the server's clock, as every lookup reads an expiry
+/// (ADR-0079 d2; ADR-0080 d16; #435).
+#[tokio::test]
+async fn an_expired_person_key_is_not_counted_as_a_reviewer() {
+    let clock = FixedClock::new();
+    let app = App::new(
+        MemStore::new(),
+        MemSigner::new(TEST_SEED),
+        clock.clone(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    );
+    let (boot, _crew, team, writer, _dana) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    app.issue_key(
+        admin,
+        &IssueKeyRequest {
+            expiry: Some(at("2026-10-29T13:00:00.000000Z")),
+            ..issue_req(Role::Reviewer, "erin", vec![grant(team, Role::Reviewer)])
+        },
+    )
+    .await
+    .expect("issue erin, expiring in an hour");
+    app.submit_memory(
+        &writer.value,
+        &submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", team),
+    )
+    .await
+    .expect("submit");
+    let counted =
+        |row: Option<oml_app::app::QueueRow>| row.expect("team holds a row").person_reviewers;
+    assert_eq!(counted(queue_row(&app, admin, team).await), 2);
+
+    clock.advance(2 * 3_600);
+    assert_eq!(
+        counted(queue_row(&app, admin, team).await),
+        1,
+        "erin's expiry has come; dana's key does not expire"
+    );
+}
+
 // --- #436: instructions in force on an approval that was not a person's ---
 
 /// A steering version in force whose approval is not a person's is counted,
