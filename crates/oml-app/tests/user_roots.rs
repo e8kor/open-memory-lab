@@ -1316,6 +1316,7 @@ async fn no_guardrail_of_another_users_root_is_ever_served() {
             alice.value.as_str(),
             &GuardrailRequest {
                 workspace: Some(Reference::Name(name("bob"))),
+                include_own_held: false,
             },
         )
         .await
@@ -2600,6 +2601,57 @@ async fn a_bearer_admin_key_links_nothing_and_a_console_admin_never_links_its_ow
         .expect("journal")
         .len();
     assert_eq!(after, head + 1, "only the console admin's link journals");
+}
+
+// -- Withdraw (ADR-0083 d13; #401) -------------------------------------------
+
+fn withdraw_req(idem: &str, id: Uuid) -> oml_app::types::WithdrawRequest {
+    oml_app::types::WithdrawRequest {
+        idempotency_key: idem.to_owned(),
+        memory_id: id,
+        reason: None,
+    }
+}
+
+/// A person's session web key withdraws a held version their agent's key
+/// wrote; another person's session key, which cannot read it, is told
+/// nothing.
+#[tokio::test]
+async fn a_person_web_key_withdraws_a_version_its_agent_wrote() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let bob = signed_in(&app, admin, "bob", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let id = written(
+        &app,
+        &agent.value,
+        &submit("w1", "A note to retract.", None),
+    )
+    .await;
+    let bobs = app.web_caller(&bob, Capacity::Web).await.expect("bob-web");
+    let err = app
+        .withdraw(Bearer::Session(&bobs), &withdraw_req("b1", id))
+        .await
+        .unwrap_err();
+    // bob reads nothing in alice's root, so he is told nothing exists.
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let (receipt, replayed) = app
+        .withdraw(Bearer::Session(&web), &withdraw_req("a1", id))
+        .await
+        .expect("alice withdraws her agent's write");
+    assert!(!replayed);
+    assert_eq!(receipt.state, "withdrawn");
+    let row = app
+        .get_memory(agent.value.as_str(), id)
+        .await
+        .expect("the author still reads it");
+    assert_eq!(row.memory.status, MemoryStatus::Withdrawn);
 }
 
 // -- R2 by person (ADR-0001 d5; ADR-0082 d7; #392) ---------------------------

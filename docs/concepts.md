@@ -20,7 +20,7 @@ See [write and read memories](use/remember-and-recall.md) and [audit and lineage
 
 ## Held
 
-Every write is scanned, held, reviewed by someone who did not write it, signed, and only then readable. While a memory is held, recall serves it to its author, and to readers inside an [in-progress workspace](use/workspaces.md#in-progress-workspaces) marked unreviewed; a tenant admin reads it through the journaled [admin read](architecture/roles-and-keys.md#the-admin-read). A reviewer's approval moves it to state `promoted`.
+Every write is scanned, held, reviewed by someone who did not write it, signed, and only then readable. While a memory is held, recall serves it to its author, and to readers inside an [in-progress workspace](use/workspaces.md#in-progress-workspaces) or above it, marked unreviewed; a tenant admin reads it through the journaled [admin read](architecture/roles-and-keys.md#the-admin-read). A reviewer's approval moves it to state `promoted`.
 
 --8<-- "states.md"
 

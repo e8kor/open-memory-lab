@@ -288,8 +288,8 @@ Decided, not built.
       both, Guardrails leaves the Personal one, and neither carries To do, which is the header
       badge (d6). The switch to the other side stays outside the nav.
 
-- **d13 — The author of a held version may withdraw it** (the operator, 2026-11-14; decided, to be
-  built later). A version's author withdraws it with
+- **d13 — The author of a held version may withdraw it** (the operator, 2026-11-14; decided, built
+  2026-11-17 in #401). A version's author withdraws it with
   `POST /v1/memories/{artifact_id}/withdraw {reason?}`, and over MCP with the tool
   `oml_withdraw {artifact_id, reason?, idempotency_key}`, which joins the agent-safe catalog
   (amends ADR-0025 d12 and ADR-0039's tool table). Who may: the author key itself, an agent's key
@@ -310,6 +310,15 @@ Decided, not built.
   and on the workspace page's held rows of the person's own, each with a confirmation, in place of
   the mockups' "Cannot be withdrawn yet". A withdrawn version can be followed by a new one only
   through a fresh write or supersession of the served tip.
+  - *Built (2026-11-17, #401; the operator's coordinator, the same day).* Two readings d13 left
+    open, decided before the code. **The CLI verb** is `oml withdraw <artifact_id> [--reason]
+    [--idempotency-key]`, a top-level verb beside `oml write` and `oml read`, which are top-level
+    too; rejected: a new `oml memories` group holding this one verb, since no other verb would sit
+    in it. **The console** offers Withdraw, with a confirmation, on the personal Memories page's
+    held rows that a key of the signed-in person wrote, until Submitted exists; it moves to
+    Submitted when the cockpit lands (#410). Rejected: waiting for #410, which leaves a person no
+    console path to a mistaken agent write meanwhile; and a stub Submitted view, which #410 would
+    replace whole.
 
 ## Consequences
 

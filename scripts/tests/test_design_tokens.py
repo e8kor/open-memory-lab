@@ -88,7 +88,9 @@ class ArchitectureViews(unittest.TestCase):
                     if cls != "tag" and y == float(ty) + 8 and x + w - 74 == float(tx):
                         checked += 1
                         self.assertIn("plan", cls.split(), f"{view}: a designed tag on a solid {cls} at x={x}")
-        self.assertGreaterEqual(checked, 20)
+        # A floor, so the walk cannot pass by matching nothing: 19 since withdraw was built
+        # (ADR-0083 d13, #401) and its box lost its tag.
+        self.assertGreaterEqual(checked, 19)
 
     def test_an_architecture_view_with_a_colour_outside_its_style_is_refused(self):
         src = self.view('<rect style="fill:var(--ground)"/>')

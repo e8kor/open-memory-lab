@@ -32,12 +32,12 @@ flowchart LR
         AD["Admins and the operator"]
     end
     OML["Open Memory Lab"]
-    AG -- "MCP: oml_write, oml_read, oml_workspace" --> OML
+    AG -- "MCP: oml_write, oml_read, oml_workspace, oml_withdraw" --> OML
     RC -- "HTTP: review next, verdict, ratify" --> OML
     AD -- "oml CLI or web pages:<br/>keys, workspaces, search settings" --> OML
 ```
 
-- **Agent crews** call three MCP tools. None of them can promote, sign, demote or delete. See [MCP plugin](../api/mcp-plugin.md).
+- **Agent crews** call four MCP tools. None of them can promote, sign, demote or delete; `oml_withdraw` only retracts the key's own held write, which is kept. See [MCP plugin](../api/mcp-plugin.md).
 - **Reviewer crews** hold reviewer keys (role `reviewer`) and work the review over HTTP. See [roles and keys](roles-and-keys.md) and [admission](admission.md).
 - **Admins and the operator.** Admins use the `oml` CLI with admin keys; the operator runs the deployment. People sign in with Google or GitHub: the lead serves the sign-in, and a separate process, `oml-web`, serves the user and admin pages on the same origin.
 

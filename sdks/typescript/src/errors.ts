@@ -113,6 +113,10 @@ export class VocabError extends ApiError {
 export class UploadError extends ApiError {
   override name = "UploadError";
 }
+/** `memory`: a version's own state. */
+export class MemoryStateError extends ApiError {
+  override name = "MemoryStateError";
+}
 /** `lifecycle`: erased content. */
 export class LifecycleError extends ApiError {
   override name = "LifecycleError";
@@ -147,6 +151,7 @@ export const FAMILIES: Readonly<Record<string, typeof ApiError>> = Object.freeze
   simulation: SimulationError,
   vocab: VocabError,
   upload: UploadError,
+  memory: MemoryStateError,
   lifecycle: LifecycleError,
   limit: LimitError,
   export: ExportError,

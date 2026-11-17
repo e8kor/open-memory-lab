@@ -6,6 +6,15 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..models.served_guardrail_effect_inside_type_1 import (
+    ServedGuardrailEffectInsideType1,
+)
+from ..models.served_guardrail_effect_inside_type_2_type_1 import (
+    ServedGuardrailEffectInsideType2Type1,
+)
+from ..models.served_guardrail_effect_inside_type_3_type_1 import (
+    ServedGuardrailEffectInsideType3Type1,
+)
 from ..models.severity import Severity
 
 if TYPE_CHECKING:
@@ -31,9 +40,14 @@ class ServedGuardrail:
         text (str):
         rule (Any): Its oml-gr/1 rule, or null.
         tokens (int):
-        promoted_at (datetime.datetime):
+        promoted_at (datetime.datetime | None): Null for a held version.
+        unreviewed (bool): A held version, served to its author key or inside an in-progress workspace (ADR-0080 d10,
+            d14).
+        effect_inside (None | ServedGuardrailEffectInsideType1 | ServedGuardrailEffectInsideType2Type1 |
+            ServedGuardrailEffectInsideType3Type1): The effect the hook applies in place of the rule's own: ask for every
+            held version, null for a promoted one, which is never downgraded; the rule itself is unchanged (ADR-0080 d10).
         verdicts (list[ServedGuardrailVerdictsItem]): Each approving verdict's reviewer attestation and time, never the
-            reviewer's key (ADR-0025 d15).
+            reviewer's key (ADR-0025 d15); empty for a held version.
         conflict (list[str]): The artifact_ids of the served rows of this claim_key with another severity; empty when
             none.
     """
@@ -48,7 +62,14 @@ class ServedGuardrail:
     text: str
     rule: Any
     tokens: int
-    promoted_at: datetime.datetime
+    promoted_at: datetime.datetime | None
+    unreviewed: bool
+    effect_inside: (
+        None
+        | ServedGuardrailEffectInsideType1
+        | ServedGuardrailEffectInsideType2Type1
+        | ServedGuardrailEffectInsideType3Type1
+    )
     verdicts: list[ServedGuardrailVerdictsItem]
     conflict: list[str]
 
@@ -74,7 +95,23 @@ class ServedGuardrail:
 
         tokens = self.tokens
 
-        promoted_at = self.promoted_at.isoformat()
+        promoted_at: None | str
+        if isinstance(self.promoted_at, datetime.datetime):
+            promoted_at = self.promoted_at.isoformat()
+        else:
+            promoted_at = self.promoted_at
+
+        unreviewed = self.unreviewed
+
+        effect_inside: None | str
+        if (
+            isinstance(self.effect_inside, ServedGuardrailEffectInsideType1)
+            or isinstance(self.effect_inside, ServedGuardrailEffectInsideType2Type1)
+            or isinstance(self.effect_inside, ServedGuardrailEffectInsideType3Type1)
+        ):
+            effect_inside = self.effect_inside.value
+        else:
+            effect_inside = self.effect_inside
 
         verdicts = []
         for verdicts_item_data in self.verdicts:
@@ -98,6 +135,8 @@ class ServedGuardrail:
                 "rule": rule,
                 "tokens": tokens,
                 "promoted_at": promoted_at,
+                "unreviewed": unreviewed,
+                "effect_inside": effect_inside,
                 "verdicts": verdicts,
                 "conflict": conflict,
             }
@@ -135,7 +174,70 @@ class ServedGuardrail:
 
         tokens = d.pop("tokens")
 
-        promoted_at = datetime.datetime.fromisoformat(d.pop("promoted_at"))
+        def _parse_promoted_at(data: object) -> datetime.datetime | None:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                promoted_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return promoted_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None, data)
+
+        promoted_at = _parse_promoted_at(d.pop("promoted_at"))
+
+        unreviewed = d.pop("unreviewed")
+
+        def _parse_effect_inside(
+            data: object,
+        ) -> (
+            None
+            | ServedGuardrailEffectInsideType1
+            | ServedGuardrailEffectInsideType2Type1
+            | ServedGuardrailEffectInsideType3Type1
+        ):
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                effect_inside_type_1 = ServedGuardrailEffectInsideType1(data)
+
+                return effect_inside_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                effect_inside_type_2_type_1 = ServedGuardrailEffectInsideType2Type1(
+                    data
+                )
+
+                return effect_inside_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                effect_inside_type_3_type_1 = ServedGuardrailEffectInsideType3Type1(
+                    data
+                )
+
+                return effect_inside_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | ServedGuardrailEffectInsideType1
+                | ServedGuardrailEffectInsideType2Type1
+                | ServedGuardrailEffectInsideType3Type1,
+                data,
+            )
+
+        effect_inside = _parse_effect_inside(d.pop("effect_inside"))
 
         verdicts = []
         _verdicts = d.pop("verdicts")
@@ -158,6 +260,8 @@ class ServedGuardrail:
             rule=rule,
             tokens=tokens,
             promoted_at=promoted_at,
+            unreviewed=unreviewed,
+            effect_inside=effect_inside,
             verdicts=verdicts,
             conflict=conflict,
         )

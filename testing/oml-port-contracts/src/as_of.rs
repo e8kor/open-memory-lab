@@ -171,10 +171,23 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
         kind: MemoryKind,
         body: &str,
     ) -> Uuid {
+        self.hold_by(&self.writer, node, claim_key, kind, body)
+            .await
+    }
+
+    /// One claim `claim_key` of `kind` on `node` by `key`, left held.
+    pub async fn hold_by(
+        &self,
+        key: &IssuedKey,
+        node: Uuid,
+        claim_key: &str,
+        kind: MemoryKind,
+        body: &str,
+    ) -> Uuid {
         let n = self.idem.fetch_add(1, Ordering::Relaxed);
         self.app
             .submit_memory(
-                self.writer.value.as_str(),
+                key.value.as_str(),
                 &SubmitRequest {
                     origin: None,
                     on_similar: Default::default(),
@@ -272,16 +285,31 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
         as_of: Option<&EventTime>,
         held: bool,
     ) -> Result<oml_app::types::RecallResult, AppError> {
+        self.recall_at(key, self.home, query, search, as_of, Some(held))
+            .await
+    }
+
+    /// A recall of `query` at `node` by `key`, at `as_of`, sending
+    /// `include_unreviewed` as given.
+    pub async fn recall_at(
+        &self,
+        key: &IssuedKey,
+        node: Uuid,
+        query: &str,
+        search: Pipeline,
+        as_of: Option<&EventTime>,
+        held: Option<bool>,
+    ) -> Result<oml_app::types::RecallResult, AppError> {
         self.app
             .recall(
                 key.value.as_str(),
                 &RecallRequest {
                     query: query.to_owned(),
                     k: 10,
-                    workspace: Some(self.home.into()),
+                    workspace: Some(node.into()),
                     kinds: Vec::new(),
                     include_text: true,
-                    include_unreviewed: Some(held),
+                    include_unreviewed: held,
                     max_tokens: None,
                     search: Some(search.as_str().to_owned()),
                     match_mode: MatchMode::Any,
@@ -722,6 +750,150 @@ pub async fn inside_an_in_progress_scope_held_rows_at_an_instant_follow_todays_r
     assert_eq!(listed, one(early), "the scoped listing at t1");
 }
 
+/// A read scoped at an ancestor of an in-progress root serves the root's
+/// held rows, every author's, beside the reader's own held rows on the
+/// ancestor's other nodes, and never another author's held row outside the
+/// root; a read at a sibling serves nothing of the root; at an instant, the
+/// rows recorded by it (ADR-0080 d16, amending ADR-0030 d2, d3, d4). The
+/// store takes the two node sets apart, the own held rows' and every
+/// author's, in every statement.
+pub async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_subtree_beside_its_own_held_rows<
+    S: JournalStore + Clone,
+>(
+    store: S,
+    searches: &[&str],
+) {
+    let w = AsOfWorld::new(store, searches).await;
+    let child = |name: &'static str| {
+        let w = &w;
+        async move {
+            w.app
+                .create_workspace(w.admin.as_str(), &fresh(name), Some(w.home.into()), None)
+                .await
+                .expect("create a workspace")
+                .workspace
+                .workspace_id
+        }
+    };
+    let root = child("wip").await;
+    let sibling = child("sib").await;
+    w.app
+        .set_workspace_mode(
+            w.reviewer.value.as_str(),
+            root.into(),
+            WorkspaceMode::InProgress,
+        )
+        .await
+        .expect("mark the child in progress");
+    let second = issue(
+        &w.app,
+        &w.admin,
+        Role::Writer,
+        UsedBy::Agent,
+        vec![grant(w.home, Role::Writer), grant(w.home, Role::Reader)],
+    )
+    .await;
+    let inside = w
+        .hold_kind(root, "wip-a", MemoryKind::Memory, "a ledger draft inside")
+        .await;
+    let own = w
+        .hold_by(
+            &second,
+            w.home,
+            "draft-b",
+            MemoryKind::Memory,
+            "a ledger draft at home",
+        )
+        .await;
+    let outside = w
+        .hold_kind(
+            w.home,
+            "draft-c",
+            MemoryKind::Memory,
+            "a ledger draft by another",
+        )
+        .await;
+    let approved = w.promote(root, "wip-d", "a ledger draft approved").await;
+    let t1 = w.instant();
+    let late = w
+        .hold_kind(root, "wip-e", MemoryKind::Memory, "a ledger draft late")
+        .await;
+    // A held version of an instruction kind is listed as every kind is,
+    // and never a recall hit (ADR-0080 d16).
+    let steering = w
+        .hold_kind(
+            root,
+            "wip-f",
+            MemoryKind::Steering,
+            "prefer the ledger pool",
+        )
+        .await;
+    let at_sibling = w.reader_of(sibling).await;
+    let set = |ids: &[Uuid]| ids.iter().copied().collect::<BTreeSet<Uuid>>();
+    for &search in &w.searches {
+        let hits = |key, node, as_of, held| {
+            let w = &w;
+            async move {
+                w.recall_at(key, node, "ledger draft", search, as_of, held)
+                    .await
+                    .expect("recall")
+                    .hits
+                    .iter()
+                    .map(|h| (h.served.memory.memory_id, h.served.memory.status))
+                    .collect::<Vec<_>>()
+            }
+        };
+        let ids = |hits: &[(Uuid, oml_app::domain::MemoryStatus)]| {
+            hits.iter().map(|h| h.0).collect::<BTreeSet<Uuid>>()
+        };
+        let by_default = hits(&second, w.home, None, None).await;
+        assert_eq!(
+            ids(&by_default),
+            set(&[inside, own, approved, late]),
+            "{search}: by default at the ancestor, the root's rows and the key's own, never {outside}"
+        );
+        assert!(
+            by_default.iter().all(|(id, status)| (*id == approved)
+                == (*status == oml_app::domain::MemoryStatus::Promoted)),
+            "{search}: every held row served as held"
+        );
+        assert_eq!(
+            ids(&hits(&second, w.home, None, Some(false)).await),
+            one(approved),
+            "{search}: false narrows to the promoted rows"
+        );
+        assert_eq!(
+            ids(&hits(&w.reader, w.home, None, None).await),
+            set(&[inside, approved, late]),
+            "{search}: a reader of the ancestor alone"
+        );
+        assert!(
+            hits(&at_sibling, sibling, None, Some(true))
+                .await
+                .is_empty(),
+            "{search}: a sibling reads nothing of the root"
+        );
+        let then = ids(&hits(&second, w.home, Some(&t1), Some(true)).await);
+        assert_eq!(
+            then,
+            set(&[inside, own, approved]),
+            "{search}: at t1, the rows recorded by then"
+        );
+        w.assert_gettable_today(&second, &then).await;
+    }
+    let listed: BTreeSet<Uuid> = w
+        .list(&w.reader, None, None, false)
+        .await
+        .expect("list")
+        .into_iter()
+        .collect();
+    assert_eq!(
+        listed,
+        set(&[inside, approved, late, steering]),
+        "the scoped listing at the ancestor, every held kind"
+    );
+}
+
 /// `an_as_of_after_the_leads_clock_is_refused`, and the arguments `as_of`
 /// does not combine with, each refused naming its field.
 pub async fn an_as_of_after_the_leads_clock_is_refused<S: JournalStore + Clone>(
@@ -796,5 +968,10 @@ where
     held_rows_at_an_instant_follow_todays_rules(make().await, searches).await;
     inside_an_in_progress_scope_held_rows_at_an_instant_follow_todays_rules(make().await, searches)
         .await;
+    a_read_at_an_ancestor_serves_a_descendant_in_progress_subtree_beside_its_own_held_rows(
+        make().await,
+        searches,
+    )
+    .await;
     an_as_of_after_the_leads_clock_is_refused(make().await, searches).await;
 }

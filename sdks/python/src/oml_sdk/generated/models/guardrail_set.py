@@ -29,8 +29,8 @@ class GuardrailSet:
                 (ADR-0037 d4; since v0.5.1).
             set_digest (str): Opaque; a client only compares it.
             over_cap (bool): More than twelve apply; the set is still served whole.
-            guardrails (list[ServedGuardrail]): Ordered by severity, depth from the root, promoted_at and artifact_id; never
-                by a query.
+            guardrails (list[ServedGuardrail]): Ordered by severity, depth from the root, promoted_at and artifact_id, a
+                held version after the promoted rows of its severity and depth; never by a query.
             own_held (list[GuardrailSetOwnHeldItem]): The caller's own held guardrails in the chain, by key and version,
                 never by text.
     """

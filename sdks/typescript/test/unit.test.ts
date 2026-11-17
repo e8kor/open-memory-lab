@@ -290,6 +290,19 @@ test("reject sends its reason and serve_id", async () => {
   });
 });
 
+test("withdraw posts the reason under an idempotency key", async () => {
+  const result = { artifact_id: "art_1", state: "withdrawn", at: "2026-11-17T18:00:00Z", journal_seq: 7 };
+  const { requests, fetcher } = recorder(200, result);
+  const written = await client(fetcher).withdraw("art_1", { reason: "written by mistake" });
+  assert.deepEqual(
+    requests.map((r) => [r.method, new URL(r.url).pathname]),
+    [["POST", "/v1/memories/art_1/withdraw"]],
+  );
+  assert.deepEqual(await requests[0]?.json(), { reason: "written by mistake" });
+  assert.equal(requests[0]?.headers.get("idempotency-key"), written.idempotencyKey);
+  assert.equal(written.value.state, "withdrawn");
+});
+
 test("a refusal raises the envelope's code and details", async () => {
   const envelope = {
     error: {
@@ -403,7 +416,7 @@ test("the generated SDK carries no operation the server does not route", () => {
     readFileSync(new URL("../../../docs/api/openapi.yaml", import.meta.url), "utf8"),
   );
   assert.ok(declared.has("GET /v2/whoami"));
-  assert.equal(declared.size, 83);
+  assert.equal(declared.size, 84);
   const generated = generatedOperations(
     readFileSync(new URL("../src/generated/schema.ts", import.meta.url), "utf8"),
   );
