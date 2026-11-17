@@ -99,7 +99,10 @@ pub struct QueueRow {
     pub path: String,
     /// The live person's reviewer keys whose effective access confers
     /// reviewer on the workspace, so may approve its held instructions
-    /// (ADR-0080 d16; #435). A count, never a key.
+    /// (ADR-0080 d16; #435). A count, never a key. It overcounts: a key
+    /// whose person also wrote the held rows is counted, though outside that
+    /// person's own root it cannot approve them (`review.author_in_lineage`,
+    /// same_person; ADR-0082 d7).
     pub person_reviewers: u64,
 }
 

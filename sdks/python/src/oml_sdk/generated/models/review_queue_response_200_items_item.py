@@ -21,7 +21,9 @@ class ReviewQueueResponse200ItemsItem:
         held_instructions (int): The held steering, guardrail and other instruction-class versions among held; only a
             person's reviewer key approves one (ADR-0080 d16).
         person_reviewers (int): The live person's reviewer keys whose effective access confers reviewer on the
-            workspace. A count, never a key.
+            workspace. A count, never a key. It overcounts: a key whose person also wrote the held instructions is counted,
+            though outside that person's own root it cannot approve them (review.author_in_lineage, same_person; ADR-0082
+            d7), so a non-zero count does not prove that someone can approve each one.
         oldest_at (datetime.datetime):
     """
 

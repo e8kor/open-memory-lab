@@ -2242,7 +2242,7 @@ pub struct ScanBacklog {
     /// person's, or that carry no approval: approved before #391 made an
     /// instruction a person's to approve (ADR-0080 d16; #436). Read off the
     /// row's `approver_used_by`, so a person's key that had a crew is not
-    /// counted.
+    /// counted (#460).
     pub instructions_without_person_approval: u64,
 }
 

@@ -525,7 +525,7 @@ export interface paths {
         };
         /**
          * The review queue's depth and oldest held row per workspace, tenant-wide; no content.
-         * @description Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending ADR-0026 d15). One item per workspace holding a held row: its id, path, held count, the held instruction-class versions among them (held_instructions), the live person's reviewer keys whose grants and denials confer reviewer there (person_reviewers: reviewer keys used_by person with no crew and no profile, not revoked or expired, the only keys that approve an instruction; ADR-0080 d16, #435) and the oldest held row's time, by path. No memory id, text, author or key. Journals nothing. Since v0.6.4; the two counts since v0.8.2.
+         * @description Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending ADR-0026 d15). One item per workspace holding a held row: its id, path, held count, the held instruction-class versions among them (held_instructions), the live person's reviewer keys whose grants and denials confer reviewer there (person_reviewers: reviewer keys used_by person with no crew and no profile, not revoked or expired, the only keys that approve an instruction; ADR-0080 d16, #435; a key whose person wrote the held instructions is counted though outside that person's own root it cannot approve them) and the oldest held row's time, by path. No memory id, text, author or key. Journals nothing. Since v0.6.4; the two counts since v0.8.2.
          */
         get: operations["reviewQueue"];
         put?: never;
@@ -5219,7 +5219,7 @@ export interface operations {
                             held: number;
                             /** @description The held steering, guardrail and other instruction-class versions among held; only a person's reviewer key approves one (ADR-0080 d16). */
                             held_instructions: number;
-                            /** @description The live person's reviewer keys whose effective access confers reviewer on the workspace. A count, never a key. */
+                            /** @description The live person's reviewer keys whose effective access confers reviewer on the workspace. A count, never a key. It overcounts: a key whose person also wrote the held instructions is counted, though outside that person's own root it cannot approve them (review.author_in_lineage, same_person; ADR-0082 d7), so a non-zero count does not prove that someone can approve each one. */
                             person_reviewers: number;
                             /** Format: date-time */
                             oldest_at: string;
