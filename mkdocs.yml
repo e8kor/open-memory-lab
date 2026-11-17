@@ -140,6 +140,7 @@ nav:
       - Event catalog: data/event-catalog.md
       - Chain format: data/chain-format.md
       - Lake tables: data/delta-tables.md
+      - Bundle format: data/bundle-format.md
       - PostgreSQL schema: data/postgres-schema.md
       - Glossary: reference/glossary.md
       - Design records: reference/design-records.md

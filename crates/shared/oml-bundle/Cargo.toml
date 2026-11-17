@@ -1,0 +1,33 @@
+[package]
+name = "oml-bundle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The workspace bundle format oml-bundle/1 (ADR-0084): layout, manifest, signature, age encryption, verification and the import plan."
+
+# A leaf: the server's export and import routes and the CLI's
+# `oml workspaces export|import` both link it, so the two sides verify one
+# format with one set of refusal codes (ADR-0084 d7). It links no domain crate
+# (the CLI links none, ADR-0006 d6), reads no key file and no clock, and
+# writes nothing to a log.
+[dependencies]
+age = { workspace = true }
+ed25519-dalek = { workspace = true }
+hex = { workspace = true }
+hmac = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tar = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+bech32 = { workspace = true }
+
+[lints]
+workspace = true
+
+[lib]
+name = "oml_bundle"
+path = "src/lib.rs"
