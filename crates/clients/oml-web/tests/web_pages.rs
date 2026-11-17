@@ -4314,6 +4314,17 @@ async fn a_curated_claim_is_held_until_a_key_outside_its_lineage_approves_and_th
     assert_eq!(curated.state.as_str(), "held", "held until reviewed");
     assert_eq!(curated.workspace_path, "universe");
     assert_eq!(curated.memory.author_key_id, curate.key_id);
+    // boss-review acts for boss, whose key wrote the claim outside boss's
+    // root, so it is served nothing of it (ADR-0082 d7).
+    let (status, _, page) = act_and_follow(
+        &rig,
+        &admin,
+        "/web/admin/review",
+        &[("action", "review_next")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(!page.contains("Keys rotate quarterly."), "{page}");
     // carol-review is outside the curated claim's lineage and its person, so it is served.
     let (_, _, page) = act_and_follow(
         &rig,

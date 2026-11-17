@@ -2860,7 +2860,10 @@ async fn team_with_alices_reviewer_and_bobs_writer(
     (review, writer, bob)
 }
 
-fn held_request(limit: usize, needs: Option<oml_app::types::ReviewLane>) -> oml_app::types::HeldListingRequest {
+fn held_request(
+    limit: usize,
+    needs: Option<oml_app::types::ReviewLane>,
+) -> oml_app::types::HeldListingRequest {
     oml_app::types::HeldListingRequest {
         workspace: None,
         author_key: None,
@@ -2884,7 +2887,11 @@ async fn a_held_page_skips_the_reviewers_own_persons_rows_and_serves_the_next_el
         written(
             &app,
             &alice.value,
-            &submit(&format!("a{n}"), &format!("Alice's note {n}."), Some("team")),
+            &submit(
+                &format!("a{n}"),
+                &format!("Alice's note {n}."),
+                Some("team"),
+            ),
         )
         .await;
     }
@@ -2903,7 +2910,11 @@ async fn a_held_page_skips_the_reviewers_own_persons_rows_and_serves_the_next_el
         .review_held(Bearer::Session(&review), &held_request(2, None))
         .await
         .expect("the listing");
-    let listed: Vec<Uuid> = page.items.iter().map(|i| i.served.memory.memory_id).collect();
+    let listed: Vec<Uuid> = page
+        .items
+        .iter()
+        .map(|i| i.served.memory.memory_id)
+        .collect();
     assert_eq!(listed, bobs, "bob's rows fill the page");
     assert!(page.next_cursor.is_none(), "nothing past bob's rows");
 }
@@ -2946,7 +2957,12 @@ async fn the_bulk_confirmation_names_no_row_the_reviewers_own_person_wrote_outsi
     let boot = bootstrap(&app).await;
     let admin = boot.admin_key.value.as_str();
     let (review, alice, bob) = team_with_alices_reviewer_and_bobs_writer(&app, admin).await;
-    let mine = written(&app, &alice.value, &submit("n1", "Alice's note.", Some("team"))).await;
+    let mine = written(
+        &app,
+        &alice.value,
+        &submit("n1", "Alice's note.", Some("team")),
+    )
+    .await;
     let theirs = written(&app, &bob.value, &submit("n2", "Bob's note.", Some("team"))).await;
     let named = app
         .review_named(Bearer::Session(&review), &[mine, theirs])
