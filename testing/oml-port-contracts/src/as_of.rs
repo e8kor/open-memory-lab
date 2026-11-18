@@ -240,6 +240,19 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
         body: &str,
         retirement: bool,
     ) -> Uuid {
+        self.supersede_from(target, expected, body, retirement, None)
+            .await
+    }
+
+    /// [`Self::supersede`], the successor declaring `valid_from`.
+    pub async fn supersede_from(
+        &self,
+        target: Uuid,
+        expected: u32,
+        body: &str,
+        retirement: bool,
+        valid_from: Option<&str>,
+    ) -> Uuid {
         let n = self.idem.fetch_add(1, Ordering::Relaxed);
         let id = self
             .app
@@ -259,7 +272,7 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
                     severity: None,
                     rule: None,
                     kind_fields: None,
-                    valid_from: None,
+                    valid_from: valid_from.map(ToOwned::to_owned),
                     valid_until: None,
                     anchor: None,
                     format: None,
@@ -608,6 +621,210 @@ pub async fn an_as_of_read_never_serves_a_version_erased_today<S, E, Fut>(
             .expect("list")
             .is_empty()
     );
+}
+
+/// `an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_it`
+/// (ADR-0059 d22, the operator's decision of 2026-11-17): a demoted
+/// version is served by no read at any instant, and the instants it was
+/// the tip serve the latest earlier promoted, non-demoted version; a
+/// demoted version below the tip leaves the instants it was the tip with
+/// none.
+pub async fn an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_it<
+    S: JournalStore + Clone,
+>(
+    store: S,
+    searches: &[&str],
+) {
+    let w = AsOfWorld::new(store, searches).await;
+    let v1 = w
+        .promote(w.home, "runbook", "the runbook lives in the wiki")
+        .await;
+    let t1 = w.instant();
+    let v2 = w
+        .supersede(v1, 1, "the runbook lives in the repository", false)
+        .await;
+    let t2 = w.instant();
+    let v3 = w
+        .supersede(v2, 2, "the runbook lives in the handbook", false)
+        .await;
+    let t3 = w.instant();
+    // A version below the tip goes: the instants it was the tip serve v1,
+    // and today's tip stays (the probe, not the short cut, answers t2).
+    w.app
+        .demote_version(w.admin.as_str(), v2)
+        .await
+        .expect("demote v2, below the tip");
+    for &search in &w.searches {
+        let at = |t| w.hits(&w.reader, "runbook lives", search, t, false);
+        assert_eq!(
+            at(Some(&t1)).await,
+            one(v1),
+            "{search}: v1 was the tip at t1"
+        );
+        assert_eq!(
+            at(Some(&t2)).await,
+            one(v1),
+            "{search}: v1 stands in for v2 at t2"
+        );
+        assert_eq!(
+            at(Some(&t3)).await,
+            one(v3),
+            "{search}: v3 was the tip at t3"
+        );
+        assert_eq!(at(None).await, one(v3), "{search}: v3 is today's tip");
+    }
+    assert_eq!(
+        w.list(&w.reader, Some("runbook"), Some(&t2), false)
+            .await
+            .expect("list"),
+        vec![v1]
+    );
+    assert!(w.get(&w.reader, v2, Some(&t2)).await.is_err());
+    assert!(w.get(&w.reader, v2, None).await.is_err());
+    // The tip goes: v1, the greatest promoted version below it that is not
+    // demoted, is the tip again and stands in at every instant.
+    let demotion = w
+        .app
+        .demote_version(w.admin.as_str(), v3)
+        .await
+        .expect("demote the tip");
+    assert_eq!(demotion.restored.map(|r| r.artifact_id), Some(v1));
+    for &search in &w.searches {
+        let at = |t| w.hits(&w.reader, "runbook lives", search, t, false);
+        assert_eq!(
+            at(Some(&t3)).await,
+            one(v1),
+            "{search}: v1 stands in for v3 at t3"
+        );
+        assert_eq!(at(Some(&t2)).await, one(v1), "{search}: and for v2 at t2");
+        assert_eq!(at(None).await, one(v1), "{search}: v1 is today's tip");
+    }
+    w.app
+        .demote_version(w.admin.as_str(), v1)
+        .await
+        .expect("demote the last");
+    for &search in &w.searches {
+        let at = |t| w.hits(&w.reader, "runbook lives", search, t, false);
+        for t in [&t1, &t2, &t3] {
+            assert!(at(Some(t)).await.is_empty(), "{search}: nothing stands in");
+        }
+    }
+    assert!(
+        w.list(&w.reader, Some("runbook"), Some(&t1), false)
+            .await
+            .expect("list")
+            .is_empty()
+    );
+}
+
+/// A demotion restores the end the restored version had before the
+/// supersession it undoes (ADR-0089 d16, note of 2026-11-18): `v1` declares
+/// no dates, `v2` supersedes it with a `valid_from` in the past, so its
+/// ratification ends `v1` there (ADR-0059 d4); demoting `v2` leaves `v1`
+/// open again, served today and at an instant before the demotion.
+pub async fn a_demotion_restores_the_end_the_version_had_before_its_supersession<
+    S: JournalStore + Clone,
+>(
+    store: S,
+    searches: &[&str],
+) {
+    let w = AsOfWorld::new(store.clone(), searches).await;
+    let v1 = w
+        .promote(w.home, "lease", "the lease renews every month")
+        .await;
+    let v2 = w
+        .supersede_from(
+            v1,
+            1,
+            "the lease renews every quarter",
+            false,
+            Some("2020-01-01"),
+        )
+        .await;
+    for &search in &w.searches {
+        assert_eq!(
+            w.hits(&w.reader, "lease renews", search, None, false).await,
+            one(v2),
+            "{search}: v2 is today's tip and v1 ended in 2020"
+        );
+    }
+    let t = w.instant();
+    let demotion = w
+        .app
+        .demote_version(w.admin.as_str(), v2)
+        .await
+        .expect("demote the tip");
+    assert_eq!(demotion.restored.map(|r| r.artifact_id), Some(v1));
+    for &search in &w.searches {
+        let at = |t| w.hits(&w.reader, "lease renews", search, t, false);
+        assert_eq!(at(None).await, one(v1), "{search}: v1 serves today");
+        assert_eq!(
+            at(Some(&t)).await,
+            one(v1),
+            "{search}: and stands in for v2 before the demotion"
+        );
+    }
+    assert_eq!(
+        w.list(&w.reader, Some("lease"), None, false)
+            .await
+            .expect("list"),
+        vec![v1]
+    );
+    assert_eq!(
+        w.list(&w.reader, Some("lease"), Some(&t), false)
+            .await
+            .expect("list"),
+        vec![v1]
+    );
+    let restored = store.memory(w.tenant, v1).await.expect("read").expect("v1");
+    assert!(restored.valid.until.is_none(), "v1's end is open again");
+}
+
+/// A demotion of a version below the tip restores the end that version's
+/// ratification gave the version it replaced (ADR-0089 d16, note of
+/// 2026-11-18): `v2` supersedes the open `v1` with a `valid_from` in the
+/// past, `v3` supersedes `v2`, and demoting `v2` leaves `v1` open again, so
+/// an as-of read in `v2`'s tenure serves `v1` in its place.
+pub async fn demoting_a_version_below_the_tip_restores_the_end_its_ratification_gave_the_version_it_replaced<
+    S: JournalStore + Clone,
+>(
+    store: S,
+    searches: &[&str],
+) {
+    let w = AsOfWorld::new(store.clone(), searches).await;
+    let v1 = w
+        .promote(w.home, "rota", "the rota rotates every week")
+        .await;
+    let v2 = w
+        .supersede_from(
+            v1,
+            1,
+            "the rota rotates every fortnight",
+            false,
+            Some("2020-01-01"),
+        )
+        .await;
+    let t2 = w.instant();
+    let v3 = w
+        .supersede(v2, 2, "the rota rotates every month", false)
+        .await;
+    let demotion = w
+        .app
+        .demote_version(w.admin.as_str(), v2)
+        .await
+        .expect("demote v2, below the tip");
+    assert_eq!(demotion.restored, None, "the tip does not move");
+    for &search in &w.searches {
+        let at = |t| w.hits(&w.reader, "rota rotates", search, t, false);
+        assert_eq!(
+            at(Some(&t2)).await,
+            one(v1),
+            "{search}: v1 stands in for v2 in v2's tenure"
+        );
+        assert_eq!(at(None).await, one(v3), "{search}: v3 is today's tip");
+    }
+    let replaced = store.memory(w.tenant, v1).await.expect("read").expect("v1");
+    assert!(replaced.valid.until.is_none(), "v1's end is open again");
 }
 
 /// `a_retired_claim_serves_its_earlier_tip_before_the_retirement_and_nothing_after`.
@@ -979,4 +1196,13 @@ where
     )
     .await;
     an_as_of_after_the_leads_clock_is_refused(make().await, searches).await;
+    an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_it(make().await, searches)
+        .await;
+    a_demotion_restores_the_end_the_version_had_before_its_supersession(make().await, searches)
+        .await;
+    demoting_a_version_below_the_tip_restores_the_end_its_ratification_gave_the_version_it_replaced(
+        make().await,
+        searches,
+    )
+    .await;
 }

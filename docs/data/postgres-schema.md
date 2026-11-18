@@ -27,14 +27,14 @@ Three roles reach the database. The owner role owns every table and runs the mig
 | [`account_meters`](#account_meters) | owns | SELECT, INSERT, UPDATE |  |
 | [`account_profiles`](#account_profiles) | owns | SELECT, INSERT, UPDATE, DELETE |  |
 | [`api_keys`](#api_keys) | owns | SELECT, INSERT, UPDATE |  |
-| [`artifact_keys`](#artifact_keys) | owns |  | SELECT, INSERT, UPDATE |
+| [`artifact_keys`](#artifact_keys) | owns | SELECT (artifact_id, destroyed_at, tenant_id), UPDATE (destroyed_at, wrapped_dek) | SELECT, INSERT, UPDATE |
 | [`brief_edges`](#brief_edges) | owns | SELECT, INSERT, UPDATE | SELECT |
 | [`claim_edges`](#claim_edges) | owns | SELECT, INSERT, UPDATE | SELECT |
 | [`connect_codes`](#connect_codes) | owns | SELECT, INSERT, UPDATE |  |
 | [`crews`](#crews) | owns | SELECT, INSERT, UPDATE |  |
 | [`document_passages`](#document_passages) | owns | SELECT, INSERT, DELETE |  |
 | [`grants`](#grants) | owns | SELECT, INSERT |  |
-| [`idempotency`](#idempotency) | owns | SELECT, INSERT, DELETE |  |
+| [`idempotency`](#idempotency) | owns | SELECT, INSERT, UPDATE (committed_at, response), DELETE |  |
 | [`journal`](#journal) | owns | SELECT, INSERT | SELECT |
 | [`journal_chain_head`](#journal_chain_head) | owns | SELECT, INSERT, UPDATE |  |
 | [`key_denials`](#key_denials) | owns | SELECT, INSERT, UPDATE |  |
@@ -258,7 +258,7 @@ Grants: serving: SELECT, INSERT, UPDATE.
 
 ### artifact_keys
 
-Per-version data keys sealing lake bodies, wrapped by the lake KEK; erase nulls the wrapped key.
+Per-version data keys sealing lake bodies, wrapped by the lake KEK; erase nulls the wrapped key. The serving role holds only a column grant: SELECT on tenant_id, artifact_id and destroyed_at and UPDATE on wrapped_dek and destroyed_at, so it destroys a key in the erase transaction and reads none (0056).
 
 Kind: table.
 
@@ -286,7 +286,7 @@ Row-level security: enabled and forced, so the owner is bound too.
     - using `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
     - with check `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
 
-Grants: lake writer: SELECT, INSERT, UPDATE.
+Grants: serving: SELECT (artifact_id, destroyed_at, tenant_id), UPDATE (destroyed_at, wrapped_dek); lake writer: SELECT, INSERT, UPDATE.
 
 ### brief_edges
 
@@ -539,7 +539,7 @@ Row-level security: enabled and forced, so the owner is bound too.
     - using `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
     - with check `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
 
-Grants: serving: SELECT, INSERT, DELETE.
+Grants: serving: SELECT, INSERT, UPDATE (committed_at, response), DELETE.
 
 ### journal
 
@@ -740,6 +740,9 @@ Kind: partitioned table, `PARTITION BY LIST (tenant_id)`.
 | `skill_description` | `text` | null |  |  |
 | `document_title` | `text` | null |  |  |
 | `test_shape` | `text` | null |  |  |
+| `valid_until_ratified` | `boolean` | not null | `false` | Whether valid_until is the end a ratified supersession gave the version; a demotion that restores it as the tip writes valid_until_before back. |
+| `valid_until_before` | `text` | null |  | The end the version had before a ratified supersession replaced it; NULL for an open end. Read only while valid_until_ratified is true (0058). |
+| `valid_until_before_us` | `bigint` | null |  | valid_until_before as Unix microseconds, as valid_until_us is valid_until (0058). |
 
 Checks:
 

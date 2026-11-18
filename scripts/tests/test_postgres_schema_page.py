@@ -21,7 +21,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import gen_postgres_schema as G  # noqa: E402
 
 
-def table(name, kind="r", comment=None, partition_of=None, bound=None, grants=(), policies=(), checks=()):
+def table(name, kind="r", comment=None, partition_of=None, bound=None, grants=(), policies=(), checks=(),
+          column_grants=()):
     return {
         "name": name, "kind": kind, "owner": "owner", "comment": comment,
         "rls": kind in ("r", "p"), "force_rls": kind in ("r", "p"),
@@ -37,6 +38,8 @@ def table(name, kind="r", comment=None, partition_of=None, bound=None, grants=()
         + ([{"name": f"{name}_pkey", "type": "p", "def": "PRIMARY KEY (tenant_id)"}] if kind in ("r", "p") else []),
         "policies": list(policies),
         "grants": [{"grantee": g, "privilege": p, "grantable": False} for g, p in grants],
+        "column_grants": [{"column": c, "grantee": g, "privilege": p, "grantable": False}
+                          for c, g, p in column_grants],
     }
 
 
@@ -58,6 +61,10 @@ def snapshot():
             table("memories_t_00", partition_of="memories", bound="FOR VALUES IN ('00')"),
             table("outbox_seq_seq", kind="S", grants=[("serving", "USAGE"), ("lake writer", "SELECT")]),
             table("_sqlx_migrations"),
+            table("artifact_keys", comment="Keys.", policies=[POLICY],
+                  column_grants=[("tenant_id", "serving", "SELECT"), ("note", "serving", "UPDATE"),
+                                 ("note", "serving", "SELECT"), ("tenant_id", "lake writer", "SELECT")],
+                  grants=[("lake writer", "UPDATE")]),
         ],
     }
 
@@ -92,6 +99,18 @@ class Rendering(unittest.TestCase):
         self.assertIn("| [`tenants`](#tenants) | owns | SELECT, UPDATE | SELECT |", page)
         self.assertIn("Grants: serving: SELECT, UPDATE; lake writer: SELECT.", page)
         self.assertIn("No table or sequence grants anything to `PUBLIC`.", page)
+
+    def test_a_column_grant_is_listed_with_its_columns_and_a_table_wide_grant_without(self):
+        page = G.render(snapshot())
+        self.assertIn("Grants: serving: SELECT (note, tenant_id), UPDATE (note); "
+                      "lake writer: SELECT (tenant_id), UPDATE.", page)
+        self.assertIn("| [`artifact_keys`](#artifact_keys) | owns | SELECT (note, tenant_id), UPDATE (note) "
+                      "| SELECT (tenant_id), UPDATE |", page)
+
+    def test_a_column_grant_to_a_role_the_run_did_not_mint_stops_the_run(self):
+        raw = {"relations": [table("tenants", column_grants=[("note", "someone_else", "SELECT")])]}
+        with self.assertRaises(RuntimeError):
+            G.relabel(raw, {"owner": "owner"})
 
     def test_checks_policies_and_the_row_level_security_mode_are_written_out(self):
         page = G.render(snapshot())

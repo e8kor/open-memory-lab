@@ -109,78 +109,6 @@ paths:
         '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/memories/{artifact_id}/demote:
-    post:
-      tags: [claim-administration]
-      operationId: demoteClaim
-      summary: Journalled demotion; bytes are kept (R4).
-      description: 'Requires: admin key role.'
-      parameters:
-        - { $ref: 'openapi.yaml#/components/parameters/ArtifactId' }
-        - { $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            example:
-              version: 2
-              reason: quote withdrawn by supplier
-            schema: { $ref: '#/components/schemas/DemoteRequest' }
-      responses:
-        '200':
-          description: Demoted.
-          headers:
-            X-Request-Id: { $ref: 'openapi.yaml#/components/headers/XRequestId' }
-          content:
-            application/json:
-              example:
-                journal_seq: 4311
-                event_id: evt_01JB2YS8TA1CW3EY5G7J9LN2Q4
-                dry_run: false
-              schema: { $ref: '#/components/schemas/ActResult' }
-        '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
-        default: { $ref: 'openapi.yaml#/components/responses/Error' }
-
-  /v2/memories/{artifact_id}/erase:
-    post:
-      tags: [claim-administration]
-      operationId: eraseClaim
-      summary: Journalled crypto-shred — erase event plus DEK destruction, scoped to body and attachment bytes.
-      description: 'Requires: admin key role. dry_run returns the erasure inventory per copy class. Attribution metadata survives — #146.'
-      parameters:
-        - { $ref: 'openapi.yaml#/components/parameters/ArtifactId' }
-        - { $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            example:
-              dry_run: true
-            schema: { $ref: '#/components/schemas/EraseRequest' }
-      responses:
-        '202':
-          description: Erase journalled, DEK destroyed (or the dry-run inventory).
-          headers:
-            X-Request-Id: { $ref: 'openapi.yaml#/components/headers/XRequestId' }
-          content:
-            application/json:
-              example:
-                journal_seq: null
-                event_id: null
-                dry_run: true
-                preview:
-                  copy_classes:
-                  - copy_class: postgres_body
-                    disposition: unreadable on DEK destruction
-                  - copy_class: attachment_objects
-                    count: 1
-                    disposition: unreadable on DEK destruction
-                  - copy_class: lake_derived
-                    disposition: unreadable on DEK destruction
-              schema: { $ref: '#/components/schemas/ActResult' }
-        '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
-        default: { $ref: 'openapi.yaml#/components/responses/Error' }
-
   /v2/claims/tip-override:
     post:
       tags: [claim-administration]
@@ -1319,18 +1247,6 @@ components:
         workspace_id: { $ref: 'openapi.yaml#/components/schemas/WorkspaceRef', description: 'Destination node, by id or name.' }
         re_key: { type: [string, 'null'], description: New claim_key when the move would collide at the destination. }
         dry_run: { type: boolean, default: false }
-
-    DemoteRequest:
-      type: object
-      required: [version, reason]
-      properties:
-        version: { type: integer }
-        reason: { type: string }
-
-    EraseRequest:
-      type: object
-      properties:
-        dry_run: { type: boolean, default: false, description: Returns the erasure inventory — every copy class and its disposition. }
 
     TipOverrideRequest:
       type: object
