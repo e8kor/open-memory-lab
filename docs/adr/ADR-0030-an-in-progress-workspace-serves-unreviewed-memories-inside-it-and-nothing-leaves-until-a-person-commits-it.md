@@ -95,8 +95,8 @@ Questions revision 1 left open are settled below at their recommended answers, e
 
     *Proposed amendment of 2026-11-18 (the operator's answer D4 to the lifecycle review, #429;
     proposed until the operator accepts this text) [operator batch].* An import may land held in
-    any open workspace (ADR-0084 d6, as amended by D4), so a new target no longer has to be in
-    progress. **Superseded:** the exception above. An import that creates its target creates it
+    any open or protected workspace, never a frozen one (ADR-0084 d6, as amended by D4), so a new
+    target no longer has to be in progress. **Superseded:** the exception above. An import that creates its target creates it
     `standard`, and only a person's reviewer key marks it in progress, as this decision says for
     every workspace; the one case in which a writer key set the mode ends. v0.8.2 built the
     exception (#426, I16); the build of ADR-0084's amendment removes it.
