@@ -242,7 +242,7 @@ fn bm25_over_reference<'a>(
     // however many of its passages hold the word; the mean length is the
     // search units' (ADR-0081 d4; the review's reading R6 amended).
     let versions = reference.len() as u64;
-    let held_by: Vec<BTreeSet<String>> = reference
+    let words_of: Vec<BTreeSet<String>> = reference
         .iter()
         .map(|m| units(m).iter().flat_map(|u| words(&u.text)).collect())
         .collect();
@@ -261,7 +261,7 @@ fn bm25_over_reference<'a>(
     };
     let df: Vec<u64> = terms
         .iter()
-        .map(|t| held_by.iter().filter(|w| w.contains(t)).count() as u64)
+        .map(|t| words_of.iter().filter(|w| w.contains(t)).count() as u64)
         .collect();
     let mut candidates: Vec<Candidate> = rows
         .flat_map(units)
