@@ -13981,6 +13981,105 @@ pub async fn a_document_repeating_a_word_in_4000_passages_moves_a_memorys_idf_by
     }
 }
 
+/// A document is recalled by no key it is not served to (ADR-0081 d4;
+/// ADR-0025 d4; ADR-0083 d13), in every retriever the store serves, the
+/// trigram, keyword-all and sparse lists included: a held document by its
+/// author's key alone, never by another key's own held scope, and a
+/// rejected or a withdrawn document by nobody.
+pub async fn a_held_rejected_or_withdrawn_document_is_recalled_by_no_key_it_is_not_served_to<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(426);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let author = Uuid::from_u128(0xE4);
+    let other = Uuid::from_u128(0xE6);
+    // Sparse lists read what the encoder wrote: queue from now on.
+    store
+        .sparse_backfill(tenant, 1_000)
+        .await
+        .expect("sparse on");
+    let doc = |id: u128, key: &str, word: &str| MemoryRecord {
+        kind: MemoryKind::Document,
+        claim_key: format!("doc/{key}"),
+        kind_fields: Some(Box::new(oml_app::types::KindFields::Document {
+            title: Some(key.to_owned()),
+        })),
+        format: Box::new(oml_app::types::FormatFields {
+            media_type: "text/markdown".to_owned(),
+            ..Default::default()
+        }),
+        ..held_memory(
+            tenant,
+            wa,
+            Uuid::from_u128(id),
+            "rita",
+            author,
+            &format!("# {key}\n\nIntro.\n\n## Detail\n\nThe {word} lives here.\n"),
+        )
+    };
+    let (held_id, rejected_id, withdrawn_id) = (
+        Uuid::from_u128(0xF81),
+        Uuid::from_u128(0xF82),
+        Uuid::from_u128(0xF83),
+    );
+    hold(&mut rig, store, doc(0xF81, "platypus-guide", "platypus"))
+        .await
+        .expect("held");
+    hold(&mut rig, store, doc(0xF82, "numbat-guide", "numbat"))
+        .await
+        .expect("held");
+    reject(&mut rig, store, rejected_id)
+        .await
+        .expect("rejected");
+    hold(&mut rig, store, doc(0xF83, "quoll-guide", "quoll"))
+        .await
+        .expect("held");
+    rig.commit(
+        store,
+        event_types::MEMORY_WITHDRAWN,
+        json!({ "artifact_id": withdrawn_id.to_string(), "reason": null }),
+        MetadataFold::MemoryWithdrawn {
+            memory_id: withdrawn_id,
+        },
+        None,
+    )
+    .await
+    .expect("withdrawn");
+    for kind in store.retrievers() {
+        if kind == RetrieverKind::Time {
+            continue;
+        }
+        for (query, id) in [
+            ("platypus", held_id),
+            ("numbat", rejected_id),
+            ("quoll", withdrawn_id),
+        ] {
+            for (scope, who) in [
+                (scope_of(wa, None), "no held scope"),
+                (scope_of(wa, Some(other)), "another key's held scope"),
+                (scope_of(wa, Some(author)), "the author's held scope"),
+            ] {
+                let found: Vec<Uuid> = run(store, tenant, kind, &scope, query, MatchMode::Any)
+                    .await
+                    .candidates
+                    .iter()
+                    .map(|c| c.memory_id)
+                    .collect();
+                let served = id == held_id && who == "the author's held scope";
+                assert_eq!(
+                    found.contains(&id),
+                    served,
+                    "{kind:?} {query:?} under {who}: {found:?}"
+                );
+            }
+        }
+    }
+}
+
 /// An erased or a demoted document's passages are never recalled: an
 /// erasure takes its passages and their postings with the body, and a
 /// demotion takes its passages out of every served list (ADR-0081 d3, d4;
@@ -14864,6 +14963,10 @@ where
     a_document_is_searched_by_its_passages_and_both_bm25_lists_agree(&new_store().await).await;
     an_erased_or_demoted_documents_passages_are_never_recalled(&new_store().await).await;
     a_document_takes_one_place_of_k_however_many_of_its_passages_match(&new_store().await).await;
+    a_held_rejected_or_withdrawn_document_is_recalled_by_no_key_it_is_not_served_to(
+        &new_store().await,
+    )
+    .await;
     a_document_repeating_a_word_in_4000_passages_moves_a_memorys_idf_by_one_version(
         &new_store().await,
     )

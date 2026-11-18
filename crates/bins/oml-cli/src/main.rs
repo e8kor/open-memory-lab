@@ -7180,7 +7180,10 @@ mod tests {
             "documents_uncut": 0,
         }});
         let lines = super::postings_doctor(None, Some(&clean));
-        assert!(!lines.iter().any(|l| l.contains("no passages")), "{lines:?}");
+        assert!(
+            !lines.iter().any(|l| l.contains("no passages")),
+            "{lines:?}"
+        );
     }
 
     use super::*;

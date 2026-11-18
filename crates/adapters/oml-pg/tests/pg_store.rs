@@ -8126,7 +8126,7 @@ async fn counts_from_postings(
         .await
         .expect("tenant");
     let terms: Vec<(Uuid, i16, i64, i32)> = sqlx::query_as(
-        "SELECT workspace_id, memory_kind, token_id, count(DISTINCT (memory_id, ordinal))::int4 \
+        "SELECT workspace_id, memory_kind, token_id, count(DISTINCT memory_id)::int4 \
            FROM search_postings WHERE tenant_id = $1 AND kind = 1 AND state = 1 \
           GROUP BY 1, 2, 3",
     )
@@ -8135,7 +8135,7 @@ async fn counts_from_postings(
     .await
     .expect("terms");
     let areas: Vec<(Uuid, i16, i32, i64)> = sqlx::query_as(
-        "SELECT m.workspace_id, oml_search_memory_kind(m.kind), count(*)::int4, \
+        "SELECT m.workspace_id, oml_search_memory_kind(m.kind), count(DISTINCT m.id)::int4, \
                 sum(u.search_len)::int8 \
            FROM memories m \
           CROSS JOIN LATERAL oml_search_units(m.tenant_id, m.id, m.kind, m.search_vector, \
@@ -8525,13 +8525,14 @@ async fn a_demoted_retired_or_erased_version_leaves_no_similar_key() {
 }
 
 /// A document version's passages are written with it and are its search
-/// units: each passage's postings carry its ordinal, the counts take one
-/// unit per passage and agree with the postings, the health check reads
-/// clean, the owner's refill leaves the counts as the fold kept them, and
-/// an erasure takes the passages with the body (ADR-0081 d3, d4; R6;
-/// migration 0059).
+/// units: each passage's postings carry its ordinal, the counts take the
+/// version once and its units' lengths and agree with the postings, the
+/// health check reads clean, and the owner's refill leaves the counts as the
+/// fold kept them (ADR-0081 d3, d4; R6 amended; migration 0059). Its
+/// erasure is
+/// `a_documents_passages_postings_words_and_sparse_entries_go_with_its_erasure`.
 #[tokio::test]
-async fn a_document_versions_passages_are_its_search_units_from_write_to_erasure() {
+async fn a_document_versions_passages_are_its_search_units_and_the_refill_keeps_their_counts() {
     if !splits().await {
         return;
     }
@@ -8634,36 +8635,6 @@ async fn a_document_versions_passages_are_its_search_units_from_write_to_erasure
         counts_from_postings(&store, tenant).await,
         "the refill keeps the counts the fold kept"
     );
-    as_owner(
-        &store,
-        tenant,
-        "UPDATE memories SET status = 'erased' WHERE tenant_id = $1 AND id = $2",
-        doc,
-    )
-    .await;
-    let mut tx = owner.begin().await.expect("begin");
-    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
-        .bind(tenant.to_string())
-        .execute(&mut *tx)
-        .await
-        .expect("tenant");
-    let left: (i64, i64) = sqlx::query_as(
-        "SELECT (SELECT count(*) FROM document_passages WHERE tenant_id = $1 AND memory_id = $2), \
-                (SELECT count(*) FROM search_postings WHERE tenant_id = $1 AND memory_id = $2)",
-    )
-    .bind(tenant)
-    .bind(doc)
-    .fetch_one(&mut *tx)
-    .await
-    .expect("left");
-    tx.commit().await.expect("commit");
-    assert_eq!(
-        left,
-        (0, 0),
-        "an erasure takes the passages and their postings"
-    );
-    let (_, terms, areas) = postings_of(&store, tenant).await;
-    assert!(terms.is_empty() && areas.is_empty(), "no count is left");
     drop_dbs(&created).await;
 }
 
@@ -13165,8 +13136,17 @@ fn doc_recall(query: &str, pipeline: &str, k: usize) -> oml_app::types::RecallRe
 }
 
 /// A tenant with a crew node, a writer and a reviewer on it, over the
-/// serving login: (app, writer, reviewer, crew).
-async fn document_rig(store: &PgStore, tenant: &str) -> (PgApp, String, String, Uuid) {
+/// serving login.
+struct DocumentRig {
+    app: PgApp,
+    writer: String,
+    reviewer: String,
+    crew: Uuid,
+    admin: String,
+    tenant: Uuid,
+}
+
+async fn document_rig(store: &PgStore, tenant: &str) -> DocumentRig {
     use oml_app::search::Pipeline;
     let app = app_over_pg(store).with_search(
         oml_app::search::SearchConfig::new(
@@ -13188,7 +13168,14 @@ async fn document_rig(store: &PgStore, tenant: &str) -> (PgApp, String, String, 
     let reviewer = reviewer_pg(&app, &admin, "docs-reviewer", "dana/reviewer", crew)
         .await
         .value;
-    (app, writer, reviewer, crew)
+    DocumentRig {
+        app,
+        writer,
+        reviewer,
+        crew,
+        admin,
+        tenant: boot.tenant_id,
+    }
 }
 
 /// `body` written as `kind` by `writer` and approved by `reviewer`; its id.
@@ -13219,7 +13206,12 @@ async fn recall_serves_one_hit_per_document_its_best_passage_on_postgres() {
     }
     let created = Mutex::new(Vec::new());
     let store = fresh_search_store(&created).await;
-    let (app, writer, reviewer, _) = document_rig(&store, "docs-best").await;
+    let DocumentRig {
+        app,
+        writer,
+        reviewer,
+        ..
+    } = document_rig(&store, "docs-best").await;
     let body = "# Deploy guide\n\nWhat the guide covers.\n\n## Install\n\n\
                 Run the zebra installer with quokka flags.\n\n## Rollback\n\n\
                 Undo the zebra install.\n";
@@ -13290,7 +13282,12 @@ async fn a_section_query_on_a_300_line_document_returns_that_passage_on_postgres
     }
     let created = Mutex::new(Vec::new());
     let store = fresh_search_store(&created).await;
-    let (app, writer, reviewer, _) = document_rig(&store, "docs-section").await;
+    let DocumentRig {
+        app,
+        writer,
+        reviewer,
+        ..
+    } = document_rig(&store, "docs-section").await;
     let mut body = String::from("# Operations manual\n");
     for n in 1..=30 {
         body.push_str(&format!("## Section {n}\n\n"));
@@ -13327,7 +13324,12 @@ async fn a_recall_of_k_10_answers_10_hits_beside_a_document_of_30_matching_passa
     }
     let created = Mutex::new(Vec::new());
     let store = fresh_search_store(&created).await;
-    let (app, writer, reviewer, _) = document_rig(&store, "docs-k").await;
+    let DocumentRig {
+        app,
+        writer,
+        reviewer,
+        ..
+    } = document_rig(&store, "docs-k").await;
     let mut body = String::from("# Wombat manual\n\nHow the wombat is kept.\n\n");
     for n in 1..=30 {
         body.push_str(&format!(
@@ -13404,9 +13406,18 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
         !m59.contains("DROP TRIGGER") && !m59.contains("CREATE TRIGGER memories_search_postings"),
         "0059 replaces the fold's function and keeps its trigger"
     );
-    assert!(!m59.contains("oml_search_postings_refill(t)"), "0059 refills nothing");
-    assert!(m59.contains("NOT VALID"), "0059 adds the kind check unvalidated");
-    assert!(m60.starts_with("-- no-transaction"), "0060 runs outside a transaction");
+    assert!(
+        !m59.contains("oml_search_postings_refill(t)"),
+        "0059 refills nothing"
+    );
+    assert!(
+        m59.contains("NOT VALID"),
+        "0059 adds the kind check unvalidated"
+    );
+    assert!(
+        m60.starts_with("-- no-transaction"),
+        "0060 runs outside a transaction"
+    );
     for shape in [
         "SET LOCAL lock_timeout = '5s'",
         "ATTACH PARTITION",
@@ -13499,8 +13510,14 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
         .await
         .expect("the index and the check");
     assert!(partitions >= 1, "the seeded tenant has a partition");
-    assert_eq!(attached, partitions, "one served index per partition, attached");
-    assert!(valid && carries, "the served index is valid and carries the ordinal");
+    assert_eq!(
+        attached, partitions,
+        "one served index per partition, attached"
+    );
+    assert!(
+        valid && carries,
+        "the served index is valid and carries the ordinal"
+    );
     assert!(validated, "the kind check is validated");
     let mut tx = conn.begin().await.expect("begin");
     sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
@@ -13514,7 +13531,10 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
             .fetch_one(&mut *tx)
             .await
             .expect("passages");
-    assert_eq!(passages, 3, "the startup cut gives the document its passages");
+    assert_eq!(
+        passages, 3,
+        "the startup cut gives the document its passages"
+    );
     let (rows, units): (i64, i64) = sqlx::query_as(
         "SELECT rows::int8, units FROM search_workspace_rows \
           WHERE tenant_id = $1 AND kind = 1 AND memory_kind = 3",
@@ -13533,7 +13553,10 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
     .fetch_one(&mut *tx)
     .await
     .expect("kangaroo's count");
-    assert_eq!(df, 1, "the document holds kangaroo once however many passages do");
+    assert_eq!(
+        df, 1,
+        "the document holds kangaroo once however many passages do"
+    );
     tx.rollback().await.expect("rollback");
     let health = store
         .postings_health(tenant)
@@ -13541,7 +13564,12 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
         .expect("health")
         .expect("a partition");
     assert_eq!(
-        (health.unfilled, health.served_behind, health.workspace_drift, health.term_drift),
+        (
+            health.unfilled,
+            health.served_behind,
+            health.workspace_drift,
+            health.term_drift
+        ),
         (0, 0, 0, 0),
         "{health:?}"
     );
@@ -13553,7 +13581,11 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
                 reference: None,
                 anchor: oml_app::types::AnchorFilter::default(),
                 promoted_nodes: vec![wa],
-                kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact, MemoryKind::Document],
+                kinds: vec![
+                    MemoryKind::Memory,
+                    MemoryKind::DerivedFact,
+                    MemoryKind::Document,
+                ],
                 own_held: None,
                 expired_at: None,
                 as_of: None,
@@ -13603,5 +13635,89 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
         .expect("a partition");
     assert_eq!(health.documents_uncut, 1, "doctor names the uncut document");
     drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// A promoted document erased through `erase_claim` leaves nothing that
+/// was cut or derived from its text (ADR-0081 d3; ADR-0089 d16; ADR-0005
+/// d2): its passages, its lexical and its sparse postings, its sparse
+/// queue entry, its words in the vocabulary and its counts all go with the
+/// body, and recall finds it in no pipeline.
+#[tokio::test]
+async fn a_documents_passages_postings_words_and_sparse_entries_go_with_its_erasure() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let DocumentRig {
+        app,
+        writer,
+        reviewer,
+        crew,
+        admin,
+        tenant,
+    } = document_rig(&store, "docs-erase").await;
+    store
+        .sparse_backfill(tenant, 1_000)
+        .await
+        .expect("sparse on");
+    let body = "# Echidna guide\n\nWhat the guide covers.\n\n## Feeding\n\n\
+                The echidna eats ants.\n\n## Sleeping\n\nThe echidna sleeps in logs.\n";
+    let doc = promoted_pg(&app, &writer, &reviewer, "e1", MemoryKind::Document, body).await;
+    oml_port_contracts::encode_sparse_backlog(&store).await;
+    let left = || async {
+        let mut owner = owner_conn(&store).await;
+        let mut tx = owner.begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("tenant");
+        let row: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM document_passages WHERE tenant_id = $1 AND memory_id = $2), \
+                    (SELECT count(*) FROM search_postings \
+                      WHERE tenant_id = $1 AND memory_id = $2 AND kind = 1), \
+                    (SELECT count(*) FROM search_postings \
+                      WHERE tenant_id = $1 AND memory_id = $2 AND kind = 2), \
+                    (SELECT count(*) FROM search_sparse_queue WHERE tenant_id = $1 AND memory_id = $2), \
+                    (SELECT count(*) FROM search_vocabulary \
+                      WHERE tenant_id = $1 AND workspace_id = $3 AND word = 'echidna'), \
+                    (SELECT count(*) FROM search_workspace_rows WHERE tenant_id = $1 AND memory_kind = 3)",
+        )
+        .bind(tenant)
+        .bind(doc)
+        .bind(crew)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("what is left");
+        tx.rollback().await.expect("rollback");
+        row
+    };
+    let (passages, lexical, sparse, queued, words, counts) = left().await;
+    assert_eq!(passages, 3, "three passages");
+    assert!(
+        lexical > 0 && sparse > 0,
+        "lexical {lexical} and sparse {sparse} postings"
+    );
+    assert_eq!(queued, 0, "encoded, off the queue");
+    assert_eq!((words, counts), (1, 1), "its words and its counts");
+    app.erase_claim(admin.as_str(), doc).await.expect("erase");
+    assert_eq!(
+        left().await,
+        (0, 0, 0, 0, 0, 0),
+        "passages, postings, the queue, the vocabulary and the counts go with the body"
+    );
+    for pipeline in DOCUMENT_PIPELINES {
+        let recall = app
+            .recall(&writer, &doc_recall("echidna", pipeline, 10))
+            .await
+            .expect("recall");
+        assert!(
+            recall.hits.is_empty(),
+            "{pipeline}: {:?}",
+            recall.hits.len()
+        );
+    }
     drop_dbs(&created).await;
 }
