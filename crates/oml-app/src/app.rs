@@ -4708,9 +4708,7 @@ where
         key: &KeyRecord,
         memory: &MemoryRecord,
     ) -> Result<bool, AppError> {
-        Ok(self
-            .same_person(key.tenant_id, memory.author_key_id, key)
-            .await?
+        Ok(self.same_person_as_author(memory, key).await?
             && !self.in_own_root(key, memory.workspace_id).await?)
     }
 
@@ -4734,6 +4732,21 @@ where
             self.person_of(reviewer).await?,
         );
         Ok(same_user(a.as_ref(), r.as_ref()))
+    }
+
+    /// Whether `memory`'s author and `reviewer` act for one person, the
+    /// author read as recorded at the write (`author_person`), so an unlink
+    /// of the author key between the write and this act clears neither the
+    /// `same_user` mark nor R2 by person (ADR-0085 d16, amended 2026-11-18;
+    /// #448). The reviewer is read as it stands, as [`Self::same_person`]
+    /// reads it.
+    async fn same_person_as_author(
+        &self,
+        memory: &MemoryRecord,
+        reviewer: &KeyRecord,
+    ) -> Result<bool, AppError> {
+        let r = self.person_of(reviewer).await?;
+        Ok(same_user(memory.author_person.as_ref(), r.as_ref()))
     }
 
     /// A user key's edge with an endpoint in `universe` is refused
@@ -5881,6 +5894,7 @@ where
             replaces: None,
             author_principal: key.principal.clone(),
             author_key_id: key.key_id,
+            author_person: self.person_of(key).await?,
             derives_from: req.derives_from.clone(),
             lineage_principals: principals.into_iter().collect(),
             lineage_key_ids: key_ids.into_iter().collect(),
@@ -6222,7 +6236,7 @@ where
             .encode()
         });
         let mut ancestries = BTreeMap::new();
-        let mut users: BTreeMap<Uuid, bool> = BTreeMap::new();
+        let reviewer_person = self.person_of(key).await?;
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
             let m = &row.memory;
@@ -6234,14 +6248,9 @@ where
             {
                 continue;
             }
-            let same = match users.get(&m.author_key_id) {
-                Some(same) => *same,
-                None => {
-                    let same = self.same_person(tenant_id, m.author_key_id, key).await?;
-                    users.insert(m.author_key_id, same);
-                    same
-                }
-            };
+            // The author's person as recorded at the write (ADR-0085 d16,
+            // amended 2026-11-18; #448).
+            let same = same_user(m.author_person.as_ref(), reviewer_person.as_ref());
             // R2 by person: a row the reviewer's own person wrote outside
             // that person's root is not theirs to judge, so it is not
             // listed (ADR-0001 d5; ADR-0082 d7).
@@ -6549,9 +6558,7 @@ where
         // A claim's ratification is marked as a transition's and an edge's
         // are: whether the reviewing key and the authoring key name one
         // user (ADR-0046 d2, ADR-0055 d7).
-        let same_user = self
-            .same_person(key.tenant_id, memory.author_key_id, key)
-            .await?;
+        let same_user = self.same_person_as_author(&memory, key).await?;
         // R2 by person: outside the author's person's own root, a key acting
         // for that person counts no verdict, approve or reject (ADR-0001 d5;
         // ADR-0082 d7). Inside the root the verdict stands, marked
@@ -8813,9 +8820,7 @@ where
         let by = if target.author_key_id == key.key_id {
             Withdrawer::AuthorKey
         } else if key.credential == Credential::Session
-            && self
-                .same_person(key.tenant_id, target.author_key_id, key)
-                .await?
+            && self.same_person_as_author(&target, key).await?
         {
             Withdrawer::PersonSession
         } else {
@@ -9231,6 +9236,7 @@ where
             replaces: Some(target.memory_id),
             author_principal: key.principal.clone(),
             author_key_id: key.key_id,
+            author_person: self.person_of(key).await?,
             derives_from: derives_from.clone(),
             lineage_principals: principals.into_iter().collect(),
             lineage_key_ids: key_ids.into_iter().collect(),

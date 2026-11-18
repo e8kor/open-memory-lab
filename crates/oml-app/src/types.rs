@@ -1193,6 +1193,12 @@ pub struct MemoryRecord {
     pub replaces: Option<Uuid>,
     pub author_principal: String,
     pub author_key_id: Uuid,
+    /// The person the author key acted for at the write, by name, as
+    /// `same_user` compares it; `None` for a key that acts for no person.
+    /// Set once at the write, so a later unlink of the key changes neither
+    /// the `same_user` mark nor R2 by person (ADR-0085 d16, amended
+    /// 2026-11-18; #448).
+    pub author_person: Option<Name>,
     pub derives_from: Vec<Uuid>,
     /// The row's lineage closure, flattened: the author plus every declared
     /// ancestor's closure (roles-and-keys.md lineage-closure exclusion).

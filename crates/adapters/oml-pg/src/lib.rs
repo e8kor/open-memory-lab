@@ -2282,7 +2282,8 @@ fn used_by_from_str(s: &str) -> Result<UsedBy, StoreError> {
 /// (timestamptz(6) holds the microseconds).
 const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workspace_id, m.claim_key, m.version, \
      m.kind, m.claim, m.claim_digest, m.body_bytes, m.status, m.is_tip, m.retirement, \
-     m.replaces_artifact_id, m.author_principal, m.author_key_id, m.derives_from, \
+     m.replaces_artifact_id, m.author_principal, m.author_key_id, m.author_person, \
+     m.derives_from, \
      m.lineage_principals, m.lineage_key_ids, m.scan_finding, m.scanned_under, \
      m.severity, m.rule, \
      m.skill_name, m.skill_description, m.document_title, m.test_shape, \
@@ -2300,8 +2301,9 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workspace_id, m.claim_key, m.
      AS approved_at_signed";
 
 /// R2 by person in SQL, over `m` and the reviewer key `{key}`: true for a
-/// row whose author key acts for the person the reviewer key acts for (a
-/// key's user root, its linked root, or the user root its session key
+/// row whose author's person, recorded at its write (`m.author_person`,
+/// ADR-0085 d16 as amended 2026-11-18), is the person the reviewer key acts
+/// for (a key's user root, its linked root, or the user root its session key
 /// names), in a workspace outside that person's root; NULL or false
 /// otherwise, so a reviewer acting for no person is never narrowed
 /// (ADR-0001 d5; ADR-0082 d7). The tenant is read off `m`, so the serve
@@ -2309,13 +2311,11 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workspace_id, m.claim_key, m.
 /// share one text; `key` is the reviewer key's placeholder, split at
 /// [`REVIEWER_KEY`] where the caller binds it.
 const SAME_PERSON_OUTSIDE_ROOT: &str = "EXISTS (SELECT 1 FROM api_keys rk \
-    JOIN api_keys ak ON ak.tenant_id = m.tenant_id AND ak.id = m.author_key_id \
     CROSS JOIN LATERAL (SELECT COALESCE(rk.user_root_id, rk.linked_user_id, \
         (SELECT u.id FROM workspaces u \
          WHERE u.tenant_id = m.tenant_id AND u.user_root AND u.name = rk.session_for)) AS root) r \
-    CROSS JOIN LATERAL (SELECT COALESCE(ak.user_root_id, ak.linked_user_id, \
-        (SELECT u.id FROM workspaces u \
-         WHERE u.tenant_id = m.tenant_id AND u.user_root AND u.name = ak.session_for)) AS root) a \
+    CROSS JOIN LATERAL (SELECT (SELECT u.id FROM workspaces u \
+         WHERE u.tenant_id = m.tenant_id AND u.user_root AND u.name = m.author_person) AS root) a \
     WHERE rk.tenant_id = m.tenant_id AND rk.id = {key} AND r.root = a.root \
       AND NOT EXISTS (SELECT 1 FROM workspaces w \
           WHERE w.tenant_id = m.tenant_id AND w.id = m.workspace_id \
@@ -2445,6 +2445,7 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
         replaces: row.try_get("replaces_artifact_id").map_err(backend)?,
         author_principal: row.try_get("author_principal").map_err(backend)?,
         author_key_id: row.try_get("author_key_id").map_err(backend)?,
+        author_person: stored_name(row, "author_person")?,
         derives_from: row.try_get("derives_from").map_err(backend)?,
         lineage_principals: row.try_get("lineage_principals").map_err(backend)?,
         lineage_key_ids: row.try_get("lineage_key_ids").map_err(backend)?,
@@ -3164,6 +3165,17 @@ async fn insert_memory(
         insert = insert.bind(scanner);
     }
     insert.execute(&mut **tx).await.map_err(backend)?;
+    // The author's person, recorded once at the write (ADR-0085 d16, amended
+    // 2026-11-18; migration 0061), only when the key acts for one.
+    if let Some(person) = &m.author_person {
+        sqlx::query("UPDATE memories SET author_person = $3 WHERE tenant_id = $1 AND id = $2")
+            .bind(m.tenant_id)
+            .bind(m.memory_id)
+            .bind(person.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+    }
     // A skill's, a document's or a test case's fields in the same
     // transaction, only when the version carries any (migration 0048).
     if let Some(fields) = m.kind_fields.as_deref() {

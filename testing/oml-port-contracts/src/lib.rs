@@ -528,6 +528,7 @@ pub fn held_memory(
         replaces: None,
         author_principal: author_principal.to_owned(),
         author_key_id,
+        author_person: None,
         derives_from: Vec::new(),
         lineage_principals: vec![author_principal.to_owned()],
         lineage_key_ids: vec![author_key_id],
@@ -1068,6 +1069,51 @@ pub async fn journal_memory_fold_and_lookup<S: JournalStore>(store: &S) {
         None,
         "unknown ids are absent, not errors"
     );
+}
+
+/// A version reads back the author's person its write recorded, and one
+/// whose author acts for no person reads back none (ADR-0085 d16, amended
+/// 2026-11-18; #448).
+pub async fn a_versions_author_person_reads_back_as_its_write_recorded_it<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(4);
+    rig.seed_chain(store, 0).await;
+    let workspace = Uuid::from_u128(0xB1);
+    for (n, person) in [(0xC1_u128, Some("alice")), (0xC2, None)] {
+        let memory_id = Uuid::from_u128(n);
+        let memory = MemoryRecord {
+            author_person: person.map(|p| Name::parse(p).expect("a name")),
+            ..held_memory(
+                rig.tenant_id,
+                workspace,
+                memory_id,
+                "wanda",
+                Uuid::from_u128(0xD1),
+                "held body",
+            )
+        };
+        rig.commit(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": memory_id.to_string() }),
+            MetadataFold::MemoryHeld {
+                imported: None,
+                memory,
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+        )
+        .await
+        .expect("commit held");
+        let read = store
+            .memory(rig.tenant_id, memory_id)
+            .await
+            .expect("memory")
+            .expect("the fold landed");
+        assert_eq!(read.author_person.as_ref().map(Name::as_str), person);
+    }
 }
 
 /// Holds `memory`, a claim's first version, and promotes it through the
@@ -2354,15 +2400,33 @@ pub async fn the_review_queue_serves_no_row_its_own_person_wrote_outside_their_r
     rig.commit(store, event_types::KEY_LINKED_PERSON, payload, fold, None)
         .await
         .expect("the link commits");
+    // Each row records the person its author key acted for at the write,
+    // as the application sets it (ADR-0085 d16, amended 2026-11-18).
     let rows = [
-        (Uuid::from_u128(0x6120), project.workspace_id, &user_key),
-        (Uuid::from_u128(0x6121), team.workspace_id, &linked),
-        (Uuid::from_u128(0x6122), team.workspace_id, &session),
-        (Uuid::from_u128(0x6123), team.workspace_id, &other),
+        (
+            Uuid::from_u128(0x6120),
+            project.workspace_id,
+            &user_key,
+            Some("alice"),
+        ),
+        (
+            Uuid::from_u128(0x6121),
+            team.workspace_id,
+            &linked,
+            Some("alice"),
+        ),
+        (
+            Uuid::from_u128(0x6122),
+            team.workspace_id,
+            &session,
+            Some("alice"),
+        ),
+        (Uuid::from_u128(0x6123), team.workspace_id, &other, None),
     ];
-    for (id, workspace, key) in rows {
+    for (id, workspace, key, person) in rows {
         let mut memory = held_memory(t, workspace, id, &key.principal, key.key_id, "body");
         memory.claim_key = format!("person-{id}");
+        memory.author_person = person.map(name);
         rig.commit(
             store,
             event_types::SUBMISSION_REMEMBER,
@@ -9662,6 +9726,8 @@ where
     )
     .await;
     Box::pin(journal_memory_fold_and_lookup(&new_store().await)).await;
+    Box::pin(a_versions_author_person_reads_back_as_its_write_recorded_it(&new_store().await))
+        .await;
     Box::pin(a_ratified_end_is_written_with_the_tip_move_or_not_at_all(
         &new_store().await,
     ))

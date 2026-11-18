@@ -8,7 +8,7 @@ answers: what a workspace release is, when its manifest is fixed and what it may
 # ADR-0085 — A workspace publishes immutable releases that one person cuts and another ratifies, and each key binds to the tip, the latest release or a pinned one
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its three questions decided at their
-recommendations and every other default as drafted · proposed the same day · amended 2026-11-17 (d16: how the console acts with a linked key, accepted the same day by the operator, "Session + named key")
+recommendations and every other default as drafted · proposed the same day · amended 2026-11-17 (d16: how the console acts with a linked key, accepted the same day by the operator, "Session + named key") · amended 2026-11-18 (d16: a version records its author's person at its write, the follow-up d16 left open, built by #448)
 
 **Release:** not scheduled; the first record of the workspace lifecycle
 ([review](https://github.com/e8kor/open-memory-lab/blob/main/design/workspace-lifecycle.md)), before
@@ -351,6 +351,26 @@ Decided, not built.
       verdict. Recording the author's person on the version at its write, so an unlink cannot
       clear the mark, is the follow-up this record leaves open. A revoked key may still be
       unlinked.
+    - *The author's person is recorded at the write* (amended 2026-11-18, #448, closing the
+      follow-up above). A version records, when it is written, the person its author key acts
+      for, by name as `same_user` compares it: a session key's person, the user root a user key
+      names or a linked tenant key is linked to, none for a key that acts for no person
+      (`memories.author_person`, migration 0061). Every rule that asks whether a version's author
+      is a person reads that record and never the key's link as it stands: the `same_user` mark
+      on a claim's approval, R2 by person (the verdict refused outside the person's root, and the
+      row left off that person's review listing and queue, ADR-0082 d7) and a person's session
+      withdrawal (ADR-0083 d13). An unlink between the write and the verdict therefore changes
+      none of them; a link made after the write does not either, so a version an unlinked key
+      wrote stays no person's. The reviewer side is read as it stands at the verdict, as before.
+      Transitions and claim edges keep reading their proposer key's link at the verdict; they
+      record no person. *Backfill:* migration 0061 gives every version written before it the
+      person its author key resolves to when the migration runs, read the same way; a key
+      unlinked before the migration gives its earlier versions no person, so a mark those versions
+      would have carried at their write is not recovered. *Twin part* (ADR-0090 d4): derived,
+      computed from the author key's row at the fold as the lineage columns are, so a rebuild that
+      replays the link events in order reproduces it; the backfilled values are the exception a
+      rebuild recomputes at each version's own seq. The cost: one nullable text column on
+      `memories` and one read of the author key's person at each write.
     - *Root writes* ("Yes, allow it"). A linked tenant key is its person's key for writing into
       that person's root wherever its grants allow, with or without the console: the user-root
       write rule reads the person as `same_user` does (ADR-0044 d16).
