@@ -52,6 +52,7 @@ pub fn version(artifact_id: &str, version: u64, claim_key: &str, text: &str) -> 
         skill: None,
         document: None,
         test: None,
+        guardrail: None,
         derives_from: Vec::new(),
         origin: json!({"kind": "manual"}),
         attachments: Vec::new(),

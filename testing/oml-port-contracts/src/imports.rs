@@ -172,6 +172,7 @@ fn line(artifact_id: &str, version: u64, claim_key: &str, text: &str) -> Version
         skill: None,
         document: None,
         test: None,
+        guardrail: None,
         derives_from: Vec::new(),
         origin: json!({"kind": "doc"}),
         attachments: Vec::new(),
@@ -956,6 +957,7 @@ async fn imported_steering_guardrail_and_skill_versions_land_held<S: JournalStor
         "Never force-push a shared branch.",
     );
     guardrail.kind = "guardrail".to_owned();
+    guardrail.guardrail = Some(json!({"severity": "should", "rule": null}));
     let mut skill = line(
         "art-k",
         1,
@@ -978,17 +980,29 @@ async fn imported_steering_guardrail_and_skill_versions_land_held<S: JournalStor
         )
         .await,
     );
-    assert_eq!(done.counts.get("new"), Some(&2), "{:?}", done.refusals);
-    // oml-bundle/1 carries no guardrail severity or rule, so the target
-    // refuses an imported guardrail and names it (open with the operator).
-    assert_eq!(done.refusals.len(), 1, "{:?}", done.refusals);
-    assert_eq!(done.refusals[0].claim_key, "no-force-push");
-    assert!(
-        done.refusals[0]
-            .code
-            .starts_with("GuardrailSeverityRequired"),
-        "{:?}",
-        done.refusals
+    assert_eq!(done.counts.get("new"), Some(&3), "{:?}", done.refusals);
+    // ADR-0080 d10, d16: inside the in-progress target the held guardrail
+    // is served unreviewed and asking.
+    let served = rig
+        .app
+        .guardrails(
+            rig.writer.as_str(),
+            &oml_app::types::GuardrailRequest {
+                workspace: Some(Reference::Id(done.target_workspace_id)),
+                include_own_held: false,
+            },
+        )
+        .await
+        .expect("the guardrails read");
+    let row = served
+        .guardrails
+        .iter()
+        .find(|g| g.claim_key == "no-force-push")
+        .expect("the imported guardrail is served inside");
+    assert!(row.unreviewed);
+    assert_eq!(
+        row.effect_inside,
+        Some(oml_app::domain::guardrail::Effect::Ask)
     );
     let view = rig
         .store
@@ -1017,6 +1031,31 @@ async fn imported_steering_guardrail_and_skill_versions_land_held<S: JournalStor
             "a key outside the target reads no held {}",
             tip.claim_key
         );
+    }
+}
+
+/// I20: a guardrail line without its severity and rule is refused by the
+/// reader by name, before anything is bound or written.
+async fn a_guardrail_line_without_its_fields_is_refused_by_name<S: JournalStore + Clone>(
+    store: S,
+) {
+    let rig = rig(store).await;
+    let mut guardrail = line("art-g", 1, "no-force-push", "Never force-push a shared branch.");
+    guardrail.kind = "guardrail".to_owned();
+    let bytes = bundle_of(vec![guardrail], "2026-11-17T09:00:00.000000Z", &source_key());
+    let up = upload(&rig, &rig.writer, &bytes).await;
+    let refused = import(
+        &rig,
+        &rig.writer,
+        &request(up, "notes", Some(fingerprint(&source_key()))),
+    )
+    .await;
+    match refused {
+        Err(AppError::Bundle(e)) => {
+            assert_eq!(e.code(), "bundle.malformed");
+            assert!(e.to_string().contains("guardrail_fields_missing"), "{e}");
+        }
+        other => panic!("expected bundle.malformed, got {other:?}"),
     }
 }
 
@@ -1297,6 +1336,7 @@ where
     imported_steering_guardrail_and_skill_versions_land_held(make().await).await;
     import_provenance_names_the_source_line_and_the_journal_lists_each_version(make().await).await;
     an_import_that_fails_shreds_its_upload_key(make().await).await;
+    a_guardrail_line_without_its_fields_is_refused_by_name(make().await).await;
     an_import_stopped_for_an_hour_is_ended_and_shredded_by_the_sweep(make().await).await;
     a_new_target_is_created_in_progress_and_a_retry_marks_its_own_empty_one(make().await).await;
 }

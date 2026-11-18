@@ -280,6 +280,7 @@ fn line(artifact_id: &str, claim_key: &str, text: &str) -> oml_bundle::VersionLi
         skill: None,
         document: None,
         test: None,
+        guardrail: None,
         derives_from: Vec::new(),
         origin: json!({"kind": "manual"}),
         attachments: Vec::new(),

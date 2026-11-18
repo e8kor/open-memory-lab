@@ -809,8 +809,8 @@ where
                         body: fields.body,
                         workspace: Some(Reference::Id(import.target_workspace_id)),
                         derives_from: Vec::new(),
-                        severity: None,
-                        rule: None,
+                        severity: fields.severity,
+                        rule: fields.rule,
                         kind_fields: fields.kind_fields,
                         valid_from: v.valid_from.clone(),
                         valid_until: v.valid_until.clone(),
@@ -843,8 +843,16 @@ where
                         reason: None,
                         workspace: None,
                         refuse_vocabulary_target: false,
-                        severity: None,
-                        rule: None,
+                        severity: if retire {
+                            None
+                        } else {
+                            fields.as_ref().and_then(|f| f.severity)
+                        },
+                        rule: if retire {
+                            None
+                        } else {
+                            fields.as_ref().and_then(|f| f.rule.clone())
+                        },
                         kind_fields: if retire {
                             None
                         } else {
@@ -950,6 +958,9 @@ struct VersionFields {
     kind_fields: Option<KindFields>,
     anchor: Option<Anchor>,
     origin: Option<OriginKind>,
+    /// A guardrail's severity and rule, which the reader checked (I20).
+    severity: Option<oml_domain::guardrail::Severity>,
+    rule: Option<Value>,
 }
 
 impl VersionFields {
@@ -993,12 +1004,26 @@ impl VersionFields {
                     .ok_or_else(|| refused("/origin", "the source's origin kind is unknown"))?,
             ),
         };
+        let (severity, rule) = match &v.guardrail {
+            None => (None, None),
+            Some(g) => (
+                Some(
+                    g.get("severity")
+                        .and_then(Value::as_str)
+                        .and_then(oml_domain::guardrail::Severity::parse)
+                        .ok_or_else(|| refused("/guardrail", "the source's severity is unknown"))?,
+                ),
+                g.get("rule").filter(|r| !r.is_null()).cloned(),
+            ),
+        };
         Ok(Self {
             kind,
             body: body.to_owned(),
             kind_fields,
             anchor,
             origin,
+            severity,
+            rule,
         })
     }
 }

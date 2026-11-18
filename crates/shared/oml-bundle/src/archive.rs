@@ -497,6 +497,43 @@ fn is_digest(text: &str) -> Option<&str> {
 /// The record checks a writer and a reader share: closed shapes the types
 /// cannot say, duplicates, references and unreferenced bodies (d1–d4, d7,
 /// d13, R1, R5, R7).
+/// Why a version line's `guardrail` breaks ADR-0037's rules, or `None`
+/// (ADR-0084 reading I20): a guardrail that is not a retirement carries
+/// `{severity, rule}`, its severity a known word and its rule, when given,
+/// an `oml-gr/1` rule the severity admits; every other line carries none.
+fn guardrail_defect(v: &crate::VersionLine) -> Option<&'static str> {
+    let needs = v.kind == "guardrail" && !v.retirement;
+    let Some(fields) = &v.guardrail else {
+        return needs.then_some("guardrail_fields_missing");
+    };
+    if !needs {
+        return Some("guardrail_fields_unexpected");
+    }
+    let Some(object) = fields.as_object() else {
+        return Some("guardrail is not an object");
+    };
+    if object.keys().any(|k| k != "severity" && k != "rule") {
+        return Some("guardrail carries a member other than severity and rule");
+    }
+    let Some(severity) = object
+        .get("severity")
+        .and_then(serde_json::Value::as_str)
+        .and_then(oml_guardrail::Severity::parse)
+    else {
+        return Some("guardrail severity is not a known severity");
+    };
+    match object.get("rule") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(rule) => match oml_guardrail::Rule::parse(rule) {
+            Err(_) => Some("guardrail rule does not parse as oml-gr/1"),
+            Ok(rule) if !severity.admits(rule.effect()) => {
+                Some("guardrail rule's effect is stricter than its severity admits")
+            }
+            Ok(_) => None,
+        },
+    }
+}
+
 fn check_records(c: &BundleContents) -> Result<(), BundleError> {
     let versions_file = LINE_FILES[1];
     let mut ids = BTreeSet::new();
@@ -526,6 +563,11 @@ fn check_records(c: &BundleContents) -> Result<(), BundleError> {
         }
         if is_digest(&v.plaintext_digest).is_none() {
             return bad("plaintext_digest is not sha256: and 64 hex");
+        }
+        // I20: a guardrail carries its severity and rule under submit's
+        // rules; no other version carries them.
+        if let Some(reason) = guardrail_defect(v) {
+            return bad(reason);
         }
         match (&v.text, &v.body) {
             (Some(text), None) if text.len() > INLINE_TEXT_MAX => {

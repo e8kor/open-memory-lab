@@ -614,3 +614,13 @@ until the operator confirms or reverses it with the other decisions of the batch
   exports its person's console writes.
 - **I19 — Every export is metered. [operator batch]** An export by a key with no account root is
   counted on the tenant's `exports` meter, so no export goes uncounted.
+- **I20 — A guardrail travels with its severity and rule (d1). [operator batch]** The
+  `oml-bundle/1` version line gains an optional `guardrail: {severity, rule}` object, as `skill`,
+  `document` and `test` carry theirs. Export writes it for every guardrail version that is not a
+  retirement; the reader refuses a guardrail line without it, or another line with it, as
+  `bundle.malformed`, and checks the severity is known and the rule, when given, parses as
+  `oml-gr/1` and is one the severity admits; import passes both to submit, whose caps and scan
+  run again. An imported guardrail lands held and is served inside the in-progress target
+  unreviewed with `effect_inside: ask` (ADR-0080 d10, d16). The format is unreleased, so no
+  reader of an earlier form exists. *Rejected:* leaving guardrails out of bundles, which an
+  import refused by name and a person could not tell from a scan veto.

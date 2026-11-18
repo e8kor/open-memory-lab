@@ -74,6 +74,13 @@ A version line carries the claim's text inline up to 64 KiB, or a `body` digest.
 its kind, format, anchor, valid time, kind object, `derives_from`, `origin` exactly as signed,
 attachments by digest, state, and an `author` of `{used_by, same_user, pseudonym}`.
 
+A guardrail version that is not a retirement also carries `guardrail`, its `{severity, rule}` as
+signed: `severity` a known severity and `rule`, when not null, an `oml-gr/1` rule the severity
+admits. Every other line carries no `guardrail`. A reader refuses a guardrail line without it, or
+any other line with it, as `bundle.malformed`, naming `guardrail_fields_missing` or
+`guardrail_fields_unexpected`. The kind's other fields (a steering version's text, a term's or
+vocabulary release's body) travel in the text.
+
 A pseudonym is HMAC-SHA-256 of the source key id under a salt drawn for that bundle and never
 exported. One author is recognisable as one author inside a bundle, and never across bundles. No
 line of `workspaces.jsonl`, `versions.jsonl`, `verdicts.jsonl` or `edges.jsonl` names a key or a
