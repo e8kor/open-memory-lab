@@ -8,7 +8,7 @@ answers: why a document is a kind and not a memory with a markdown format; which
 # ADR-0081 — A document is a reviewed markdown or text claim that recall searches by passage and the MCP server serves as a resource
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, every default as
-drafted · proposed the same day, tracking #374 · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d4, 2026-11-15)
+drafted · proposed the same day, tracking #374 · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d4, 2026-11-15) · d2 amended 2026-11-18 (the long-title cut and the one slug rule, #405) · [the build's readings of 2026-11-18](#the-builds-readings-of-2026-11-18), proposed for the operator's batch
 
 **Release:** planned for v0.7.4
 
@@ -78,8 +78,18 @@ Decided, not built.
   already keeps, ADR-0057 d7). Absent on submit, the server derives `doc/<slug of the title>` by
   ADR-0057 d7's slug rule; a key outside the grammar is refused naming `claim_key`. Every character
   is unreserved in RFC 3986, so a key maps to a URI segment for segment with no encoding, which
-  meets proposed ADR-0036 d5's rule that the server decodes no segment. Sync's keys already fit:
-  its key rule maps every character outside `[a-z0-9._/-]` to `-` (ADR-0057 d7).
+  meets proposed ADR-0036 d5's rule that the server decodes no segment. Sync's characters fit:
+  its key rule maps every character outside `[a-z0-9._/-]` to `-` (ADR-0057 d7). Its lengths do
+  not always fit: a path segment over 64 characters, or a key `fit_key` cuts at 111 characters
+  and a 16-digit hash, breaks the segment bound, and the `document` adapter reports such a path
+  unreadable naming this rule (R4, 2026-11-18). *Amended 2026-11-18 (#405, the #438 review):* a
+  title whose slug is longer than one segment's 64 characters keeps its first 47, then `-`, then
+  the first 16 hex digits of the SHA-256 of the full key `doc/<slug>`: ADR-0057 d7's 111-character
+  fitting cut, scaled to this record's 64-character segment bound, so two long titles that share
+  a prefix keep distinct keys. The slug is the one rule d3 names: the heading's plain text (links
+  to their text, code and emphasis marks dropped) slugged as GitHub renders it, held in the leaf
+  crate `oml-passage` that the server and `oml-cli` both link, so `# [Guide](https://x.y)` keys
+  as `doc/guide` on both.
 
 - **d3 — Passages are cut by the server at capture, by one deterministic rule shared with sync.**
   For `text/markdown`, a passage is each level-1 to level-4 heading with its text up to the next
@@ -187,6 +197,48 @@ Decided, not built.
 - **d9 — Files, PDFs and binary resources wait for attachments.** A document is text in the
   claim's body. A PDF, an image or any other file is an ADR-0004 attachment and an ADR-0057 d21
   `page=<n>` fragment, both refused until built; `resources/read` serves no `blob` until then.
+
+## The build's readings of 2026-11-18
+
+The v0.8.0 build (#405, #406) took the readings below where this record was silent. The
+coordinator confirmed each at its recommendation on 2026-11-18; they are proposed for the
+operator's batch, which confirms or changes them, and each line names the decision it reads.
+
+- **R1 (d3).** A heading with no content line before the next heading of level 1 to 4 is not a
+  passage of its own: its text joins the `heading_path` of the passages below it. Text before the
+  first heading is a passage only when it holds a content line. A passage of one title line would
+  be the shortest unit in the index and, under BM25's length normalisation, outrank the section
+  that answers the query; the `headings` adapter already skips such a heading (ADR-0057 d7).
+  Rejected: every heading a passage, which keeps `?passage=<slug>` resolvable for a bare title
+  and ranks bare titles first.
+- **R2 (d3, d4, d6).** A passage is indexed by the document's title, then its `heading_path`
+  joined by ` > `, then its lines, as the `headings` adapter writes a section's claim text, so a
+  section under "Install" of the "Deploy guide" matches "deploy install". The served `text` is the
+  passage's source lines, `start_line` to `end_line`, byte for byte, so a passage read equals the
+  same span of a full read. Rejected: indexing the lines alone, which misses a query naming the
+  document's subject.
+- **R3 (d4).** `more_passages` counts the document's other passages in the pipeline's fused
+  candidate list before the `k` cut, from any retriever: a lower bound, bounded by each list's
+  depth, as ADR-0092 d4's `matched_by_kind` is. Rejected: an exact count of every passage that
+  holds a query word, one more statement per document hit.
+- **R4 (d2, d7).** `--adapter document` reads `.md` as `text/markdown` and `.txt` as
+  `text/plain`, the `lines` adapter's set, keyed by the path without that extension under
+  ADR-0057 d7's mapping. A path whose key breaks d2's grammar (a segment over 64 characters, a
+  key over 128) is reported unreadable naming the key rule, and nothing is written for it.
+  Rejected: cutting each long segment by d2's title cut, a second key rule.
+- **R5 (d7).** A run refuses a path when the workspace holds live claims written for it the other
+  way: a `document` claim at `doc/<p>` beside claims of another kind under `doc/<p>/` whose anchor
+  `path` is the same file, in either direction. The refusal names both adapters and the keys it
+  would leave. The anchor path, not the key shape alone, decides, so `docs/guide.md` loaded as a
+  document (`doc/docs/guide`) and `docs/guide/intro.md` loaded by `headings`
+  (`doc/docs/guide/intro/<slug>`) never collide. Rejected: the key prefix alone, which refuses
+  that pair.
+- **R6 (d4, implementation).** Passages are search units in the existing postings: `search_postings`
+  gains a passage `ordinal`, a document version holds one unit per passage with its own search
+  text, vector and length on `document_passages`, the existing fold triggers keep them with the
+  version's state, and every retriever reads a document through its passages; the per-kind counts
+  of ADR-0052 d5 count a document's passages under its own kind code. A version with no
+  documents, which is every row written before this build, is ranked exactly as before.
 
 ## Consequences
 
