@@ -3428,3 +3428,119 @@ async fn an_agent_key_supersedes_no_row_another_key_of_its_person_wrote() {
         .unwrap_err();
     assert!(matches!(err, AppError::AuthorOnly), "{err:?}");
 }
+
+// -- a person's reviewer starts a claim (ADR-0082 d2, d8 item 5, d10; #409) --
+
+/// A person's session reviewer key starts a new claim where it holds
+/// reviewer and reader, a shared workspace included; the version is held
+/// and author-only, and a tenant reviewer key, which no session serves,
+/// keeps `access.verb_ceiling` (ADR-0082 d10).
+#[tokio::test]
+async fn a_session_reviewer_key_starts_a_held_claim_in_a_shared_workspace() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (review, _writer, bob) = team_with_alices_reviewer_and_bobs_writer(&app, admin).await;
+    let id = app
+        .submit_memory(
+            Bearer::Session(&review),
+            &submit("r1", "Releases freeze on Thursdays.", Some("team")),
+        )
+        .await
+        .expect("alice's review key starts a claim in team")
+        .receipt
+        .memory_id;
+    let row = app
+        .get_memory(Bearer::Session(&review), id)
+        .await
+        .expect("its author reads it");
+    assert_eq!(row.memory.status, MemoryStatus::Held);
+    assert_eq!(row.memory.author_key_id, review.key().key_id);
+    let err = app.get_memory(bob.value.as_str(), id).await.unwrap_err();
+    assert!(
+        matches!(err, AppError::NotFound),
+        "held rows are author-only: {err:?}"
+    );
+    let tenant_reviewer = tenant_key(
+        &app,
+        admin,
+        Role::Reviewer,
+        "team-review",
+        vec![
+            grant(by_name("team"), Role::Reviewer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    let err = app
+        .submit_memory(
+            tenant_reviewer.value.as_str(),
+            &submit("t1", "A tenant reviewer's claim.", Some("team")),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+}
+
+/// The claim a person's session reviewer key started is judged by no key of
+/// that person outside their root: the key itself is in its lineage, and
+/// the person's linked reviewer key is refused `same_person`; another
+/// person's reviewer approves it (ADR-0082 d7, d10).
+#[tokio::test]
+async fn a_session_reviewers_claim_is_judged_by_no_key_of_its_person_outside_their_root() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (review, _writer, _bob) = team_with_alices_reviewer_and_bobs_writer(&app, admin).await;
+    let id = app
+        .submit_memory(
+            Bearer::Session(&review),
+            &submit("r1", "Releases freeze on Thursdays.", Some("team")),
+        )
+        .await
+        .expect("alice's review key starts a claim in team")
+        .receipt
+        .memory_id;
+    let err = app
+        .post_verdict(Bearer::Session(&review), id, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::AuthorInLineage | AppError::SamePerson),
+        "{err:?}"
+    );
+    let ops = console_admin(&app, admin, "ops-two").await;
+    let linked = person_tenant_key(
+        &app,
+        admin,
+        "alice/team-review",
+        vec![
+            grant(by_name("team"), Role::Reviewer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    app.link_key_to_person(Bearer::Session(&ops), linked.key_id.into(), &name("alice"))
+        .await
+        .expect("linked");
+    let err = app
+        .post_verdict(linked.value.as_str(), id, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(same_person(&err), "{err:?}");
+    let other = person_tenant_key(
+        &app,
+        admin,
+        "bob/team-review",
+        vec![
+            grant(by_name("team"), Role::Reviewer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    let outcome = app
+        .post_verdict(other.value.as_str(), id, Verdict::Approve, None)
+        .await
+        .expect("another person approves");
+    assert!(!outcome.same_user);
+}
