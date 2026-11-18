@@ -3506,7 +3506,13 @@ async fn a_session_reviewers_claim_is_judged_by_no_key_of_its_person_outside_the
         .await
         .unwrap_err();
     assert!(
-        matches!(err, AppError::AuthorInLineage | AppError::SamePerson),
+        matches!(
+            err,
+            AppError::Verdict(
+                oml_app::domain::VerdictError::PrincipalInLineage(_)
+                    | oml_app::domain::VerdictError::KeyInLineage(_)
+            )
+        ),
         "{err:?}"
     );
     let ops = console_admin(&app, admin, "ops-two").await;

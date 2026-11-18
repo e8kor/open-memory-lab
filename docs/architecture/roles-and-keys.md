@@ -123,6 +123,8 @@ A writer supersedes only its own memory; a person's session web key also superse
 
 A `service` key omits `review`.
 
+A person's session key whose role is reviewer also starts a new claim, held as every write is, where it holds reviewer and reader; its lineage excludes it from judging that claim. No other reviewer key starts one ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d2, d10).
+
 ## Review independence
 
 OML limits which rows a reviewer may review, and checks it when approving.

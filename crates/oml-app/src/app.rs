@@ -5635,14 +5635,33 @@ where
     ) -> Result<SubmitOutcome, AppError> {
         let caller = self.authenticate_bearer(bearer).await?;
         let key = &caller.key;
-        require_admissible(key, Role::Writer, "submit")?;
+        // A person's reviewer session key starts a claim where it holds
+        // reviewer and reader, the grants a supersession's step 4 asks; the
+        // version is held and its lineage excludes the key. Every other
+        // reviewer key keeps the verb ceiling (ADR-0082 d2, d8 item 5, d10).
+        let session_reviewer = key.credential == Credential::Session && key.role == Role::Reviewer;
+        if !session_reviewer {
+            require_admissible(key, Role::Writer, "submit")?;
+        }
         // The body's workspace, by id or name, resolves after step 1 and
         // before the record is looked up, so either spelling is one request
         // (ADR-0026 d4).
         let workspace_id = self.target_workspace(key, req.workspace.as_ref()).await?;
-        let access = self
-            .require_access(&caller, workspace_id, Role::Writer, "submit")
-            .await;
+        let access = if session_reviewer {
+            match self
+                .require_access(&caller, workspace_id, Role::Reviewer, "submit")
+                .await
+            {
+                Ok(()) => {
+                    self.require_access(&caller, workspace_id, Role::Reader, "submit")
+                        .await
+                }
+                refused => refused,
+            }
+        } else {
+            self.require_access(&caller, workspace_id, Role::Writer, "submit")
+                .await
+        };
         // A memory is started in a user root by its own user's keys only.
         // The rule is answered where step 2 allows or step 3 would answer
         // `access.grant_refused`, which a key that reads the node gets; a

@@ -60,7 +60,7 @@ Write, list, recall and replace memories on the provider ring.
 
 Submit a memory (remember or learn); held on arrival, scanned same-call.
 
-Requires: writer effective access on the resolved workspace; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id; lineage is attribution, not a verb of its own.
+Requires: writer effective access on the resolved workspace, or, for a person's session key whose role is reviewer, reviewer and reader effective access there: the version is held and its lineage excludes that key, and every other reviewer key is access.verb_ceiling; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id; lineage is attribution, not a verb of its own.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
