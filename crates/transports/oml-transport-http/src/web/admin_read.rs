@@ -12,9 +12,9 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_app::app::{AdminMemory, AdminPage, AdminSearchRequest};
-use oml_app::domain::EventTime;
 use oml_app::domain::name::Reference;
 use oml_app::domain::origin::OriginKind;
+use oml_app::domain::{EventTime, MemoryKind};
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::AdminState;
 
@@ -32,6 +32,8 @@ struct SearchBody {
     origin_kind: Option<String>,
     /// The authoring key, by name or id, of the tenant.
     author: Option<String>,
+    /// A comma list of kinds (ADR-0083 d5; ADR-0082 d8 item 3).
+    kind: Option<String>,
     limit: Option<usize>,
     cursor: Option<String>,
 }
@@ -204,12 +206,25 @@ where
                 })
             })
             .transpose()?;
+        let kinds = match req.kind.as_deref() {
+            None => Vec::new(),
+            Some(list) => list
+                .split(',')
+                .map(|k| {
+                    MemoryKind::parse(k).ok_or_else(|| {
+                        ApiError::validation(format!("unknown kind {k:?}"))
+                            .with_details(json!({ "field": "/kind" }))
+                    })
+                })
+                .collect::<Result<_, _>>()?,
+        };
         let search = AdminSearchRequest {
             query: req.query.as_deref(),
             workspace,
             state,
             origin,
             author,
+            kinds,
             after,
             limit,
         };

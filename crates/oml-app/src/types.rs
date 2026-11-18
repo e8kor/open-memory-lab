@@ -4254,6 +4254,9 @@ pub struct AdminSearch {
     pub origin_kinds: Vec<OriginKind>,
     /// Only rows this key wrote (ADR-0045 d24).
     pub author: Option<Uuid>,
+    /// Only rows of these kinds; empty narrows nothing (ADR-0083 d5;
+    /// ADR-0082 d8 item 3).
+    pub kinds: Vec<MemoryKind>,
     pub after: Option<ListingPosition>,
     pub limit: usize,
 }

@@ -1377,6 +1377,7 @@ Requires: admin key role; the operator and every other role answer access.verb_c
 | `state` | `held` \| `promoted` \| `rejected` \| `superseded` \| `demoted` \| `withdrawn` | no |  |
 | `origin_kind` | `repo` \| `doc` \| `code` \| `lake` \| `chat` \| `web` \| `manual` | no | One origin.kind. |
 | `author` | string | no | The authoring key of the tenant, by name or id. |
+| `kind` | string | no | A comma list of kinds, each one of memory, derived_fact, steering, guardrail, term, term_mapping, vocab_release, skill, document or test: a row of any of them is served. |
 | `limit` | integer | no | At most 200, the console list's largest page (raised from 100 in v0.7.0). |
 | `cursor` | string | no |  |
 

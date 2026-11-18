@@ -45,7 +45,7 @@ pub const OPERATIONS: [&str; 45] = [
     "setWorkspaceMode POST /v2/workspaces/{workspace}/mode body:mode resp:WorkspaceView",
     "listMemories GET /v1/memories query:with_own,mine,include_text,author,workspace,state,kind,promoted_since,origin_kinds,limit,cursor resp:MemoryPage",
     "recallMemories POST /v1/memories/recall body:query,k,workspace,kinds,include_text,include_unreviewed,origin_kinds resp:RecallResponse",
-    "adminSearchMemories POST /v2/admin/memories/search body:query,workspace,state,origin_kind,author,limit,cursor resp:AdminMemoryPage",
+    "adminSearchMemories POST /v2/admin/memories/search body:query,workspace,state,origin_kind,author,kind,limit,cursor resp:AdminMemoryPage",
     "getWorkspaceTree GET /v2/workspaces/{workspace}/tree query:counts,offers resp:WorkspaceCounts",
     "listKeys GET /v2/keys query:user,limit,cursor resp:KeyPage",
     "createWorkspace POST /v2/workspaces body:name,parent resp:Workspace",
@@ -450,6 +450,11 @@ pub struct Memory {
     /// kind; `None` from an API that does not name it.
     #[serde(default)]
     pub kind: Option<String>,
+    /// A skill's name and description, on kind `skill` alone, except a
+    /// retirement (ADR-0080 d1); the console's change compares them
+    /// (ADR-0082 d6).
+    #[serde(default)]
+    pub skill: Option<SkillFields>,
     /// Who wrote it, by kind: `agent`, `human`, `connector` or
     /// `simulation`.
     #[serde(default)]
@@ -593,6 +598,14 @@ pub struct PreviewRefusal {
     pub message: String,
     #[serde(default)]
     pub details: Option<Value>,
+}
+
+/// A skill's own fields, as a version carries them (openapi.yaml
+/// `SkillFields`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SkillFields {
+    pub name: String,
+    pub description: String,
 }
 
 /// A same-named skill along a previewed skill's chain (ADR-0080 d5).
@@ -1342,6 +1355,8 @@ pub struct AdminSearch<'a> {
     pub state: Option<&'a str>,
     pub origin_kind: Option<&'a str>,
     pub author: Option<&'a str>,
+    /// A comma list of kinds (ADR-0083 d5).
+    pub kind: Option<&'a str>,
     pub limit: u32,
     pub cursor: Option<&'a str>,
 }
@@ -1793,6 +1808,7 @@ impl<T: Transport> Client<T> {
             ("state", search.state),
             ("origin_kind", search.origin_kind),
             ("author", search.author),
+            ("kind", search.kind),
             ("cursor", search.cursor),
         ] {
             if let Some(value) = value {
@@ -2865,7 +2881,7 @@ mod tests {
         assert_eq!(seen[18].uri(), "/v2/review/held?limit=50&workspace=alice");
         assert_eq!(seen[19].uri(), "/v2/review/held?ids=a,b");
         assert_eq!(
-            std::str::from_utf8(seen[22].body()).unwrap(),
+            std::str::from_utf8(seen[24].body()).unwrap(),
             r#"{"connect_code":false,"name":"alice-laptop","role":"writer"}"#
         );
     }

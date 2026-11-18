@@ -8391,6 +8391,8 @@ export interface operations {
                     origin_kind?: "repo" | "doc" | "code" | "lake" | "chat" | "web" | "manual";
                     /** @description The authoring key of the tenant, by name or id (ADR-0045 d24; ADR-0070 d5). Since v0.6.4. */
                     author?: string;
+                    /** @description A comma list of kinds, each one of memory, derived_fact, steering, guardrail, term, term_mapping, vocab_release, skill, document or test: a row of any of them is served (ADR-0083 d5; ADR-0082 d8 item 3). Any other value is request.validation naming /kind. Since v0.8.0. */
+                    kind?: string;
                     /** @description At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0). */
                     limit?: number;
                     cursor?: string;

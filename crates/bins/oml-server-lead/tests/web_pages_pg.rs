@@ -293,6 +293,25 @@ async fn the_first_admin_email_is_added_under_an_admin_key_and_signs_in_through_
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
+    // The admin search's kind list runs under Postgres (ADR-0083 d5), and
+    // the To do counts read under the person's web capacity (d11).
+    let (status, _, body) = send(
+        &router,
+        json_post(
+            "/v2/admin/memories/search",
+            &boot.admin_key.value,
+            json!({"state": "promoted", "kind": "skill,guardrail"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _, counts) = send(
+        &router,
+        as_web(&cookie, "web", "GET", "/v2/todo/counts", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{counts}");
+    assert!(counts.contains(r#""review":0"#), "{counts}");
 
     // A moved account is refused under Postgres's pin as under the double's.
     let (status, token) = sign_in(&router, &providers, 8, "alice@example.com").await;

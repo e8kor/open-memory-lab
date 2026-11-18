@@ -4294,3 +4294,60 @@ async fn todo_counts_answer_only_a_persons_web_session_key() {
         assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
     }
 }
+
+/// The admin search's kind list narrows its rows to those kinds, and an
+/// empty list narrows nothing (ADR-0083 d5; ADR-0082 d8 item 3).
+#[tokio::test]
+async fn the_admin_search_serves_only_the_kinds_its_kind_list_names() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (_, _review, _writer, bob) = team_with_alices_session_and_bobs_writer(&app, admin).await;
+    let note = written(
+        &app,
+        &bob.value,
+        &submit("k1", "A plain note.", Some("team")),
+    )
+    .await;
+    let steering = written(
+        &app,
+        &bob.value,
+        &SubmitRequest {
+            kind: MemoryKind::Steering,
+            ..submit("k2", "Cite every source.", Some("team"))
+        },
+    )
+    .await;
+    let search = |kinds: Vec<MemoryKind>| oml_app::app::AdminSearchRequest {
+        query: None,
+        workspace: Some(by_name("team")),
+        state: None,
+        origin: None,
+        author: None,
+        kinds,
+        after: None,
+        limit: 50,
+    };
+    let ids = |page: oml_app::app::AdminPage| -> Vec<Uuid> {
+        page.items.iter().map(|m| m.memory.memory_id).collect()
+    };
+    let only = app
+        .admin_search_filtered(admin, &search(vec![MemoryKind::Steering]))
+        .await
+        .expect("the steering alone");
+    assert_eq!(ids(only), [steering]);
+    let both = app
+        .admin_search_filtered(
+            admin,
+            &search(vec![MemoryKind::Memory, MemoryKind::Steering]),
+        )
+        .await
+        .expect("both kinds");
+    assert_eq!(ids(both).len(), 2);
+    let any = app
+        .admin_search_filtered(admin, &search(Vec::new()))
+        .await
+        .expect("no kind list");
+    let any = ids(any);
+    assert!(any.contains(&note) && any.contains(&steering), "{any:?}");
+}

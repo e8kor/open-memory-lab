@@ -5817,6 +5817,7 @@ impl WebStore for MemStore {
                         .is_some_and(|k| search.origin_kinds.contains(&k))
             })
             .filter(|m| search.author.is_none_or(|a| m.author_key_id == a))
+            .filter(|m| search.kinds.is_empty() || search.kinds.contains(&m.kind))
             .filter(|m| {
                 search.after.as_ref().is_none_or(|a| {
                     (m.created_at.unix_micros(), m.memory_id)

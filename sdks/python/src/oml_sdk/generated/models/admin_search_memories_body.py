@@ -24,6 +24,9 @@ class AdminSearchMemoriesBody:
         origin_kind (AdminSearchMemoriesBodyOriginKind | Unset): One origin.kind (ADR-0045 d22, d24; ADR-0070 d5). Since
             v0.6.4.
         author (str | Unset): The authoring key of the tenant, by name or id (ADR-0045 d24; ADR-0070 d5). Since v0.6.4.
+        kind (str | Unset): A comma list of kinds, each one of memory, derived_fact, steering, guardrail, term,
+            term_mapping, vocab_release, skill, document or test: a row of any of them is served (ADR-0083 d5; ADR-0082 d8
+            item 3). Any other value is request.validation naming /kind. Since v0.8.0.
         limit (int | Unset): At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0).
         cursor (str | Unset):
     """
@@ -33,6 +36,7 @@ class AdminSearchMemoriesBody:
     state: AdminSearchMemoriesBodyState | Unset = UNSET
     origin_kind: AdminSearchMemoriesBodyOriginKind | Unset = UNSET
     author: str | Unset = UNSET
+    kind: str | Unset = UNSET
     limit: int | Unset = UNSET
     cursor: str | Unset = UNSET
 
@@ -51,6 +55,8 @@ class AdminSearchMemoriesBody:
 
         author = self.author
 
+        kind = self.kind
+
         limit = self.limit
 
         cursor = self.cursor
@@ -68,6 +74,8 @@ class AdminSearchMemoriesBody:
             field_dict["origin_kind"] = origin_kind
         if author is not UNSET:
             field_dict["author"] = author
+        if kind is not UNSET:
+            field_dict["kind"] = kind
         if limit is not UNSET:
             field_dict["limit"] = limit
         if cursor is not UNSET:
@@ -98,6 +106,8 @@ class AdminSearchMemoriesBody:
 
         author = d.pop("author", UNSET)
 
+        kind = d.pop("kind", UNSET)
+
         limit = d.pop("limit", UNSET)
 
         cursor = d.pop("cursor", UNSET)
@@ -108,6 +118,7 @@ class AdminSearchMemoriesBody:
             state=state,
             origin_kind=origin_kind,
             author=author,
+            kind=kind,
             limit=limit,
             cursor=cursor,
         )

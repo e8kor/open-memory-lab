@@ -11916,6 +11916,7 @@ impl WebStore for PgStore {
              AND ($4::timestamptz IS NULL OR (m.created_at, m.id) < ($4::timestamptz, $5::uuid)) \
              AND (cardinality($7::text[]) = 0 OR m.origin_kind = ANY($7)) \
              AND ($8::uuid IS NULL OR m.author_key_id = $8) \
+             AND (cardinality($9::text[]) = 0 OR m.kind = ANY($9)) \
              ORDER BY m.created_at DESC, m.id DESC LIMIT $6"
         );
         let mut tx = self.pool.begin().await.map_err(backend)?;
@@ -11934,6 +11935,13 @@ impl WebStore for PgStore {
             .bind(i64::try_from(search.limit).unwrap_or(i64::MAX))
             .bind(origin_kind_strings(&search.origin_kinds))
             .bind(search.author)
+            .bind(
+                search
+                    .kinds
+                    .iter()
+                    .map(|k| k.as_str().to_owned())
+                    .collect::<Vec<_>>(),
+            )
             .fetch_all(&mut *tx)
             .await
             .map_err(backend)?;

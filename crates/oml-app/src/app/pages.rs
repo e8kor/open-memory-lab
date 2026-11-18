@@ -148,6 +148,9 @@ pub struct AdminSearchRequest<'a> {
     pub origin: Option<OriginKind>,
     /// The authoring key, by name or id.
     pub author: Option<Reference>,
+    /// Only rows of these kinds; empty narrows nothing (ADR-0083 d5;
+    /// ADR-0082 d8 item 3).
+    pub kinds: Vec<MemoryKind>,
     pub after: Option<(EventTime, Uuid)>,
     pub limit: usize,
 }
@@ -1438,6 +1441,7 @@ where
                 state,
                 origin: None,
                 author: None,
+                kinds: Vec::new(),
                 after,
                 limit,
             },
@@ -1447,7 +1451,8 @@ where
 
     /// The admin read's search with the admin page's every filter
     /// (ADR-0045 d22, d24): [`Self::admin_search`] narrowed besides to one
-    /// `origin.kind` and one authoring key, by name or id, of the tenant. One
+    /// `origin.kind`, one authoring key, by name or id, of the tenant, and a
+    /// set of kinds (ADR-0083 d5). One
     /// `memory.admin_read` per page served, as there.
     pub async fn admin_search_filtered(
         &self,
@@ -1463,6 +1468,7 @@ where
             state,
             origin,
             author,
+            kinds,
             after,
             limit,
         } = req.clone();
@@ -1492,6 +1498,7 @@ where
             state,
             origin_kinds: origin.into_iter().collect(),
             author,
+            kinds,
             after: after.map(|(created_at, artifact_id)| crate::types::ListingPosition {
                 created_at,
                 artifact_id,
