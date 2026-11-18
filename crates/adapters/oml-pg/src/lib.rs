@@ -1038,7 +1038,7 @@ const WHOLE_UNITS: Units = Units {
 /// before 0059 and not cut yet or a text that holds no content line (R1),
 /// is no search unit, here as in the postings (migration 0059's
 /// `oml_search_units`), so neither list reads it.
-fn whole_units(branch: impl Fn(&Units) -> String) -> String {
+fn whole_units(branch: &impl Fn(&Units) -> String) -> String {
     branch(&WHOLE_UNITS)
 }
 
