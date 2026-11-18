@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use serde_json::json;
 use uuid::Uuid;
 
-use oml_domain::access::{Covers, check_issuance};
+use oml_domain::access::{Covers, check_issuance, effective_roles};
 use oml_domain::name::{Name, NamedKind, Reference, UNIVERSE};
 use oml_domain::web::SESSION_KEY_SUFFIXES;
 use oml_domain::{EventTime, Role, Sha256Hash, SignedEnvelope, UsedBy, event_types};
@@ -97,6 +97,13 @@ pub struct OwnKey {
 pub struct QueueRow {
     pub depth: QueueDepth,
     pub path: String,
+    /// The live person's reviewer keys whose effective access confers
+    /// reviewer on the workspace, so may approve its held instructions
+    /// (ADR-0080 d16; #435). A count, never a key. It overcounts: a key
+    /// whose person also wrote the held rows is counted, though outside that
+    /// person's own root it cannot approve them (`review.author_in_lineage`,
+    /// same_person; ADR-0082 d7).
+    pub person_reviewers: u64,
 }
 
 /// One verdict on a memory, as the journal holds it (ADR-0045 d21).
@@ -826,14 +833,50 @@ where
 
     /// `GET /v2/review/queue` (ADR-0070 d5 #2): the review queue's depth and
     /// age per workspace, tenant-wide, no content (ADR-0045 d10, amending
-    /// ADR-0026 d15).
+    /// ADR-0026 d15), with each workspace's held instructions and the
+    /// person's reviewer keys that may approve them: a live key whose grants
+    /// and denials confer reviewer there, as `require_access` reads one key
+    /// (ADR-0080 d16; #435). Counts only, never a key or a memory.
     pub async fn review_queue(&self, admin: &Caller) -> Result<Vec<QueueRow>, AppError> {
         require_role(&admin.key, Role::Admin, "review_queue")?;
         let tenant_id = admin.key.tenant_id;
+        let depths = self.journal.web_queue(tenant_id).await?;
+        let reviewers: Vec<_> = if depths.is_empty() {
+            Vec::new()
+        } else {
+            let now = self.clock.now();
+            self.journal
+                .web_person_reviewers(tenant_id)
+                .await?
+                .into_iter()
+                .filter(|r| !r.key.expired_at(&now))
+                .collect()
+        };
         let mut out = Vec::new();
-        for depth in self.journal.web_queue(tenant_id).await? {
-            let path = self.path_of(tenant_id, depth.workspace_id).await?;
-            out.push(QueueRow { depth, path });
+        for depth in depths {
+            let Some(ancestry) = self
+                .journal
+                .workspace_ancestry(tenant_id, depth.workspace_id)
+                .await?
+            else {
+                out.push(QueueRow {
+                    depth,
+                    path: String::new(),
+                    person_reviewers: 0,
+                });
+                continue;
+            };
+            let path = super::derived_path(&ancestry);
+            let ids: Vec<Uuid> = ancestry.iter().map(|w| w.workspace_id).collect();
+            let person_reviewers = reviewers
+                .iter()
+                .filter(|r| effective_roles(&r.grants, &r.denials, &ids).contains(&Role::Reviewer))
+                .count() as u64;
+            out.push(QueueRow {
+                depth,
+                path,
+                person_reviewers,
+            });
         }
         out.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(out)

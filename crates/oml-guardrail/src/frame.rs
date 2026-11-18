@@ -69,7 +69,7 @@ pub fn render_frame(set: &Value, options: &FrameOptions<'_>) -> Result<Frame, &'
         .count();
     let over = set["over_cap"].as_bool().unwrap_or(false) || promoted > SET_CAP;
     if over && !options.whole_over_cap {
-        lines.push(over_cap_sentence(count));
+        lines.push(over_cap_sentence(promoted));
     } else if guardrails.is_empty() {
         lines.push("No guardrail applies here.".to_owned());
     } else {
@@ -95,7 +95,7 @@ pub fn render_frame(set: &Value, options: &FrameOptions<'_>) -> Result<Frame, &'
     }
     Ok(Frame {
         text: lines.join("\n"),
-        over_cap: over.then_some(count),
+        over_cap: over.then_some(promoted),
         count,
     })
 }

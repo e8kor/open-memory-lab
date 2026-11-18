@@ -7352,9 +7352,11 @@ where
     /// `promoted_at` and `artifact_id`, never by a query; rows of one
     /// `claim_key` with different severities each name the others in
     /// `conflict`; over [`SET_CAP`] the set is served whole with
-    /// `over_cap`. Held guardrails are never served as rules: the caller's
-    /// own held ones in the same chain are listed by `claim_key` and version
-    /// alone, at most [`OWN_HELD_MAX_LINES`] (d3). Each served row carries
+    /// `over_cap`. A held guardrail is served as a line of its own, marked
+    /// unreviewed and asking, to its author key under `include_own_held` and
+    /// inside an in-progress root (ADR-0080 d10); the caller's own held ones
+    /// in the same chain that are not served are listed by `claim_key` and
+    /// version alone, at most [`OWN_HELD_MAX_LINES`] (d3). Each served row carries
     /// its approving verdicts' `used_by` and `at`, never a reviewer's key
     /// name (d5); they are read from the journal, one pass over the tenant's
     /// chain per read whose cost is unmeasured. The result names the served
@@ -7435,18 +7437,18 @@ where
                 }
                 MemoryStatus::Held => {
                     let own = m.author_key_id == key.key_id;
-                    if own {
-                        own_held.push(OwnHeldGuardrail {
+                    let served = reads
+                        && served_unreviewed(&m, self.scanner.version())
+                        && ((own && req.include_own_held) || inside.contains(&m.workspace_id));
+                    // A version served as a line is not also listed as held
+                    // and not in force.
+                    match m.guardrail.clone() {
+                        Some(fields) if served => in_force.push((depth, *fields, m)),
+                        _ if own => own_held.push(OwnHeldGuardrail {
                             claim_key: m.claim_key.clone(),
                             version: m.version,
-                        });
-                    }
-                    if reads
-                        && served_unreviewed(&m, self.scanner.version())
-                        && ((own && req.include_own_held) || inside.contains(&m.workspace_id))
-                        && let Some(fields) = m.guardrail.clone()
-                    {
-                        in_force.push((depth, *fields, m));
+                        }),
+                        _ => {}
                     }
                 }
                 _ => {}

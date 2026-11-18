@@ -1,4 +1,4 @@
-//! The `oml-scan/1.2` rule table (ADR-0065 d2–d5). Each rule names its
+//! The `oml-scan/1.3` rule table (ADR-0065 d2–d5). Each rule names its
 //! finding class, its action and one pattern; a rule whose match needs a
 //! second look (an entropy floor, a placeholder password) names that check.
 //!
@@ -44,6 +44,9 @@ pub(crate) enum Check {
     /// Capture groups 1 and 2 are a user and a password; the password must
     /// not be a placeholder, the user's own name or an environment reference.
     Password,
+    /// The match is a bech32 string whose checksum holds (BIP-173), in
+    /// either case: a placeholder or a mistyped value fails it.
+    Bech32,
 }
 
 /// One rule of the set.
@@ -88,14 +91,26 @@ const fn pii(rule: Rule) -> Rule {
     Rule { pii: true, ..rule }
 }
 
-/// The rules, in reporting order. Ids are stable within `oml-scan/1.2`; a
-/// changed pattern or a new rule is a new name, `oml-scan/1.3` for a fix (ADR-0065 d1; ADR-0074 d21).
+/// The rules, in reporting order. Ids are stable within `oml-scan/1.3`; a
+/// changed pattern or a new rule is a new name, `oml-scan/1.4` for a fix (ADR-0065 d1; ADR-0074 d21).
 pub(crate) const RULES: &[Rule] = &[
     // ---- d3: secrets, veto -------------------------------------------------
     veto(
         "private-key-block",
         "secret.private_key",
         r"-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----",
+    ),
+    // An age X25519 identity: the secret half of a bundle recipient
+    // (ADR-0084 d5; #453), in either case and glued to a word on either side,
+    // and only when its bech32 checksum holds. Its public half, `age1…`,
+    // passes. The post-quantum and plugin identities are not read (#461).
+    checked(
+        veto(
+            "age-identity",
+            "secret.private_key",
+            r"(?i-u:AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58})",
+        ),
+        Check::Bech32,
     ),
     veto(
         "putty-private-key",

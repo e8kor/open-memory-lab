@@ -1,4 +1,4 @@
-//! The `oml-scan/1.2` rule set (ADR-0065): a true positive per rule, built at
+//! The `oml-scan/1.3` rule set (ADR-0065): a true positive per rule, built at
 //! run time from obviously fake material so no key-shaped literal sits in
 //! the repository; the false-positive corpus; findings that never carry
 //! what they matched; and the time budget.
@@ -30,9 +30,71 @@ const ALNUM: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456
 const UPPER32: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 const B64: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const URLSAFE: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+/// The bech32 data alphabet, upper case as an age identity spells it.
+const BECH32_UPPER: &str = "QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L";
 
 fn j(parts: &[&str]) -> String {
     parts.concat()
+}
+
+/// BIP-173's checksum over `values`, bech32's generator.
+fn polymod(values: &[u8]) -> u32 {
+    const GEN: [u32; 5] = [
+        0x3b6a_57b2,
+        0x2650_8e6d,
+        0x1ea1_19fa,
+        0x3d42_33dd,
+        0x2a14_62b3,
+    ];
+    let mut chk = 1_u32;
+    for &v in values {
+        let top = chk >> 25;
+        chk = ((chk & 0x1ff_ffff) << 5) ^ u32::from(v);
+        for (i, g) in GEN.iter().enumerate() {
+            if (top >> i) & 1 == 1 {
+                chk ^= g;
+            }
+        }
+    }
+    chk
+}
+
+/// A fake age X25519 identity whose bech32 checksum holds: 32 bytes from
+/// the xorshift stream, encoded under `age-secret-key-` as age spells an
+/// identity, upper case (BIP-173). No key-shaped literal sits in the tree.
+fn age_identity(seed: u64) -> String {
+    let hrp = "age-secret-key-";
+    let bytes: Vec<u8> = fake("0123456789abcdef", 64, seed)
+        .as_bytes()
+        .chunks(2)
+        .map(|h| u8::from_str_radix(std::str::from_utf8(h).expect("hex"), 16).expect("hex"))
+        .collect();
+    let (mut acc, mut n, mut data) = (0_u32, 0_u32, Vec::new());
+    for b in bytes {
+        acc = (acc << 8) | u32::from(b);
+        n += 8;
+        while n >= 5 {
+            n -= 5;
+            data.push(u8::try_from((acc >> n) & 31).expect("five bits"));
+        }
+        acc &= (1 << n) - 1;
+    }
+    if n > 0 {
+        data.push(u8::try_from((acc << (5 - n)) & 31).expect("five bits"));
+    }
+    let mut values: Vec<u8> = hrp.bytes().map(|c| c >> 5).collect();
+    values.push(0);
+    values.extend(hrp.bytes().map(|c| c & 31));
+    values.extend(&data);
+    values.extend([0; 6]);
+    let sum = polymod(&values) ^ 1;
+    data.extend((0..6).map(|i| u8::try_from((sum >> (5 * (5 - i))) & 31).expect("five bits")));
+    let alphabet = BECH32_UPPER.as_bytes();
+    let tail: String = data
+        .iter()
+        .map(|&v| char::from(alphabet[usize::from(v)]))
+        .collect();
+    j(&["AGE-SECRET", "-KEY-1", &tail])
 }
 
 /// One sample per rule id: (rule, text, the secret inside it or "").
@@ -45,6 +107,12 @@ fn positives() -> Vec<(&'static str, String, String)> {
         "private-key-block",
         s.clone(),
         format!("the deploy key:\n{s}\n{}\n", fake(B64, 64, 1)),
+    );
+    let s = age_identity(30);
+    add(
+        "age-identity",
+        s.clone(),
+        format!("# created: 2026-11-17\n{s}\n"),
     );
     let s = j(&["PuTTY-User-Key-File-", "3: ssh-ed25519"]);
     add("putty-private-key", s.clone(), format!("key file {s}"));
@@ -376,14 +444,86 @@ fn a_field_over_the_bound_is_vetoed_not_scanned_in_part() {
     }
 }
 
-/// Each fix of what a rule matches ships under a new name (ADR-0065 d1;
+/// Each change of what the set matches ships under a new name (ADR-0065 d1;
 /// ADR-0074 d21, d28): `/1.1` read every memory through the normalised
 /// views, `/1.2` anchors the letters-only view to the word edges of the
-/// text as written (#226).
+/// text as written (#226), `/1.3` vetoes an age identity (#453).
 #[test]
-fn the_rule_set_after_the_letters_view_fix_is_oml_scan_1_2() {
-    assert_eq!(RULESET, "oml-scan/1.2");
-    assert_eq!(RuleSet::new(Options::default()).version(), "oml-scan/1.2");
+fn the_rule_set_after_the_age_identity_rule_is_oml_scan_1_3() {
+    assert_eq!(RULESET, "oml-scan/1.3");
+    assert_eq!(RuleSet::new(Options::default()).version(), "oml-scan/1.3");
+}
+
+/// An age X25519 identity, `AGE-SECRET-KEY-1` and 58 bech32 characters whose
+/// checksum holds, is the secret half of a bundle recipient (ADR-0084 d5): a
+/// memory that pastes one is refused, its finding named as the other
+/// private-key rules name theirs, in either case, since bech32 reads both,
+/// and glued to a word before it (#453).
+#[test]
+fn an_age_secret_key_in_a_memory_is_vetoed() {
+    let scanner = RuleSet::new(Options::default());
+    let identity = age_identity(31);
+    for pasted in [
+        identity.clone(),
+        identity.to_ascii_lowercase(),
+        format!("OML_EXPORT_{identity}"),
+        format!("{identity}_old"),
+        format!("{identity}9"),
+        format!("{identity}x"),
+    ] {
+        let text = format!("the export identity, keep safe:\n{pasted}\nend");
+        match scanner.scan(&[("/body", "clean"), ("/anchor/fragment", &text)]) {
+            Verdict::Veto(f) => {
+                assert_eq!(f.len(), 1, "{f:?}");
+                assert_eq!(
+                    (f[0].class, f[0].rule, f[0].field.as_str(), f[0].line),
+                    ("secret.private_key", "age-identity", "/anchor/fragment", 2),
+                    "{pasted}"
+                );
+            }
+            other => panic!("{pasted}: {other:?}"),
+        }
+    }
+}
+
+/// The public half, a recipient `age1` and 58 lower-case bech32 characters,
+/// is published on purpose and passes; so do the identity's prefix alone,
+/// a value too short, one with a character outside bech32, and an
+/// identity-shaped value whose bech32 checksum fails: a placeholder in a
+/// runbook, or a real one with a character changed (#453).
+#[test]
+fn an_age_public_recipient_is_not_vetoed() {
+    let scanner = RuleSet::new(Options::default());
+    let recipient = j(&["age1", &fake(BECH32_UPPER, 58, 32).to_ascii_lowercase()]);
+    let short = j(&["AGE-SECRET", "-KEY-1", &fake(BECH32_UPPER, 40, 33)]);
+    let outside = j(&[
+        "AGE-SECRET",
+        "-KEY-1",
+        &fake(BECH32_UPPER, 57, 34),
+        "B", // `B` is not in the bech32 alphabet
+    ]);
+    let placeholder = j(&["AGE-SECRET", "-KEY-1", &"X".repeat(58)]);
+    let identity = age_identity(35);
+    let last = identity.chars().last().expect("a character");
+    let changed = format!(
+        "{}{}",
+        &identity[..identity.len() - 1],
+        if last == 'Q' { 'P' } else { 'Q' }
+    );
+    for text in [
+        format!("export with --recipient {recipient}"),
+        "an identity starts with AGE-SECRET-KEY-1 and is read from a file".to_owned(),
+        format!("truncated: {short}"),
+        format!("not bech32: {outside}"),
+        format!("put the identity here: {placeholder}"),
+        format!(
+            "a placeholder in lower case: {}",
+            placeholder.to_ascii_lowercase()
+        ),
+        format!("one character changed: {changed}"),
+    ] {
+        assert_eq!(scanner.scan(&[("/body", &text)]), Verdict::Pass, "{text}");
+    }
 }
 
 /// A finding names the view its rule read and the byte range of the match
