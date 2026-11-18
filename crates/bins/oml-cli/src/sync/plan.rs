@@ -255,8 +255,9 @@ pub(crate) struct Claim {
     pub(crate) key: String,
     pub(crate) tip: Option<Listed>,
     pub(crate) held: bool,
-    /// Promoted versions older than the tip: (version, anchor hash).
-    older: Vec<(u64, String)>,
+    /// Promoted versions older than the tip: (version, anchor hash, text
+    /// digest).
+    older: Vec<(u64, String, String)>,
     /// The greatest version among held and promoted (d19).
     pub(crate) latest_live: u64,
     /// The latest version in any state, for a claim with no tip.
@@ -276,7 +277,13 @@ impl Claim {
         let older = versions
             .iter()
             .filter(|v| v.state == "promoted" && v.version < tip_version)
-            .filter_map(|v| Some((v.version, v.anchor.as_ref()?.hash.clone()?)))
+            .filter_map(|v| {
+                Some((
+                    v.version,
+                    v.anchor.as_ref()?.hash.clone()?,
+                    v.plaintext_digest.clone(),
+                ))
+            })
             .collect();
         let latest_live = versions
             .iter()
@@ -803,7 +810,16 @@ fn decide(ctx: &Context, claim: &Claim, si: &SourceItem, digest: &str) -> Entry 
             ..bare(Outcome::Moved, key, &si.path)
         };
     }
-    if let Some((version, _)) = claim.older.iter().rev().find(|(_, h)| *h == si.item.hash) {
+    // A document is served byte for byte, so its older version matches only
+    // when its text digest does too: a whitespace-only edit is a change
+    // (ADR-0081 d7, R13).
+    let document = si.item.format.is_some();
+    if let Some((version, ..)) = claim
+        .older
+        .iter()
+        .rev()
+        .find(|(_, h, d)| *h == si.item.hash && (!document || d.as_str() == digest))
+    {
         if !ctx.allow_rollback {
             return Entry {
                 replaces: Some(tip.artifact_id.clone()),

@@ -364,6 +364,7 @@ pub fn execute(
         ..ListQuery::default()
     })?;
     let (kind, namespaces) = resolve_adapter(loaded, opts, &ctx, &own, &served)?;
+    refuse_mixed_paths(loaded, kind, opts, &ctx, &own, &served)?;
     ctx.namespaces = namespaces;
     guard_rev(loaded, opts, &ctx, &own, &served)?;
     guard_exclude(opts, &ctx, &own, &served)?;
@@ -498,6 +499,66 @@ fn recorded_claims(
     out
 }
 
+/// One path is loaded one way (ADR-0081 d7, the review's reading R5
+/// amended 2026-11-18): each loaded path is refused when the workspace holds
+/// live claims anchored at it written the other way, a `document` claim for
+/// a run of another adapter, or another adapter's claims for a `document`
+/// run, naming the path, both adapters and the keys the run would leave.
+/// `--change-adapter` takes the switch instead.
+fn refuse_mixed_paths(
+    loaded: &Loaded,
+    kind: Kind,
+    opts: &Options,
+    ctx: &Context,
+    own: &[Listed],
+    served: &[Listed],
+) -> Result<(), CliError> {
+    if kind == Kind::Rust || (opts.change_adapter && !opts.check) {
+        return Ok(());
+    }
+    let mut mixed: Vec<String> = Vec::new();
+    let mut other: BTreeSet<&'static str> = BTreeSet::new();
+    for path in loaded.paths() {
+        let at: BTreeSet<(Kind, &str)> = own
+            .iter()
+            .chain(served)
+            .filter(|v| v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str()))
+            .filter(|v| matches!(v.state.as_str(), "held" | "promoted") && !v.retirement)
+            .filter(|v| {
+                v.anchor.as_ref().is_some_and(|a| {
+                    a.repo.as_deref() == Some(ctx.repo.as_str())
+                        && a.path.as_deref() == Some(path.as_str())
+                })
+            })
+            .filter_map(|v| {
+                v.adapter()
+                    .filter(|k| *k != Kind::Rust)
+                    .map(|k| (k, v.claim_key.as_str()))
+            })
+            .filter(|(k, _)| (*k == Kind::Document) != (kind == Kind::Document))
+            .collect();
+        if !at.is_empty() {
+            other.extend(at.iter().map(|(k, _)| k.name()));
+            let keys: Vec<&str> = at.iter().map(|(_, key)| *key).collect();
+            mixed.push(format!("{path} ({})", keys.join(", ")));
+        }
+    }
+    if mixed.is_empty() {
+        return Ok(());
+    }
+    Err(CliError::local(format!(
+        "{} {} loaded by the {} adapter; loading {} with {} would leave those claims beside its \
+         own, and one path is loaded one way. To switch to {} and retire them, pass \
+         --change-adapter",
+        mixed.join("; "),
+        if mixed.len() == 1 { "is" } else { "are" },
+        other.into_iter().collect::<Vec<_>>().join(", "),
+        if mixed.len() == 1 { "it" } else { "them" },
+        kind.name(),
+        kind.name()
+    )))
+}
+
 /// The adapters whose claims this workspace holds under the source.
 fn recorded_adapters(ctx: &Context, own: &[Listed], served: &[Listed]) -> BTreeSet<Kind> {
     recorded_claims(ctx, own, served).into_keys().collect()
@@ -531,26 +592,13 @@ fn resolve_adapter(
             all.push(k);
             Ok((k, all))
         }
-        Some(k) if k == Kind::Document || recorded.contains(&Kind::Document) => {
-            // One path is loaded one way (ADR-0081 d7, R5): name both
-            // adapters and the claims the run would leave beside its own.
-            let left: Vec<String> = recorded_claims(ctx, own, served)
-                .into_values()
-                .flatten()
-                .collect();
-            Err(CliError::local(format!(
-                "this source's paths are loaded by the {} adapter; loading them with {} would \
-                 leave {} beside its own, and one path is loaded one way. To switch to {} and \
-                 retire them, pass --change-adapter",
-                names(),
-                k.name(),
-                if left.is_empty() {
-                    "their claims".to_owned()
-                } else {
-                    left.join(", ")
-                },
-                k.name()
-            )))
+        // Documents sit beside one other adapter's claims in a source,
+        // refused path by path ([`refuse_mixed_paths`]; ADR-0081 d7, R5
+        // amended).
+        Some(k)
+            if k == Kind::Document || recorded.iter().all(|r| *r == Kind::Document || *r == k) =>
+        {
+            Ok((k, vec![k]))
         }
         Some(k) => Err(CliError::local(format!(
             "this source uses the {} adapter; to switch to {} and retire its existing claims, \

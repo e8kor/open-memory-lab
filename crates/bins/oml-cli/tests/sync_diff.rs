@@ -172,10 +172,24 @@ impl Fake {
     fn capture(&self, claim_key: &str, workspace: &str, version: u64, body: &Value) -> Value {
         let artifact_id = format!("art-{claim_key}-{workspace}-v{version}");
         let text = body["body"].as_str().unwrap_or_default();
+        // A supersession sends no kind and keeps its target's, as the
+        // server's does.
+        let kept = self
+            .versions
+            .borrow()
+            .iter()
+            .filter(|v| v.claim_key == claim_key && v.workspace_id == workspace)
+            .max_by_key(|v| v.version)
+            .map(|v| v.kind.clone());
+        let kind = body["kind"]
+            .as_str()
+            .map(str::to_owned)
+            .or(kept)
+            .unwrap_or_else(|| "memory".to_owned());
         self.versions.borrow_mut().push(Version {
             artifact_id: artifact_id.clone(),
             claim_key: claim_key.to_owned(),
-            kind: body["kind"].as_str().unwrap_or("memory").to_owned(),
+            kind,
             version,
             state: "held".into(),
             retirement: body["retirement"] == true,
@@ -811,6 +825,37 @@ fn a_rollback_to_an_earlier_promoted_hash_is_never_written() {
     assert!(outcomes(&revert).contains(&("changed".into(), "doc/docs/guide/beta".into())));
     assert_eq!(fake.writes().len(), 1);
     assert_eq!(fake.writes()[0].1["expected_version"], 2);
+}
+
+/// ADR-0081 d7, R13 of 2026-11-18: a document's body is served byte for
+/// byte, so a version whose text differs from an older one by whitespace
+/// alone is a change, never a rollback to that version.
+#[test]
+fn a_whitespace_only_edit_of_a_document_is_written_and_not_taken_for_a_rollback() {
+    let fake = Fake::new();
+    let v1 = loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Document, &rev(1));
+    run(&fake, &v1, &opts());
+    fake.promote_all();
+    let edited = GUIDE_V1.replace("Beta holds.", "Beta changed.");
+    run(
+        &fake,
+        &loaded(&[("docs/guide.md", &edited)], Kind::Document, &rev(2)),
+        &opts(),
+    );
+    fake.promote_all();
+    let spaced = GUIDE_V1.replace("Alpha holds.", "Alpha  holds.");
+    let before = fake.writes().len();
+    let third = run(
+        &fake,
+        &loaded(&[("docs/guide.md", &spaced)], Kind::Document, &rev(3)),
+        &opts(),
+    );
+    assert!(
+        outcomes(&third).contains(&("changed".into(), "doc/docs/guide".into())),
+        "{:?}",
+        outcomes(&third)
+    );
+    assert_eq!(fake.writes().len(), before + 1, "the edit is written");
 }
 
 #[test]
@@ -2001,6 +2046,40 @@ fn sync_document_reports_a_path_outside_the_key_grammar_unreadable() {
         .map(|(_, b)| b["claim_key"].as_str().unwrap().to_owned())
         .collect();
     assert_eq!(keys, ["doc/docs/guide"]);
+}
+
+/// ADR-0081 d7, R5 amended 2026-11-18: the refusal is taken per loaded
+/// path, by the live claims anchored at that path. Two paths loaded two
+/// ways in two single-file runs stay apart, and a run over the whole
+/// source with either adapter is refused at the path the other loaded,
+/// however many adapters the source already holds.
+#[test]
+fn sync_refuses_per_path_so_a_source_holding_both_adapters_cannot_load_a_path_the_other_way() {
+    let fake = Fake::new();
+    let a = ("docs/a.md", GUIDE_V1);
+    let b = ("docs/b.md", GUIDE_V1);
+    let only = |files: &[(&str, &str)], kind: Kind| Loaded {
+        scope: Scope::Files(files.iter().map(|(p, _)| (*p).to_owned()).collect()),
+        ..loaded(files, kind, &rev(1))
+    };
+    run(&fake, &only(&[a], Kind::Document), &opts());
+    fake.promote_all();
+    // Another path of the same source, the other way: no path is mixed.
+    run(&fake, &only(&[b], Kind::Headings), &opts());
+    fake.promote_all();
+    let before = fake.writes().len();
+    for kind in [Kind::Document, Kind::Headings] {
+        let err = try_run(&fake, &loaded(&[a, b], kind, &rev(1)), &opts()).unwrap_err();
+        let (path, keys) = if kind == Kind::Document {
+            ("docs/b.md", "doc/docs/b/alpha")
+        } else {
+            ("docs/a.md", "doc/docs/a")
+        };
+        for word in [path, keys, "headings", "document", "--change-adapter"] {
+            assert!(err.contains(word), "{kind:?}: {word}: {err}");
+        }
+    }
+    assert_eq!(fake.writes().len(), before, "nothing written");
 }
 
 /// ADR-0081 d7, the build's reading R5: one path is loaded one way; a run
