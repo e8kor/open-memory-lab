@@ -713,5 +713,8 @@ fn a_verdict_naming_a_version_the_bundle_does_not_carry_is_refused_as_malformed(
     c.verdicts[0].version = 2;
     let err = write_bundle(&c, &test_key(), Vec::new()).expect_err("refused");
     assert_eq!(err.code(), "bundle.malformed");
-    assert!(err.to_string().contains("verdict_on_absent_version"), "{err}");
+    assert!(
+        err.to_string().contains("verdict_on_absent_version"),
+        "{err}"
+    );
 }

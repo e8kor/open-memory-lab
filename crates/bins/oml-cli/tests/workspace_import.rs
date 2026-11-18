@@ -150,10 +150,12 @@ fn serve(runtime: &tokio::runtime::Runtime, stub: Stub) -> (String, Shared) {
         )
         .route(
             "/v2/uploads/{id}",
-            axum::routing::delete(|State(s): State<Shared>, UrlPath(id): UrlPath<String>| async move {
-                note(&s, format!("DELETE /v2/uploads/{id}"));
-                StatusCode::NO_CONTENT
-            }),
+            axum::routing::delete(
+                |State(s): State<Shared>, UrlPath(id): UrlPath<String>| async move {
+                    note(&s, format!("DELETE /v2/uploads/{id}"));
+                    StatusCode::NO_CONTENT
+                },
+            ),
         )
         .route(
             "/v2/uploads/{id}/parts/{n}",
@@ -166,61 +168,72 @@ fn serve(runtime: &tokio::runtime::Runtime, stub: Stub) -> (String, Shared) {
         )
         .route(
             "/v2/uploads/{id}/complete",
-            post(|State(s): State<Shared>, UrlPath(id): UrlPath<String>| async move {
-                note(&s, format!("POST /v2/uploads/{id}/complete"));
-                Json(json!({ "upload_id": id, "state": "completed" }))
-            }),
+            post(
+                |State(s): State<Shared>, UrlPath(id): UrlPath<String>| async move {
+                    note(&s, format!("POST /v2/uploads/{id}/complete"));
+                    Json(json!({ "upload_id": id, "state": "completed" }))
+                },
+            ),
         )
         .route(
             "/v2/workspaces/{w}",
-            get(|State(s): State<Shared>, UrlPath(w): UrlPath<String>| async move {
-                note(&s, format!("GET /v2/workspaces/{w}"));
-                if s.target_exists {
-                    Json(json!({ "workspace_id": "w-1", "name": w })).into_response()
-                } else {
-                    refusal(StatusCode::NOT_FOUND, "access.not_found", "")
-                }
-            }),
+            get(
+                |State(s): State<Shared>, UrlPath(w): UrlPath<String>| async move {
+                    note(&s, format!("GET /v2/workspaces/{w}"));
+                    if s.target_exists {
+                        Json(json!({ "workspace_id": "w-1", "name": w })).into_response()
+                    } else {
+                        refusal(StatusCode::NOT_FOUND, "access.not_found", "")
+                    }
+                },
+            ),
         )
         .route(
             "/v2/imports",
-            post(|State(s): State<Shared>, Json(body): Json<Value>| async move {
-                note(&s, format!("POST /v2/imports upload={}", body["upload_id"]));
-                if s.refuse_import {
-                    return refusal(
-                        StatusCode::UNPROCESSABLE_ENTITY,
-                        "request.validation",
-                        "/allow_older",
-                    );
-                }
-                if body["dry_run"] == true {
-                    return Json(json!({
-                        "plan": {
-                            "counts": { "versions": 3 },
-                            "source": { "tenant_name": "acme" },
-                            "exported_at": "2026-11-17T10:00:00Z",
-                            "authenticated": true,
-                        }
-                    }))
-                    .into_response();
-                }
-                (StatusCode::ACCEPTED, Json(json!({ "import": import("running") })))
-                    .into_response()
-            }),
+            post(
+                |State(s): State<Shared>, Json(body): Json<Value>| async move {
+                    note(&s, format!("POST /v2/imports upload={}", body["upload_id"]));
+                    if s.refuse_import {
+                        return refusal(
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "request.validation",
+                            "/allow_older",
+                        );
+                    }
+                    if body["dry_run"] == true {
+                        return Json(json!({
+                            "plan": {
+                                "counts": { "versions": 3 },
+                                "source": { "tenant_name": "acme" },
+                                "exported_at": "2026-11-17T10:00:00Z",
+                                "authenticated": true,
+                            }
+                        }))
+                        .into_response();
+                    }
+                    (
+                        StatusCode::ACCEPTED,
+                        Json(json!({ "import": import("running") })),
+                    )
+                        .into_response()
+                },
+            ),
         )
         .route(
             "/v2/imports/{id}",
-            get(|State(s): State<Shared>, UrlPath(id): UrlPath<String>| async move {
-                note(&s, format!("GET /v2/imports/{id}"));
-                let mut left = s.running_reads.lock().expect("lock");
-                let state = if *left > 0 {
-                    *left -= 1;
-                    "running"
-                } else {
-                    "done"
-                };
-                Json(json!({ "import": import(state) }))
-            }),
+            get(
+                |State(s): State<Shared>, UrlPath(id): UrlPath<String>| async move {
+                    note(&s, format!("GET /v2/imports/{id}"));
+                    let mut left = s.running_reads.lock().expect("lock");
+                    let state = if *left > 0 {
+                        *left -= 1;
+                        "running"
+                    } else {
+                        "done"
+                    };
+                    Json(json!({ "import": import(state) }))
+                },
+            ),
         )
         .with_state(shared.clone());
     runtime.spawn(async move {
@@ -302,7 +315,11 @@ fn a_dry_runs_upload_is_named_and_the_real_run_imports_it_without_uploading_agai
             ..Stub::default()
         },
     );
-    let dry = oml(&dir, &server, &["--expect-key", &fingerprint(), "--dry-run"]);
+    let dry = oml(
+        &dir,
+        &server,
+        &["--expect-key", &fingerprint(), "--dry-run"],
+    );
     let (stdout, stderr) = texts(&dry);
     assert_eq!(dry.status.code(), Some(0), "{stdout}{stderr}");
     assert!(stdout.contains("--upload up-1"), "{stdout}");
@@ -322,8 +339,9 @@ fn a_dry_runs_upload_is_named_and_the_real_run_imports_it_without_uploading_agai
     assert_eq!(real.status.code(), Some(0), "{stdout}{stderr}");
     let after: Vec<String> = calls(&stub).split_off(opened);
     assert!(
-        after.iter().all(|c| !c.starts_with("POST /v2/uploads")
-            && !c.starts_with("PUT")),
+        after
+            .iter()
+            .all(|c| !c.starts_with("POST /v2/uploads") && !c.starts_with("PUT")),
         "{after:?}"
     );
     assert!(

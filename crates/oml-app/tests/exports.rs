@@ -682,10 +682,7 @@ async fn a_crew_key_is_refused_export_as_person_only() {
         .export_workspace(crew_key.value.as_str(), by_name("alice"), &history())
         .await
         .expect_err("a crew key never exports");
-    assert!(
-        matches!(err, AppError::ExportPersonOnly { .. }),
-        "{err:?}"
-    );
+    assert!(matches!(err, AppError::ExportPersonOnly { .. }), "{err:?}");
 }
 
 #[tokio::test]
@@ -797,7 +794,10 @@ async fn a_versions_derives_from_keeps_only_the_ids_the_bundle_exports() {
     let (app, store) = rig();
     let a = alice(&app).await;
     let mut promoted = Vec::new();
-    for (idem, body) in [("kept", "the kiln vents north"), ("gone", "the vent code is 5531")] {
+    for (idem, body) in [
+        ("kept", "the kiln vents north"),
+        ("gone", "the vent code is 5531"),
+    ] {
         let id = written(&app, &a.agent.value, &submit(idem, body)).await;
         app.post_verdict(a.review.value.as_str(), id, Verdict::Approve, None)
             .await

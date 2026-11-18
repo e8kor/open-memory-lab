@@ -5586,9 +5586,7 @@ impl PgStore {
             ))
             .bind(tenant_id)
             .bind(today)
-            .bind(
-                i32::try_from(oml_app::domain::usage::ACTIVITY_RETENTION_DAYS).map_err(backend)?,
-            )
+            .bind(i32::try_from(oml_app::domain::usage::ACTIVITY_RETENTION_DAYS).map_err(backend)?)
             .execute(&mut *tx)
             .await
             .map_err(backend)?;

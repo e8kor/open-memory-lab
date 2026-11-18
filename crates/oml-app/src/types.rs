@@ -3476,7 +3476,9 @@ pub enum AppError {
     ImportOverQuota(oml_domain::signup::QuotaReached),
     /// The tenant runs an import or dry run already, or the process runs
     /// its bound of them (`import.busy`, 409, retryable; ADR-0084 I13).
-    #[error("an import or dry run of this tenant's is running, or the server runs its bound of them (ADR-0084 I13, import.busy)")]
+    #[error(
+        "an import or dry run of this tenant's is running, or the server runs its bound of them (ADR-0084 I13, import.busy)"
+    )]
     ImportBusy,
     /// The tenant runs an export already (`export.busy`, 409, retryable;
     /// ADR-0084 I13).
