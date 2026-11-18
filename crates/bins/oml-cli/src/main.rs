@@ -2897,7 +2897,9 @@ fn run_workspaces_import(
     let parts_path = format!("/v2/uploads/{}/parts", segment(&upload_id)?);
     // Pass 2: decrypt again and send each part as it is read.
     let (size, sha256) = upload_pass(open()?, &identity, PART_SIZE, &mut |n, bytes| {
-        client.put_bytes(&format!("{parts_path}/{n}"), bytes).map(|_| ())
+        client
+            .put_bytes(&format!("{parts_path}/{n}"), bytes)
+            .map(|_| ())
     })?;
     if (size, sha256.as_str()) != (verified.size, verified.sha256.as_str()) {
         return Err(CliError::local(
@@ -7665,11 +7667,13 @@ mod tests {
                 .to_owned(),
         );
         let lines = imports_doctor(Some(&loud));
-        assert!(lines[1].starts_with("warn imports_stopped: 1 "), "{lines:?}");
+        assert!(
+            lines[1].starts_with("warn imports_stopped: 1 "),
+            "{lines:?}"
+        );
         assert!(lines[2].starts_with("allow_older: 2 "), "{lines:?}");
         assert_eq!(
-            lines[3],
-            "import_refusals since start: bundle.digest_mismatch 1",
+            lines[3], "import_refusals since start: bundle.digest_mismatch 1",
             "{lines:?}"
         );
         assert_eq!(

@@ -3115,7 +3115,9 @@ impl JournalStore for MemStore {
         let state = self.tenant(tenant_id);
         let mut state = state.lock().expect("tenant lock");
         if !state.imports.contains_key(&import_id) {
-            return Err(StoreError::Backend(format!("import {import_id} is not held")));
+            return Err(StoreError::Backend(format!(
+                "import {import_id} is not held"
+            )));
         }
         if !state
             .import_versions

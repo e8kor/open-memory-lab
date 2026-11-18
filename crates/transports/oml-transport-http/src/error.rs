@@ -1725,19 +1725,44 @@ mod bundle_refusals {
         let cases = [
             (B::FormatUnknown { found: s() }, 422),
             (B::Layout { detail: s() }, 422),
-            (B::PathUnsafe { path: s(), detail: s() }, 422),
+            (
+                B::PathUnsafe {
+                    path: s(),
+                    detail: s(),
+                },
+                422,
+            ),
             (B::TooLarge { detail: s() }, 413),
             (B::LineTooLong { file: s(), line: 1 }, 422),
             (B::Depth { file: s(), line: 1 }, 422),
             (B::Duplicate { detail: s() }, 422),
             (B::UnreferencedBody { path: s() }, 422),
-            (B::Malformed { file: s(), line: 1, reason: s() }, 422),
+            (
+                B::Malformed {
+                    file: s(),
+                    line: 1,
+                    reason: s(),
+                },
+                422,
+            ),
             (B::DigestMismatch { detail: s() }, 422),
             (B::SignatureInvalid { detail: s() }, 422),
-            (B::SignatureUnexpected { found: s(), expected: s() }, 422),
+            (
+                B::SignatureUnexpected {
+                    found: s(),
+                    expected: s(),
+                },
+                422,
+            ),
             (B::Unencrypted { detail: s() }, 422),
             (B::DecryptFailed { detail: s() }, 422),
-            (B::BundleOlder { exported_at: s(), ledger_at: s() }, 409),
+            (
+                B::BundleOlder {
+                    exported_at: s(),
+                    ledger_at: s(),
+                },
+                409,
+            ),
             (B::SinceMismatch { detail: s() }, 409),
             (B::SourceKeyChanged { detail: s() }, 409),
             (B::Io { detail: s() }, 422),
@@ -1753,7 +1778,10 @@ mod bundle_refusals {
         assert_eq!(codes.len(), 18, "each refusal has its own code");
         let errors_md = include_str!("../../../../docs/api/errors.md");
         for code in &codes {
-            assert!(errors_md.contains(&format!("| `{code}` |")), "{code} has a row on errors.md");
+            assert!(
+                errors_md.contains(&format!("| `{code}` |")),
+                "{code} has a row on errors.md"
+            );
         }
     }
 }

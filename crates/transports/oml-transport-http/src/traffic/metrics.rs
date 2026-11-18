@@ -696,13 +696,20 @@ impl Metrics {
 
     /// The deployment's imports by state and how many used `allow_older`,
     /// at one sweep (ADR-0084 d15).
-    pub fn import_sweep(&self, by_state: &std::collections::BTreeMap<String, u64>, allow_older: u64) {
+    pub fn import_sweep(
+        &self,
+        by_state: &std::collections::BTreeMap<String, u64>,
+        allow_older: u64,
+    ) {
         for state in oml_app::domain::import::ImportState::ALL {
             self.imports
                 .get_or_create(&StateLabels {
                     state: state.as_str().to_owned(),
                 })
-                .set(i64::try_from(by_state.get(state.as_str()).copied().unwrap_or(0)).unwrap_or(i64::MAX));
+                .set(
+                    i64::try_from(by_state.get(state.as_str()).copied().unwrap_or(0))
+                        .unwrap_or(i64::MAX),
+                );
         }
         self.imports_allow_older
             .set(i64::try_from(allow_older).unwrap_or(i64::MAX));
