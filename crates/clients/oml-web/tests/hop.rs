@@ -23,6 +23,8 @@ const ROOT: &str = "6f1c2d4e-0000-4000-8000-000000000001";
 #[derive(Clone)]
 struct Answers {
     whoami: Option<Value>,
+    /// The workspace page's node read, its primary call.
+    view: Option<Value>,
     guardrails: Option<Value>,
     tree: Option<Value>,
 }
@@ -66,6 +68,13 @@ impl Transport for Double {
                 || json_response(500, &envelope("internal.error")),
                 |set| json_response(200, set),
             )
+        } else if path == "/v2/workspaces/alice" {
+            self.answers.view.as_ref().map_or_else(
+                || json_response(500, &envelope("internal.error")),
+                |view| json_response(200, view),
+            )
+        } else if path.starts_with("/v1/memories") || path.starts_with("/v2/review/held") {
+            json_response(200, &json!({"items": [], "next_cursor": null}))
         } else {
             self.answers.tree.as_ref().map_or_else(
                 || json_response(503, &envelope("unavailable.read_only")),
@@ -89,6 +98,15 @@ fn set() -> Value {
     json!({
         "scope_node": ROOT, "scope_path": "universe.alice", "guardrail_scope": "ancestors",
         "set_digest": "d", "over_cap": false, "guardrails": [], "own_held": [],
+    })
+}
+
+fn view() -> Value {
+    json!({
+        "id": ROOT, "name": "alice", "path": "universe.alice", "status": "development",
+        "mode": "standard", "user_root": true, "my_effective_verbs": ["remember", "recall"],
+        "pending_transitions": [], "policy": {"k": 1, "required_roles": []},
+        "approved_by_kind": {},
     })
 }
 
@@ -123,7 +141,7 @@ async fn page(
     });
     let response = app
         .oneshot(
-            Request::get("/web/guardrails")
+            Request::get("/web/workspace?kind=guardrail")
                 .header("x-request-id", "page-42")
                 .header(header::COOKIE, format!("{SESSION_COOKIE}={TOKEN}"))
                 .body(Body::empty())
@@ -147,6 +165,7 @@ async fn page(
 fn all() -> Answers {
     Answers {
         whoami: Some(whoami()),
+        view: Some(view()),
         guardrails: Some(set()),
         tree: Some(tree()),
     }
@@ -157,14 +176,13 @@ async fn each_api_call_of_a_page_carries_the_pages_id_as_its_correlation_and_a_n
 {
     let (status, _, page, calls, lines) = page(all()).await;
     assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(
-        page.contains("Rules in force at <code>alice</code>"),
-        "{page}"
-    );
+    assert!(page.contains("In force here"), "{page}");
     assert!(page.contains("alice · oml"), "{page}");
     // whoami as web and as admin with the To do badge's counts read in
-    // the same round (ADR-0083 d6), then the set and the tree: five calls.
-    assert_eq!(calls.len(), 5, "{calls:?}");
+    // the same round (ADR-0083 d6), then the node, and together the kind's
+    // listing, the person's own rows, the held rows to judge, the set and
+    // the tree: nine calls (ADR-0082 d1).
+    assert_eq!(calls.len(), 9, "{calls:?}");
     let mut ids: Vec<String> = calls
         .iter()
         .map(|(_, h)| h["x-request-id"].to_str().unwrap().to_owned())
@@ -172,13 +190,7 @@ async fn each_api_call_of_a_page_carries_the_pages_id_as_its_correlation_and_a_n
     ids.sort();
     assert_eq!(
         ids,
-        [
-            "page-42.1",
-            "page-42.2",
-            "page-42.3",
-            "page-42.4",
-            "page-42.5"
-        ]
+        (1..=9).map(|n| format!("page-42.{n}")).collect::<Vec<_>>()
     );
     for (path, h) in &calls {
         assert_eq!(h["x-correlation-id"], "page-42", "{path}");
@@ -191,7 +203,7 @@ async fn each_api_call_of_a_page_carries_the_pages_id_as_its_correlation_and_a_n
     assert_eq!(line["request_id"], "page-42");
     assert_eq!(line["credential"], "session");
     assert_eq!(line["key"], "alice-web");
-    assert_eq!(line["api_request_ids"].as_array().unwrap().len(), 5);
+    assert_eq!(line["api_request_ids"].as_array().unwrap().len(), 9);
     assert!(!lines.lock().unwrap()[0].contains(TOKEN));
 }
 
@@ -203,7 +215,7 @@ async fn the_admin_tab_shows_only_where_the_admin_credential_resolves() {
 }
 
 #[tokio::test]
-async fn a_failed_tree_renders_the_guardrails_without_the_selector_naming_the_calls_request_id() {
+async fn a_failed_tree_renders_the_page_without_the_selector_naming_the_calls_request_id() {
     let (status, _, page, _, _) = page(Answers {
         tree: None,
         ..all()
@@ -218,10 +230,24 @@ async fn a_failed_tree_renders_the_guardrails_without_the_selector_naming_the_ca
     );
 }
 
+/// A failed set is a secondary read: the panel says so and the page draws
+/// the rest (ADR-0070 d8).
 #[tokio::test]
-async fn a_failed_set_is_the_error_page_naming_the_pages_request_id() {
+async fn a_failed_set_marks_the_in_force_panel_and_draws_the_page() {
     let (status, _, page, _, _) = page(Answers {
         guardrails: None,
+        ..all()
+    })
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("In force here is unavailable"), "{page}");
+    assert!(page.contains("No guardrail in alice."), "{page}");
+}
+
+#[tokio::test]
+async fn a_failed_node_read_is_the_error_page_naming_the_pages_request_id() {
+    let (status, _, page, _, _) = page(Answers {
+        view: None,
         ..all()
     })
     .await;
@@ -240,7 +266,7 @@ async fn auth_invalid_from_whoami_sends_the_person_to_sign_in() {
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(
         headers[header::LOCATION],
-        "/web/sign-in?next=%2Fweb%2Fguardrails"
+        "/web/sign-in?next=%2Fweb%2Fworkspace%3Fkind%3Dguardrail"
     );
     // The session check's round alone: whoami, and the badge's counts read
     // made beside it (ADR-0083 d6); nothing of the page itself.
@@ -253,7 +279,7 @@ async fn auth_invalid_from_whoami_sends_the_person_to_sign_in() {
     assert!(
         !calls
             .iter()
-            .any(|(p, _)| p.starts_with("/v1/guardrails") || p.contains("/tree")),
+            .any(|(p, _)| p.starts_with("/v1/guardrails") || p.starts_with("/v2/workspaces/")),
         "{calls:?}"
     );
 }

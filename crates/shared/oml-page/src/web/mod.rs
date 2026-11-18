@@ -129,15 +129,14 @@ pub const ADMIN_PEOPLE_PATH: &str = "/web/admin/people";
 /// system's BrandHeader draws it; the lead's pages and `oml-web`'s draw the
 /// same nav. No tab leads to the other side: that is the switch. Neither
 /// nav carries To do, which is the header's badge, nor a count (ADR-0083
-/// d6, d12); Guardrails leaves with the workspace page's In force here
-/// panel (#410).
-pub const PERSONAL_TABS: [(&str, &str); 6] = [
+/// d6, d12); Guardrails left with the workspace page's In force here
+/// panel (ADR-0083 d12; #410).
+pub const PERSONAL_TABS: [(&str, &str); 5] = [
     (START_PATH, "Start"),
     (USER_MEMORIES_PATH, "Memories"),
     (USER_ATLAS_PATH, "Atlas"),
     (USER_KEYS_PATH, "Keys"),
     (USER_WORKSPACES_PATH, "Workspaces"),
-    ("/web/guardrails", "Guardrails"),
 ];
 
 /// The Administration side's nav, `(href, word)`, in the Personal side's
@@ -777,7 +776,7 @@ mod tests {
         );
         assert_eq!(
             nav(&personal),
-            r#"<nav aria-label="Personal"><a href="/web/start">Start</a><a href="/web/memories">Memories</a><a href="/web/atlas">Atlas</a><a href="/web/keys" class="on" aria-current="page">Keys</a><a href="/web/workspaces">Workspaces</a><a href="/web/guardrails">Guardrails</a></nav>"#
+            r#"<nav aria-label="Personal"><a href="/web/start">Start</a><a href="/web/memories">Memories</a><a href="/web/atlas">Atlas</a><a href="/web/keys" class="on" aria-current="page">Keys</a><a href="/web/workspaces">Workspaces</a></nav>"#
         );
         let admin = shell("", &bar(Scope::Administration), ADMIN_ATLAS_PATH, None, "");
         assert_eq!(

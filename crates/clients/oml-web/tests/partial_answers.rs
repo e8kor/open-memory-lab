@@ -661,7 +661,7 @@ async fn every_console_page_carries_the_todo_badge_with_one_counts_call() {
         "/web/atlas",
         "/web/keys",
         "/web/workspaces",
-        "/web/guardrails",
+        "/web/workspace",
         "/web/todo",
     ] {
         let page = send(with_counts(4), get(path)).await;

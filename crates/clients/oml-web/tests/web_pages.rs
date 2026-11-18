@@ -731,20 +731,28 @@ fn steering_req() -> oml_app::types::SubmitRequest {
     }
 }
 
+/// The workspace page's Guardrails kind opens with In force here: what an
+/// agent connected to the workspace loads, the inherited first, linking
+/// where each comes from, then the workspace's own, with the counts under
+/// the key's guardrail scope (ADR-0083 d12).
 #[tokio::test]
-async fn the_user_page_shows_guardrail_scope_and_selects_nested_workspaces() {
+async fn in_force_here_lists_the_roots_rule_as_here_and_on_a_nested_workspace_as_inherited() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let value = laptop_key(&rig, &cookie).await;
     let id = agent_guardrail(&rig, &value, "Run the tests before every commit.").await;
-    let (_, _, page) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
-    assert!(page.contains("Guardrails"), "{page}");
+    let (_, _, page) = send(
+        &rig.router,
+        get("/web/workspace?kind=guardrail", Some(&cookie)),
+    )
+    .await;
     assert!(
-        page.contains("Rules in force at <code>alice</code>"),
+        page.contains(r#"<h2 id="in-force">In force here</h2>"#),
         "{page}"
     );
+    assert!(page.contains(r#"<h1 class="mono">alice</h1>"#), "{page}");
     assert!(
-        page.contains("This workspace and its readable parent workspaces."),
+        page.contains("An agent connected here loads 0 inherited and 0 from here, at most 12: its key's guardrail scope is <code>ancestors</code>."),
         "{page}"
     );
     // The picker names the scope in force by its reference (design notes
@@ -756,17 +764,32 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workspaces() {
     // Held, it is no rule yet: the set holds none (d3); the memories view
     // lists the agents' held rows.
     assert!(page.contains("No guardrail applies here."), "{page}");
+    // The agent's held guardrail is listed for its person's reviewer key to
+    // judge, and loads nowhere yet.
+    assert!(
+        page.contains(&format!(
+            r#"href="/web/todo/judge?memory={id}">Judge it</a>"#
+        )),
+        "{page}"
+    );
     // Approved by the person's reviewer key, it is in force.
     let (judged, (status, _, page)) = judge_next(&rig, &cookie, "approve", None).await;
     assert_eq!(judged, id.to_string());
     assert_eq!(status, StatusCode::OK, "{page}");
-    let (_, _, page) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
+    let (_, _, page) = send(
+        &rig.router,
+        get("/web/workspace?kind=guardrail", Some(&cookie)),
+    )
+    .await;
     assert!(
-        page.contains("[must] Run the tests before every commit."),
+        page.contains("<strong>must</strong> Run the tests before every commit."),
         "{page}"
     );
-    // Its source by the reference the field takes, not by its path.
-    assert!(page.contains("(alice, auto-"), "{page}");
+    assert!(page.contains(" · here</span></li>"), "{page}");
+    assert!(
+        page.contains("An agent connected here loads 0 inherited and 1 from here"),
+        "{page}"
+    );
     assert!(!page.contains("universe.alice"), "{page}");
     let (status, _, _) = act(
         &rig,
@@ -809,12 +832,15 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workspaces() {
         .workspace_id;
     let (status, _, nested) = send(
         &rig.router,
-        get(&format!("/web/guardrails?workspace={docs}"), Some(&cookie)),
+        get(
+            &format!("/web/workspace?workspace={docs}&kind=guardrail"),
+            Some(&cookie),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{nested}");
     assert!(
-        nested.contains("Rules in force at <code>alice.docs</code>"),
+        nested.contains(r#"<h1 class="mono">alice.docs</h1>"#),
         "{nested}"
     );
     assert!(
@@ -822,9 +848,14 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workspaces() {
         "{nested}"
     );
     assert!(
-        nested.contains("[must] Run the tests before every commit."),
+        nested.contains("<strong>must</strong> Run the tests before every commit."),
         "the parent's root rule applies to the nested workspace: {nested}"
     );
+    assert!(
+        nested.contains(r#"<a href="/web/workspace?workspace=alice&amp;kind=guardrail">inherited from alice</a>"#),
+        "{nested}"
+    );
+    assert!(nested.contains("No guardrail in alice.docs."), "{nested}");
     // No page act writes, supersedes or retires a guardrail (d17).
     let (status, _, body) = act(
         &rig,
@@ -863,7 +894,10 @@ async fn the_guardrail_selector_includes_workspaces_after_the_first_tree_page() 
         .workspace_id;
     let (status, _, page) = send(
         &rig.router,
-        get(&format!("/web/guardrails?workspace={last}"), Some(&cookie)),
+        get(
+            &format!("/web/workspace?workspace={last}&kind=guardrail"),
+            Some(&cookie),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
@@ -1844,11 +1878,11 @@ async fn a_moved_page_draws_the_header_and_tabs_the_leads_pages_draw() {
         let cookie = signed_in(&rig, subject, email).await;
         let (_, _, lead) = send(&rig.router, get("/web/setup", Some(&cookie))).await;
         let (status, headers, moved) =
-            send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
+            send(&rig.router, get("/web/workspace", Some(&cookie))).await;
         assert_eq!(status, StatusCode::OK, "{moved}");
         assert_eq!(header_of(&moved), header_of(&lead), "{email}");
         assert!(
-            moved.contains(r#"<a href="/web/guardrails" class="on" aria-current="page">"#),
+            moved.contains(r#"<a href="/web/workspaces" class="on" aria-current="page">"#),
             "{moved}"
         );
         // The page came over the hop: oml-web's own policy, no provider.
@@ -1857,8 +1891,11 @@ async fn a_moved_page_draws_the_header_and_tabs_the_leads_pages_draw() {
     }
 }
 
+/// The Guardrails view's path answers `308` to the workspace page's
+/// Guardrails kind, keeping the workspace, before any session is read
+/// (ADR-0083 d12).
 #[tokio::test]
-async fn the_old_guardrails_url_is_not_found_and_the_view_answers_at_its_own_path() {
+async fn the_old_guardrails_urls_answer_not_found_or_308_to_the_workspace_page() {
     // ADR-0070 d7 (b) as amended: each moved page has its own path under
     // /web/; the lead's 303 from the old ?view= form is deleted in v0.7.1
     // (ADR-0070, "The old URLs deleted").
@@ -1869,24 +1906,28 @@ async fn the_old_guardrails_url_is_not_found_and_the_view_answers_at_its_own_pat
         assert_eq!(status, StatusCode::NOT_FOUND, "{old}");
         assert!(headers.get(header::LOCATION).is_none(), "{old}");
     }
-    let (status, _, page) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
+    let (status, headers, _) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::PERMANENT_REDIRECT);
+    let location = headers[header::LOCATION].to_str().unwrap().to_owned();
+    assert_eq!(location, "/web/workspace?kind=guardrail");
+    let (status, _, page) = send(&rig.router, get(&location, Some(&cookie))).await;
     assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(page.contains("Rules in force at"), "{page}");
+    assert!(page.contains("In force here"), "{page}");
 }
 
 #[tokio::test]
 async fn a_moved_page_without_a_session_goes_to_the_leads_sign_in() {
     let rig = rig().await;
-    let (status, headers, _) = send(&rig.router, get("/web/guardrails", None)).await;
+    let (status, headers, _) = send(&rig.router, get("/web/workspace", None)).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     let location = headers[header::LOCATION].to_str().unwrap().to_owned();
-    assert_eq!(location, "/web/sign-in?next=%2Fweb%2Fguardrails");
+    assert_eq!(location, "/web/sign-in?next=%2Fweb%2Fworkspace");
     let (status, _, page) = send(&rig.router, get(&location, None)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(page.contains("Sign in with Google"), "{page}");
     // The lead's sign-in carries the page on, to come back to it.
     assert!(
-        page.contains(r#"name="next" value="/web/guardrails""#),
+        page.contains(r#"name="next" value="/web/workspace""#),
         "{page}"
     );
 }
@@ -1897,11 +1938,11 @@ async fn a_signed_out_session_cookie_goes_to_sign_in_from_a_moved_page() {
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let (status, _, _) = act(&rig, &cookie, "/web", &[("action", "sign_out")]).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    let (status, headers, _) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
+    let (status, headers, _) = send(&rig.router, get("/web/workspace", Some(&cookie))).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(
         headers[header::LOCATION],
-        "/web/sign-in?next=%2Fweb%2Fguardrails"
+        "/web/sign-in?next=%2Fweb%2Fworkspace"
     );
 }
 
@@ -1998,9 +2039,14 @@ async fn every_signed_in_page_draws_the_sign_out_control_in_its_header() {
         oml_web::start::STATUS_PATH,
         oml_web::start::EXPORT_PATH,
     ];
-    // The old Review paths answer a 308 to the pages that replace them
-    // (ADR-0083 d6) and draw nothing of their own.
-    let moved = [oml_web::USER_REVIEW_PATH, oml_web::ADMIN_REVIEW_PATH];
+    // The old Review paths, and the Guardrails view's, answer a 308 to the
+    // pages that replace them (ADR-0083 d6, d12) and draw nothing of their
+    // own.
+    let moved = [
+        oml_web::USER_REVIEW_PATH,
+        oml_web::ADMIN_REVIEW_PATH,
+        oml_web::GUARDRAILS_PATH,
+    ];
     for path in moved {
         let (status, _, _) = send(&rig.router, get(path, Some(&cookie))).await;
         assert_eq!(status, StatusCode::PERMANENT_REDIRECT, "{path}");
@@ -2016,10 +2062,26 @@ async fn every_signed_in_page_draws_the_sign_out_control_in_its_header() {
             }
             oml_web::TODO_JUDGE_PATH => format!("{path}?memory={memory}"),
             oml_web::ADMIN_KEYS_PATH => format!("{path}?user=bob"),
+            oml_web::workspace::ADMIN_WORKSPACE_PATH => format!("{path}?workspace=bob"),
+            // An edit or a retirement opens on a skill, a guardrail or a
+            // document; the memory here is none, so its form answers the
+            // refusal page, which draws the control too.
+            oml_web::workspace::EDIT_PATH | oml_web::workspace::RETIRE_PATH => {
+                format!("{path}?memory={memory}")
+            }
             _ => (*path).to_owned(),
         };
         let (status, _, page) = send(&rig.router, get(&url, Some(&cookie))).await;
-        assert_eq!(status, StatusCode::OK, "{url}: {page}");
+        let refused = [
+            oml_web::workspace::EDIT_PATH,
+            oml_web::workspace::RETIRE_PATH,
+        ];
+        let want = if refused.contains(path) {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::OK
+        };
+        assert_eq!(status, want, "{url}: {page}");
         assert_eq!(sign_out_form(&page).as_ref(), Some(&expected), "{url}");
         assert!(
             header_of(&page).contains(r#"<button type="submit" class="linkish">Sign out</button>"#),
@@ -2027,7 +2089,7 @@ async fn every_signed_in_page_draws_the_sign_out_control_in_its_header() {
         );
         drawn += 1;
     }
-    assert_eq!(drawn, 19, "every page route of oml_web::PAGES was read");
+    assert_eq!(drawn, 23, "every page route of oml_web::PAGES was read");
     // A page an act answers is drawn by the same chrome.
     let (status, _, page) = act(
         &rig,
@@ -2092,7 +2154,7 @@ async fn every_refusal_page_of_a_signed_in_person_draws_the_sign_out_control_in_
         StatusCode::BAD_REQUEST,
         send(
             &rig.router,
-            get("/web/guardrails?workspace=a&workspace=b", Some(&cookie)),
+            get("/web/workspace?workspace=a&workspace=b", Some(&cookie)),
         )
         .await,
     );
@@ -2149,7 +2211,7 @@ async fn every_refusal_page_of_a_signed_in_person_draws_the_sign_out_control_in_
     );
     assert!(page.contains("signing out still works"), "{page}");
     for path in [
-        "/web/guardrails",
+        "/web/workspace",
         "/web/workspaces",
         "/web/memories",
         "/web/atlas",
@@ -2212,7 +2274,7 @@ async fn the_sign_out_control_ends_the_session_and_no_credential_of_it_works_aft
             "{capacity}: live before the sign-out"
         );
     }
-    let (_, _, page) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
+    let (_, _, page) = send(&rig.router, get("/web/workspace", Some(&cookie))).await;
     let (status, headers, body) = sign_out_from(&rig, &cookie, &page).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     assert_eq!(headers[header::LOCATION], "/web");
@@ -7620,14 +7682,14 @@ fn side_nav(label: &str, tabs: &[(&str, &str)], current: &str) -> String {
 }
 
 /// The Personal tabs: no Review tab, since To do is the badge every page's
-/// header carries (ADR-0083 d6).
-const PERSONAL: [(&str, &str); 6] = [
+/// header carries (ADR-0083 d6), and no Guardrails tab, which folded into
+/// the workspace page (d12).
+const PERSONAL: [(&str, &str); 5] = [
     ("/web/start", "Start"),
     ("/web/memories", "Memories"),
     ("/web/atlas", "Atlas"),
     ("/web/keys", "Keys"),
     ("/web/workspaces", "Workspaces"),
-    ("/web/guardrails", "Guardrails"),
 ];
 
 /// The Administration tabs, likewise without Review (ADR-0083 d6).
@@ -9067,4 +9129,794 @@ async fn admin_held_view_links_judge_on_the_personal_side() {
     assert!(refused.contains(&rejected.to_string()), "{refused}");
     assert!(!refused.contains("waiting for a verdict"), "{refused}");
     assert!(!refused.contains("/web/todo/judge"), "{refused}");
+}
+
+// -- the workspace page and its builder (ADR-0082 d1-d6; ADR-0083 d12) -------
+
+/// An agent's skill `name` in its person's root, held.
+async fn agent_skill(rig: &Rig, value: &str, name: &str, body: &str) -> uuid::Uuid {
+    rig.app
+        .submit_memory(
+            value,
+            &oml_app::types::SubmitRequest {
+                on_similar: Default::default(),
+                anchor: None,
+                origin: None,
+                idempotency_key: format!("s-{name}"),
+                claim_key: None,
+                verb: None,
+                kind: oml_app::domain::MemoryKind::Skill,
+                body: body.to_owned(),
+                workspace: None,
+                derives_from: Vec::new(),
+                severity: None,
+                rule: None,
+                kind_fields: Some(oml_app::types::KindFields::Skill {
+                    name: name.to_owned(),
+                    description: "Walk the release steps.".to_owned(),
+                }),
+                valid_from: None,
+                valid_until: None,
+                format: Some("text/markdown".to_owned()),
+                title: None,
+            },
+        )
+        .await
+        .expect("the agent proposes a skill")
+        .receipt
+        .memory_id
+}
+
+/// An approved skill `release-checklist` in alice's root, written by her
+/// agent and approved by her review key: the cookie and its id.
+async fn approved_skill(rig: &Rig) -> (String, uuid::Uuid) {
+    let cookie = signed_in(rig, "sub-1", EMAIL).await;
+    let value = laptop_key(rig, &cookie).await;
+    let id = agent_skill(
+        rig,
+        &value,
+        "release-checklist",
+        "Tag, build, publish notes.",
+    )
+    .await;
+    let (judged, (status, _, page)) = judge_next(rig, &cookie, "approve", None).await;
+    assert_eq!(judged, id.to_string());
+    assert_eq!(status, StatusCode::OK, "{page}");
+    (cookie, id)
+}
+
+/// Every builder page answers without script and says nothing in the
+/// second person, and no control saves, publishes or deletes (ADR-0082 d1;
+/// the operator's rule of 2026-11-13).
+fn assert_builder_copy(page: &str) {
+    assert!(!page.contains("<script"), "no script: {page}");
+    let lower = page.to_lowercase();
+    for word in [" you ", " you.", " your ", " my "] {
+        assert!(!lower.contains(word), "{word:?}: {page}");
+    }
+    for word in [">Save<", ">Publish<", ">Delete<"] {
+        assert!(!page.contains(word), "{word}: {page}");
+    }
+}
+
+/// The skills of a workspace are listed on its page with Edit and Retire on
+/// the approved tip, the kinds counted by approved claims, the one New and
+/// who approves under the policy (ADR-0082 d1, d10).
+#[tokio::test]
+async fn the_workspace_page_lists_skills_with_edit_and_retire_on_an_approved_tip() {
+    let rig = rig().await;
+    let (cookie, id) = approved_skill(&rig).await;
+    let (status, _, page) =
+        send(&rig.router, get("/web/workspace?kind=skill", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_builder_copy(&page);
+    assert!(
+        page.contains("<title>alice · Workspaces · OML</title>"),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<nav class="crumbs" aria-label="Breadcrumb">Personal / <a href="/web/workspaces">Workspaces</a> / alice</nav><h1 class="mono">alice</h1>"#),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<nav class="oml-views" aria-label="Approved contents by kind"><a href="/web/memories?workspace=alice">Memories <span class="n">1</span></a><a href="/web/workspace?workspace=alice&amp;kind=skill" aria-current="page">Skills <span class="n">1</span></a><a href="/web/workspace?workspace=alice&amp;kind=guardrail">Guardrails <span class="n">0</span></a><a href="/web/workspace?workspace=alice&amp;kind=document">Documents <span class="n">0</span></a></nav>"#),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<a class="button primary" href="/web/workspace/new?workspace=alice&amp;kind=skill">New skill</a>"#),
+        "{page}"
+    );
+    assert!(
+        page.contains("Proposed under <code>alice-web</code>. Held until approved; nothing new is served before then. This workspace needs 1 approval: in this root <code>alice-review</code> may give it, marked same user."),
+        "{page}"
+    );
+    assert!(
+        page.contains(&format!(
+            r#"<a class="button" href="/web/workspace/edit?memory={id}">Edit</a> <a class="button" href="/web/workspace/retire?memory={id}">Retire</a>"#
+        )),
+        "{page}"
+    );
+    assert!(
+        page.contains("<code>/mcp__&lt;server&gt;__release-checklist</code>"),
+        "{page}"
+    );
+    // The Workspaces view's row leads here (d1).
+    let (_, _, workspaces) = send(&rig.router, get("/web/workspaces", Some(&cookie))).await;
+    assert!(
+        workspaces.contains(r#"<a href="/web/workspace?workspace=alice">alice</a>"#),
+        "{workspaces}"
+    );
+}
+
+/// The values a form carries: every field the form's page drew as an
+/// input, with the hidden fields, as a browser sends them.
+fn form_values(page: &str) -> Vec<(String, String)> {
+    let form = &page[page.find(r#"<form class="oml-form""#).expect("the form")..];
+    let form = &form[..form.find("</form>").expect("its end")];
+    let mut out = Vec::new();
+    for marker in [r#"<input type="hidden" name=""#, r#"<input name=""#] {
+        let mut at = 0;
+        while let Some(found) = form[at..].find(marker) {
+            let start = at + found + marker.len();
+            let name = &form[start..start + form[start..].find('"').unwrap()];
+            let value_at = start + form[start..].find(r#"value=""#).unwrap() + 7;
+            let value = &form[value_at..value_at + form[value_at..].find('"').unwrap()];
+            if name != "csrf_token" {
+                out.push((name.to_owned(), value.replace("&amp;", "&")));
+            }
+            at = value_at;
+        }
+    }
+    let marker = r#"<textarea name=""#;
+    let mut at = 0;
+    while let Some(found) = form[at..].find(marker) {
+        let start = at + found + marker.len();
+        let name = &form[start..start + form[start..].find('"').unwrap()];
+        let open = start + form[start..].find('>').unwrap() + 1;
+        let close = open + form[open..].find("</textarea>").unwrap();
+        out.push((name.to_owned(), form[open..close].replace("&amp;", "&")));
+        at = close;
+    }
+    out
+}
+
+/// A form post of `values`, with `step` and the fields of `extra` set over
+/// them.
+async fn post_form(
+    rig: &Rig,
+    cookie: &str,
+    path: &str,
+    values: &[(String, String)],
+    extra: &[(&str, &str)],
+) -> (StatusCode, HeaderMap, String) {
+    let mut fields: Vec<(&str, &str)> = values
+        .iter()
+        .filter(|(n, _)| !extra.iter().any(|(e, _)| e == n))
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    fields.extend_from_slice(extra);
+    act(rig, cookie, path, &fields).await
+}
+
+/// The held skills alice's keys wrote in her root.
+async fn held_skills(rig: &Rig) -> usize {
+    rig.store
+        .events_range(rig.boot.tenant_id, 1, 100_000)
+        .await
+        .expect("the journal")
+        .iter()
+        .filter(|e| {
+            format!("{e:?}").contains("submission.remember") && format!("{e:?}").contains("triage")
+        })
+        .count()
+}
+
+/// Before a preview Preview is the one primary and Propose is not drawn;
+/// the page a preview answered draws what a session will receive and
+/// Propose; Propose with a changed field redraws the preview instead of
+/// writing; and with the previewed values it writes once and answers `303`
+/// to the workspace page (ADR-0082 d5).
+#[tokio::test]
+async fn propose_is_drawn_only_after_a_preview_of_the_same_values() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, first) = send(
+        &rig.router,
+        get("/web/workspace/new?kind=skill", Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_builder_copy(&first);
+    assert!(first.contains("<h1>New skill</h1>"), "{first}");
+    assert!(
+        first.contains(r#"<nav class="crumbs" aria-label="Breadcrumb">Personal / <a href="/web/workspaces">Workspaces</a> / <a href="/web/workspace?workspace=alice&amp;kind=skill">alice</a> / New skill</nav>"#),
+        "{first}"
+    );
+    assert!(
+        first.contains(r#"<div class="acts"><button type="submit" name="step" value="preview" class="primary">Preview</button></div>"#),
+        "{first}"
+    );
+    assert!(!first.contains("Propose skill"), "{first}");
+    let mut values = form_values(&first);
+    for (name, value) in &mut values {
+        match name.as_str() {
+            "name" => *value = "triage".to_owned(),
+            "description" => *value = "Sort an incident.".to_owned(),
+            "body" => *value = "Read the alert, then page the owner.".to_owned(),
+            _ => {}
+        }
+    }
+    let (status, _, previewed) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/new",
+        &values,
+        &[("step", "preview")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{previewed}");
+    assert_builder_copy(&previewed);
+    assert!(
+        previewed.contains(r#"<h2 id="preview">Preview</h2>"#),
+        "{previewed}"
+    );
+    assert!(
+        previewed
+            .contains("A session receives the command <code>/mcp__&lt;server&gt;__triage</code>."),
+        "{previewed}"
+    );
+    assert!(
+        previewed.contains("<pre>- triage: Sort an incident.</pre>"),
+        "{previewed}"
+    );
+    assert!(
+        previewed.contains(r#"<button type="submit" name="step" value="preview">Preview</button><button type="submit" name="step" value="propose" class="primary">Propose skill</button>"#),
+        "{previewed}"
+    );
+    assert_eq!(held_skills(&rig).await, 0, "a preview writes nothing");
+    // A field changed since the preview: the page previews again.
+    let mut changed = form_values(&previewed);
+    for (name, value) in &mut changed {
+        if name == "description" {
+            *value = "Sort an incident by severity.".to_owned();
+        }
+    }
+    let (status, _, again) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/new",
+        &changed,
+        &[("step", "propose")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert!(
+        again.contains("<pre>- triage: Sort an incident by severity.</pre>"),
+        "{again}"
+    );
+    assert_eq!(
+        held_skills(&rig).await,
+        0,
+        "a changed field is previewed, not written"
+    );
+    let (status, headers, _) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/new",
+        &form_values(&again),
+        &[("step", "propose")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        headers[header::LOCATION],
+        "/web/workspace?workspace=alice&kind=skill&done=proposed"
+    );
+    assert_eq!(held_skills(&rig).await, 1);
+    let (_, _, listed) = send(
+        &rig.router,
+        get(
+            "/web/workspace?workspace=alice&kind=skill&done=proposed",
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert!(
+        listed.contains("Proposed: the new version is held until it is approved"),
+        "{listed}"
+    );
+    assert!(
+        listed.contains("New skill</td>") || listed.contains(" New skill"),
+        "{listed}"
+    );
+}
+
+/// The same Propose sent twice carries the form's nonce both times, so the
+/// API replays the first and one version is captured (ADR-0082 d2).
+#[tokio::test]
+async fn a_double_submit_of_propose_captures_one_version() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (_, _, first) = send(
+        &rig.router,
+        get("/web/workspace/new?kind=skill", Some(&cookie)),
+    )
+    .await;
+    let mut values = form_values(&first);
+    for (name, value) in &mut values {
+        match name.as_str() {
+            "name" => *value = "triage".to_owned(),
+            "description" => *value = "Sort an incident.".to_owned(),
+            "body" => *value = "Read the alert.".to_owned(),
+            _ => {}
+        }
+    }
+    let (_, _, previewed) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/new",
+        &values,
+        &[("step", "preview")],
+    )
+    .await;
+    let ready = form_values(&previewed);
+    for _ in 0..2 {
+        let (status, _, body) = post_form(
+            &rig,
+            &cookie,
+            "/web/workspace/new",
+            &ready,
+            &[("step", "propose")],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    }
+    assert_eq!(held_skills(&rig).await, 1, "the second send replayed");
+}
+
+/// A refusal keeps the form with every value typed and draws the error
+/// beside its field, its sentence first and its code last; Propose is not
+/// offered (ADR-0082 d5).
+#[tokio::test]
+async fn a_refused_preview_keeps_every_value_and_names_the_error_beside_its_field() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (_, _, first) = send(
+        &rig.router,
+        get("/web/workspace/new?kind=skill", Some(&cookie)),
+    )
+    .await;
+    let mut values = form_values(&first);
+    for (name, value) in &mut values {
+        match name.as_str() {
+            "name" => *value = "Not A Name".to_owned(),
+            "description" => *value = "Sort an incident.".to_owned(),
+            "body" => *value = "Read the alert.".to_owned(),
+            _ => {}
+        }
+    }
+    let (status, _, page) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/new",
+        &values,
+        &[("step", "preview")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{page}");
+    assert_builder_copy(&page);
+    assert!(page.contains(r#"<input name="name" value="Not A Name" required aria-describedby="err-name" aria-invalid="true">"#), "{page}");
+    assert!(
+        page.contains(r#"<input name="description" value="Sort an incident." required>"#),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<p class="field-error" id="err-name" role="alert">"#),
+        "{page}"
+    );
+    assert!(
+        page.contains("<code>request.validation</code></p>"),
+        "{page}"
+    );
+    assert!(!page.contains("Propose skill"), "{page}");
+}
+
+/// An edit is previewed with its change against the served tip, name,
+/// description and body each in its own block, and proposes the next
+/// version; once it is held, the page offers no second edit and links the
+/// pending one (ADR-0082 d2, d6).
+#[tokio::test]
+async fn an_edit_previews_its_change_and_then_waits_for_review() {
+    let rig = rig().await;
+    let (cookie, id) = approved_skill(&rig).await;
+    let (status, _, form) = send(
+        &rig.router,
+        get(&format!("/web/workspace/edit?memory={id}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{form}");
+    assert_builder_copy(&form);
+    assert!(form.contains("<h1>Edit release-checklist</h1>"), "{form}");
+    assert!(
+        form.contains("<code>release-checklist</code> <span class=\"dim\">fixed for every version"),
+        "{form}"
+    );
+    let mut values = form_values(&form);
+    for (name, value) in &mut values {
+        if name == "body" {
+            *value = "Tag, build, sign, publish notes.".to_owned();
+        }
+    }
+    let (status, _, previewed) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/edit",
+        &values,
+        &[("step", "preview")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{previewed}");
+    assert!(previewed.contains("Change against v1 <span class=\"n\">baseline: v1, the served tip · 0 words removed, 1 added</span>"), "{previewed}");
+    assert!(
+        previewed.contains(r#"<p class="label">Name <span class="n">unchanged</span></p>"#),
+        "{previewed}"
+    );
+    assert!(previewed.contains("<ins>sign,</ins>"), "{previewed}");
+    assert!(previewed.contains(">Propose v2</button>"), "{previewed}");
+    let (status, _, _) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/edit",
+        &form_values(&previewed),
+        &[("step", "propose")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (_, _, page) = send(&rig.router, get("/web/workspace?kind=skill", Some(&cookie))).await;
+    assert!(
+        page.contains("in force · <a href=\"/web/memory?id="),
+        "{page}"
+    );
+    assert!(page.contains("edit v2 waits for review</a>"), "{page}");
+    assert!(
+        !page.contains(&format!("/web/workspace/edit?memory={id}")),
+        "{page}"
+    );
+    assert!(page.contains("Edit of v1"), "{page}");
+    // The person's own held version offers Withdraw, with its confirmation.
+    assert!(page.contains("&amp;act=withdraw\">Withdraw</a>"), "{page}");
+    // The edit form itself links the pending version instead of a second edit.
+    let (_, _, again) = send(
+        &rig.router,
+        get(&format!("/web/workspace/edit?memory={id}"), Some(&cookie)),
+    )
+    .await;
+    assert!(
+        again.contains("edit v2 waits for review</a>: a second proposal would race it"),
+        "{again}"
+    );
+    assert!(!again.contains(r#"<form class="oml-form""#), "{again}");
+}
+
+/// When the tip moved after the form was drawn, nothing is proposed, the
+/// typed text is kept, and the one primary edits from the new tip with it,
+/// previewing the change against that tip (ADR-0082 d5).
+#[tokio::test]
+async fn a_stale_edit_offers_one_primary_that_edits_from_the_new_tip_with_the_typed_text() {
+    let rig = rig().await;
+    let (cookie, id) = approved_skill(&rig).await;
+    let (_, _, stale) = send(
+        &rig.router,
+        get(&format!("/web/workspace/edit?memory={id}"), Some(&cookie)),
+    )
+    .await;
+    let mut typed = form_values(&stale);
+    for (name, value) in &mut typed {
+        if name == "body" {
+            *value = "Tag, build, publish notes, announce.".to_owned();
+        }
+    }
+    // Another edit lands and is approved first.
+    let (_, _, other) = send(
+        &rig.router,
+        get(&format!("/web/workspace/edit?memory={id}"), Some(&cookie)),
+    )
+    .await;
+    let mut values = form_values(&other);
+    for (name, value) in &mut values {
+        if name == "body" {
+            *value = "Tag, build, sign, publish notes.".to_owned();
+        }
+    }
+    let (_, _, previewed) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/edit",
+        &values,
+        &[("step", "preview")],
+    )
+    .await;
+    let (status, _, _) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/edit",
+        &form_values(&previewed),
+        &[("step", "propose")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (_, (status, _, _)) = judge_next(&rig, &cookie, "approve", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, conflict) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/edit",
+        &typed,
+        &[("step", "preview")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{conflict}");
+    assert_builder_copy(&conflict);
+    assert!(conflict.contains("v2 is now the latest version; this edit was made against v1. Nothing was proposed; the text typed here is kept. <code>submission.version_conflict</code>"), "{conflict}");
+    assert!(conflict.contains(r#"<button type="submit" name="step" value="rebase" class="primary">Edit from v2 with this text</button>"#), "{conflict}");
+    assert_eq!(
+        conflict.matches("class=\"primary\"").count(),
+        1,
+        "{conflict}"
+    );
+    let rebase: Vec<(String, String)> = {
+        let form = &conflict[conflict.find(r#"<form class="oml-form""#).unwrap()..];
+        let mut out = Vec::new();
+        let marker = r#"<input type="hidden" name=""#;
+        let mut at = 0;
+        while let Some(found) = form[at..].find(marker) {
+            let start = at + found + marker.len();
+            let name = &form[start..start + form[start..].find('"').unwrap()];
+            let v = start + form[start..].find(r#"value=""#).unwrap() + 7;
+            let value = &form[v..v + form[v..].find('"').unwrap()];
+            if name != "csrf_token" {
+                out.push((name.to_owned(), value.replace("&amp;", "&")));
+            }
+            at = v;
+        }
+        out
+    };
+    let (status, _, rebased) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/edit",
+        &rebase,
+        &[("step", "rebase")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rebased}");
+    assert!(rebased.contains("Change against v2"), "{rebased}");
+    assert!(
+        rebased.contains("Tag, build, publish notes, announce.</textarea>"),
+        "{rebased}"
+    );
+    assert!(rebased.contains(">Propose v3</button>"), "{rebased}");
+}
+
+/// Retire asks for a reason and names what stops once it is approved; a
+/// missing reason is refused beside its field, and the proposal answers
+/// `303` with the retirement's notice (ADR-0082 d3).
+#[tokio::test]
+async fn retire_names_what_stops_and_needs_a_reason() {
+    let rig = rig().await;
+    let (cookie, id) = approved_skill(&rig).await;
+    let (status, _, form) = send(
+        &rig.router,
+        get(&format!("/web/workspace/retire?memory={id}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{form}");
+    assert_builder_copy(&form);
+    assert!(form.contains("<h1>Retire release-checklist</h1>"), "{form}");
+    assert!(
+        form.contains(
+            "Once approved, the command <code>/oml:release-checklist</code> is no longer offered."
+        ),
+        "{form}"
+    );
+    let values = form_values(&form);
+    let (status, _, refused) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/retire",
+        &values,
+        &[("step", "preview")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert!(refused.contains("A reason is required: it is the retirement version&#39;s text. <code>request.validation</code>"), "{refused}");
+    let (status, _, previewed) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/retire",
+        &values,
+        &[
+            ("step", "preview"),
+            ("reason", "Releases are automated now."),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{previewed}");
+    assert!(
+        previewed.contains(">Propose retirement</button>"),
+        "{previewed}"
+    );
+    let (status, headers, _) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/retire",
+        &form_values(&previewed),
+        &[("step", "propose")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        headers[header::LOCATION],
+        "/web/workspace?workspace=alice&kind=skill&done=retirement"
+    );
+    let (_, _, page) = send(
+        &rig.router,
+        get("/web/workspace?kind=skill&done=retirement", Some(&cookie)),
+    )
+    .await;
+    assert!(
+        page.contains("retirement v2 waits for review</a>"),
+        "{page}"
+    );
+    assert!(page.contains("Retirement of v1"), "{page}");
+}
+
+/// A document's preview draws its resource address and its passages, and a
+/// guardrail's its session-start line and the set's size against the cap
+/// (ADR-0082 d5; ADR-0081 d3).
+#[tokio::test]
+async fn a_document_and_a_guardrail_preview_draw_what_a_session_receives() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (_, _, form) = send(
+        &rig.router,
+        get("/web/workspace/new?kind=document", Some(&cookie)),
+    )
+    .await;
+    assert!(form.contains("<h1>New document</h1>"), "{form}");
+    let mut values = form_values(&form);
+    for (name, value) in &mut values {
+        match name.as_str() {
+            "title" => *value = "Runbook".to_owned(),
+            "claim_key" => *value = "doc/runbook".to_owned(),
+            "body" => {
+                *value = "# Runbook\n\nStart here.\n\n## Deploy\n\nRun the deployer.\n".to_owned()
+            }
+            _ => {}
+        }
+    }
+    let (status, _, page) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/new",
+        &values,
+        &[("step", "preview"), ("format", "text/markdown")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains("Its resource address is <code>oml://workspace/alice/doc/runbook</code>."),
+        "{page}"
+    );
+    assert!(
+        page.contains("<li><code>#runbook</code> lines 1–3 · Runbook</li>"),
+        "{page}"
+    );
+    assert!(
+        page.contains("<li><code>#deploy</code> lines 5–7 · Runbook › Deploy</li>"),
+        "{page}"
+    );
+    assert!(page.contains(">Propose document</button>"), "{page}");
+
+    let (_, _, form) = send(
+        &rig.router,
+        get("/web/workspace/new?kind=guardrail", Some(&cookie)),
+    )
+    .await;
+    assert!(form.contains("At most 300 bytes (UTF-8)."), "{form}");
+    let mut values = form_values(&form);
+    for (name, value) in &mut values {
+        match name.as_str() {
+            "body" => *value = "Never force-push to main.".to_owned(),
+            "pattern" => *value = "git push *".to_owned(),
+            _ => {}
+        }
+    }
+    let (status, _, page) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/new",
+        &values,
+        &[
+            ("step", "preview"),
+            ("severity", "never"),
+            ("tool", "shell"),
+            ("effect", "deny"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_builder_copy(&page);
+    assert!(
+        page.contains("<pre>- [never] Never force-push to main.</pre>"),
+        "{page}"
+    );
+    assert!(
+        page.contains(
+            "Its rule checks each shell call: shell · command <code>git push *</code> · deny."
+        ),
+        "{page}"
+    );
+    assert!(
+        page.contains("1 of at most 12 guardrails apply here once it is approved."),
+        "{page}"
+    );
+    assert!(page.contains("25 of 300 bytes (UTF-8)."), "{page}");
+}
+
+/// The admin side's workspace page lists the same contents by kind,
+/// read-only: no New, Edit, Retire or form, and a person who is no admin
+/// is told nothing of it (ADR-0082 d1).
+#[tokio::test]
+async fn the_admin_workspace_page_has_no_builder_act() {
+    let rig = rig().await;
+    let (cookie, _) = approved_skill(&rig).await;
+    let (status, _, refused) = send(
+        &rig.router,
+        get(
+            "/web/admin/workspace?workspace=alice&kind=skill",
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, page) = send(
+        &rig.router,
+        get(
+            "/web/admin/workspace?workspace=alice&kind=skill",
+            Some(&boss),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_builder_copy(&page);
+    assert!(
+        page.contains("<title>Admin · alice · Workspaces · OML</title>"),
+        "{page}"
+    );
+    assert!(page.contains(r#"<nav class="crumbs" aria-label="Breadcrumb">Administration / <a href="/web/admin/workspaces">Workspaces</a> / alice</nav>"#), "{page}");
+    assert!(page.contains(r#"aria-label="Approved contents by kind"><a href="/web/admin/memories?workspace=alice">Memories <span class="n">1</span></a>"#), "{page}");
+    assert!(page.contains(">release-checklist</a>"), "{page}");
+    assert!(page.contains("first version"), "{page}");
+    for act in [
+        "New skill",
+        "/web/workspace/new",
+        "/web/workspace/edit",
+        "/web/workspace/retire",
+        ">Edit<",
+        ">Retire<",
+        r#"<form class="oml-form""#,
+        "Judge it",
+        "Withdraw",
+    ] {
+        assert!(!page.contains(act), "{act}: {page}");
+    }
+    // The admin Workspaces rows lead here.
+    let (_, _, rows) = send(&rig.router, get("/web/admin/workspaces", Some(&boss))).await;
+    assert!(
+        rows.contains(r#"<a href="/web/admin/workspace?workspace=alice">alice</a>"#),
+        "{rows}"
+    );
 }

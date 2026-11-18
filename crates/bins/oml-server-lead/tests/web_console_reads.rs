@@ -979,3 +979,66 @@ async fn every_console_page_carries_the_todo_badge_with_one_store_call() {
         "the counts read's store calls at 6 and 48"
     );
 }
+
+/// The workspace page's reads, each a call the builder added (ADR-0082
+/// d1, d6; Consequences), measured 2026-11-19 over the in-memory store:
+/// the node with its approved counts by kind (10 store calls), the kind's
+/// listing on the node (14) and an edit's read of the served tip whose text
+/// the change is drawn against (4), none growing with the workspaces under
+/// the person's root; and the person's own rows (`mine`), which the page
+/// reads to offer Withdraw, at 6 calls and one more per row it lists, the
+/// listing's own cost, not the page's (6 rows: 12; 48 rows: 54).
+#[tokio::test]
+async fn the_workspace_pages_reads_cost_the_same_at_6_and_48_workspaces() {
+    let mut seen = Vec::new();
+    for n in [6, 48] {
+        let rig = rig().await;
+        held_in_workspaces(&rig, n).await;
+        let web_key = web(&rig.alice, "web");
+        let node = get(&rig.router, "/v2/workspaces/alice", &web_key, true).await;
+        assert_eq!(node.status, StatusCode::OK, "{}", node.body);
+        assert!(node.body["approved_by_kind"].is_object(), "{}", node.body);
+        let id = node.body["id"].as_str().expect("an id").to_owned();
+        let list = get(
+            &rig.router,
+            &format!(
+                "/v1/memories?with_own=true&include_text=true&limit=200&workspace={id}&kind=skill"
+            ),
+            &web_key,
+            true,
+        )
+        .await;
+        assert_eq!(list.status, StatusCode::OK, "{}", list.body);
+        let mine = get(
+            &rig.router,
+            &format!(
+                "/v1/memories?mine=true&include_text=true&limit=200&workspace={id}&kind=memory"
+            ),
+            &web_key,
+            true,
+        )
+        .await;
+        assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
+        let row = mine.body["items"][0]["artifact_id"]
+            .as_str()
+            .expect("a row")
+            .to_owned();
+        let tip = get(&rig.router, &format!("/v1/memories/{row}"), &web_key, true).await;
+        assert_eq!(tip.status, StatusCode::OK, "{}", tip.body);
+        println!(
+            "store calls at {n} workspaces: node {}, list {}, mine {}, tip {}",
+            node.store_calls(),
+            list.store_calls(),
+            mine.store_calls(),
+            tip.store_calls()
+        );
+        seen.push((
+            node.store_calls(),
+            list.store_calls(),
+            mine.store_calls(),
+            tip.store_calls(),
+        ));
+    }
+    assert_eq!(seen[0], (10, 14, 12, 4), "the reads at 6 workspaces");
+    assert_eq!(seen[1], (10, 14, 54, 4), "the reads at 48 workspaces");
+}

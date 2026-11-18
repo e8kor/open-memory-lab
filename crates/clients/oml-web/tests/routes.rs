@@ -177,3 +177,31 @@ async fn the_old_admin_review_path_answers_308_to_the_held_view() {
     }
     assert!(!oml_web::serves("POST", "/web/admin/review"));
 }
+
+/// The Guardrails view's path answers `308` to the workspace page's
+/// Guardrails kind, keeping the workspace, and with none to the page,
+/// which opens on the person's root (ADR-0083 d12).
+#[tokio::test]
+async fn web_guardrails_redirects_308_to_the_workspace_page() {
+    for (path, location) in [
+        ("/web/guardrails", "/web/workspace?kind=guardrail"),
+        (
+            "/web/guardrails?workspace=alice.proj",
+            "/web/workspace?workspace=alice.proj&kind=guardrail",
+        ),
+        (
+            "/web/guardrails?workspace=team&done=x",
+            "/web/workspace?workspace=team&kind=guardrail",
+        ),
+    ] {
+        assert_eq!(
+            moved(path).await,
+            (
+                http::StatusCode::PERMANENT_REDIRECT,
+                Some(location.to_owned())
+            ),
+            "{path}"
+        );
+    }
+    assert!(!oml_web::serves("POST", "/web/guardrails"));
+}

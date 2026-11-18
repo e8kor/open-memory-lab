@@ -14,7 +14,6 @@ mod card;
 pub mod config;
 mod diff;
 pub mod doctor;
-pub mod frame;
 pub mod keys;
 pub mod memories;
 pub mod memory;
@@ -28,6 +27,7 @@ pub mod session;
 pub mod start;
 pub mod todo;
 mod usage;
+pub mod workspace;
 pub mod workspaces;
 
 use std::sync::Arc;
@@ -65,6 +65,14 @@ pub use oml_page::SIGN_IN_PATH;
 /// (`tests/routes.rs`).
 pub const PAGES: &[(&str, &str)] = &[
     ("GET", GUARDRAILS_PATH),
+    ("GET", workspace::WORKSPACE_PATH),
+    ("GET", workspace::NEW_PATH),
+    ("POST", workspace::NEW_PATH),
+    ("GET", workspace::EDIT_PATH),
+    ("POST", workspace::EDIT_PATH),
+    ("GET", workspace::RETIRE_PATH),
+    ("POST", workspace::RETIRE_PATH),
+    ("GET", workspace::ADMIN_WORKSPACE_PATH),
     ("GET", USER_WORKSPACES_PATH),
     ("POST", USER_WORKSPACES_PATH),
     ("GET", ADMIN_WORKSPACES_PATH),
@@ -149,8 +157,9 @@ pub use oml_page::web::USER_WORKSPACES_PATH;
 /// `GET /web/admin?view=workspace` and the admin page's workspace actions.
 pub use oml_page::web::ADMIN_WORKSPACES_PATH;
 
-/// The Guardrails view's own path (ADR-0037 d17), moved from
-/// `GET /web?view=guardrails`.
+/// The Guardrails view's former path: a `GET` answers `308` to the
+/// workspace page's Guardrails kind, whose In force here panel replaced it
+/// (ADR-0083 d12).
 pub const GUARDRAILS_PATH: &str = "/web/guardrails";
 
 /// Whether a request with `method` and `path` is one of [`PAGES`], or the
@@ -278,7 +287,7 @@ async fn ready(axum::extract::State(web): axum::extract::State<Web>) -> axum::re
 
 /// The fields of `uri`'s query that `names` names, each `name=value`
 /// encoded; the other fields are dropped.
-fn kept_query(uri: &http::Uri, names: &[&str]) -> Vec<String> {
+pub(crate) fn kept_query(uri: &http::Uri, names: &[&str]) -> Vec<String> {
     use axum::extract::Query;
     // A query that does not decode keeps nothing: the redirect still lands.
     let pairs = Query::<Vec<(String, String)>>::try_from_uri(uri)
@@ -292,7 +301,7 @@ fn kept_query(uri: &http::Uri, names: &[&str]) -> Vec<String> {
 }
 
 /// A `308` to `location`.
-fn permanent(location: &str) -> axum::response::Response {
+pub(crate) fn permanent(location: &str) -> axum::response::Response {
     use axum::response::IntoResponse as _;
     (
         StatusCode::PERMANENT_REDIRECT,
@@ -330,7 +339,20 @@ async fn not_found() -> StatusCode {
 /// page routes the session load.
 pub fn router(web: Web) -> Router {
     let pages = Router::new()
-        .route(GUARDRAILS_PATH, get(pages::guardrails_page))
+        .route(workspace::WORKSPACE_PATH, get(workspace::user_page))
+        .route(
+            workspace::NEW_PATH,
+            get(workspace::new_page).post(workspace::new_act),
+        )
+        .route(
+            workspace::EDIT_PATH,
+            get(workspace::edit_page).post(workspace::edit_act),
+        )
+        .route(
+            workspace::RETIRE_PATH,
+            get(workspace::retire_page).post(workspace::retire_act),
+        )
+        .route(workspace::ADMIN_WORKSPACE_PATH, get(workspace::admin_page))
         .route(
             USER_WORKSPACES_PATH,
             get(workspaces::user_page).post(workspaces::user_act),
@@ -378,6 +400,7 @@ pub fn router(web: Web) -> Router {
     // The old Review paths answer their 308 before any session is read: a
     // redirect needs none (ADR-0083 d6).
     let moved = Router::new()
+        .route(GUARDRAILS_PATH, get(workspace::moved_guardrails))
         .route(USER_REVIEW_PATH, get(moved_review))
         .route(ADMIN_REVIEW_PATH, get(moved_admin_review));
     // The JSON routes load their own session: no session is not found as
@@ -424,7 +447,18 @@ mod tests {
     #[test]
     fn the_proxy_sends_only_the_moved_pages_paths_here() {
         // Route-by-path (ADR-0070 d7 (b) as amended): the query plays no part.
+        // The Guardrails view's path answers its 308 (ADR-0083 d12); the
+        // workspace page and its forms are this process's (ADR-0082 d1).
         assert!(serves("GET", "/web/guardrails"));
+        assert!(serves("GET", "/web/workspace") && !serves("POST", "/web/workspace"));
+        for path in [
+            "/web/workspace/new",
+            "/web/workspace/edit",
+            "/web/workspace/retire",
+        ] {
+            assert!(serves("GET", path) && serves("POST", path), "{path}");
+        }
+        assert!(serves("GET", "/web/admin/workspace") && !serves("POST", "/web/admin/workspace"));
         assert!(serves("GET", "/web/workspaces"));
         assert!(serves("POST", "/web/workspaces"));
         assert!(serves("GET", "/web/admin/workspaces"));

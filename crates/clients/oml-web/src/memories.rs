@@ -268,6 +268,16 @@ const KINDS: &[(&str, &str)] = &[
     ("test", "test"),
 ];
 
+/// The kinds the Personal cockpit's listing asks for, as its `kind`: none
+/// sent, so every kind (ADR-0083 d1). The workspace page's Memories count
+/// sums the approved claims of exactly these kinds (ADR-0082 d10).
+pub(crate) const COCKPIT_KIND: Option<&str> = None;
+
+/// Whether the Personal cockpit lists claims of `kind`.
+pub(crate) fn cockpit_lists(kind: &str) -> bool {
+    COCKPIT_KIND.is_none_or(|kinds| kinds.split(',').any(|k| k == kind))
+}
+
 impl ListQuery {
     fn parse(fields: &Fields, side: Side) -> Result<Self, FieldRefusal> {
         // An empty field is no filter, as a submitted filter form sends it.
@@ -486,9 +496,9 @@ async fn user_cards(
             promoted_since: since.as_deref(),
             origin: q.origin.as_deref(),
             author: q.author.as_deref(),
+            kind: COCKPIT_KIND,
             limit: q.limit,
             cursor: q.cursor.as_deref(),
-            ..MemoryQuery::default()
         };
         let page = web
             .api
