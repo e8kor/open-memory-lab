@@ -2208,31 +2208,12 @@ fn run_skills_list(
     }
     println!(
         "skills offered at {} (guardrail scope {}): {}",
-        first["scope_path"].as_str().unwrap_or("?"),
+        oml_cli::skills::printable(first["scope_path"].as_str().unwrap_or("?")),
         first["guardrail_scope"].as_str().unwrap_or("?"),
         skills.len()
     );
     for s in &skills {
-        let mark = if s["unreviewed"] == true {
-            " [unreviewed]"
-        } else {
-            ""
-        };
-        let overrides = s["overrides"]
-            .as_array()
-            .filter(|o| !o.is_empty())
-            .map(|o| {
-                let paths: Vec<&str> = o.iter().filter_map(Value::as_str).collect();
-                format!(" (overrides {})", paths.join(", "))
-            })
-            .unwrap_or_default();
-        println!(
-            "{} v{} {}{mark}: {}{overrides}",
-            s["name"].as_str().unwrap_or("?"),
-            s["version"],
-            s["workspace_path"].as_str().unwrap_or("?"),
-            s["description"].as_str().unwrap_or(""),
-        );
+        println!("{}", oml_cli::skills::list_line(s));
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -2243,36 +2224,25 @@ fn run_skills_list(
 /// skills the current project's and the home's `.claude/skills/` keep on
 /// disk.
 fn local_skill_lines() -> Vec<String> {
-    use std::io::Write as _;
     let home = std::env::var("HOME")
         .ok()
         .filter(|h| Path::new(h).is_absolute());
     let mut lines = Vec::new();
     if let Some(home) = &home {
-        let probe = json!({
+        let input = json!({
             "session_id": "oml-doctor-skill-probe",
             "hook_event_name": "PreToolUse",
             "tool_name": "Write",
             "tool_input": { "file_path": format!("{home}/.claude/skills/oml-doctor/SKILL.md"), "content": "" },
             "cwd": home,
         });
-        let output = std::process::Command::new("oml")
-            .args(["hook", "pre-tool-use"])
-            .env_remove("OML_API_KEY")
-            .env_remove("OML_URL")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .and_then(|mut child| {
-                if let Some(mut stdin) = child.stdin.take() {
-                    let _ = stdin.write_all(probe.to_string().as_bytes());
-                }
-                child.wait_with_output()
-            })
-            .ok();
-        let stdout = output.map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
-        lines.extend(oml_cli::skills::hook_probe_line(stdout.as_deref()));
+        let probed = oml_cli::skills::probe(
+            "oml",
+            &["hook", "pre-tool-use"],
+            &input.to_string(),
+            oml_cli::skills::PROBE_TIMEOUT,
+        );
+        lines.extend(oml_cli::skills::hook_probe_line(&probed));
     }
     let mut roots = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {
