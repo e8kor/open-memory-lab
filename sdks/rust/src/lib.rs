@@ -2706,6 +2706,20 @@ mod tests {
             ),
             decodes(
                 &client
+                    .preview(
+                        &CALL,
+                        &Draft {
+                            kind: "skill",
+                            body: "Cite every source.",
+                            skill: Some(("cite", "Cite sources.")),
+                            replaces: Some(("m-1", 1)),
+                            ..Draft::default()
+                        },
+                    )
+                    .await,
+            ),
+            decodes(
+                &client
                     .withdraw(&CALL, "idem-11w", "m-1", Some("by mistake"))
                     .await,
             ),

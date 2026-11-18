@@ -1988,10 +1988,12 @@ async fn signed_in(app: &TestApp, admin: &str, user: &str, is_admin: bool) -> We
 /// another person's. `<user>-curate`, a tenant writer key with writer on
 /// the `universe` node alone, writes there, is told `access.grant_refused`
 /// in its person's root, and `submission.user_root_refused` in another
-/// person's root it reads. `<user>-review` and `<user>-admin` are refused
-/// a new memory by their role before any node is read, wherever it is
-/// addressed; the review key reaches the rule through a supersession, which
-/// the port contracts' user-root suite proves.
+/// person's root it reads. `<user>-review`, a session reviewer key, starts
+/// a held memory where it holds reviewer and reader (ADR-0082 d10): in its
+/// person's root, and in another person's root it was designated to review
+/// it is told `submission.user_root_refused`. `<user>-admin` is refused a
+/// new memory by its role before any node is read, wherever it is
+/// addressed.
 #[tokio::test]
 async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key_and_no_one_elses()
 {
@@ -2029,8 +2031,8 @@ async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key
         (Capacity::Curate, "universe", Answer::Held),
         (Capacity::Curate, "alice", Answer::GrantRefused),
         (Capacity::Curate, "bob", Answer::UserRootRefused),
-        (Capacity::Review, "alice", Answer::VerbCeiling),
-        (Capacity::Review, "bob", Answer::VerbCeiling),
+        (Capacity::Review, "alice", Answer::Held),
+        (Capacity::Review, "bob", Answer::UserRootRefused),
         (Capacity::Admin, "alice", Answer::VerbCeiling),
         (Capacity::Admin, "bob", Answer::VerbCeiling),
     ];
