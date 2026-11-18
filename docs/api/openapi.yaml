@@ -1489,6 +1489,69 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/todo/counts:
+    get:
+      tags: [review]
+      operationId: todoCounts
+      summary: The To do page's counts for a person's web session key; no content.
+      description: 'Requires: a person''s web session key, <user>-web, through its capacity credential; any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0083 d11). review is the number of rows GET /v2/review/held would serve the person''s reviewer key, <user>-review, at workspace and below it, or across every workspace without workspace, computed under the same grants, lineage exclusions and author fences as that listing; counted up to 1,000, with truncated true past it. A person with no live reviewer key or no reviewer grant counts 0, and so does a workspace that key cannot read or that does not exist, which is never named or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes, ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.0.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - name: workspace
+          in: query
+          required: false
+          description: The workspace, by id or name, whose subtree is counted; every workspace when absent.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The counts.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                review: 3
+                truncated: false
+              schema:
+                type: object
+                required: [review, truncated]
+                properties:
+                  review: { type: integer, minimum: 0, maximum: 1000, description: "The To review group's length: the held rows the person's reviewer key may judge." }
+                  truncated: { type: boolean, description: "Whether a count passed 1,000 and answers 1,000." }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/admin/todo/counts:
+    get:
+      tags: [review]
+      operationId: adminTodoCounts
+      summary: The administration To do page's counts; no content.
+      description: 'Requires: admin key role; every other key answers access.verb_ceiling (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts, open investigations) join with ADR-0089''s acts; until then it answers truncated alone, false (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.0.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      responses:
+        '200':
+          description: The counts.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                truncated: false
+              schema:
+                type: object
+                required: [truncated]
+                properties:
+                  truncated: { type: boolean }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/review/verdicts/bulk:
     post:
       tags: [review]

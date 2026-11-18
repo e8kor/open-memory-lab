@@ -32,7 +32,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 43] = [
+pub const OPERATIONS: [&str; 45] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami query:person resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workspace resp:GuardrailSet",
@@ -55,6 +55,8 @@ pub const OPERATIONS: [&str; 43] = [
     "reviewHeld GET /v2/review/held query:ids resp:HeldNamed",
     "postBulkVerdict POST /v2/review/verdicts/bulk body:verdict,artifact_ids,reason resp:BulkVerdictResult",
     "reviewQueue GET /v2/review/queue resp:ReviewQueue",
+    "todoCounts GET /v2/todo/counts query:workspace resp:TodoCounts",
+    "adminTodoCounts GET /v2/admin/todo/counts resp:AdminTodoCounts",
     "issueKey POST /v2/keys body:name,role,connect_code,expiry resp:KeyIssued",
     "mintConnectCode POST /v2/keys/{key}/connect-codes resp:ConnectCode",
     "addDenial POST /v2/keys/{key}/denials body:workspace resp:Denial",
@@ -1120,6 +1122,23 @@ pub struct ReviewQueue {
     pub items: Vec<QueueItem>,
 }
 
+/// `GET /v2/todo/counts`: the To do page's built groups, each counted up
+/// to 1,000 (ADR-0083 d11, d14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct TodoCounts {
+    /// The To review group: the held rows the person's reviewer key may
+    /// judge.
+    pub review: u64,
+    /// Whether a count passed 1,000.
+    pub truncated: bool,
+}
+
+/// `GET /v2/admin/todo/counts`: no group is built yet (ADR-0083 d14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct AdminTodoCounts {
+    pub truncated: bool,
+}
+
 /// A grant as a listed key carries it: the role and the workspace's path.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ListedGrant {
@@ -1933,6 +1952,34 @@ impl<T: Transport> Client<T> {
         self.get(Some(call), "/v2/review/queue".to_owned()).await
     }
 
+    /// `GET /v2/todo/counts`: the To do page's counts, as a person's web
+    /// session key reads them, at `workspace` and below or across every
+    /// workspace (ADR-0083 d11).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn todo_counts(
+        &self,
+        call: &Call<'_>,
+        workspace: Option<&str>,
+    ) -> Result<TodoCounts, Error> {
+        let path = match workspace {
+            Some(w) => format!("/v2/todo/counts?workspace={}", encode(w)),
+            None => "/v2/todo/counts".to_owned(),
+        };
+        self.get(Some(call), path).await
+    }
+
+    /// `GET /v2/admin/todo/counts`: the administration To do page's
+    /// counts. An admin key's (ADR-0083 d11).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn admin_todo_counts(&self, call: &Call<'_>) -> Result<AdminTodoCounts, Error> {
+        self.get(Some(call), "/v2/admin/todo/counts".to_owned())
+            .await
+    }
+
     /// `GET /v2/keys`: one page of `limit` keys after `cursor`; `user`
     /// names the person, which an admin key must.
     ///
@@ -2670,6 +2717,8 @@ mod tests {
                     .await,
             ),
             decodes(&client.review_queue(&CALL).await),
+            decodes(&client.todo_counts(&CALL, Some("alice")).await),
+            decodes(&client.admin_todo_counts(&CALL).await),
             decodes(
                 &client
                     .issue_key(&CALL, "idem-7", "alice-laptop", "writer", false, None)

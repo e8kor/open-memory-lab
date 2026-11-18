@@ -721,6 +721,105 @@ where
         ))
     }
 
+    // -- GET /v2/todo/counts, GET /v2/admin/todo/counts ----------------------
+
+    pub(crate) async fn todo_counts(
+        State(st): State<Self>,
+        rid: Rid,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let result = match query {
+            Ok(Query(params)) => Self::todo_counts_inner(&st, &params, &headers).await,
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
+    }
+
+    /// `GET /v2/todo/counts`: the To do page's counts for a person's web
+    /// session key, each the length its group's list would serve the
+    /// person's reviewer key, at `workspace` and below or across every
+    /// workspace, up to 1,000 with `truncated` past it; no content, no
+    /// claim, no name (ADR-0083 d11, d14). Only `review` is built.
+    async fn todo_counts_inner(
+        st: &Self,
+        params: &[(String, String)],
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let caller = st.console_caller(headers).await?;
+        let mut workspace = None;
+        let mut seen = std::collections::HashSet::new();
+        for (name, value) in params {
+            if !seen.insert(name.as_str()) {
+                return Err(ApiError::validation(format!(
+                    "the query parameter {name} is given more than once"
+                )));
+            }
+            match name.as_str() {
+                "workspace" => workspace = Some(reference("workspace", value)?),
+                other => {
+                    return Err(ApiError::validation(format!(
+                        "unknown query parameter {other:?}"
+                    )));
+                }
+            }
+        }
+        if !is_web_session_key(&caller) {
+            return Err(session_key_only(&caller, "todo_counts"));
+        }
+        let counts = st
+            .app
+            .todo_counts(Bearer::Session(&caller), workspace.as_ref())
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({
+                "review": counts.review,
+                "truncated": counts.truncated,
+            }),
+        ))
+    }
+
+    pub(crate) async fn admin_todo_counts(
+        State(st): State<Self>,
+        rid: Rid,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let result = match query {
+            Ok(Query(params)) if params.is_empty() => {
+                Self::admin_todo_counts_inner(&st, &headers).await
+            }
+            Ok(Query(params)) => Err(ApiError::validation(format!(
+                "unknown query parameter {:?}",
+                params[0].0
+            ))),
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
+    }
+
+    /// `GET /v2/admin/todo/counts`, admin by key role: the administration
+    /// To do page's counts; none of its groups is built, so it answers
+    /// `{truncated: false}` (ADR-0083 d11, d14).
+    async fn admin_todo_counts_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
+        let caller = st.console_caller(headers).await?;
+        let counts = st
+            .app
+            .admin_todo_counts(Bearer::Session(&caller))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({ "truncated": counts.truncated }),
+        ))
+    }
+
     // -- #3 POST /v2/web/users/{user}/capacities -----------------------------
 
     pub(crate) async fn grant_capacities(

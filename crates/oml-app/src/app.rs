@@ -117,6 +117,11 @@ use crate::ports::{
 };
 use crate::telemetry::{HITS_STORED, Label, RecallEvent, Remembered, Telemetry, TelemetryItem};
 use crate::types::{
+    AdminTodoCounts, BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy,
+    HELD_PAGE_MAX, HeldFilter, HeldItem, HeldListingRequest, HeldPage, ReviewLane, TODO_COUNT_CAP,
+    TodoCounts, VersionFinding,
+};
+use crate::types::{
     AppError, Approval, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage,
     AuthorizeParams, Bearer, BootstrapRequest, BootstrapResult, Brief, BriefEdgePage,
     BriefEdgeProposalOutcome, BriefEdgeRatification, BriefEdgeRecord, BriefEdgeView,
@@ -133,15 +138,11 @@ use crate::types::{
     NamedRef, NamingRefusal, OAuthClientRecord, OnSimilar, OwnHeldGuardrail, PROVIDER_TENANT,
     ProposeBriefEdge, ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts,
     RefreshForm, RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail, ServedMemory,
-    SimilarItem, SourceCheck, SourceCheckReceipt, SourceCheckRequest, StateClause, SubmitOutcome, SubmitReceipt,
-    SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage,
-    TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode,
-    TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
+    SimilarItem, SourceCheck, SourceCheckReceipt, SourceCheckRequest, StateClause, SubmitOutcome,
+    SubmitReceipt, SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest,
+    TailPage, TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView,
+    TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
     WithdrawReceipt, WithdrawRequest, WorkspaceInfo, WorkspaceRecord, WorkspaceStatusView,
-};
-use crate::types::{
-    BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX,
-    HeldFilter, HeldItem, HeldListingRequest, HeldPage, ReviewLane, VersionFinding,
 };
 use crate::types::{Preview, PreviewFacts, PreviewRequest, SkillShadow};
 use crate::types::{ServedSkill, SkillBody, SkillRead, SkillRequest, SkillSet};
@@ -6327,51 +6328,12 @@ where
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
             let m = &row.memory;
-            // R2 and R3 in depth: nothing the queue would not serve this key
-            // leaves the application layer, whatever the store returned.
-            let excluded = m.lineage_key_ids.contains(&key.key_id)
-                || m.lineage_principals.contains(&key.principal);
-            if m.status != MemoryStatus::Held || excluded || !filter.nodes.contains(&m.workspace_id)
-            {
+            let Some(same) = self
+                .held_admits(key, &filter, &walked, &mut users, m)
+                .await?
+            else {
                 continue;
-            }
-            let same = match users.get(&m.author_key_id) {
-                Some(same) => *same,
-                None => {
-                    let same = self.same_person(tenant_id, m.author_key_id, key).await?;
-                    users.insert(m.author_key_id, same);
-                    same
-                }
             };
-            // R2 by person: a row the reviewer's own person wrote outside
-            // that person's root is not theirs to judge, so it is not
-            // listed (ADR-0001 d5; ADR-0082 d7).
-            if same {
-                let in_root = match walked.get(&m.workspace_id) {
-                    Some(w) => w.user(),
-                    None => self
-                        .journal
-                        .workspace(tenant_id, m.workspace_id)
-                        .await?
-                        .and_then(|w| w.user()),
-                };
-                // Whether the row's root is the reviewer's own person's,
-                // from the key row and the walk, without a read where the
-                // walk holds the root: a session key names its person by
-                // the root's name.
-                let own = match (key.user.or(key.linked_user), &key.session_user, in_root) {
-                    (_, _, None) => false,
-                    (Some(root), _, Some(r)) => root == r,
-                    (None, Some(user), Some(r)) => match walked.get(&r) {
-                        Some(w) => &w.name == user,
-                        None => self.person_root_of(key).await? == Some(r),
-                    },
-                    (None, None, Some(_)) => false,
-                };
-                if !own {
-                    continue;
-                }
-            }
             if let Entry::Vacant(slot) = ancestries.entry(m.workspace_id)
                 && let Some(ancestry) = ancestry_of(&walked, m.workspace_id)
             {
@@ -6400,6 +6362,225 @@ where
             next_cursor,
             lane_authors,
         })
+    }
+
+    /// Whether the held listing serves `m` to `key` under `filter`, and if
+    /// so whether the key names the author's person (`same_user`): the
+    /// application layer's half of the listing's rule, which every read
+    /// that lists or counts held rows applies to what the store returned
+    /// (ADR-0055 d2; ADR-0083 d11). `users` caches each author key's answer
+    /// across the rows of one read.
+    async fn held_admits(
+        &self,
+        key: &KeyRecord,
+        filter: &HeldFilter,
+        walked: &BTreeMap<Uuid, WorkspaceRecord>,
+        users: &mut BTreeMap<Uuid, bool>,
+        m: &MemoryRecord,
+    ) -> Result<Option<bool>, AppError> {
+        let tenant_id = key.tenant_id;
+        // R2 and R3 in depth: nothing the queue would not serve this key
+        // leaves the application layer, whatever the store returned.
+        let excluded = m.lineage_key_ids.contains(&key.key_id)
+            || m.lineage_principals.contains(&key.principal);
+        if m.status != MemoryStatus::Held || excluded || !filter.nodes.contains(&m.workspace_id) {
+            return Ok(None);
+        }
+        let same = match users.get(&m.author_key_id) {
+            Some(same) => *same,
+            None => {
+                let same = self.same_person(tenant_id, m.author_key_id, key).await?;
+                users.insert(m.author_key_id, same);
+                same
+            }
+        };
+        // R2 by person: a row the reviewer's own person wrote outside
+        // that person's root is not theirs to judge, so it is not
+        // listed (ADR-0001 d5; ADR-0082 d7).
+        if same {
+            let in_root = match walked.get(&m.workspace_id) {
+                Some(w) => w.user(),
+                None => self
+                    .journal
+                    .workspace(tenant_id, m.workspace_id)
+                    .await?
+                    .and_then(|w| w.user()),
+            };
+            // Whether the row's root is the reviewer's own person's,
+            // from the key row and the walk, without a read where the
+            // walk holds the root: a session key names its person by
+            // the root's name.
+            let own = match (key.user.or(key.linked_user), &key.session_user, in_root) {
+                (_, _, None) => false,
+                (Some(root), _, Some(r)) => root == r,
+                (None, Some(user), Some(r)) => match walked.get(&r) {
+                    Some(w) => &w.name == user,
+                    None => self.person_root_of(key).await? == Some(r),
+                },
+                (None, None, Some(_)) => false,
+            };
+            if !own {
+                return Ok(None);
+            }
+        }
+        Ok(Some(same))
+    }
+
+    /// The live session key of `capacity` that serves the same person as
+    /// the session key `key`, as its caller: the row holding the capacity's
+    /// name, a session key serving that person, not revoked and not
+    /// expired (ADR-0045 d6). `None` where the tenant holds no such key.
+    async fn sibling_session_caller(
+        &self,
+        key: &KeyRecord,
+        capacity: Capacity,
+    ) -> Result<Option<Caller>, AppError> {
+        let Some(user) = &key.session_user else {
+            return Ok(None);
+        };
+        let Ok(name) = pages::key_name(user, capacity.suffix()) else {
+            return Ok(None);
+        };
+        let Some(id) = self
+            .journal
+            .resolve_name(key.tenant_id, NamedKind::Key, &name)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let Some(found) = self.journal.key(key.tenant_id, id).await? else {
+            return Ok(None);
+        };
+        let now = self.clock.now();
+        let serves = found.name.as_ref() == Some(&name)
+            && found.credential == Credential::Session
+            && found.session_user.as_ref() == Some(user)
+            && found.revoked_at.is_none()
+            && !found.expired_at(&now);
+        if !serves {
+            return Ok(None);
+        }
+        Ok(Some(self.caller_of(found).await?))
+    }
+
+    /// The To do counts read (ADR-0083 d11, d14): for a person's web
+    /// session key, `review`, the number of rows the held listing would
+    /// serve the person's reviewer key, `<user>-review`, at `workspace` and
+    /// below it or across every workspace without one, counted under the
+    /// listing's own store read and [`Self::held_admits`], so it counts no
+    /// row that listing would not serve; up to [`TODO_COUNT_CAP`], with
+    /// `truncated` set past it. It reads no text out and journals nothing.
+    /// A person with no live reviewer key, no reviewer grant or a
+    /// `workspace` its reviewer key cannot read counts 0, the workspace not
+    /// named. Groups whose feature is not built are not counted (d14).
+    pub async fn todo_counts(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        workspace: Option<&Reference>,
+    ) -> Result<TodoCounts, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        if !auth::is_web_session_key(&caller.key) {
+            return Err(AppError::VerbCeiling {
+                role: caller.key.role,
+                verb: "todo_counts",
+            });
+        }
+        let none = TodoCounts::default();
+        let Some(reviewer) = self
+            .sibling_session_caller(&caller.key, Capacity::Review)
+            .await?
+        else {
+            return Ok(none);
+        };
+        let key = &reviewer.key;
+        if require_person_reviewer(key).is_err() {
+            return Ok(none);
+        }
+        let Some(lane) = review_lane(key, None) else {
+            return Ok(none);
+        };
+        let tenant_id = key.tenant_id;
+        let (mut nodes, walked) = self.reviewer_nodes_walked(&reviewer).await?;
+        if let Some(workspace) = workspace {
+            let root = match self.resolve(key, NamedKind::Workspace, workspace).await {
+                Ok(root) => root,
+                Err(AppError::NotFound) => return Ok(none),
+                Err(e) => return Err(e),
+            };
+            let subtree: BTreeSet<Uuid> = self
+                .journal
+                .workspace_subtree(tenant_id, root)
+                .await?
+                .into_iter()
+                .map(|w| w.workspace_id)
+                .collect();
+            nodes.retain(|n| subtree.contains(n));
+        }
+        if nodes.is_empty() {
+            return Ok(none);
+        }
+        let filter = HeldFilter {
+            nodes,
+            author_key_id: None,
+            claim_key_prefix: None,
+            lane,
+        };
+        let mut users: BTreeMap<Uuid, bool> = BTreeMap::new();
+        let mut after: Option<ListingPosition> = None;
+        let mut review = 0u64;
+        loop {
+            let rows = self
+                .journal
+                .review_held(
+                    tenant_id,
+                    &key.principal,
+                    key.key_id,
+                    &filter,
+                    after.as_ref(),
+                    HELD_PAGE_MAX,
+                )
+                .await?;
+            for row in &rows {
+                if self
+                    .held_admits(key, &filter, &walked, &mut users, &row.memory)
+                    .await?
+                    .is_some()
+                {
+                    review += 1;
+                    if review > TODO_COUNT_CAP {
+                        return Ok(TodoCounts {
+                            review: TODO_COUNT_CAP,
+                            truncated: true,
+                        });
+                    }
+                }
+            }
+            match rows.last() {
+                Some(last) if rows.len() == HELD_PAGE_MAX => {
+                    after = Some(ListingPosition {
+                        created_at: last.held_since.clone(),
+                        artifact_id: last.memory.memory_id,
+                    });
+                }
+                _ => break,
+            }
+        }
+        Ok(TodoCounts {
+            review,
+            truncated: false,
+        })
+    }
+
+    /// The administration To do counts read (ADR-0083 d11, d14): an admin
+    /// key's, and no group of it is built yet, so it answers `truncated`
+    /// alone, false; each group joins with its feature (ADR-0089).
+    pub async fn admin_todo_counts(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+    ) -> Result<AdminTodoCounts, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        require_role(&caller.key, Role::Admin, "admin_todo_counts")?;
+        Ok(AdminTodoCounts::default())
     }
 
     /// The named held rows as the listing would show them to this key, for

@@ -2110,6 +2110,31 @@ pub struct HeldItem {
     pub same_user: bool,
 }
 
+/// The most a To do count counts; past it the read answers this number
+/// with `truncated` set (ADR-0083 d2, d11: chosen, not measured).
+pub const TODO_COUNT_CAP: u64 = 1_000;
+
+/// The To do counts read (ADR-0083 d11, d14): each built group's length,
+/// as its own list would serve it, up to [`TODO_COUNT_CAP`]. Only `review`
+/// is built; every other group joins with its feature.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TodoCounts {
+    /// The To review group: the held rows the person's reviewer key may
+    /// judge.
+    pub review: u64,
+    /// Whether a count passed [`TODO_COUNT_CAP`].
+    pub truncated: bool,
+}
+
+/// The administration To do counts read (ADR-0083 d11, d14): its groups
+/// (unconfirmed fixes, alerts, investigations) join with ADR-0089's acts;
+/// until then it answers `truncated` alone.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AdminTodoCounts {
+    /// Whether a count passed [`TODO_COUNT_CAP`].
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct HeldPage {
     pub items: Vec<HeldItem>,

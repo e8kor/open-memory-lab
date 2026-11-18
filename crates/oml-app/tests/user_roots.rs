@@ -2879,6 +2879,16 @@ async fn team_with_alices_reviewer_and_bobs_writer(
     app: &TestApp,
     admin: &str,
 ) -> (oml_app::app::Caller, IssuedKey, IssuedKey) {
+    let (_, review, alice, bob) = team_with_alices_session_and_bobs_writer(app, admin).await;
+    (review, alice, bob)
+}
+
+/// [`team_with_alices_reviewer_and_bobs_writer`] with alice's session, which
+/// her other capacities' callers are made from.
+async fn team_with_alices_session_and_bobs_writer(
+    app: &TestApp,
+    admin: &str,
+) -> (WebSessionRecord, oml_app::app::Caller, IssuedKey, IssuedKey) {
     let ops = console_admin(app, admin, "ops").await;
     let (alice, writer) = team_with_alices_linked_writer(app, admin, &ops).await;
     let alice_admin = app
@@ -2911,7 +2921,7 @@ async fn team_with_alices_reviewer_and_bobs_writer(
         )
         .await
         .expect("bob's tenant writer key");
-    (review, writer, bob)
+    (alice, review, writer, bob)
 }
 
 fn held_request(
@@ -4141,4 +4151,146 @@ async fn a_session_reviewer_lists_remember_where_it_may_submit_and_a_tenant_revi
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+}
+
+/// The To do counts read's `review` is the length of the held listing it
+/// counts, as the person's reviewer key reads it, across every workspace
+/// and under a workspace filter, and counts no row the listing would not
+/// serve: alice's own rows outside her root (ADR-0083 d2, d11, d14).
+#[tokio::test]
+async fn todo_counts_equal_the_lengths_of_the_lists_they_count() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (alice, review, writer, bob) = team_with_alices_session_and_bobs_writer(&app, admin).await;
+    for n in 0..3 {
+        written(
+            &app,
+            &writer.value,
+            &submit(
+                &format!("a{n}"),
+                &format!("Alice's note {n}."),
+                Some("team"),
+            ),
+        )
+        .await;
+    }
+    for n in 0..2 {
+        written(
+            &app,
+            &bob.value,
+            &submit(&format!("b{n}"), &format!("Bob's note {n}."), Some("team")),
+        )
+        .await;
+    }
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    for workspace in [None, Some(by_name("team"))] {
+        let listed = app
+            .review_held(
+                Bearer::Session(&review),
+                &oml_app::types::HeldListingRequest {
+                    workspace: workspace.clone(),
+                    ..held_request(200, None)
+                },
+            )
+            .await
+            .expect("the listing");
+        let counts = app
+            .todo_counts(Bearer::Session(&web), workspace.as_ref())
+            .await
+            .expect("the counts");
+        assert_eq!(listed.items.len(), 2, "bob's rows alone");
+        assert_eq!(counts.review, listed.items.len() as u64, "{workspace:?}");
+        assert!(!counts.truncated);
+    }
+}
+
+/// A workspace the person's reviewer key cannot read contributes zero and
+/// is not named: filtered to it the count is 0, not a refusal; across
+/// every workspace its rows are not counted; and a person whose reviewer
+/// key holds no grant counts 0 (ADR-0083 d11, d14).
+#[tokio::test]
+async fn todo_counts_never_count_an_unreadable_workspace() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (alice, _review, _writer, bob) =
+        team_with_alices_session_and_bobs_writer(&app, admin).await;
+    app.create_workspace(admin, &name("other"), Some(by_name("universe")), None)
+        .await
+        .expect("a second shared workspace");
+    let elsewhere = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                ..user_req(
+                    Role::Writer,
+                    "unused",
+                    "bob/other",
+                    vec![
+                        grant(by_name("other"), Role::Writer),
+                        grant(by_name("other"), Role::Reader),
+                    ],
+                )
+            },
+        )
+        .await
+        .expect("bob's writer on other");
+    written(
+        &app,
+        &elsewhere.value,
+        &submit("o1", "Held where alice cannot review.", Some("other")),
+    )
+    .await;
+    written(&app, &bob.value, &submit("t1", "Bob's note.", Some("team"))).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let every = app
+        .todo_counts(Bearer::Session(&web), None)
+        .await
+        .expect("every workspace");
+    assert_eq!(every.review, 1, "team's row alone");
+    let other = app
+        .todo_counts(Bearer::Session(&web), Some(&by_name("other")))
+        .await
+        .expect("an unreadable workspace counts, never refuses");
+    assert_eq!(other.review, 0);
+    let missing = app
+        .todo_counts(Bearer::Session(&web), Some(&by_name("no-such-place")))
+        .await
+        .expect("a workspace that does not exist answers the same");
+    assert_eq!(missing.review, 0);
+    let carol = signed_in(&app, admin, "carol", false).await;
+    let carol_web = app
+        .web_caller(&carol, Capacity::Web)
+        .await
+        .expect("carol-web");
+    let none = app
+        .todo_counts(Bearer::Session(&carol_web), None)
+        .await
+        .expect("no reviewer grant");
+    assert_eq!(none.review, 0);
+}
+
+/// Only a person's web session key reads the counts: its reviewer key's
+/// own caller, or any other key, is refused before anything is counted
+/// (ADR-0083 d11).
+#[tokio::test]
+async fn todo_counts_answer_only_a_persons_web_session_key() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (_alice, review, _writer, bob) =
+        team_with_alices_session_and_bobs_writer(&app, admin).await;
+    for bearer in [Bearer::Session(&review), Bearer::Key(bob.value.as_str())] {
+        let err = app.todo_counts(bearer, None).await.unwrap_err();
+        assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+    }
 }
