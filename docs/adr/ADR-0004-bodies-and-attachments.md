@@ -157,6 +157,17 @@ flowchart LR
     - The doctor line reads the metrics listener, so the routes stay five: no status route is
       added for it.
     - An import's staging key (ADR-0084 d11) is the bound session's `part_key` (ADR-0084 I4).
+  - **Readings of 2026-11-18 (the coordinator, the review of bulk B; for the operator's batch).**
+    - A bound upload's plaintext is read back through the digest: reading it recomputes the
+      SHA-256 over the parts as decrypted and refuses `upload.digest_mismatch` when it differs from
+      the session's, so bytes changed at rest after completion are never imported.
+    - Binding requires the session unexpired at the instant of the bind (`expires_at > at`).
+    - The local object store writes each object to a temporary file under a random name opened
+      exclusively, renames it into place and syncs the parent directory; it creates its root
+      owner-only (0700).
+    - A bound session whose import stopped is shredded by the sweep (ADR-0084 I11), and a bound
+      session whose key is still set 24 hours after binding is the doctor warning
+      `upload_staging_stale`. A failure to shred is logged with its reason.
 
 - **d4 — Stored objects are ciphertext in an S3-compatible object store, encrypted per artifact,
   with both digests recorded.** The object is named by the SHA-256 of its plaintext

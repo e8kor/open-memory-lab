@@ -554,3 +554,63 @@ The coordinator confirmed these while history-mode export was built.
   default, `own_root`, until `PUT /v2/tenant/export-policy` and the allowance route are built; the
   migration adds the column, the allowance table and the `exports` meter, and the doctor names the
   policy.
+
+### Fix readings of 2026-11-18 (the review of bulk B; for the operator's batch)
+
+Two independent reviews of the bulk B head `634c8e90` asked for revision. The coordinator decided
+these on 2026-11-18, and the code follows them. Each is marked **[operator batch]**: it stands
+until the operator confirms or reverses it with the other decisions of the batch.
+
+- **I10 — An import runs after its request answers. [operator batch]** `POST /v2/imports`, not
+  a dry run, verifies the bundle, plans it, binds the upload and starts the run in a task that
+  does not depend on the request; it answers `202 {import}` with the row `running`. A dry run
+  still answers `200 {plan}` at once. The CLI polls `GET /v2/imports/{id}` until the import ends.
+  *Rejected:* the inline run, which ties an import of up to `uploads.max_bytes` to one HTTP
+  request and loses it when a proxy or the client gives up.
+- **I11 — An import interrupted for an hour is ended. [operator batch]** At the lead's start and
+  in every upload sweep, an import `running` for more than one hour that this process is not
+  running ends `failed`, its bound upload's key is nulled in the same transaction and its objects
+  are removed by the sweep (d11's shred). What it wrote stays held. The doctor's
+  `imports_stopped` warning counts only such imports. A bound upload whose key is still set more
+  than 24 hours after it was bound is the doctor warning `upload_staging_stale` (d11). A store
+  failure while shredding is logged, never swallowed.
+- **I12 — The source key is pinned when the import begins (R11). [operator batch]** The
+  transaction that binds the upload and inserts the import row also inserts the ledger's pin,
+  `INSERT … ON CONFLICT DO NOTHING`, and compares: a pin naming another key refuses
+  `import.source_key_changed` and writes nothing. A pin written for an import that never ended
+  carries an empty `exported_at`, so it bounds no later bundle's age. The `workspace.imported` fold
+  moves the ledger's export instant and release and never its `signer_fingerprint`. So two
+  concurrent first imports pin one key, and a failed first import still pins the key it named.
+- **I13 — Imports and exports are bounded in memory. [operator batch]** One import or dry run
+  per tenant at a time, and at most two across the process; over either limit is
+  `import.busy` (409, retryable). One export per tenant at a time, refused `export.busy` (409,
+  retryable), and a bundle larger than `uploads.max_bytes` is `export.too_large` (413). The parts
+  are not streamed into the reader: the verified bundle holds every body in memory, so a streamed
+  read saves only the tar's copy, and the bound above is what holds the peak. The export's
+  whole-chain walk and in-memory build, and the per-day limits of d15 that are not built, are
+  bottleneck rows on the limits page.
+- **I14 — An imported version's provenance is part of its write. [operator batch]** The
+  `import_versions` row and `import_provenance` are written in the submit's or supersession's own
+  transaction, as a field of its fold, so no version an import wrote lacks them.
+  `workspace.imported` lists the imported version ids, so the journal rebuilds the ledger of what
+  each import wrote. The doctor warns when a version carries an import's idempotency key and no
+  provenance.
+- **I15 — A conflict that is a removal writes a retirement (d8). [operator batch]** Where the
+  source removed a key and the target's tip moved, the import writes a held retirement marked
+  `conflict`, not a superseding text.
+- **I16 — A new target is created in progress in one commit (amending ADR-0030 d1).
+  [operator batch]** See ADR-0030's note of 2026-11-18. A retry against a `standard`, empty
+  workspace that the importing key created sets the mode then.
+- **I17 — Verdicts on erased versions do not travel (R1, d2). [operator batch]** A verdict is
+  exported only for a version exported whole; `oml-bundle`'s reader refuses a verdict that names an
+  erasure marker or a version the bundle does not carry, `bundle.malformed`. A version's
+  `derives_from` keeps only the ids the bundle carries.
+- **I18 — A crew key never exports (d10, I1). [operator batch]** The export rule excludes a key
+  that belongs to a crew, as it excludes an agent key: `access.verb_ceiling`, `details.reason:
+  export_person_only`.
+- **I6 as written (replacing the build's reading of 2026-11-18). [operator batch]** For any key
+  acting for a person, the own set is that person's key set: the person's web keys, the person's
+  own agent keys, and the key itself; not the calling key's own set alone. A bearer person key
+  exports its person's console writes.
+- **I19 — Every export is metered. [operator batch]** An export by a key with no account root is
+  counted on the tenant's `exports` meter, so no export goes uncounted.
