@@ -222,9 +222,10 @@ async fn a_person_downloads_an_age_file_that_opens_and_verifies_under_the_server
         json!({ "body": "the kiln fires at 1200 C", "claim_key": "kiln" }),
     )
     .await;
+    // A write lands held: 202 (http-api.md submit).
     assert_eq!(
         status,
-        StatusCode::CREATED,
+        StatusCode::ACCEPTED,
         "{}",
         String::from_utf8_lossy(&body)
     );
