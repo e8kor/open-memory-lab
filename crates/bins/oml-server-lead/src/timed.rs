@@ -29,8 +29,8 @@ use oml_app::types::{
     ClaimEdgeSelection, ClaimKeyState, ClientDescription, ConnectCodeRecord, ConnectGrant,
     ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, HeldFilter, HeldRow, KeyAccess,
     KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord,
-    PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome, ReviewLane, SweepReport, TenantRow,
-    TokenPair, TokenRecord, TransitionRecord, UnnamedRows, WebCredentialRows, WebEntry,
+    PersonReviewer, PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome, ReviewLane, SweepReport,
+    TenantRow, TokenPair, TokenRecord, TransitionRecord, UnnamedRows, WebCredentialRows, WebEntry,
     WebSessionRecord, WorkspaceRecord,
 };
 use oml_transport_http::traffic::store_call;
@@ -1273,6 +1273,16 @@ impl<J: WebStore> WebStore for Timed<J> {
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<Vec<QueueDepth>, StoreError>> + Send {
         timed("web_queue", self.inner.web_queue(tenant_id))
+    }
+
+    fn web_person_reviewers(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<PersonReviewer>, StoreError>> + Send {
+        timed(
+            "web_person_reviewers",
+            self.inner.web_person_reviewers(tenant_id),
+        )
     }
 
     fn web_admin_search(

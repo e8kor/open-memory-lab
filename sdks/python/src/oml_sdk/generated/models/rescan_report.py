@@ -40,6 +40,12 @@ class RescanReport:
         promoted_unapproved (int | Unset): After this call, served versions (promoted tips) with no approval: their
             approved_at is null because migration 0044's fill could not match the verdict their promotion names. A version a
             ratified successor replaced is not counted. Doctor's approval_unmatched (ADR-0077 d6). A count, never a list.
+        instructions_without_person_approval (int | Unset): After this call, served instruction-class versions (promoted
+            steering, guardrail and skill tips, retirements aside) whose approving key was not a person's reviewer key, or
+            that carry no approval: approved before an instruction became a person's to approve. A person reviews one again
+            by superseding it; the replaced version is then no tip and not counted. Read off the row's approver_used_by, so
+            a person's key that had a crew is not counted. Doctor's instruction_approvals (ADR-0080 d16, #436). Since
+            v0.8.2.
     """
 
     scanner_version: None | str
@@ -53,6 +59,7 @@ class RescanReport:
     scanned_by_origin: RescanReportScannedByOrigin | Unset = UNSET
     findings_unlisted: int | Unset = UNSET
     promoted_unapproved: int | Unset = UNSET
+    instructions_without_person_approval: int | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         scanner_version: None | str
@@ -87,6 +94,8 @@ class RescanReport:
 
         promoted_unapproved = self.promoted_unapproved
 
+        instructions_without_person_approval = self.instructions_without_person_approval
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -107,6 +116,10 @@ class RescanReport:
             field_dict["findings_unlisted"] = findings_unlisted
         if promoted_unapproved is not UNSET:
             field_dict["promoted_unapproved"] = promoted_unapproved
+        if instructions_without_person_approval is not UNSET:
+            field_dict["instructions_without_person_approval"] = (
+                instructions_without_person_approval
+            )
 
         return field_dict
 
@@ -167,6 +180,10 @@ class RescanReport:
 
         promoted_unapproved = d.pop("promoted_unapproved", UNSET)
 
+        instructions_without_person_approval = d.pop(
+            "instructions_without_person_approval", UNSET
+        )
+
         rescan_report = cls(
             scanner_version=scanner_version,
             scanned=scanned,
@@ -179,6 +196,7 @@ class RescanReport:
             scanned_by_origin=scanned_by_origin,
             findings_unlisted=findings_unlisted,
             promoted_unapproved=promoted_unapproved,
+            instructions_without_person_approval=instructions_without_person_approval,
         )
 
         return rescan_report

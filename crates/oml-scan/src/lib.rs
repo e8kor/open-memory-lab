@@ -1,4 +1,4 @@
-//! The deterministic content scan, rule set `oml-scan/1.2` (ADR-0065; `/1` before the 2026-11-10 amendment, `/1.1` before #226).
+//! The deterministic content scan, rule set `oml-scan/1.3` (ADR-0065; `/1` before the 2026-11-10 amendment, `/1.1` before #226, `/1.2` before the age identity rule of #453).
 //!
 //! Rules, not a model: the same text gives the same findings under the same
 //! rule-set version (admission.md). A finding names its class, its rule and
@@ -28,7 +28,7 @@ pub use rules::Action;
 use rules::{Check, LETTER_PHRASES, PLACEHOLDERS, RULES, Rule, Tail};
 
 /// The rule-set version every verdict is journalled under (ADR-0065 d1).
-pub const RULESET: &str = "oml-scan/1.2";
+pub const RULESET: &str = "oml-scan/1.3";
 
 /// The largest text one scan reads: 1 MiB. A longer field is vetoed as
 /// `format.scan_bound` rather than scanned in part (d9).
@@ -124,7 +124,7 @@ pub struct Options {
 static COMPILED: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     RULES
         .iter()
-        .map(|r| Regex::new(r.pattern).expect("the oml-scan/1.2 patterns compile"))
+        .map(|r| Regex::new(r.pattern).expect("the oml-scan/1.3 patterns compile"))
         .collect()
 });
 
@@ -164,7 +164,7 @@ pub fn rule_ids() -> Vec<(&'static str, &'static str, Action)> {
     out
 }
 
-/// The scanner: the compiled `oml-scan/1.2` set, the deployment's options,
+/// The scanner: the compiled `oml-scan/1.3` set, the deployment's options,
 /// and the findings counted by rule since start (d11).
 #[derive(Debug, Default)]
 pub struct RuleSet {
@@ -388,7 +388,49 @@ fn first_match(rule: &Rule, re: &Regex, text: &str) -> Option<(usize, usize)> {
             })
             .and_then(|c| c.get(0))
             .map(|m| (m.start(), m.end())),
+        Check::Bech32 => re
+            .find_iter(text)
+            .find(|m| bech32_checksum(m.as_str()))
+            .map(|m| (m.start(), m.end())),
     }
+}
+
+/// Whether `s`, a human-readable part, `1` and the data in either case,
+/// carries a valid bech32 checksum: BIP-173's polymod over the expanded
+/// part and the data comes to 1. A placeholder such as a run of `X` fails.
+fn bech32_checksum(s: &str) -> bool {
+    const ALPHABET: &[u8] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+    const GEN: [u32; 5] = [
+        0x3b6a_57b2,
+        0x2650_8e6d,
+        0x1ea1_19fa,
+        0x3d42_33dd,
+        0x2a14_62b3,
+    ];
+    let lower = s.to_ascii_lowercase();
+    let Some((hrp, data)) = lower.rsplit_once('1') else {
+        return false;
+    };
+    let mut values: Vec<u8> = hrp.bytes().map(|c| c >> 5).collect();
+    values.push(0);
+    values.extend(hrp.bytes().map(|c| c & 31));
+    for c in data.bytes() {
+        match ALPHABET.iter().position(|&a| a == c) {
+            Some(v) => values.push(u8::try_from(v).unwrap_or(u8::MAX)),
+            None => return false,
+        }
+    }
+    let mut chk = 1_u32;
+    for v in values {
+        let top = chk >> 25;
+        chk = ((chk & 0x1ff_ffff) << 5) ^ u32::from(v);
+        for (i, g) in GEN.iter().enumerate() {
+            if (top >> i) & 1 == 1 {
+                chk ^= g;
+            }
+        }
+    }
+    chk == 1
 }
 
 fn code_finding(

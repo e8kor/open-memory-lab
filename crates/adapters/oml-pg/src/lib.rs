@@ -51,8 +51,8 @@ use oml_app::types::{
     DenialRecord, DocumentCaching, FormatFields, GrantRecord, GuardrailFields, HIT_KINDS,
     HeldFilter, HeldRow, KeyAccess, KeyRecord, KeyReferences, KindFields, ListingFilter,
     ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT,
-    PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome, ReviewLane, SourceCheck, SweepReport,
-    TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
+    PersonReviewer, PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome, ReviewLane, SourceCheck,
+    SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
     VersionFinding, WebCredentialKey, WebCredentialRows, WebEntry, WebSessionRecord,
     WorkspaceRecord, WorkspaceRef,
 };
@@ -8434,8 +8434,17 @@ impl JournalStore for PgStore {
         // not counted, since recall serves none (ADR-0077 d6; #311, #332).
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        let (held, all, unlisted, unapproved): (i64, i64, i64, i64) = sqlx::query_as(
-            "SELECT count(*) FILTER (WHERE status = 'held' \
+        // The instruction class is read off the domain, as the queue read
+        // reads it; `approver_used_by` is the approving key's attestation,
+        // and a row with none is counted (ADR-0080 d16; #436).
+        let instructions: Vec<&str> = MemoryKind::ALL
+            .iter()
+            .filter(|k| k.class().needs_person())
+            .map(|k| k.as_str())
+            .collect();
+        let (held, all, unlisted, unapproved, unpersoned): (i64, i64, i64, i64, i64) =
+            sqlx::query_as(
+                "SELECT count(*) FILTER (WHERE status = 'held' \
                                        AND scanned_under IS DISTINCT FROM $2::text), \
                     count(*) FILTER (WHERE scanned_under IS DISTINCT FROM $2::text), \
                     count(*) FILTER (WHERE status = 'held' AND scan_finding IS NOT NULL \
@@ -8443,21 +8452,26 @@ impl JournalStore for PgStore {
                                                         WHERE f.tenant_id = m.tenant_id \
                                                           AND f.memory_id = m.id)), \
                     count(*) FILTER (WHERE status = 'promoted' AND is_tip \
-                                       AND NOT retirement AND approved_at IS NULL) \
+                                       AND NOT retirement AND approved_at IS NULL), \
+                    count(*) FILTER (WHERE status = 'promoted' AND is_tip \
+                                       AND NOT retirement AND kind = ANY($3::text[]) \
+                                       AND approver_used_by IS DISTINCT FROM 'person') \
              FROM memories m \
              WHERE tenant_id = $1 AND status <> 'erased'",
-        )
-        .bind(tenant_id)
-        .bind(current)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(backend)?;
+            )
+            .bind(tenant_id)
+            .bind(current)
+            .bind(&instructions)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(ScanBacklog {
             held_unrescanned: u64::try_from(held).map_err(backend)?,
             rescan_due: u64::try_from(all).map_err(backend)?,
             findings_unlisted: u64::try_from(unlisted).map_err(backend)?,
             promoted_unapproved: u64::try_from(unapproved).map_err(backend)?,
+            instructions_without_person_approval: u64::try_from(unpersoned).map_err(backend)?,
         })
     }
 
@@ -10326,13 +10340,22 @@ impl WebStore for PgStore {
     async fn web_queue(&self, tenant_id: Uuid) -> Result<Vec<QueueDepth>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
+        // The instruction class is read off the domain, so a kind added to it
+        // is counted without touching this read (ADR-0080 d16; #435).
+        let instructions: Vec<&str> = MemoryKind::ALL
+            .iter()
+            .filter(|k| k.class().needs_person())
+            .map(|k| k.as_str())
+            .collect();
         let rows = sqlx::query(concat!(
-            "SELECT workspace_id, count(*) AS held, ",
+            "SELECT workspace_id, count(*) AS held, \
+             count(*) FILTER (WHERE kind = ANY($2::text[])) AS held_instructions, ",
             utc!("min(created_at)"),
             " AS oldest_signed FROM memories WHERE tenant_id = $1 AND status = 'held' \
              GROUP BY workspace_id ORDER BY workspace_id"
         ))
         .bind(tenant_id)
+        .bind(&instructions)
         .fetch_all(&mut *tx)
         .await
         .map_err(backend)?;
@@ -10340,15 +10363,99 @@ impl WebStore for PgStore {
         rows.iter()
             .map(|row| {
                 let held: i64 = row.try_get("held").map_err(backend)?;
+                let held_instructions: i64 = row.try_get("held_instructions").map_err(backend)?;
                 Ok(QueueDepth {
                     workspace_id: row.try_get("workspace_id").map_err(backend)?,
                     held: u64::try_from(held).map_err(backend)?,
+                    held_instructions: u64::try_from(held_instructions).map_err(backend)?,
                     oldest: event_time_column(row, "oldest_signed")?.ok_or_else(|| {
                         StoreError::Backend("a held group has no oldest row".to_owned())
                     })?,
                 })
             })
             .collect()
+    }
+
+    async fn web_person_reviewers(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<Vec<PersonReviewer>, StoreError> {
+        // The keys, then their grants and the denials in force, in one
+        // snapshot: three statements over `api_keys`, `grants` and
+        // `key_denials`, never `memories` (#435).
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        one_snapshot(&mut tx).await?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let keys = sqlx::query(&format!(
+            "SELECT {KEY_COLUMNS} FROM api_keys WHERE tenant_id = $1 AND role = 'reviewer' \
+             AND used_by = 'person' AND crew_id IS NULL AND profile IS NULL \
+             AND revoked_at IS NULL ORDER BY name"
+        ))
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?
+        .iter()
+        .map(key_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        let ids: Vec<Uuid> = keys.iter().map(|k| k.key_id).collect();
+        let grants = sqlx::query(
+            "SELECT key_id, id, role, workspace_node_id, deny, covers FROM grants \
+             WHERE tenant_id = $1 AND key_id = ANY($2) ORDER BY epoch ASC, id ASC",
+        )
+        .bind(tenant_id)
+        .bind(&ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let denials = sqlx::query(
+            "SELECT key_id, id, workspace_node_id FROM key_denials \
+             WHERE tenant_id = $1 AND key_id = ANY($2) AND lifted_epoch IS NULL \
+             ORDER BY epoch ASC, id ASC",
+        )
+        .bind(tenant_id)
+        .bind(&ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let mut out: Vec<PersonReviewer> = keys
+            .into_iter()
+            .map(|key| PersonReviewer {
+                key,
+                grants: Vec::new(),
+                denials: Vec::new(),
+            })
+            .collect();
+        for row in &grants {
+            let role: String = row.try_get("role").map_err(backend)?;
+            let deny: Value = row.try_get("deny").map_err(backend)?;
+            let covers: String = row.try_get("covers").map_err(backend)?;
+            let grant = Grant {
+                grant_id: row.try_get("id").map_err(backend)?,
+                node: row.try_get("workspace_node_id").map_err(backend)?,
+                role: role_from_str(&role)?,
+                deny: deny_from_json(&deny)?,
+                covers: Covers::parse(&covers).ok_or_else(|| {
+                    StoreError::Backend(format!("grants.covers {covers:?} is not a coverage"))
+                })?,
+            };
+            let key_id: Uuid = row.try_get("key_id").map_err(backend)?;
+            if let Some(r) = out.iter_mut().find(|r| r.key.key_id == key_id) {
+                r.grants.push(grant);
+            }
+        }
+        for row in &denials {
+            let denial = KeyDenial {
+                denial_id: row.try_get("id").map_err(backend)?,
+                node: row.try_get("workspace_node_id").map_err(backend)?,
+            };
+            let key_id: Uuid = row.try_get("key_id").map_err(backend)?;
+            if let Some(r) = out.iter_mut().find(|r| r.key.key_id == key_id) {
+                r.denials.push(denial);
+            }
+        }
+        Ok(out)
     }
 
     async fn web_admin_search(

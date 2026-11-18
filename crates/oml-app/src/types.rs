@@ -3850,7 +3850,21 @@ pub enum ProviderFailure {
 pub struct QueueDepth {
     pub workspace_id: Uuid,
     pub held: u64,
+    /// The held versions of an instruction-class kind among `held`, which
+    /// only a person's reviewer key approves (ADR-0080 d16; #435).
+    pub held_instructions: u64,
     pub oldest: EventTime,
+}
+
+/// A live person's reviewer key of the tenant, as the queue reads it: a
+/// reviewer key `used_by: person` with no crew and no profile, not revoked,
+/// with its grants and the denials in force (ADR-0080 d16; #435). Its
+/// expiry is read on the caller's clock.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonReviewer {
+    pub key: KeyRecord,
+    pub grants: Vec<Grant>,
+    pub denials: Vec<KeyDenial>,
 }
 
 /// What the admin read searches (ADR-0045 d21): the full-text `query`
