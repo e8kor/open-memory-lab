@@ -2224,8 +2224,7 @@ fn run_skills_list(
 /// skills the current project's and the home's `.claude/skills/` keep on
 /// disk.
 fn local_skill_lines() -> Vec<String> {
-    let home = std::env::var("HOME")
-        .ok()
+    let home = oml_cli::guardrails::skills_home(&|name| std::env::var(name).ok())
         .filter(|h| Path::new(h).is_absolute());
     let mut lines = Vec::new();
     if let Some(home) = &home {
