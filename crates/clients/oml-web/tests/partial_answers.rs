@@ -615,3 +615,295 @@ async fn the_memories_hints_read_one_tree_page_and_say_when_they_are_partial() {
         page.body
     );
 }
+
+/// The counts reads as a script answers them: `review` waiting on the
+/// Personal side, nothing built on the admin side (ADR-0083 d14); every
+/// other read an empty page, or the counted tree.
+fn with_counts(review: u64) -> Script {
+    Arc::new(move |_, path| {
+        if path.starts_with("/v2/todo/counts") {
+            (
+                200,
+                json!({"review": review, "truncated": false}),
+                Vec::new(),
+            )
+        } else if path.starts_with("/v2/admin/todo/counts") {
+            (200, json!({"truncated": false}), Vec::new())
+        } else if path.contains("tree?counts=true") {
+            (200, counts(), Vec::new())
+        } else {
+            (200, empty_page(), Vec::new())
+        }
+    })
+}
+
+/// Every page of both sides carries "To do · N" before the account name,
+/// drawn from one counts call per page view, of its own side; an act's
+/// redirect makes none (ADR-0083 d6).
+#[tokio::test]
+async fn every_console_page_carries_the_todo_badge_with_one_counts_call() {
+    for path in [
+        "/web/start",
+        "/web/memories",
+        "/web/memories?view=submitted",
+        "/web/atlas",
+        "/web/keys",
+        "/web/workspaces",
+        "/web/guardrails",
+        "/web/todo",
+    ] {
+        let page = send(with_counts(4), get(path)).await;
+        assert!(
+            page.body.contains(r#"href="/web/todo">To do · 4</a>"#)
+                || page
+                    .body
+                    .contains(r#"href="/web/todo" aria-current="page">To do · 4</a>"#),
+            "{path}: {}",
+            page.body
+        );
+        assert_eq!(
+            calls_to(&page, "GET /v2/todo/counts"),
+            1,
+            "{path}: {:?}",
+            page.calls
+        );
+        assert_eq!(calls_to(&page, "GET /v2/admin/todo/counts"), 0, "{path}");
+    }
+    for path in [
+        "/web/admin/memories",
+        "/web/admin/memories?view=held",
+        "/web/admin/keys",
+        "/web/admin/todo",
+    ] {
+        let page = send_as(with_counts(4), get(path), true).await;
+        assert!(
+            page.body.contains(">To do · 0</a>"),
+            "{path}: {}",
+            page.body
+        );
+        assert!(page.body.contains(r#"href="/web/admin/todo""#), "{path}");
+        assert_eq!(calls_to(&page, "GET /v2/admin/todo/counts"), 1, "{path}");
+        assert_eq!(calls_to(&page, "GET /v2/todo/counts"), 0, "{path}");
+    }
+    let next = send(with_counts(4), post("/web/todo", "action=next")).await;
+    assert_eq!(next.status, StatusCode::SEE_OTHER, "{}", next.body);
+    assert_eq!(
+        calls_to(&next, "GET /v2/todo/counts"),
+        0,
+        "{:?}",
+        next.calls
+    );
+}
+
+/// A counts read that fails leaves the page whole and its badge without a
+/// number: the badge never shows one the API did not serve (ADR-0083 d6).
+#[tokio::test]
+async fn a_page_whose_counts_read_fails_draws_its_badge_without_a_number() {
+    let script: Script = Arc::new(|_, path| {
+        if path.starts_with("/v2/todo/counts") {
+            (503, envelope("system.unavailable"), Vec::new())
+        } else {
+            (200, empty_page(), Vec::new())
+        }
+    });
+    let page = send(script, get("/web/keys")).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    assert!(
+        page.body
+            .contains(r#"<a class="oml-todo-b" href="/web/todo">To do</a>"#),
+        "{}",
+        page.body
+    );
+}
+
+const HELD: &str = "0f0e8a52-5d1c-4f43-9a5e-2f7c1f9b8f10";
+const SERVED: &str = "6c1b2d3e-4f50-4a61-8b72-9c83d4e5f601";
+
+/// A held edit of a served skill, as the held listing serves it.
+fn held_edit() -> Value {
+    json!({
+        "artifact_id": HELD, "claim_key": "skill/bump-deps", "version": 3, "tip": false,
+        "workspace_id": ROOT, "workspace_path": "universe.alice", "kind": "skill",
+        "state": "held", "principal": "bob", "author_key_id": "k-bob",
+        "created_at": "2026-11-18T08:00:00.000000Z", "promoted_at": null,
+        "text": "Run cargo update weekly.",
+        "skill": {"name": "bump-deps", "description": "Bump the lockfile weekly."},
+        "replaces": {"artifact_id": SERVED, "version": 2},
+        "held_since": "2026-11-18T08:00:00.000000Z", "same_user": false,
+        "needs_person": true, "needs_person_reason": "instruction_needs_person",
+    })
+}
+
+/// To do's reads and Judge's, as a held edit of a served skill waits.
+fn one_held_edit() -> Script {
+    Arc::new(|_, path| {
+        if path.starts_with("/v2/todo/counts") {
+            (200, json!({"review": 1, "truncated": false}), Vec::new())
+        } else if path.starts_with("/v2/review/held?ids=") {
+            (
+                200,
+                json!({"items": [{"id": HELD, "item": held_edit(), "needs_person": true}]}),
+                Vec::new(),
+            )
+        } else if path.starts_with("/v2/review/held") {
+            (
+                200,
+                json!({"items": [held_edit()], "next_cursor": null}),
+                Vec::new(),
+            )
+        } else if path == format!("/v1/memories/{SERVED}") {
+            (
+                200,
+                json!({
+                    "artifact_id": SERVED, "claim_key": "skill/bump-deps", "version": 2,
+                    "tip": true, "workspace_path": "universe.alice", "kind": "skill",
+                    "state": "promoted", "principal": "alice",
+                    "created_at": "2026-11-10T08:00:00.000000Z",
+                    "promoted_at": "2026-11-11T08:00:00.000000Z",
+                    "text": "Run cargo update.",
+                    "skill": {"name": "bump-deps", "description": "Bump the lockfile."},
+                }),
+                Vec::new(),
+            )
+        } else {
+            (200, empty_page(), Vec::new())
+        }
+    })
+}
+
+/// To do lists what the reviewer key may judge, its group counted by the
+/// counts read, each row naming its decision and opening Judge; Next goes
+/// to the oldest row's Judge page (ADR-0083 d2, d11, d14).
+#[tokio::test]
+async fn todo_lists_the_held_rows_with_judge_and_next_opens_the_oldest() {
+    let page = send(one_held_edit(), get("/web/todo")).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    assert!(
+        page.body.contains("<title>To do · OML</title>"),
+        "{}",
+        page.body
+    );
+    assert!(page.body.contains("<h1>To do</h1>"));
+    assert!(
+        page.body
+            .contains(r#"<h2 id="todo-review">To review · 1</h2>"#),
+        "{}",
+        page.body
+    );
+    assert!(
+        page.body.contains("Edit <span class=\"of\">of v2</span>"),
+        "{}",
+        page.body
+    );
+    assert!(page.body.contains(&format!(
+        r#"href="/web/todo/judge?memory={HELD}">Judge</a>"#
+    )));
+    assert!(
+        page.body
+            .contains(r#"<button type="submit" class="primary">Next</button>"#)
+    );
+    assert!(!page.body.contains("Nothing waits for this account."));
+    let next = send(one_held_edit(), post("/web/todo", "action=next")).await;
+    assert_eq!(next.status, StatusCode::SEE_OTHER, "{}", next.body);
+    assert_eq!(
+        next.headers[header::LOCATION],
+        format!("/web/todo/judge?memory={HELD}").as_str()
+    );
+    // Next on Judge passes over the item it leaves.
+    let after = send(
+        one_held_edit(),
+        post(
+            "/web/todo",
+            &format!("action=next&after={HELD}&workspace=alice"),
+        ),
+    )
+    .await;
+    assert_eq!(
+        after.headers[header::LOCATION],
+        "/web/todo?done=empty&workspace=alice"
+    );
+    let empty = send(with_counts(0), get("/web/todo?done=empty")).await;
+    assert!(
+        empty.body.contains("Nothing waits for this account."),
+        "{}",
+        empty.body
+    );
+    assert!(
+        empty
+            .body
+            .contains(r#"href="/web/memories?view=submitted">Memories, Submitted</a>"#)
+    );
+}
+
+/// Judge draws a supersession's change against the version it replaces,
+/// name, description and body each in its labelled block, with the
+/// verdict form posting to Judge and Next posting to To do (ADR-0082 d6;
+/// ADR-0083 d2).
+#[tokio::test]
+async fn the_judge_page_draws_a_supersessions_change_in_labelled_blocks() {
+    let page = send(
+        one_held_edit(),
+        get(&format!("/web/todo/judge?memory={HELD}")),
+    )
+    .await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    assert!(
+        page.body.contains("<title>Judge · To do · OML</title>"),
+        "{}",
+        page.body
+    );
+    assert!(page.body.contains(r#"<nav class="crumbs" aria-label="Breadcrumb">Personal / <a href="/web/todo">To do</a> / Judge</nav>"#));
+    assert!(
+        page.body.contains("baseline: v2, the served tip"),
+        "{}",
+        page.body
+    );
+    assert!(
+        page.body
+            .contains(r#"<p class="label">Name <span class="n">unchanged</span></p>"#)
+    );
+    assert!(
+        page.body
+            .contains("Bump the <del>lockfile.</del> <ins>lockfile</ins> <ins>weekly.</ins>"),
+        "{}",
+        page.body
+    );
+    assert!(
+        page.body
+            .contains("Run cargo <del>update.</del> <ins>update</ins> <ins>weekly.</ins>")
+    );
+    assert!(page.body.contains(r#"<form class="row" method="post" action="/web/todo/judge"><input type="hidden" name="action" value="judge">"#));
+    assert!(
+        page.body
+            .contains(r#"<button type="submit" class="primary">Record verdict</button>"#)
+    );
+    assert!(page.body.contains(&format!(
+        r#"<input type="hidden" name="after" value="{HELD}">"#
+    )));
+    // One more read per item: the replaced version (ADR-0082 d6).
+    assert_eq!(calls_to(&page, &format!("GET /v1/memories/{SERVED}")), 1);
+}
+
+/// The admin To do lists nothing yet and draws no verdict, confirmation or
+/// ratification (ADR-0083 d11, d14).
+#[tokio::test]
+async fn the_admin_todo_says_nothing_waits_and_draws_no_act() {
+    let page = send_as(with_counts(4), get("/web/admin/todo"), true).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    assert!(
+        page.body.contains("<title>Admin · To do · OML</title>"),
+        "{}",
+        page.body
+    );
+    assert!(page.body.contains("Nothing waits for this account."));
+    for act in [
+        "Record verdict",
+        "Confirm",
+        "Ratify",
+        "<select",
+        "method=\"post\" action=\"/web/admin",
+    ] {
+        assert!(!page.body.contains(act), "{act}");
+    }
+    assert!(!page.body.contains("name=\"workspace\""), "no filter");
+}

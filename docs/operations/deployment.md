@@ -136,8 +136,9 @@ private network.
   The pages `oml-web` serves are `PAGES` in `crates/clients/oml-web/src/lib.rs`, each at a path
   of its own, today `/web/guardrails`, `/web/workspaces`, `/web/admin/workspaces`, `/web/memories`,
   `/web/atlas`, `/web/admin/memories`, `/web/admin/atlas`, `/web/data/memories`,
-  `/web/admin/data/memories`, `/web/review`, `/web/admin/review`, `/web/keys` and
-  `/web/admin/keys`, each for `GET` and, for the Workspaces, Review and Keys views, `POST`. Since
+  `/web/admin/data/memories`, `/web/review` and `/web/admin/review` (each a `308` for this
+  release), `/web/todo`, `/web/todo/judge`, `/web/admin/todo`, `/web/keys` and `/web/admin/keys`,
+  each for `GET` and, for the Workspaces, To do, Judge and Keys pages, `POST`. Since
   v0.7.1 the old `?view=` addresses and `/web/admin` answer not found.
   `deploy/caddy/Caddyfile` is a Caddy configuration that routes them; a page that moves in a
   later release adds a route there.

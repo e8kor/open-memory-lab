@@ -12,6 +12,7 @@ pub mod admin;
 pub mod atlas;
 mod card;
 pub mod config;
+mod diff;
 pub mod doctor;
 pub mod frame;
 pub mod keys;
@@ -23,9 +24,9 @@ pub mod outcome;
 pub mod pages;
 pub mod picker;
 pub mod render;
-pub mod review;
 pub mod session;
 pub mod start;
+pub mod todo;
 mod usage;
 pub mod workspaces;
 
@@ -75,9 +76,12 @@ pub const PAGES: &[(&str, &str)] = &[
     ("GET", memories::USER_DATA_PATH),
     ("GET", memories::ADMIN_DATA_PATH),
     ("GET", USER_REVIEW_PATH),
-    ("POST", USER_REVIEW_PATH),
     ("GET", ADMIN_REVIEW_PATH),
-    ("POST", ADMIN_REVIEW_PATH),
+    ("GET", TODO_PATH),
+    ("POST", TODO_PATH),
+    ("GET", TODO_JUDGE_PATH),
+    ("POST", TODO_JUDGE_PATH),
+    ("GET", ADMIN_TODO_PATH),
     ("GET", USER_KEYS_PATH),
     ("POST", USER_KEYS_PATH),
     ("GET", ADMIN_KEYS_PATH),
@@ -119,13 +123,15 @@ pub use oml_page::web::{
     ADMIN_ATLAS_PATH, ADMIN_MEMORIES_PATH, USER_ATLAS_PATH, USER_MEMORIES_PATH,
 };
 
-/// The user page's Review view and its acts (ADR-0045 d11; ADR-0055 d10),
-/// moved from `GET /web?view=review` and the review acts of `POST /web`.
-pub use oml_page::web::USER_REVIEW_PATH;
+/// The Review views' old paths: a `GET` answers `308` to To do, keeping
+/// the workspace, and on the admin side to Memories, Held, for the release
+/// that builds To do (ADR-0083 d6). A `POST` is no longer routed here, so
+/// the lead answers it not found: the forms that posted it are drawn
+/// nowhere, and a `308` would carry a verdict to a page without that act.
+pub use oml_page::web::{ADMIN_REVIEW_PATH, USER_REVIEW_PATH};
 
-/// The admin page's Review view, with the queue and bulk review, moved from
-/// `GET /web/admin?view=review`, `?view=held` and `?view=queue`.
-pub use oml_page::web::ADMIN_REVIEW_PATH;
+/// The To do page of each side and the Judge page (ADR-0083 d2, d6, d11).
+pub use oml_page::web::{ADMIN_TODO_PATH, TODO_JUDGE_PATH, TODO_PATH};
 
 /// The user page's Keys view and its acts (ADR-0045 d9), moved from
 /// `GET /web` and the key acts of `POST /web`.
@@ -270,6 +276,50 @@ async fn ready(axum::extract::State(web): axum::extract::State<Web>) -> axum::re
         .into_response()
 }
 
+/// The fields of `uri`'s query that `names` names, each `name=value`
+/// encoded; the other fields are dropped.
+fn kept_query(uri: &http::Uri, names: &[&str]) -> Vec<String> {
+    use axum::extract::Query;
+    // A query that does not decode keeps nothing: the redirect still lands.
+    let pairs = Query::<Vec<(String, String)>>::try_from_uri(uri)
+        .map(|Query(pairs)| pairs)
+        .unwrap_or_default();
+    pairs
+        .into_iter()
+        .filter(|(k, _)| names.contains(&k.as_str()))
+        .map(|(k, v)| format!("{k}={}", oml_sdk::encode(&v)))
+        .collect()
+}
+
+/// A `308` to `location`.
+fn permanent(location: &str) -> axum::response::Response {
+    use axum::response::IntoResponse as _;
+    (
+        StatusCode::PERMANENT_REDIRECT,
+        [(http::header::LOCATION, location.to_owned())],
+    )
+        .into_response()
+}
+
+/// `GET /web/review`: `308` to To do, keeping the workspace and the linked
+/// key the page judged as (ADR-0083 d6; ADR-0085 d16).
+async fn moved_review(uri: http::Uri) -> axum::response::Response {
+    let kept = kept_query(&uri, &["workspace", "as"]);
+    if kept.is_empty() {
+        permanent(TODO_PATH)
+    } else {
+        permanent(&format!("{TODO_PATH}?{}", kept.join("&")))
+    }
+}
+
+/// `GET /web/admin/review`: `308` to the admin Memories page's Held view,
+/// keeping the workspace (ADR-0083 d6).
+async fn moved_admin_review(uri: http::Uri) -> axum::response::Response {
+    let mut kept = vec!["view=held".to_owned()];
+    kept.extend(kept_query(&uri, &["workspace"]));
+    permanent(&format!("{ADMIN_MEMORIES_PATH}?{}", kept.join("&")))
+}
+
 /// Every path no page serves; it passes the same layers as a page.
 async fn not_found() -> StatusCode {
     StatusCode::NOT_FOUND
@@ -293,14 +343,9 @@ pub fn router(web: Web) -> Router {
         .route(ADMIN_MEMORIES_PATH, get(memories::admin_list))
         .route(USER_ATLAS_PATH, get(memories::user_atlas))
         .route(ADMIN_ATLAS_PATH, get(memories::admin_atlas))
-        .route(
-            USER_REVIEW_PATH,
-            get(review::user_page).post(review::user_act),
-        )
-        .route(
-            ADMIN_REVIEW_PATH,
-            get(review::admin_page).post(review::admin_act),
-        )
+        .route(TODO_PATH, get(todo::user_page).post(todo::user_act))
+        .route(TODO_JUDGE_PATH, get(todo::judge_page).post(todo::judge_act))
+        .route(ADMIN_TODO_PATH, get(todo::admin_page))
         .route(USER_KEYS_PATH, get(keys::user_page).post(keys::user_act))
         .route(ADMIN_KEYS_PATH, get(keys::admin_page).post(keys::admin_act))
         .route(
@@ -330,6 +375,11 @@ pub fn router(web: Web) -> Router {
             session::load,
         ))
         .with_state(web.clone());
+    // The old Review paths answer their 308 before any session is read: a
+    // redirect needs none (ADR-0083 d6).
+    let moved = Router::new()
+        .route(USER_REVIEW_PATH, get(moved_review))
+        .route(ADMIN_REVIEW_PATH, get(moved_admin_review));
     // The JSON routes load their own session: no session is not found as
     // data, never a redirect to sign in (ADR-0045 d25).
     let data = Router::new()
@@ -348,6 +398,7 @@ pub fn router(web: Web) -> Router {
         .route(HEALTH_PATH, get(health))
         .route(READY_PATH, get(ready).with_state(web.clone()))
         .merge(pages)
+        .merge(moved)
         .merge(data)
         .merge(frames)
         .fallback(not_found)
@@ -379,12 +430,17 @@ mod tests {
         assert!(serves("GET", "/web/admin/workspaces"));
         assert!(serves("POST", "/web/admin/workspaces"));
         for path in [
-            "/web/review",
-            "/web/admin/review",
+            "/web/todo",
+            "/web/todo/judge",
             "/web/keys",
             "/web/admin/keys",
         ] {
             assert!(serves("GET", path) && serves("POST", path), "{path}");
+        }
+        // The old Review paths answer their 308 to a GET for one release;
+        // a POST goes to the lead, which answers not found (ADR-0083 d6).
+        for path in ["/web/review", "/web/admin/review", "/web/admin/todo"] {
+            assert!(serves("GET", path) && !serves("POST", path), "{path}");
         }
         for path in [
             "/web/memories",

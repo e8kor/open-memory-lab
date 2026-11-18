@@ -132,8 +132,9 @@ input,select,textarea{min-height:var(--control-h);min-width:12rem;max-width:100%
 input[type=checkbox]{min-width:0;min-height:0;width:var(--check);height:var(--check);accent-color:var(--ice)}
 textarea{width:100%;min-height:7rem;padding:var(--space-2) var(--space-3);font:var(--t-code-weight) var(--t-code-size)/var(--t-code-line) var(--font-mono)}
 form.act select{min-width:10rem}
-button{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);min-height:var(--control-h);min-width:var(--target-min);font:var(--t-button-weight) var(--t-button-size)/var(--t-button-line) var(--font-body);border-radius:var(--radius-md);padding:0 var(--space-4);border:1px solid var(--control-border);background:transparent;color:var(--ink);cursor:pointer}
-button:hover{border-color:var(--ice)}
+button,a.button{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);min-height:var(--control-h);min-width:var(--target-min);font:var(--t-button-weight) var(--t-button-size)/var(--t-button-line) var(--font-body);border-radius:var(--radius-md);padding:0 var(--space-4);border:1px solid var(--control-border);background:transparent;color:var(--ink);cursor:pointer}
+button:hover,a.button:hover{border-color:var(--ice)}
+a.button{text-decoration:none;box-sizing:border-box}
 button.primary{background:var(--star-fill);border:var(--stroke-strong) solid var(--star);color:var(--on-star)}
 button.primary:focus-visible{box-shadow:var(--focus-gap)}
 button.linkish{border:0;min-height:0;padding:var(--space-0\.5) 0;color:var(--ice);font-weight:var(--t-body-weight);text-align:left}
@@ -363,3 +364,23 @@ a.oml-wa-browse::after,.oml-wa-browse>summary::after{content:"";width:var(--spac
 .oml-wa-close a{display:inline-flex;align-items:center;min-height:var(--target-min);font:var(--t-code-weight) var(--t-meta-size)/var(--t-meta-line) var(--font-mono);font-variant-ligatures:none}
 .oml-atlas-up{margin:0 0 var(--space-2);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
 @media (max-width:599px){.oml-wa{max-width:none}}
+/* To do (ADR-0083 d6, d11; TodoScreen, BrandHeader): the header's badge beside the account name on both sides, a word and a number in an outline with no colour for the count, in the first row at phone width; the To do rows; the empty state */
+header.top .oml-todo-b{flex:none;display:inline-flex;align-items:center;min-height:var(--control-h-sm);padding:0 var(--space-2);border:1px solid var(--control-border);border-radius:var(--radius-pill);color:var(--ink);text-decoration:none;white-space:nowrap;font:var(--t-button-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);font-variant-numeric:tabular-nums}
+header.top .oml-todo-b:hover{border-color:var(--ice)}
+header.top .oml-todo-b[aria-current]{box-shadow:inset 0 calc(-1 * var(--stroke-strong)) 0 var(--star)}
+header.top.admin .oml-todo-b{color:var(--ground);border-color:var(--ground)}
+header.top.admin .oml-todo-b[aria-current]{box-shadow:inset 0 calc(-1 * var(--stroke-strong)) 0 var(--ground)}
+@media (max-width:599px){header.top .oml-todo-b{order:1}}
+.oml-todo{list-style:none;margin:0 0 var(--space-4);padding:0;display:flex;flex-direction:column;max-width:var(--card-max);border-top:1px solid var(--rule-soft)}
+.oml-todo>li{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2) var(--space-4);padding:var(--space-3) 0;border-bottom:1px solid var(--rule-soft)}
+.oml-todo .td-main{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:var(--space-1)}
+.oml-todo .td-what{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1) var(--space-2);font:var(--t-body-dense-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-body);color:var(--ink)}
+.oml-todo .td-what .lnk{color:var(--ink);overflow-wrap:anywhere}
+.oml-todo .td-facts{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1) var(--space-3);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.oml-todo .td-facts .k{color:var(--ink-faint)}
+.oml-todo .td-facts .t{font-family:var(--font-mono);font-size:var(--t-meta-size);font-variant-ligatures:none;overflow-wrap:anywhere}
+.oml-todo .td-act{flex:none}
+.oml-todo-g{container-type:inline-size}
+@container (max-width:479px){.oml-todo .td-main{flex-basis:100%}}
+.oml-empty{display:flex;flex-direction:column;gap:var(--space-2);max-width:var(--card-max);margin:var(--space-4) 0;padding:var(--space-6) var(--space-4);border:1px dashed var(--rule);border-radius:var(--radius-md)}
+.oml-empty p{margin:0}

@@ -61,15 +61,27 @@ To read the queue without taking anything, run `oml review list` (a reviewer key
 
 ## Reviewing on the user page
 
-Signed in at `/web`, the **Review** tab serves the next held memory to the user's own reviewer key,
-`<user>-review`, as `oml review next` does. **Memories** has two views, two links under its
+Signed in at `/web`, every page carries a **To do · N** badge beside the account name: the number
+of held memories the user's own reviewer key, `<user>-review`, may judge, across every workspace.
+It links to **To do** (`/web/todo`), whose **To review** group lists them oldest first, each row
+naming the decision (New memory, New skill, Edit of v2, Retirement of v1), its kind, workspace and
+author, `same user` where a key of the person wrote it inside their own root, and how long it has
+waited, with **Judge**. A workspace filter narrows the list; **Next** opens the oldest item.
+**Judge** (`/web/todo/judge`) draws the item whole with the checks, what each verdict does and, for
+an edit, the change against the version it replaces, name, description and body each in its own
+block, removed words struck and added words underlined; **Record verdict** records the verdict as
+`<user>-review` and returns to To do, and Next on Judge opens the next item without one. With
+nothing to judge the page says "Nothing waits for this account." and links to Memories, Submitted.
+The old **Review** address answers a redirect to To do for this release
+([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d2, d6, d11). **Memories** has two views, two links under its
 heading that keep the workspace and the filters. **Approved**, the default, lists the approved
 versions the person's keys read, newest first, 50 a page, filtered by workspace, text, state
 (approved or superseded), origin or author key; its search never serves a held version, inside an
 in-progress workspace either, so a held row is never listed there. **Submitted** lists what the
 person's own keys wrote that is held, rejected or withdrawn, and what was approved in the last 30
 days, each row led by one sentence: "Waiting for review.", "Waiting for review. v2 is still
-served.", "Approved on 2026-11-10 and served as `deploy-window` v3.", "Rejected." or
+served.", "Approved on 2026-11-10 and served as `deploy-window` v3." (for a skill, "Approved on 2026-11-10 and
+published as `/mcp__oml__bump-deps`."), "Rejected." or
 "Withdrawn.". A held row offers **Withdraw**, which asks for confirmation first. Submitted has no
 text search, since a held row's text is read only by its author; when a rejection or a withdrawal
 happened is not served to its author, so neither sentence names a day

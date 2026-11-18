@@ -118,9 +118,11 @@ each workspace a link that filters the rows, its tab carrying the held count ("H
 **Rejected**. Each page read is one `memory.admin_read` in the journal, the Atlas view's
 included. The admin key never judges: a held row links "Judge as `<user>-review`" to the
 Personal side, where the person's own reviewer key gives the verdict if it may, and no admin page
-draws a verdict form, Review next or a pick box. Bulk review is the command line's, `oml review
-list` and `oml review approve|reject --ids` under the person's reviewer key; the admin Review page
-shows the queue alone until it moves to Memories, Held
+draws a verdict form, Next or a pick box. Bulk review is the command line's, `oml review
+list` and `oml review approve|reject --ids` under the person's reviewer key; the old admin Review
+address answers a redirect to Memories, Held. Each view filters by kind too. The admin bar carries
+a **To do · N** badge linking to the admin To do page, which lists nothing yet: its groups come with
+admin fixes
 ([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d5, d7). **Atlas** shows the workspaces as a map sized by their rows, with a table twin.
 **Workspaces** shows the tree with one dropdown a workspace: status changes as the admin key,
 ratified only by a key other than the proposer's; in progress and commit as the reviewer key.

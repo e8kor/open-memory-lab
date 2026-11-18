@@ -23,8 +23,8 @@ use axum::extract::{Form, State};
 use axum::response::Response;
 use http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use oml_page::web::{
-    ADMIN_KEYS_PATH, USER_KEYS_PATH, USER_REVIEW_PATH, attr, form, hidden, input, select, shell,
-    short, state_tag, text,
+    ADMIN_KEYS_PATH, TODO_PATH, USER_KEYS_PATH, attr, form, hidden, input, select, shell, short,
+    state_tag, text,
 };
 use oml_sdk::{ListedKey, encode};
 
@@ -600,7 +600,7 @@ fn linked_section(linked: &[oml_sdk::LinkedKey]) -> String {
     for key in linked {
         let _ = write!(
             out,
-            r#"<li><code>{}</code> · <a href="{USER_REVIEW_PATH}?as={}">Review as this key</a></li>"#,
+            r#"<li><code>{}</code> · <a href="{TODO_PATH}?as={}">Judge as this key in To do</a></li>"#,
             short(&key.name),
             attr(&encode(&key.id))
         );

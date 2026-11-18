@@ -16,15 +16,22 @@ The pages move one at a time, and each moved page gets its own path under `/web/
 Workspaces view at `/web/workspaces` on the user page and `/web/admin/workspaces` on the admin page;
 the Memories list at `GET /web/memories` and `GET /web/admin/memories`; the Atlas at
 `GET /web/atlas` and `GET /web/admin/atlas`, with the list's JSON at `GET /web/data/memories` and
-`GET /web/admin/data/memories`; the Review view at `/web/review` and `/web/admin/review`; and the
+`GET /web/admin/data/memories`; the To do page at `/web/todo` and `/web/admin/todo`, with the Judge
+page at `/web/todo/judge`; and the
 Keys view at `/web/keys` and `/web/admin/keys`. Every act on them runs through the API as the
 person's session keys, and a form sent twice runs once. Making a workspace's drafts visible to everyone working here or to
 the writing key only, proposing or ratifying a status change, and a bulk verdict are confirmed first. Every page of
 the admin list is one journalled admin read, as before. The Memories list has the views of
 ADR-0083: Approved and Submitted on the user page (`?view=submitted`), Approved, Held and Rejected
-on the admin page (`?view=held|rejected`). The user page's Review view holds review next; the
-admin page's Review view shows the queue of held memories per workspace alone, with no verdict,
-since the admin key never judges and bulk review is the command line's. The reviewer is never the
+on the admin page (`?view=held|rejected`), the admin views with a Kind filter. What waits on the
+person is the To do page (ADR-0083 d11): its To review group lists the held memories the person's
+reviewer key may judge, oldest first, each row opening Judge, where the verdict is recorded and the
+change of an edit is drawn against the version it replaces; Next opens the oldest. The admin To do
+lists nothing yet and offers no verdict, since the admin key never judges and bulk review is the
+command line's. Every page of both sides carries a "To do · N" badge beside the account name, read
+from one counts call per page view; where that read does not answer, the badge shows no number. The
+old Review paths answer `308` for this release: `/web/review` to `/web/todo` and
+`/web/admin/review` to the admin Memories page's Held view, each keeping the workspace. The reviewer is never the
 author, and a verdict the API refuses is shown with its code. On the Keys view a key's value or a
 connect code is shown once, on the page the act lands on: it travels there sealed in a cookie that
 page clears, never in an address or a log line, and `oml-web` keeps no copy. The admin's Keys view
@@ -172,7 +179,7 @@ included. For Caddy (`deploy/caddy/Caddyfile` is the full route table):
 
 ```caddyfile
 memory.example.com {
-	@oml_web path /web/guardrails /web/workspaces /web/admin/workspaces /web/memories /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/keys /web/admin/keys
+	@oml_web path /web/guardrails /web/workspaces /web/admin/workspaces /web/memories /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/todo /web/todo/judge /web/admin/todo /web/keys /web/admin/keys
 	reverse_proxy @oml_web 127.0.0.1:8091
 	reverse_proxy 127.0.0.1:8090
 }

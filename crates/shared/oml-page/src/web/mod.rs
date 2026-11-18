@@ -81,13 +81,25 @@ pub const USER_WORKSPACES_PATH: &str = "/web/workspaces";
 /// The admin page's Workspaces view, which `oml-web` serves (ADR-0070 d7 (b)).
 pub const ADMIN_WORKSPACES_PATH: &str = "/web/admin/workspaces";
 
-/// The user page's Review view, review next only; bulk review stays the
-/// admin page's (ADR-0055 d1). `oml-web` serves it (ADR-0070 d7 (b)).
+/// The Review view's old path, which answers `308` to [`TODO_PATH`],
+/// keeping the workspace, for the release that builds To do, and then
+/// goes (ADR-0083 d6).
 pub const USER_REVIEW_PATH: &str = "/web/review";
 
-/// The admin page's Review view, with the tenant's queue above it, which
-/// `oml-web` serves (ADR-0070 d7 (b)).
+/// The admin Review view's old path, which answers `308` to the admin
+/// Memories page's Held view for one release (ADR-0083 d6).
 pub const ADMIN_REVIEW_PATH: &str = "/web/admin/review";
+
+/// The Personal To do page, what waits on the signed-in person (ADR-0083
+/// d6, d11), which `oml-web` serves; the header's badge links here.
+pub const TODO_PATH: &str = "/web/todo";
+
+/// The Judge page of one held item, below To do (ADR-0083 d2).
+pub const TODO_JUDGE_PATH: &str = "/web/todo/judge";
+
+/// The administration To do page (ADR-0083 d11); the admin bar's badge
+/// links here.
+pub const ADMIN_TODO_PATH: &str = "/web/admin/todo";
 
 /// The user page's Keys view, which `oml-web` serves (ADR-0070 d7 (b)).
 pub const USER_KEYS_PATH: &str = "/web/keys";
@@ -115,11 +127,13 @@ pub const ADMIN_PEOPLE_PATH: &str = "/web/admin/people";
 
 /// The Personal side's nav, `(href, word)`, in the order the design
 /// system's BrandHeader draws it; the lead's pages and `oml-web`'s draw the
-/// same nav. No tab leads to the other side: that is the switch.
-pub const PERSONAL_TABS: [(&str, &str); 7] = [
+/// same nav. No tab leads to the other side: that is the switch. Neither
+/// nav carries To do, which is the header's badge, nor a count (ADR-0083
+/// d6, d12); Guardrails leaves with the workspace page's In force here
+/// panel (#410).
+pub const PERSONAL_TABS: [(&str, &str); 6] = [
     (START_PATH, "Start"),
     (USER_MEMORIES_PATH, "Memories"),
-    (USER_REVIEW_PATH, "Review"),
     (USER_ATLAS_PATH, "Atlas"),
     (USER_KEYS_PATH, "Keys"),
     (USER_WORKSPACES_PATH, "Workspaces"),
@@ -128,11 +142,10 @@ pub const PERSONAL_TABS: [(&str, &str); 7] = [
 
 /// The Administration side's nav, `(href, word)`, in the Personal side's
 /// order where the two share a page.
-pub const ADMIN_TABS: [(&str, &str); 8] = [
+pub const ADMIN_TABS: [(&str, &str); 7] = [
     (ADMIN_PEOPLE_PATH, "People"),
     ("/web/admin/users", "Quotas"),
     (ADMIN_MEMORIES_PATH, "Memories"),
-    (ADMIN_REVIEW_PATH, "Review"),
     (ADMIN_ATLAS_PATH, "Atlas"),
     (ADMIN_KEYS_PATH, "Keys"),
     (ADMIN_WORKSPACES_PATH, "Workspaces"),
@@ -198,6 +211,15 @@ impl Scope {
         }
     }
 
+    /// The side's To do page, which its badge links (ADR-0083 d6).
+    #[must_use]
+    pub fn todo(self) -> &'static str {
+        match self {
+            Self::Personal { .. } => TODO_PATH,
+            Self::Administration => ADMIN_TODO_PATH,
+        }
+    }
+
     /// The side's first page, where its brand leads.
     #[must_use]
     pub fn first(self) -> (&'static str, &'static str) {
@@ -247,6 +269,40 @@ pub struct Bar {
     pub scope: Scope,
     pub who: String,
     pub csrf: String,
+    /// The To do badge's count (ADR-0083 d6).
+    pub todo: Todo,
+}
+
+/// What the header's To do badge says (ADR-0083 d6, d11): the sum of the
+/// counts read's members, or nothing where the read did not answer or was
+/// not made, so the badge never shows a number the API did not serve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Todo {
+    /// The counts read did not answer, or this page does not make it:
+    /// "To do" with no number.
+    #[default]
+    Unread,
+    /// The sum, and whether a member passed the read's cap.
+    Counted { n: u64, truncated: bool },
+}
+
+/// The badge (BrandHeader): "To do · N" in a pill outline, a link to the
+/// side's To do page, `aria-current="page"` on that page; "To do · 1000+"
+/// past the read's cap, and "To do" alone where the read did not answer.
+fn todo_badge(scope: Scope, todo: Todo, active: &str) -> String {
+    let href = scope.todo();
+    let current = if active == href {
+        r#" aria-current="page""#
+    } else {
+        ""
+    };
+    let shown = match todo {
+        Todo::Unread => "To do".to_owned(),
+        Todo::Counted { n, truncated } => {
+            format!("To do · {n}{}", if truncated { "+" } else { "" })
+        }
+    };
+    format!(r#"<a class="oml-todo-b" href="{href}"{current}>{shown}</a>"#)
 }
 
 /// A short string from a person, an agent, a provider or the store, as a
@@ -444,12 +500,13 @@ fn header(bar: &Bar, active: &str) -> String {
         )
     };
     format!(
-        r#"<header class="top {}">{}<span class="scope">{}{}</span>{nav}{}<div class="end">{who}{}</div></header>"#,
+        r#"<header class="top {}">{}<span class="scope">{}{}</span>{nav}{}<div class="end">{}{who}{}</div></header>"#,
         scope.class(),
         brand_of(scope),
         glyph_svg(scope.glyph()),
         scope.word(),
         scope.switch(),
+        todo_badge(scope, bar.todo, active),
         sign_out(&bar.csrf)
     )
 }
@@ -541,7 +598,13 @@ pub fn refusal_page(
     let back = bar.map_or_else(
         || r#"<a href="/web">Back</a>"#.to_owned(),
         |bar| {
-            let (href, word) = bar.scope.tab_of(path).unwrap_or(bar.scope.first());
+            // A refusal below To do leads back to it (ADR-0083 d2).
+            let todo = bar.scope.todo();
+            let (href, word) = if path == todo || path.starts_with(&format!("{todo}/")) {
+                (todo, "To do")
+            } else {
+                bar.scope.tab_of(path).unwrap_or(bar.scope.first())
+            };
             format!(r#"<a href="{href}">Back to {word}</a>"#)
         },
     );
@@ -620,6 +683,10 @@ mod tests {
             scope,
             who: "alice · oml".to_owned(),
             csrf: "c5".to_owned(),
+            todo: Todo::Counted {
+                n: 3,
+                truncated: false,
+            },
         }
     }
 
@@ -644,6 +711,7 @@ mod tests {
                 scope: Scope::Personal { admin: false },
                 who: "<script>".to_owned(),
                 csrf: "\"x".to_owned(),
+                todo: Todo::Unread,
             },
             START_PATH,
             None,
@@ -709,12 +777,12 @@ mod tests {
         );
         assert_eq!(
             nav(&personal),
-            r#"<nav aria-label="Personal"><a href="/web/start">Start</a><a href="/web/memories">Memories</a><a href="/web/review">Review</a><a href="/web/atlas">Atlas</a><a href="/web/keys" class="on" aria-current="page">Keys</a><a href="/web/workspaces">Workspaces</a><a href="/web/guardrails">Guardrails</a></nav>"#
+            r#"<nav aria-label="Personal"><a href="/web/start">Start</a><a href="/web/memories">Memories</a><a href="/web/atlas">Atlas</a><a href="/web/keys" class="on" aria-current="page">Keys</a><a href="/web/workspaces">Workspaces</a><a href="/web/guardrails">Guardrails</a></nav>"#
         );
         let admin = shell("", &bar(Scope::Administration), ADMIN_ATLAS_PATH, None, "");
         assert_eq!(
             nav(&admin),
-            r#"<nav aria-label="Administration"><a href="/web/admin/people">People</a><a href="/web/admin/users">Quotas</a><a href="/web/admin/memories">Memories</a><a href="/web/admin/review">Review</a><a href="/web/admin/atlas" class="on" aria-current="page">Atlas</a><a href="/web/admin/keys">Keys</a><a href="/web/admin/workspaces">Workspaces</a><a href="/web/admin/curate">Curate</a></nav>"#
+            r#"<nav aria-label="Administration"><a href="/web/admin/people">People</a><a href="/web/admin/users">Quotas</a><a href="/web/admin/memories">Memories</a><a href="/web/admin/atlas" class="on" aria-current="page">Atlas</a><a href="/web/admin/keys">Keys</a><a href="/web/admin/workspaces">Workspaces</a><a href="/web/admin/curate">Curate</a></nav>"#
         );
         assert!(
             personal.contains(r#"<header class="top personal">"#),
@@ -752,6 +820,52 @@ mod tests {
         assert!(!personal.contains("Your page") && !admin.contains("Your page"));
     }
 
+    /// Every page of both sides carries "To do · N" in the header's end,
+    /// before the account name, linking to the side's To do page; on that
+    /// page it is `aria-current`; past the cap it says so, and where the
+    /// counts read did not answer it shows no number (ADR-0083 d6).
+    #[test]
+    fn the_header_carries_the_todo_badge_before_the_account_name() {
+        let personal = shell(
+            "",
+            &bar(Scope::Personal { admin: false }),
+            USER_KEYS_PATH,
+            None,
+            "",
+        );
+        assert!(
+            personal.contains(r#"<div class="end"><a class="oml-todo-b" href="/web/todo">To do · 3</a><span class="who">"#),
+            "{personal}"
+        );
+        let admin = shell(
+            "To do",
+            &bar(Scope::Administration),
+            ADMIN_TODO_PATH,
+            None,
+            "",
+        );
+        assert!(
+            admin.contains(
+                r#"<a class="oml-todo-b" href="/web/admin/todo" aria-current="page">To do · 3</a>"#
+            ),
+            "{admin}"
+        );
+        assert!(!nav(&admin).contains("To do") && !nav(&personal).contains("To do"));
+        let mut zero = bar(Scope::Personal { admin: false });
+        zero.todo = Todo::Counted {
+            n: 0,
+            truncated: false,
+        };
+        assert!(shell("", &zero, START_PATH, None, "").contains(">To do · 0</a>"));
+        zero.todo = Todo::Counted {
+            n: 1000,
+            truncated: true,
+        };
+        assert!(shell("", &zero, START_PATH, None, "").contains(">To do · 1000+</a>"));
+        zero.todo = Todo::Unread;
+        assert!(shell("", &zero, START_PATH, None, "").contains(r#"href="/web/todo">To do</a>"#));
+    }
+
     /// A person without the admin capacity is shown no word, link or
     /// address of the other side, on a page or on a refusal (ADR-0045 d10).
     #[test]
@@ -759,7 +873,7 @@ mod tests {
         let bar = bar(Scope::of_path("/web/admin/people", false));
         assert_eq!(bar.scope, Scope::Personal { admin: false });
         for html in [
-            shell("", &bar, USER_REVIEW_PATH, None, ""),
+            shell("", &bar, TODO_PATH, None, ""),
             refusal_page(
                 "access.not_found",
                 "no such page here",
@@ -813,8 +927,8 @@ mod tests {
             "Admin · Quotas · OML"
         );
         assert_eq!(
-            title(&shell("Confirm", &admin, ADMIN_REVIEW_PATH, None, "")),
-            "Admin · Confirm · Review · OML"
+            title(&shell("Confirm", &admin, ADMIN_MEMORIES_PATH, None, "")),
+            "Admin · Confirm · Memories · OML"
         );
         assert_eq!(
             title(&refusal("access.not_found", "x")),

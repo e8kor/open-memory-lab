@@ -129,6 +129,12 @@ web:
       pathType: Exact
     - path: /web/admin/review
       pathType: Exact
+    - path: /web/todo
+      pathType: Exact
+    - path: /web/todo/judge
+      pathType: Exact
+    - path: /web/admin/todo
+      pathType: Exact
     - path: /web/keys
       pathType: Exact
     - path: /web/admin/keys

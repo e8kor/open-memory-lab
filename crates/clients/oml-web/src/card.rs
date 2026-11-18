@@ -366,6 +366,8 @@ pub(crate) struct Card {
     valid_from: Option<String>,
     valid_until: Option<String>,
     kind: Option<String>,
+    /// A skill's name, as the version carries it (ADR-0080 d1).
+    skill_name: Option<String>,
     origin: Option<String>,
     stale: Option<String>,
     checked: Option<SourceChecked>,
@@ -430,6 +432,7 @@ impl Card {
             valid_from: m.valid_from.clone(),
             valid_until: m.valid_until.clone(),
             kind: m.kind.clone(),
+            skill_name: m.skill.as_ref().map(|k| k.name.clone()),
             origin: m.origin.as_ref().map(|o| o.kind.clone()),
             stale: m.stale.clone(),
             checked: m.source_checked.clone(),
@@ -488,11 +491,21 @@ impl Card {
                     .approved
                     .as_deref()
                     .map_or_else(String::new, |at| format!(" on {}", text(&day(at))));
-                format!(
-                    "Approved{on} and served as <code>{}</code> v{}.",
-                    text(&self.claim_key),
-                    self.version
-                )
+                // An approved skill names the command its name is
+                // published as; a nearer workspace's skill of the same
+                // name shadows it, so the copy says published, not what a
+                // session runs (ADR-0083 d15; ADR-0080 d5).
+                match (self.kind.as_deref(), self.skill_name.as_deref()) {
+                    (Some("skill"), Some(name)) => format!(
+                        "Approved{on} and published as <code>/mcp__oml__{}</code>.",
+                        text(name)
+                    ),
+                    _ => format!(
+                        "Approved{on} and served as <code>{}</code> v{}.",
+                        text(&self.claim_key),
+                        self.version
+                    ),
+                }
             }
         }
     }
@@ -549,6 +562,7 @@ impl Card {
             valid_from: m.valid_from.clone(),
             valid_until: m.valid_until.clone(),
             kind: None,
+            skill_name: None,
             origin: None,
             stale: None,
             checked: None,
@@ -613,6 +627,7 @@ impl Card {
             valid_from: m.valid_from.clone(),
             valid_until: m.valid_until.clone(),
             kind: m.kind.clone(),
+            skill_name: None,
             origin: None,
             stale: None,
             checked: None,
@@ -668,6 +683,12 @@ impl Card {
     }
 
     /// The authoring principal, or on the admin side the key and its user.
+    /// The kind the read serves, `memory` among them; `None` where it
+    /// names none.
+    pub(crate) fn kind(&self) -> Option<&str> {
+        self.kind.as_deref()
+    }
+
     pub(crate) fn author(&self) -> Option<&str> {
         self.author.as_deref()
     }
@@ -765,7 +786,8 @@ impl Card {
     }
 
     /// The kind of decision a held version asks for (ReviewCard): a first
-    /// version, an edit of the version it replaces, or a retirement of it.
+    /// version (a new memory, skill, guardrail or document), an edit of the
+    /// version it replaces, or a retirement of it.
     pub(crate) fn decision(&self) -> String {
         let of = self
             .replaces
@@ -777,7 +799,16 @@ impl Card {
         let word = match (self.retirement, self.successor()) {
             (true, _) => "Retirement",
             (false, true) => "Edit",
-            (false, false) => return r#"<span class="oml-decision">New memory</span>"#.to_owned(),
+            // A first version, named by the builder's kinds (ADR-0083 d2).
+            (false, false) => {
+                let word = match self.kind.as_deref() {
+                    Some("skill") => "New skill",
+                    Some("guardrail") => "New guardrail",
+                    Some("document") => "New document",
+                    _ => "New memory",
+                };
+                return format!(r#"<span class="oml-decision">{word}</span>"#);
+            }
         };
         format!(r#"<span class="oml-decision">{word}{of}</span>"#)
     }
@@ -1218,115 +1249,9 @@ fn admin_state(state: &str) -> &'static str {
         .unwrap_or("demoted")
 }
 
-/// The words of `s`, split on whitespace.
-fn words(s: &str) -> Vec<&str> {
-    s.split_whitespace().collect()
-}
-
-/// The longest common subsequence of two word lists, as a mark per word of
-/// each: `true` where the word is kept.
-fn kept(was: &[&str], now: &[&str]) -> (Vec<bool>, Vec<bool>) {
-    let (n, m) = (was.len(), now.len());
-    let mut table = vec![vec![0u32; m + 1]; n + 1];
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            table[i][j] = if was[i] == now[j] {
-                table[i + 1][j + 1] + 1
-            } else {
-                table[i + 1][j].max(table[i][j + 1])
-            };
-        }
-    }
-    let (mut a, mut b) = (vec![false; n], vec![false; m]);
-    let (mut i, mut j) = (0, 0);
-    while i < n && j < m {
-        if was[i] == now[j] {
-            a[i] = true;
-            b[j] = true;
-            i += 1;
-            j += 1;
-        } else if table[i + 1][j] >= table[i][j + 1] {
-            i += 1;
-        } else {
-            j += 1;
-        }
-    }
-    (a, b)
-}
-
-/// The most words the change compares; past it the two texts are shown
-/// whole without marks, so a page never spends quadratic time on a long
-/// text. A constant of the build, unmeasured.
-const CHANGE_WORDS_MAX: usize = 2_000;
-
-/// One side of the change: each word escaped, a dropped one struck through
-/// (`del`), an added one underlined (`ins`), so the change does not rest
-/// on colour.
-fn side(list: &[&str], marks: &[bool], tag: &str) -> String {
-    list.iter()
-        .zip(marks)
-        .map(|(w, keep)| {
-            if *keep {
-                text(w)
-            } else {
-                format!("<{tag}>{}</{tag}>", text(w))
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// The change against the version a successor replaces, at page density
-/// (MemoryCard): a `<details>` that names its baseline and opens on two
-/// named blocks, "Was" and "Now"; for a retirement, the reason beside what
-/// stops being served. The comparison is the console's own: the longest
-/// common subsequence of whitespace-split words, no model.
-pub(crate) fn change(
-    was_version: i64,
-    was: &str,
-    now_version: u32,
-    now: &str,
-    retirement: bool,
-) -> String {
-    if retirement {
-        return format!(
-            r#"<details class="oml-diff" open><summary>What stops being served</summary><div class="sides"><div class="side"><p class="label">Reason · this version</p><p class="t">{}</p></div><div class="side"><p class="label">Stops being served · v{was_version}</p><p class="t">{}</p></div></div></details>"#,
-            text(now),
-            text(was)
-        );
-    }
-    let (a, b) = (words(was), words(now));
-    let (ka, kb) = if a.len() + b.len() > CHANGE_WORDS_MAX {
-        (vec![true; a.len()], vec![true; b.len()])
-    } else {
-        kept(&a, &b)
-    };
-    let removed = ka.iter().filter(|k| !**k).count();
-    let added = kb.iter().filter(|k| !**k).count();
-    format!(
-        r#"<details class="oml-diff" open><summary>Change against v{was_version} <span class="n">baseline: v{was_version} · {removed} words removed, {added} added</span></summary><div class="sides"><div class="side"><p class="label">Was · v{was_version}</p><p class="t">{}</p></div><div class="side"><p class="label">Now · v{now_version}, this version</p><p class="t">{}</p></div></div></details>"#,
-        side(&a, &ka, "del"),
-        side(&b, &kb, "ins"),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_change_strikes_a_removed_word_and_underlines_an_added_one() {
-        let block = change(2, "runs on ci-small", 3, "runs on ci-medium now", false);
-        assert!(block.contains("<del>ci-small</del>"), "{block}");
-        assert!(
-            block.contains("<ins>ci-medium</ins> <ins>now</ins>"),
-            "{block}"
-        );
-        assert!(block.contains("1 words removed, 2 added"), "{block}");
-        assert!(block.contains("Was · v2") && block.contains("Now · v3, this version"));
-        let retired = change(1, "the old wiki", 2, "shut down", true);
-        assert!(retired.contains("Stops being served · v1"), "{retired}");
-    }
 
     #[test]
     fn an_instant_reads_to_the_second_in_utc() {

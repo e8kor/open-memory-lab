@@ -908,3 +908,69 @@ async fn the_top_label_read_costs_the_gate_and_one_tree_walk() {
     assert_eq!(admin.store_calls(), 4, "{}", admin.line);
     assert_eq!(review.store_calls(), 7, "{}", review.line);
 }
+
+// ---------------------------------------------------------------------------
+// The To do badge's counts read (ADR-0083 d6, d11)
+// ---------------------------------------------------------------------------
+
+/// Every console page draws its "To do · N" badge from one counts call per
+/// page view, `GET /v2/todo/counts` as `<user>-web` on the Personal side
+/// and `GET /v2/admin/todo/counts` as `<user>-admin` on the admin side
+/// (`oml-web`'s `partial_answers.rs` holds the one call per page). The
+/// Personal read counts what the held listing serves `<user>-review`
+/// through the listing's own store read: the gate's call, the reviewer
+/// key's resolution and access, its reviewer walk and one page of held
+/// rows, and the author's person for the `same_user` fence, so its store
+/// calls do not grow with the workspaces, as the listing's do not. The
+/// admin read is the gate's call alone: no group of it is built (d14).
+/// This is the one store call each page of both sides gained.
+#[tokio::test]
+async fn every_console_page_carries_the_todo_badge_with_one_store_call() {
+    let mut calls = Vec::new();
+    for n in [6, 48] {
+        let rig = rig().await;
+        held_in_workspaces(&rig, n).await;
+        let counts = get(
+            &rig.router,
+            "/v2/todo/counts",
+            &web(&rig.alice, "web"),
+            true,
+        )
+        .await;
+        assert_eq!(counts.status, StatusCode::OK, "{}", counts.body);
+        let held = get(
+            &rig.router,
+            "/v2/review/held?limit=200",
+            &web(&rig.alice, "review"),
+            true,
+        )
+        .await;
+        let listed = held.body["items"].as_array().expect("items").len();
+        assert_eq!(counts.body["review"], listed, "{}", counts.body);
+        assert_eq!(counts.body["truncated"], false);
+        println!(
+            "store calls: the counts read at {n} workspaces {}",
+            counts.store_calls()
+        );
+        calls.push(counts.store_calls());
+        let admin = get(
+            &rig.router,
+            "/v2/admin/todo/counts",
+            &web(&rig.alice, "admin"),
+            true,
+        )
+        .await;
+        assert_eq!(admin.status, StatusCode::OK, "{}", admin.body);
+        assert_eq!(admin.body, serde_json::json!({"truncated": false}));
+        assert_eq!(
+            admin.store_calls(),
+            1,
+            "the gate's call alone: {}",
+            admin.line
+        );
+    }
+    assert_eq!(
+        calls[0], calls[1],
+        "the counts read's store calls at 6 and 48"
+    );
+}

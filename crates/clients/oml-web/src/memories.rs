@@ -31,8 +31,8 @@ use axum::extract::State;
 use axum::response::{IntoResponse as _, Response};
 use http::{HeaderMap, StatusCode, Uri};
 use oml_page::web::{
-    ADMIN_ATLAS_PATH, ADMIN_MEMORIES_PATH, USER_ATLAS_PATH, USER_MEMORIES_PATH, attr, input,
-    select, shell, text,
+    ADMIN_ATLAS_PATH, ADMIN_MEMORIES_PATH, TODO_PATH, USER_ATLAS_PATH, USER_MEMORIES_PATH, attr,
+    input, select, shell, text,
 };
 use oml_sdk::{AdminSearch, CountedNode, MemoryQuery, RecallQuery};
 use serde_json::{Value, json};
@@ -243,6 +243,9 @@ struct ListQuery {
     state: Option<String>,
     workspace: Option<String>,
     origin: Option<String>,
+    /// The admin views' kind filter, one kind (ADR-0083 d5); the Personal
+    /// views take none.
+    kind: Option<String>,
     author: Option<String>,
     cursor: Option<String>,
     limit: u32,
@@ -250,6 +253,20 @@ struct ListQuery {
 }
 
 const ORIGINS: &[&str] = &["repo", "doc", "code", "lake", "chat", "web", "manual"];
+
+/// The admin views' Kind filter, value and word, "any" first: the kinds the
+/// admin search takes that a person or an agent writes (ADR-0083 d5;
+/// ADR-0082 d8 item 3).
+const KINDS: &[(&str, &str)] = &[
+    ("", "any"),
+    ("memory", "memory"),
+    ("derived_fact", "derived fact"),
+    ("steering", "steering"),
+    ("guardrail", "guardrail"),
+    ("skill", "skill"),
+    ("document", "document"),
+    ("test", "test"),
+];
 
 impl ListQuery {
     fn parse(fields: &Fields, side: Side) -> Result<Self, FieldRefusal> {
@@ -296,12 +313,26 @@ impl ListQuery {
                 "origin is repo, doc, code, lake, chat, web or manual".to_owned(),
             ));
         }
+        let kind = value("kind");
+        if let Some(sent) = kind.as_deref() {
+            if side == Side::User {
+                return Err(("kind", "the Personal views take no kind filter".to_owned()));
+            }
+            if !KINDS.iter().any(|(v, _)| !v.is_empty() && *v == sent) {
+                return Err((
+                    "kind",
+                    "kind is memory, derived_fact, steering, guardrail, skill, document or test"
+                        .to_owned(),
+                ));
+            }
+        }
         Ok(Self {
             view,
             q: value("q"),
             state,
             workspace: value("workspace"),
             origin,
+            kind,
             author: value("author"),
             cursor: value("cursor"),
             limit,
@@ -319,6 +350,7 @@ impl ListQuery {
             ("state", self.state.as_deref()),
             ("workspace", self.workspace.as_deref()),
             ("origin", self.origin.as_deref()),
+            ("kind", self.kind.as_deref()),
             ("author", self.author.as_deref()),
             ("limit", self.limit_sent.as_deref()),
             ("cursor", cursor),
@@ -574,6 +606,7 @@ async fn admin_cards(
                 state: Some(q.state_sent()),
                 origin_kind: q.origin.as_deref(),
                 author: q.author.as_deref(),
+                kind: q.kind.as_deref(),
                 limit: q.limit,
                 cursor: q.cursor.as_deref(),
             },
@@ -606,6 +639,7 @@ fn keep(q: &ListQuery) -> Vec<(&'static str, String)> {
         ("q", &q.q),
         ("state", &q.state),
         ("origin", &q.origin),
+        ("kind", &q.kind),
         ("author", &q.author),
         ("limit", &q.limit_sent),
     ]
@@ -751,9 +785,20 @@ fn list_view(
     } else {
         select("state", "State", &states)
     };
+    // The admin search's kind filter, on the admin list's views alone
+    // (ADR-0083 d5).
+    let kind_field = if side == Side::Admin && !atlas {
+        select(
+            "kind",
+            "Kind",
+            &selected(KINDS, q.kind.as_deref().unwrap_or("")),
+        )
+    } else {
+        String::new()
+    };
     let _ = write!(
         out,
-        r#"<form class="filters" method="get" action="{}">{hidden}{field}{text_field}{state_field}{}{}<button type="submit">Filter</button></form>"#,
+        r#"<form class="filters" method="get" action="{}">{hidden}{field}{text_field}{state_field}{kind_field}{}{}<button type="submit">Filter</button></form>"#,
         if atlas { side.atlas() } else { side.memories() },
         select("origin", "Source", &origins),
         input("author", "Author", q.author.as_deref().unwrap_or(""), false),
@@ -1484,6 +1529,21 @@ pub async fn user_list(
     Extension(calls): Extension<Arc<PageCalls>>,
     uri: Uri,
 ) -> Response {
+    // The cockpit's drafted To review and Fixes views are To do's groups:
+    // their links answer 308 there, keeping the workspace (ADR-0083 d6).
+    if let Ok(fields) = Fields::of(&uri)
+        && matches!(fields.get("view"), Some("review" | "fixes"))
+    {
+        let location = fields.given("workspace").map_or_else(
+            || TODO_PATH.to_owned(),
+            |w| format!("{TODO_PATH}?workspace={}", oml_sdk::encode(w)),
+        );
+        return (
+            StatusCode::PERMANENT_REDIRECT,
+            [(http::header::LOCATION, location)],
+        )
+            .into_response();
+    }
     list_page(web, session, calls, &uri, Side::User).await
 }
 
@@ -1825,6 +1885,30 @@ mod tests {
             assert_eq!(refused, Some(field), "{pairs:?}");
         }
         assert_eq!(parsed(&[("limit", "200")]).unwrap().limit, PAGE_MAX);
+    }
+
+    #[test]
+    fn the_admin_views_take_one_kind_and_the_personal_views_none() {
+        let q = parsed_on(Side::Admin, &[("view", "held"), ("kind", "skill")]).unwrap();
+        assert_eq!(q.kind.as_deref(), Some("skill"));
+        assert_eq!(
+            q.link(ADMIN_MEMORIES_PATH, None),
+            "/web/admin/memories?view=held&amp;kind=skill"
+        );
+        assert!(
+            parsed_on(Side::Admin, &[("kind", "")])
+                .unwrap()
+                .kind
+                .is_none()
+        );
+        for (side, pairs) in [
+            (Side::Admin, &[("kind", "Skill")][..]),
+            (Side::Admin, &[("kind", "skill,guardrail")][..]),
+            (Side::User, &[("kind", "skill")][..]),
+        ] {
+            let refused = parsed_on(side, pairs).err().map(|(name, _)| name);
+            assert_eq!(refused, Some("kind"), "{side:?} {pairs:?}");
+        }
     }
 
     #[test]
