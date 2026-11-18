@@ -1782,10 +1782,10 @@ fn refuse_guardrail_kind(kind: Option<&str>) -> Result<(), Value> {
             "kind guardrail is refused here: a guardrail is written with its severity and rule on the HTTP API (POST /v1/memories) or the CLI, and reviewed before it binds",
         ));
     }
-    // The document and test kinds are written over the HTTP API until
-    // oml_write takes their objects (#405, #419); a skill is admitted with
-    // its `skill` object (ADR-0080 d3).
-    if let Some(kind @ ("document" | "test")) = kind {
+    // The test kind is written over the HTTP API until oml_write takes its
+    // object (#419); a skill is admitted with its `skill` object (ADR-0080
+    // d3) and a document with its `document` object (ADR-0081 d5).
+    if let Some(kind @ "test") = kind {
         return Err(field_refusal(
             "/kind",
             &format!(
