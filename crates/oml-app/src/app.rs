@@ -7763,7 +7763,7 @@ where
     }
 
     /// The skills offered at the scope node, one page of them without
-    /// bodies (ADR-0080 d11): the set [`Self::offered_skills`] computes, in
+    /// bodies (ADR-0080 d11): the set `offered_skills` computes, in
     /// d5's order, 50 a page after the cursor's position, with the digest
     /// of the whole set. Serving one is a read, not a recall: nothing here
     /// counts in `recalls` (d12).
