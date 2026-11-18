@@ -9,6 +9,7 @@
 
 #[cfg(feature = "e2e-sign-in")]
 pub mod e2e;
+pub mod objects;
 pub mod otlp;
 pub mod timed;
 
@@ -111,6 +112,67 @@ pub struct Config {
     /// `search.sparse.*`: where the learned sparse model's files are,
     /// whether the lead may fetch them, and its pool (ADR-0052 d14).
     pub sparse: SparseSettings,
+    /// `storage.url`, `uploads.max_bytes` and `uploads.tenant_max_bytes`:
+    /// where upload parts are kept and the two limits (ADR-0004 d3, as
+    /// amended 2026-11-17).
+    pub uploads: UploadSettings,
+}
+
+/// The upload sessions' settings (ADR-0004 d3, as amended 2026-11-17).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UploadSettings {
+    /// The directory `storage.url` names; `oml-objects` by default.
+    pub storage_dir: PathBuf,
+    /// `uploads.max_bytes`: 1 GiB by default.
+    pub max_bytes: u64,
+    /// `uploads.tenant_max_bytes`: 4 GiB by default.
+    pub tenant_max_bytes: u64,
+}
+
+impl Default for UploadSettings {
+    fn default() -> Self {
+        Self {
+            storage_dir: PathBuf::from(objects::DEFAULT_STORAGE_URL),
+            max_bytes: oml_app::domain::upload::DEFAULT_MAX_BYTES,
+            tenant_max_bytes: oml_app::domain::upload::DEFAULT_TENANT_MAX_BYTES,
+        }
+    }
+}
+
+/// `storage.url` and `uploads.*` (configuration.md; ADR-0004 d3, as amended
+/// 2026-11-17): a scheme other than a local directory, and a limit that is
+/// not a positive whole number of bytes, stop the start.
+fn upload_settings(lookup: &dyn Fn(&str) -> Option<String>) -> Result<UploadSettings, ConfigError> {
+    let storage_dir = objects::storage_dir(
+        lookup(KEY_STORAGE_URL)
+            .as_deref()
+            .unwrap_or(objects::DEFAULT_STORAGE_URL),
+    )
+    .map_err(ConfigError::Invalid)?;
+    let bytes = |key: &str, default: u64| match lookup(key) {
+        None => Ok(default),
+        Some(value) => value
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .filter(|n| *n > 0)
+            .ok_or_else(|| {
+                ConfigError::Invalid(format!(
+                    "{key} {value:?} is not a positive whole number of bytes (configuration.md)"
+                ))
+            }),
+    };
+    Ok(UploadSettings {
+        storage_dir,
+        max_bytes: bytes(
+            KEY_UPLOADS_MAX_BYTES,
+            oml_app::domain::upload::DEFAULT_MAX_BYTES,
+        )?,
+        tenant_max_bytes: bytes(
+            KEY_UPLOADS_TENANT_MAX_BYTES,
+            oml_app::domain::upload::DEFAULT_TENANT_MAX_BYTES,
+        )?,
+    })
 }
 
 /// `search.sparse.*` (configuration.md; ADR-0052 d14): the model directory,
@@ -472,6 +534,9 @@ pub const WEB_CLIENT_SECRET_MIN: usize = oml_web_credential::CLIENT_SECRET_MIN;
 /// measured.
 pub const WEB_CLIENT_ROTATION_MAX_US: i64 = 7 * 86_400 * 1_000_000;
 const KEY_BRIEF_MAX_TOKENS: &str = "brief.max_tokens";
+const KEY_STORAGE_URL: &str = "storage.url";
+const KEY_UPLOADS_MAX_BYTES: &str = "uploads.max_bytes";
+const KEY_UPLOADS_TENANT_MAX_BYTES: &str = "uploads.tenant_max_bytes";
 const KEY_SIGNUP_MODE: &str = "signup.mode";
 const KEY_SIGNUP_TENANT: &str = "signup.tenant";
 const KEY_SIGNUP_ISSUER: &str = "signup.issuer";
@@ -919,6 +984,7 @@ impl Config {
                 ))
             })?,
         };
+        let uploads = upload_settings(&lookup)?;
         let signup = signup_policy(&lookup, oauth_issuer.is_some())?;
         // A hosted server that is not open for sign-up says it is shared
         // here, in the deploy that upgrades past ADR-0076 (d9).
@@ -1130,6 +1196,7 @@ impl Config {
             search,
             rerank,
             sparse,
+            uploads,
         })
     }
 
@@ -1867,6 +1934,167 @@ pub fn spawn_connection_sweep(store: PgStore) -> tokio::task::JoinHandle<()> {
     })
 }
 
+/// How often [`spawn_upload_sweep`] runs: 5 minutes (ADR-0004 d3, as
+/// amended 2026-11-17).
+pub const UPLOAD_SWEEP_SECONDS: u64 = 5 * 60;
+
+/// The `event` field of the log line a sweep that changed something
+/// writes (observability.md).
+pub const EVENT_UPLOAD_SWEEP: &str = "upload_sweep";
+/// The `event` field of the log line a failed sweep writes.
+pub const EVENT_UPLOAD_SWEEP_FAILED: &str = "upload_sweep_failed";
+
+/// One upload sweep over every tenant (ADR-0004 d3, "Expiry"): each
+/// tenant's expired sessions shredded and their objects removed, and the
+/// totals the `uploads` doctor line reads. A tenant that fails is counted
+/// and named in the returned reasons; the others are swept.
+pub async fn sweep_uploads(
+    app: &LeadApp,
+    store: &PgStore,
+) -> Result<
+    (
+        oml_transport_http::traffic::metrics::UploadTotals,
+        u64,
+        u64,
+        Vec<String>,
+    ),
+    String,
+> {
+    let tenants = enumerate_tenants(store.pool())
+        .await
+        .map_err(|e| format!("tenant enumeration: {e}"))?;
+    let mut totals = oml_transport_http::traffic::metrics::UploadTotals::default();
+    let (mut changed, mut failures, mut reasons) = (0, 0, Vec::new());
+    let mut stopped = 0;
+    for tenant_id in &tenants {
+        match app.sweep_uploads(*tenant_id).await {
+            Ok(sweep) => {
+                changed += sweep.expired + sweep.removed;
+                failures += sweep.failures;
+                for (state, n) in sweep.stats.by_state {
+                    *totals.by_state.entry(state).or_default() += n;
+                }
+                totals.unbound_bytes += sweep.stats.unbound_bytes;
+                totals.unswept += sweep.stats.unswept;
+                totals.staging_stale += sweep.stats.staging_stale;
+                stopped += sweep.imports_stopped;
+            }
+            Err(e) => {
+                failures += 1;
+                reasons.push(format!("tenant {tenant_id}: {e}"));
+            }
+        }
+    }
+    totals.stored_bytes = app.uploads_stored_bytes().await.unwrap_or(0);
+    if stopped > 0 {
+        tracing::warn!(
+            event = EVENT_IMPORTS_STOPPED,
+            stopped,
+            "imports running for more than an hour that this process does not run ended failed; their staging keys are shredded (ADR-0084 I11)"
+        );
+    }
+    Ok((totals, changed + stopped, failures, reasons))
+}
+
+/// The `event` field of the log line a sweep that ended stopped imports
+/// writes (ADR-0084 I11).
+pub const EVENT_IMPORTS_STOPPED: &str = "imports_stopped";
+
+/// The `event` field of the log line a lead writes at start when the
+/// directory `storage.url` names cannot be opened (ADR-0004 d3, note of
+/// 2026-11-18).
+pub const EVENT_UPLOAD_STORE_UNAVAILABLE: &str = "upload_store_unavailable";
+
+/// The deployment's imports by state, how many used `allow_older`, how
+/// many are stopped (I11) and the versions with an import's key and no
+/// provenance (I14), for the `imports` doctor line (ADR-0084 d15). A tenant
+/// that fails to read is left out of the totals.
+pub async fn import_totals(app: &LeadApp, store: &PgStore) -> oml_app::types::ImportStats {
+    let mut totals = oml_app::types::ImportStats::default();
+    let Ok(tenants) = enumerate_tenants(store.pool()).await else {
+        return totals;
+    };
+    for tenant_id in tenants {
+        if let Ok(stats) = app.import_stats(tenant_id).await {
+            for (state, n) in stats.by_state {
+                *totals.by_state.entry(state).or_default() += n;
+            }
+            totals.allow_older += stats.allow_older;
+            totals.stopped += stats.stopped;
+            totals.unprovenanced += stats.unprovenanced;
+        }
+    }
+    totals
+}
+
+/// Runs [`sweep_uploads`] at the lead's start and every
+/// [`UPLOAD_SWEEP_SECONDS`] after, setting the upload gauges and logging
+/// [`EVENT_UPLOAD_SWEEP`] when it shredded or removed something, or
+/// [`EVENT_UPLOAD_SWEEP_FAILED`] with the reasons. A failed sweep never
+/// stops the lead or the next sweep.
+pub fn spawn_upload_sweep(
+    app: Arc<LeadApp>,
+    store: PgStore,
+    metrics: Arc<oml_transport_http::traffic::Metrics>,
+    objects: Arc<objects::LazyObjects>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticks = tokio::time::interval(std::time::Duration::from_secs(UPLOAD_SWEEP_SECONDS));
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticks.tick().await;
+            // Each sweep tries to open a store the lead could not open yet,
+            // and says which kind of failure keeps it closed (ADR-0004 d3,
+            // note of 2026-11-18).
+            let opened = tokio::task::spawn_blocking({
+                let objects = Arc::clone(&objects);
+                move || objects.probe().err().map(|f| f.kind)
+            })
+            .await
+            .unwrap_or(Some("other"));
+            metrics.upload_store(opened);
+            // The sweep first ends stopped imports (I11), so the gauges
+            // read after it.
+            let swept = sweep_uploads(&app, &store).await;
+            let imports = import_totals(&app, &store).await;
+            metrics.import_sweep(
+                &imports.by_state,
+                imports.allow_older,
+                imports.stopped,
+                imports.unprovenanced,
+            );
+            match swept {
+                Ok((totals, changed, failures, reasons)) => {
+                    metrics.upload_sweep(&totals, failures);
+                    if failures > 0 {
+                        tracing::error!(
+                            event = EVENT_UPLOAD_SWEEP_FAILED,
+                            failures,
+                            reasons = %reasons.join("; "),
+                            "UPLOAD SWEEP FAILED for some sessions — their keys are shredded first, and the next sweep removes what is left"
+                        );
+                    } else if changed > 0 {
+                        tracing::info!(
+                            event = EVENT_UPLOAD_SWEEP,
+                            changed,
+                            unswept = totals.unswept,
+                            "upload sessions swept (ADR-0004 d3)"
+                        );
+                    }
+                }
+                Err(reason) => {
+                    metrics.upload_sweep(&Default::default(), 1);
+                    tracing::error!(
+                        event = EVENT_UPLOAD_SWEEP_FAILED,
+                        %reason,
+                        "UPLOAD SWEEP FAILED — the next sweep retries"
+                    );
+                }
+            }
+        }
+    })
+}
+
 /// How often [`spawn_usage_rollup`] runs [`roll_up_usage`]: an hour, so a
 /// closed day's ledger rows land within the hour after midnight UTC
 /// (ADR-0071 d4).
@@ -2002,8 +2230,26 @@ pub fn lead_state(
     fork_check_ok: bool,
     enrollment_token: Option<String>,
 ) -> LeadState {
-    composed(
+    lead_state_over(
         lead_app(store, signing_key),
+        store,
+        db_ping,
+        fork_check_ok,
+        enrollment_token,
+    )
+}
+
+/// [`lead_state`] over an app the caller composed, as a test composes one
+/// with an object store (ADR-0004 d3, as amended 2026-11-17).
+pub fn lead_state_over(
+    app: LeadApp,
+    store: &PgStore,
+    db_ping: DbPing,
+    fork_check_ok: bool,
+    enrollment_token: Option<String>,
+) -> LeadState {
+    composed(
+        Arc::new(app),
         store,
         db_ping,
         fork_check_ok,
@@ -2018,7 +2264,7 @@ pub fn lead_state(
 /// the 16 slots, one per host name and one per resolved address, and the
 /// address allow-list before any connection (ADR-0031 d5).
 fn composed<F: DocumentFetcher + 'static>(
-    app: LeadApp,
+    app: Arc<LeadApp>,
     store: &PgStore,
     db_ping: DbPing,
     fork_check_ok: bool,
@@ -2027,7 +2273,7 @@ fn composed<F: DocumentFetcher + 'static>(
     traffic: Traffic,
 ) -> LeadState {
     ApiState::new(
-        Arc::new(app),
+        app,
         Timed::new(store.clone()),
         db_ping,
         fork_check_ok,
@@ -2127,6 +2373,7 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
         WebClient::default(),
         false,
         None,
+        None,
     )
     .await
 }
@@ -2156,6 +2403,7 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     web_client: WebClient,
     shared: bool,
     profiles: Option<oml_app::types::QuotaProfiles>,
+    uploads: Option<UploadSettings>,
 ) -> Result<LeadStart, String> {
     // The retrievers the database can run decide which pipelines may be
     // served: a configuration naming one it cannot run stops the start,
@@ -2277,6 +2525,36 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
         None => app,
     };
     app.check_signup_policy().await?;
+    // Upload sessions keep their parts in the local directory
+    // `storage.url` names, created owner-only on first use (ADR-0004 d3, as
+    // amended 2026-11-17): one the lead cannot open is a warning, never a
+    // stopped start, and every upload answers `upload.storage_failed` until
+    // it opens (note of 2026-11-18). A lead started without the settings
+    // answers every upload the same.
+    let objects = uploads
+        .as_ref()
+        .map(|settings| Arc::new(objects::LazyObjects::new(&settings.storage_dir)));
+    if let Some(objects) = &objects {
+        let unavailable = objects.probe().err();
+        if let Some(failure) = &unavailable {
+            tracing::warn!(
+                event = EVENT_UPLOAD_STORE_UNAVAILABLE,
+                reason = %failure.reason,
+                "UPLOAD STORE UNAVAILABLE — the lead serves every other route, and every upload answers upload.storage_failed until storage.url names a directory it can write (ADR-0004 d3)"
+            );
+        }
+        traffic
+            .metrics()
+            .upload_store(unavailable.as_ref().map(|f| f.kind));
+    }
+    let app = match (&uploads, &objects) {
+        (Some(settings), Some(objects)) => app.with_uploads(
+            Arc::clone(objects) as _,
+            settings.max_bytes,
+            settings.tenant_max_bytes,
+        ),
+        _ => app,
+    };
     // The naming signs, and the lead never signs on top of a fork (ADR-0002
     // d7): after a failed fork check the start only reads whether a row has
     // no name.
@@ -2288,6 +2566,15 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
             .map(|()| Vec::new())
     };
     let enrollment_token = (tenants.is_empty() && fork_check.is_ok()).then(mint_enrollment_token);
+    let app = Arc::new(app);
+    if let Some(objects) = objects {
+        let _sweep = spawn_upload_sweep(
+            Arc::clone(&app),
+            store.clone(),
+            Arc::clone(traffic.metrics()),
+            objects,
+        );
+    }
     let state = composed(
         app,
         store,
@@ -3196,6 +3483,37 @@ mod tests {
                 "{bad}: {err}"
             );
         }
+    }
+
+    #[test]
+    fn uploads_keep_parts_in_oml_objects_under_1_gib_and_4_gib_by_default_and_refuse_another_scheme()
+     {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ];
+        let cfg = Config::from_sources(None, &|k| env_of(&base).get(k).cloned())
+            .expect("the default loads");
+        assert_eq!(cfg.uploads, UploadSettings::default());
+        assert_eq!(cfg.uploads.storage_dir, PathBuf::from("oml-objects"));
+        assert_eq!(cfg.uploads.max_bytes, 1 << 30);
+        assert_eq!(cfg.uploads.tenant_max_bytes, 4 << 30);
+        let file = "[storage]\nurl = \"file:///srv/oml/objects\"\n[uploads]\nmax_bytes = 1000\ntenant_max_bytes = 5000\n";
+        let cfg = Config::from_sources(Some(file), &|k| env_of(&base).get(k).cloned())
+            .expect("a file value loads");
+        assert_eq!(cfg.uploads.storage_dir, PathBuf::from("/srv/oml/objects"));
+        assert_eq!(
+            (cfg.uploads.max_bytes, cfg.uploads.tenant_max_bytes),
+            (1000, 5000)
+        );
+        let mut env = env_of(&base);
+        env.insert("OML_STORAGE__URL".to_owned(), "s3://bucket".to_owned());
+        let err = Config::from_sources(None, &|k| env.get(k).cloned()).expect_err("refused");
+        assert!(err.to_string().contains("storage.url"), "{err}");
+        let mut env = env_of(&base);
+        env.insert("OML_UPLOADS__MAX_BYTES".to_owned(), "0".to_owned());
+        let err = Config::from_sources(None, &|k| env.get(k).cloned()).expect_err("refused");
+        assert!(err.to_string().contains("uploads.max_bytes"), "{err}");
     }
 
     #[test]

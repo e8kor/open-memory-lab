@@ -101,6 +101,14 @@ impl Client {
         &self.server
     }
 
+    /// This client's server and key under another deadline: an upload's
+    /// parts, its completion and the import request each move up to
+    /// `uploads.max_bytes`, which the 30-second default does not cover.
+    #[must_use]
+    pub fn lasting(&self, timeout: Duration) -> Self {
+        Self::with_timeout(self.server.clone(), self.key.clone(), timeout)
+    }
+
     fn bearer(&self) -> Result<String, CliError> {
         self.key.as_deref().map(|k| format!("Bearer {k}")).ok_or_else(|| {
             CliError::local(
@@ -156,6 +164,34 @@ impl Client {
         finish(request.send_json(body.clone()))
     }
 
+    /// PUT raw bytes as `application/octet-stream` under the key: one
+    /// upload part (ADR-0004 d3).
+    ///
+    /// # Errors
+    ///
+    /// The server refused, or could not be reached.
+    pub fn put_bytes(&self, path: &str, bytes: &[u8]) -> Result<(u16, Value), CliError> {
+        let request = self
+            .agent
+            .put(&format!("{}{path}", self.server))
+            .set("Authorization", &self.bearer()?)
+            .set("Content-Type", "application/octet-stream");
+        finish(request.send_bytes(bytes))
+    }
+
+    /// DELETE under the key; returns (status, parsed body).
+    ///
+    /// # Errors
+    ///
+    /// The server refused, or could not be reached.
+    pub fn delete(&self, path: &str) -> Result<(u16, Value), CliError> {
+        let request = self
+            .agent
+            .delete(&format!("{}{path}", self.server))
+            .set("Authorization", &self.bearer()?);
+        finish(request.call())
+    }
+
     /// POST a JSON body; returns (status, parsed body).
     pub fn post(
         &self,
@@ -164,6 +200,43 @@ impl Client {
         opts: &CallOpts,
     ) -> Result<(u16, Value), CliError> {
         finish(self.send_post(path, body, opts)?)
+    }
+
+    /// POST a JSON body under the key and copy a binary success body into
+    /// `out`; returns the bytes copied and the `OML-Manifest-Digest` header.
+    /// A refusal is read as [`Client::post`] reads it, and nothing is
+    /// written to `out` then.
+    ///
+    /// # Errors
+    ///
+    /// The server refused, could not be reached, or the body could not be
+    /// copied into `out`.
+    pub fn post_download(
+        &self,
+        path: &str,
+        body: &Value,
+        out: &mut dyn std::io::Write,
+    ) -> Result<(u64, Option<String>), CliError> {
+        let result = self
+            .agent
+            .post(&format!("{}{path}", self.server))
+            .set("Authorization", &self.bearer()?)
+            .send_json(body.clone());
+        match result {
+            Ok(response) => {
+                let digest = response
+                    .header("OML-Manifest-Digest")
+                    .map(ToOwned::to_owned);
+                let copied = std::io::copy(&mut response.into_reader(), out).map_err(|e| {
+                    CliError::Unanswered(format!(
+                        "the server answered, but its body could not be saved ({e}); the server \
+                         may have acted on the request"
+                    ))
+                })?;
+                Ok((copied, digest))
+            }
+            Err(e) => finish(Err(e)).map(|_| (0, None)),
+        }
     }
 
     /// POST a JSON body; returns the parsed success body and whether it is an

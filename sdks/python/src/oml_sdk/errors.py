@@ -128,8 +128,16 @@ class LimitError(ApiError):
     """`limit`: rate and quota."""
 
 
+class BundleError(ApiError):
+    """`bundle`: a workspace bundle that cannot be written or read (ADR-0084)."""
+
+
+class WorkspaceImportError(ApiError):
+    """`import`: a bundle import the target or its ledger refuses (ADR-0084; named so beside Python's ImportError)."""
+
+
 class ExportError(ApiError):
-    """`export`: evidence export jobs."""
+    """`export`: workspace exports the policy or the key's reads refuse."""
 
 
 class SettingsError(ApiError):
@@ -156,6 +164,8 @@ FAMILIES: dict[str, type[ApiError]] = {
     "memory": MemoryStateError,
     "lifecycle": LifecycleError,
     "limit": LimitError,
+    "bundle": BundleError,
+    "import": WorkspaceImportError,
     "export": ExportError,
     "settings": SettingsError,
     "system": ServerError,

@@ -9,6 +9,7 @@ from .errors import (
     AccessError,
     ApiError,
     AuthError,
+    BundleError,
     ConfigError,
     ExportError,
     IdempotencyError,
@@ -28,12 +29,14 @@ from .errors import (
     UploadError,
     VocabError,
     WorkspaceError,
+    WorkspaceImportError,
 )
 
 __all__ = [
     "AccessError",
     "ApiError",
     "AuthError",
+    "BundleError",
     "ConfigError",
     "ExportError",
     "IdempotencyError",
@@ -54,6 +57,7 @@ __all__ = [
     "UploadError",
     "VocabError",
     "WorkspaceError",
+    "WorkspaceImportError",
     "Written",
     "fence_for",
 ]

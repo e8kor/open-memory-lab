@@ -48,7 +48,8 @@ spec:
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
-            # The lead writes only its keyring; migrations are compiled in.
+            # The lead writes only its keyring and the upload sessions'
+            # parts, each on its own volume; migrations are compiled in.
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
@@ -56,8 +57,14 @@ spec:
               type: RuntimeDefault
           # The image sets OML_SERVER__LISTEN=0.0.0.0:8080 and
           # OML_KMS__KEYRING_PATH=/var/lib/oml/keyring/signing.key; the port
-          # and the mount below follow them (scripts/check_chart.py).
+          # and the keyring mount below follow them (scripts/check_chart.py).
           env:
+            # A directory below the objects mount, which the lead creates
+            # owned by itself and owner-only: the mount's own root belongs
+            # to root and the lead never chmods a root it does not own
+            # (ADR-0004 d3, note of 2026-11-18).
+            - name: OML_STORAGE__URL
+              value: /var/lib/oml/objects/store
             - name: OML_POSTGRES__URL
               valueFrom:
                 secretKeyRef:
@@ -119,6 +126,8 @@ spec:
           volumeMounts:
             - name: keyring
               mountPath: /var/lib/oml/keyring
+            - name: objects
+              mountPath: /var/lib/oml/objects
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -127,3 +136,21 @@ spec:
         - name: keyring
           persistentVolumeClaim:
             claimName: {{ include "oml.keyringClaim" . }}
+        # Upload sessions' encrypted parts (storage.url; ADR-0004 d3). By
+        # default an emptyDir, so a pod replaced mid-upload loses the parts
+        # it held and their sessions name them at completion as
+        # upload.incomplete, to be sent again; objects.persistence keeps
+        # them on a claim instead. uploads.tenant_max_bytes bounds one
+        # tenant's parts, not the node's disk: sizeLimit does, and the
+        # kubelet evicts the lead past it.
+        - name: objects
+          {{- if .Values.objects.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "oml.objectsClaim" . }}
+          {{- else }}
+          emptyDir:
+            {{- with .Values.objects.sizeLimit }}
+            sizeLimit: {{ . | quote }}
+            {{- else }} {}
+            {{- end }}
+          {{- end }}

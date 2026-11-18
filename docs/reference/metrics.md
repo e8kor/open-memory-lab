@@ -63,6 +63,22 @@ Histograms use bucket bounds that start at 1 ms and double sixteen times, to 32.
 | `oml_reranks_total` | counter | `outcome`, `reason` | Reranking stages: `applied` or `skipped`, with the reason `none`, `busy`, `timeout` or `failed`. |
 | `oml_sparse_encoded_total` | counter | `outcome` | Versions the learned sparse encoder wrote postings for, failed on, or parked as dead letters. |
 | `oml_sparse_backlog` | gauge | none | Versions waiting for the sparse encoder, across the deployment. |
+| `oml_upload_refusals_total` | counter | `code` | Upload requests refused, by `upload.*` code. |
+| `oml_upload_sessions` | gauge | `state` | Upload sessions at the last sweep, by state, across the deployment. |
+| `oml_upload_unbound_bytes` | gauge | none | Declared bytes of the open and unbound upload sessions at the last sweep. |
+| `oml_upload_stored_bytes` | gauge | none | Bytes the object store held under `uploads/` at the last sweep. |
+| `oml_upload_unswept` | gauge | none | Upload sessions whose key is shredded and whose parts remain, at the last sweep. |
+| `oml_upload_staging_stale` | gauge | none | Bound upload sessions whose key is still set 24 hours after binding, at the last sweep. |
+| `oml_upload_sweep_failures_total` | counter | none | Upload sweep steps that failed since start; the next sweep, 5 minutes on, retries. |
+| `oml_upload_store_unavailable` | gauge | `reason` | 1 while the object store at `storage.url` cannot be opened, by the kind of failure: `permission_denied`, `read_only`, `not_a_directory`, `not_found`, `full` or `other`; no series while it opens. The log's `upload_store_unavailable` names the path and the error. |
+| `oml_import_refusals_total` | counter | `code` | `POST /v2/imports` refused, by code: a `bundle.*` or `import.*` code, or another the route answered. |
+| `oml_import_versions_total` | counter | `outcome` | Claim keys finished imports planned, by outcome: `new`, `changed`, `removed`, `unchanged`, `equivalent`, `conflict` or `refused`. |
+| `oml_imports` | gauge | `state` | Imports at the last sweep, by state (`running`, `done`, `failed`), across the deployment. A `running` one stopped with the server. |
+| `oml_imports_allow_older` | gauge | none | Imports that admitted an older bundle under `allow_older`, at the last sweep. |
+| `oml_imports_stopped` | gauge | none | Imports running for more than an hour that the server is not running, at the last sweep; the sweep ends each `failed`. |
+| `oml_imports_unprovenanced` | gauge | none | Versions carrying an import's idempotency key and no `import_provenance`, at the last sweep. |
+| `oml_export_refusals_total` | counter | `code` | `POST /v2/workspaces/{workspace}/exports` refused, by code: `export.busy` (one export per tenant runs), `export.too_large` (a bundle over `uploads.max_bytes`) or another the route answered; `oml doctor` names them under `exports` ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) I13). |
+| `oml_exports_total` | counter | none | Workspace bundles served by `POST /v2/workspaces/{workspace}/exports`, each journalled as `workspace.exported` ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d15). |
 | `oml_memories_unrecalled` | gauge | `promoted_for` | Served memories no recall in the last 30 days returned, by time since approval (`7d`, `30d`, `90d`, `older`). Refreshed every 10 minutes. |
 
 ### Recall telemetry

@@ -235,6 +235,7 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
         config.web_client.clone(),
         config.shared,
         Some(config.quota_profiles.clone()),
+        Some(config.uploads.clone()),
     )
     .await?;
     // The encoder drains the queue every write fills, off the commit path

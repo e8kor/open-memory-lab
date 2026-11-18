@@ -84,6 +84,15 @@ Questions revision 1 left open are settled below at their recommended answers, e
     while it has one. Setting `in_progress` on a node already in progress, or `standard` on one
     already standard, is a no-op that journals nothing.
 
+    *Amendment of 2026-11-18 (the coordinator, bulk B review of #426; for the operator's batch).*
+    One exception to "a reviewer key `used_by: person`": a workspace import by a person's writer
+    key (ADR-0084 d6, I16) that creates its target marks that new workspace `in_progress` in the
+    same commit that creates it, journalling `workspace.mode_set` under the importing key. A retry
+    against a `standard` workspace that is empty and that the same key created sets the mode then.
+    The writer key marks only a workspace it has just created and that holds nothing, so the mark
+    changes who reads no other key's rows. *Rejected:* a reviewer key's mark in a second step,
+    which left a crash between the two a `standard` target that the retry refused.
+
 - **d2 — One boundary rule decides every scoped read: a row on node D is served to a read scoped
   at N only if D has no in-progress root, or N has the same one.** A **scoped read** — recall,
   the scoped listing, the claim-edge and brief reads, the events tail — serves the *served node

@@ -112,6 +112,299 @@ impl<J: Retriever> Retriever for Timed<J> {
 }
 
 impl<J: JournalStore> JournalStore for Timed<J> {
+    fn upload_open(
+        &self,
+        session: &oml_app::types::UploadSession,
+        per_key: u64,
+        tenant_max_bytes: u64,
+    ) -> impl Future<Output = Result<Result<(), oml_app::domain::upload::UploadRefusal>, StoreError>>
+    + Send {
+        timed(
+            "upload_open",
+            self.inner.upload_open(session, per_key, tenant_max_bytes),
+        )
+    }
+
+    fn upload_session(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+    ) -> impl Future<Output = Result<Option<oml_app::types::UploadSession>, StoreError>> + Send
+    {
+        timed(
+            "upload_session",
+            self.inner.upload_session(tenant_id, upload_id),
+        )
+    }
+
+    fn upload_part_received(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        n: u64,
+        at: &EventTime,
+        expires_at: &EventTime,
+    ) -> impl Future<Output = Result<Option<oml_app::types::UploadSession>, StoreError>> + Send
+    {
+        timed(
+            "upload_part_received",
+            self.inner
+                .upload_part_received(tenant_id, upload_id, n, at, expires_at),
+        )
+    }
+
+    fn upload_parts_lost(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        parts: &[u64],
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
+        timed(
+            "upload_parts_lost",
+            self.inner.upload_parts_lost(tenant_id, upload_id, parts),
+        )
+    }
+
+    fn upload_transition(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        from: &[oml_app::domain::upload::UploadState],
+        to: oml_app::domain::upload::UploadState,
+        at: &EventTime,
+        expires_at: Option<&EventTime>,
+        shred: bool,
+    ) -> impl Future<Output = Result<Option<oml_app::types::UploadSession>, StoreError>> + Send
+    {
+        timed(
+            "upload_transition",
+            self.inner
+                .upload_transition(tenant_id, upload_id, from, to, at, expires_at, shred),
+        )
+    }
+
+    fn uploads_expire(
+        &self,
+        tenant_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed("uploads_expire", self.inner.uploads_expire(tenant_id, at))
+    }
+
+    fn uploads_unswept(
+        &self,
+        tenant_id: Uuid,
+        limit: u32,
+    ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send {
+        timed(
+            "uploads_unswept",
+            self.inner.uploads_unswept(tenant_id, limit),
+        )
+    }
+
+    fn upload_objects_removed(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
+        timed(
+            "upload_objects_removed",
+            self.inner.upload_objects_removed(tenant_id, upload_id, at),
+        )
+    }
+
+    fn upload_stats(
+        &self,
+        tenant_id: Uuid,
+        stale_before: &EventTime,
+    ) -> impl Future<Output = Result<oml_app::types::UploadStats, StoreError>> + Send {
+        timed(
+            "upload_stats",
+            self.inner.upload_stats(tenant_id, stale_before),
+        )
+    }
+
+    fn import_target_view(
+        &self,
+        tenant_id: Uuid,
+        target_workspace_id: Uuid,
+        source_server_id: &str,
+        source_tenant_id: &str,
+    ) -> impl Future<Output = Result<oml_app::types::ImportTargetView, StoreError>> + Send {
+        timed(
+            "import_target_view",
+            self.inner.import_target_view(
+                tenant_id,
+                target_workspace_id,
+                source_server_id,
+                source_tenant_id,
+            ),
+        )
+    }
+
+    fn import_begin(
+        &self,
+        import: &oml_app::types::ImportRecord,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<oml_app::types::ImportBegin, StoreError>> + Send {
+        timed("import_begin", self.inner.import_begin(import, at))
+    }
+
+    fn imports_end_stopped(
+        &self,
+        tenant_id: Uuid,
+        started_before: &EventTime,
+        at: &EventTime,
+        live: &[Uuid],
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed(
+            "imports_end_stopped",
+            self.inner
+                .imports_end_stopped(tenant_id, started_before, at, live),
+        )
+    }
+
+    fn workspace_creator_if_empty(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Option<Uuid>, StoreError>> + Send {
+        timed(
+            "workspace_creator_if_empty",
+            self.inner
+                .workspace_creator_if_empty(tenant_id, workspace_id),
+        )
+    }
+
+    fn import_version_recorded(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+        version: &oml_app::types::ImportedVersion,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
+        timed(
+            "import_version_recorded",
+            self.inner
+                .import_version_recorded(tenant_id, import_id, version),
+        )
+    }
+
+    fn import_provenance(
+        &self,
+        tenant_id: Uuid,
+        memory_id: Uuid,
+    ) -> impl Future<Output = Result<Option<serde_json::Value>, StoreError>> + Send {
+        timed(
+            "import_provenance",
+            self.inner.import_provenance(tenant_id, memory_id),
+        )
+    }
+
+    fn import_failed(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+        at: &EventTime,
+        counts: &std::collections::BTreeMap<String, u64>,
+        refusals: &[oml_app::types::ImportRefusal],
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
+        timed(
+            "import_failed",
+            self.inner
+                .import_failed(tenant_id, import_id, at, counts, refusals),
+        )
+    }
+
+    fn import_record(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+    ) -> impl Future<Output = Result<Option<oml_app::types::ImportRecord>, StoreError>> + Send {
+        timed(
+            "import_record",
+            self.inner.import_record(tenant_id, import_id),
+        )
+    }
+
+    fn import_stats(
+        &self,
+        tenant_id: Uuid,
+        stopped_before: &EventTime,
+    ) -> impl Future<Output = Result<oml_app::types::ImportStats, StoreError>> + Send {
+        timed(
+            "import_stats",
+            self.inner.import_stats(tenant_id, stopped_before),
+        )
+    }
+
+    fn export_policy(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<oml_app::domain::export::ExportPolicy, StoreError>> + Send
+    {
+        timed("export_policy", self.inner.export_policy(tenant_id))
+    }
+
+    fn export_allowed(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send {
+        timed(
+            "export_allowed",
+            self.inner.export_allowed(tenant_id, workspace_id, at),
+        )
+    }
+
+    fn export_versions(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        own_keys: &[Uuid],
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send {
+        timed(
+            "export_versions",
+            self.inner.export_versions(tenant_id, nodes, own_keys),
+        )
+    }
+
+    fn export_body_bytes(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        own_keys: &[Uuid],
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed(
+            "export_body_bytes",
+            self.inner.export_body_bytes(tenant_id, nodes, own_keys),
+        )
+    }
+
+    fn exported_bytes(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed(
+            "exported_bytes",
+            self.inner.exported_bytes(tenant_id, user_root, at),
+        )
+    }
+
+    fn tenant_exported_bytes(
+        &self,
+        tenant_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed(
+            "tenant_exported_bytes",
+            self.inner.tenant_exported_bytes(tenant_id, at),
+        )
+    }
+
     fn user_usage(
         &self,
         tenant_id: Uuid,

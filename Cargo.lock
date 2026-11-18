@@ -4157,11 +4157,15 @@ dependencies = [
 name = "oml-app"
 version = "0.7.3"
 dependencies = [
+ "bech32",
+ "chacha20poly1305",
  "ed25519-dalek",
+ "oml-bundle",
  "oml-domain",
  "oml-passage",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.21",
  "tokio",
  "uuid",
@@ -4176,6 +4180,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "hmac",
+ "oml-guardrail",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4188,12 +4193,14 @@ name = "oml-cli"
 version = "0.7.3"
 dependencies = [
  "axum",
+ "bech32",
  "clap",
  "ed25519-dalek",
  "expectrl",
  "getrandom 0.2.17",
  "hex",
  "oml-app",
+ "oml-bundle",
  "oml-delta-log",
  "oml-former-names",
  "oml-guardrail",
@@ -4209,12 +4216,14 @@ dependencies = [
  "sha2 0.10.9",
  "sqlx",
  "syn 2.0.119",
+ "tar",
  "tokio",
  "toml 0.8.23",
  "unicode-normalization",
  "ureq",
  "uuid",
  "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]
@@ -4364,8 +4373,13 @@ dependencies = [
 name = "oml-port-contracts"
 version = "0.7.3"
 dependencies = [
+ "chacha20poly1305",
+ "ed25519-dalek",
  "oml-app",
+ "oml-bundle",
  "serde_json",
+ "sha2 0.10.9",
+ "tar",
  "tokio",
  "uuid",
 ]
@@ -4416,9 +4430,11 @@ name = "oml-server-lead"
 version = "0.7.3"
 dependencies = [
  "axum",
+ "bech32",
  "getrandom 0.2.17",
  "hex",
  "oml-app",
+ "oml-bundle",
  "oml-fetch",
  "oml-format",
  "oml-guardrail",
@@ -4435,8 +4451,10 @@ dependencies = [
  "opentelemetry_sdk",
  "prost",
  "reqwest 0.13.5",
+ "rustix",
  "rustls",
  "serde_json",
+ "sha2 0.10.9",
  "sqlx",
  "thiserror 2.0.21",
  "tokio",

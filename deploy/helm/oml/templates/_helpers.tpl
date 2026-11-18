@@ -70,3 +70,7 @@ oml.e8kor.github.io/role: lead
 {{- define "oml.keyringClaim" -}}
 {{- .Values.keyring.existingClaim | default (printf "%s-keyring" (include "oml.fullname" .)) -}}
 {{- end -}}
+
+{{- define "oml.objectsClaim" -}}
+{{- .Values.objects.persistence.existingClaim | default (printf "%s-objects" (include "oml.fullname" .)) -}}
+{{- end -}}

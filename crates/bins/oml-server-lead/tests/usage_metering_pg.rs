@@ -186,6 +186,7 @@ async fn rig() -> Option<Rig> {
         WebClient::new(Some(WEB_CLIENT_SECRET.to_owned()), None),
         false,
         Some(profiles()),
+        None,
     )
     .await
     .expect("the lead starts")

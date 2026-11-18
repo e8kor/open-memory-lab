@@ -144,6 +144,32 @@ struct SparseLabels {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct CodeLabels {
+    code: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct StateLabels {
+    state: String,
+}
+
+/// One upload sweep's totals over every tenant, for the `uploads` doctor
+/// line (ADR-0004 d3, as amended 2026-11-17). No tenant label.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UploadTotals {
+    /// Sessions by state, by the state's spelling.
+    pub by_state: std::collections::BTreeMap<String, u64>,
+    /// Declared bytes of the open and unbound sessions.
+    pub unbound_bytes: u64,
+    /// Bytes the object store holds under `uploads/`.
+    pub stored_bytes: u64,
+    /// Sessions whose key is gone and whose objects remain.
+    pub unswept: u64,
+    /// Bound sessions whose key is still set 24 hours after binding.
+    pub staging_stale: u64,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct BulkLabels {
     outcome: String,
 }
@@ -193,6 +219,22 @@ pub struct Metrics {
     quality: Quality,
     sparse_encoded: Family<SparseLabels, Counter>,
     sparse_backlog: Gauge,
+    upload_refusals: Family<CodeLabels, Counter>,
+    upload_sessions: Family<StateLabels, Gauge>,
+    upload_unbound_bytes: Gauge,
+    upload_stored_bytes: Gauge,
+    upload_unswept: Gauge,
+    upload_staging_stale: Gauge,
+    upload_sweep_failures: Counter,
+    upload_store_unavailable: Family<ReasonLabels, Gauge>,
+    import_refusals: Family<CodeLabels, Counter>,
+    export_refusals: Family<CodeLabels, Counter>,
+    import_versions: Family<OutcomeLabels, Counter>,
+    imports: Family<StateLabels, Gauge>,
+    imports_allow_older: Gauge,
+    imports_stopped: Gauge,
+    imports_unprovenanced: Gauge,
+    exports: Counter,
     scan_findings: Family<ScanLabels, Counter>,
     scan_counts: std::sync::OnceLock<ScanCounts>,
     scan_refresh: std::sync::Mutex<()>,
@@ -346,6 +388,22 @@ impl Default for Metrics {
         let quota_refusals = Family::<QuotaLabels, Counter>::default();
         let sparse_encoded = Family::<SparseLabels, Counter>::default();
         let sparse_backlog = Gauge::default();
+        let upload_refusals = Family::<CodeLabels, Counter>::default();
+        let upload_sessions = Family::<StateLabels, Gauge>::default();
+        let upload_unbound_bytes = Gauge::default();
+        let upload_stored_bytes = Gauge::default();
+        let upload_unswept = Gauge::default();
+        let upload_staging_stale = Gauge::default();
+        let upload_sweep_failures = Counter::default();
+        let upload_store_unavailable = Family::<ReasonLabels, Gauge>::default();
+        let import_refusals = Family::<CodeLabels, Counter>::default();
+        let export_refusals = Family::<CodeLabels, Counter>::default();
+        let import_versions = Family::<OutcomeLabels, Counter>::default();
+        let imports = Family::<StateLabels, Gauge>::default();
+        let imports_allow_older = Gauge::default();
+        let imports_stopped = Gauge::default();
+        let imports_unprovenanced = Gauge::default();
+        let exports = Counter::default();
         registry.register(
             "oml_http_request_duration_seconds",
             "API-listener request duration by route template and status; probes answered 200 are not counted",
@@ -475,6 +533,92 @@ impl Default for Metrics {
             "versions waiting for the learned sparse encoder across the deployment",
             sparse_backlog.clone(),
         );
+        // Upload sessions (ADR-0004 d3, as amended 2026-11-17): the
+        // refusals by their closed code, and what the last sweep counted
+        // over every tenant, with no tenant label.
+        registry.register(
+            "oml_upload_refusals",
+            "upload requests refused, by upload.* code",
+            upload_refusals.clone(),
+        );
+        registry.register(
+            "oml_upload_sessions",
+            "upload sessions at the last sweep, by state, across the deployment",
+            upload_sessions.clone(),
+        );
+        registry.register(
+            "oml_upload_unbound_bytes",
+            "declared bytes of open and unbound upload sessions at the last sweep",
+            upload_unbound_bytes.clone(),
+        );
+        registry.register(
+            "oml_upload_stored_bytes",
+            "bytes the object store held under uploads/ at the last sweep",
+            upload_stored_bytes.clone(),
+        );
+        registry.register(
+            "oml_upload_unswept",
+            "upload sessions whose key is shredded and whose objects remain, at the last sweep",
+            upload_unswept.clone(),
+        );
+        registry.register(
+            "oml_upload_staging_stale",
+            "bound upload sessions whose key is still set 24 hours after binding, at the last sweep",
+            upload_staging_stale.clone(),
+        );
+        registry.register(
+            "oml_upload_sweep_failures",
+            "upload sweeps or object removals that failed since start; the next sweep retries",
+            upload_sweep_failures.clone(),
+        );
+        registry.register(
+            "oml_upload_store_unavailable",
+            "1 while the object store at storage.url cannot be opened, by the closed kind of its failure",
+            upload_store_unavailable.clone(),
+        );
+        // Workspace imports (ADR-0084 d15): refusals by their closed code,
+        // versions by the plan's outcome, and the imports by state at the
+        // last sweep, with no tenant label.
+        registry.register(
+            "oml_import_refusals",
+            "imports refused, by bundle.*, import.* or other refusal code",
+            import_refusals.clone(),
+        );
+        registry.register(
+            "oml_import_versions",
+            "claim keys imports planned, by outcome: new, changed, removed, unchanged, equivalent, conflict or refused",
+            import_versions.clone(),
+        );
+        registry.register(
+            "oml_imports",
+            "imports at the last sweep, by state; running ones outlive no live request, so they stopped",
+            imports.clone(),
+        );
+        registry.register(
+            "oml_imports_allow_older",
+            "imports that used allow_older, at the last sweep",
+            imports_allow_older.clone(),
+        );
+        registry.register(
+            "oml_imports_stopped",
+            "imports running for more than an hour that this process did not run, at the last sweep",
+            imports_stopped.clone(),
+        );
+        registry.register(
+            "oml_imports_unprovenanced",
+            "versions carrying an import's idempotency key and no import_provenance, at the last sweep",
+            imports_unprovenanced.clone(),
+        );
+        registry.register(
+            "oml_export_refusals",
+            "workspace exports refused, by code: export.busy, export.too_large or another the route answered (ADR-0084 I13)",
+            export_refusals.clone(),
+        );
+        registry.register(
+            "oml_exports",
+            "workspace bundles served, each journalled as workspace.exported (ADR-0084 d15)",
+            exports.clone(),
+        );
         registry.register(
             "oml_handler_panics",
             "requests whose handler panicked and were answered system.internal by the panic guard; every one is a defect, named in the lead's log under event handler_panic",
@@ -514,6 +658,22 @@ impl Default for Metrics {
             quality,
             sparse_encoded,
             sparse_backlog,
+            upload_refusals,
+            import_refusals,
+            export_refusals,
+            import_versions,
+            imports,
+            imports_allow_older,
+            imports_stopped,
+            imports_unprovenanced,
+            upload_sessions,
+            upload_unbound_bytes,
+            upload_stored_bytes,
+            upload_unswept,
+            upload_staging_stale,
+            upload_sweep_failures,
+            upload_store_unavailable,
+            exports,
             scan_findings,
             scan_counts: std::sync::OnceLock::new(),
             scan_refresh: std::sync::Mutex::new(()),
@@ -554,6 +714,34 @@ impl Metrics {
         if error_code.is_some_and(|c| c.starts_with("idempotency.")) {
             self.conflicts.inc();
         }
+        if let Some(code) = error_code.filter(|c| c.starts_with("upload.")) {
+            self.upload_refusals
+                .get_or_create(&CodeLabels {
+                    code: code.to_owned(),
+                })
+                .inc();
+        }
+        if route == "/v2/imports"
+            && let Some(code) = error_code
+        {
+            self.import_refusals
+                .get_or_create(&CodeLabels {
+                    code: code.to_owned(),
+                })
+                .inc();
+        }
+        if route == "/v2/workspaces/{workspace}/exports"
+            && let Some(code) = error_code
+        {
+            self.export_refusals
+                .get_or_create(&CodeLabels {
+                    code: code.to_owned(),
+                })
+                .inc();
+        }
+        if route == "/v2/workspaces/{workspace}/exports" && status == 200 {
+            self.exports.inc();
+        }
         if route == "/oauth/token" {
             self.oauth_tokens
                 .get_or_create(&TokenLabels {
@@ -562,6 +750,46 @@ impl Metrics {
                 })
                 .inc();
         }
+    }
+
+    /// One finished import's planned keys, by outcome (ADR-0084 d15).
+    pub(crate) fn import_versions(&self, counts: &std::collections::BTreeMap<String, u64>) {
+        for outcome in oml_app::domain::import::OUTCOMES {
+            if let Some(&n) = counts.get(outcome) {
+                self.import_versions
+                    .get_or_create(&OutcomeLabels {
+                        outcome: outcome.to_owned(),
+                    })
+                    .inc_by(n);
+            }
+        }
+    }
+
+    /// The deployment's imports by state and how many used `allow_older`,
+    /// at one sweep (ADR-0084 d15).
+    pub fn import_sweep(
+        &self,
+        by_state: &std::collections::BTreeMap<String, u64>,
+        allow_older: u64,
+        stopped: u64,
+        unprovenanced: u64,
+    ) {
+        for state in oml_app::domain::import::ImportState::ALL {
+            self.imports
+                .get_or_create(&StateLabels {
+                    state: state.as_str().to_owned(),
+                })
+                .set(
+                    i64::try_from(by_state.get(state.as_str()).copied().unwrap_or(0))
+                        .unwrap_or(i64::MAX),
+                );
+        }
+        self.imports_allow_older
+            .set(i64::try_from(allow_older).unwrap_or(i64::MAX));
+        self.imports_stopped
+            .set(i64::try_from(stopped).unwrap_or(i64::MAX));
+        self.imports_unprovenanced
+            .set(i64::try_from(unprovenanced).unwrap_or(i64::MAX));
     }
 
     /// One item of a bulk verdict: `approved`, `rejected` or `skipped`
@@ -768,6 +996,41 @@ impl Metrics {
                     })
                     .inc_by(n);
             }
+        }
+    }
+
+    /// What the last upload sweep counted over every tenant, and the
+    /// removals or tenants it failed (ADR-0004 d3, as amended 2026-11-17).
+    /// Every state is set, a state with no session to zero.
+    pub fn upload_sweep(&self, totals: &UploadTotals, failures: u64) {
+        let gauge = |n: u64| i64::try_from(n).unwrap_or(i64::MAX);
+        for state in oml_app::domain::upload::UploadState::ALL {
+            self.upload_sessions
+                .get_or_create(&StateLabels {
+                    state: state.as_str().to_owned(),
+                })
+                .set(gauge(
+                    totals.by_state.get(state.as_str()).copied().unwrap_or(0),
+                ));
+        }
+        self.upload_unbound_bytes.set(gauge(totals.unbound_bytes));
+        self.upload_stored_bytes.set(gauge(totals.stored_bytes));
+        self.upload_unswept.set(gauge(totals.unswept));
+        self.upload_staging_stale.set(gauge(totals.staging_stale));
+        self.upload_sweep_failures.inc_by(failures);
+    }
+
+    /// Whether the object store at `storage.url` can be opened: `None`
+    /// while it can, else the closed kind of its failure, served at 1
+    /// (ADR-0004 d3, note of 2026-11-18).
+    pub fn upload_store(&self, unavailable: Option<&str>) {
+        self.upload_store_unavailable.clear();
+        if let Some(reason) = unavailable {
+            self.upload_store_unavailable
+                .get_or_create(&ReasonLabels {
+                    reason: reason.to_owned(),
+                })
+                .set(1);
         }
     }
 

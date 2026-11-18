@@ -1,0 +1,18 @@
+{{- if and .Values.objects.persistence.enabled (not .Values.objects.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "oml.objectsClaim" . }}
+  labels:
+    {{- include "oml.labels" . | nindent 4 }}
+    app.kubernetes.io/component: objects
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.objects.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.objects.persistence.size }}
+{{- end }}

@@ -33,8 +33,12 @@ Three roles reach the database. The owner role owns every table and runs the mig
 | [`connect_codes`](#connect_codes) | owns | SELECT, INSERT, UPDATE |  |
 | [`crews`](#crews) | owns | SELECT, INSERT, UPDATE |  |
 | [`document_passages`](#document_passages) | owns | SELECT, INSERT, DELETE |  |
+| [`export_allowances`](#export_allowances) | owns | SELECT, INSERT, UPDATE |  |
 | [`grants`](#grants) | owns | SELECT, INSERT |  |
 | [`idempotency`](#idempotency) | owns | SELECT, INSERT, UPDATE (committed_at, response), DELETE |  |
+| [`import_ledger`](#import_ledger) | owns | SELECT, INSERT, UPDATE |  |
+| [`import_versions`](#import_versions) | owns | SELECT, INSERT |  |
+| [`imports`](#imports) | owns | SELECT, INSERT, UPDATE |  |
 | [`journal`](#journal) | owns | SELECT, INSERT | SELECT |
 | [`journal_chain_head`](#journal_chain_head) | owns | SELECT, INSERT, UPDATE |  |
 | [`key_denials`](#key_denials) | owns | SELECT, INSERT, UPDATE |  |
@@ -56,7 +60,9 @@ Three roles reach the database. The owner role owns every table and runs the mig
 | [`search_vocabulary`](#search_vocabulary) | owns | SELECT, INSERT, UPDATE, DELETE |  |
 | [`search_workspace_rows`](#search_workspace_rows) | owns | SELECT, INSERT, UPDATE, DELETE |  |
 | [`similar_keys`](#similar_keys) | owns | SELECT, INSERT, UPDATE, DELETE |  |
+| [`tenant_activity`](#tenant_activity) | owns | SELECT, INSERT, UPDATE, DELETE |  |
 | [`tenants`](#tenants) | owns | SELECT, INSERT, UPDATE | SELECT |
+| [`upload_sessions`](#upload_sessions) | owns | SELECT, INSERT, UPDATE |  |
 | [`usage_daily`](#usage_daily) | owns | SELECT, INSERT, DELETE |  |
 | [`user_quotas`](#user_quotas) | owns | SELECT, INSERT, UPDATE, DELETE |  |
 | [`web_deletion_requests`](#web_deletion_requests) | owns | SELECT, INSERT, UPDATE |  |
@@ -112,9 +118,11 @@ Kind: table.
 | `day` | `date` | not null |  |  |
 | `writes` | `bigint` | not null | `0` |  |
 | `recalls` | `bigint` | not null | `0` |  |
+| `exports` | `bigint` | not null | `0` | Bytes of the account's workspace exports on the day, the exports meter. |
 
 Checks:
 
+- `account_activity_exports_check`: `CHECK (exports >= 0)`
 - `account_activity_recalls_check`: `CHECK (recalls >= 0)`
 - `account_activity_writes_check`: `CHECK (writes >= 0)`
 
@@ -476,6 +484,33 @@ Row-level security: enabled and forced, so the owner is bound too.
 
 Grants: serving: SELECT, INSERT, DELETE.
 
+### export_allowances
+
+An admin's allowance of one shared workspace's export under the own_root policy, folded from export.allowance_set. It reads no content.
+
+Kind: table.
+
+| Column | Type | Null | Default | Purpose |
+|---|---|---|---|---|
+| `tenant_id` | `uuid` | not null |  |  |
+| `workspace_id` | `uuid` | not null |  |  |
+| `until` | `timestamp with time zone` | null |  |  |
+| `set_by_key_id` | `uuid` | not null |  |  |
+| `event_id` | `uuid` | not null |  |  |
+
+Keys:
+
+- `export_allowances_tenant_id_fkey` (foreign key): `FOREIGN KEY (tenant_id) REFERENCES tenants(id)`
+- `export_allowances_pkey` (primary key): `PRIMARY KEY (tenant_id, workspace_id)`
+
+Row-level security: enabled and forced, so the owner is bound too.
+
+- Policy `tenant_isolation`, ALL for PUBLIC, permissive:
+    - using `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+    - with check `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+
+Grants: serving: SELECT, INSERT, UPDATE.
+
 ### grants
 
 Grants folded from grant.issued: one role over one node's subtree, with per-grant deny masks.
@@ -540,6 +575,114 @@ Row-level security: enabled and forced, so the owner is bound too.
     - with check `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
 
 Grants: serving: SELECT, INSERT, UPDATE (committed_at, response), DELETE.
+
+### import_ledger
+
+Per target workspace and source: the newest export instant and release imported and the pinned signer fingerprint (R11).
+
+Kind: table.
+
+| Column | Type | Null | Default | Purpose |
+|---|---|---|---|---|
+| `tenant_id` | `uuid` | not null |  |  |
+| `target_workspace_id` | `uuid` | not null |  |  |
+| `source_server_id` | `text` | not null |  |  |
+| `source_tenant_id` | `text` | not null |  |  |
+| `exported_at` | `text` | not null |  |  |
+| `release_label` | `text` | null |  |  |
+| `release_manifest_digest` | `text` | null |  |  |
+| `signer_fingerprint` | `text` | not null |  |  |
+| `updated_at` | `timestamp with time zone` | not null |  |  |
+
+Keys:
+
+- `import_ledger_tenant_id_fkey` (foreign key): `FOREIGN KEY (tenant_id) REFERENCES tenants(id)`
+- `import_ledger_pkey` (primary key): `PRIMARY KEY (tenant_id, target_workspace_id, source_server_id, source_tenant_id)`
+
+Row-level security: enabled and forced, so the owner is bound too.
+
+- Policy `tenant_isolation`, ALL for PUBLIC, permissive:
+    - using `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+    - with check `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+
+Grants: serving: SELECT, INSERT, UPDATE.
+
+### import_versions
+
+Every version an import wrote and the source version it carries.
+
+Kind: table.
+
+| Column | Type | Null | Default | Purpose |
+|---|---|---|---|---|
+| `tenant_id` | `uuid` | not null |  |  |
+| `import_id` | `uuid` | not null |  |  |
+| `memory_id` | `uuid` | not null |  |  |
+| `source_artifact_id` | `text` | not null |  |  |
+| `source_version` | `bigint` | not null |  |  |
+| `outcome` | `text` | not null |  |  |
+
+Checks:
+
+- `import_versions_outcome_check`: `CHECK (outcome = ANY (ARRAY['new'::text, 'changed'::text, 'removed'::text, 'conflict'::text]))`
+
+Keys:
+
+- `import_versions_tenant_id_fkey` (foreign key): `FOREIGN KEY (tenant_id) REFERENCES tenants(id)`
+- `import_versions_tenant_id_import_id_fkey` (foreign key): `FOREIGN KEY (tenant_id, import_id) REFERENCES imports(tenant_id, id)`
+- `import_versions_pkey` (primary key): `PRIMARY KEY (tenant_id, import_id, memory_id)`
+
+Row-level security: enabled and forced, so the owner is bound too.
+
+- Policy `tenant_isolation`, ALL for PUBLIC, permissive:
+    - using `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+    - with check `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+
+Grants: serving: SELECT, INSERT.
+
+### imports
+
+Workspace imports (I4): one per import, bound to one upload session.
+
+Kind: table.
+
+| Column | Type | Null | Default | Purpose |
+|---|---|---|---|---|
+| `tenant_id` | `uuid` | not null |  |  |
+| `id` | `uuid` | not null |  |  |
+| `target_workspace_id` | `uuid` | not null |  |  |
+| `importer_key_id` | `uuid` | not null |  |  |
+| `upload_id` | `uuid` | not null |  |  |
+| `source_server_id` | `text` | not null |  |  |
+| `source_tenant_id` | `text` | not null |  |  |
+| `manifest_digest` | `text` | not null |  |  |
+| `signer_fingerprint` | `text` | not null |  |  |
+| `authenticated` | `boolean` | not null |  |  |
+| `allow_older` | `boolean` | not null |  |  |
+| `state` | `text` | not null |  |  |
+| `counts` | `jsonb` | not null | `'{}'::jsonb` |  |
+| `refusals` | `jsonb` | not null | `'[]'::jsonb` |  |
+| `created_at` | `timestamp with time zone` | not null |  |  |
+| `ended_at` | `timestamp with time zone` | null |  |  |
+
+Checks:
+
+- `imports_check`: `CHECK ((state = 'running'::text) = (ended_at IS NULL))`
+- `imports_state_check`: `CHECK (state = ANY (ARRAY['running'::text, 'done'::text, 'failed'::text]))`
+
+Keys:
+
+- `imports_tenant_id_fkey` (foreign key): `FOREIGN KEY (tenant_id) REFERENCES tenants(id)`
+- `imports_pkey` (primary key): `PRIMARY KEY (tenant_id, id)`
+- `imports_tenant_id_upload_id_key` (unique): `UNIQUE (tenant_id, upload_id)`
+
+Row-level security: enabled and forced, so the owner is bound too.
+
+- Policy `tenant_isolation`, ALL for PUBLIC, permissive:
+    - using `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+    - with check `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+
+Grants: serving: SELECT, INSERT, UPDATE.
 
 ### journal
 
@@ -740,6 +883,7 @@ Kind: partitioned table, `PARTITION BY LIST (tenant_id)`.
 | `skill_description` | `text` | null |  |  |
 | `document_title` | `text` | null |  |  |
 | `test_shape` | `text` | null |  |  |
+| `import_provenance` | `jsonb` | null |  | An imported version's source provenance; null for every version not imported. |
 | `valid_until_ratified` | `boolean` | not null | `false` | Whether valid_until is the end a ratified supersession gave the version; a demotion that restores it as the tip writes valid_until_before back. |
 | `valid_until_before` | `text` | null |  | The end the version had before a ratified supersession replaced it; NULL for an open end. Read only while valid_until_ratified is true (0058). |
 | `valid_until_before_us` | `bigint` | null |  | valid_until_before as Unix microseconds, as valid_until_us is valid_until (0058). |
@@ -1354,6 +1498,35 @@ Grants: serving: SELECT, INSERT, UPDATE, DELETE.
 
 Partitions after the last migration: none. The lead creates one per tenant as the tenant is created.
 
+### tenant_activity
+
+Bytes of every workspace export of the tenant in one UTC day, a key with no account root's included, kept 62 days: the tenant's exports meter (I19).
+
+Kind: table.
+
+| Column | Type | Null | Default | Purpose |
+|---|---|---|---|---|
+| `tenant_id` | `uuid` | not null |  |  |
+| `day` | `date` | not null |  |  |
+| `exports` | `bigint` | not null | `0` |  |
+
+Checks:
+
+- `tenant_activity_exports_check`: `CHECK (exports >= 0)`
+
+Keys:
+
+- `tenant_activity_tenant_id_fkey` (foreign key): `FOREIGN KEY (tenant_id) REFERENCES tenants(id)`
+- `tenant_activity_pkey` (primary key): `PRIMARY KEY (tenant_id, day)`
+
+Row-level security: enabled and forced, so the owner is bound too.
+
+- Policy `tenant_isolation`, ALL for PUBLIC, permissive:
+    - using `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+    - with check `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+
+Grants: serving: SELECT, INSERT, UPDATE, DELETE.
+
 ### tenants
 
 Tenant registry.
@@ -1371,9 +1544,11 @@ Kind: table.
 | `federation_enabled` | `boolean` | not null | `false` | Whether recall may search beyond its scope, folded from federation.policy_set. |
 | `federation_default_sources` | `text` | not null | `'scope'::text` | The sources mode an absent recall sources reads: scope or wide, never a list. |
 | `federation_max_sources` | `integer` | not null | `8` | The most candidates a wide recall searches beside its scope, and the most names a list carries. |
+| `export_policy` | `text` | not null | `'own_root'::text` | Who may export a workspace bundle: off, own_root (a person, inside their own root) or allowed (shared subtrees too).. |
 
 Checks:
 
+- `tenants_export_policy_check`: `CHECK (export_policy = ANY (ARRAY['off'::text, 'own_root'::text, 'allowed'::text]))`
 - `tenants_federation_default_sources_check`: `CHECK (federation_default_sources = ANY (ARRAY['scope'::text, 'wide'::text]))`
 - `tenants_federation_max_sources_check`: `CHECK (federation_max_sources >= 0 AND federation_max_sources <= 64)`
 - `tenants_search_default_check`: `CHECK (search_default IS NULL OR search_default ~ '^[a-z0-9-]{1,40}$'::text)`
@@ -1392,6 +1567,52 @@ Row-level security: enabled and forced, so the owner is bound too.
     - with check `id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
 
 Grants: serving: SELECT, INSERT, UPDATE; lake writer: SELECT.
+
+### upload_sessions
+
+Upload sessions (as amended 2026-11-17): metadata only; the parts are ciphertext at storage.url under part_key, nulled to shred. Never journalled.
+
+Kind: table.
+
+| Column | Type | Null | Default | Purpose |
+|---|---|---|---|---|
+| `tenant_id` | `uuid` | not null |  |  |
+| `id` | `uuid` | not null |  |  |
+| `key_id` | `uuid` | not null |  |  |
+| `purpose` | `text` | not null |  |  |
+| `size` | `bigint` | not null |  |  |
+| `sha256` | `text` | not null |  |  |
+| `received` | `bigint[]` | not null | `'{}'::bigint[]` |  |
+| `state` | `text` | not null |  |  |
+| `part_key` | `bytea` | null |  |  |
+| `created_at` | `timestamp with time zone` | not null |  |  |
+| `touched_at` | `timestamp with time zone` | not null |  |  |
+| `expires_at` | `timestamp with time zone` | null |  |  |
+| `completed_at` | `timestamp with time zone` | null |  |  |
+| `bound_at` | `timestamp with time zone` | null |  |  |
+| `objects_removed_at` | `timestamp with time zone` | null |  |  |
+
+Checks:
+
+- `upload_sessions_check`: `CHECK ((state <> ALL (ARRAY['open'::text, 'completed'::text])) OR expires_at IS NOT NULL)`
+- `upload_sessions_part_key_check`: `CHECK (part_key IS NULL OR length(part_key) = 32)`
+- `upload_sessions_purpose_check`: `CHECK (purpose = 'import'::text)`
+- `upload_sessions_sha256_check`: `CHECK (sha256 ~ '^[0-9a-f]{64}$'::text)`
+- `upload_sessions_size_check`: `CHECK (size > 0)`
+- `upload_sessions_state_check`: `CHECK (state = ANY (ARRAY['open'::text, 'completed'::text, 'bound'::text, 'failed'::text, 'expired'::text, 'abandoned'::text]))`
+
+Keys:
+
+- `upload_sessions_tenant_id_fkey` (foreign key): `FOREIGN KEY (tenant_id) REFERENCES tenants(id)`
+- `upload_sessions_pkey` (primary key): `PRIMARY KEY (tenant_id, id)`
+
+Row-level security: enabled and forced, so the owner is bound too.
+
+- Policy `tenant_isolation`, ALL for PUBLIC, permissive:
+    - using `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+    - with check `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+
+Grants: serving: SELECT, INSERT, UPDATE.
 
 ### usage_daily
 
@@ -1412,6 +1633,7 @@ Kind: table.
 | `keys` | `bigint` | not null |  |  |
 | `connections` | `bigint` | not null |  |  |
 | `recorded_at` | `timestamp with time zone` | not null |  |  |
+| `exports` | `bigint` | not null | `0` | Bytes of the account's workspace exports on the day. |
 
 Keys:
 

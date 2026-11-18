@@ -27,6 +27,8 @@ path = "src/main.rs"
 lake-sync = ["dep:oml-delta-log"]
 
 [dependencies]
+# The bundle format: decrypt and verify before upload (ADR-0084 d7).
+oml-bundle.workspace = true
 oml-former-names.workspace = true
 clap.workspace = true
 ed25519-dalek.workspace = true
@@ -44,11 +46,14 @@ toml.workspace = true
 unicode-normalization.workspace = true
 ureq.workspace = true
 uuid.workspace = true
+zeroize.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
 
 [dev-dependencies]
+bech32.workspace = true
+tar.workspace = true
 axum.workspace = true
 expectrl.workspace = true
 oml-app.workspace = true

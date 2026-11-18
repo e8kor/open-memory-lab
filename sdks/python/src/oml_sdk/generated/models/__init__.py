@@ -102,6 +102,8 @@ from .error_envelope import ErrorEnvelope
 from .error_envelope_error import ErrorEnvelopeError
 from .error_envelope_error_details import ErrorEnvelopeErrorDetails
 from .events_page import EventsPage
+from .export_request import ExportRequest
+from .export_request_mode import ExportRequestMode
 from .export_web_person_response_200 import ExportWebPersonResponse200
 from .export_web_person_response_200_keys_item import ExportWebPersonResponse200KeysItem
 from .export_web_person_response_200_memories_item import (
@@ -137,6 +139,22 @@ from .held_named_items_item import HeldNamedItemsItem
 from .held_page import HeldPage
 from .held_page_items_item import HeldPageItemsItem
 from .held_page_lane_authors_type_0_item import HeldPageLaneAuthorsType0Item
+from .import_ import Import
+from .import_answer import ImportAnswer
+from .import_counts import ImportCounts
+from .import_plan import ImportPlan
+from .import_plan_counts import ImportPlanCounts
+from .import_plan_edges import ImportPlanEdges
+from .import_plan_keys_item import ImportPlanKeysItem
+from .import_plan_keys_item_outcome import ImportPlanKeysItemOutcome
+from .import_plan_keys_item_source_type_0 import ImportPlanKeysItemSourceType0
+from .import_plan_source import ImportPlanSource
+from .import_refusals_item import ImportRefusalsItem
+from .import_refusals_item_source import ImportRefusalsItemSource
+from .import_request import ImportRequest
+from .import_source import ImportSource
+from .import_state import ImportState
+from .import_status import ImportStatus
 from .journal_event import JournalEvent
 from .journal_event_payload import JournalEventPayload
 from .key import Key
@@ -317,6 +335,11 @@ from .transition_proposal import TransitionProposal
 from .transition_proposal_to import TransitionProposalTo
 from .transition_state import TransitionState
 from .transition_to import TransitionTo
+from .upload_open_request import UploadOpenRequest
+from .upload_open_request_purpose import UploadOpenRequestPurpose
+from .upload_session import UploadSession
+from .upload_session_purpose import UploadSessionPurpose
+from .upload_session_state import UploadSessionState
 from .usage_drift import UsageDrift
 from .usage_drift_drift_item import UsageDriftDriftItem
 from .usage_drift_drift_item_meter import UsageDriftDriftItemMeter
@@ -482,6 +505,8 @@ __all__ = (
     "ErrorEnvelopeError",
     "ErrorEnvelopeErrorDetails",
     "EventsPage",
+    "ExportRequest",
+    "ExportRequestMode",
     "ExportWebPersonResponse200",
     "ExportWebPersonResponse200KeysItem",
     "ExportWebPersonResponse200MemoriesItem",
@@ -515,6 +540,22 @@ __all__ = (
     "HeldPage",
     "HeldPageItemsItem",
     "HeldPageLaneAuthorsType0Item",
+    "Import",
+    "ImportAnswer",
+    "ImportCounts",
+    "ImportPlan",
+    "ImportPlanCounts",
+    "ImportPlanEdges",
+    "ImportPlanKeysItem",
+    "ImportPlanKeysItemOutcome",
+    "ImportPlanKeysItemSourceType0",
+    "ImportPlanSource",
+    "ImportRefusalsItem",
+    "ImportRefusalsItemSource",
+    "ImportRequest",
+    "ImportSource",
+    "ImportState",
+    "ImportStatus",
     "JournalEvent",
     "JournalEventPayload",
     "Key",
@@ -683,6 +724,11 @@ __all__ = (
     "TransitionProposalTo",
     "TransitionState",
     "TransitionTo",
+    "UploadOpenRequest",
+    "UploadOpenRequestPurpose",
+    "UploadSession",
+    "UploadSessionPurpose",
+    "UploadSessionState",
     "UsageDrift",
     "UsageDriftDriftItem",
     "UsageDriftDriftItemMeter",

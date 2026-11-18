@@ -22,6 +22,11 @@ pub mod event_types {
     pub const WORKSPACE_MODE_SET: &str = "workspace.mode_set";
     /// A workspace now names another crew record (ADR-0026 d8).
     pub const WORKSPACE_CREW_UPDATED: &str = "workspace.crew_updated";
+    /// A person's key imported a bundle into an in-progress workspace: the
+    /// manifest digest, the outcome counts, whether the signature was
+    /// authenticated and allow_older, and the upload's digest (ADR-0084
+    /// d11, d15).
+    pub const WORKSPACE_IMPORTED: &str = "workspace.imported";
     /// A forward ladder step proposed by a reviewer or admin; pending until
     /// a second identity ratifies it (ADR-0009 d3).
     pub const WORKSPACE_STATUS_PROPOSED: &str = "workspace.status_proposed";
@@ -140,6 +145,10 @@ pub mod event_types {
     /// and, for a search, a digest of the query, never either text
     /// (ADR-0045 d21).
     pub const MEMORY_ADMIN_READ: &str = "memory.admin_read";
+    /// A person's key exported a workspace as a bundle: the manifest
+    /// digest, the mode, the counts and the recipients' fingerprints, never
+    /// a line of content (ADR-0084 d10).
+    pub const WORKSPACE_EXPORTED: &str = "workspace.exported";
     /// An admin key set the tenant's default search pipeline, or cleared
     /// it to follow the deployment's (ADR-0049 d4).
     pub const SEARCH_DEFAULT_SET: &str = "search.default_set";

@@ -352,6 +352,9 @@ pub enum MetadataFold {
         memory: MemoryRecord,
         enqueue: bool,
         findings: Box<[VersionFinding]>,
+        /// An import's write: its `import_versions` row and the version's
+        /// `import_provenance`, stored in this commit (ADR-0084 I14).
+        imported: Option<Box<crate::types::ImportedWrite>>,
     },
     /// A verdict that does not yet satisfy the policy's `k`: journalled,
     /// status unchanged.
@@ -471,6 +474,21 @@ pub enum MetadataFold {
     /// `memory.admin_read`: an admin key read memories' text; nothing
     /// changes but the journal (ADR-0045 d21).
     AdminRead,
+    /// `workspace.imported`: the import's row ends `done` with its counts
+    /// and refusals, and the target's ledger for the source moves to the
+    /// bundle's export instant, release and signer, in the event's
+    /// transaction (ADR-0084 d8, d11, R11). The store refuses an import it
+    /// does not hold or one that is not `running`.
+    WorkspaceImported(crate::types::ImportEnded),
+    /// `workspace.exported`: the export's bytes counted on the `exports`
+    /// meter of the exporter's account on the event's UTC day, and on the
+    /// tenant's `exports` meter for every export; `None` for a key of no
+    /// account, whose export the tenant's meter alone counts (ADR-0084 d10,
+    /// I19).
+    WorkspaceExported {
+        user_root: Option<Uuid>,
+        bytes: u64,
+    },
     /// `web.quota_set`: one person's override of one quota, or with `None`
     /// its return to the deployment's default (ADR-0068 d5).
     QuotaSet {
@@ -939,6 +957,252 @@ pub trait Retriever: Send + Sync {
 /// on another store, as an embedder's index would be, gets its own (ADR-0049
 /// d2).
 pub trait JournalStore: Retriever + Send + Sync {
+    /// Inserts an open upload session, in one transaction with the count
+    /// of the key's open and unbound sessions and the sum of the tenant's
+    /// declared bytes: the session's key holding `per_key` of them already
+    /// is [`UploadRefusal::SessionLimit`], and the tenant's passing
+    /// `tenant_max_bytes` with it is [`UploadRefusal::TenantLimit`]; either
+    /// writes nothing (ADR-0004 d3, as amended 2026-11-17).
+    ///
+    /// [`UploadRefusal::SessionLimit`]: oml_domain::upload::UploadRefusal::SessionLimit
+    /// [`UploadRefusal::TenantLimit`]: oml_domain::upload::UploadRefusal::TenantLimit
+    fn upload_open(
+        &self,
+        session: &crate::types::UploadSession,
+        per_key: u64,
+        tenant_max_bytes: u64,
+    ) -> impl Future<Output = Result<Result<(), oml_domain::upload::UploadRefusal>, StoreError>> + Send;
+
+    /// The session's row, whatever its state.
+    fn upload_session(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+    ) -> impl Future<Output = Result<Option<crate::types::UploadSession>, StoreError>> + Send;
+
+    /// Records part `n` as stored and the session touched at `at`, expiring
+    /// at `expires_at`, while the session is open; `None`, writing nothing,
+    /// when it is not.
+    fn upload_part_received(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        n: u64,
+        at: &EventTime,
+        expires_at: &EventTime,
+    ) -> impl Future<Output = Result<Option<crate::types::UploadSession>, StoreError>> + Send;
+
+    /// Takes `parts` out of an open session's received parts, because the
+    /// object store no longer holds them, so its status names them missing
+    /// as the completion did (ADR-0004 d3, note of 2026-11-18); a session
+    /// that is not open is left as it is.
+    fn upload_parts_lost(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        parts: &[u64],
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// Moves the session from one of `from` to `to` at `at`, with
+    /// `expires_at` as its new expiry, and nulls its key when `shred`;
+    /// `None`, writing nothing, when its state is not in `from`. Reaching
+    /// `completed` sets `completed_at`, and `bound` sets `bound_at`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one compare-and-set over the session's row"
+    )]
+    fn upload_transition(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        from: &[oml_domain::upload::UploadState],
+        to: oml_domain::upload::UploadState,
+        at: &EventTime,
+        expires_at: Option<&EventTime>,
+        shred: bool,
+    ) -> impl Future<Output = Result<Option<crate::types::UploadSession>, StoreError>> + Send;
+
+    /// Marks every open or unbound session past its expiry at `at` as
+    /// `expired` and nulls its key, in one statement; the count marked.
+    fn uploads_expire(
+        &self,
+        tenant_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
+    /// Up to `limit` sessions whose key is gone and whose objects are not
+    /// yet recorded removed.
+    fn uploads_unswept(
+        &self,
+        tenant_id: Uuid,
+        limit: u32,
+    ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send;
+
+    /// Records the session's objects removed at `at`.
+    fn upload_objects_removed(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// The tenant's sessions counted by state, its unbound bytes, its
+    /// unswept sessions, and its bound sessions whose key is still set and
+    /// that were bound before `stale_before`.
+    fn upload_stats(
+        &self,
+        tenant_id: Uuid,
+        stale_before: &EventTime,
+    ) -> impl Future<Output = Result<crate::types::UploadStats, StoreError>> + Send;
+
+    /// The target workspace as an import from the source
+    /// (`source_server_id`, `source_tenant_id`) sees it: each claim key's
+    /// latest held or promoted version, what imports from that source
+    /// wrote, and the ledger (ADR-0084 R10, R11).
+    fn import_target_view(
+        &self,
+        tenant_id: Uuid,
+        target_workspace_id: Uuid,
+        source_server_id: &str,
+        source_tenant_id: &str,
+    ) -> impl Future<Output = Result<crate::types::ImportTargetView, StoreError>> + Send;
+
+    /// Binds the import's upload, pins the source's key and inserts the
+    /// import's row `running`, in one transaction: the session moves from
+    /// `completed` to `bound` only when the importing key opened it and it
+    /// expires after `at`, and the target's ledger for the source is
+    /// inserted with the import's signer and an empty `exported_at` where
+    /// none exists. A session not bindable, or a ledger pinning another
+    /// key, writes nothing (ADR-0004 d3; ADR-0084 I4, I12).
+    fn import_begin(
+        &self,
+        import: &crate::types::ImportRecord,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<crate::types::ImportBegin, StoreError>> + Send;
+
+    /// Ends `failed` at `at` every import `running` since before
+    /// `started_before` and not named in `live`, and nulls its bound
+    /// upload's key in the same transaction, so the upload sweep removes
+    /// its objects; the count ended (ADR-0084 I11).
+    fn imports_end_stopped(
+        &self,
+        tenant_id: Uuid,
+        started_before: &EventTime,
+        at: &EventTime,
+        live: &[Uuid],
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
+    /// The key that created `workspace_id`, when the workspace holds no
+    /// version and no child; `None` otherwise (ADR-0030 d1, amended
+    /// 2026-11-18).
+    fn workspace_creator_if_empty(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Option<Uuid>, StoreError>> + Send;
+
+    /// Records one version the import wrote and sets the row's
+    /// `import_provenance`; recording it again changes nothing (ADR-0084
+    /// d4, d11).
+    fn import_version_recorded(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+        version: &crate::types::ImportedVersion,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// The version's `import_provenance`, or `None` for a version no
+    /// import wrote (ADR-0084 d4).
+    fn import_provenance(
+        &self,
+        tenant_id: Uuid,
+        memory_id: Uuid,
+    ) -> impl Future<Output = Result<Option<Value>, StoreError>> + Send;
+
+    /// Ends a `running` import `failed` with its counts and refusals so
+    /// far; nothing is journalled for a failure (ADR-0084 d11).
+    fn import_failed(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+        at: &EventTime,
+        counts: &std::collections::BTreeMap<String, u64>,
+        refusals: &[crate::types::ImportRefusal],
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// One import's row, its position counted from the versions recorded.
+    fn import_record(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+    ) -> impl Future<Output = Result<Option<crate::types::ImportRecord>, StoreError>> + Send;
+
+    /// The tenant's imports by state, how many used `allow_older`, how many
+    /// are `running` since before `stopped_before`, and the versions with an
+    /// import's idempotency key and no provenance (ADR-0084 d15, I11, I14).
+    fn import_stats(
+        &self,
+        tenant_id: Uuid,
+        stopped_before: &EventTime,
+    ) -> impl Future<Output = Result<crate::types::ImportStats, StoreError>> + Send;
+
+    /// The tenant's export policy (ADR-0084 d10): `own_root` until an admin
+    /// sets another.
+    fn export_policy(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<oml_domain::export::ExportPolicy, StoreError>> + Send;
+
+    /// Whether an admin's allowance in force at `at` lets `workspace_id` be
+    /// exported under `own_root` (ADR-0084 d10): one with no `until`, or
+    /// an `until` after `at`.
+    fn export_allowed(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+
+    /// A history export's versions of `nodes` (ADR-0084 d2, reading I6), in
+    /// creation order: every version that is promoted, tip or superseded;
+    /// every erased version that was promoted once; and every version a key
+    /// of `own_keys` wrote, in any state. Another key's held, rejected,
+    /// demoted and withdrawn versions are never read.
+    fn export_versions(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        own_keys: &[Uuid],
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
+
+    /// The stored body bytes of the versions [`Self::export_versions`]
+    /// would read that are not erased, summed without reading a body: an
+    /// export's estimate before it reads one (ADR-0084 I13).
+    fn export_body_bytes(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        own_keys: &[Uuid],
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
+    /// The bytes the account's exports counted in the UTC month `at` falls
+    /// in, the `exports` meter (ADR-0084 d10; ADR-0071 d2).
+    fn exported_bytes(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
+    /// The bytes every export of the tenant counted in the UTC month `at`
+    /// falls in, an export by a key of no account included: the tenant's
+    /// `exports` meter (ADR-0084 I19).
+    fn tenant_exported_bytes(
+        &self,
+        tenant_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
     /// The account's meters, read from its counters (ADR-0071 d2, d3): the
     /// four stocks and the flows of the UTC month `at` falls in.
     fn user_usage(
@@ -2210,6 +2474,36 @@ pub trait DocumentFetcher: Send + Sync {
         address: IpAddr,
         guard: FetchGuard,
     ) -> impl Future<Output = Result<FetchedDocument, DocumentFetchFailure>> + Send;
+}
+
+/// The future of one object store call: the value, or the store's reason.
+pub type ObjectFuture<'a, T> =
+    core::pin::Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
+
+/// The object store port (ADR-0004 d3, as amended 2026-11-17; ADR-0090
+/// d16): named bytes at `storage.url`, a local directory by default. It
+/// stores what it is given, ciphertext from every caller, and decides
+/// nothing. Held as `Arc<dyn ObjectStore>`, as the reranker is.
+pub trait ObjectStore: Send + Sync {
+    /// Stores `bytes` under `name`, replacing what was there.
+    fn put<'a>(&'a self, name: &'a str, bytes: Vec<u8>) -> ObjectFuture<'a, ()>;
+
+    /// The bytes under `name`, or `None` where there are none.
+    fn get<'a>(&'a self, name: &'a str) -> ObjectFuture<'a, Option<Vec<u8>>>;
+
+    /// Removes every object whose name starts with `prefix`; removing
+    /// nothing is not an error.
+    fn delete_prefix<'a>(&'a self, prefix: &'a str) -> ObjectFuture<'a, ()>;
+
+    /// The bytes stored under `prefix`, for the doctor line.
+    fn stored_bytes<'a>(&'a self, prefix: &'a str) -> ObjectFuture<'a, u64>;
+
+    /// Whether the store can be used now, or the reason it cannot: a store
+    /// opened lazily tries to open here, and an upload is not opened over
+    /// one that cannot (ADR-0004 d3, note of 2026-11-18).
+    fn ready(&self) -> ObjectFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// The signer port — the lead/follower split as a trait: only the lead
