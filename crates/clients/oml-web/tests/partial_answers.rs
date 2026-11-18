@@ -516,33 +516,45 @@ async fn a_key_list_past_the_pages_a_view_reads_is_refused_by_name_and_no_cut_li
     }
 }
 
+/// Judge's verdict is the act's one write: once the API records it, the
+/// page lands on To do with its notice and claims no next item, so no
+/// later read can fail it into a partial answer (ADR-0083 d2).
 #[tokio::test]
-async fn a_verdict_recorded_before_the_next_claim_fails_lands_on_the_view_with_its_notice() {
+async fn a_judge_verdict_the_api_records_lands_on_todo_with_its_notice_and_claims_no_next_item() {
+    const ID: &str = "0b9e4c1a-0000-4000-8000-0000000000a1";
     let script: Script = Arc::new(|method, path| match (method.as_str(), path) {
-        ("POST", "/v2/review/verdicts") => (
+        ("POST", "/v2/review/verdicts/bulk") => (
             200,
-            json!({"artifact_id": "m1", "version": 3, "verdict": "approve", "state": "promoted"}),
+            json!({
+                "items": [{"artifact_id": ID, "outcome": "approved", "state": "promoted", "version": 3}],
+                "summary": {"approved": 1, "rejected": 0, "skipped": 0},
+            }),
             Vec::new(),
         ),
-        ("POST", "/v2/review/next") => (503, envelope("system.unavailable"), Vec::new()),
-        _ => (404, envelope("access.not_found"), Vec::new()),
+        _ => (503, envelope("system.unavailable"), Vec::new()),
     });
     let answer = send(
         script,
         post(
-            "/web/review",
-            "action=verdict&serve_id=srv_1&verdict=approve&nonce=0123456789abcdef0123456789abcdef",
+            "/web/todo/judge",
+            &format!("action=judge&artifact_id={ID}&verdict=approve"),
         ),
     )
     .await;
     assert_eq!(answer.status, StatusCode::SEE_OTHER, "{}", answer.body);
     assert_eq!(
         answer.headers[header::LOCATION],
-        "/web/review?done=verdict&version=3&state=promoted"
+        "/web/todo?done=verdict&version=3&state=promoted"
     );
-    assert!(
-        answer.calls.iter().any(|c| c == "POST /v2/review/next"),
-        "the claim was tried: {:?}",
+    let past_session: Vec<&String> = answer
+        .calls
+        .iter()
+        .filter(|c| !c.starts_with("GET /v2/whoami"))
+        .collect();
+    assert_eq!(
+        past_session,
+        ["POST /v2/review/verdicts/bulk"],
+        "the verdict alone, no next item claimed: {:?}",
         answer.calls
     );
 }

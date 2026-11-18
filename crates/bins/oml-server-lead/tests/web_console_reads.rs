@@ -922,8 +922,9 @@ async fn the_top_label_read_costs_the_gate_and_one_tree_walk() {
 /// key's resolution and access, its reviewer walk and one page of held
 /// rows, and the author's person for the `same_user` fence, so its store
 /// calls do not grow with the workspaces, as the listing's do not. The
-/// admin read is the gate's call alone: no group of it is built (d14).
-/// This is the one store call each page of both sides gained.
+/// admin read is the gate's call and the key's resolution alone: no group
+/// of it is built (d14).
+/// This is the one API call each page of both sides gained.
 #[tokio::test]
 async fn every_console_page_carries_the_todo_badge_with_one_store_call() {
     let mut calls = Vec::new();
@@ -962,10 +963,14 @@ async fn every_console_page_carries_the_todo_badge_with_one_store_call() {
         .await;
         assert_eq!(admin.status, StatusCode::OK, "{}", admin.body);
         assert_eq!(admin.body, serde_json::json!({"truncated": false}));
+        // Measured 2026-11-19 over the in-memory store: the gate's call and
+        // the use case's own resolution of the admin key, which reads its
+        // access afresh as every later resolution in a request does
+        // (ADR-0070 d8, #297); no group of it reads anything (d14).
         assert_eq!(
             admin.store_calls(),
-            1,
-            "the gate's call alone: {}",
+            2,
+            "the gate's call and the key's resolution: {}",
             admin.line
         );
     }

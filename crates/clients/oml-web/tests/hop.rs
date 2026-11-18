@@ -162,14 +162,24 @@ async fn each_api_call_of_a_page_carries_the_pages_id_as_its_correlation_and_a_n
         "{page}"
     );
     assert!(page.contains("alice · oml"), "{page}");
-    // whoami as web and as admin, then the set and the tree: four calls.
-    assert_eq!(calls.len(), 4, "{calls:?}");
+    // whoami as web and as admin with the To do badge's counts read in
+    // the same round (ADR-0083 d6), then the set and the tree: five calls.
+    assert_eq!(calls.len(), 5, "{calls:?}");
     let mut ids: Vec<String> = calls
         .iter()
         .map(|(_, h)| h["x-request-id"].to_str().unwrap().to_owned())
         .collect();
     ids.sort();
-    assert_eq!(ids, ["page-42.1", "page-42.2", "page-42.3", "page-42.4"]);
+    assert_eq!(
+        ids,
+        [
+            "page-42.1",
+            "page-42.2",
+            "page-42.3",
+            "page-42.4",
+            "page-42.5"
+        ]
+    );
     for (path, h) in &calls {
         assert_eq!(h["x-correlation-id"], "page-42", "{path}");
         assert_eq!(h["oml-web-client"], SECRET, "{path}");
@@ -181,7 +191,7 @@ async fn each_api_call_of_a_page_carries_the_pages_id_as_its_correlation_and_a_n
     assert_eq!(line["request_id"], "page-42");
     assert_eq!(line["credential"], "session");
     assert_eq!(line["key"], "alice-web");
-    assert_eq!(line["api_request_ids"].as_array().unwrap().len(), 4);
+    assert_eq!(line["api_request_ids"].as_array().unwrap().len(), 5);
     assert!(!lines.lock().unwrap()[0].contains(TOKEN));
 }
 
@@ -232,8 +242,18 @@ async fn auth_invalid_from_whoami_sends_the_person_to_sign_in() {
         headers[header::LOCATION],
         "/web/sign-in?next=%2Fweb%2Fguardrails"
     );
+    // The session check's round alone: whoami, and the badge's counts read
+    // made beside it (ADR-0083 d6); nothing of the page itself.
     assert!(
-        calls.iter().all(|(p, _)| p == "/v2/whoami?person=false"),
+        calls
+            .iter()
+            .all(|(p, _)| p == "/v2/whoami?person=false" || p == "/v2/todo/counts"),
+        "{calls:?}"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|(p, _)| p.starts_with("/v1/guardrails") || p.contains("/tree")),
         "{calls:?}"
     );
 }
