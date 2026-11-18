@@ -48,7 +48,7 @@ const COUNT: usize = 10;
 /// Claude Code's cap on a hook's `additionalContext`, in characters: past
 /// it the text is saved to a file and only a preview enters the session.
 /// Claude Code is JavaScript, whose string length counts UTF-16 units, so
-/// the cap is counted in those ([`units`]). The skills index is fitted
+/// the cap is counted in those (`units`). The skills index is fitted
 /// under it, after everything else (ADR-0080 d8).
 pub const CONTEXT_CAP: usize = 10_000;
 
