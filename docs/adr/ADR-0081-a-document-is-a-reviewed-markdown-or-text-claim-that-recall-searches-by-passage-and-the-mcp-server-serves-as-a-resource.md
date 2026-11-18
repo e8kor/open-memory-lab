@@ -317,6 +317,11 @@ confirms or changes it, and names the reading or decision it amends.
   and the partitions are known only at run time, so each partition's build is a plain `CREATE
   INDEX` under that partition's `SHARE` lock, as 0041 builds its index: reads never wait, and a
   tenant's writes wait for its own partition's build alone.
+  A document version with no passage cut, written before 0059 and not cut yet or a text with
+  no content line (R1), is no search unit in any list and counts in no statistic, so the scans
+  read memories with no probe of the passages; the lead cuts the first kind at startup, before it
+  serves, and doctor names both. Rejected: reading such a version whole in a third scan branch,
+  which re-reads every memory of the scope for rows that hold, at most, a title.
 - **R15 (d3), 2026-11-18, for the operator's batch.** The cut reads markdown in linear time and
   bounds what it keeps: a heading's text is read to 200 characters, as a title is (d1), so a
   heading path entry and a passage's search text never carry more of one line; and a document

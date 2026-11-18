@@ -785,7 +785,7 @@ fn keyword_all_sql(scope: &str, query: &str, k: &str) -> String {
     };
     format!(
         "{} ORDER BY score DESC, id ASC, ordinal ASC LIMIT {k}",
-        one_per_version(&branch(&WHOLE_UNITS), &branch(&PASSAGE_UNITS))
+        one_per_version(&whole_units(&branch), &branch(&PASSAGE_UNITS))
     )
 }
 
@@ -1021,19 +1021,26 @@ struct Units {
     text: &'static str,
 }
 
-/// Every row but a document version with passages: one unit, its own
-/// columns, a document version not cut yet among them. The `OR` reads the
-/// row's kind first, so a row of any other kind never probes the passages.
+/// Every row of a kind but `document`: one unit, its own columns, read by
+/// the statement as before passages, its parallel plan included.
 const WHOLE_UNITS: Units = Units {
     from: "memories m",
-    only: "(m.kind <> 'document' OR NOT EXISTS (SELECT 1 FROM document_passages d0 \
-            WHERE d0.tenant_id = $1 AND d0.memory_id = m.id))",
+    only: "m.kind <> 'document'",
     ordinal: "-1",
     bytes: "m.body_bytes",
     vector: "m.search_vector",
     len: "m.search_len",
     text: "COALESCE(m.search_text, m.claim)",
 };
+
+/// The whole-version branch as one relation of `branch`'s columns: every
+/// kind but `document`. A document version with no passage cut, written
+/// before 0059 and not cut yet or a text that holds no content line (R1),
+/// is no search unit, here as in the postings (migration 0059's
+/// `oml_search_units`), so neither list reads it.
+fn whole_units(branch: impl Fn(&Units) -> String) -> String {
+    branch(&WHOLE_UNITS)
+}
 
 /// A document version's passages, each its own unit, read from the
 /// passages and joined to their version by its key, so a scope with no
@@ -1139,7 +1146,7 @@ fn keyword_any_sql(anchor: &str) -> String {
              LEFT JOIN document_passages d \
                ON d.tenant_id = $1 AND d.memory_id = top.id AND d.ordinal = top.ordinal \
              ORDER BY top.score DESC, top.id ASC, top.ordinal ASC",
-            one_per_version(&branch(&WHOLE_UNITS), &branch(&PASSAGE_UNITS))
+            one_per_version(&whole_units(&branch), &branch(&PASSAGE_UNITS))
         ),
         9,
     )
@@ -1182,7 +1189,7 @@ fn bm25_stats(scope: &str) -> String {
         "stats AS (SELECT count(*) FILTER (WHERE x.ordinal < 1)::float8 AS n, \
                           GREATEST(COALESCE(avg(x.len), 1), 1)::float8 AS avgdl \
                    FROM ({} UNION ALL {}) x)",
-        branch(&WHOLE_UNITS),
+        whole_units(&branch),
         branch(&PASSAGE_UNITS)
     )
 }
@@ -1206,7 +1213,7 @@ fn bm25_unit_forms(scope: &str) -> (String, String) {
             only = u.only,
         )
     };
-    (branch(&WHOLE_UNITS), branch(&PASSAGE_UNITS))
+    (whole_units(&branch), branch(&PASSAGE_UNITS))
 }
 
 /// Each form's document frequency from `whole` and `passages`, relations
@@ -1461,6 +1468,7 @@ const POSTINGS_OWN_HELD: &str = "SELECT m.id, COALESCE(d.search_len, m.search_le
      LEFT JOIN document_passages d \
        ON m.kind = 'document' AND d.tenant_id = $1 AND d.memory_id = m.id \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
+        AND (m.kind <> 'document' OR d.memory_id IS NOT NULL) \
         AND (m.author_key_id = ANY($2::uuid[]) \
           OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, '') || '/' || m.workspace_id::text, 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
         AND m.workspace_id = ANY($3::uuid[]) AND m.kind = ANY($4::text[]) AND NOT m.retirement \
@@ -1692,7 +1700,9 @@ const POSTINGS_HEALTH: &str = "WITH v AS ( \
                 m.kind, m.search_vector, \
                 oml_search_state(m.status, m.is_tip, m.retirement, m.kind) AS state \
          FROM memories m WHERE m.tenant_id = $1), \
-     want AS (SELECT * FROM v WHERE state IS NOT NULL AND search_len > 0), \
+     want AS (SELECT * FROM v WHERE state IS NOT NULL AND search_len > 0 \
+                AND (v.kind IS DISTINCT FROM 'document' OR EXISTS (SELECT 1 FROM document_passages d \
+                     WHERE d.tenant_id = $1 AND d.memory_id = v.id))), \
      served AS (SELECT v.workspace_id, v.mk, count(DISTINCT v.id)::int8 AS rows, \
                        count(*)::int8 AS units, sum(u.search_len)::int8 AS len \
                 FROM v CROSS JOIN LATERAL oml_search_units($1, v.id, v.kind, v.search_vector, v.search_len) u \
@@ -1869,7 +1879,7 @@ fn trigram_sql(anchor: &str) -> String {
     with_now(
         &format!(
             "{} ORDER BY score DESC, id ASC, ordinal ASC LIMIT $7",
-            one_per_version(&branch(&WHOLE_UNITS), &branch(&PASSAGE_UNITS))
+            one_per_version(&whole_units(&branch), &branch(&PASSAGE_UNITS))
         ),
         8,
     )

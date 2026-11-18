@@ -30,8 +30,8 @@
 -- kept. Nothing is refilled here: 0060 rebuilds the served index to carry
 -- the ordinal, partition by partition, and refills the tenants that hold a
 -- document row, each committed alone, so a document version written before
--- this change is one whole-version unit until then, and until the lead
--- cuts its passages at startup. A lock is waited for at most 5 s.
+-- this change is searched by no list until the lead cuts its passages at
+-- startup, before it serves. A lock is waited for at most 5 s.
 
 SET LOCAL lock_timeout = '5s';
 
@@ -130,10 +130,11 @@ COMMENT ON COLUMN search_workspace_rows.units IS
 
 ------------------------------------------------------------------------------
 -- oml_search_units — a version's search units: a document version's
--- passages, each with its own lexemes and length; otherwise, or for a
--- document version with no passage, the version itself, ordinal -1, with
--- the lexemes and length given. Read by the fold, the refill and the
--- health check, so the three agree on what a unit is.
+-- passages, each with its own lexemes and length; a version of any other
+-- kind is itself, ordinal -1, with the lexemes and length given. A document
+-- version with no passage (not cut yet, or a text with no content line,
+-- R1) has no unit, as the scans read none for it. Read by the fold, the
+-- refill and the health check, so the three agree on what a unit is.
 ------------------------------------------------------------------------------
 CREATE FUNCTION oml_search_units(t uuid, id uuid, kind text, sv tsvector, len integer)
     RETURNS TABLE (ordinal integer, search_vector tsvector, search_len integer)
@@ -143,7 +144,6 @@ CREATE FUNCTION oml_search_units(t uuid, id uuid, kind text, sv tsvector, len in
     UNION ALL
     SELECT -1, sv, len
      WHERE kind IS DISTINCT FROM 'document'
-        OR NOT EXISTS (SELECT 1 FROM document_passages d WHERE d.tenant_id = t AND d.memory_id = id)
 $$;
 
 ------------------------------------------------------------------------------
@@ -225,6 +225,10 @@ DECLARE
 BEGIN
     SELECT count(*), COALESCE(sum(u.search_len), 0) INTO n, total
       FROM oml_search_units(t, id, kind, sv, len) u;
+    -- A version with no unit is counted nowhere, as no scan reads it.
+    IF n = 0 THEN
+        RETURN;
+    END IF;
     ids := ARRAY(SELECT DISTINCT oml_token_id(l)
                    FROM oml_search_units(t, id, kind, sv, len) u
                   CROSS JOIN LATERAL unnest(tsvector_to_array(u.search_vector)) l);

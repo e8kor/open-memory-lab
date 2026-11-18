@@ -175,6 +175,10 @@ struct Unit<'a> {
 /// cuts them at write.
 fn units(m: &MemoryRecord) -> Vec<Unit<'_>> {
     let passages = m.passage_units();
+    // A document with no passage is no unit, as in the PostgreSQL store.
+    if passages.is_empty() && m.kind == MemoryKind::Document {
+        return Vec::new();
+    }
     if passages.is_empty() {
         return vec![Unit {
             m,

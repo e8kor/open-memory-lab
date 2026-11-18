@@ -6838,7 +6838,7 @@ fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) 
     // d4); a server before 0059 sends no such field.
     if n("documents_uncut") > 0 {
         lines.push(format!(
-            "warn search: {} document version{} have no passages, so recall reads each whole: one written before migration 0059 is cut when the lead restarts; one whose text holds no passage stays whole",
+            "warn search: {} document version{} have no passages, so recall finds none of them: one written before migration 0059 is cut when the lead restarts; one whose text holds no content line has nothing to find",
             n("documents_uncut"),
             if n("documents_uncut") == 1 { "" } else { "s" },
         ));
