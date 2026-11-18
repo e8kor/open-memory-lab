@@ -59,10 +59,10 @@ from .generated.models import (
     SupersedeRequest,
     SupersedeRequestKind,
     VerdictRequest,
-    WithdrawRequest,
-    WithdrawResult,
     VerdictRequestVerdict,
     VerdictResult,
+    WithdrawRequest,
+    WithdrawResult,
     WorkspaceView,
 )
 from .generated.types import UNSET, Response

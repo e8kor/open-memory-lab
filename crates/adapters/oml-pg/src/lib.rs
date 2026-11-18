@@ -765,7 +765,7 @@ pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, \
 /// The own held recall statement `recall_own_held` runs, binding `$1` the
 /// tenant, `$2` the author keys (the own key set, and the mark of the
 /// server's rule set on each node inside an in-progress subtree,
-/// [`held_authors`]), `$3` the readable nodes, `$4`
+/// `held_authors`), `$3` the readable nodes, `$4`
 /// the query, `$5` the kinds and `$6` `k`; pruned to the tenant's partition
 /// as [`RECALL_FTS`] is (ADR-0034 d11).
 pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
