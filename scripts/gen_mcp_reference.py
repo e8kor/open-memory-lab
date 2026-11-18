@@ -74,11 +74,15 @@ PROMPTS = (
     "`input`. `prompts/get` of a skill answers one user message: a header line naming its workspace, version and approval, "
     "or beginning `UNREVIEWED` for a version no reviewer has approved, then the body, then a line `Input:` and the input when "
     "one is sent. A name not offered here answers `-32602`, \"no skill <name> is offered here\", whatever the reason.\n\n"
-    "`resources/list` serves the same skills as resources at `oml://workspace/<workspace>/skill/<name>`, `text/markdown`; "
-    "`resources/templates/list` serves that template; `resources/read` answers the header and body as one text content, with "
-    "the artifact id, version, approval and `unreviewed` in `_meta.oml`. A URI segment holding `%` or a reserved character is "
-    "`-32602`; any other URI not served, a skill shadowed out of reach and a document URI among them, answers `-32002`, "
-    "\"Resource not found\". Serving a prompt or a resource is a read, not a recall.\n"
+    "`resources/list` serves the documents at the key's default workspace first, newest first, 50 a page, each at "
+    "`oml://workspace/<workspace>/doc/<path>` with its title, format, size and a description naming its workspace and "
+    "approval as data to check; then the same skills as resources at `oml://workspace/<workspace>/skill/<name>`, "
+    "`text/markdown`. One `cursor` pages both lists, its prefix naming which it continues. `resources/templates/list` serves "
+    "`oml://workspace/{workspace}/doc{/path*}{?passage}` and the skill template. `resources/read` answers a document's body "
+    "byte for byte, or with `?passage=<fragment>` that passage's lines, and a skill's header and body as one text content, "
+    "with the artifact id, version, approval and `unreviewed` in `_meta.oml`. A URI segment holding `%` or a reserved "
+    "character is `-32602`; any other URI not served, a skill shadowed out of reach and a passage the document does not "
+    "hold among them, answers `-32002`, \"Resource not found\". Serving a prompt or a resource is a read, not a recall.\n"
 )
 
 
