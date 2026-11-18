@@ -787,7 +787,7 @@ async fn a_guardrail_scope_other_than_workspace_or_ancestors_is_refused() {
 }
 
 #[tokio::test]
-async fn recall_refuses_kinds_guardrail_naming_kinds_and_the_listing_serves_the_kind() {
+async fn recall_ranks_kind_guardrail_as_an_in_force_hit_and_the_catalog_lists_the_kind() {
     let router = doubles_router();
     let t = tenant(&router).await;
     let id = submit_guardrail(
@@ -803,22 +803,27 @@ async fn recall_refuses_kinds_guardrail_naming_kinds_and_the_listing_serves_the_
         "/v1/memories/recall",
         Some(&t.writer),
         None,
-        Some(&json!({"query": "tests", "kinds": ["guardrail"], "workspace": t.crew})),
+        Some(&json!({"query": "tests", "kinds": ["guardrail"], "workspace": t.crew, "include_unreviewed": true})),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["error"]["details"]["field"], "/kinds", "{body}");
-    assert!(
-        body["error"]["message"]
-            .as_str()
-            .is_some_and(|m| m.contains("GET /v1/guardrails")),
-        "{body}"
-    );
+    // An applicable guardrail is a ranked data hit, in force; the author's
+    // own held one is served under include_unreviewed (ADR-0092 d3).
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["steering"], "not_requested", "{body}");
+    let hits = body["hits"].as_array().expect("hits");
+    assert_eq!(hits.len(), 1, "{body}");
+    assert_eq!(hits[0]["memory"]["artifact_id"], id.as_str(), "{body}");
+    assert_eq!(hits[0]["memory"]["kind"], "guardrail", "{body}");
+    assert_eq!(hits[0]["memory"]["in_force"], true, "{body}");
+    // Held until a person approves it, so its author sees it marked.
+    assert_eq!(hits[0]["memory"]["unreviewed"], true, "{body}");
+    assert_eq!(hits[0]["memory"]["needs_person"], true, "{body}");
+    assert_eq!(body["search"]["matched_by_kind"]["guardrail"], 1, "{body}");
 
     let (status, page) = send(
         &router,
         "GET",
-        "/v1/memories?own=true&kind=guardrail",
+        "/v1/memories?own=true&kinds=guardrail",
         Some(&t.writer),
         None,
         None,

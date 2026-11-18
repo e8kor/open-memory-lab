@@ -447,10 +447,10 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
     }
     let [quote, alloy, steering]: [String; 3] = held.try_into().expect("three receipts");
 
-    // 4. The own-work listing, oml_read with no mode argument, shows all
-    // three held, each a claim item with its text and count (d6, d13;
-    // ADR-0039 d4).
-    let work = agent.ok("oml_read", json!({})).await;
+    // 4. The own-work listing, oml_read with own true, shows all three
+    // held, each a claim item with its text and count (d6, d13; ADR-0039
+    // d4; ADR-0092 d6).
+    let work = agent.ok("oml_read", json!({"own": true})).await;
     assert_eq!(work["mode"], "listing", "{work}");
     let items = work["items"].as_array().expect("items");
     assert_eq!(set(items.iter().map(id)), set([&quote, &alloy, &steering]));
@@ -698,13 +698,13 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
 
     // The agent learns that every write it made was approved from its own
     // listing's state filter, with no events cursor (ADR-0039 d2).
-    let approved = agent.ok("oml_read", json!({"state": "promoted"})).await;
+    let approved = agent.ok("oml_read", json!({"own": true, "state": "promoted"})).await;
     assert_eq!(
         set(ids(&approved["items"])),
         set([&quote, &alloy, &steering, &revised, &retirement]),
         "{approved}"
     );
-    let waiting = agent.ok("oml_read", json!({"state": "held"})).await;
+    let waiting = agent.ok("oml_read", json!({"own": true, "state": "held"})).await;
     assert_eq!(waiting["items"], json!([]), "{waiting}");
 
     // 11. R3 on recall and on the stream: the second key's held submission

@@ -4389,7 +4389,7 @@ async fn steering_on_an_unreadable_ancestor_is_not_served() {
 }
 
 #[tokio::test]
-async fn kinds_filters_hits_only() {
+async fn kinds_narrows_the_hits_and_decides_whether_the_steering_list_is_served() {
     let Some((rig, admin, crew, _quotes, writer, reviewer)) = steering_rig().await else {
         return;
     };
@@ -4415,9 +4415,10 @@ async fn kinds_filters_hits_only() {
     ))
     .await;
 
-    for (kinds, hits) in [
-        (json!(["derived_fact"]), vec![derived.clone()]),
-        (json!(["memory"]), vec![memory.clone()]),
+    // (kinds, steering served, hits) under ADR-0092 d1, d2.
+    for (kinds, steered, hits) in [
+        (json!(["derived_fact"]), false, vec![derived.clone()]),
+        (json!(["memory", "steering"]), true, vec![memory.clone()]),
     ] {
         let (status, recall) = recall_over_http(
             router,
@@ -4427,18 +4428,39 @@ async fn kinds_filters_hits_only() {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{recall}");
-        assert_eq!(steering_ids(&recall), vec![steering.clone()], "{recall}");
+        if steered {
+            assert_eq!(steering_ids(&recall), vec![steering.clone()], "{recall}");
+        } else {
+            assert_eq!(recall["steering"], "not_requested", "{recall}");
+        }
         assert_eq!(hit_ids(&recall), hits, "{recall}");
     }
+    // Steering alone serves the list and ranks nothing.
+    let (status, recall) = recall_over_http(
+        router,
+        &reader,
+        None,
+        json!({"query": "aluminium price", "kinds": ["steering"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    assert_eq!(steering_ids(&recall), vec![steering.clone()], "{recall}");
+    assert_eq!(recall["hits"], json!([]), "{recall}");
+    assert_eq!(recall["search"]["hits"], "not_requested", "{recall}");
+    // A vocabulary kind named is served; none is written here.
+    let (status, recall) = recall_over_http(
+        router,
+        &reader,
+        None,
+        json!({"query": "aluminium price", "kinds": ["term"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    assert_eq!(recall["hits"], json!([]), "{recall}");
 
-    // An empty filter, a steering filter and a vocabulary kind are refused,
-    // never read as no filter (openapi.yaml RecallRequest.kinds).
-    for kinds in [
-        json!([]),
-        json!(["steering"]),
-        json!(["term"]),
-        json!(["bogus"]),
-    ] {
+    // An empty filter and an unknown kind are refused naming /kinds, never
+    // read as no filter (openapi.yaml RecallRequest.kinds).
+    for kinds in [json!([]), json!(["bogus"])] {
         let (status, refused) = recall_over_http(
             router,
             &reader,
@@ -4448,6 +4470,7 @@ async fn kinds_filters_hits_only() {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{kinds}: {refused}");
         assert_envelope(&refused, "request.validation");
+        assert_eq!(refused["error"]["details"]["field"], "/kinds", "{refused}");
     }
 
     drop_db(&rig.db_name).await;
