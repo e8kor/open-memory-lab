@@ -291,6 +291,17 @@ pub struct WorkspaceView {
     pub name: String,
     pub path: String,
     pub status: String,
+    /// `in_progress` where a person put the node in progress, else
+    /// `standard` (ADR-0030 d1); `None` from an API that does not serve it.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Whether the node is a person's root (ADR-0044 d1).
+    #[serde(default)]
+    pub user_root: bool,
+    /// The verbs the calling key may use here; the builder offers New where
+    /// they hold `remember` (ADR-0082 d2, d11).
+    #[serde(default)]
+    pub my_effective_verbs: Vec<String>,
     #[serde(default)]
     pub pending_transitions: Vec<Transition>,
     /// The review policy in force (ADR-0009 d3); `None` from an API that
@@ -455,6 +466,18 @@ pub struct Memory {
     /// (ADR-0082 d6).
     #[serde(default)]
     pub skill: Option<SkillFields>,
+    /// A guardrail's severity, `never`, `must` or `should`, on kind
+    /// `guardrail` alone, except a retirement (ADR-0037 d2).
+    #[serde(default)]
+    pub severity: Option<String>,
+    /// A guardrail's `oml-gr/1` rule, or `None` where it has none (ADR-0037
+    /// d8).
+    #[serde(default)]
+    pub rule: Option<Value>,
+    /// A document's title, on kind `document` alone, except a retirement
+    /// (ADR-0081 d1).
+    #[serde(default)]
+    pub document: Option<DocumentFields>,
     /// Who wrote it, by kind: `agent`, `human`, `connector` or
     /// `simulation`.
     #[serde(default)]
@@ -624,6 +647,14 @@ pub struct SkillFields {
     pub description: String,
 }
 
+/// A document's own fields, as a version carries them (openapi.yaml
+/// `DocumentFields`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DocumentFields {
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
 /// A same-named skill along a previewed skill's chain (ADR-0080 d5).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SkillShadow {
@@ -652,11 +683,48 @@ pub struct Draft<'a> {
     pub skill: Option<(&'a str, &'a str)>,
     /// A document's title.
     pub document_title: Option<&'a str>,
+    /// A document's claim key, sent on a new item alone (ADR-0081 d2).
+    pub claim_key: Option<&'a str>,
     pub severity: Option<&'a str>,
     pub rule: Option<&'a Value>,
     /// The version replaced and the version the form rendered.
     pub replaces: Option<(&'a str, u32)>,
     pub retirement: bool,
+}
+
+impl Draft<'_> {
+    /// The body submit, supersede and preview share: the kind and its
+    /// fields, and for a supersession the version the form rendered and
+    /// whether it retires; `replaces` itself is preview's alone.
+    fn body(&self) -> Value {
+        let mut body = serde_json::json!({ "kind": self.kind, "body": self.body });
+        if let Some(workspace) = self.workspace {
+            body["workspace"] = Value::from(workspace);
+        }
+        if let Some(format) = self.format {
+            body["format"] = Value::from(format);
+        }
+        if let Some((name, description)) = self.skill {
+            body["skill"] = serde_json::json!({ "name": name, "description": description });
+        }
+        if let Some(title) = self.document_title {
+            body["document"] = serde_json::json!({ "title": title });
+        }
+        if let Some(claim_key) = self.claim_key {
+            body["claim_key"] = Value::from(claim_key);
+        }
+        if let Some(severity) = self.severity {
+            body["severity"] = Value::from(severity);
+        }
+        if let Some(rule) = self.rule {
+            body["rule"] = rule.clone();
+        }
+        if let Some((_, expected_version)) = self.replaces {
+            body["expected_version"] = Value::from(expected_version);
+            body["retirement"] = Value::from(self.retirement);
+        }
+        body
+    }
 }
 
 /// `GET /v1/memories`: one page of memories.
@@ -2220,29 +2288,9 @@ impl<T: Transport> Client<T> {
         call: &Call<'_>,
         draft: &Draft<'_>,
     ) -> Result<MemoryPreview, Error> {
-        let mut body = serde_json::json!({ "kind": draft.kind, "body": draft.body });
-        if let Some(workspace) = draft.workspace {
-            body["workspace"] = Value::from(workspace);
-        }
-        if let Some(format) = draft.format {
-            body["format"] = Value::from(format);
-        }
-        if let Some((name, description)) = draft.skill {
-            body["skill"] = serde_json::json!({ "name": name, "description": description });
-        }
-        if let Some(title) = draft.document_title {
-            body["document"] = serde_json::json!({ "title": title });
-        }
-        if let Some(severity) = draft.severity {
-            body["severity"] = Value::from(severity);
-        }
-        if let Some(rule) = draft.rule {
-            body["rule"] = rule.clone();
-        }
-        if let Some((artifact_id, expected_version)) = draft.replaces {
+        let mut body = draft.body();
+        if let Some((artifact_id, _)) = draft.replaces {
             body["replaces"] = Value::from(artifact_id);
-            body["expected_version"] = Value::from(expected_version);
-            body["retirement"] = Value::from(draft.retirement);
         }
         self.send(
             Method::POST,
@@ -2250,6 +2298,55 @@ impl<T: Transport> Client<T> {
             "/v1/memories/preview".to_owned(),
             None,
             Some(&body),
+        )
+        .await
+    }
+
+    /// `POST /v1/memories` with a draft's kind and fields: a new skill,
+    /// guardrail or document, held until reviewed (ADR-0082 d2, d4).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn submit(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        draft: &Draft<'_>,
+    ) -> Result<Accepted, Error> {
+        self.post(
+            call,
+            "/v1/memories".to_owned(),
+            idempotency_key,
+            &draft.body(),
+        )
+        .await
+    }
+
+    /// `POST /v1/memories/{artifact_id}/supersede` with a draft's fields,
+    /// re-sent on every version: the edit or the retirement of the version
+    /// `replaces` names, at the version the form rendered, held until
+    /// reviewed (ADR-0082 d2, d3, d4; ADR-0037 d10).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer; a draft that names no
+    /// version it replaces is refused before any call.
+    pub async fn supersede_draft(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        draft: &Draft<'_>,
+    ) -> Result<Accepted, Error> {
+        let Some((artifact_id, _)) = draft.replaces else {
+            return Err(Error::Decode {
+                status: 0,
+                why: "a supersession names the version it replaces".to_owned(),
+            });
+        };
+        self.post(
+            call,
+            format!("/v1/memories/{}/supersede", encode(artifact_id)),
+            idempotency_key,
+            &draft.body(),
         )
         .await
     }
