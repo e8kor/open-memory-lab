@@ -2559,7 +2559,7 @@ fn document_doctor(client: &Client) -> Vec<String> {
         return lines;
     };
     let Ok((_, page)) = client.get(&format!(
-        "/v1/memories?kind=document&anchor_repo={}&limit=100",
+        "/v1/memories?kinds=document&anchor_repo={}&limit=100",
         encode(&repo)
     )) else {
         return lines;

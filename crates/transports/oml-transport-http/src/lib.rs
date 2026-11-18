@@ -776,7 +776,7 @@ where
     ) -> Result<oml_app::types::MemoryPage, ApiError> {
         let acting = acting(headers, connection)?;
         let mut params = params.to_vec();
-        params.push(("kind".to_owned(), "document".to_owned()));
+        params.push(("kinds".to_owned(), "document".to_owned()));
         let req = list_request(&params)?;
         st.app
             .list_memories(acting.bearer(), &req)
