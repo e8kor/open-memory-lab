@@ -409,6 +409,12 @@ pub struct MemStore {
     /// nothing, then settles normally: a failure between an act and its
     /// record (#233).
     fail_next_settle: Arc<AtomicBool>,
+    /// Every `instruction_rows` read fails as a lost connection would,
+    /// until disarmed: an outage of the skill and guardrail reads.
+    fail_instruction_rows: Arc<AtomicBool>,
+    /// The next `memory` read finds a held row promoted, as a verdict that
+    /// lands between two reads of one request would leave it.
+    promote_on_next_memory_read: Arc<AtomicBool>,
     /// The next commit parks once it has applied, until the park opens:
     /// an act whose commit landed and whose request is still in flight.
     park_after_commit: Arc<Mutex<Option<CommitPark>>>,
@@ -701,6 +707,21 @@ impl MemStore {
     /// (#233).
     pub fn fail_next_idempotency_settle(&self) {
         self.fail_next_settle.store(true, Ordering::SeqCst);
+    }
+
+    /// Promotes the row the next `memory` read names, when it is held,
+    /// before answering: a verdict that lands between two reads of one
+    /// request.
+    pub fn promote_on_next_memory_read(&self) {
+        self.promote_on_next_memory_read
+            .store(true, Ordering::SeqCst);
+    }
+
+    /// Fails every `instruction_rows` read with a backend error while
+    /// `failing` is true: a store outage behind the skill and guardrail
+    /// reads.
+    pub fn fail_instruction_rows(&self, failing: bool) {
+        self.fail_instruction_rows.store(failing, Ordering::SeqCst);
     }
 
     /// Parks the next commit once it has applied, until the returned park
@@ -3956,7 +3977,16 @@ impl JournalStore for MemStore {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
         };
-        let state = tenant.lock().expect("tenant lock");
+        let mut state = tenant.lock().expect("tenant lock");
+        if self
+            .promote_on_next_memory_read
+            .swap(false, Ordering::SeqCst)
+            && let Some(m) = state.memories.get_mut(&memory_id)
+            && m.status == MemoryStatus::Held
+        {
+            m.status = MemoryStatus::Promoted;
+            m.is_tip = true;
+        }
         Ok(state.memories.get(&memory_id).cloned())
     }
 
@@ -4236,13 +4266,20 @@ impl JournalStore for MemStore {
             .collect())
     }
 
-    async fn guardrail_rows(
+    async fn instruction_rows(
         &self,
         tenant_id: Uuid,
+        kind: MemoryKind,
         nodes: &[Uuid],
         author_key_id: Uuid,
         held_nodes: &[Uuid],
+        bodies: bool,
     ) -> Result<Vec<MemoryRecord>, StoreError> {
+        if self.fail_instruction_rows.load(Ordering::SeqCst) {
+            return Err(StoreError::Backend(
+                "the connection was lost before the instruction rows were read".to_owned(),
+            ));
+        }
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Vec::new());
         };
@@ -4250,14 +4287,22 @@ impl JournalStore for MemStore {
         Ok(state
             .memories
             .values()
-            .filter(|m| m.kind == MemoryKind::Guardrail && nodes.contains(&m.workspace_id))
+            .filter(|m| m.kind == kind && nodes.contains(&m.workspace_id))
             .filter(|m| {
                 served_tip(m)
                     || (m.status == MemoryStatus::Held
                         && (m.author_key_id == author_key_id
                             || held_nodes.contains(&m.workspace_id)))
             })
-            .cloned()
+            .map(|m| {
+                let mut m = m.clone();
+                if !bodies {
+                    m.body = String::new();
+                    // The search text carries a titled version's body.
+                    m.format.search_text = None;
+                }
+                m
+            })
             .collect())
     }
 

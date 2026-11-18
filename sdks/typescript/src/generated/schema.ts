@@ -148,6 +148,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The skills offered at the scope node, 50 a page, without bodies.
+         * @description Requires: reader on the scope node. Offers the promoted skill tips on the node and, under guardrail_scope ancestors, on each ancestor the key reads and, inside a workspace a person put in progress, on each node below the scope node in that subtree; never a skill in a child workspace outside one. Inside an in-progress subtree every author's held skill is offered too, and under include_own_held the key's own: marked unreviewed, never a held retirement or a version the scan held. A name held in two workspaces goes to the one nearer the scope node by tree distance, an ancestor winning a tie and then the smaller path; the nearer names the farther in overrides. Ordered by depth, then name; any parameter other than workspace, include_own_held and cursor is request.validation naming it. Serving the set is a read, not a recall (docs/api/http-api.md, Skills; ADR-0080 d4, d5, d10, d11, d12, d14, d16; since v0.8.0).
+         */
+        get: operations["getSkills"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/account/usage": {
         parameters: {
             query?: never;
@@ -3165,6 +3185,44 @@ export interface components {
                 version: number;
             }[];
         };
+        /** @description One page of the skills offered at the scope node, without bodies (ADR-0080 d11). */
+        SkillSet: {
+            scope_node: string;
+            /** @description The scope node's derived path, root first. */
+            scope_path: string;
+            guardrail_scope: components["schemas"]["GuardrailScope"];
+            /** @description Opaque, over the whole offered set, every page alike; a client only compares it. */
+            set_digest: string;
+            /** @description Ordered by depth from the scope node, then name. */
+            skills: components["schemas"]["ServedSkill"][];
+            /** @description Null on the last page. */
+            next_cursor: string | null;
+        };
+        ServedSkill: {
+            /** @description GET /v1/memories/{artifact_id} serves the body. */
+            artifact_id: string;
+            /** @description skill/<name>. */
+            claim_key: string;
+            /** @description The command: the skill's name, or <name>-unreviewed for a held edit of an approved skill (ADR-0080 d10). */
+            name: string;
+            description: string;
+            version: number;
+            workspace_path: string;
+            /** @description The tree distance from the scope node, up or down: 0 on the scope node. */
+            depth: number;
+            /** @description The farther workspaces' paths whose skill of this name it shadows, nearest first. */
+            overrides: string[];
+            /**
+             * Format: date-time
+             * @description Null for a held version (ADR-0077 d5).
+             */
+            approved_at: string | null;
+            approver: components["schemas"]["Approver"] | null;
+            /** @description The skill's MCP resource, oml://workspace/<workspace>/skill/<name> (ADR-0080 d7). */
+            uri: string;
+            /** @description A held version, offered to its author key or inside an in-progress workspace (ADR-0080 d10, d14). */
+            unreviewed: boolean;
+        };
         ServedGuardrail: {
             artifact_id: string;
             claim_key: string;
@@ -4344,6 +4402,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GuardrailSet"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getSkills: {
+        parameters: {
+            query?: {
+                /** @description The scope node, by id or name, within the key's grants; omitted, the key's default workspace. */
+                workspace?: string;
+                /** @description Offer the calling key's own held skills too, each unreviewed, a held edit of an approved skill as <name>-unreviewed (ADR-0080 d10, d14). The MCP prompts and resources and the plugin's session-start hook send true. */
+                include_own_held?: boolean;
+                /** @description A next_cursor this key was served; the next page follows its position. */
+                cursor?: string;
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the offered set and the digest of the whole set. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillSet"];
                 };
             };
             401: components["responses"]["Unauthorized"];

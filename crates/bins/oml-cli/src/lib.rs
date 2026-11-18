@@ -22,5 +22,6 @@ pub mod lake;
 pub mod owner_only;
 pub mod quickstart;
 pub mod setup;
+pub mod skills;
 pub mod sync;
 pub mod verify;

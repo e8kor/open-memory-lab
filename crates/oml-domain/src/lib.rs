@@ -61,6 +61,7 @@ pub mod oauth;
 pub mod origin;
 pub mod signup;
 pub mod similar;
+pub mod skills;
 pub mod upload;
 pub mod usage;
 pub mod valid_time;

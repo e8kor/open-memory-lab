@@ -1890,3 +1890,286 @@ async fn every_held_kind_inside_is_listed_to_the_in_progress_audience() {
     assert_eq!(got.memory.status, MemoryStatus::Held);
     assert!(w.listed(&w.bob, w.side).await.is_empty());
 }
+
+/// A `tip` key scoped at an ancestor of an in-progress root is offered the
+/// held skill below it, marked unreviewed, nearest first; a sibling of the
+/// root is offered nothing of it, and a key whose guardrail scope is
+/// `workspace` keeps its own node alone (ADR-0080 d4, d10, d16).
+#[tokio::test]
+async fn a_tip_key_at_an_in_progress_ancestor_is_offered_the_held_skill_below_it() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    w.app
+        .submit_memory(
+            w.ann.value.as_str(),
+            &SubmitRequest {
+                origin: None,
+                on_similar: Default::default(),
+                valid_from: None,
+                valid_until: None,
+                anchor: None,
+                idempotency_key: "s1".to_owned(),
+                claim_key: None,
+                verb: None,
+                kind: MemoryKind::Skill,
+                body: "Drain the canary.".to_owned(),
+                workspace: Some(w.proj.into()),
+                derives_from: Vec::new(),
+                severity: None,
+                rule: None,
+                kind_fields: Some(oml_app::types::KindFields::Skill {
+                    name: "canary".to_owned(),
+                    description: "Drain the canary before promotion.".to_owned(),
+                }),
+                format: None,
+                title: None,
+            },
+        )
+        .await
+        .expect("a held skill inside the root");
+    let offered = |key: &IssuedKey, node: Uuid| {
+        let (app, key) = (&w.app, key.value.clone());
+        async move {
+            app.skills(
+                key.as_str(),
+                &oml_app::types::SkillRequest {
+                    workspace: Some(node.into()),
+                    include_own_held: false,
+                    cursor: None,
+                },
+            )
+            .await
+            .expect("the skill read")
+            .skills
+            .into_iter()
+            .map(|s| (s.name, s.unreviewed, s.depth))
+            .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(
+        offered(&w.bob, w.crew).await,
+        vec![("canary".to_owned(), true, 1)],
+        "at the root's parent, marked, one level down"
+    );
+    assert_eq!(
+        offered(&w.bob, w.proj).await,
+        vec![("canary".to_owned(), true, 0)],
+        "inside the root"
+    );
+    assert!(
+        offered(&w.bob, w.side).await.is_empty(),
+        "a sibling is offered nothing below another branch"
+    );
+    let narrow = w
+        .app
+        .issue_key(
+            w.boot.admin_key.value.as_str(),
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Reader,
+                name: fresh_key_name(),
+                principal: "nora".to_owned(),
+                used_by: Some(UsedBy::Agent),
+                default_workspace: None,
+                crew: None,
+                grants: vec![grant(w.crew, Role::Reader)],
+                connect_code: false,
+                user: None,
+                guardrail_scope: Some(oml_app::domain::guardrail::GuardrailScope::Workspace),
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("a workspace-scoped key");
+    assert!(
+        offered(&narrow, w.crew).await.is_empty(),
+        "guardrail_scope workspace keeps the node's own alone"
+    );
+}
+
+impl World {
+    /// A skill `name` written by `key` on `node`; its id.
+    async fn skill(&self, key: &IssuedKey, idem: &str, name: &str, body: &str, node: Uuid) -> Uuid {
+        self.app
+            .submit_memory(
+                key.value.as_str(),
+                &SubmitRequest {
+                    origin: None,
+                    on_similar: Default::default(),
+                    valid_from: None,
+                    valid_until: None,
+                    anchor: None,
+                    idempotency_key: idem.to_owned(),
+                    claim_key: None,
+                    verb: None,
+                    kind: MemoryKind::Skill,
+                    body: body.to_owned(),
+                    workspace: Some(node.into()),
+                    derives_from: Vec::new(),
+                    severity: None,
+                    rule: None,
+                    kind_fields: Some(oml_app::types::KindFields::Skill {
+                        name: name.to_owned(),
+                        description: format!("Runs {name}."),
+                    }),
+                    format: None,
+                    title: None,
+                },
+            )
+            .await
+            .expect("a skill")
+            .receipt
+            .memory_id
+    }
+
+    /// The commands offered to `key` at `node`, as (command, unreviewed,
+    /// depth).
+    async fn offered(
+        &self,
+        key: &IssuedKey,
+        node: Uuid,
+        include_own_held: bool,
+    ) -> Vec<(String, bool, u32)> {
+        self.app
+            .skills(
+                key.value.as_str(),
+                &oml_app::types::SkillRequest {
+                    workspace: Some(node.into()),
+                    include_own_held,
+                    cursor: None,
+                },
+            )
+            .await
+            .expect("the skill read")
+            .skills
+            .into_iter()
+            .map(|s| (s.name, s.unreviewed, s.depth))
+            .collect()
+    }
+}
+
+/// A held retirement of a promoted skill inside an in-progress root is not
+/// served: the promoted skill stays offered, alone, until a reviewer
+/// approves the retirement (ADR-0080 d10).
+#[tokio::test]
+async fn a_held_skill_retirement_is_not_served_and_the_promoted_skill_stays_offered() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let tip = w
+        .skill(&w.ann, "s1", "canary", "Drain the canary.", w.proj)
+        .await;
+    w.app
+        .post_verdict(w.person.value.as_str(), tip, Verdict::Approve, None)
+        .await
+        .expect("a person approves");
+    w.app
+        .supersede(
+            w.ann.value.as_str(),
+            &SupersedeRequest {
+                origin: None,
+                on_similar: Default::default(),
+                valid_from: None,
+                valid_until: None,
+                anchor: None,
+                expected_version: 1,
+                idempotency_key: "s1-retire".to_owned(),
+                target_id: tip,
+                body: "the canary pool is gone".to_owned(),
+                kind: None,
+                retirement: true,
+                derives_from: Vec::new(),
+                reason: None,
+                workspace: None,
+                refuse_vocabulary_target: false,
+                severity: None,
+                rule: None,
+                kind_fields: None,
+                format: None,
+                title: None,
+            },
+        )
+        .await
+        .expect("a held retirement");
+    for key in [&w.ann, &w.bob] {
+        assert_eq!(
+            w.offered(key, w.proj, true).await,
+            vec![("canary".to_owned(), false, 0)],
+            "the approved skill alone"
+        );
+    }
+}
+
+/// A skill the scan held for a finding, or one not scanned under the
+/// current scanner, is never offered, inside an in-progress root or to its
+/// own author (ADR-0080 d10; ADR-0030 d3; ADR-0074 d20).
+#[tokio::test]
+async fn a_skill_held_by_the_scan_or_not_yet_scanned_is_never_offered() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    w.skill(
+        &w.ann,
+        "s1",
+        "flagged",
+        "Drain the canary [needs-person].",
+        w.proj,
+    )
+    .await;
+    let stale = w
+        .skill(&w.ann, "s2", "stale", "Drain the blue pool.", w.proj)
+        .await;
+    assert_eq!(
+        w.offered(&w.bob, w.proj, false).await,
+        vec![("stale".to_owned(), true, 0)],
+        "the scan-held one is not offered; the clean one is"
+    );
+    // A recorded scan under another scanner leaves the version unscanned
+    // by the current one.
+    seal_onto(
+        &w,
+        event_types::SCAN_FINDINGS_RECORDED,
+        json!({ "scanned_under": "scanner-0", "versions": [
+            { "artifact_id": stale.to_string(), "findings": [] },
+        ] }),
+        MetadataFold::FindingsRecorded {
+            scanned_under: Some("scanner-0".to_owned()),
+            versions: vec![oml_app::ports::RecordedVersion {
+                memory_id: stale,
+                summary: None,
+                findings: Vec::new(),
+            }],
+        },
+    )
+    .await;
+    for key in [&w.ann, &w.bob] {
+        assert!(
+            w.offered(key, w.proj, true).await.is_empty(),
+            "neither is offered"
+        );
+    }
+}
+
+/// Down-reach crosses an intermediate workspace that is not in progress:
+/// a key at `crew` is offered the held skill of an in-progress root two
+/// levels down, at depth 2, marked, and nothing of the intermediate's own
+/// held rows (ADR-0080 d4, d16; R1).
+#[tokio::test]
+async fn down_reach_crosses_an_intermediate_workspace_that_is_not_in_progress() {
+    let w = world().await;
+    let admin = w.boot.admin_key.value.clone();
+    let mid = workspace(&w.app, &admin, "mid", w.crew).await;
+    let root = workspace(&w.app, &admin, "deep", mid).await;
+    w.mark(root).await;
+    w.skill(&w.ann, "s1", "deep", "Drain the deep pool.", root)
+        .await;
+    w.skill(&w.ann, "s2", "middle", "Not in progress.", mid)
+        .await;
+    assert_eq!(
+        w.offered(&w.bob, w.crew, false).await,
+        vec![("deep".to_owned(), true, 2)]
+    );
+    assert_eq!(
+        w.offered(&w.bob, mid, false).await,
+        vec![("deep".to_owned(), true, 1)]
+    );
+}

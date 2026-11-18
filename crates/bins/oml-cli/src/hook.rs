@@ -45,6 +45,24 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
 pub const DEADLINE: Duration = Duration::from_secs(8);
 /// The own-work items listed and the recall's `k` (d2).
 const COUNT: usize = 10;
+/// Claude Code's cap on a hook's `additionalContext`, in characters: past
+/// it the text is saved to a file and only a preview enters the session.
+/// Claude Code is JavaScript, whose string length counts UTF-16 units, so
+/// the cap is counted in those (`units`). The skills index is fitted
+/// under it, after everything else (ADR-0080 d8).
+pub const CONTEXT_CAP: usize = 10_000;
+
+/// `text`'s length as a JavaScript string counts it: UTF-16 units, two for
+/// a character outside the Basic Multilingual Plane.
+fn units(text: &str) -> usize {
+    text.encode_utf16().count()
+}
+/// The characters a skill's description takes in the index at most, the
+/// last one `…` when cut (ADR-0080 d8).
+pub const SKILL_DESCRIPTION_CAP: usize = 160;
+/// The characters kept free for the index's closing "and at least N more"
+/// line when lines are left out.
+const MORE_LINE_RESERVE: usize = 32;
 /// What every occurrence of the key value is printed as (d4).
 const REDACTED: &str = "[OML_API_KEY]";
 /// The characters a claim key or the workspace path is printed in at most,
@@ -66,6 +84,17 @@ pub(crate) const LINE_CAP: usize = 200;
 pub fn session_start(
     var: &dyn Fn(&str) -> Option<String>,
     stdin: &mut dyn Read,
+) -> Result<String, Option<String>> {
+    let started = std::time::Instant::now();
+    session_start_timed(var, stdin, &|| started.elapsed())
+}
+
+/// [`session_start`] with the hook's elapsed time read from `elapsed`, so
+/// the skills read's deadline guard is proven without waiting.
+fn session_start_timed(
+    var: &dyn Fn(&str) -> Option<String>,
+    stdin: &mut dyn Read,
+    elapsed: &dyn Fn() -> Duration,
 ) -> Result<String, Option<String>> {
     let set = |name: &str| var(name).filter(|v| !v.is_empty());
     let switch = set("OML_SESSION_CONTEXT");
@@ -148,10 +177,24 @@ pub fn session_start(
     // needs; a failure here costs the brief alone, never the context
     // (ADR-0046 d9).
     let brief = default_brief(&client);
+    // The offered skills' index, read last; a failure here costs the index
+    // alone, never the context (ADR-0080 d8; ADR-0029 d5). It is not read
+    // once a full request timeout would pass the hook's deadline, so the
+    // context already read is never lost to it.
+    let skills = if skills_read_in_time(elapsed()) {
+        offered_skills(
+            client
+                .get("/v1/skills?include_own_held=true")
+                .map(|(_, v)| v),
+        )
+    } else {
+        None
+    };
 
     let context = render(&Rendered {
         server: client.server(),
         brief: &brief,
+        skills: skills.as_ref(),
         own,
         steering,
         hits,
@@ -190,6 +233,24 @@ fn default_brief(client: &Client) -> Vec<Value> {
         .ok()
         .and_then(|(_, node)| node["brief"]["items"].as_array().cloned())
         .unwrap_or_default()
+}
+
+/// The most skill lines the session-start index prints before "and N more"
+/// (ADR-0080 d8, d13).
+pub const SKILL_INDEX_LINES: usize = 20;
+
+/// Whether the skills read still fits before the deadline: one request
+/// timeout after `elapsed` is within [`DEADLINE`] (ADR-0080 d8; ADR-0029
+/// d5).
+fn skills_read_in_time(elapsed: Duration) -> bool {
+    elapsed <= DEADLINE.saturating_sub(REQUEST_TIMEOUT)
+}
+
+/// `GET /v1/skills`'s answer when it is the read's shape, else `None`: the
+/// index is left out and the rest of the context is printed (ADR-0080 d8;
+/// ADR-0029 d5).
+fn offered_skills(answer: Result<Value, CliError>) -> Option<Value> {
+    answer.ok().filter(|set| set["skills"].is_array())
 }
 
 /// The server and the agent's key the hook sends to it, from one source.
@@ -332,6 +393,9 @@ struct Rendered<'a> {
     /// The default workspace's brief, empty when it has none or it could not
     /// be read (ADR-0046 d9).
     brief: &'a [Value],
+    /// `GET /v1/skills`'s first page, `None` when it could not be read
+    /// (ADR-0080 d8).
+    skills: Option<&'a Value>,
     own: &'a [Value],
     steering: &'a [Value],
     hits: &'a [Value],
@@ -477,7 +541,72 @@ fn render(r: &Rendered<'_>) -> String {
             r.budget["hits_omitted"], r.budget["max_tokens"]
         ));
     }
+    if let Some(set) = r.skills {
+        // The index is fitted into what the rest left under the cap.
+        let used = out.iter().map(|l| units(l) + 1).sum::<usize>();
+        skill_index(r, set, CONTEXT_CAP.saturating_sub(used), &mut out);
+    }
     out.join("\n")
+}
+
+/// The offered skills' index after the recall (ADR-0080 d8, d10): one line
+/// per skill in the read's order, names and descriptions only and never a
+/// body, at most [`SKILL_INDEX_LINES`], then "and N more" with no partial
+/// line. A description is cut to [`SKILL_DESCRIPTION_CAP`] characters and a
+/// URI is never cut. A held skill's line begins `[unreviewed]` and ends
+/// "(unreviewed)". The lines fit in `room` UTF-16 units, the closing line
+/// included, so the whole context stays under [`CONTEXT_CAP`]; a line that
+/// does not fit is counted in N. N counts the first page past the lines
+/// printed; a further page makes it "at least N more", since the hook makes
+/// one request. No section when nothing is offered or no line fits.
+fn skill_index(r: &Rendered<'_>, set: &Value, room: usize, out: &mut Vec<String>) {
+    let skills = set["skills"].as_array().map_or(&[][..], Vec::as_slice);
+    if skills.is_empty() {
+        return;
+    }
+    let printed = |text: &str| crate::skills::printable(&one_line(&(r.redact)(text)));
+    let header = format!(
+        "OML skills at {}:",
+        r.name(set["scope_path"].as_str().unwrap_or("?"))
+    );
+    // The blank line and the header, each with its newline.
+    let mut used = 1 + units(&header) + 1 + MORE_LINE_RESERVE;
+    let mut lines = Vec::new();
+    for s in skills.iter().take(SKILL_INDEX_LINES) {
+        let name = r.name(&printed(s["name"].as_str().unwrap_or("?")));
+        let held = s["unreviewed"] == true;
+        let (lead, trail) = if held {
+            ("[unreviewed] ", " (unreviewed)")
+        } else {
+            ("", "")
+        };
+        let line = format!(
+            "- {lead}{name}: {} (read {}, or run /oml:{name}){trail}",
+            cut(
+                printed(s["description"].as_str().unwrap_or("")),
+                SKILL_DESCRIPTION_CAP
+            ),
+            printed(s["uri"].as_str().unwrap_or("?")),
+        );
+        let length = units(&line) + 1;
+        if used + length > room {
+            break;
+        }
+        used += length;
+        lines.push(line);
+    }
+    if lines.is_empty() {
+        return;
+    }
+    let more = skills.len().saturating_sub(lines.len());
+    out.push(String::new());
+    out.push(header);
+    out.extend(lines);
+    if set["next_cursor"].is_string() {
+        out.push(format!("and at least {} more", more + 1));
+    } else if more > 0 {
+        out.push(format!("and {more} more"));
+    }
 }
 
 fn push_or_none(out: &mut Vec<String>, lines: Vec<String>, none: &str) {
@@ -1696,6 +1825,7 @@ mod tests {
         let context = render(&Rendered {
             server: "https://oml.example",
             brief: &[],
+            skills: None,
             own: &[],
             steering: std::slice::from_ref(&item),
             hits: &[json!({ "memory": item })],
@@ -1714,6 +1844,318 @@ mod tests {
         );
     }
 
+    fn skill_set(count: usize, held_last: bool) -> Value {
+        let skills: Vec<Value> = (0..count)
+            .map(|i| {
+                json!({
+                    "name": format!("skill-{i:02}"),
+                    "description": format!("Does task {i}."),
+                    "uri": format!("oml://workspace/metals/skill/skill-{i:02}"),
+                    "unreviewed": held_last && i + 1 == count,
+                })
+            })
+            .collect();
+        json!({ "scope_path": "acme.metals", "skills": skills, "next_cursor": null })
+    }
+
+    fn context_with_skills(set: Option<&Value>) -> String {
+        let redact = |text: &str| text.to_owned();
+        render(&Rendered {
+            server: "https://oml.example",
+            brief: &[],
+            skills: set,
+            own: &[],
+            steering: &[],
+            hits: &[],
+            budget: &Value::Null,
+            query: "metals",
+            compacted: false,
+            redact: &redact,
+        })
+    }
+
+    /// The index prints at most twenty skill lines, names and descriptions
+    /// only, then "and N more" with no partial line (ADR-0080 d8).
+    #[test]
+    fn session_start_lists_at_most_twenty_skills_then_and_n_more() {
+        let set = skill_set(25, false);
+        let context = context_with_skills(Some(&set));
+        let at = context
+            .find("OML skills at acme.metals:")
+            .expect("the index section");
+        let lines: Vec<&str> = context[at..].lines().skip(1).collect();
+        assert_eq!(lines.len(), 21, "{context}");
+        assert_eq!(
+            lines[0],
+            "- skill-00: Does task 0. (read oml://workspace/metals/skill/skill-00, or run /oml:skill-00)"
+        );
+        assert!(lines[19].starts_with("- skill-19: "), "{context}");
+        assert_eq!(lines[20], "and 5 more");
+    }
+
+    /// A held skill's index line ends "(unreviewed)", and a second page
+    /// the hook did not read makes the count a lower bound (ADR-0080 d8,
+    /// d10).
+    #[test]
+    fn a_held_skill_index_line_ends_unreviewed_and_a_second_page_is_at_least() {
+        let set = skill_set(3, true);
+        let context = context_with_skills(Some(&set));
+        assert!(context.contains("/oml:skill-02) (unreviewed)"), "{context}");
+        let mut paged = skill_set(50, false);
+        paged["next_cursor"] = json!("c1");
+        let context = context_with_skills(Some(&paged));
+        assert!(context.ends_with("and at least 31 more"), "{context}");
+    }
+
+    /// Twenty offered skills with 1,024-character descriptions after a
+    /// recall at the default budget keep the whole context under Claude
+    /// Code's cap: each description is cut to 160 characters, the lines
+    /// that do not fit are counted in "and N more", and every held line
+    /// printed begins `[unreviewed]` and ends "(unreviewed)" (ADR-0080 d8,
+    /// d10).
+    #[test]
+    fn twenty_long_skills_after_a_recall_stay_under_the_context_cap_and_keep_every_held_mark() {
+        let skills: Vec<Value> = (0..20)
+            .map(|i| {
+                json!({
+                    "name": format!("skill-{i:02}"),
+                    "description": "d".repeat(1024),
+                    "uri": format!("oml://workspace/metals/skill/skill-{i:02}"),
+                    "unreviewed": i % 2 == 1,
+                })
+            })
+            .collect();
+        let set = json!({ "scope_path": "acme.metals", "skills": skills, "next_cursor": null });
+        let own: Vec<Value> = (0..10)
+            .map(|i| {
+                json!({ "claim_key": format!("own-{i}"), "state": "held", "version": 1,
+                "workspace_path": "acme.metals" })
+            })
+            .collect();
+        let steering = [json!({ "claim_key": "pool", "state": "promoted",
+            "text": "Prefer the canary pool before every release." })];
+        let redact = |text: &str| text.to_owned();
+        // The default budget, 800 budget tokens or 3,200 bytes of hit
+        // bodies, and the largest, 2000 or 8,000 bytes.
+        for (budget, body) in [(800, 320), (2000, 800)] {
+            let hits: Vec<Value> = (0..10)
+                .map(|i| {
+                    json!({ "memory": { "claim_key": format!("fact-{i}"),
+                    "state": "promoted", "text": "w".repeat(body) } })
+                })
+                .collect();
+            let context = render(&Rendered {
+                server: "https://oml.example",
+                brief: &[],
+                skills: Some(&set),
+                own: &own,
+                steering: &steering,
+                hits: &hits,
+                budget: &json!({ "truncated": false, "max_tokens": budget }),
+                query: "metals",
+                compacted: false,
+                redact: &redact,
+            });
+            let length = context.chars().count();
+            assert!(length <= CONTEXT_CAP, "{budget}: {length} characters");
+            let Some(at) = context.find("OML skills at acme.metals:") else {
+                assert!(budget > 800, "the default budget leaves room for the index");
+                continue;
+            };
+            let lines: Vec<&str> = context[at..].lines().skip(1).collect();
+            let printed: Vec<&str> = lines
+                .iter()
+                .copied()
+                .filter(|l| l.starts_with("- "))
+                .collect();
+            assert!(!printed.is_empty(), "{budget}: {lines:?}");
+            if printed.len() < 20 {
+                assert_eq!(
+                    lines.last().copied(),
+                    Some(format!("and {} more", 20 - printed.len()).as_str()),
+                    "{budget}"
+                );
+            }
+            for line in &printed {
+                let description = line
+                    .split_once(": ")
+                    .and_then(|(_, rest)| rest.split_once(" (read "))
+                    .map(|(d, _)| d)
+                    .expect("a description");
+                assert_eq!(description.chars().count(), SKILL_DESCRIPTION_CAP, "{line}");
+                assert!(description.ends_with('…'), "{line}");
+                let n: usize = line
+                    .split("skill-")
+                    .nth(1)
+                    .and_then(|r| r.get(..2))
+                    .and_then(|d| d.parse().ok())
+                    .expect("a number");
+                let held = n % 2 == 1;
+                assert_eq!(line.starts_with("- [unreviewed] "), held, "{line}");
+                assert_eq!(line.ends_with(" (unreviewed)"), held, "{line}");
+            }
+        }
+    }
+
+    /// The cap is counted in UTF-16 units, as a JavaScript string's length
+    /// is: a recall full of characters outside the Basic Multilingual Plane,
+    /// two units each, still leaves the whole context under the cap
+    /// (ADR-0080 d8; R18).
+    #[test]
+    fn the_context_cap_counts_utf16_units_so_astral_characters_stay_under_it() {
+        let skills: Vec<Value> = (0..20)
+            .map(|i| {
+                json!({
+                    "name": format!("skill-{i:02}"),
+                    "description": "d".repeat(1024),
+                    "uri": format!("oml://workspace/metals/skill/skill-{i:02}"),
+                    "unreviewed": false,
+                })
+            })
+            .collect();
+        let set = json!({ "scope_path": "acme.metals", "skills": skills, "next_cursor": null });
+        let hits: Vec<Value> = (0..10)
+            .map(|i| {
+                json!({ "memory": { "claim_key": format!("fact-{i}"),
+                "state": "promoted", "text": "\u{1F600}".repeat(320) } })
+            })
+            .collect();
+        let redact = |text: &str| text.to_owned();
+        let context = render(&Rendered {
+            server: "https://oml.example",
+            brief: &[],
+            skills: Some(&set),
+            own: &[],
+            steering: &[],
+            hits: &hits,
+            budget: &json!({ "truncated": false, "max_tokens": 800 }),
+            query: "metals",
+            compacted: false,
+            redact: &redact,
+        });
+        let units = context.encode_utf16().count();
+        assert!(units <= CONTEXT_CAP, "{units} UTF-16 units");
+        assert!(context.contains("OML skills at acme.metals:"), "{context}");
+    }
+
+    /// A skill's URI is printed whole in the index, however long, and a
+    /// stored control character is printed escaped (ADR-0080 d1, d7, d8).
+    #[test]
+    fn a_skill_uri_is_never_cut_in_the_index_and_a_control_character_is_escaped() {
+        let workspace = "w".repeat(150);
+        let uri = format!("oml://workspace/{workspace}/skill/deploy");
+        let set = json!({ "scope_path": "acme", "skills": [{
+            "name": "deploy", "description": "Ship\u{1b}[2J it.", "uri": uri, "unreviewed": false,
+        }], "next_cursor": null });
+        let context = context_with_skills(Some(&set));
+        assert!(
+            context.contains(&format!("(read {uri}, or run /oml:deploy)")),
+            "{context}"
+        );
+        assert!(context.contains("Ship\\u{001B}[2J it."), "{context}");
+        assert!(!context.contains('\u{1b}'), "{context}");
+    }
+
+    /// The requests a stub server answering every session-start read
+    /// received, by request line, and the hook's document.
+    fn session_start_against_stub(elapsed: Duration) -> (Vec<String>, String) {
+        use std::io::{BufRead as _, BufReader, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+                let mut first = String::new();
+                let _ = reader.read_line(&mut first);
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                    if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = v.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0; length];
+                let _ = std::io::Read::read_exact(&mut reader, &mut body);
+                let first = first.trim().to_owned();
+                let answer = if first.contains("/v1/memories/recall") {
+                    json!({ "steering": [], "hits": [], "budget": {} })
+                } else if first.contains("/v1/skills") {
+                    json!({ "scope_path": "acme", "next_cursor": null, "skills": [{
+                        "name": "deploy", "description": "Ship it.", "unreviewed": false,
+                        "uri": "oml://workspace/acme/skill/deploy" }] })
+                } else {
+                    json!({ "items": [] })
+                }
+                .to_string();
+                record.lock().expect("lock").push(first);
+                let mut stream = stream;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}",
+                    answer.len()
+                );
+            }
+        });
+        let url = format!("http://{addr}");
+        let var = |name: &str| match name {
+            "OML_URL" => Some(url.clone()),
+            "OML_API_KEY" => Some("oml_test_key".to_owned()),
+            _ => None,
+        };
+        let stdin = json!({ "source": "startup", "cwd": "/work/acme" }).to_string();
+        let document =
+            session_start_timed(&var, &mut stdin.as_bytes(), &|| elapsed).expect("a document");
+        let seen = seen.lock().expect("lock").clone();
+        (seen, document)
+    }
+
+    /// The skills read is skipped once a full request timeout would pass
+    /// the hook's deadline, and the context already read is printed
+    /// without the index (ADR-0080 d8; ADR-0029 d5).
+    #[test]
+    fn the_session_start_hook_skips_the_skills_read_past_the_deadline_less_one_request() {
+        let in_time = DEADLINE.saturating_sub(REQUEST_TIMEOUT);
+        let (seen, document) = session_start_against_stub(in_time);
+        assert!(
+            seen.iter().any(|l| l.starts_with("GET /v1/skills")),
+            "{seen:?}"
+        );
+        assert!(document.contains("OML skills at acme:"), "{document}");
+        let late = in_time + Duration::from_millis(1);
+        let (seen, document) = session_start_against_stub(late);
+        assert!(
+            !seen.iter().any(|l| l.starts_with("GET /v1/skills")),
+            "{seen:?}"
+        );
+        assert!(document.contains("Steering in force:"), "{document}");
+        assert!(!document.contains("OML skills at"), "{document}");
+    }
+
+    /// A skills read that fails, or answers in another shape, leaves the
+    /// index out and the rest of the context in (ADR-0080 d8; ADR-0029 d5);
+    /// a scope that offers nothing prints no section.
+    #[test]
+    fn session_start_fails_open_when_the_skills_read_fails() {
+        let failed = offered_skills(Err(CliError::local("connection refused".to_owned())));
+        assert_eq!(failed, None);
+        let shapeless = offered_skills(Ok(json!({ "error": "not found" })));
+        assert_eq!(shapeless, None);
+        let context = context_with_skills(failed.as_ref());
+        assert!(
+            context.starts_with("OML memory for this session"),
+            "{context}"
+        );
+        assert!(context.contains("Steering in force:"), "{context}");
+        assert!(!context.contains("OML skills at"), "{context}");
+        let empty = skill_set(0, false);
+        assert!(!context_with_skills(Some(&empty)).contains("OML skills at"));
+    }
+
     /// Held steering, served marked `unreviewed`, prints after the
     /// promoted rows prefixed `[unreviewed]` (ADR-0080 d10).
     #[test]
@@ -1727,6 +2169,7 @@ mod tests {
         let context = render(&Rendered {
             server: "https://oml.example",
             brief: &[],
+            skills: None,
             own: &[],
             steering: &steering,
             hits: &[],

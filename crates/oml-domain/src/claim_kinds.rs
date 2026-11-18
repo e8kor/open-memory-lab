@@ -80,6 +80,12 @@ impl TestShape {
 /// `guardrails` nor a name ending in `-unreviewed` (ADR-0080 d1, d5, d10).
 pub fn check_skill_name(name: &str) -> Result<(), FieldRefusal> {
     const FIELD: &str = "/skill/name";
+    if name.chars().any(hidden_character) {
+        return Err(refused(
+            FIELD,
+            "a skill name holds no control, bidi override or zero-width character",
+        ));
+    }
     if Name::parse(name).is_err() {
         return Err(refused(
             FIELD,
@@ -110,17 +116,41 @@ fn one_line(text: &str, max: usize) -> bool {
     (1..=max).contains(&count) && !text.contains(['\n', '\r'])
 }
 
+/// Whether `c` hides or reorders text where a skill's name or description
+/// is printed: a C0 or C1 control, a bidi override or isolate (U+202A to
+/// U+202E, U+2066 to U+2069), or a zero-width character (U+200B to U+200D,
+/// U+2060, U+FEFF).
+#[must_use]
+pub fn hidden_character(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{202A}'..='\u{202E}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{200B}'..='\u{200D}'
+                | '\u{2060}'
+                | '\u{FEFF}'
+        )
+}
+
 /// Whether `description` may describe a skill: one line of 1 to 1024
-/// characters (ADR-0080 d1).
+/// characters, none of them a [`hidden_character`], since the description
+/// is printed in the session index and every listing (ADR-0080 d1, d8).
 pub fn check_skill_description(description: &str) -> Result<(), FieldRefusal> {
-    if one_line(description, SKILL_DESCRIPTION_MAX) {
-        Ok(())
-    } else {
-        Err(refused(
-            "/skill/description",
+    const FIELD: &str = "/skill/description";
+    if !one_line(description, SKILL_DESCRIPTION_MAX) {
+        return Err(refused(
+            FIELD,
             "a skill description is one line of 1 to 1024 characters",
-        ))
+        ));
     }
+    if description.chars().any(hidden_character) {
+        return Err(refused(
+            FIELD,
+            "a skill description holds no control, bidi override or zero-width character",
+        ));
+    }
+    Ok(())
 }
 
 /// Whether a skill body is admitted: no front matter, since the name and

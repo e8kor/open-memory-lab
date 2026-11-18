@@ -527,3 +527,59 @@ mod tests {
         );
     }
 }
+
+/// A decoded skill-set cursor: the depth and the command of the last skill
+/// a page served, the set being in that order (ADR-0080 d5, d11). Every
+/// page recomputes the set, so the position names only what the key was
+/// offered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillCursor {
+    /// The key the cursor answers.
+    pub key_id: Uuid,
+    pub after: (u32, String),
+    pub issued_at: EventTime,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SkillWire {
+    key_id: Uuid,
+    after_depth: u32,
+    after_command: String,
+    issued_at: String,
+}
+
+impl SkillCursor {
+    /// The opaque string a page's `next_cursor` carries.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        let wire = SkillWire {
+            key_id: self.key_id,
+            after_depth: self.after.0,
+            after_command: self.after.1.clone(),
+            issued_at: self.issued_at.as_str().to_owned(),
+        };
+        let json = serde_json::to_vec(&wire).expect("a cursor serializes");
+        encode_b64url(&json)
+    }
+
+    /// Decodes a cursor string; anything an encoder did not write is
+    /// [`CursorError::Malformed`].
+    pub fn decode(text: &str) -> Result<Self, CursorError> {
+        let bytes = decode_b64url(text).ok_or(CursorError::Malformed)?;
+        let wire: SkillWire = serde_json::from_slice(&bytes).map_err(|_| CursorError::Malformed)?;
+        Ok(Self {
+            key_id: wire.key_id,
+            after: (wire.after_depth, wire.after_command),
+            issued_at: EventTime::parse(&wire.issued_at).map_err(|_| CursorError::Malformed)?,
+        })
+    }
+
+    /// The position `text` resumes after for `key_id` at `now`, under the
+    /// rules of [`ListingCursor::resume`].
+    pub fn resume(text: &str, key_id: Uuid, now: &EventTime) -> Result<(u32, String), CursorError> {
+        let cursor = Self::decode(text)?;
+        answers(cursor.key_id, &cursor.issued_at, key_id, now)?;
+        Ok(cursor.after)
+    }
+}

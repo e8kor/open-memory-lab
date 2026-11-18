@@ -286,6 +286,7 @@ from .served_guardrail_effect_inside_type_3_type_1 import (
 )
 from .served_guardrail_verdicts_item import ServedGuardrailVerdictsItem
 from .served_guardrail_verdicts_item_used_by import ServedGuardrailVerdictsItemUsedBy
+from .served_skill import ServedSkill
 from .set_federation_policy_body import SetFederationPolicyBody
 from .set_federation_policy_body_default_sources import (
     SetFederationPolicyBodyDefaultSources,
@@ -301,6 +302,7 @@ from .similar_item_kind import SimilarItemKind
 from .similar_item_relation import SimilarItemRelation
 from .similar_item_state import SimilarItemState
 from .skill_fields import SkillFields
+from .skill_set import SkillSet
 from .source_check_request import SourceCheckRequest
 from .source_check_request_result import SourceCheckRequestResult
 from .source_check_result import SourceCheckResult
@@ -674,6 +676,7 @@ __all__ = (
     "ServedGuardrailEffectInsideType3Type1",
     "ServedGuardrailVerdictsItem",
     "ServedGuardrailVerdictsItemUsedBy",
+    "ServedSkill",
     "SetFederationPolicyBody",
     "SetFederationPolicyBodyDefaultSources",
     "SetSearchDefaultBody",
@@ -687,6 +690,7 @@ __all__ = (
     "SimilarItemRelation",
     "SimilarItemState",
     "SkillFields",
+    "SkillSet",
     "SourceCheckRequest",
     "SourceCheckRequestResult",
     "SourceCheckResult",

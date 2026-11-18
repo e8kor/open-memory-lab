@@ -45,10 +45,11 @@
               "steering",
               "term",
               "term_mapping",
-              "vocab_release"
+              "vocab_release",
+              "skill"
             ],
             "default": "memory",
-            "description": "The claim's kind; omitted, memory, or with replaces the target's. With replaces only memory, derived_fact and steering are accepted, within the kind-change rule (docs/architecture/audit-and-lineage.md)."
+            "description": "The claim's kind; omitted, memory, or with replaces the target's. With replaces only memory, derived_fact, steering and skill are accepted, within the kind-change rule (docs/architecture/audit-and-lineage.md). A skill is markdown instructions with a skill object; its claim key is skill/<name>, derived, and a person approves every version."
           },
           "derives_from": {
             "type": "array",
@@ -165,6 +166,27 @@
             "type": "string",
             "maxLength": 100,
             "description": "One line stating the one fact the text shows, at most 100 characters. Required with a format other than text/plain and text/markdown; optional otherwise."
+          },
+          "skill": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 52,
+                "description": "The skill's command name: a lowercase label, a letter first, letters, digits and single hyphens, never guardrails and never ending in -unreviewed. Fixed across versions."
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 1024,
+                "description": "One line of what the skill does and when to use it."
+              }
+            },
+            "required": [
+              "name",
+              "description"
+            ],
+            "additionalProperties": false,
+            "description": "With kind skill, required, also with replaces: the skill's name and description. The text is the skill's markdown instructions, at most 32,768 bytes, with no front matter. Refused on every other kind and on a retirement."
           }
         },
         "required": [

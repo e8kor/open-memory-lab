@@ -2317,6 +2317,88 @@ pub struct GuardrailSet {
     pub served_ids: Vec<Uuid>,
 }
 
+/// A read of the skills offered at one scope node (ADR-0080 d4, d11):
+/// `GET /v1/skills`, and through it the MCP prompts and resources and the
+/// session-start index.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SkillRequest {
+    pub workspace: Option<Reference>,
+    /// Offer the calling key's own held skills, marked unreviewed (ADR-0080
+    /// d14); the MCP methods and the plugin's hook send it.
+    pub include_own_held: bool,
+    /// The page to resume after, a `next_cursor` this key was served.
+    pub cursor: Option<String>,
+}
+
+/// One offered skill as the read serves it, without its body (ADR-0080
+/// d11): the command a prompt and a resource answer to, the version behind
+/// it and where it lives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServedSkill {
+    pub artifact_id: Uuid,
+    pub claim_key: String,
+    /// The command: the skill's name, or `<name>-unreviewed` for a held
+    /// edit of a promoted skill (ADR-0080 d10).
+    pub name: String,
+    /// The skill's own name, as its fields carry it.
+    pub skill_name: String,
+    pub description: String,
+    pub version: u32,
+    pub workspace_id: Uuid,
+    /// The workspace's name, which the resource URI carries (ADR-0081 d6).
+    pub workspace_name: String,
+    pub workspace_path: String,
+    /// The tree distance from the scope node, up or down: 0 on the scope
+    /// node (ADR-0080 d5).
+    pub depth: u32,
+    /// The farther workspaces whose skill of this name it shadows, nearest
+    /// first (ADR-0080 d5).
+    pub overrides: Vec<String>,
+    /// `None` on a held version (ADR-0077 d5).
+    pub approved_at: Option<EventTime>,
+    pub approver: Option<Approval>,
+    pub uri: String,
+    /// A held version, marked (ADR-0080 d10, d14).
+    pub unreviewed: bool,
+    /// The body's UTF-8 bytes, a resource's `size`.
+    pub body_bytes: u64,
+}
+
+/// One page of the skills offered at a scope node (ADR-0080 d11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillSet {
+    pub scope_node: Uuid,
+    pub scope_path: String,
+    pub guardrail_scope: GuardrailScope,
+    /// Over the whole offered set, every page alike (ADR-0080 d11).
+    pub set_digest: String,
+    pub skills: Vec<ServedSkill>,
+    pub next_cursor: Option<String>,
+    /// The artifact ids this page served: what the read log records, as
+    /// recall's does (ADR-0025 d9; ADR-0080 d6).
+    pub served_ids: Vec<Uuid>,
+}
+
+/// Which skill a prompt or a resource read names (ADR-0080 d6, d7): a
+/// command offered at the scope node, or, for a resource, a command of the
+/// named workspace's own skills the scope can offer, a shadowed one
+/// included.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillRead {
+    pub command: String,
+    /// The workspace name a resource URI carries; `None` for a prompt.
+    pub workspace_name: Option<String>,
+    pub include_own_held: bool,
+}
+
+/// An offered skill with its body, as a prompt or a resource serves it
+/// whole (ADR-0080 d6, d9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillBody {
+    pub skill: ServedSkill,
+    pub body: String,
+}
+
 /// Whose rows a listing reads: the store's own predicate, so no page
 /// reaches a row outside it (http-api.md search; ADR-0025 d13).
 #[derive(Debug, Clone, PartialEq, Eq)]

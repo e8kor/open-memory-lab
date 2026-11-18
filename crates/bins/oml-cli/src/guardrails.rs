@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use oml_guardrail::{
-    CACHE_MAX_AGE_DAYS, CacheState, CachedRule, FrameOptions, Rule, ToolCall, Verdict,
+    CACHE_MAX_AGE_DAYS, CacheState, CachedRule, Effect, FrameOptions, Rule, ToolCall, Verdict,
     cache_file_name, decide, decode_cache, encode_cache, over_cap_sentence, render_frame,
 };
 use serde_json::{Map, Value, json};
@@ -96,9 +96,36 @@ pub fn pre_tool_use(
         .and_then(Path::to_str)
         .unwrap_or_default()
         .to_owned();
+    let local_skill = local_skill_write(
+        &call,
+        skills_home(var).as_deref(),
+        var(PROJECT_DIR).as_deref(),
+    );
+    let ask = |reason: String| {
+        json!({
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "ask",
+            "permissionDecisionReason": reason,
+        })
+    };
     Ok(match decide(&state, &call, &dir_text) {
+        // The built-in skill rule needs no cache, so it asks with or
+        // without one; a guardrail's deny on the same call wins, as deny
+        // wins over ask (ADR-0080 d15; ADR-0037 d9).
+        Verdict::Nothing if local_skill => {
+            json!({ "hookSpecificOutput": ask(LOCAL_SKILL_REASON.to_owned()) }).to_string()
+        }
         Verdict::Nothing => String::new(),
+        Verdict::Warn(message) if local_skill => json!({
+            "systemMessage": message,
+            "hookSpecificOutput": ask(LOCAL_SKILL_REASON.to_owned()),
+        })
+        .to_string(),
         Verdict::Warn(message) => json!({ "systemMessage": message }).to_string(),
+        Verdict::Decide(decision) if local_skill && decision.effect != Effect::Deny => json!({
+            "hookSpecificOutput": ask(format!("{} {LOCAL_SKILL_REASON}", decision.reason())),
+        })
+        .to_string(),
         Verdict::Decide(decision) => json!({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -108,6 +135,89 @@ pub fn pre_tool_use(
         })
         .to_string(),
     })
+}
+
+/// The variable Claude Code sets to the session's project directory.
+const PROJECT_DIR: &str = "CLAUDE_PROJECT_DIR";
+
+/// The home whose `.claude/skills/` the local-skill rule matches: `HOME`,
+/// or `USERPROFILE` when `HOME` is unset or empty, as on Windows (R20).
+pub fn skills_home(var: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    let set = |name: &str| var(name).filter(|v| !v.is_empty());
+    set("HOME").or_else(|| set("USERPROFILE"))
+}
+
+/// Why a local skill file write asks (ADR-0080 d15).
+pub const LOCAL_SKILL_REASON: &str = "OML keeps skills: store this one with oml_write and kind skill (replaces to update it); allow this call to write the local file anyway.";
+
+/// Whether `call` writes a file under a project's `.claude/skills/` or
+/// `$HOME/.claude/skills/` (ADR-0080 d15): a `Write`, `Edit`, `MultiEdit`
+/// or `NotebookEdit` whose path, after `~` expansion and resolution against
+/// the session's working directory, lies there, in any letter case. The
+/// project is the session's working directory and, when Claude Code names
+/// one, its project directory. The path is normalised lexically, so `..`
+/// cannot step out of the match and no file is read (R12, R17).
+#[must_use]
+pub fn local_skill_write(call: &ToolCall<'_>, home: Option<&str>, project: Option<&str>) -> bool {
+    let field = match call.tool_name {
+        "Write" | "Edit" | "MultiEdit" => "file_path",
+        "NotebookEdit" => "notebook_path",
+        _ => return false,
+    };
+    let Some(raw) = call.tool_input.get(field).and_then(Value::as_str) else {
+        return false;
+    };
+    let home = home.filter(|h| Path::new(h).is_absolute());
+    let expanded = match (raw.strip_prefix('~'), home) {
+        (Some(""), Some(h)) => PathBuf::from(h),
+        (Some(rest), Some(h)) if rest.starts_with(['/', '\\']) => {
+            PathBuf::from(h).join(rest.trim_start_matches(['/', '\\']))
+        }
+        _ => PathBuf::from(raw),
+    };
+    let resolved = match call.cwd.filter(|_| expanded.is_relative()) {
+        Some(cwd) => Path::new(cwd).join(&expanded),
+        None => expanded,
+    };
+    if !resolved.is_absolute() {
+        return false;
+    }
+    // Compared without regard to case, as macOS's and Windows' default
+    // file systems name one directory in any case; a long s and a Kelvin
+    // sign fold to `s` and `k` there too.
+    let folded = |p: &Path| {
+        PathBuf::from(
+            p.to_string_lossy()
+                .to_lowercase()
+                .replace('\u{17F}', "s")
+                .replace('\u{212A}', "k"),
+        )
+    };
+    let path = folded(&normalise(&resolved));
+    [call.cwd, project, home]
+        .into_iter()
+        .flatten()
+        .filter(|base| Path::new(base).is_absolute())
+        .any(|base| {
+            path.starts_with(folded(
+                &normalise(Path::new(base)).join(".claude").join("skills"),
+            ))
+        })
+}
+
+/// `path` with `.` and `..` folded away, lexically.
+fn normalise(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// `oml hook guardrails`: one `GET /v1/guardrails` under the agent's own
@@ -397,4 +507,255 @@ pub fn export(
     std::fs::write(out, contents)
         .map_err(|e| format!("{} cannot be written: {e}", out.display()))?;
     Ok(true)
+}
+
+// The cases are written with POSIX absolute paths, which Windows does not
+// read as absolute.
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    fn call<'a>(tool: &'a str, input: &'a Value, cwd: Option<&'a str>) -> ToolCall<'a> {
+        ToolCall {
+            tool_name: tool,
+            tool_input: input,
+            cwd,
+        }
+    }
+
+    const HOME: &str = "/home/ada";
+    const CWD: &str = "/work/repo";
+
+    fn asks(tool: &str, field: &str, path: &str, project: Option<&str>) -> bool {
+        let input = json!({ field: path });
+        local_skill_write(&call(tool, &input, Some(CWD)), Some(HOME), project)
+    }
+
+    /// `MultiEdit` and `NotebookEdit` writes under `.claude/skills/` ask as
+    /// `Write` and `Edit` do, each by the field it carries (ADR-0080 d15).
+    #[test]
+    fn multiedit_and_notebookedit_under_claude_skills_ask() {
+        assert!(asks(
+            "MultiEdit",
+            "file_path",
+            ".claude/skills/x/SKILL.md",
+            None
+        ));
+        assert!(asks(
+            "NotebookEdit",
+            "notebook_path",
+            "~/.claude/skills/x/n.ipynb",
+            None
+        ));
+        assert!(!asks(
+            "NotebookEdit",
+            "file_path",
+            "~/.claude/skills/x/n.ipynb",
+            None
+        ));
+        assert!(!asks(
+            "Read",
+            "file_path",
+            ".claude/skills/x/SKILL.md",
+            None
+        ));
+    }
+
+    /// The project Claude Code names in `CLAUDE_PROJECT_DIR` is matched
+    /// beside the working directory (ADR-0080 d15; R12).
+    #[test]
+    fn a_write_under_the_claude_project_dir_skills_asks() {
+        let path = "/srv/project/.claude/skills/x/SKILL.md";
+        assert!(!asks("Write", "file_path", path, None));
+        assert!(asks("Write", "file_path", path, Some("/srv/project")));
+    }
+
+    /// A `..` that leaves `.claude/skills` is not matched, and one that
+    /// enters it is (R12).
+    #[test]
+    fn a_dot_dot_that_leaves_the_skills_directory_does_not_ask() {
+        assert!(!asks(
+            "Write",
+            "file_path",
+            ".claude/skills/../notes.md",
+            None
+        ));
+        assert!(!asks(
+            "Write",
+            "file_path",
+            "/work/repo/.claude/skills/x/../../a.md",
+            None
+        ));
+        assert!(asks(
+            "Write",
+            "file_path",
+            "src/../.claude/skills/x/SKILL.md",
+            None
+        ));
+    }
+
+    /// The match ignores case, as macOS's and Windows' default file systems
+    /// do (ADR-0080 d15).
+    #[test]
+    fn a_case_variant_of_claude_skills_asks() {
+        for path in [
+            ".Claude/Skills/x/SKILL.md",
+            "/WORK/Repo/.claude/SKILLS/x/SKILL.md",
+            "~/.CLAUDE/skills/x/SKILL.md",
+        ] {
+            assert!(asks("Write", "file_path", path, None), "{path}");
+        }
+        assert!(!asks(
+            "Write",
+            "file_path",
+            ".claude/skillset/SKILL.md",
+            None
+        ));
+    }
+
+    /// A long s (U+017F) and a Kelvin sign (U+212A), which a case-folding
+    /// file system reads as `s` and `k`, do not slip past the ask.
+    #[test]
+    fn a_long_s_or_a_kelvin_sign_in_claude_skills_asks() {
+        for path in [
+            ".claude/\u{17F}kills/x/SKILL.md",
+            ".claude/s\u{212A}ills/x/SKILL.md",
+        ] {
+            assert!(asks("Write", "file_path", path, None), "{path}");
+        }
+    }
+}
+
+/// The home the local-skill rule matches: `HOME`, or `USERPROFILE` when
+/// `HOME` is unset or empty (R20).
+#[cfg(test)]
+mod home_tests {
+    use super::*;
+
+    fn only(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |name: &str| {
+            pairs
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| (*v).to_owned())
+        }
+    }
+
+    #[test]
+    fn the_home_falls_back_to_userprofile_when_home_is_unset() {
+        assert_eq!(
+            skills_home(&only(&[("USERPROFILE", r"C:\Users\ada")])).as_deref(),
+            Some(r"C:\Users\ada")
+        );
+        assert_eq!(
+            skills_home(&only(&[("HOME", ""), ("USERPROFILE", "/home/ada")])).as_deref(),
+            Some("/home/ada")
+        );
+        assert_eq!(
+            skills_home(&only(&[("HOME", "/home/bo"), ("USERPROFILE", "/home/ada")])).as_deref(),
+            Some("/home/bo")
+        );
+        assert_eq!(skills_home(&only(&[])), None);
+    }
+}
+
+// The same cases with drive paths, mixed separators and a Windows home,
+// for the Windows leg of CI.
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    const HOME: &str = r"C:\Users\ada";
+    const CWD: &str = r"C:\work\repo";
+
+    fn asks(tool: &str, field: &str, path: &str, project: Option<&str>) -> bool {
+        let input = json!({ field: path });
+        let call = ToolCall {
+            tool_name: tool,
+            tool_input: &input,
+            cwd: Some(CWD),
+        };
+        local_skill_write(&call, Some(HOME), project)
+    }
+
+    #[test]
+    fn multiedit_and_notebookedit_under_claude_skills_ask_on_windows() {
+        assert!(asks(
+            "MultiEdit",
+            "file_path",
+            r".claude\skills\x\SKILL.md",
+            None
+        ));
+        assert!(asks(
+            "NotebookEdit",
+            "notebook_path",
+            r"~\.claude\skills\x\n.ipynb",
+            None
+        ));
+        assert!(asks(
+            "Write",
+            "file_path",
+            "~/.claude/skills/x/SKILL.md",
+            None
+        ));
+        assert!(asks(
+            "Write",
+            "file_path",
+            r"C:\Users\ada\.claude\skills\x\SKILL.md",
+            None
+        ));
+        assert!(!asks(
+            "NotebookEdit",
+            "file_path",
+            r"~\.claude\skills\x\n.ipynb",
+            None
+        ));
+    }
+
+    #[test]
+    fn a_write_under_the_claude_project_dir_skills_asks_on_windows() {
+        let path = r"D:\project\.claude\skills\x\SKILL.md";
+        assert!(!asks("Write", "file_path", path, None));
+        assert!(asks("Write", "file_path", path, Some(r"D:\project")));
+    }
+
+    #[test]
+    fn a_dot_dot_that_leaves_the_skills_directory_does_not_ask_on_windows() {
+        assert!(!asks(
+            "Write",
+            "file_path",
+            r".claude\skills\..\notes.md",
+            None
+        ));
+        assert!(!asks(
+            "Write",
+            "file_path",
+            r"C:\work\repo\.claude\skills\x\..\..\a.md",
+            None
+        ));
+        assert!(asks(
+            "Write",
+            "file_path",
+            r"src\..\.claude\skills\x\SKILL.md",
+            None
+        ));
+    }
+
+    #[test]
+    fn a_case_variant_or_mixed_separators_of_claude_skills_ask_on_windows() {
+        for path in [
+            "c:/WORK/Repo/.Claude/Skills/x/SKILL.md",
+            r"C:\work\repo/.claude\SKILLS/x\SKILL.md",
+            r"~\.CLAUDE\skills\x\SKILL.md",
+            ".claude\\\u{17F}kills\\x\\SKILL.md",
+        ] {
+            assert!(asks("Write", "file_path", path, None), "{path}");
+        }
+        assert!(!asks(
+            "Write",
+            "file_path",
+            r".claude\skillset\SKILL.md",
+            None
+        ));
+    }
 }

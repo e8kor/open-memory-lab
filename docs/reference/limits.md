@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-18
 answers: "the size, rate, page and capacity bounds OML enforces or has measured, with units, who sets them and what error is returned"
 ---
 
@@ -57,6 +57,7 @@ From the maintainers' own runs on one 8-vCPU host with PostgreSQL:
 - Workspace export and import (ADR-0084 I13, d15): an export refuses `export.too_large` before it reads a body when the stored bytes of what it would carry pass `uploads.max_bytes`, but that sum leaves out the lines, verdicts and events, so the bundle is measured again once built; an export that passes the estimate builds its whole bundle in memory before it is encrypted, and memory is bounded only by that final check, up to the tar and the age file together. Two exports and two imports run in the process at most; an import holds the verified bundle, every body included, in memory. An export walks the tenant's whole journal once for its versions' submissions and verdicts, so its time grows with the chain, not with the subtree. The per-day export limit of d15 is not built: one export per tenant at a time is the only bound on how often a tenant exports. The busy gates, and the list of imports the upload sweep leaves running, are held in the lead's process: they bound one lead, and two leads serving one database would each admit their own (as ADR-0072 d12 says of its counters).
 - Lake writer lag under sustained load ([run the lake writer](../operations/lake.md)).
 - The admin queue read's person-reviewer count (`GET /v2/review/queue`, #435): one pass over the tenant's held rows, one over its person's reviewer keys with their grants and denials, then a match per workspace and key, so it grows with workspaces holding rows times those keys.
+- The offered skill set (`GET /v1/skills`, and every MCP `prompts/list`, `prompts/get`, `resources/list` and `resources/read`): each call recomputes the whole set at the key's scope, one ancestry read, a walk of the in-progress subtree below it and one read of every skill row on those workspaces, without bodies, and nothing is cached between calls, so its cost grows with the skill rows in scope and is paid again by each prompt or resource read ([ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d11).
 
 ## Not verified against a live client
 
