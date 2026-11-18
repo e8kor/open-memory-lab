@@ -10,7 +10,7 @@ answers: what a workspace export carries and what it never carries; the bundle's
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its four questions decided at their
 recommendations and every other default as drafted · proposed the same day · the "unless its source server is
 pinned" of its file name is ADR-0088, which is deferred · the format built as the crate `oml-bundle`, with its readings and the
-operator's R1 decision of 2026-11-17 and the integration readings I1–I9 recorded at the end of this record; of d15, `history`-mode export (the route and `oml workspaces export`) is built (#425), and the import (`POST /v2/imports`, `GET /v2/imports/{id}`, `oml workspaces import`, the `imports` doctor line) is built (#426); the rest is not built
+operator's R1 decision of 2026-11-17 and the integration readings I1–I9 recorded at the end of this record; of d15, `history`-mode export (the route and `oml workspaces export`) is built (#425), and the import (`POST /v2/imports`, `GET /v2/imports/{id}`, `oml workspaces import`, the `imports` doctor line) is built (#426); the rest is not built · amendment of d6 proposed 2026-11-18 (imports into any open workspace, the operator's answer D4 to the lifecycle review; #429)
 
 **Release:** not scheduled; after ADR-0085, whose release manifest `release` mode exports. A
 trusted source server, the "unless" of the title, is the deferred ADR-0088.
@@ -146,7 +146,9 @@ Decided, not built.
 - **d6 — An import lands in an in-progress workspace, and every imported version is held.**
   - The target is a `development` workspace in progress, or a new name the import creates in
     progress where the importer may create workspaces (ADR-0044 d6). Any other target is refused as
-    `import.target_not_in_progress`.
+    `import.target_not_in_progress`. *(Superseded, proposed 2026-11-18, D4 at the end of this
+    record: any open workspace, with a person's verdict where the workspace is protected or
+    released.)*
   - Each version is written held by the importing key. The `tip` keys connected there read it
     marked unreviewed (ADR-0030 d3), and the target's tests and impact report run against it
     (ADR-0086, ADR-0087). The import adds no reader of held rows beyond ADR-0080 d16's in-progress audience of the target.
@@ -631,3 +633,42 @@ until the operator confirms or reverses it with the other decisions of the batch
   a person (ADR-0085 d16) owns itself alone in an export: the own set widens to a person's keys only
   for a user key or a session key of that person, never through `linked_user`, so a linked key
   exports none of the person's other keys' held, rejected or withdrawn rows (R3).
+
+### The lifecycle review's amendment of 2026-11-18 (D4; proposed, #429)
+
+The operator answered the lifecycle review's import question on 2026-11-18 (ADR-0085's
+amendments of the same day hold D1 to D3). This records the answer as proposed; the operator
+accepts the text.
+
+- **D4 — An import lands held in any open workspace (amends d6; ADR-0030 d1's exception of
+  2026-11-18).**
+  - **The target** is any open workspace, a `development` one in progress or `standard`, or a new
+    name the import creates. "Open" is ADR-0085's D1: a `protected` or `frozen` target stays
+    refused, because under D1 it is production for every reader.
+  - **Every imported version is written held** by the importing key, as d6 says. In a `standard`
+    workspace only the importer reads them until review (R3); in one in progress, d6's `tip`
+    audience reads them marked unreviewed.
+  - **A person's verdict where the workspace is protected or released.** In a `protected`
+    workspace, or a workspace with a published release, withdrawn or not, every imported version
+    needs its approving verdict from a person's reviewer key (`used_by: person`) of a person other
+    than the importer's own. A reviewer crew's agent key does not approve an imported version
+    there. Since an import never lands in a `protected` workspace, the rule binds a version still
+    held when its workspace is moved to `protected` or first publishes a release. d4's
+    `attests_not_source_author` still travels with that verdict. Why: R2 on the target is checked
+    against the importer, and d4's honest limit leaves only an attestation between a source author
+    and their own work; an agent's attestation carries nothing, so where content reaches
+    production a person judges it.
+  - **A new target is created `standard`.** The target no longer has to be in progress, so ADR-0030
+    d1's exception of 2026-11-18 (I16), in which the importing writer key marked its new workspace
+    in progress, is superseded; a person's reviewer key marks it afterwards if the team wants its
+    `tip` keys to read the imported work. **[operator batch]**: this keeps the one mode act a
+    person's, at the cost of that second step.
+  - **The refusal's name [operator batch].** `import.target_not_in_progress` names a rule this
+    amendment retires. The build renames it `import.target_not_open` (409, `details.workspace_id`,
+    `details.status`), a pure cut under ADR-0091 d2, and the verdict rule's refusal is
+    `review.person_required` with `details.reason: imported_needs_person`.
+  - **What is built.** v0.8.2 built d6 as first written: in-progress targets only (#426). The wider
+    rule and the verdict rule are built with the release work (ADR-0085), not before; until then
+    the shipped refusal stands and the pages that describe the built import do not change.
+  - **Superseded:** d6's first bullet, from "The target is a `development` workspace in progress"
+    to "`import.target_not_in_progress`"; I16's new target created in progress.

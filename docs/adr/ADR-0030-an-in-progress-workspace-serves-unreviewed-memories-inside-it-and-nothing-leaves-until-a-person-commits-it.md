@@ -9,7 +9,7 @@ answers: what an in-progress workspace is and who may mark it (a person's key, n
 
 **Status:** accepted design · 2026-11-06 (was accepted design) · introduced in v0.6.0 · first recorded 2026-11-05 · revision 2, rebuilt on the v0.5.8 API; revision 1
 ([#12](https://github.com/e8kor/open-memory-lab/pull/12), 2026-10-31, proposed) is preserved at tag
-`archive/feat/in-progress-workareas` · amended by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d2, d3, d4, 2026-11-14), [ADR-0081](ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource.md) (d3, 2026-11-14)
+`archive/feat/in-progress-workareas` · amended by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d2, d3, d4, 2026-11-14), [ADR-0081](ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource.md) (d3, 2026-11-14) · amendment of d1's exception of 2026-11-18 proposed the same day (D4 of the lifecycle review; #429)
 
 **Release:** introduced in v0.6.0 ([releases](../changelog.md))
 
@@ -92,6 +92,14 @@ Questions revision 1 left open are settled below at their recommended answers, e
     The writer key marks only a workspace it has just created and that holds nothing, so the mark
     changes who reads no other key's rows. *Rejected:* a reviewer key's mark in a second step,
     which left a crash between the two a `standard` target that the retry refused.
+
+    *Proposed amendment of 2026-11-18 (the operator's answer D4 to the lifecycle review, #429;
+    proposed until the operator accepts this text) [operator batch].* An import may land held in
+    any open workspace (ADR-0084 d6, as amended by D4), so a new target no longer has to be in
+    progress. **Superseded:** the exception above. An import that creates its target creates it
+    `standard`, and only a person's reviewer key marks it in progress, as this decision says for
+    every workspace; the one case in which a writer key set the mode ends. v0.8.2 built the
+    exception (#426, I16); the build of ADR-0084's amendment removes it.
 
 - **d2 — One boundary rule decides every scoped read: a row on node D is served to a read scoped
   at N only if D has no in-progress root, or N has the same one.** A **scoped read** — recall,
