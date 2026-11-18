@@ -3943,3 +3943,202 @@ async fn a_guardrail_preview_answers_its_canonical_rule_and_the_set_size_after_i
     assert!(retire.refusal.is_none(), "{:?}", retire.refusal);
     assert_eq!(retire.set_after, Some(0));
 }
+
+/// Alice's web and review session keys, with one approved guardrail in
+/// force in her root: (app, web, the guardrail's id).
+async fn one_guardrail_in_force() -> (TestApp, oml_app::app::Caller, Uuid) {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let id = written(
+        &app,
+        &agent.value,
+        &guardrail("g1", "Never force-push.", Some("alice")),
+    )
+    .await;
+    app.post_verdict(Bearer::Session(&review), id, Verdict::Approve, None)
+        .await
+        .expect("alice approves her guardrail");
+    (app, web, id)
+}
+
+async fn set_after(
+    app: &TestApp,
+    web: &oml_app::app::Caller,
+    req: oml_app::types::PreviewRequest,
+) -> Option<usize> {
+    let preview = app
+        .preview(Bearer::Session(web), &req)
+        .await
+        .expect("a preview");
+    assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+    preview.set_after
+}
+
+/// A new rule's preview adds one to the set in force (ADR-0082 d11).
+#[tokio::test]
+async fn a_new_guardrails_preview_adds_one_to_the_set_size() {
+    let (app, web, _) = one_guardrail_in_force().await;
+    let req = oml_app::types::PreviewRequest::Submit(guardrail(
+        "g2",
+        "Never push without review.",
+        Some("alice"),
+    ));
+    assert_eq!(set_after(&app, &web, req).await, Some(2));
+}
+
+/// An edit of a rule in force keeps the set's size (ADR-0082 d11).
+#[tokio::test]
+async fn an_edit_of_a_guardrail_in_force_keeps_the_set_size() {
+    let (app, web, id) = one_guardrail_in_force().await;
+    let req = oml_app::types::PreviewRequest::Supersede(SupersedeRequest {
+        severity: Some(Severity::Must),
+        ..supersede_req("g2", id, "Never force-push to main.")
+    });
+    assert_eq!(set_after(&app, &web, req).await, Some(1));
+}
+
+/// A retirement of a rule in force takes one from the set (ADR-0082 d11).
+#[tokio::test]
+async fn a_retirement_of_a_guardrail_in_force_takes_one_from_the_set_size() {
+    let (app, web, id) = one_guardrail_in_force().await;
+    let req = oml_app::types::PreviewRequest::Supersede(SupersedeRequest {
+        retirement: true,
+        ..supersede_req("g2", id, "No longer needed.")
+    });
+    assert_eq!(set_after(&app, &web, req).await, Some(0));
+}
+
+/// A skill's preview names only the same-named skills the key reads: a
+/// key granted on `team.sub` alone is told nothing of `team`'s skill, which
+/// a key that reads `team` is told it shadows (ADR-0082 d11).
+#[tokio::test]
+async fn a_skill_preview_never_names_a_skill_the_key_cannot_read() {
+    use oml_app::types::PreviewRequest;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    app.create_workspace(admin, &name("team"), Some(by_name("universe")), None)
+        .await
+        .expect("team");
+    let sub = app
+        .create_workspace(admin, &name("sub"), Some(by_name("team")), None)
+        .await
+        .expect("team.sub")
+        .workspace
+        .workspace_id
+        .to_string();
+    let rw = |node: &str| {
+        vec![
+            grant(by_name(node), Role::Writer),
+            grant(by_name(node), Role::Reader),
+        ]
+    };
+    let team_writer = tenant_key(&app, admin, Role::Writer, "team/writer", rw("team")).await;
+    let sub_writer = tenant_key(&app, admin, Role::Writer, "sub/writer", rw(&sub)).await;
+    let reviewer = person_tenant_key(
+        &app,
+        admin,
+        "carol/team-review",
+        vec![
+            grant(by_name("team"), Role::Reviewer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    let skill = |idem: &str, workspace: &str| SubmitRequest {
+        kind: MemoryKind::Skill,
+        claim_key: None,
+        format: Some("text/markdown".to_owned()),
+        kind_fields: Some(oml_app::types::KindFields::Skill {
+            name: "cite".to_owned(),
+            description: "Cite every source.".to_owned(),
+        }),
+        ..submit(idem, "Cite every source, then check each.", Some(workspace))
+    };
+    let id = written(&app, &team_writer.value, &skill("s1", "team")).await;
+    approve(&app, &reviewer.value, id).await;
+
+    let shadows = |key: String| {
+        let app = &app;
+        let req = PreviewRequest::Submit(skill("s2", &sub));
+        async move {
+            let preview = app.preview(key.as_str(), &req).await.expect("a preview");
+            assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+            preview.shadows
+        }
+    };
+    assert_eq!(
+        shadows(team_writer.value.clone()).await,
+        vec![oml_app::types::SkillShadow {
+            workspace_path: "universe.team".to_owned(),
+            shadowed_by: false,
+        }]
+    );
+    assert!(
+        shadows(sub_writer.value.clone()).await.is_empty(),
+        "team's skill is not named to a key that cannot read team"
+    );
+}
+
+/// The verbs a key lists on a workspace are the verbs it may use there: a
+/// person's session reviewer key lists `remember` where it holds reviewer
+/// and reader, and its submit is held; a tenant reviewer key lists no
+/// `remember`, and its submit is `access.verb_ceiling` (ADR-0082 d11).
+#[tokio::test]
+async fn a_session_reviewer_lists_remember_where_it_may_submit_and_a_tenant_reviewer_does_not() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (review, _writer, _bob) = team_with_alices_reviewer_and_bobs_writer(&app, admin).await;
+    let tenant_reviewer = tenant_key(
+        &app,
+        admin,
+        Role::Reviewer,
+        "team-review",
+        vec![
+            grant(by_name("team"), Role::Reviewer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    let verbs = app
+        .workspace_info(Bearer::Session(&review), Some(by_name("team")))
+        .await
+        .expect("the workspace read")
+        .my_effective_verbs;
+    assert!(verbs.contains(&"remember"), "{verbs:?}");
+    let written = app
+        .submit_memory(
+            Bearer::Session(&review),
+            &submit("r1", "Releases freeze on Thursdays.", Some("team")),
+        )
+        .await
+        .expect("its submit is held");
+    assert_eq!(written.receipt.state, "held");
+
+    let verbs = app
+        .workspace_info(tenant_reviewer.value.as_str(), Some(by_name("team")))
+        .await
+        .expect("the workspace read")
+        .my_effective_verbs;
+    assert!(!verbs.contains(&"remember"), "{verbs:?}");
+    let err = app
+        .submit_memory(
+            tenant_reviewer.value.as_str(),
+            &submit("t1", "A tenant reviewer's claim.", Some("team")),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+}
