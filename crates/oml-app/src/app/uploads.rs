@@ -270,6 +270,10 @@ where
             }
         }
         if !lost.is_empty() {
+            // The status names them missing too, as the refusal does.
+            self.journal
+                .upload_parts_lost(session.tenant_id, upload_id, &lost)
+                .await?;
             return Err(AppError::Upload(UploadRefusal::Incomplete {
                 missing: lost.into_iter().take(MISSING_NAMED).collect(),
             }));

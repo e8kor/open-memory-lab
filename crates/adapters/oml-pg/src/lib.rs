@@ -7339,6 +7339,34 @@ impl JournalStore for PgStore {
         row.as_ref().map(upload_from_row).transpose()
     }
 
+    async fn upload_parts_lost(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        parts: &[u64],
+    ) -> Result<(), StoreError> {
+        let parts = parts
+            .iter()
+            .map(|&n| i64::try_from(n))
+            .collect::<Result<Vec<i64>, _>>()
+            .map_err(backend)?;
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        sqlx::query(
+            "UPDATE upload_sessions \
+                SET received = ARRAY(SELECT n FROM unnest(received) AS n WHERE n <> ALL ($3)) \
+              WHERE tenant_id = $1 AND id = $2 AND state = 'open'",
+        )
+        .bind(tenant_id)
+        .bind(upload_id)
+        .bind(&parts)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
     async fn upload_transition(
         &self,
         tenant_id: Uuid,

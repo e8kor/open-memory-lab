@@ -153,6 +153,18 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn upload_parts_lost(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        parts: &[u64],
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
+        timed(
+            "upload_parts_lost",
+            self.inner.upload_parts_lost(tenant_id, upload_id, parts),
+        )
+    }
+
     fn upload_transition(
         &self,
         tenant_id: Uuid,

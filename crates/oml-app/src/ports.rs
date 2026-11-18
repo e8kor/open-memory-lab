@@ -991,6 +991,17 @@ pub trait JournalStore: Retriever + Send + Sync {
         expires_at: &EventTime,
     ) -> impl Future<Output = Result<Option<crate::types::UploadSession>, StoreError>> + Send;
 
+    /// Takes `parts` out of an open session's received parts, because the
+    /// object store no longer holds them, so its status names them missing
+    /// as the completion did (ADR-0004 d3, note of 2026-11-18); a session
+    /// that is not open is left as it is.
+    fn upload_parts_lost(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        parts: &[u64],
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
     /// Moves the session from one of `from` to `to` at `at`, with
     /// `expires_at` as its new expiry, and nulls its key when `shred`;
     /// `None`, writing nothing, when its state is not in `from`. Reaching

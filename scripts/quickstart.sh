@@ -133,16 +133,27 @@ upload_call() { # method path content_type body: prints the status, then the bod
     curl -sS -X "$1" "$OML_URL$2" -H "authorization: Bearer $agent" \
         -H "content-type: $3" --data-binary "$4" -w '\n%{http_code}'
 }
-sha="$(printf 'oml' | sha256sum | cut -d' ' -f1)"
+# The SHA-256 of the three bytes `oml`, a constant so no hashing tool is needed.
+sha=f56b8c45e2d3956317d111717907141461626f2dbe9589437adf87c9de3352f4
 opened="$(upload_call POST /v2/uploads application/json "{\"purpose\":\"import\",\"size\":3,\"sha256\":\"$sha\"}")"
 [ "$(tail -n1 <<<"$opened")" = 201 ] || fail "an upload session did not open: $opened"
 upload="$(sed '$d' <<<"$opened" | jq -r .upload_id)"
+# The session is abandoned however the check ends, so none lingers until it
+# expires; the DELETE's status is reported.
+abandon_upload() {
+    local code
+    code="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "$OML_URL/v2/uploads/$upload" \
+        -H "authorization: Bearer $agent" || true)"
+    echo "quickstart: upload $upload abandoned, DELETE answered ${code:-no answer}" >&2
+}
+trap abandon_upload EXIT
 stored="$(upload_call PUT "/v2/uploads/$upload/parts/1" application/octet-stream oml)"
 [ "$(tail -n1 <<<"$stored")" = 200 ] || fail "the upload's part was not stored at storage.url: $stored"
 completed="$(upload_call POST "/v2/uploads/$upload/complete" application/json '{}')"
 [ "$(sed '$d' <<<"$completed" | jq -r .state)" = completed ] || fail "the upload did not complete: $completed"
-upload_call DELETE "/v2/uploads/$upload" application/json '' >/dev/null
 echo "quickstart: an upload of 3 bytes opened, stored its part at storage.url and completed (upload $upload)" >&2
+trap - EXIT
+abandon_upload
 
 cat <<EOF
 OML is ready at $OML_URL. The MCP check passed on the agent's one key: write ->

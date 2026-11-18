@@ -753,6 +753,13 @@ async fn a_part_the_store_lost_is_named_incomplete_at_completion_and_sending_it_
         refusal(rig.app.complete_upload(alice.as_str(), id).await),
         UploadRefusal::Incomplete { missing: vec![2] }
     );
+    // The status agrees with the refusal.
+    let status = rig
+        .app
+        .upload_status(alice.as_str(), id)
+        .await
+        .expect("status");
+    assert_eq!(status.missing(), vec![2]);
     rig.app
         .put_upload_part(alice.as_str(), id, 2, part(&bytes, 2))
         .await

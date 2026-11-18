@@ -3111,6 +3111,24 @@ impl JournalStore for MemStore {
         Ok(Some(session.clone()))
     }
 
+    async fn upload_parts_lost(
+        &self,
+        tenant_id: Uuid,
+        upload_id: Uuid,
+        parts: &[u64],
+    ) -> Result<(), StoreError> {
+        let state = self.tenant(tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        if let Some((session, _)) = state.uploads.get_mut(&upload_id)
+            && session.state == oml_domain::upload::UploadState::Open
+        {
+            for n in parts {
+                session.received.remove(n);
+            }
+        }
+        Ok(())
+    }
+
     async fn upload_transition(
         &self,
         tenant_id: Uuid,

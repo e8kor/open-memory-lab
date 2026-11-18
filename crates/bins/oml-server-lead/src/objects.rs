@@ -83,6 +83,11 @@ impl LocalObjects {
                         meta.mode() & 0o7777
                     ),
                 ));
+            } else {
+                // Not the lead's and not writable by others: usable only
+                // if the lead may write it, which a probe file settles
+                // before any session opens.
+                probe_write(root)?;
             }
         }
         Ok(Self {
@@ -220,6 +225,22 @@ impl ObjectStore for LazyObjects {
     fn ready(&self) -> ObjectFuture<'_, ()> {
         Box::pin(async move { self.open().await.map(drop) })
     }
+}
+
+/// Creates and removes a file under a fresh random name in `dir`.
+#[cfg(unix)]
+fn probe_write(dir: &Path) -> std::io::Result<()> {
+    let mut nonce = [0_u8; 16];
+    getrandom::getrandom(&mut nonce).map_err(std::io::Error::other)?;
+    let probe = dir.join(format!(
+        ".{}.probe",
+        nonce.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    ));
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)?;
+    std::fs::remove_file(&probe)
 }
 
 fn create_private_dir(dir: &Path) -> std::io::Result<()> {
@@ -381,8 +402,9 @@ mod tests {
     }
 
     /// A root the lead does not own is never chmodded: one others can
-    /// write is refused by name, as an emptyDir's root is, and one they
-    /// cannot is opened as it is (ADR-0004 d3, note of 2026-11-18).
+    /// write is refused by name, as an emptyDir's root is, and one the lead
+    /// cannot write is refused before a session opens (ADR-0004 d3, note
+    /// of 2026-11-18).
     #[cfg(unix)]
     #[test]
     fn a_root_the_lead_does_not_own_is_refused_when_others_can_write_it_and_never_chmodded() {
@@ -403,7 +425,10 @@ mod tests {
         let system = Path::new("/usr/share");
         match std::fs::metadata(system) {
             Ok(meta) if uid != 0 && meta.uid() != uid && meta.mode() & 0o022 == 0 => {
-                LocalObjects::open(system).expect("opened, never chmodded");
+                // The lead cannot write it: refused before a session opens,
+                // and its mode is never changed.
+                let refused = LazyObjects::new(system).probe().expect_err("not writable");
+                assert_eq!(refused.kind, "permission_denied", "{refused:?}");
                 assert_eq!(std::fs::metadata(system).expect("meta").mode(), meta.mode());
             }
             _ => {}

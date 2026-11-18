@@ -138,8 +138,8 @@ Use this when `oml doctor` warns `upload_store_unavailable`, or clients get `upl
    journalctl -u oml-server -o cat | jq -c 'select(.event=="upload_store_unavailable") | .reason'
    ```
 
-2. Set `storage.url` to an absolute directory the server's user can write, or one it can create below a directory it can write, and restart. The server never changes the mode of a directory it does not own, and refuses one that others can write.
-3. When `complete` answers `upload.incomplete` for parts the client already sent, the store lost them, for example when a pod with an emptyDir was replaced: the client sends the named parts again with `PUT /v2/uploads/{id}/parts/{n}` and completes again. `GET /v2/uploads/{id}` still lists those parts as received.
+2. Set `storage.url` to an absolute directory the server's user can write, or one it can create below a directory it can write, and restart. The server never changes the mode of a directory it does not own, and refuses one that others can write or that it cannot write itself.
+3. When `complete` answers `upload.incomplete` for parts the client already sent, the store lost them, for example when a pod with an emptyDir was replaced: the client sends the named parts again with `PUT /v2/uploads/{id}/parts/{n}` and completes again. `GET /v2/uploads/{id}` lists the same parts as missing.
 
 ## A form answers idempotency.in_progress
 

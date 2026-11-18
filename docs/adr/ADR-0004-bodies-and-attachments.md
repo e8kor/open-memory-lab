@@ -186,7 +186,8 @@ flowchart LR
   - **Note of 2026-11-18, second (the coordinator, the review of the CI fix; for the operator's
     batch).** The lead tightens a `storage.url` root to owner-only only when it owns it. A root it
     does not own is never chmodded: one its group or others can write is refused, naming the owner
-    and the mode, as a volume's root owned by root is; one they cannot write is used as it is. So
+    and the mode, as a volume's root owned by root is; one they cannot write is used only when a probe file shows the lead can write it, and refused
+    otherwise, so `ready()` fails before a session opens. So
     the Helm chart sets `storage.url` to `/var/lib/oml/objects/store`, a directory below its volume
     that the lead creates owned by itself, and `scripts/check_chart.py` refuses a storage URL that
     is not strictly below a mounted volume. The first open, and each later try while the store is
