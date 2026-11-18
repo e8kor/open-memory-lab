@@ -6334,6 +6334,11 @@ fn uploads_doctor(scrape: Option<&Scrape>) -> Vec<String> {
             "warn upload_unswept: {n} upload session(s) have their key shredded and their objects still at storage.url; the ciphertext opens under no key, and each sweep tries the removal again: check storage.url's directory is writable by the lead (event upload_sweep_failed names the reason)"
         ));
     }
+    if let n @ 1.. = scrape.sum("oml_upload_staging_stale", &[]) {
+        lines.push(format!(
+            "warn upload_staging_stale: {n} bound upload(s) still hold their staging key 24 hours after binding; an import's end shreds it and the next sweep shreds any whose import ended (event import_shred_failed names the reason) (ADR-0004 d3, ADR-0084 I11)"
+        ));
+    }
     if let n @ 1.. = scrape.sum("oml_upload_sweep_failures_total", &[]) {
         lines.push(format!(
             "warn upload_sweep_failed: {n} upload sweep step(s) failed since start; the lead's log names each under event upload_sweep_failed, and the next sweep retries"
@@ -6385,15 +6390,23 @@ fn imports_doctor(scrape: Option<&Scrape>) -> Vec<String> {
         return vec!["off (this server runs no imports)".to_owned()];
     }
     let state = |s: &str| scrape.sum("oml_imports", &[("state", s)]);
+    let stopped = scrape.sum("oml_imports_stopped", &[]);
     let mut lines = vec![format!(
-        "{} done, {} failed, {} stopped while running",
+        "{} done, {} failed, {} running, {stopped} stopped",
         state("done"),
         state("failed"),
         state("running"),
     )];
-    if let n @ 1.. = state("running") {
+    // ADR-0084 I11: only a run past the hour that no process runs is
+    // stopped; the next sweep ends it failed and shreds its upload.
+    if stopped > 0 {
         lines.push(format!(
-            "warn imports_stopped: {n} import(s) stopped while running (the lead restarted mid-import); what each wrote stays held, GET /v2/imports/{{id}} names its position, and importing the same bundle again writes only what is missing"
+            "warn imports_stopped: {stopped} import(s) running for more than an hour that the lead is not running (it restarted mid-import); the next upload sweep ends each failed and shreds its upload's key, what each wrote stays held, GET /v2/imports/{{id}} names its position, and importing the same bundle again writes only what is missing"
+        ));
+    }
+    if let n @ 1.. = scrape.sum("oml_imports_unprovenanced", &[]) {
+        lines.push(format!(
+            "warn imports_unprovenanced: {n} version(s) carry an import's idempotency key and no import_provenance; this build records both in one commit, so report it as a defect with the versions' ids (ADR-0084 I14)"
         ));
     }
     if let n @ 1.. = scrape.sum("oml_imports_allow_older", &[]) {
@@ -7890,6 +7903,53 @@ mod tests {
     }
 
     #[test]
+    fn the_imports_doctor_warns_only_on_imports_running_past_the_hour_and_on_unprovenanced_versions()
+     {
+        // A run under an hour is running, not stopped (ADR-0084 I11).
+        let live = Scrape(
+            "oml_imports{state=\"running\"} 1\n\
+             oml_imports_stopped 0\n\
+             oml_imports_unprovenanced 0\n"
+                .to_owned(),
+        );
+        assert_eq!(
+            imports_doctor(Some(&live)),
+            vec!["0 done, 0 failed, 1 running, 0 stopped".to_owned()]
+        );
+        let stopped = Scrape(
+            "oml_imports{state=\"running\"} 2\n\
+             oml_imports_stopped 1\n\
+             oml_imports_unprovenanced 3\n"
+                .to_owned(),
+        );
+        let lines = imports_doctor(Some(&stopped));
+        assert!(
+            lines[1].starts_with("warn imports_stopped: 1 "),
+            "{lines:?}"
+        );
+        assert!(
+            lines[2].starts_with("warn imports_unprovenanced: 3 "),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn the_uploads_doctor_warns_on_staging_keys_still_set_a_day_after_binding() {
+        let stale = Scrape(
+            "oml_upload_sessions{state=\"bound\"} 1\n\
+             oml_upload_staging_stale 1\n"
+                .to_owned(),
+        );
+        let lines = uploads_doctor(Some(&stale));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("warn upload_staging_stale: 1 ")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
     fn the_imports_doctor_counts_imports_and_warns_on_stopped_ones() {
         assert_eq!(
             imports_doctor(Some(&Scrape("oml_http_requests 1\n".to_owned()))),
@@ -7903,10 +7963,11 @@ mod tests {
         );
         assert_eq!(
             imports_doctor(Some(&quiet)),
-            vec!["3 done, 0 failed, 0 stopped while running".to_owned()]
+            vec!["3 done, 0 failed, 0 running, 0 stopped".to_owned()]
         );
         let loud = Scrape(
             "oml_imports{state=\"running\"} 1\n\
+             oml_imports_stopped 1\n\
              oml_imports_allow_older 2\n\
              oml_import_refusals_total{code=\"bundle.digest_mismatch\"} 1\n"
                 .to_owned(),
