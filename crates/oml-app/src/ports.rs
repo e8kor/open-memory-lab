@@ -24,10 +24,10 @@ use crate::types::{
     ClaimEdgeSelection, ClaimKeyState, ClientDescription, ConnectCode, ConnectCodeRecord,
     ConnectGrant, ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, HeldFilter,
     HeldRow, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord,
-    OAuthClientRecord, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts,
-    RefreshOutcome, ReviewLane, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord,
-    TransitionRecord, UnnamedRows, VersionFinding, WebCredentialKey, WebCredentialRows, WebEntry,
-    WebSessionRecord, WorkspaceRecord,
+    OAuthClientRecord, PersonReviewer, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth,
+    RefreshFacts, RefreshOutcome, ReviewLane, SourceCheck, SweepReport, TenantRow, TokenPair,
+    TokenRecord, TransitionRecord, UnnamedRows, VersionFinding, WebCredentialKey,
+    WebCredentialRows, WebEntry, WebSessionRecord, WorkspaceRecord,
 };
 use oml_domain::web::Provider;
 
@@ -1722,6 +1722,14 @@ pub trait WebStore: JournalStore {
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<Vec<QueueDepth>, StoreError>> + Send;
 
+    /// The tenant's live person's reviewer keys, each with its grants and
+    /// the denials in force, in name order: keys only, never a memory
+    /// (ADR-0080 d16; #435).
+    fn web_person_reviewers(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<PersonReviewer>, StoreError>> + Send;
+
     /// Every memory of the tenant the search names, any state, newest
     /// first (ADR-0045 d21).
     fn web_admin_search(
@@ -2230,6 +2238,12 @@ pub struct ScanBacklog {
     /// took the tip from is not counted, and neither is a retirement tip,
     /// which recall does not serve.
     pub promoted_unapproved: u64,
+    /// Served instruction-class tips whose approving key was not a
+    /// person's, or that carry no approval: approved before #391 made an
+    /// instruction a person's to approve (ADR-0080 d16; #436). Read off the
+    /// row's `approver_used_by`, so a person's key that had a crew is not
+    /// counted (#460).
+    pub instructions_without_person_approval: u64,
 }
 
 /// What a scanner says about itself, for `/readyz` and doctor's scan line
