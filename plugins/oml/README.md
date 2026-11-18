@@ -125,12 +125,12 @@ On that one key the agent:
 2. recalls before it acts with `oml_read` and a `query`, reading the `steering` rows first;
 3. writes with `oml_write`, adding `derives_from` for a conclusion drawn from memories it
    holds, and gets `state: "held"` back; the server derives the `claim_key`;
-4. lists its own writes with `oml_read` and no `query`, reads one back with its
+4. lists its own writes with `oml_read`, `own: true` and no `query`, reads one back with its
    `artifact_id`, and searches them beside the approved memories by passing
    `include_unreviewed: true` with the `query`; no other key reads or recalls them before
    approval;
-5. learns whether a different identity approved them by listing its own work with `state`,
-   after which every key that reads the workspace recalls them;
+5. learns whether a different identity approved them by listing its own work with `own: true`
+   and `state`, after which every key that reads the workspace recalls them;
 6. revises or retires a memory with `oml_write`, `replaces` and the `expected_version` it read,
    which is held and approved like any write while recall keeps serving the version it
    replaces.

@@ -36,10 +36,10 @@ oml sync policies/ --workspace draft --adapter headings
 
 **Designed: documents** ([ADR-0081](../adr/ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource.md)). A `document` claim, key `doc/<path>`, is a titled markdown or text body. Recall ranks it by passage and serves the best passage as the hit; the MCP server serves the whole document as a resource, `oml://…`, so an agent reads the policy, not a fragment. PDFs and other files wait for attachments.
 
-**Designed: finding documents by kind** ([ADR-0092](../adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md), v0.8.0). A drafting agent sends
-`kinds: ["document"]` to search the policies alone, or lists `prefix: "doc/policies/"` without a
-query to see every policy document it reads, with titles and counts and no bodies until it reads
-one.
+**Built: finding documents by kind** ([ADR-0092](../adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md)). A drafting agent lists
+`prefix: "doc/policies/"` without a query to see every policy document it reads, with titles and
+counts and no bodies until it reads one. Recall with `kinds: ["document"]` searches the policies
+alone once document passages land; until then it finds no document.
 
 ## 3. Define vocabulary
 

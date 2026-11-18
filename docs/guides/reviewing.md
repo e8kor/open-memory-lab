@@ -72,12 +72,18 @@ any memory in it is held. Apply
 shows what will happen before anything is recorded
 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
 
-**Catalog. Designed, not built** ([ADR-0092](../adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md), planned for v0.8.0). A **Catalog** page after
-Memories will list what the person's key reads across kinds, with a tab and a count per kind. A
-held version served inside an in-progress workspace carries the unreviewed mark; a held skill,
-guardrail or steering version also carries "needs a person", and **Judge it** where the person's
-reviewer key may judge it. The page approves nothing itself: the verdict is given on the judge
-page, as today.
+**Catalog** ([ADR-0092](../adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) d7). The
+**Catalog** page, `/web/catalog`, after Memories in the Personal nav, lists what the person's web
+key reads in a workspace and every workspace below it, across kinds, newest first. A tab per kind
+carries its count: All, Memories, Derived facts, Documents, Tests, Skills, Guardrails, Steering
+and Terms, a count above the cap shown as "10,000+". "Name starts with" filters by claim key
+prefix, such as `skill/` or `doc/runbooks/`, and "State" by Approved, Unreviewed or All. Each row
+shows the name, kind, a one-line description, workspace, version, state and the date it changed;
+a guardrail row says whether it is in force at the workspace, and a skill row whether it is
+offered there. A held version served inside an in-progress workspace carries the unreviewed mark;
+a held skill, guardrail or steering version also carries "needs a person", and **Judge it** where
+the person's reviewer key may judge it. The page approves nothing itself: the verdict is given on
+the judge page.
 
 ## Check the memory
 

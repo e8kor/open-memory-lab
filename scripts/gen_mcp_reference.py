@@ -51,20 +51,6 @@ def rows(schema: dict, prefix: str = "") -> list[str]:
     return out
 
 
-# Prose for a decided change the catalog does not serve yet; removed when the build lands.
-DESIGNED = (
-    "**Designed, not built: search by kind and the catalog** "
-    "([ADR-0092](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/"
-    "ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md), "
-    "planned for v0.8.0). The arguments below are what the server serves today. In v0.8.0 `kinds` takes every kind in recall and "
-    "listing modes and replaces the listing's `kind`; a recall naming none returns hits of every kind the key reads, each marked "
-    "with its kind, steering first and unranked unless `kinds` leaves it out; skill hits carry a name, description and resource URI "
-    "and guardrail hits their text and rule, both data and never run or binding. Without a query, `oml_read` returns the catalog: "
-    "`kinds`, `workspace`, `prefix` and `state` filter it, `include_text` adds bodies, and the first page carries per-kind counts. "
-    "`own` then defaults to `false`, so an agent asks for its own work with `own: true`.\n"
-)
-
-
 # The prompts and resources the server serves beside the tools (ADR-0037 d11; ADR-0080 d5 to d7):
 # not in the tool catalog, so written here.
 PROMPTS = (
@@ -96,7 +82,6 @@ def render(doc: dict) -> str:
         f"*{docgen.BANNER.format(script='scripts/gen_mcp_reference.py')} Source: `docs/api/mcp-tools.json`, the file the server includes at build time.*\n",
         "A field outside the mode a call chose is refused with `request.validation`, naming the field in `details.field`. "
         "Errors use the [error codes](errors.md). Authenticate with a bearer key, or with an OAuth access token where connections are on.\n",
-        DESIGNED,
     ]
     for t in tools:
         hints = [HINTS[k] if v else "not " + HINTS[k] for k, v in t.get("annotations", {}).items() if k in HINTS]
