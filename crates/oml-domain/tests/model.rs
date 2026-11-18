@@ -58,14 +58,22 @@ fn the_claim_states_are_the_schema_set_and_none_is_superseded() {
 }
 
 #[test]
-fn transition_admits_only_held_to_promoted_or_rejected() {
+fn the_lifecycle_admits_demote_from_promoted_and_erase_from_any_unerased_state() {
     // A supersession adds no state: the replaced version stays promoted and
-    // only loses the tip (ADR-0025 d10). Demote, erase, reopen and
-    // reassignment are unbuilt, so nothing else is legal yet.
-    let legal = [
+    // only loses the tip (ADR-0025 d10). A demotion takes a promoted version
+    // only, served or superseded, and never a held one (ADR-0089 d16); an
+    // erase takes a version in any state but erased (ADR-0005 d2, amended
+    // 2026-11-17). Reopen and reassignment are unbuilt.
+    let mut legal = vec![
         (MemoryStatus::Held, MemoryStatus::Promoted),
         (MemoryStatus::Held, MemoryStatus::Rejected),
+        (MemoryStatus::Promoted, MemoryStatus::Demoted),
     ];
+    for from in ALL {
+        if from != MemoryStatus::Erased {
+            legal.push((from, MemoryStatus::Erased));
+        }
+    }
     for from in ALL {
         for to in ALL {
             let result = transition(from, to);
@@ -80,6 +88,24 @@ fn transition_admits_only_held_to_promoted_or_rejected() {
             }
         }
     }
+}
+
+#[test]
+fn only_a_promoted_version_can_be_demoted() {
+    for from in ALL {
+        let result = transition(from, MemoryStatus::Demoted);
+        assert_eq!(result.is_ok(), from == MemoryStatus::Promoted, "{from:?}");
+    }
+    assert!(transition(MemoryStatus::Withdrawn, MemoryStatus::Demoted).is_err());
+}
+
+#[test]
+fn a_withdrawn_version_can_be_erased_and_an_erased_one_cannot_be_erased_again() {
+    assert_eq!(
+        transition(MemoryStatus::Withdrawn, MemoryStatus::Erased),
+        Ok(MemoryStatus::Erased)
+    );
+    assert!(transition(MemoryStatus::Erased, MemoryStatus::Erased).is_err());
 }
 
 fn key(n: u8) -> Uuid {

@@ -68,18 +68,19 @@ fn served_tip(m: &MemoryRecord) -> bool {
 }
 
 /// Whether `m` was its claim's tip at `as_of` and is promoted today
-/// (ADR-0059 d15, d16): promoted at or before the instant, with no later
-/// version of its `workspace_id` and `claim_key`, in any state today,
-/// promoted at or before it.
+/// (ADR-0059 d15, d16, d22): promoted at or before the instant, with no
+/// later version of its `workspace_id` and `claim_key` promoted at or
+/// before it, in any state today but `demoted`.
 fn tip_at(state: &TenantState, m: &MemoryRecord, as_of: &EventTime) -> bool {
     let promoted_by = |r: &MemoryRecord| {
-        r.promoted_at
-            .as_ref()
-            .is_some_and(|at| at.as_str() <= as_of.as_str())
+        r.status != MemoryStatus::Demoted
+            && r.promoted_at
+                .as_ref()
+                .is_some_and(|at| at.as_str() <= as_of.as_str())
     };
-    // Today's tip promoted by the instant was the tip then, while a tip
-    // moves forward alone (ADR-0059 d16), as PostgreSQL's `tip_at_sql`
-    // reads it.
+    // Today's tip promoted by the instant was the tip then: it is the
+    // greatest non-demoted version promoted by any instant since its own
+    // promotion (ADR-0059 d22), as PostgreSQL's `tip_at_sql` reads it.
     m.status == MemoryStatus::Promoted
         && promoted_by(m)
         && (m.is_tip
@@ -359,6 +360,11 @@ struct TenantState {
     /// The profile an admin assigned each account (`account_profiles`;
     /// ADR-0071 d5).
     account_profiles: BTreeMap<Uuid, String>,
+    /// The end each version had before a ratified supersession replaced
+    /// it, `None` for an open end, until a demotion restores it as the tip
+    /// (`memories.valid_until_ratified` and `valid_until_before`, 0058;
+    /// ADR-0089 d16, note of 2026-11-18).
+    valid_until_before: BTreeMap<Uuid, Option<oml_domain::valid_time::ValidEnd>>,
 }
 
 /// BTreeMap journal-and-metadata store with a real lock per tenant: chain
@@ -726,8 +732,9 @@ impl MemStore {
         self.widen_similar.store(true, Ordering::SeqCst);
     }
 
-    /// Sets a stored row's status, journalling nothing: the demoted or
-    /// erased row a test needs, which no use case in this build produces.
+    /// Sets a stored row's status, journalling nothing: a row in a state a
+    /// test needs without the act that reaches it (the fix acts reach
+    /// `demoted` and `erased`, ADR-0089 d16).
     /// A row the tenant does not hold is left absent.
     pub fn set_status(&self, tenant_id: Uuid, memory_id: Uuid, status: MemoryStatus) {
         if let Some(tenant) = self.tenant_existing(tenant_id)
@@ -2008,6 +2015,101 @@ fn apply_fold(
             }
             state.queue.retain(|e| e.memory_id != memory_id);
         }
+        MetadataFold::MemoryDemoted {
+            memory_id,
+            restored,
+        } => {
+            // The compare-and-set PostgreSQL's fold makes (ADR-0089 d16).
+            let Some(demoted) = state.memories.get(&memory_id).cloned() else {
+                return Err(StoreError::TipMoved {
+                    replaced: memory_id,
+                });
+            };
+            let below = |r: &MemoryRecord| {
+                r.workspace_id == demoted.workspace_id
+                    && r.claim_key == demoted.claim_key
+                    && r.version < demoted.version
+                    && r.status == MemoryStatus::Promoted
+            };
+            let greatest_below = state
+                .memories
+                .values()
+                .filter(|r| below(r))
+                .max_by_key(|r| r.version)
+                .map(|r| r.memory_id);
+            let cas = demoted.status == MemoryStatus::Promoted
+                && match restored {
+                    Some(r) => {
+                        demoted.is_tip
+                            && greatest_below == Some(r)
+                            && state.memories.get(&r).is_some_and(|m| !m.is_tip)
+                    }
+                    None => !demoted.is_tip || greatest_below.is_none(),
+                };
+            if !cas {
+                return Err(StoreError::TipMoved {
+                    replaced: memory_id,
+                });
+            }
+            if let Some(memory) = state.memories.get_mut(&memory_id) {
+                memory.status = MemoryStatus::Demoted;
+                memory.is_tip = false;
+            }
+            // The version it replaced, still promoted, gets back the end it
+            // had before this version's ratification, tip or not (ADR-0089
+            // d16, note of 2026-11-18).
+            if let Some(replaced) = demoted.replaces
+                && state
+                    .memories
+                    .get(&replaced)
+                    .is_some_and(|m| m.status == MemoryStatus::Promoted)
+                && let Some(before) = state.valid_until_before.remove(&replaced)
+                && let Some(memory) = state.memories.get_mut(&replaced)
+            {
+                memory.valid.until = before;
+            }
+            if let Some(r) = restored
+                && let Some(memory) = state.memories.get_mut(&r)
+            {
+                memory.is_tip = true;
+            }
+        }
+        MetadataFold::ClaimErased { memory_ids } => {
+            // The compare-and-set: the ids are one claim's versions, and
+            // that claim holds no version they leave out (ADR-0089 d16).
+            let first = memory_ids.first().copied().unwrap_or_default();
+            let Some(named) = state.memories.get(&first).cloned() else {
+                return Err(StoreError::TipMoved { replaced: first });
+            };
+            let claim: BTreeSet<Uuid> = state
+                .memories
+                .values()
+                .filter(|m| m.workspace_id == named.workspace_id && m.claim_key == named.claim_key)
+                .map(|m| m.memory_id)
+                .collect();
+            let ids: BTreeSet<Uuid> = memory_ids.iter().copied().collect();
+            if claim != ids {
+                return Err(StoreError::TipMoved { replaced: first });
+            }
+            // The body and what derives from it go; the digest, title,
+            // attribution and lineage stay (ADR-0005 d2, d5).
+            for id in &ids {
+                if let Some(memory) = state.memories.get_mut(id) {
+                    memory.status = MemoryStatus::Erased;
+                    memory.is_tip = false;
+                    memory.body = String::new();
+                    if let Some(g) = memory.guardrail.as_mut() {
+                        g.rule = None;
+                    }
+                    memory.format.search_text = None;
+                    memory.format.search_text_by = None;
+                    // A skill's name and description and a document's
+                    // title stay, signed in the submission as the title is
+                    // (ADR-0005 d3, note of 2026-11-18).
+                }
+            }
+            state.queue.retain(|e| !ids.contains(&e.memory_id));
+        }
         MetadataFold::SourceChecked { memory_id, check } => {
             if let Some(memory) = state.memories.get_mut(&memory_id) {
                 memory.source_check = Some(Box::new(check));
@@ -2109,6 +2211,9 @@ fn apply_fold(
             if let Some(target) = state.memories.get_mut(&replaced) {
                 target.is_tip = false;
                 if let Some(end) = replaced_valid_until {
+                    state
+                        .valid_until_before
+                        .insert(replaced, target.valid.until.clone());
                     target.valid.until = Some(*end);
                 }
             }
@@ -3602,6 +3707,21 @@ impl JournalStore for MemStore {
                 })
                 .count() as u64,
             instructions_without_person_approval: instructions as u64,
+            held_successors_stranded: state
+                .memories
+                .values()
+                .filter(|m| {
+                    m.status == MemoryStatus::Held
+                        && m.replaces.is_some_and(|r| {
+                            !state
+                                .memories
+                                .get(&r)
+                                .is_some_and(|t| t.status == MemoryStatus::Promoted && t.is_tip)
+                        })
+                })
+                .count() as u64,
+            // This store keeps no data keys.
+            erased_keys_live: 0,
         })
     }
 
@@ -3661,6 +3781,41 @@ impl JournalStore for MemStore {
             })
             .map(|m| m.version)
             .max())
+    }
+
+    async fn valid_until_before(
+        &self,
+        tenant_id: Uuid,
+        memory_id: Uuid,
+    ) -> Result<Option<Option<oml_domain::valid_time::ValidEnd>>, StoreError> {
+        Ok(self.tenant_existing(tenant_id).and_then(|tenant| {
+            tenant
+                .lock()
+                .expect("tenant lock")
+                .valid_until_before
+                .get(&memory_id)
+                .cloned()
+        }))
+    }
+
+    async fn claim_versions(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+        claim_key: &str,
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut versions: Vec<MemoryRecord> = state
+            .memories
+            .values()
+            .filter(|m| m.workspace_id == workspace_id && m.claim_key == claim_key)
+            .cloned()
+            .collect();
+        versions.sort_by_key(|m| m.version);
+        Ok(versions)
     }
 
     async fn claim_tip(

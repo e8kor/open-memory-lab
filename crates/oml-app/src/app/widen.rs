@@ -85,7 +85,7 @@ pub fn drops_widen_signals(event_type: &str) -> bool {
     matches!(
         event_type,
         e::LIFECYCLE_ERASE
-            | "lifecycle.demote"
+            | e::LIFECYCLE_DEMOTE
             | e::WORKSPACE_MODE_SET
             | e::WORKSPACE_STATUS_TRANSITION
             | e::FEDERATION_POLICY_SET

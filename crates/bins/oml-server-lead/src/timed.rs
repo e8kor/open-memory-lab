@@ -550,6 +550,32 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn valid_until_before(
+        &self,
+        tenant_id: Uuid,
+        memory_id: Uuid,
+    ) -> impl Future<
+        Output = Result<Option<Option<oml_app::domain::valid_time::ValidEnd>>, StoreError>,
+    > + Send {
+        timed(
+            "valid_until_before",
+            self.inner.valid_until_before(tenant_id, memory_id),
+        )
+    }
+
+    fn claim_versions(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+        claim_key: &str,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send {
+        timed(
+            "claim_versions",
+            self.inner
+                .claim_versions(tenant_id, workspace_id, claim_key),
+        )
+    }
+
     fn claim_tip(
         &self,
         tenant_id: Uuid,

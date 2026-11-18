@@ -8,6 +8,7 @@
 mod auth;
 mod emails;
 mod federation;
+mod fixes;
 mod key_limits;
 mod linked_keys;
 mod metering;
@@ -20,6 +21,7 @@ mod usage;
 mod widen;
 pub use auth::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
 pub use federation::WideKey;
+pub use fixes::{Demotion, Erasure};
 pub use metering::{AccountLimits, UsageDriftReport};
 pub use pages::{
     ActClaim, ActTicket, AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted,
