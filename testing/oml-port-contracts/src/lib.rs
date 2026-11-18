@@ -13715,8 +13715,16 @@ pub async fn a_document_is_searched_by_its_passages_and_both_bm25_lists_agree<S:
                     },
                 )
             };
-            let scan = ask(RetrieverKind::Bm25).await.expect("bm25");
-            if store.retrievers().contains(&RetrieverKind::Bm25Postings) {
+            // A store serving no bm25 is read by its keyword list.
+            let served = store.retrievers();
+            let scan_kind = if served.contains(&RetrieverKind::Bm25) {
+                RetrieverKind::Bm25
+            } else {
+                RetrieverKind::KeywordAny
+            };
+            let scan = ask(scan_kind).await.expect("scan");
+            if served.contains(&RetrieverKind::Bm25) && served.contains(&RetrieverKind::Bm25Postings)
+            {
                 let postings = ask(RetrieverKind::Bm25Postings).await.expect("postings");
                 same_list(&postings, &scan, &format!("{query:?} own {own_held:?}"));
             }
@@ -13747,6 +13755,96 @@ pub async fn a_document_is_searched_by_its_passages_and_both_bm25_lists_agree<S:
         }
     }
     assert!(seen_doc, "the document's passages are candidates");
+}
+
+/// An erased or a demoted document's passages are never recalled: an
+/// erasure takes its passages and their postings with the body, and a
+/// demotion takes its passages out of every served list (ADR-0081 d3, d4;
+/// ADR-0089 d16).
+pub async fn an_erased_or_demoted_documents_passages_are_never_recalled<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(423);
+    rig.seed_chain(store, 0).await;
+    let (wa, _own) = postings_fixture(&mut rig, store).await;
+    let tenant = rig.tenant_id;
+    let doc = |id: u128, key: &str, word: &str| MemoryRecord {
+        kind: MemoryKind::Document,
+        claim_key: format!("doc/{key}"),
+        kind_fields: Some(Box::new(oml_app::types::KindFields::Document {
+            title: Some(key.to_owned()),
+        })),
+        format: Box::new(oml_app::types::FormatFields {
+            media_type: "text/markdown".to_owned(),
+            ..Default::default()
+        }),
+        ..held_memory(
+            tenant,
+            wa,
+            Uuid::from_u128(id),
+            "rita",
+            Uuid::from_u128(0xE5),
+            &format!("# {key}\n\nIntro.\n\n## Detail\n\nThe {word} lives here.\n"),
+        )
+    };
+    let demoted = Uuid::from_u128(0xF31);
+    let erased = Uuid::from_u128(0xF32);
+    hold_and_promote(&mut rig, store, doc(0xF31, "wombat-guide", "wombat")).await;
+    hold_and_promote(&mut rig, store, doc(0xF32, "quokka-guide", "quokka")).await;
+    let found = |query: &'static str, kind: RetrieverKind| {
+        let scope = CandidateScope {
+            reference: None,
+            anchor: oml_app::types::AnchorFilter::default(),
+            kinds: HIT_KINDS.to_vec(),
+            ..scope_of(wa, None)
+        };
+        async move {
+            store
+                .retrieve(
+                    tenant,
+                    kind,
+                    &scope,
+                    RetrievalQuery {
+                        query,
+                        match_mode: MatchMode::Any,
+                        k: 20,
+                        sparse: &[],
+                        window: None,
+                        within: &[],
+                    },
+                )
+                .await
+                .expect("retrieve")
+                .candidates
+                .into_iter()
+                .map(|c| c.memory_id)
+                .collect::<Vec<_>>()
+        }
+    };
+    let kinds: Vec<RetrieverKind> = [
+        RetrieverKind::KeywordAny,
+        RetrieverKind::Bm25,
+        RetrieverKind::Bm25Postings,
+    ]
+        .into_iter()
+        .filter(|k| store.retrievers().contains(k))
+        .collect();
+    for &kind in &kinds {
+        assert!(found("wombat", kind).await.contains(&demoted), "{kind:?}");
+        assert!(found("quokka", kind).await.contains(&erased), "{kind:?}");
+    }
+    demote(&mut rig, store, demoted, None).await.expect("demote");
+    erase(&mut rig, store, vec![erased]).await.expect("erase");
+    for &kind in &kinds {
+        assert!(
+            !found("wombat", kind).await.contains(&demoted),
+            "{kind:?}: a demoted document's passages are not recalled"
+        );
+        assert!(
+            !found("quokka", kind).await.contains(&erased),
+            "{kind:?}: an erased document's passages are not recalled"
+        );
+    }
 }
 
 /// An expired version counts in no statistic: `bm25` and `bm25-postings`
@@ -14538,6 +14636,7 @@ where
     bm25_scores_a_word_a_lone_row_says_once_at_its_weight(&new_store().await).await;
     bm25_counts_an_inflected_form_once_as_it_counts_the_exact_word(&new_store().await).await;
     a_document_is_searched_by_its_passages_and_both_bm25_lists_agree(&new_store().await).await;
+    an_erased_or_demoted_documents_passages_are_never_recalled(&new_store().await).await;
     trigram_finds_a_misspelled_words_memory(&new_store().await).await;
     did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the_scope(&new_store().await)
         .await;
