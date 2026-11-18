@@ -12,7 +12,10 @@ SDKs do. It holds no store and writes no journal. The server keeps the API, sign
 that has not moved yet.
 
 The pages move one at a time, and each moved page gets its own path under `/web/`. In this build
-`oml-web` serves four views: the Guardrails view of the user page at `GET /web/guardrails`; the
+`oml-web` serves these views: a workspace's own page at `GET /web/workspace?workspace=&kind=`,
+with its forms at `/web/workspace/new`, `/web/workspace/edit` and `/web/workspace/retire`, and the
+admin side's read-only `GET /web/admin/workspace`; `GET /web/guardrails`, the former Guardrails
+view, answers `308` to the workspace page's Guardrails kind; the
 Workspaces view at `/web/workspaces` on the user page and `/web/admin/workspaces` on the admin page;
 the Memories list at `GET /web/memories` and `GET /web/admin/memories`; the Atlas at
 `GET /web/atlas` and `GET /web/admin/atlas`, with the list's JSON at `GET /web/data/memories` and
@@ -214,7 +217,7 @@ been measured ([#170](https://github.com/e8kor/open-memory-lab/issues/170)). Cal
 of kept-alive connections.
 
 When the call a page needs fails, `oml-web` shows the server's error code and message with the
-page's request id. When a secondary part fails, such as the workspace list on the Guardrails view,
+page's request id. When a secondary part fails, such as the workspace list on the workspace page,
 the page renders without it and names that call's request id.
 
 A list the page reads a page at a time is read whole or refused, never shown cut short:

@@ -93,6 +93,42 @@ any memory in it is held. Apply
 shows what will happen before anything is recorded
 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
 
+### Build skills, guardrails and documents on a workspace's page
+
+Each row of **Workspaces** opens that workspace's own page, `/web/workspace?workspace=<name>`
+([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d1). Under the workspace picker, **Approved contents by kind** links Memories (the Memories
+page filtered to the workspace), Skills, Guardrails and Documents, each with its count of approved
+items, one per claim, on that workspace alone. The kind's table lists every version: name, state,
+for a held one the decision (New skill, Edit of v2, Retirement of v1), version and when it changed,
+or severity and rule for a guardrail. An approved version with nothing held after it offers
+**Edit** and **Retire**; one with a held successor says "in force · edit v3 waits for review" and
+links that version; a held version offers **Judge it** where the person's reviewer key may judge
+it, and **Withdraw** where a key of the person wrote it. Inside a workspace whose drafts are visible
+to everyone working there, a held row is marked unreviewed and "served here, unreviewed". The
+Guardrails kind opens with **In force here**: every guardrail an agent connected to the workspace
+loads, the inherited ones first, each linking to the workspace it comes from, then the workspace's
+own, with the counts under the key's guardrail scope
+([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d12). The old Guardrails
+address answers a redirect there.
+
+**New skill**, **New guardrail** and **New document** open a form, offered where a key of the person
+may write: `<user>-web` in the person's own root, `<user>-review` in a shared workspace where it
+holds reviewer. A skill takes a name (fixed for every version), a description and a markdown body;
+a guardrail a severity (`never`, `must`, `should`), a text of at most 300 bytes and an optional
+rule (tool, match, effect); a document a title, a format (markdown or plain text), an optional
+claim key and a body. **Preview** comes first: it writes nothing and draws above the form what a
+session will receive, the command `/mcp__<server>__<name>` for a skill, the session-start line, what
+the rule checks and the set's size against its cap of 12 for a guardrail, the resource address and
+the passages for a document, with the scan's findings. **Propose** appears only on the page a
+preview answered and writes exactly the previewed values, held until approved; a field changed
+since then is previewed again instead. An edit also draws its change against the served tip, name,
+description and body in their own blocks. **Retire** names what stops once it is approved and
+needs a reason. A refusal keeps every value and names the error beside its field; when the claim
+moved on since the form was drawn, the one action is **Edit from v3 with this text**. The same form
+sent twice writes one version. In the person's root `<user>-review` may approve, marked same user;
+in a shared workspace a reviewer outside the person approves, a person for a skill or a guardrail
+([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d2-d7).
+
 **Catalog. Designed, not built** ([ADR-0092](../adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md), planned for v0.8.0). A **Catalog** page after
 Memories will list what the person's key reads across kinds, with a tab and a count per kind. A
 held version served inside an in-progress workspace carries the unreviewed mark; a held skill,

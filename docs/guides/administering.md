@@ -124,6 +124,9 @@ address answers a redirect to Memories, Held. Each view filters by kind too. The
 a **To do · N** badge linking to the admin To do page, which lists nothing yet: its groups come with
 admin fixes
 ([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d5, d7). **Atlas** shows the workspaces as a map sized by their rows, with a table twin.
+Each row of **Workspaces** opens the workspace's admin page, `/web/admin/workspace`, which lists
+its skills, guardrails and documents by kind with their counts, states and lineage, read-only: an
+admin key writes no claim, so it offers no New, Edit or Retire ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d1).
 **Workspaces** shows the tree with one dropdown a workspace: status changes as the admin key,
 ratified only by a key other than the proposer's; in progress and commit as the reviewer key.
 Apply asks for confirmation first ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).

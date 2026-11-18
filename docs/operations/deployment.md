@@ -134,7 +134,7 @@ private network.
   the server, unchanged: the API, `/mcp`, `/oauth/*`, `/.well-known/*`, `/readyz` and sign-in
   (`/web/sign-in`, `/web/callback/*`, `/web/sign-up`). Do not rewrite paths or cache responses.
   The pages `oml-web` serves are `PAGES` in `crates/clients/oml-web/src/lib.rs`, each at a path
-  of its own, today `/web/guardrails`, `/web/workspaces`, `/web/admin/workspaces`, `/web/memories`,
+  of its own, today `/web/guardrails`, `/web/workspace` and its forms, `/web/admin/workspace`, `/web/workspaces`, `/web/admin/workspaces`, `/web/memories`,
   `/web/atlas`, `/web/admin/memories`, `/web/admin/atlas`, `/web/data/memories`,
   `/web/admin/data/memories`, `/web/review` and `/web/admin/review` (each a `308` for this
   release), `/web/todo`, `/web/todo/judge`, `/web/admin/todo`, `/web/keys` and `/web/admin/keys`,

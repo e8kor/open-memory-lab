@@ -65,7 +65,7 @@ What the console does today:
 - **One card, one picker.** Every memory is drawn by one card function (`card.rs`), and one
   workspace picker serves Memories, the Atlas, Review and Guardrails (`picker.rs`).
 
-Decided, not built.
+Decided; built in v0.8.0: the API in #409, the console in #410 (the workspace page, its forms, In force here and the admin workspace page).
 
 ## Decision
 
