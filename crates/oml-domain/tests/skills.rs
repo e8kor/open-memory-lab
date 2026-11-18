@@ -266,10 +266,49 @@ fn sixty_held_skills_give_at_most_fifty_held_commands_and_every_promoted_one_is_
             p.name
         );
     }
-    assert!(set.all.iter().filter(|o| o.candidate.held).count() <= HELD_SKILLS_MAX);
+    // `all` is the URI lookup and keeps every held command.
+    assert_eq!(set.all.iter().filter(|o| o.candidate.held).count(), 60);
     // The first fifty held in the set's order are kept.
     assert!(set.offered.iter().any(|o| o.command == "held-49"));
     assert!(!set.offered.iter().any(|o| o.command == "held-50"));
+}
+
+/// Every offered command stays readable by URI however many held ones are
+/// shadowed before it in the set's order: 26 names held as version 1 in two
+/// sibling workspaces at one distance, nothing approved, offer each name
+/// from the smaller path, and the listed URI of every one, and of every
+/// shadowed one, resolves in `all` (ADR-0080 d7, d10; R15, R19).
+#[test]
+fn every_offered_held_command_stays_readable_by_uri_past_the_held_cap() {
+    let mut candidates = Vec::new();
+    for i in 0..26 {
+        let name = format!("s{i:02}");
+        candidates.push(candidate(&name, "universe.team.wip-a", 1, false, true));
+        candidates.push(candidate(&name, "universe.team.wip-b", 1, false, true));
+    }
+    let set = offer(candidates.clone());
+    assert_eq!(set.offered.len(), 26);
+    for o in &set.offered {
+        assert!(
+            set.all
+                .iter()
+                .any(|a| a.candidate.artifact_id == o.candidate.artifact_id
+                    && a.command == o.command),
+            "{} from {} is offered and not readable by URI",
+            o.command,
+            o.candidate.path
+        );
+    }
+    for c in &candidates {
+        assert!(
+            set.all
+                .iter()
+                .any(|a| a.candidate.artifact_id == c.artifact_id),
+            "{} at {} is not readable by URI",
+            c.name,
+            c.path
+        );
+    }
 }
 
 #[test]
