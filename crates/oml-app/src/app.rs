@@ -7524,6 +7524,7 @@ where
                 &listed,
                 key.key_id,
                 &inside,
+                true,
             )
             .await?;
 
@@ -7766,7 +7767,14 @@ where
         let listed: Vec<Uuid> = nodes.keys().copied().collect();
         let rows = self
             .journal
-            .instruction_rows(tenant_id, MemoryKind::Skill, &listed, key.key_id, &inside)
+            .instruction_rows(
+                tenant_id,
+                MemoryKind::Skill,
+                &listed,
+                key.key_id,
+                &inside,
+                false,
+            )
             .await?;
         let mut candidates = Vec::new();
         let mut kept = BTreeMap::new();
@@ -7801,6 +7809,7 @@ where
                 ancestor,
                 held,
                 version: m.version,
+                created_at: m.created_at.as_str().to_owned(),
             });
             names.insert(m.workspace_id, name.clone());
             kept.insert(m.memory_id, m);
@@ -7850,8 +7859,8 @@ where
                     .as_ref()
                     .is_none_or(|a| (o.candidate.distance, o.command.clone()) > *a)
             })
-            .take(SKILL_PAGE.saturating_add(1))
             .filter_map(|o| served_skill(&scope, o, rows.get(&o.candidate.artifact_id)?))
+            .take(SKILL_PAGE.saturating_add(1))
             .collect();
         let more = page.len() > SKILL_PAGE;
         page.truncate(SKILL_PAGE);
@@ -7918,9 +7927,18 @@ where
         let Some(skill) = served_skill(&scope, offered, &row) else {
             return Ok(None);
         };
+        // The set was read without bodies; the one served is read here
+        // (ADR-0080 d11). A row gone since is not served.
+        let Some(full) = self
+            .journal
+            .memory(caller.key.tenant_id, row.memory_id)
+            .await?
+        else {
+            return Ok(None);
+        };
         Ok(Some(SkillBody {
             skill,
-            body: row.body,
+            body: full.body,
         }))
     }
 

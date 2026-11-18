@@ -8054,16 +8054,23 @@ impl JournalStore for PgStore {
         nodes: &[Uuid],
         author_key_id: Uuid,
         held_nodes: &[Uuid],
+        bodies: bool,
     ) -> Result<Vec<MemoryRecord>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
+        // A listing that serves no body selects none (ADR-0080 d11).
+        let columns = if bodies {
+            MEMORY_COLUMNS.to_owned()
+        } else {
+            MEMORY_COLUMNS.replacen("m.claim, ", "''::text AS claim, ", 1)
+        };
         // The promoted served tips of the kind on the named nodes,
         // never a retirement version, the held versions the calling key
         // authored there, and every held version on the nodes inside an
         // in-progress subtree: the state and author predicates are this
         // statement's own (proposed ADR-0037 d3, d4; ADR-0080 d10, d16).
         let sql = format!(
-            "SELECT {MEMORY_COLUMNS} FROM memories m \
+            "SELECT {columns} FROM memories m \
              WHERE m.tenant_id = $1 AND m.kind = $5 \
                AND m.workspace_id = ANY($2::uuid[]) \
                AND ((m.status = 'promoted' AND m.is_tip AND NOT m.retirement) \

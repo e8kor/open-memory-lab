@@ -82,7 +82,9 @@ PROMPTS = (
     "byte for byte, or with `?passage=<fragment>` that passage's lines, and a skill's header and body as one text content, "
     "with the artifact id, version, approval and `unreviewed` in `_meta.oml`. A URI segment holding `%` or a reserved "
     "character is `-32602`; any other URI not served, a skill shadowed out of reach and a passage the document does not "
-    "hold among them, answers `-32002`, \"Resource not found\". Serving a prompt or a resource is a read, not a recall.\n"
+    "hold among them, answers `-32002`, \"Resource not found\". Serving a prompt or a resource is a read, not a recall. When the server cannot read the "
+    "skills, page one of `prompts/list` holds the `guardrails` prompt alone, and `resources/list`, `prompts/get` and "
+    "`resources/read` answer `-32603`, \"the skills could not be read; retry later\".\n"
 )
 
 

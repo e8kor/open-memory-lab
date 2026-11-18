@@ -12,9 +12,13 @@ use tower::ServiceExt as _;
 const ENROLLMENT: &str = "enr_test_fixture_token";
 
 fn doubles_router() -> Router {
+    doubles_router_over(oml_app::doubles::MemStore::new())
+}
+
+/// The router over `store`, which a test can then fail.
+fn doubles_router_over(store: oml_app::doubles::MemStore) -> Router {
     use oml_app::App;
-    use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
-    let store = MemStore::new();
+    use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
     let app = App::new(
         store.clone(),
         MemSigner::new([7; 32]),
@@ -323,6 +327,8 @@ async fn prompts_list_puts_the_guardrails_prompt_first_and_pages_by_fifty() {
     for i in 0..51 {
         submit_skill(&router, &t, &t.writer, &format!("s{i:02}"), "Do it.").await;
     }
+    // One approved and fifty held, so the held ones stay within their cap.
+    approve_next(&router, &t, 1).await;
     let first = rpc(&router, &t.writer, "prompts/list", json!({})).await;
     let page = names(&first, "prompts");
     assert_eq!(page.len(), 51, "{first}");
@@ -585,4 +591,172 @@ async fn a_resource_uri_with_a_percent_segment_is_refused_32602() {
         assert_eq!(missing["error"]["code"], -32002, "{uri}: {missing}");
         assert_eq!(missing["error"]["data"]["uri"], uri);
     }
+}
+
+/// A skill `name` on `workspace`, written by `token`; its id.
+async fn submit_skill_on(
+    router: &Router,
+    token: &str,
+    workspace: &str,
+    name: &str,
+    body: &str,
+) -> String {
+    let (status, receipt) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        Some(token),
+        Some(&format!("skill-{name}-{workspace}")),
+        Some(
+            &json!({"kind": "skill", "format": "text/markdown", "body": body,
+                     "skill": {"name": name, "description": format!("Runs {name}.")},
+                     "workspace": workspace}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{receipt}");
+    receipt["artifact_id"]
+        .as_str()
+        .expect("artifact_id")
+        .to_owned()
+}
+
+/// A child workspace `name` under `parent`; its id.
+async fn child_workspace(router: &Router, admin: &str, parent: &str, name: &str) -> String {
+    let (status, wa) = send(
+        router,
+        "POST",
+        "/v2/workspaces",
+        Some(admin),
+        Some(&format!("wa-{name}")),
+        Some(&json!({"parent": parent, "name": name})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{wa}");
+    wa["id"].as_str().expect("workspace id").to_owned()
+}
+
+/// A nearer workspace's held version 1 never takes the bare command of a
+/// skill a farther workspace holds approved: `/oml:<name>` serves the
+/// approved body, and the held one answers as `<name>-unreviewed` beside
+/// it, marked (ADR-0080 d10, d16; R15).
+#[tokio::test]
+async fn the_bare_command_serves_the_approved_skill_when_a_nearer_workspace_holds_only_a_held_one()
+{
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    submit_skill(&router, &t, &t.writer, "deploy", "Approved deploy steps.").await;
+    approve_next(&router, &t, 1).await;
+    let app = child_workspace(&router, &t.admin, &t.crew, "app").await;
+    let near = issue(
+        &router,
+        &t.admin,
+        json!({"role": "writer", "name": "near", "principal": "crew/agent-9", "default_workspace": app,
+               "grants": [{"workspace": app, "role": "writer"}, {"workspace": t.crew, "role": "reader"}]}),
+    )
+    .await["value"]
+        .as_str()
+        .expect("near value")
+        .to_owned();
+    submit_skill_on(&router, &near, &app, "deploy", "Unreviewed deploy steps.").await;
+    let listed = rpc(&router, &near, "prompts/list", json!({})).await;
+    assert_eq!(
+        names(&listed, "prompts"),
+        ["guardrails", "deploy-unreviewed", "deploy"],
+        "{listed}"
+    );
+    let got = rpc(&router, &near, "prompts/get", json!({"name": "deploy"})).await;
+    let text = got["messages"][0]["content"]["text"]
+        .as_str()
+        .expect("text");
+    assert!(
+        text.starts_with("OML skill `deploy` from `universe.metals-crew`, version 1, approved ")
+            && text.ends_with("\n\nApproved deploy steps."),
+        "{text}"
+    );
+    let got = rpc(
+        &router,
+        &near,
+        "prompts/get",
+        json!({"name": "deploy-unreviewed"}),
+    )
+    .await;
+    let text = got["messages"][0]["content"]["text"]
+        .as_str()
+        .expect("text");
+    assert!(
+        text.starts_with("UNREVIEWED: not yet approved by a reviewer.")
+            && text.ends_with("\n\nUnreviewed deploy steps."),
+        "{text}"
+    );
+    let (_, set) = send(
+        &router,
+        "GET",
+        "/v1/skills?include_own_held=true",
+        Some(&near),
+        None,
+        None,
+    )
+    .await;
+    let uris: Vec<&str> = set["skills"]
+        .as_array()
+        .expect("skills")
+        .iter()
+        .filter_map(|s| s["uri"].as_str())
+        .collect();
+    assert_eq!(
+        uris,
+        [
+            "oml://workspace/app/skill/deploy-unreviewed",
+            "oml://workspace/metals-crew/skill/deploy"
+        ],
+        "{set}"
+    );
+}
+
+/// When the skills cannot be read, page one of `prompts/list` still serves
+/// the guardrails prompt alone, and `resources/list`, `prompts/get` and
+/// `resources/read` answer `-32603` with one generic message; with the
+/// store back, an unknown name stays `-32602` and an unknown URI `-32002`,
+/// so an outage and a missing skill are never told apart by what they name
+/// (ADR-0080 d6, d7; ADR-0081 d6).
+#[tokio::test]
+async fn an_outage_of_the_skills_read_serves_the_guardrails_prompt_alone_and_answers_32603() {
+    let store = oml_app::doubles::MemStore::new();
+    let router = doubles_router_over(store.clone());
+    let t = tenant(&router).await;
+    submit_skill(&router, &t, &t.writer, "deploy", "Deploy steps.").await;
+    approve_next(&router, &t, 1).await;
+    store.fail_instruction_rows(true);
+    let listed = rpc(&router, &t.writer, "prompts/list", json!({})).await;
+    assert_eq!(names(&listed, "prompts"), ["guardrails"], "{listed}");
+    assert!(listed.get("nextCursor").is_none(), "{listed}");
+    for (method, params) in [
+        ("resources/list", json!({})),
+        ("prompts/get", json!({"name": "deploy"})),
+        (
+            "resources/read",
+            json!({"uri": "oml://workspace/metals-crew/skill/deploy"}),
+        ),
+    ] {
+        let failed = rpc_raw(&router, &t.writer, method, params).await;
+        assert_eq!(failed["error"]["code"], -32603, "{method}: {failed}");
+        assert_eq!(
+            failed["error"]["message"], "the skills could not be read; retry later",
+            "{method}"
+        );
+    }
+    store.fail_instruction_rows(false);
+    let unknown = rpc_raw(&router, &t.writer, "prompts/get", json!({"name": "nobody"})).await;
+    assert_eq!(unknown["error"]["code"], -32602, "{unknown}");
+    let missing = rpc_raw(
+        &router,
+        &t.writer,
+        "resources/read",
+        json!({"uri": "oml://workspace/metals-crew/skill/nobody"}),
+    )
+    .await;
+    assert_eq!(missing["error"]["code"], -32002, "{missing}");
+    let got = rpc(&router, &t.writer, "prompts/get", json!({"name": "deploy"})).await;
+    assert!(got["messages"][0]["content"]["text"].is_string(), "{got}");
 }

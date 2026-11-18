@@ -142,10 +142,10 @@ pub const LOCAL_SKILL_REASON: &str = "OML keeps skills: store this one with oml_
 /// Whether `call` writes a file under a project's `.claude/skills/` or
 /// `$HOME/.claude/skills/` (ADR-0080 d15): a `Write`, `Edit`, `MultiEdit`
 /// or `NotebookEdit` whose path, after `~` expansion and resolution against
-/// the session's working directory, lies there. The project is the
-/// session's working directory and, when Claude Code names one, its project
-/// directory. The path is normalised lexically, so `..` cannot step out of
-/// the match and no file is read.
+/// the session's working directory, lies there, in any letter case. The
+/// project is the session's working directory and, when Claude Code names
+/// one, its project directory. The path is normalised lexically, so `..`
+/// cannot step out of the match and no file is read (R12, R17).
 #[must_use]
 pub fn local_skill_write(call: &ToolCall<'_>, home: Option<&str>, project: Option<&str>) -> bool {
     let field = match call.tool_name {
@@ -171,12 +171,19 @@ pub fn local_skill_write(call: &ToolCall<'_>, home: Option<&str>, project: Optio
     if !resolved.is_absolute() {
         return false;
     }
-    let path = normalise(&resolved);
+    // Compared without regard to case, as macOS's and Windows' default
+    // file systems name one directory in any case.
+    let folded = |p: &Path| PathBuf::from(p.to_string_lossy().to_lowercase());
+    let path = folded(&normalise(&resolved));
     [call.cwd, project, home]
         .into_iter()
         .flatten()
         .filter(|base| Path::new(base).is_absolute())
-        .any(|base| path.starts_with(normalise(Path::new(base)).join(".claude").join("skills")))
+        .any(|base| {
+            path.starts_with(folded(
+                &normalise(Path::new(base)).join(".claude").join("skills"),
+            ))
+        })
 }
 
 /// `path` with `.` and `..` folded away, lexically.
@@ -481,4 +488,107 @@ pub fn export(
     std::fs::write(out, contents)
         .map_err(|e| format!("{} cannot be written: {e}", out.display()))?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn call<'a>(tool: &'a str, input: &'a Value, cwd: Option<&'a str>) -> ToolCall<'a> {
+        ToolCall {
+            tool_name: tool,
+            tool_input: input,
+            cwd,
+        }
+    }
+
+    const HOME: &str = "/home/ada";
+    const CWD: &str = "/work/repo";
+
+    fn asks(tool: &str, field: &str, path: &str, project: Option<&str>) -> bool {
+        let input = json!({ field: path });
+        local_skill_write(&call(tool, &input, Some(CWD)), Some(HOME), project)
+    }
+
+    /// `MultiEdit` and `NotebookEdit` writes under `.claude/skills/` ask as
+    /// `Write` and `Edit` do, each by the field it carries (ADR-0080 d15).
+    #[test]
+    fn multiedit_and_notebookedit_under_claude_skills_ask() {
+        assert!(asks(
+            "MultiEdit",
+            "file_path",
+            ".claude/skills/x/SKILL.md",
+            None
+        ));
+        assert!(asks(
+            "NotebookEdit",
+            "notebook_path",
+            "~/.claude/skills/x/n.ipynb",
+            None
+        ));
+        assert!(!asks(
+            "NotebookEdit",
+            "file_path",
+            "~/.claude/skills/x/n.ipynb",
+            None
+        ));
+        assert!(!asks(
+            "Read",
+            "file_path",
+            ".claude/skills/x/SKILL.md",
+            None
+        ));
+    }
+
+    /// The project Claude Code names in `CLAUDE_PROJECT_DIR` is matched
+    /// beside the working directory (ADR-0080 d15; R12).
+    #[test]
+    fn a_write_under_the_claude_project_dir_skills_asks() {
+        let path = "/srv/project/.claude/skills/x/SKILL.md";
+        assert!(!asks("Write", "file_path", path, None));
+        assert!(asks("Write", "file_path", path, Some("/srv/project")));
+    }
+
+    /// A `..` that leaves `.claude/skills` is not matched, and one that
+    /// enters it is (R12).
+    #[test]
+    fn a_dot_dot_that_leaves_the_skills_directory_does_not_ask() {
+        assert!(!asks(
+            "Write",
+            "file_path",
+            ".claude/skills/../notes.md",
+            None
+        ));
+        assert!(!asks(
+            "Write",
+            "file_path",
+            "/work/repo/.claude/skills/x/../../a.md",
+            None
+        ));
+        assert!(asks(
+            "Write",
+            "file_path",
+            "src/../.claude/skills/x/SKILL.md",
+            None
+        ));
+    }
+
+    /// The match ignores case, as macOS's and Windows' default file systems
+    /// do (ADR-0080 d15).
+    #[test]
+    fn a_case_variant_of_claude_skills_asks() {
+        for path in [
+            ".Claude/Skills/x/SKILL.md",
+            "/WORK/Repo/.claude/SKILLS/x/SKILL.md",
+            "~/.CLAUDE/skills/x/SKILL.md",
+        ] {
+            assert!(asks("Write", "file_path", path, None), "{path}");
+        }
+        assert!(!asks(
+            "Write",
+            "file_path",
+            ".claude/skillset/SKILL.md",
+            None
+        ));
+    }
 }

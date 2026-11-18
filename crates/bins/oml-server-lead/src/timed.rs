@@ -423,11 +423,19 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         nodes: &[Uuid],
         author_key_id: Uuid,
         held_nodes: &[Uuid],
+        bodies: bool,
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send {
+        // One series per kind, so the guardrail read and the skill read
+        // are told apart.
+        let method = match kind {
+            MemoryKind::Guardrail => "instruction_rows.guardrail",
+            MemoryKind::Skill => "instruction_rows.skill",
+            _ => "instruction_rows",
+        };
         timed(
-            "instruction_rows",
+            method,
             self.inner
-                .instruction_rows(tenant_id, kind, nodes, author_key_id, held_nodes),
+                .instruction_rows(tenant_id, kind, nodes, author_key_id, held_nodes, bodies),
         )
     }
 
