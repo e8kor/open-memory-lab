@@ -75,7 +75,7 @@ What exists today:
   2026-11-14).
 
 The decision has to say what a skill is, who sees which, how it is served without a local copy,
-and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md)'s R1 to R4 and restates none of them; d16 widens ADR-0001 d5's first exception, the in-progress workspace, as that exception's own text records. Decided. The class rule's person verdict is built for steering and guardrail in v0.8.0 (#391), and for skill once the kind lands (#400, #403); the rest of this record is not built.
+and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md)'s R1 to R4 and restates none of them; d16 widens ADR-0001 d5's first exception, the in-progress workspace, as that exception's own text records. Decided. The class rule's person verdict is built for steering and guardrail in v0.8.0 (#391), and for skill once the kind lands (#400, #403); d16's in-progress audience is built for recall, the scoped listing and a read by id in v0.8.0 (#402), and d10's and d14's held guardrails and steering, to their author key and inside in-progress roots up the key's chain, in v0.8.0 (#407); the rest of this record is not built.
 
 ## Decision
 
@@ -411,7 +411,7 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
   subtree's promoted rows as promoted and its held rows by ADR-0030 d3, marked unreviewed. A read
   scoped at a sibling of R or on another branch still serves nothing of R's subtree until its
   commit or a published release. ADR-0030 d4's default for `include_unreviewed` is `true` when the
-  served node set holds an in-progress subtree, and held rows come only from such subtrees.
+  served node set holds an in-progress subtree, and held rows come only from such subtrees. *(Read 2026-11-17, review of #456: absent, the default adds nothing outside those subtrees, so the key's own held rows outside an in-progress subtree need the request's own `include_unreviewed: true`, as ADR-0030 d4 has it; `false` narrows to promoted rows for the steering list as for hits; held steering and held guardrails go to the calling key alone, never to another key of its person, d14; the guardrail set's cap counts approved rules alone and held versions are capped apart.)*
   Offering follows the same audience for every instruction kind (the operator, 2026-11-14: "yes,
   absolutely"): a `tip` key scoped at an in-progress root, inside it or at one of its ancestors is
   offered the subtree's skills (prompts, resources, index lines), guardrails (loaded rules, a held

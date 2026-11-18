@@ -5239,7 +5239,7 @@ async fn own_held_rows_count_against_k_and_the_budget() {
 }
 
 #[tokio::test]
-async fn own_held_steering_and_retirement_rows_never_enter_recall() {
+async fn own_held_steering_joins_the_steering_list_and_a_retirement_never_enters_recall() {
     let Some((rig, _admin, _crew, agent, reviewer, _reader)) = own_held_rig().await else {
         return;
     };
@@ -5270,7 +5270,9 @@ async fn own_held_steering_and_retirement_rows_never_enter_recall() {
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{retirement}");
 
-    // Neither is in force, so neither is recalled; the promoted tip stays.
+    // Neither is a hit; the promoted tip stays. The key's own held steering
+    // joins the steering list, marked unreviewed (ADR-0080 d14); the
+    // retirement never enters recall.
     let recall = recall_ok(
         router,
         &agent,
@@ -5278,7 +5280,13 @@ async fn own_held_steering_and_retirement_rows_never_enter_recall() {
     )
     .await;
     assert_eq!(hit_ids(&recall), vec![json!(target)], "{recall}");
-    assert_eq!(recall["steering"], json!([]), "{recall}");
+    let served = recall["steering"].as_array().expect("steering");
+    assert_eq!(served.len(), 1, "{recall}");
+    assert_eq!(
+        served[0]["artifact_id"], steering["artifact_id"],
+        "{recall}"
+    );
+    assert_eq!(served[0]["unreviewed"], true, "{recall}");
     // Get reaches both: they are the key's own (ADR-0025 d3).
     for row in [&steering, &retirement] {
         let id = row["artifact_id"].as_str().expect("id");
@@ -8021,8 +8029,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        91,
-        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link and unlink (ADR-0085 d16), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15)"
+        92,
+        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link and unlink (ADR-0085 d16), withdraw, the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -11642,5 +11650,69 @@ async fn the_widen_hint_is_the_same_over_http_and_mcp_once_the_lead_builds_its_s
         "{settings}"
     );
     assert_eq!(settings["widen_signal"]["failed"], 0, "{settings}");
+    drop_db(&rig.db_name).await;
+}
+
+/// `POST /v1/memories/{artifact_id}/withdraw` (ADR-0083 d13): an empty body
+/// withdraws the author's held version under its Idempotency-Key, which a
+/// retry replays; a key without one, a closed body's stray field and a
+/// version no longer held are refused by name; a key that cannot read the
+/// version is told nothing.
+#[tokio::test]
+async fn the_author_withdraws_its_held_version_over_http_and_the_route_refuses_by_name() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _, root) = bootstrap(router).await;
+    let team = create_workspace(router, &admin, root, "team").await;
+    let writer = agent_on(router, &admin, "agent/withdraw", team).await;
+    let stranger = agent_on(router, &admin, "agent/stranger", team).await;
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        submit_into(&writer, "w-1", &team.to_string(), "mistake"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let id = body["artifact_id"].as_str().expect("id").to_owned();
+    let path = format!("/v1/memories/{id}/withdraw");
+
+    let (status, _, body) = send(router, "POST", &path, Call::auth(&writer)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_envelope(&body, "request.idempotency_key_required");
+    let (status, _, body) = send(
+        router,
+        "POST",
+        &path,
+        Call::auth(&writer)
+            .idem("wd-1")
+            .body(json!({ "why": "a stray field" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_envelope(&body, "request.validation");
+    // A held row is its author's alone: another key is told nothing.
+    let (status, _, body) = send(router, "POST", &path, Call::auth(&stranger).idem("wd-s")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_envelope(&body, "access.not_found");
+
+    let (status, headers, body) =
+        send(router, "POST", &path, Call::auth(&writer).idem("wd-2")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["artifact_id"], id);
+    assert_eq!(body["state"], "withdrawn");
+    assert!(body["journal_seq"].is_u64(), "{body}");
+    assert!(!headers.contains_key("idempotency-replay"));
+    let (status, headers, again) =
+        send(router, "POST", &path, Call::auth(&writer).idem("wd-2")).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again, body, "the replay is the stored answer");
+    assert_eq!(headers["idempotency-replay"], "true");
+    let (status, _, body) = send(router, "POST", &path, Call::auth(&writer).idem("wd-3")).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_envelope(&body, "memory.not_held");
+
     drop_db(&rig.db_name).await;
 }

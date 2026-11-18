@@ -69,6 +69,7 @@ Per-command sections below omit these options.
 | `oml admin rescan` | Report by rule and location which stored versions current rules would refuse or hold; never prints text or changes data |
 | `oml write` | Submit a claim for review, replace one with --replaces, or propose its retirement |
 | `oml read` | Fetch a memory by artifact id, recall with --query, or list memories |
+| `oml withdraw` | Withdraw a held version this key wrote, for a mistaken write; it is kept as withdrawn and never served |
 | `oml events` | Tail journal event digests within the key's reader access |
 | `oml sync` | Sync a workspace with committed repository documents: extract, diff, write, check, or link claims |
 | `oml anchor` | Print a JSON source anchor for a committed file or fragment at --rev, for oml write --anchor |
@@ -836,6 +837,25 @@ oml read [OPTIONS] [ARTIFACT_ID]
 | `--anchor-repo <ANCHOR_REPO>` | Filter by anchor repository, such as github.com/owner/name |
 | `--anchor-path-prefix <ANCHOR_PATH_PREFIX>` | Filter by anchor path prefix, such as docs/adr/ |
 | `--origin-kind <ORIGIN_KINDS>` | Filter by origin kind; repeat for multiple, for example --origin-kind chat --origin-kind doc [possible values: repo, doc, code, lake, chat, web, manual] |
+
+
+## `oml withdraw`
+
+Withdraw a held version this key wrote, for a mistaken write; it is kept as withdrawn and never served
+
+
+```
+oml withdraw [OPTIONS] <ARTIFACT_ID>
+```
+
+| Argument | Meaning |
+|---|---|
+| `<ARTIFACT_ID>` | The held version's artifact id |
+
+| Option | Meaning |
+|---|---|
+| `--reason <REASON>` | Why it is withdrawn; journalled with the act |
+| `--idempotency-key <IDEMPOTENCY_KEY>` | Idempotency-Key for the withdrawal; reusing it replays the first response. Defaults to a fresh key per run |
 
 
 ## `oml events`

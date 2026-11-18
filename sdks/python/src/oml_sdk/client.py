@@ -31,6 +31,7 @@ from .generated.api.memories import (
     recall_memories,
     submit_memory,
     supersede_memory,
+    withdraw_memory,
 )
 from .generated.api.review import post_verdict, review_next
 from .generated.api.workspaces import get_workspace
@@ -60,6 +61,8 @@ from .generated.models import (
     VerdictRequest,
     VerdictRequestVerdict,
     VerdictResult,
+    WithdrawRequest,
+    WithdrawResult,
     WorkspaceView,
 )
 from .generated.types import UNSET, Response
@@ -537,6 +540,25 @@ class OmlClient:
                 else UNSET,
             )
         ).parsed
+
+    def withdraw(
+        self,
+        artifact_id: str,
+        *,
+        reason: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Written[WithdrawResult]:
+        """Withdraw a held version this key wrote, for a mistaken write: it is
+        kept as withdrawn, leaves every review queue and is never served; no
+        reviewer is involved (ADR-0083 d13). Only a held version is withdrawn
+        (`memory.not_held`), and only by its author (`access.author_only`)."""
+        request = WithdrawRequest(reason=_opt(reason))
+        return self._write(
+            idempotency_key,
+            lambda key: withdraw_memory.sync_detailed(
+                artifact_id, client=self._api, body=request, idempotency_key=key
+            ),
+        )
 
     def pages(self, **filters: Any) -> Iterator[MemoryPage]:
         """Every page of `read`'s listing, following `next_cursor` until it is

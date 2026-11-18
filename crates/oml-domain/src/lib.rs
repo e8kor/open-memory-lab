@@ -87,6 +87,7 @@ pub use ladder::{
 };
 pub use model::{
     ClaimClass, DERIVED_CLAIM_KEY_PREFIX, KeyCrew, LineageClosure, MemoryKind, MemoryStatus, Role,
-    TransitionError, UsedBy, VerdictError, check_approval_class, check_reviewer, derive_claim_key,
-    is_person_reviewer, nfc, satisfies_crew_inequality, satisfies_manager_inequality, transition,
+    TransitionError, UsedBy, VerdictError, WithdrawRefusal, Withdrawer, check_approval_class,
+    check_reviewer, derive_claim_key, is_person_reviewer, nfc, satisfies_crew_inequality,
+    satisfies_manager_inequality, transition, withdraw,
 };

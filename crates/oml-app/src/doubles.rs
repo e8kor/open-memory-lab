@@ -2071,6 +2071,12 @@ fn apply_fold(
             }
             state.queue.retain(|e| e.memory_id != memory_id);
         }
+        MetadataFold::MemoryWithdrawn { memory_id } => {
+            if let Some(memory) = state.memories.get_mut(&memory_id) {
+                memory.status = MemoryStatus::Withdrawn;
+            }
+            state.queue.retain(|e| e.memory_id != memory_id);
+        }
         MetadataFold::SourceChecked { memory_id, check } => {
             if let Some(memory) = state.memories.get_mut(&memory_id) {
                 memory.source_check = Some(Box::new(check));
@@ -2721,11 +2727,11 @@ impl Retriever for MemStore {
             }
             scope.own_held.as_ref().is_some_and(|own| {
                 m.status == MemoryStatus::Held
+                    && own.nodes.contains(&m.workspace_id)
                     && (own.author_key_ids.contains(&m.author_key_id)
-                        || (own.any_author
+                        || (own.any_author_nodes.contains(&m.workspace_id)
                             && m.scan_finding.is_none()
                             && m.scanned_under == own.current_scanner))
-                    && own.nodes.contains(&m.workspace_id)
             })
         };
         if kind == RetrieverKind::Time {
@@ -3896,6 +3902,7 @@ impl JournalStore for MemStore {
         tenant_id: Uuid,
         nodes: &[Uuid],
         author_key_id: Uuid,
+        held_nodes: &[Uuid],
     ) -> Result<Vec<MemoryRecord>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Vec::new());
@@ -3907,7 +3914,9 @@ impl JournalStore for MemStore {
             .filter(|m| m.kind == MemoryKind::Guardrail && nodes.contains(&m.workspace_id))
             .filter(|m| {
                 served_tip(m)
-                    || (m.status == MemoryStatus::Held && m.author_key_id == author_key_id)
+                    || (m.status == MemoryStatus::Held
+                        && (m.author_key_id == author_key_id
+                            || held_nodes.contains(&m.workspace_id)))
             })
             .cloned()
             .collect())
@@ -3942,8 +3951,7 @@ impl JournalStore for MemStore {
                         && m.status == MemoryStatus::Held
                         && !m.retirement
                         && m.scan_finding.is_none()
-                        && &m.scanned_under == current_scanner
-                        && HIT_KINDS.contains(&m.kind)))
+                        && &m.scanned_under == current_scanner))
             }
         };
         let position = |m: &MemoryRecord| (m.created_at.as_str().to_owned(), m.memory_id);
@@ -4077,6 +4085,16 @@ impl JournalStore for MemStore {
             rescan_due: older.len() as u64,
             findings_unlisted: unlisted as u64,
             promoted_unapproved: unapproved as u64,
+            withdrawn_in_queue: state
+                .queue
+                .iter()
+                .filter(|e| {
+                    state
+                        .memories
+                        .get(&e.memory_id)
+                        .is_some_and(|m| m.status == MemoryStatus::Withdrawn)
+                })
+                .count() as u64,
             instructions_without_person_approval: instructions as u64,
         })
     }
@@ -4920,7 +4938,6 @@ impl JournalStore for MemStore {
                             && !m.retirement
                             && m.scan_finding.is_none()
                             && m.scanned_under == selection.current_scanner
-                            && HIT_KINDS.contains(&m.kind)
                             && selection.held_nodes.contains(&m.workspace_id)))
             })
         };

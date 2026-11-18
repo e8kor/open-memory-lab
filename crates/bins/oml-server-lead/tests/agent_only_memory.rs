@@ -386,16 +386,20 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
     let (agent, other, wa) = (&crew.agent, &crew.other, crew.workspace.as_str());
     let mut texts: HashMap<String, &str> = HashMap::new();
 
-    // 1. One connection lists the three tools, oml_write, oml_read and
-    // oml_workspace, and the journey calls only those: Claude Code offers the
-    // model nothing else (ADR-0025 d12; ADR-0039 d2).
+    // 1. One connection lists the four tools, oml_write, oml_read,
+    // oml_workspace and oml_withdraw, and the journey calls only those:
+    // Claude Code offers the model nothing else (ADR-0025 d12; ADR-0039 d2;
+    // ADR-0083 d13).
     let listed = agent.rpc("tools/list", json!({})).await;
     let names = set(listed["result"]["tools"]
         .as_array()
         .expect("tools")
         .iter()
         .map(|t| t["name"].as_str().expect("name")));
-    assert_eq!(names, set(["oml_write", "oml_read", "oml_workspace"]));
+    assert_eq!(
+        names,
+        set(["oml_write", "oml_read", "oml_workspace", "oml_withdraw"])
+    );
 
     // 2. On its default workspace the one key both remembers and recalls
     // (d1, d14; roles-and-keys.md, effective verbs).
@@ -484,8 +488,9 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
         .await;
 
     // 6. include_unreviewed: the author's held memories join the hits,
-    // flagged held; held steering is not in force, and no other key sees
-    // them, the same principal's included (d3, d4; ADR-0039 d4).
+    // flagged held; its own held steering joins the steering list, marked
+    // unreviewed (ADR-0080 d14); no other key sees them, the same
+    // principal's included (d3, d4; ADR-0039 d4).
     let own = agent
         .ok(
             "oml_read",
@@ -493,7 +498,10 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
         )
         .await;
     assert_eq!(own["mode"], "recall", "{own}");
-    assert_eq!(own["steering"], json!([]), "{own}");
+    let held_steering = own["steering"].as_array().expect("steering");
+    assert_eq!(held_steering.len(), 1, "{own}");
+    assert_eq!(held_steering[0]["claim_key"], STEERING_KEY, "{own}");
+    assert_eq!(held_steering[0]["unreviewed"], true, "{own}");
     assert_eq!(set(ids(&own["hits"])), set([&quote, &alloy]), "{own}");
     for hit in own["hits"].as_array().expect("hits") {
         assert_eq!(hit["state"], "held", "{hit}");

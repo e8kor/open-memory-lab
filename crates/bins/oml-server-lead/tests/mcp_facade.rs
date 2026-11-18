@@ -797,7 +797,7 @@ async fn the_v0_3_0_tool_names_answer_unknown_tool() {
 }
 
 #[tokio::test]
-async fn tools_list_names_three_tools_each_with_its_annotations() {
+async fn tools_list_names_four_tools_each_with_its_annotations() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -825,6 +825,7 @@ async fn tools_list_names_three_tools_each_with_its_annotations() {
             ("oml_write", "Remember"),
             ("oml_read", "Recall"),
             ("oml_workspace", "Workspace"),
+            ("oml_withdraw", "Withdraw"),
         ],
         "{listed}"
     );
@@ -847,6 +848,15 @@ async fn tools_list_names_three_tools_each_with_its_annotations() {
             ),
             ("oml_read", &read_only),
             ("oml_workspace", &read_only),
+            (
+                "oml_withdraw",
+                &json!({
+                    "readOnlyHint": false,
+                    "destructiveHint": false,
+                    "idempotentHint": true,
+                    "openWorldHint": false,
+                })
+            ),
         ],
         "{listed}"
     );
@@ -871,7 +881,7 @@ fn the_instructions_and_tool_descriptions_describe_and_do_not_command() {
                 .to_owned(),
         ));
     }
-    assert_eq!(texts.len(), 4);
+    assert_eq!(texts.len(), 5);
     // An imperative aimed at the model: a sentence that opens with a verb
     // about calling, trying, recording or treating, or tells it to do so
     // "before" or "after" something.
@@ -4062,5 +4072,78 @@ async fn oml_read_takes_as_of_in_every_mode_and_answers_as_http_does() {
         http_get["error"]["code"], absent["structuredContent"]["error"]["code"],
         "get: HTTP and oml_read agree"
     );
+    drop_db(&db).await;
+}
+
+/// `oml_withdraw` is listed, and withdraws the calling key's own held
+/// version over MCP: the version leaves review, a retry replays, and a
+/// promoted version is the ring's `memory.not_held` (ADR-0083 d13).
+#[tokio::test]
+async fn oml_withdraw_is_listed_and_withdraws_over_mcp() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, reviewer, _, _) = crew(&router).await;
+    let listed = rpc(&router, &writer, 1, "tools/list", json!({})).await;
+    assert!(
+        listed["result"]["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .any(|t| t["name"] == "oml_withdraw"),
+        "{listed}"
+    );
+    let held = call_tool(
+        &router,
+        &writer,
+        2,
+        "oml_write",
+        json!({"text": "A note written by mistake.", "idempotency_key": "w-1"}),
+    )
+    .await;
+    let id = held["structuredContent"]["artifact_id"]
+        .as_str()
+        .expect("id")
+        .to_owned();
+    let withdraw = json!({
+        "artifact_id": id,
+        "reason": "written by mistake",
+        "idempotency_key": "wd-1",
+    });
+    let done = call_tool(&router, &writer, 3, "oml_withdraw", withdraw.clone()).await;
+    assert_eq!(done["isError"], false, "{done}");
+    assert_eq!(done["structuredContent"]["state"], "withdrawn");
+    assert_eq!(done["structuredContent"]["idempotent_replay"], false);
+    let replay = call_tool(&router, &writer, 4, "oml_withdraw", withdraw).await;
+    assert_eq!(
+        replay["structuredContent"]["idempotent_replay"], true,
+        "{replay}"
+    );
+    let serve = send(
+        &router,
+        "POST",
+        "/v2/review/next",
+        Some(&reviewer),
+        None,
+        Some(&json!({})),
+    )
+    .await;
+    assert_ne!(
+        serve.1["artifact_id"].as_str(),
+        Some(id.as_str()),
+        "no review queue serves it: {serve:?}"
+    );
+    let promoted = ratified(&router, &writer, &reviewer).await;
+    let refused = call_tool(
+        &router,
+        &writer,
+        5,
+        "oml_withdraw",
+        json!({"artifact_id": promoted, "idempotency_key": "wd-2"}),
+    )
+    .await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    assert_eq!(refusal_code(&refused), "memory.not_held", "{refused}");
+
     drop_db(&db).await;
 }

@@ -34,6 +34,7 @@ Histograms use bucket bounds that start at 1 ms and double sixteen times, to 32.
 |---|---|---|---|
 | `oml_review_wait_seconds` | histogram | `verdict` | Time from a memory's submission to its verdict. The count by `verdict` gives the rejection rate. |
 | `oml_review_bulk_items_total` | counter | `outcome` | Items in bulk verdicts: `approved`, `rejected` or `skipped`. |
+| `oml_memories_withdrawn_total` | counter | none | Held versions their author withdrew ([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d13). A replayed withdrawal is not counted again. |
 | `oml_recall_unreviewed_hits_total` | counter | none | Recall hits labeled `unreviewed`. |
 | `oml_workspace_mode_changes_total` | counter | `mode` | Workspace modes set by a person's key. `standard` on an in-progress root is its commit. |
 | `oml_recall_sources_total` | counter | `mode` | Recalls that searched beyond their scope, by `sources` mode: `wide` or `list` ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). |

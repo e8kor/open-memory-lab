@@ -634,10 +634,12 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         tenant_id: Uuid,
         nodes: &[Uuid],
         author_key_id: Uuid,
+        held_nodes: &[Uuid],
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send {
         timed(
             "guardrail_rows",
-            self.inner.guardrail_rows(tenant_id, nodes, author_key_id),
+            self.inner
+                .guardrail_rows(tenant_id, nodes, author_key_id, held_nodes),
         )
     }
 

@@ -50,9 +50,7 @@ The rule is the constitution's second bounded exception: same-person approval co
 
 ## 6. Withdraw a held draft
 
-Designed, not built ([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d13). The author key of a held version, an agent's included, withdraws it with `oml_withdraw` or `POST /v1/memories/{artifact_id}/withdraw`, and Dana withdraws any held version written by the person's own keys from the console's Submitted view. The version is kept as `withdrawn`, leaves every review queue and is never served. No verdict is recorded, so R1 is untouched.
-
-Today, a held version leaves the queue only by a verdict: Dana's review key rejects it with a reason, and the bytes are kept.
+Built ([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d13). The author key of a held version, an agent's included, withdraws it with `oml_withdraw`, `oml withdraw <artifact_id>` or `POST /v1/memories/{artifact_id}/withdraw`. Dana withdraws any held version written by the person's own keys from the console: on the Memories page such a row offers Withdraw, which opens a confirmation. The Submitted view takes the act over when it is built (#410). The version is kept as `withdrawn` with its text, leaves every review queue and is never served; it stays listed to its author with `state=withdrawn`. No verdict is recorded, so R1 is untouched.
 
 ## 7. Keep personal knowledge apart from team work
 

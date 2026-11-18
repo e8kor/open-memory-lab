@@ -299,8 +299,9 @@ impl World {
 }
 
 /// Law 1: inside, another author's held row is served to a reader, labelled
-/// held; from the parent, from a sibling scope and to another tenant it is
-/// not (P-R3-BOUNDARY).
+/// held; from a sibling scope and to another tenant it is not
+/// (P-R3-BOUNDARY). From an ancestor it is, since ADR-0080 d16: see
+/// `a_read_at_an_ancestor_serves_a_descendant_in_progress_root_marked_unreviewed`.
 #[tokio::test]
 async fn unreviewed_rows_are_served_inside_an_in_progress_scope_and_invisible_from_outside_it() {
     let w = world().await;
@@ -330,18 +331,13 @@ async fn unreviewed_rows_are_served_inside_an_in_progress_scope_and_invisible_fr
             .await
             .is_empty()
     );
-    // From the parent and from a sibling: nothing, even asking for it.
-    assert!(
-        w.recall_with(&w.bob, "canary", w.crew, Some(true))
-            .await
-            .is_empty()
-    );
+    // From a sibling: nothing, even asking for it.
     assert!(
         w.recall_with(&w.bob, "canary", w.side, Some(true))
             .await
             .is_empty()
     );
-    assert!(w.listed(&w.bob, w.crew).await.is_empty());
+    assert!(w.listed(&w.bob, w.side).await.is_empty());
 
     // Another tenant reads nothing of it.
     let other = bootstrap(&w.app, "globex").await;
@@ -539,9 +535,9 @@ impl World {
     }
 }
 
-/// Law 3: the commit is refused while anything inside is held, and from it
-/// the promoted rows reach the parent; before it, a promoted row inside is
-/// not served outside either.
+/// Law 3: the commit is refused while anything inside is held; the
+/// promoted rows inside reach the parent before it and after it (ADR-0080
+/// d16).
 #[tokio::test]
 async fn the_commit_is_refused_while_unreviewed_rows_remain_and_then_releases_the_subtree() {
     let w = world().await;
@@ -564,11 +560,12 @@ async fn the_commit_is_refused_while_unreviewed_rows_remain_and_then_releases_th
         .post_verdict(w.person.value.as_str(), id, Verdict::Approve, None)
         .await
         .expect("approve");
-    assert!(
-        w.recall_with(&w.bob, "canary", w.crew, Some(false))
-            .await
-            .is_empty(),
-        "a promoted row inside stays inside until the commit"
+    // Since ADR-0080 d16 an ancestor's read serves the subtree's promoted
+    // rows before the commit; the commit changes nothing for it.
+    assert_eq!(
+        World::ids(&w.recall_with(&w.bob, "canary", w.crew, Some(false)).await),
+        vec![id],
+        "a promoted row inside is served to the ancestor as promoted"
     );
     // A transition inside waits for the commit.
     let err = w
@@ -602,7 +599,7 @@ async fn the_commit_is_refused_while_unreviewed_rows_remain_and_then_releases_th
     assert_eq!(
         World::ids(&w.recall_with(&w.bob, "canary", w.crew, Some(false)).await),
         vec![id],
-        "released to the parent"
+        "still served to the parent after the commit"
     );
 }
 
@@ -1568,4 +1565,327 @@ async fn an_edge_to_a_flagged_held_row_is_not_listed_to_a_sibling_in_progress() 
         1,
         "the flagged endpoint's author still does"
     );
+}
+
+/// A withdrawn version is never served inside an in-progress workspace:
+/// another reader there neither recalls, lists nor reads it, as a held one
+/// was before the withdrawal (ADR-0083 d13).
+#[tokio::test]
+async fn a_withdrawn_version_is_never_served_inside_an_in_progress_workspace() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let id = w
+        .write(&w.ann, "a1", "the canary drains before promotion", w.proj)
+        .await;
+    assert_eq!(
+        World::ids(&w.recall(&w.bob, "canary", w.proj).await),
+        vec![id]
+    );
+    w.app
+        .withdraw(
+            w.ann.value.as_str(),
+            &oml_app::types::WithdrawRequest {
+                idempotency_key: "w1".to_owned(),
+                memory_id: id,
+                reason: Some("written to the wrong workspace".to_owned()),
+            },
+        )
+        .await
+        .expect("ann withdraws her held version");
+    assert!(w.recall(&w.bob, "canary", w.proj).await.is_empty());
+    assert!(w.listed(&w.bob, w.proj).await.is_empty());
+    assert!(matches!(
+        w.app.get_memory(w.bob.value.as_str(), id).await,
+        Err(AppError::NotFound)
+    ));
+}
+
+// -- The in-progress audience reaches the ancestors (ADR-0080 d16; #402) ----
+
+impl World {
+    /// A successor of `target` at version `expected + 1` by `key`, left held;
+    /// with `retirement` it retires the claim.
+    async fn successor(
+        &self,
+        key: &IssuedKey,
+        idem: &str,
+        target: Uuid,
+        expected: u32,
+        body: &str,
+        retirement: bool,
+    ) -> Uuid {
+        self.app
+            .supersede(
+                key.value.as_str(),
+                &SupersedeRequest {
+                    idempotency_key: idem.to_owned(),
+                    on_similar: Default::default(),
+                    target_id: target,
+                    body: body.to_owned(),
+                    kind: None,
+                    retirement,
+                    derives_from: Vec::new(),
+                    reason: None,
+                    workspace: None,
+                    refuse_vocabulary_target: false,
+                    severity: None,
+                    rule: None,
+                    kind_fields: None,
+                    valid_from: None,
+                    valid_until: None,
+                    anchor: None,
+                    format: None,
+                    title: None,
+                    origin: None,
+                    expected_version: expected,
+                },
+            )
+            .await
+            .expect("supersede")
+            .receipt
+            .memory_id
+    }
+}
+
+/// A read scoped at an ancestor of an in-progress root serves the root's
+/// held rows, every author's, marked held, by default and in the scoped
+/// listing; the reader's own held rows on the ancestor's other nodes, which
+/// are not inside, only with `include_unreviewed: true`; and `false` narrows
+/// them away (ADR-0080 d16, amending ADR-0030 d2, d4).
+#[tokio::test]
+async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_root_marked_unreviewed() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let inside = w
+        .write(&w.ann, "a1", "the canary drains before promotion", w.proj)
+        .await;
+    let bobs_own = w
+        .write(&w.bob, "b1", "the canary waits for the pager", w.crew)
+        .await;
+    let anns_outside = w
+        .write(&w.ann, "a2", "the canary rotates weekly", w.crew)
+        .await;
+
+    // Absent, the default adds the root's rows alone: bob's own row on the
+    // ancestor's other node needs the request's own `true` (ADR-0030 d4).
+    let at_crew = w.recall(&w.bob, "canary", w.crew).await;
+    assert_eq!(
+        World::ids(&at_crew),
+        vec![inside],
+        "the root's row, not bob's own outside it, not ann's"
+    );
+    let explicit = w.recall_with(&w.bob, "canary", w.crew, Some(true)).await;
+    let mut ids = World::ids(&explicit);
+    ids.sort();
+    let mut expected = vec![inside, bobs_own];
+    expected.sort();
+    assert_eq!(
+        ids, expected,
+        "true adds bob's own row, never ann's outside one"
+    );
+    assert!(
+        at_crew
+            .iter()
+            .chain(explicit.iter())
+            .all(|h| h.1 == MemoryStatus::Held),
+        "each marked unreviewed"
+    );
+    assert!(!ids.contains(&anns_outside));
+    assert_eq!(
+        w.listed(&w.bob, w.crew).await,
+        vec![inside],
+        "the scoped listing at the ancestor"
+    );
+    assert!(
+        w.recall_with(&w.bob, "canary", w.crew, Some(false))
+            .await
+            .is_empty(),
+        "false narrows the held rows away"
+    );
+    // A key that reads only the ancestor's subtree from the universe down.
+    let wide = key(
+        &w.app,
+        &w.boot.admin_key.value,
+        Role::Reader,
+        UsedBy::Agent,
+        None,
+        "rhea",
+        vec![grant(w.boot.root_workspace_id, Role::Reader)],
+    )
+    .await
+    .expect("a reader at the universe");
+    assert_eq!(
+        World::ids(&w.recall(&wide, "canary", w.boot.root_workspace_id).await),
+        vec![inside],
+        "from two levels up as well"
+    );
+}
+
+/// A read scoped at a sibling of an in-progress root serves nothing of it,
+/// asked or not, by recall or the listing (ADR-0080 d16).
+#[tokio::test]
+async fn a_read_at_a_sibling_serves_nothing_of_an_in_progress_root() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    w.write(&w.ann, "a1", "the canary drains before promotion", w.proj)
+        .await;
+    w.promoted(&w.ann, "a2", "the canary rolls back on error", w.proj)
+        .await;
+    for asked in [None, Some(true)] {
+        assert!(
+            w.recall_with(&w.bob, "canary", w.side, asked)
+                .await
+                .is_empty()
+        );
+    }
+    assert!(w.listed(&w.bob, w.side).await.is_empty());
+}
+
+/// A held retirement inside an in-progress root is never served to the
+/// audience, inside or at an ancestor: the promoted tip it would retire is
+/// served until a reviewer approves it (ADR-0080 d16; ADR-0030 d3).
+#[tokio::test]
+async fn a_held_retirement_is_never_served_to_the_in_progress_audience() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let tip = w
+        .promoted(&w.ann, "a1", "the canary drains before promotion", w.proj)
+        .await;
+    let retirement = w
+        .successor(
+            &w.ann,
+            "a1-r",
+            tip,
+            1,
+            "the canary drains before promotion",
+            true,
+        )
+        .await;
+    for scope in [w.proj, w.crew] {
+        let hits = World::ids(&w.recall_with(&w.bob, "canary", scope, Some(true)).await);
+        assert_eq!(hits, vec![tip], "at {scope}");
+        let listed = w.listed(&w.bob, scope).await;
+        assert!(listed.contains(&tip) && !listed.contains(&retirement));
+    }
+}
+
+/// A version the scan held stays its author's inside an in-progress root,
+/// and the ancestor's audience does not widen that: from the parent another
+/// key neither recalls nor lists it, while its author does (ADR-0080 d16;
+/// ADR-0074 d20).
+#[tokio::test]
+async fn a_scan_held_version_stays_author_only_inside_an_in_progress_root() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let flagged = w
+        .write(
+            &w.ann,
+            "f1",
+            "the canary drains first [needs-person]",
+            w.proj,
+        )
+        .await;
+    assert!(
+        w.recall_with(&w.bob, "canary", w.crew, Some(true))
+            .await
+            .is_empty()
+    );
+    assert!(w.listed(&w.bob, w.crew).await.is_empty());
+    assert_eq!(
+        World::ids(&w.recall(&w.ann, "canary", w.crew).await),
+        vec![flagged],
+        "its author still recalls it"
+    );
+}
+
+/// Federation and a listed source never read an in-progress subtree's held
+/// rows: a key scoped at a sibling that names the root, or asks wide, is
+/// served none of them (ADR-0080 d16; ADR-0072).
+#[tokio::test]
+async fn federation_never_reads_an_in_progress_subtree() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let held = w
+        .write(&w.ann, "a1", "the canary drains before promotion", w.proj)
+        .await;
+    for sources in [
+        oml_app::federation::Sources::Wide,
+        oml_app::federation::Sources::List(vec![w.proj.to_string()]),
+    ] {
+        let answer = w
+            .app
+            .recall(
+                w.bob.value.as_str(),
+                &RecallRequest {
+                    sources: Some(sources.clone()),
+                    timings: false,
+                    include_expired: false,
+                    now: None,
+                    anchor: oml_app::types::AnchorFilter::default(),
+                    query: "canary".to_owned(),
+                    k: 10,
+                    workspace: Some(w.side.into()),
+                    kinds: Vec::new(),
+                    include_text: true,
+                    include_unreviewed: Some(true),
+                    max_tokens: None,
+                    search: None,
+                    match_mode: oml_app::search::MatchMode::Any,
+                    as_of: None,
+                },
+            )
+            .await;
+        let served: Vec<Uuid> = answer
+            .map(|r| r.hits.iter().map(|h| h.served.memory.memory_id).collect())
+            .unwrap_or_default();
+        assert!(!served.contains(&held), "{sources:?}: {served:?}");
+    }
+}
+
+/// Every held kind inside an in-progress root is listed and read, marked
+/// held, by the in-progress audience, a held steering version included;
+/// recall's hits stay the knowledge kinds it ranks (ADR-0080 d10, d16,
+/// amending ADR-0030 d3).
+#[tokio::test]
+async fn every_held_kind_inside_is_listed_to_the_in_progress_audience() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let steering = w
+        .app
+        .submit_memory(
+            w.ann.value.as_str(),
+            &SubmitRequest {
+                origin: None,
+                on_similar: Default::default(),
+                valid_from: None,
+                valid_until: None,
+                anchor: None,
+                idempotency_key: "s1".to_owned(),
+                claim_key: Some("claim-s1".to_owned()),
+                verb: None,
+                kind: MemoryKind::Steering,
+                body: "Prefer the canary pool for rollouts.".to_owned(),
+                workspace: Some(w.proj.into()),
+                derives_from: Vec::new(),
+                severity: None,
+                rule: None,
+                kind_fields: None,
+                format: None,
+                title: None,
+            },
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    for scope in [w.proj, w.crew] {
+        assert_eq!(w.listed(&w.bob, scope).await, vec![steering], "at {scope}");
+    }
+    let got = w
+        .app
+        .get_memory(w.bob.value.as_str(), steering)
+        .await
+        .expect("read by id inside the audience");
+    assert_eq!(got.memory.status, MemoryStatus::Held);
+    assert!(w.listed(&w.bob, w.side).await.is_empty());
 }

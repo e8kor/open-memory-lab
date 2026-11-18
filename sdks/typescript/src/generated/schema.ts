@@ -108,6 +108,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/memories/{artifact_id}/withdraw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Withdraw a held version its author wrote; it is kept as withdrawn and never served (ADR-0083 d13).
+         * @description Requires: the version's author key, an agent's included, or a person's session web key for a held version any key of that same person wrote, read as same_user reads it; any workspace, a frozen one included. Another key that can read the version is 403 access.author_only, whatever its state, and a key that cannot read it is 404 access.not_found. A version not held is 409 memory.not_held. The version's state becomes withdrawn: it is kept with its text, leaves every review queue and is never served (not in recall, not to others in a listing, not inside an in-progress workspace); it is listed to its author with state withdrawn. Journals memory.withdrawn {artifact_id, workspace_id, reason} under the withdrawing key; no verdict is recorded and nothing is promoted, signed, demoted or deleted (R1). The reason is scanned as a verdict's is. The body may be empty. Idempotency-Key required, scoped to the key with a nil workspace.
+         */
+        post: operations["withdrawMemory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/guardrails": {
         parameters: {
             query?: never;
@@ -117,7 +137,7 @@ export interface paths {
         };
         /**
          * The guardrails in force at the scope node, under the key's reader access and guardrail scope; never in recall.
-         * @description Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance, and any parameter other than workspace, guardrail_scope included, is request.validation naming it (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
+         * @description Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance, and any parameter other than workspace and include_own_held, guardrail_scope included, is request.validation naming it. On a node inside a workspace a person put in progress, every author's held guardrail is served too, and under include_own_held the key's own held ones: each a line of its own after the promoted rows, never a held retirement or a version the scan held, marked unreviewed with effect_inside ask, so a held rule asks and never denies (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; ADR-0080 d10, d14, d16; since v0.5.1).
          */
         get: operations["getGuardrails"];
         put?: never;
@@ -1530,6 +1550,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
+         * @description Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason import_person_only (ADR-0084 d11). upload_id is a completed upload session of purpose import that this key opened (ADR-0004 d3), holding the decrypted bundle; another key's is access.not_found, one in another state upload.session_invalid, one past its expiry 410 upload.expired. target is a development workspace in progress the key writes, or a bare name this key may create, which the import creates in progress; any other target is 409 import.target_not_in_progress, and a taken name name.taken (ADR-0084 d6, d9). The bundle is verified before anything is written, each check under its own bundle.* code (d7). expect_key is the source key's fingerprint, 64 hex digits; the first import from a source requires it (request.validation, details.field /expect_key, details.reason first_import) and pins it, and a later bundle under another key, or with none named, is 409 import.source_key_changed (R11). A bundle older than the last imported from its source is 409 import.bundle_older unless allow_older (d8). A plan that does not fit the account's meters is 429 import.over_quota and writes nothing. dry_run answers the plan and binds nothing. Otherwise the upload binds once, each claim key is written as the plan says, held by this key with the source's origin kind and its import_provenance, under the idempotency key import:<target>:<source server>:<source tenant>:<artifact>:<version>, so the same bundle again writes nothing; a version the target's scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the target carries is proposed by this key where its verb ceiling allows, which a writer key's does not; every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as edge:<src>:<dst>. The import journals workspace.imported, and the upload's key is nulled when it ends. No Idempotency-Key is taken: the upload binds once. Since v0.8.2.
+         */
+        post: operations["importBundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/imports/{import_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An import's state, position, counts and refusals.
+         * @description Requires: the key that ran the import; any other key, and an id no import has, answers access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no request, so one read running stopped when the server did, and position is the versions it recorded. Since v0.8.2.
+         */
+        get: operations["getImport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/admin/usage": {
         parameters: {
             query?: never;
@@ -1675,7 +1735,7 @@ export interface components {
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "bundle.unencrypted" | "export.disabled" | "export.not_readable" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "bundle.format_unknown" | "bundle.layout" | "bundle.path_unsafe" | "bundle.too_large" | "bundle.line_too_long" | "bundle.depth" | "bundle.duplicate" | "bundle.unreferenced_body" | "bundle.malformed" | "bundle.digest_mismatch" | "bundle.signature_invalid" | "bundle.signature_unexpected" | "bundle.unencrypted" | "bundle.decrypt_failed" | "bundle.io" | "import.target_not_in_progress" | "import.over_quota" | "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" | "export.disabled" | "export.not_readable" | "memory.not_held" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ExportRequest: {
             /**
              * @description history is the default in a user root; release is refused until releases are built.
@@ -1948,7 +2008,7 @@ export interface components {
             anchor_repo?: components["schemas"]["AnchorRepo"];
             anchor_path_prefix?: components["schemas"]["AnchorPathPrefix"];
             origin_kinds?: components["schemas"]["OriginKinds"];
-            /** @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held and unreviewed true; they count against k and max_tokens. Inside a workspace a person put in progress, every author's held memories on the served nodes join too, and absent means true there; absent means false everywhere else (ADR-0030 d3, d4). Rules: docs/architecture/retrieval.md. */
+            /** @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held and unreviewed true; they count against k and max_tokens. Inside a workspace a person put in progress, and in every such workspace below the scope, every author's held memories join too, and absent means true when the served workspaces hold one; absent means false everywhere else (ADR-0030 d3, d4; ADR-0080 d16). False narrows every list to promoted rows. The steering list carries held steering after the promoted rows, marked unreviewed: the calling key's own when this is true, and, unless this is false, every author's on a workspace in progress up the scope's chain (ADR-0080 d10, d14). Rules: docs/architecture/retrieval.md. */
             include_unreviewed?: boolean;
             /**
              * Format: int64
@@ -2431,6 +2491,18 @@ export interface components {
             source_checked: components["schemas"]["SourceChecked"];
             journal_seq: number;
         };
+        WithdrawRequest: {
+            /** @description Why the version is withdrawn; journalled with the act. */
+            reason?: string;
+        };
+        WithdrawResult: {
+            artifact_id: string;
+            /** @enum {string} */
+            state: "withdrawn";
+            /** Format: date-time */
+            at: string;
+            journal_seq: number;
+        };
         /** @description A named crew record — recorded, not operated; OML never contacts the external manager (docs/architecture/workspaces.md, Crews; ADR-0026 d8). */
         Crew: {
             crew_id: string;
@@ -2882,6 +2954,95 @@ export interface components {
             expires_at: string | null;
             completed_at: string | null;
         };
+        /** @description An import of a completed upload (ADR-0084 d15, I4). */
+        ImportRequest: {
+            upload_id: string;
+            /** @description An in-progress workspace by id or name, or a bare name the import creates in progress. */
+            target: string;
+            /** @default false */
+            dry_run?: boolean;
+            /** @default false */
+            allow_older?: boolean;
+            /** @description The source key's fingerprint; required on the first import from a source (R11). */
+            expect_key?: string | null;
+            /** @description The source tenant id the bundle must name (R13). */
+            expect_tenant?: string | null;
+        };
+        /** @description A dry run's plan, or the finished import. */
+        ImportAnswer: {
+            plan?: components["schemas"]["ImportPlan"];
+            import?: components["schemas"]["Import"];
+        };
+        ImportStatus: {
+            import: components["schemas"]["Import"];
+        };
+        /** @description What an import would write (ADR-0084 d8, R10). */
+        ImportPlan: {
+            source: {
+                server_id: string;
+                tenant_id: string;
+                tenant_name: string;
+            };
+            exported_at: string;
+            manifest_digest: string;
+            /** @description Null for a new name the import would create. */
+            target_workspace_id: string | null;
+            /** @description The signature was checked against expect_key; otherwise it proves integrity only (d5). */
+            authenticated: boolean;
+            signer_fingerprint: string;
+            allow_older: boolean;
+            counts: {
+                [key: string]: number;
+            };
+            keys: {
+                claim_key: string;
+                /** @enum {string} */
+                outcome: "new" | "changed" | "removed" | "unchanged" | "equivalent" | "conflict";
+                source: {
+                    artifact_id: string;
+                    version: number;
+                } | null;
+                expected_version: number | null;
+            }[];
+            /** @description Markers for versions already imported (d13). */
+            erasure_markers: number;
+            edges: {
+                proposed: number;
+                reported: number;
+            };
+        };
+        /** @description One import as its importing key reads it (ADR-0084 d11, d15). */
+        Import: {
+            import_id: string;
+            /** @enum {string} */
+            state: "running" | "done" | "failed";
+            target_workspace_id: string;
+            upload_id: string;
+            source: {
+                server_id: string;
+                tenant_id: string;
+            };
+            manifest_digest: string;
+            signer_fingerprint: string;
+            authenticated: boolean;
+            allow_older: boolean;
+            /** @description The versions the import recorded. */
+            position: number;
+            /** @description By outcome (new, changed, removed, unchanged, equivalent, conflict, refused), and edges_proposed, edges_reported and erasure_markers. */
+            counts: {
+                [key: string]: number;
+            };
+            refusals: {
+                claim_key: string;
+                source: {
+                    artifact_id: string;
+                    version: number;
+                };
+                code: string;
+            }[];
+            created_at: string;
+            ended_at: string | null;
+        };
         /** @description A key and the user the console acts with it for, null when unlinked (ADR-0085 d16). */
         KeyLink: {
             key_id: string;
@@ -2995,9 +3156,9 @@ export interface components {
             guardrail_scope: components["schemas"]["GuardrailScope"];
             /** @description Opaque; a client only compares it. */
             set_digest: string;
-            /** @description More than twelve apply; the set is still served whole. */
+            /** @description More than twelve approved rules apply, held versions not counted; the set is still served whole. */
             over_cap: boolean;
-            /** @description Ordered by severity, depth from the root, promoted_at and artifact_id; never by a query. */
+            /** @description Ordered by severity, depth from the root, promoted_at and artifact_id, a held version after the promoted rows of its severity and depth; never by a query. */
             guardrails: components["schemas"]["ServedGuardrail"][];
             /** @description The caller's own held guardrails in the chain, by key and version, never by text. */
             own_held: {
@@ -3018,9 +3179,19 @@ export interface components {
             /** @description Its oml-gr/1 rule, or null. */
             rule: unknown;
             tokens: number;
-            /** Format: date-time */
-            promoted_at: string;
-            /** @description Each approving verdict's reviewer attestation and time, never the reviewer's key (ADR-0025 d15). */
+            /**
+             * Format: date-time
+             * @description Null for a held version.
+             */
+            promoted_at: string | null;
+            /** @description A held version, served to its author key or inside an in-progress workspace (ADR-0080 d10, d14). */
+            unreviewed: boolean;
+            /**
+             * @description The effect the hook applies in place of the rule's own: ask for every held version, null for a promoted one, which is never downgraded; the rule itself is unchanged (ADR-0080 d10).
+             * @enum {string|null}
+             */
+            effect_inside: "ask" | null;
+            /** @description Each approving verdict's reviewer attestation and time, never the reviewer's key (ADR-0025 d15); empty for a held version. */
             verdicts: {
                 /** @enum {string} */
                 used_by: "agent" | "person" | "service";
@@ -4089,11 +4260,68 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    withdrawMemory: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                artifact_id: components["parameters"]["ArtifactId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                /**
+                 * @example {
+                 *       "reason": "written to the wrong workspace"
+                 *     }
+                 */
+                "application/json": components["schemas"]["WithdrawRequest"];
+            };
+        };
+        responses: {
+            /** @description The version is withdrawn. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "artifact_id": "0193a8f2-7c41-7d2e-9b1a-3c5e7f9a1b2d",
+                     *       "state": "withdrawn",
+                     *       "at": "2026-11-17T18:00:00Z",
+                     *       "journal_seq": 4302
+                     *     }
+                     */
+                    "application/json": components["schemas"]["WithdrawResult"];
+                };
+            };
+            403: components["responses"]["Error"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Error"];
+            415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
     getGuardrails: {
         parameters: {
             query?: {
                 /** @description The scope node, by id or name, within the key's grants; omitted, the key's default workspace. */
                 workspace?: string;
+                /** @description Serve the calling key's own held guardrails in the chain as rules too, each unreviewed with effect_inside ask (ADR-0080 d14). The plugin's hooks and the guardrails prompt send true. */
+                include_own_held?: boolean;
             };
             header?: {
                 /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
@@ -8269,6 +8497,92 @@ export interface operations {
             410: components["responses"]["Gone"];
             422: components["responses"]["Unprocessable"];
             503: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    importBundle: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "upload_id": "0b8f0c3e-6a51-4d55-9e1f-8d3a4c2b7e10",
+                 *       "target": "payments-dev",
+                 *       "dry_run": false,
+                 *       "expect_key": "b600306cfa76723fdec395e53a9b3d9fdb78b1e2d7a23c32fcbcd2dc6d0c4092"
+                 *     }
+                 */
+                "application/json": components["schemas"]["ImportRequest"];
+            };
+        };
+        responses: {
+            /** @description The plan of a dry run, or the finished import. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportAnswer"];
+                };
+            };
+            400: components["responses"]["Error"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["Gone"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["UnsupportedMedia"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getImport: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                /** @description The id POST /v2/imports answered. */
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The import. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportStatus"];
+                };
+            };
+            404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];
         };
     };

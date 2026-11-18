@@ -28,6 +28,8 @@ export type Memory = Schemas["Memory"];
 export type MemorySummary = Schemas["MemorySummary"];
 export type MemoryPage = Schemas["MemoryPage"];
 export type SupersedeRequest = Schemas["SupersedeRequest"];
+export type WithdrawRequest = Schemas["WithdrawRequest"];
+export type WithdrawResult = Schemas["WithdrawResult"];
 export type Serve = Schemas["Serve"];
 export type VerdictResult = Schemas["VerdictResult"];
 export type WorkspaceView = Schemas["WorkspaceView"];
@@ -345,6 +347,26 @@ export class OmlClient {
     return this.#write(options.idempotencyKey, (key, signal) =>
       this.#api.POST("/v1/memories/{artifact_id}/supersede", {
         params: { path: { artifact_id: replaces }, header: { "Idempotency-Key": key } },
+        body,
+        signal,
+      }),
+    );
+  }
+
+  /**
+   * Withdraw a held version this key wrote, for a mistaken write: it is kept as withdrawn, leaves
+   * every review queue and is never served; no reviewer is involved (ADR-0083 d13). Only a held
+   * version is withdrawn (`memory.not_held`), and only by its author (`access.author_only`).
+   */
+  async withdraw(
+    artifact_id: string,
+    input: { reason?: string } = {},
+    options: WriteOptions = {},
+  ): Promise<Written<WithdrawResult>> {
+    const body: WithdrawRequest = input.reason !== undefined ? { reason: input.reason } : {};
+    return this.#write(options.idempotencyKey, (key, signal) =>
+      this.#api.POST("/v1/memories/{artifact_id}/withdraw", {
+        params: { path: { artifact_id }, header: { "Idempotency-Key": key } },
         body,
         signal,
       }),

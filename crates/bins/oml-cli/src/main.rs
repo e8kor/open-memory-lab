@@ -157,6 +157,9 @@ enum Command {
     Write(WriteArgs),
     /// Fetch a memory by artifact id, recall with --query, or list memories.
     Read(ReadArgs),
+    /// Withdraw a held version this key wrote, for a mistaken write; it is kept
+    /// as withdrawn and never served.
+    Withdraw(WithdrawArgs),
     /// Tail journal event digests within the key's reader access.
     Events(EventsArgs),
     /// Sync a workspace with committed repository documents: extract, diff, write,
@@ -1112,6 +1115,19 @@ struct ReadArgs {
 
 /// The closed set of `origin.kind` (ADR-0063 d1).
 const ORIGIN_KINDS: [&str; 7] = ["repo", "doc", "code", "lake", "chat", "web", "manual"];
+
+#[derive(Args)]
+struct WithdrawArgs {
+    /// The held version's artifact id.
+    artifact_id: String,
+    /// Why it is withdrawn; journalled with the act.
+    #[arg(long)]
+    reason: Option<String>,
+    /// Idempotency-Key for the withdrawal; reusing it replays the first response.
+    /// Defaults to a fresh key per run.
+    #[arg(long)]
+    idempotency_key: Option<String>,
+}
 
 #[derive(Args)]
 struct EventsArgs {
@@ -2131,6 +2147,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
 
         Command::Write(args) => run_write(cli, &stored, &Write::of(args)),
         Command::Read(args) => run_read(cli, &stored, args),
+        Command::Withdraw(args) => run_withdraw(cli, &stored, args),
         Command::Events(args) => run_events(cli, &stored, args),
         Command::Review { command } => run_review(cli, &stored, command),
 
@@ -2737,6 +2754,36 @@ fn run_write(cli: &Cli, stored: &Credentials, write: &Write<'_>) -> Result<ExitC
         if response["retirement"] == json!(true) {
             println!("  retirement: proposed; the claim retires when the proposal is approved");
         }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `oml withdraw`: one `POST /v1/memories/{artifact_id}/withdraw`, the
+/// author retracting its own held version (ADR-0083 d13).
+fn run_withdraw(
+    cli: &Cli,
+    stored: &Credentials,
+    args: &WithdrawArgs,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let mut body = json!({});
+    if let Some(reason) = &args.reason {
+        body["reason"] = json!(reason);
+    }
+    let path = format!("/v1/memories/{}/withdraw", segment(&args.artifact_id)?);
+    let key = args
+        .idempotency_key
+        .clone()
+        .unwrap_or_else(new_idempotency_key);
+    let (_, response) = client.post_keyed(&path, &body, &key)?;
+    if cli.json {
+        print_json(&response);
+    } else {
+        println!(
+            "withdrawn — {} (journal seq {})",
+            field(&response, "artifact_id"),
+            response["journal_seq"]
+        );
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -5674,6 +5721,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut approvals = approval_doctor(rescan_read.as_ref());
     approvals.extend(instructions_unreviewable_doctor(queue_read.as_ref()));
     let approvals_warn = approvals.iter().any(|line| line.starts_with("warn"));
+    let withdrawals = withdrawn_queue_doctor(rescan_read.as_ref());
+    let withdrawals_fail = withdrawals.iter().any(|line| line.starts_with("fail"));
+    let withdrawals_warn = withdrawals.iter().any(|line| line.starts_with("warn"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
     let usage = usage_doctor(usage_drift.as_ref());
     let usage_warn = usage.iter().any(|line| line.starts_with("warn"));
@@ -5726,7 +5776,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let probes_ok = matches!((&health, &ready), (Some((200, _)), Some((200, _))));
     let whoami_ok = !matches!(me, Some(Err(_)));
     let review_warn = review.as_ref().is_some_and(|line| line.starts_with("warn"));
-    let outcome = if !probes_ok || !whoami_ok || !oauth_ok {
+    let outcome = if !probes_ok || !whoami_ok || !oauth_ok || withdrawals_fail {
         "fail"
     } else if me.is_none()
         || server_origin.is_some()
@@ -5742,6 +5792,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || imports_warn
         || scan_warn
         || approvals_warn
+        || withdrawals_warn
         || sync_warn
         || chat_warn
         || sources_warn
@@ -5805,6 +5856,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "usage": usage,
             "key_limits": key_limits,
             "approvals": approvals,
+            "withdrawals": withdrawals,
             "sources": sources,
             "in_progress": in_progress,
             "user_root_status": user_root_status,
@@ -5952,6 +6004,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &approvals {
             println!("approvals   : {line}");
+        }
+        for line in &withdrawals {
+            println!("withdrawals : {line}");
         }
         for line in &sync {
             println!("sync        : {line}");
@@ -6579,6 +6634,42 @@ fn instructions_unreviewable_doctor(read: Option<&Result<Value, String>>) -> Vec
         }
     }
     lines
+}
+
+/// Doctor's `memory.withdrawn_in_queue` (ADR-0083 d13), from the same
+/// admin rescan window as `approval_unmatched`: it fails when a withdrawn
+/// version is still in a review queue, which the withdrawal's own
+/// transaction rules out, so a count above zero names a store fault. A
+/// server before the count does not report it, and the line is then
+/// absent; a count that is no unsigned integer is named, never read as
+/// zero.
+fn withdrawn_queue_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
+    let report = match read {
+        None => {
+            return vec!["memory.withdrawn_in_queue: not read; an admin key reads it".to_owned()];
+        }
+        Some(Err(reason)) => {
+            return vec![format!(
+                "warn memory.withdrawn_in_queue: not read ({reason})"
+            )];
+        }
+        Some(Ok(report)) => report,
+    };
+    let Some(count) = report.get("withdrawn_in_queue") else {
+        return Vec::new();
+    };
+    let Some(queued) = count.as_u64() else {
+        return vec![format!(
+            "warn memory.withdrawn_in_queue: the server's withdrawn_in_queue is {count}, not a count"
+        )];
+    };
+    vec![if queued > 0 {
+        format!(
+            "fail memory.withdrawn_in_queue: {queued} withdrawn version(s) are still in a review queue, which a withdrawal's own transaction rules out; reviewers may be served them; report it with the server's logs"
+        )
+    } else {
+        "memory.withdrawn_in_queue: 0".to_owned()
+    }]
 }
 
 /// The scan doctor lines (ADR-0065 d11): the rule set `/readyz` names, how
@@ -7734,6 +7825,37 @@ mod tests {
         assert_eq!(
             uploads_doctor(None),
             vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_withdrawn_queue_doctor_fails_on_a_withdrawn_version_left_in_a_review_queue() {
+        let some = json!({ "scanner_version": "oml-scan/1.2", "withdrawn_in_queue": 2 });
+        assert_eq!(
+            withdrawn_queue_doctor(Some(&Ok(some))),
+            vec!["fail memory.withdrawn_in_queue: 2 withdrawn version(s) are still in a review queue, which a withdrawal's own transaction rules out; reviewers may be served them; report it with the server's logs".to_owned()]
+        );
+        let none = json!({ "scanner_version": "oml-scan/1.2", "withdrawn_in_queue": 0 });
+        assert_eq!(
+            withdrawn_queue_doctor(Some(&Ok(none))),
+            vec!["memory.withdrawn_in_queue: 0".to_owned()]
+        );
+        assert!(
+            withdrawn_queue_doctor(Some(&Ok(json!({ "scanner_version": "oml-scan/1.2" }))))
+                .is_empty()
+        );
+        assert_eq!(
+            withdrawn_queue_doctor(None),
+            vec!["memory.withdrawn_in_queue: not read; an admin key reads it".to_owned()]
+        );
+        assert_eq!(
+            withdrawn_queue_doctor(Some(&Err("503 unavailable".to_owned()))),
+            vec!["warn memory.withdrawn_in_queue: not read (503 unavailable)".to_owned()]
+        );
+        let odd = json!({ "scanner_version": "oml-scan/1.2", "withdrawn_in_queue": "many" });
+        assert_eq!(
+            withdrawn_queue_doctor(Some(&Ok(odd))),
+            vec!["warn memory.withdrawn_in_queue: the server's withdrawn_in_queue is \"many\", not a count".to_owned()]
         );
     }
 

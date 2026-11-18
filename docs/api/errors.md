@@ -74,7 +74,7 @@ A key's role, grants and denials decide these. Reads fail closed as absence.
 | `access.verb_ceiling` | 403 | The key's role never calls this verb, whatever its grants. Examples: an agent key calling an admin verb, an admin key posting a verdict or calling recall (it reads memory text only through the journaled [admin read](../architecture/roles-and-keys.md#the-admin-read)), a `used_by: service` key reviewing, any web-page request carrying an `Authorization` header. `details.reason` `session_key_only`: a person's own act (listing their keys, ending their session, the export, the deletion request) sent by any key but their web session key, an agent's key naming them included. `details.reason` `session_capacity`: a key operation sent as a person's session key of another capacity than the one it serves, such as `POST /v2/keys` as `<user>-admin`. `details.reason` `session_key_denied`: `POST /v2/keys`, `POST /v2/keys/{key}/connect-codes` or `POST /v2/keys/{key}/denials` sent as a person's session key that carries a denial, on any workspace; such a key issues no key, mints no connect code and cuts off no key, and still ends its session. `details.reason` `federation_is_person_only`: a workspace's federation field set by a key other than a person's reviewer key or an admin key. `details.reason` `export_person_only`: a workspace export sent by an agent, admin or service key; only a key used by a person exports ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d10). |
 | `access.grant_refused` | 403 | The key can read the workspace, but its effective access does not confer the verb's role there. `details`: `workspace_id`, `needed_role`. |
 | `access.not_found` | 404 | The thing does not exist, or is outside the key's read scope. The two cases look the same. Also answers a name that resolves to nothing the key may see. |
-| `access.author_only` | 403 | A writer key tried to supersede a version it did not author. |
+| `access.author_only` | 403 | A writer key tried to supersede a version it did not author, or a key tried to withdraw a version it did not author that it can read: only the author key, or a session key of the author's person, withdraws one. |
 | `access.issuer_ceiling` | 403 | Key issuance or a grant asks for a role above the issuer's, or a grant role the key role does not admit. |
 | `access.role_exclusive` | 403 | Issuance or a grant change would combine the `admin` role with a reviewer grant on one key. Use two keys. |
 | `access.banned` | 403 | Reserved. This build does not return it. |
@@ -215,6 +215,12 @@ The routes under `/v2/uploads` ([ADR-0004](../adr/ADR-0004-bodies-and-attachment
 | `import.since_mismatch` | 409 | An incremental bundle's base is not the release last imported from its source. |
 | `import.source_key_changed` | 409 | The target pins another key for this source, or the bundle names no `expect_key` over an existing pin. Import into a new workspace if the source rotated its key. |
 
+## `memory` — a version's own state
+
+| Code | HTTP | Fires when |
+|---|---|---|
+| `memory.not_held` | 409 | A withdrawal named a version that is not held: a reviewed, rejected or already withdrawn one. A reviewed version changes by supersession instead. |
+
 ## `lifecycle` — erased content
 
 | Code | HTTP | Fires when |
@@ -265,7 +271,7 @@ Review unavailability is not an API error. When no reviewer can approve, writes 
 | 401 | `auth.missing`, `auth.invalid` |
 | 403 | `oauth.origin_refused`, `oauth.attach_refused`, `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.person_required`, `review.ratifier_is_proposer`, `simulation.audience_refused`, `export.disabled`, `export.not_readable` |
 | 404 | `access.not_found` |
-| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `submission.user_root_refused`, `name.taken`, `workspace.frozen`, `workspace.transition_refused`, `workspace.in_progress_refused`, `workspace.held_remaining`, `workspace.admin_key_under_root`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `upload.incomplete`, `upload.session_limit`, `upload.tenant_limit`, `export.not_ready`, `import.target_not_in_progress`, `import.bundle_older`, `import.since_mismatch`, `import.source_key_changed` |
+| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `submission.user_root_refused`, `name.taken`, `workspace.frozen`, `workspace.transition_refused`, `workspace.in_progress_refused`, `workspace.held_remaining`, `workspace.admin_key_under_root`, `review.serve_invalid`, `memory.not_held`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `upload.incomplete`, `upload.session_limit`, `upload.tenant_limit`, `export.not_ready`, `import.target_not_in_progress`, `import.bundle_older`, `import.since_mismatch`, `import.source_key_changed` |
 | 410 | `lifecycle.erased`, `upload.expired` |
 | 413 | `request.payload_too_large`, `upload.too_large`, `bundle.too_large` |
 | 415 | `request.unsupported_media` |

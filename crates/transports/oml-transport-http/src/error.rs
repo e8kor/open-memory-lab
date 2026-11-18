@@ -6,10 +6,10 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::Response;
 use serde_json::{Value, json};
 
-use oml_app::domain::VerdictError;
 use oml_app::domain::oauth::{
     AuthorizationCodeInvalid, ClientInvalid, ConnectRefused, Refusal, Validation,
 };
+use oml_app::domain::{VerdictError, WithdrawRefusal};
 use oml_app::ports::StoreError;
 use oml_app::types::AppError;
 
@@ -567,6 +567,18 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "access.author_only",
             "A writer proposes supersessions of its own claims only (D9).",
             "a writer key may supersede only its own claims",
+        ),
+        AppError::Withdraw(WithdrawRefusal::AuthorOnly) => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.author_only",
+            "Only a version's author withdraws it: its own key, or its person's session key (ADR-0083 d13).",
+            "only the version's author withdraws it",
+        ),
+        AppError::Withdraw(WithdrawRefusal::NotHeld) => ApiError::new(
+            StatusCode::CONFLICT,
+            "memory.not_held",
+            "Only a held version is withdrawn; a reviewed version is superseded or retired instead (ADR-0083 d13).",
+            "the version is not held",
         ),
         AppError::TipConflict { current_tip } => {
             let error = tip_conflict("the supersede target is not the current served tip");

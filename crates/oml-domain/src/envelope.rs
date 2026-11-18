@@ -84,6 +84,10 @@ pub mod event_types {
     /// with its source at a commit; it changes no text and no anchor and
     /// moves nothing through review (ADR-0057 d5, d18).
     pub const SOURCE_CHECKED: &str = "source.checked";
+    /// A held version's author retracts it unreviewed: the version is kept
+    /// as `withdrawn` with its text and leaves every review queue; no
+    /// verdict is recorded (ADR-0083 d13).
+    pub const MEMORY_WITHDRAWN: &str = "memory.withdrawn";
     /// An admin's `rescan --record-held` read held versions under the
     /// server's rule set: the rule set and each version's findings, an empty
     /// list when there are none, never the text (ADR-0065 d13, d15;

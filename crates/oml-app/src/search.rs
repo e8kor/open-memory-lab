@@ -687,18 +687,20 @@ pub struct CandidateScope {
     pub as_of: Option<oml_domain::EventTime>,
 }
 
-/// The own held part of a candidate scope (ADR-0025 d4, d5).
+/// The held part of a candidate scope (ADR-0025 d4, d5): the listed keys'
+/// own held rows on `nodes`, and every author's on `any_author_nodes`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnHeldScope {
     pub author_key_ids: Vec<Uuid>,
     pub nodes: Vec<Uuid>,
-    /// Inside an in-progress scope, the held rows of every author on
-    /// `nodes`, not the listed keys' alone (ADR-0030 d3). The core sets it
-    /// only when every node of `nodes` lies inside the scope's root. Another
+    /// The served nodes inside an in-progress subtree, the scope's own or
+    /// one below it, where the held rows of every author are read, not the
+    /// listed keys' alone (ADR-0030 d3; ADR-0080 d16). The core keeps it a
+    /// subset of `nodes`; empty outside every in-progress subtree. Another
     /// author's row is read only when the scan neither held it nor last
     /// read it under another rule set than `current_scanner`, the server's
     /// own (ADR-0065 d15).
-    pub any_author: bool,
+    pub any_author_nodes: Vec<Uuid>,
     pub current_scanner: Option<String>,
 }
 

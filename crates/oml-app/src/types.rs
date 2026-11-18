@@ -2240,6 +2240,9 @@ pub struct RecallResult {
 #[derive(Debug, Clone, Default)]
 pub struct GuardrailRequest {
     pub workspace: Option<Reference>,
+    /// Serve the calling key's own held guardrails as rules, marked
+    /// unreviewed and asking (ADR-0080 d14); the plugin's hooks send it.
+    pub include_own_held: bool,
 }
 
 /// One approving verdict on a served guardrail: the reviewing key's
@@ -2266,8 +2269,18 @@ pub struct ServedGuardrail {
     pub rule: Option<Value>,
     /// The budget token count of the body (retrieval.md token budgets).
     pub tokens: u64,
-    pub promoted_at: EventTime,
+    /// `None` for a held version, which no reviewer has approved (ADR-0077
+    /// d5).
+    pub promoted_at: Option<EventTime>,
     pub verdicts: Vec<GuardrailVerdict>,
+    /// A held version, served to its author key or to an in-progress
+    /// audience, never in place of a promoted one (ADR-0080 d10, d14).
+    pub unreviewed: bool,
+    /// The effect the hook applies in place of the rule's own: `ask` for
+    /// every held version, so an unreviewed rule asks and never denies;
+    /// `None` for a promoted one, which is never downgraded (ADR-0080 d10).
+    /// The stored rule is unchanged.
+    pub effect_inside: Option<oml_domain::guardrail::Effect>,
     /// The `artifact_id`s of the served rows sharing this row's `claim_key`
     /// with another severity, in the served order; empty when none
     /// (proposed ADR-0037 d4).
@@ -2659,6 +2672,24 @@ pub struct SourceCheckRequest {
     pub hash: Option<String>,
     pub path: Option<String>,
     pub fragment: Option<String>,
+}
+
+/// `POST /v1/memories/{artifact_id}/withdraw` and `oml_withdraw` (ADR-0083
+/// d13): the author retracts its own held version, with an optional reason.
+#[derive(Debug, Clone)]
+pub struct WithdrawRequest {
+    pub idempotency_key: String,
+    pub memory_id: Uuid,
+    pub reason: Option<String>,
+}
+
+/// A recorded withdrawal: the version, its new state and the event's seq.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WithdrawReceipt {
+    pub memory_id: Uuid,
+    pub state: String,
+    pub at: String,
+    pub journal_seq: u64,
 }
 
 /// A recorded source check: the version's new mark and the event's seq.
@@ -3242,6 +3273,10 @@ pub enum AppError {
         "a writer may supersede only the claims its own key authored (roles-and-keys.md#own, access.author_only)"
     )]
     AuthorOnly,
+    /// A refused withdrawal: not the version's author (`access.author_only`)
+    /// or not held (`memory.not_held`; ADR-0083 d13).
+    #[error("{0}")]
+    Withdraw(oml_domain::WithdrawRefusal),
     /// The target is not the current served tip, at supersede or at the
     /// ratifying verdict; `current_tip` only when the caller can read it
     /// (errors.md `submission.tip_conflict`; ADR-0025 d10, d16).

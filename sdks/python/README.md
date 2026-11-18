@@ -27,21 +27,21 @@ from oml_sdk import OmlClient
 # One pair: url= and api_key=, else OML_URL and OML_API_KEY; one set alone is refused.
 with OmlClient() as oml:
     written = oml.write("The canary stage must drain before the next one starts.")
-    print(written.value.state)          # held: invisible to other keys until a reviewer's verdict
-    print(written.value.claim_key)      # derived by the server when none is sent
-    print(written.idempotency_key)      # the key every retry of this call sent
+    print(written.value.state)  # held: invisible to other keys until a reviewer's verdict
+    print(written.value.claim_key)  # derived by the server when none is sent
+    print(written.idempotency_key)  # the key every retry of this call sent
 
     for hit in oml.read(query="canary stage", include_unreviewed=True).hits:
         print(hit.memory.state, hit.memory.text)
 
-    memory = oml.read(written.value.artifact_id)   # the key's own row, in any state
+    memory = oml.read(written.value.artifact_id)  # the key's own row, in any state
     print(memory.state, memory.text)
 
     # replaces must name the served tip, so a reviewer's approve promotes the version first:
     # superseding it while it is held raises SubmissionError (submission.tip_conflict).
     oml.write("Drain, then wait five minutes.", replaces=memory.artifact_id)
 
-    for row in oml.iter_memories(limit=50):   # the key's own rows; follows next_cursor to the end
+    for row in oml.iter_memories(limit=50):  # the key's own rows; follows next_cursor to the end
         print(row.artifact_id, row.state)
 ```
 
