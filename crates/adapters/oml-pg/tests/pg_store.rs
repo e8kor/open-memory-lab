@@ -2988,11 +2988,13 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // 0020 adds search_default and 0023 telemetry_query_text_since,
             // null for every tenant they find
             // (ADR-0049 d4); 0040 the federation policy, off with its
-            // defaults (ADR-0072 d5).
+            // defaults (ADR-0072 d5); 0054 the export policy, own_root on
+            // every existing row (ADR-0084 d10).
             (true, "tenants") => {
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'search_default' \
                   - 'telemetry_query_text_since' - 'federation_enabled' \
-                  - 'federation_default_sources' - 'federation_max_sources') \
+                  - 'federation_default_sources' - 'federation_max_sources' \
+                  - 'export_policy') \
                  || jsonb_build_object('name', t.prior_name)"
             }
             // Before 0017 a workspace's status is the one every build served,
@@ -3042,7 +3044,8 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // (ADR-0056 d1, d4); 0044 adds the approval, null on every row
             // never promoted (ADR-0077 d6); 0048 adds a skill's, a document's
             // and a test case's fields, null on every existing row (ADR-0080
-            // d1; ADR-0081 d1; ADR-0086 d1).
+            // d1; ADR-0081 d1; ADR-0086 d1); 0055 adds the import provenance,
+            // null on every version not imported (ADR-0084 d4).
             (true, "memories") => {
                 "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
                  - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
@@ -10328,14 +10331,17 @@ async fn migration_0042_applies_beside_an_open_write_and_read_of_idempotency_wit
         .execute(&mut *read)
         .await
         .expect("an open read");
-    tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        store.migrate(&owner_url(&db)),
-    )
-    .await
-    .expect("0042 waits on neither the write nor the read")
-    .expect("0042 applies");
-    // 0042 and every later migration apply; 0042 is the one asserted.
+    // 0042 alone applies under the open write and read: a later migration
+    // that alters tenants, as 0054 does, waits for the write's key lock by
+    // design, so it is not part of what this law asserts.
+    let m42 = MIGRATOR
+        .iter()
+        .find(|m| m.version == 42)
+        .expect("migration 0042");
+    tokio::time::timeout(std::time::Duration::from_secs(3), conn.apply(m42))
+        .await
+        .expect("0042 waits on neither the write nor the read")
+        .expect("0042 applies");
     let applied: bool = sqlx::query_scalar(
         "SELECT coalesce(bool_or(version = 42), false) FROM _sqlx_migrations WHERE success",
     )
