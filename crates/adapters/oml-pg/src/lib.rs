@@ -752,41 +752,61 @@ async fn ensure_postings_partitions(owner: &PgPool) -> Result<u64, sqlx::Error> 
 /// plan keeps that tenant's partition alone, or drops the rest as it
 /// starts; row security stays the fence (ADR-0034 d11). Exported so the
 /// suite plans the statement the adapter runs.
-pub const RECALL_FTS: &str = "SELECT m.id, COALESCE(d.ordinal, -1) AS ordinal, \
-            COALESCE(d.body_bytes, m.body_bytes) AS body_bytes, \
-            ts_rank(to_tsvector('simple', COALESCE(d.search_text, m.search_text, m.claim)), \
-                    plainto_tsquery('simple', $3), 0) AS score \
-     FROM memories m \
-     LEFT JOIN LATERAL (SELECT d.ordinal, d.body_bytes, d.search_text FROM document_passages d \
-       WHERE m.kind = 'document' AND d.tenant_id = $1 AND d.memory_id = m.id OFFSET 0) d ON true \
-     WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
-       AND NOT m.retirement AND m.kind = ANY($4::text[]) \
-       AND m.workspace_id = ANY($2::uuid[]) /*anchor*/ \
-       AND to_tsvector('simple', COALESCE(d.search_text, m.search_text, m.claim)) @@ plainto_tsquery('simple', $3) \
-     ORDER BY score DESC, m.id ASC, ordinal ASC \
-     LIMIT $5";
+#[must_use]
+pub fn recall_fts_sql() -> String {
+    keyword_all_sql(
+        "m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
+         AND NOT m.retirement AND m.kind = ANY($4::text[]) \
+         AND m.workspace_id = ANY($2::uuid[]) /*anchor*/",
+        "$3",
+        "$5",
+    )
+}
+
+/// `keyword-all`'s statement over the rows `scope` admits (a predicate on
+/// `m`), the query bound at `query` and `k` at `k`: [`WHOLE_UNITS`] read as
+/// v0.5.0 read every row, and [`PASSAGE_UNITS`] beside them, one candidate
+/// per version ([`one_per_version`]).
+fn keyword_all_sql(scope: &str, query: &str, k: &str) -> String {
+    let branch = |u: &Units| {
+        format!(
+            "SELECT m.id, {ordinal} AS ordinal, {bytes} AS body_bytes, \
+                    ts_rank(to_tsvector('simple', {text}), plainto_tsquery('simple', {query}), 0) AS score, \
+                    '{{}}'::text[] AS matched \
+             FROM {from} \
+             WHERE {scope} AND {only} \
+               AND to_tsvector('simple', {text}) @@ plainto_tsquery('simple', {query})",
+            ordinal = u.ordinal,
+            bytes = u.bytes,
+            text = u.text,
+            from = u.from,
+            only = u.only,
+        )
+    };
+    format!(
+        "{} ORDER BY score DESC, id ASC, ordinal ASC LIMIT {k}",
+        one_per_version(&branch(&WHOLE_UNITS), &branch(&PASSAGE_UNITS))
+    )
+}
 
 /// The own held recall statement `recall_own_held` runs, binding `$1` the
 /// tenant, `$2` the author keys (the own key set, and the mark of the
 /// server's rule set on each node inside an in-progress subtree,
 /// `held_authors`), `$3` the readable nodes, `$4`
 /// the query, `$5` the kinds and `$6` `k`; pruned to the tenant's partition
-/// as [`RECALL_FTS`] is (ADR-0034 d11).
-pub const RECALL_OWN_HELD: &str = "SELECT m.id, COALESCE(d.ordinal, -1) AS ordinal, \
-            COALESCE(d.body_bytes, m.body_bytes) AS body_bytes, \
-            ts_rank(to_tsvector('simple', COALESCE(d.search_text, m.search_text, m.claim)), \
-                    plainto_tsquery('simple', $4), 0) AS score \
-     FROM memories m \
-     LEFT JOIN LATERAL (SELECT d.ordinal, d.body_bytes, d.search_text FROM document_passages d \
-       WHERE m.kind = 'document' AND d.tenant_id = $1 AND d.memory_id = m.id OFFSET 0) d ON true \
-     WHERE m.tenant_id = $1 AND m.status = 'held' \
-       AND (m.author_key_id = ANY($2::uuid[]) \
-         OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, '') || '/' || m.workspace_id::text, 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
-       AND NOT m.retirement AND m.kind = ANY($5::text[]) \
-       AND m.workspace_id = ANY($3::uuid[]) /*anchor*/ \
-       AND to_tsvector('simple', COALESCE(d.search_text, m.search_text, m.claim)) @@ plainto_tsquery('simple', $4) \
-     ORDER BY score DESC, m.id ASC, ordinal ASC \
-     LIMIT $6";
+/// as [`recall_fts_sql`] is (ADR-0034 d11).
+#[must_use]
+pub fn recall_own_held_sql() -> String {
+    keyword_all_sql(
+        "m.tenant_id = $1 AND m.status = 'held' \
+         AND (m.author_key_id = ANY($2::uuid[]) \
+           OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, '') || '/' || m.workspace_id::text, 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
+         AND NOT m.retirement AND m.kind = ANY($5::text[]) \
+         AND m.workspace_id = ANY($3::uuid[]) /*anchor*/",
+        "$4",
+        "$6",
+    )
+}
 
 /// The lineage widening a `claim_edge.proposed` fold runs after its
 /// INSERT, binding `$1` the tenant, `$2` the edge's source and `$3` its
@@ -981,23 +1001,68 @@ fn scope_at(sql: &str, at: Option<&EventTime>) -> String {
     )
 }
 
-/// A scanned version's search units (ADR-0081 d4; migration 0059): a
-/// document version's passages, each its own unit, joined to its row; every
-/// other row, and a document version with no passage, is one unit with no
-/// passage joined, so it reads its own columns as before. The `UNIT_*`
-/// expressions read a unit's ordinal (-1 the whole version), served bytes,
-/// lexemes, length and text. The join is a lateral subquery kept apart by
-/// `OFFSET 0`, so `m.kind = 'document'` gates it row by row and a row of
-/// any other kind never probes the passages' index: a scan over a scope
-/// with no document reads what it read before.
-const UNIT_JOIN: &str = "LEFT JOIN LATERAL (SELECT d.ordinal, d.body_bytes, d.search_vector, \
-            d.search_len, d.search_text FROM document_passages d \
-       WHERE m.kind = 'document' AND d.tenant_id = $1 AND d.memory_id = m.id OFFSET 0) d ON true";
-const UNIT_ORDINAL: &str = "COALESCE(d.ordinal, -1)";
-const UNIT_BYTES: &str = "COALESCE(d.body_bytes, m.body_bytes)";
-const UNIT_VECTOR: &str = "COALESCE(d.search_vector, m.search_vector)";
-const UNIT_LEN: &str = "COALESCE(d.search_len, m.search_len)";
-const UNIT_TEXT: &str = "COALESCE(d.search_text, m.search_text, m.claim)";
+/// One shape of a scanned version's search units (ADR-0081 d4; migration
+/// 0059): every statement that scans `memories` reads its candidates in two
+/// branches joined by `UNION ALL`, [`WHOLE_UNITS`] and [`PASSAGE_UNITS`], so
+/// a row of any kind but `document` is read by the statement as it was
+/// before passages, its plan included, and only document rows are joined to
+/// their passages (the review's finding 3).
+struct Units {
+    /// The relation the branch reads, `m` the version.
+    from: &'static str,
+    /// The kinds the branch reads.
+    only: &'static str,
+    /// A unit's ordinal (-1 the whole version), served bytes, lexemes,
+    /// length and text.
+    ordinal: &'static str,
+    bytes: &'static str,
+    vector: &'static str,
+    len: &'static str,
+    text: &'static str,
+}
+
+/// Every row of a kind but `document`: one unit, its own columns.
+const WHOLE_UNITS: Units = Units {
+    from: "memories m",
+    only: "m.kind <> 'document'",
+    ordinal: "-1",
+    bytes: "m.body_bytes",
+    vector: "m.search_vector",
+    len: "m.search_len",
+    text: "COALESCE(m.search_text, m.claim)",
+};
+
+/// A document version's passages, each its own unit; a document version
+/// with no passage is one unit, its own columns.
+const PASSAGE_UNITS: Units = Units {
+    from: "memories m LEFT JOIN document_passages d \
+           ON d.tenant_id = $1 AND d.memory_id = m.id",
+    only: "m.kind = 'document'",
+    ordinal: "COALESCE(d.ordinal, -1)",
+    bytes: "COALESCE(d.body_bytes, m.body_bytes)",
+    vector: "COALESCE(d.search_vector, m.search_vector)",
+    len: "COALESCE(d.search_len, m.search_len)",
+    text: "COALESCE(d.search_text, m.search_text, m.claim)",
+};
+
+/// One candidate per version (ADR-0081 d4; the review's reading R3
+/// amended), from the two branches `whole` and `passages`, each selecting
+/// `id`, `ordinal`, `body_bytes`, `score` and `matched`: a whole version is
+/// its own candidate, and of a document's passages the best by score, then
+/// ordinal, carrying the count of the others as `more_passages`. The caller
+/// orders and cuts the union, so its `k` counts versions.
+fn one_per_version(whole: &str, passages: &str) -> String {
+    format!(
+        "SELECT id, ordinal, body_bytes, score, matched, 0::int8 AS more_passages \
+           FROM ({whole}) w \
+         UNION ALL \
+         SELECT id, ordinal, body_bytes, score, matched, more_passages \
+           FROM (SELECT p.*, row_number() OVER (PARTITION BY p.id ORDER BY p.score DESC, p.ordinal ASC) AS unit_rank, \
+                        count(*) OVER (PARTITION BY p.id) - 1 AS more_passages \
+                   FROM ({passages}) p) b \
+          WHERE b.unit_rank = 1"
+    )
+}
 
 /// The versions of the tenant `$1` whose valid time ended at or before the
 /// request's now, `$NOW`, read by the `memories_valid_until` index's
@@ -1038,20 +1103,31 @@ pub fn time_sql() -> String {
 /// by id; `$6` the query, `$7` `k`, `$8` whether every term must match,
 /// `$9` the request's now, the anchor's binds from `$10`.
 fn keyword_any_sql(anchor: &str) -> String {
+    let branch = |u: &Units| {
+        format!(
+            "SELECT m.id, {ordinal} AS ordinal, {bytes} AS body_bytes, \
+                    ts_rank(to_tsvector('simple', {text}), q.tq, 0) AS score, \
+                    ARRAY(SELECT t FROM unnest(q.terms) t \
+                          WHERE t = ANY(tsvector_to_array(to_tsvector('simple', {text}))) ORDER BY t) AS matched \
+             FROM {from} CROSS JOIN q \
+             WHERE {SEARCH_SCOPE}{anchor} AND {only} \
+               AND to_tsvector('simple', {text}) @@ q.tq \
+               AND (NOT $8 OR to_tsvector('simple', {text}) @@ plainto_tsquery('simple', $6))",
+            ordinal = u.ordinal,
+            bytes = u.bytes,
+            text = u.text,
+            from = u.from,
+            only = u.only,
+        )
+    };
     with_now(
         &format!(
             "WITH q AS (SELECT NULLIF(replace(plainto_tsquery('simple', $6)::text, ' & ', ' | '), '')::tsquery AS tq, \
                     tsvector_to_array(to_tsvector('simple', $6)) AS terms) \
-         SELECT m.id, {UNIT_ORDINAL} AS ordinal, {UNIT_BYTES} AS body_bytes, \
-                ts_rank(to_tsvector('simple', {UNIT_TEXT}), q.tq, 0) AS score, \
-                ARRAY(SELECT t FROM unnest(q.terms) t \
-                      WHERE t = ANY(tsvector_to_array(to_tsvector('simple', {UNIT_TEXT}))) ORDER BY t) AS matched \
-         FROM memories m {UNIT_JOIN} CROSS JOIN q \
-         WHERE {SEARCH_SCOPE}{anchor} \
-           AND to_tsvector('simple', {UNIT_TEXT}) @@ q.tq \
-           AND (NOT $8 OR to_tsvector('simple', {UNIT_TEXT}) @@ plainto_tsquery('simple', $6)) \
-         ORDER BY score DESC, m.id ASC, ordinal ASC \
-         LIMIT $7"
+             {} \
+             ORDER BY score DESC, id ASC, ordinal ASC \
+             LIMIT $7",
+            one_per_version(&branch(&WHOLE_UNITS), &branch(&PASSAGE_UNITS))
         ),
         9,
     )
@@ -1073,6 +1149,86 @@ fn search_terms_sql() -> String {
     format!(
         "WITH {SEARCH_WORDS} \
          SELECT COALESCE(array_agg(w ORDER BY w COLLATE \"C\"), '{{}}'::text[]) FROM kept"
+    )
+}
+
+/// The BM25 statements' unit statistics over the two unit branches
+/// ([`Units`]), `scope` the predicate on `m` a branch reads: `n` counts
+/// versions, since each version has exactly one unit of ordinal -1 or 0,
+/// and `avgdl` is the units' mean length (the review's reading R6 amended).
+fn bm25_stats(scope: &str) -> String {
+    let branch = |u: &Units| {
+        format!(
+            "SELECT {ordinal} AS ordinal, {len} AS len FROM {from} WHERE {scope} AND {only}",
+            ordinal = u.ordinal,
+            len = u.len,
+            from = u.from,
+            only = u.only,
+        )
+    };
+    format!(
+        "stats AS (SELECT count(*) FILTER (WHERE x.ordinal < 1)::float8 AS n, \
+                          GREATEST(COALESCE(avg(x.len), 1), 1)::float8 AS avgdl \
+                   FROM ({} UNION ALL {}) x)",
+        branch(&WHOLE_UNITS),
+        branch(&PASSAGE_UNITS)
+    )
+}
+
+/// Each scanned unit's query forms with their frequencies, over `scope`.
+fn bm25_unit_forms(scope: &str) -> String {
+    let branch = |u: &Units| {
+        format!(
+            "SELECT m.id, {ordinal} AS ordinal, {bytes} AS body_bytes, \
+                    {len}::float8 AS dl, u.lexeme, \
+                    GREATEST(cardinality(u.positions), 1)::float8 AS tf \
+             FROM {from} CROSS JOIN q \
+             CROSS JOIN LATERAL unnest(ts_filter(setweight({vector}, 'A', q.fa), '{{a}}')) u \
+             WHERE {scope} AND {only} AND {vector} @@ q.tq",
+            ordinal = u.ordinal,
+            bytes = u.bytes,
+            len = u.len,
+            vector = u.vector,
+            from = u.from,
+            only = u.only,
+        )
+    };
+    format!(
+        "{} UNION ALL {}",
+        branch(&WHOLE_UNITS),
+        branch(&PASSAGE_UNITS)
+    )
+}
+
+/// Each form's document frequency from `units`, a relation of the
+/// [`bm25_unit_forms`] columns: a version counts once however many of its
+/// units hold the form (the review's reading R6 amended).
+fn bm25_df(units: &str) -> String {
+    format!(
+        "df AS (SELECT lexeme, sum(n)::float8 AS df FROM ( \
+                  SELECT lexeme, count(*) AS n FROM {units} WHERE ordinal < 0 GROUP BY lexeme \
+                  UNION ALL \
+                  SELECT lexeme, count(DISTINCT id) FROM {units} WHERE ordinal >= 0 GROUP BY lexeme) f \
+                GROUP BY lexeme)"
+    )
+}
+
+/// The end of a BM25 statement: `per`'s contributions summed per unit, the
+/// units holding every kept word under `$8`, one per version, cut at `$7`.
+fn bm25_tail() -> String {
+    format!(
+        "scored AS (SELECT id, ordinal, body_bytes, sum(c)::float4 AS score, \
+                           array_agg(w ORDER BY w COLLATE \"C\") AS words \
+                    FROM per GROUP BY id, ordinal, body_bytes), \
+         matching AS (SELECT id, ordinal, body_bytes, score, words AS matched FROM scored \
+                      WHERE (NOT $8 OR cardinality(words) = (SELECT count(*) FROM kept))) \
+         {} \
+         ORDER BY score DESC, id ASC, ordinal ASC \
+         LIMIT $7",
+        one_per_version(
+            "SELECT * FROM matching WHERE ordinal < 0",
+            "SELECT * FROM matching WHERE ordinal >= 0"
+        )
     )
 }
 
@@ -1115,27 +1271,20 @@ fn bm25_sql_within(anchor: &str) -> String {
                    CROSS JOIN LATERAL unnest(array_append(COALESCE(ts_lexize('english_stem', kept.w), '{{}}'::text[]), kept.w)) f), \
          q AS (SELECT string_agg(DISTINCT '''' || replace(replace(f, '\\', '\\\\'), '''', '''''') || '''', ' | ')::tsquery AS tq, \
                       array_agg(DISTINCT f) AS fa FROM forms), \
-         stats AS (SELECT count(*)::float8 AS n, GREATEST(COALESCE(avg({UNIT_LEN}), 1), 1)::float8 AS avgdl \
-                   FROM memories m {UNIT_JOIN} WHERE {SEARCH_SCOPE}), \
-         tf AS MATERIALIZED (SELECT m.id, {UNIT_ORDINAL} AS ordinal, {UNIT_BYTES} AS body_bytes, \
-                                    {UNIT_LEN}::float8 AS dl, u.lexeme, \
-                                    GREATEST(cardinality(u.positions), 1)::float8 AS tf \
-                             FROM memories m {UNIT_JOIN} CROSS JOIN q \
-                             CROSS JOIN LATERAL unnest(ts_filter(setweight({UNIT_VECTOR}, 'A', q.fa), '{{a}}')) u \
-                             WHERE {SEARCH_SCOPE} AND {UNIT_VECTOR} @@ q.tq), \
-         df AS (SELECT lexeme, count(*)::float8 AS df FROM tf GROUP BY lexeme), \
+         {stats}, \
+         tf AS MATERIALIZED ({units}), \
+         {df}, \
          per AS (SELECT tf.id, tf.ordinal, tf.body_bytes, forms.w, \
                         max(ln(1 + (s.n - df.df + 0.5) / (df.df + 0.5)) \
                             * tf.tf * 2.2 / (tf.tf + 1.2 * (0.25 + 0.75 * tf.dl / s.avgdl))) AS c \
                  FROM tf JOIN df USING (lexeme) JOIN forms ON forms.f = tf.lexeme CROSS JOIN stats s \
                  {within} \
                  GROUP BY tf.id, tf.ordinal, tf.body_bytes, forms.w), \
-         scored AS (SELECT id, ordinal, body_bytes, sum(c) AS score, array_agg(w ORDER BY w COLLATE \"C\") AS words \
-                    FROM per GROUP BY id, ordinal, body_bytes) \
-         SELECT id, ordinal, body_bytes, score::float4 AS score, words AS matched FROM scored \
-         WHERE (NOT $8 OR cardinality(words) = (SELECT count(*) FROM kept)) \
-         ORDER BY score DESC, id ASC, ordinal ASC \
-         LIMIT $7"
+         {tail}",
+            stats = bm25_stats(SEARCH_SCOPE),
+            units = bm25_unit_forms(SEARCH_SCOPE),
+            df = bm25_df("tf"),
+            tail = bm25_tail(),
         ),
         9,
     )
@@ -1177,30 +1326,22 @@ pub fn bm25_reference_sql_within(anchor: &str) -> String {
                    CROSS JOIN LATERAL unnest(array_append(COALESCE(ts_lexize('english_stem', kept.w), '{{}}'::text[]), kept.w)) f), \
          q AS (SELECT string_agg(DISTINCT '''' || replace(replace(f, '\\', '\\\\'), '''', '''''') || '''', ' | ')::tsquery AS tq, \
                       array_agg(DISTINCT f) AS fa FROM forms), \
-         stats AS (SELECT count(*)::float8 AS n, GREATEST(COALESCE(avg({UNIT_LEN}), 1), 1)::float8 AS avgdl \
-                   FROM memories m {UNIT_JOIN} WHERE {REFERENCE_SCOPE}), \
-         df AS (SELECT u.lexeme, count(*)::float8 AS df \
-                FROM memories m {UNIT_JOIN} CROSS JOIN q \
-                CROSS JOIN LATERAL unnest(ts_filter(setweight({UNIT_VECTOR}, 'A', q.fa), '{{a}}')) u \
-                WHERE {REFERENCE_SCOPE} AND {UNIT_VECTOR} @@ q.tq GROUP BY u.lexeme), \
-         tf AS MATERIALIZED (SELECT m.id, {UNIT_ORDINAL} AS ordinal, {UNIT_BYTES} AS body_bytes, \
-                                    {UNIT_LEN}::float8 AS dl, u.lexeme, \
-                                    GREATEST(cardinality(u.positions), 1)::float8 AS tf \
-                             FROM memories m {UNIT_JOIN} CROSS JOIN q \
-                             CROSS JOIN LATERAL unnest(ts_filter(setweight({UNIT_VECTOR}, 'A', q.fa), '{{a}}')) u \
-                             WHERE {SEARCH_SCOPE} AND {UNIT_VECTOR} @@ q.tq), \
+         {stats}, \
+         reference AS ({reference}), \
+         {df}, \
+         tf AS MATERIALIZED ({units}), \
          per AS (SELECT tf.id, tf.ordinal, tf.body_bytes, forms.w, \
                         max(ln(1 + (s.n - df.df + 0.5) / (df.df + 0.5)) \
                             * tf.tf * 2.2 / (tf.tf + 1.2 * (0.25 + 0.75 * tf.dl / s.avgdl))) AS c \
                  FROM tf JOIN df USING (lexeme) JOIN forms ON forms.f = tf.lexeme CROSS JOIN stats s \
                  {within} \
                  GROUP BY tf.id, tf.ordinal, tf.body_bytes, forms.w), \
-         scored AS (SELECT id, ordinal, body_bytes, sum(c) AS score, array_agg(w ORDER BY w COLLATE \"C\") AS words \
-                    FROM per GROUP BY id, ordinal, body_bytes) \
-         SELECT id, ordinal, body_bytes, score::float4 AS score, words AS matched FROM scored \
-         WHERE (NOT $8 OR cardinality(words) = (SELECT count(*) FROM kept)) \
-         ORDER BY score DESC, id ASC, ordinal ASC \
-         LIMIT $7"
+         {tail}",
+            stats = bm25_stats(REFERENCE_SCOPE),
+            reference = bm25_unit_forms(REFERENCE_SCOPE),
+            df = bm25_df("reference"),
+            units = bm25_unit_forms(SEARCH_SCOPE),
+            tail = bm25_tail(),
         ),
         9,
     )
@@ -1225,12 +1366,12 @@ fn search_forms_sql() -> String {
 /// frequency among them. Both sum the per-workspace counts, so they are the
 /// readable rows', never the tenant's.
 const POSTINGS_COUNTS: &str = "SELECT NULL::int8 AS token_id, COALESCE(sum(c.rows), 0)::int8 AS n, \
-            COALESCE(sum(c.total_len), 0)::int8 AS len \
+            COALESCE(sum(c.total_len), 0)::int8 AS len, COALESCE(sum(c.units), 0)::int8 AS units \
      FROM search_workspace_rows c \
      WHERE c.tenant_id = $1 AND c.workspace_id = ANY($2::uuid[]) AND c.kind = 1 \
        AND c.memory_kind = ANY($3::int2[]) \
      UNION ALL \
-     SELECT c.token_id, sum(c.rows)::int8, 0::int8 \
+     SELECT c.token_id, sum(c.rows)::int8, 0::int8, 0::int8 \
      FROM search_term_rows c \
      WHERE c.tenant_id = $1 AND c.workspace_id = ANY($2::uuid[]) AND c.kind = 1 \
        AND c.memory_kind = ANY($3::int2[]) AND c.token_id = ANY($4::int8[]) \
@@ -1321,7 +1462,7 @@ const POSTINGS_EXPIRED: &str = "SELECT m.id, m.search_len FROM memories m \
 
 /// Each token of `$3`'s document frequency among the own held rows `$2`,
 /// from their postings by the `(memory_id)` index.
-const POSTINGS_OWN_HELD_DF: &str = "SELECT p.token_id, count(DISTINCT (p.memory_id, p.ordinal))::int8 AS df \
+const POSTINGS_OWN_HELD_DF: &str = "SELECT p.token_id, count(DISTINCT p.memory_id)::int8 AS df \
      FROM search_postings p \
      WHERE p.tenant_id = $1 AND p.memory_id = ANY($2::uuid[]) AND p.kind = 1 \
        AND p.token_id = ANY($3::int8[]) \
@@ -1371,9 +1512,16 @@ fn bm25_postings_sql_within(anchor: &str) -> String {
          gen AS (SELECT p.memory_id, p.ordinal, q.w, max({POSTING_CONTRIBUTION}) AS c \
                  FROM p JOIN q ON q.token_id = p.token_id GROUP BY p.memory_id, p.ordinal, q.w), \
          {EXPIRED_IDS}, \
-         top AS (SELECT memory_id, ordinal FROM gen \
-                 WHERE memory_id NOT IN (SELECT id FROM expired) GROUP BY memory_id, ordinal \
-                 ORDER BY sum(c)::float4 DESC, memory_id ASC, ordinal ASC LIMIT $11), \
+         units AS (SELECT memory_id, ordinal, sum(c)::float4 AS s FROM gen \
+                   WHERE memory_id NOT IN (SELECT id FROM expired) GROUP BY memory_id, ordinal), \
+         top AS (SELECT memory_id, ordinal, more_passages FROM ( \
+                   SELECT memory_id, ordinal, s, 0::int8 AS more_passages FROM units WHERE ordinal < 0 \
+                   UNION ALL \
+                   SELECT memory_id, ordinal, s, more_passages FROM ( \
+                     SELECT u.*, row_number() OVER (PARTITION BY u.memory_id ORDER BY u.s DESC, u.ordinal ASC) AS unit_rank, \
+                            count(*) OVER (PARTITION BY u.memory_id) - 1 AS more_passages \
+                     FROM units u WHERE u.ordinal >= 0) b WHERE b.unit_rank = 1) t \
+                 ORDER BY s DESC, memory_id ASC, ordinal ASC LIMIT $11), \
          scored AS (SELECT p.memory_id, p.ordinal, q.w, max({POSTING_CONTRIBUTION}) AS c \
                     FROM top JOIN search_postings p \
                       ON p.memory_id = top.memory_id AND p.ordinal = top.ordinal \
@@ -1383,8 +1531,9 @@ fn bm25_postings_sql_within(anchor: &str) -> String {
          ranked AS (SELECT memory_id, ordinal, sum(c) AS score, array_agg(w ORDER BY w COLLATE \"C\") AS words \
                     FROM scored GROUP BY memory_id, ordinal) \
          SELECT r.memory_id AS id, r.ordinal, COALESCE(d.body_bytes, m.body_bytes) AS body_bytes, \
-                r.score::float4 AS score, r.words AS matched \
-         FROM ranked r JOIN memories m ON m.tenant_id = $1 AND m.id = r.memory_id \
+                r.score::float4 AS score, r.words AS matched, top.more_passages \
+         FROM ranked r JOIN top ON top.memory_id = r.memory_id AND top.ordinal = r.ordinal \
+         JOIN memories m ON m.tenant_id = $1 AND m.id = r.memory_id \
          LEFT JOIN document_passages d \
            ON d.tenant_id = $1 AND d.memory_id = r.memory_id AND d.ordinal = r.ordinal \
          WHERE NOT $12 OR cardinality(r.words) = $13 \
@@ -1425,12 +1574,19 @@ fn sparse_sql_within(anchor: &str) -> String {
      hit AS (SELECT p.memory_id, p.ordinal, q.piece, q.w * p.weight::float8 AS c, p.doc_len = 1 AS in_text \
              FROM p JOIN q ON q.token_id = p.token_id), \
      {EXPIRED_IDS}, \
-     top AS (SELECT memory_id, ordinal, sum(c) AS score FROM hit \
-             WHERE memory_id NOT IN (SELECT id FROM expired) GROUP BY memory_id, ordinal \
-             HAVING NOT $8 OR count(*) = $9 \
-             ORDER BY sum(c)::float4 DESC, memory_id ASC, ordinal ASC LIMIT $10) \
+     units AS (SELECT memory_id, ordinal, sum(c) AS score FROM hit \
+               WHERE memory_id NOT IN (SELECT id FROM expired) GROUP BY memory_id, ordinal \
+               HAVING NOT $8 OR count(*) = $9), \
+     top AS (SELECT memory_id, ordinal, score, more_passages FROM ( \
+               SELECT memory_id, ordinal, score, 0::int8 AS more_passages FROM units WHERE ordinal < 0 \
+               UNION ALL \
+               SELECT memory_id, ordinal, score, more_passages FROM ( \
+                 SELECT u.*, row_number() OVER (PARTITION BY u.memory_id ORDER BY u.score::float4 DESC, u.ordinal ASC) AS unit_rank, \
+                        count(*) OVER (PARTITION BY u.memory_id) - 1 AS more_passages \
+                 FROM units u WHERE u.ordinal >= 0) b WHERE b.unit_rank = 1) x \
+             ORDER BY score::float4 DESC, memory_id ASC, ordinal ASC LIMIT $10) \
      SELECT t.memory_id AS id, t.ordinal, COALESCE(d.body_bytes, m.body_bytes) AS body_bytes, \
-            t.score::float4 AS score, \
+            t.score::float4 AS score, t.more_passages, \
             array_agg(h.piece ORDER BY h.c DESC, h.piece COLLATE \"C\") AS pieces, \
             array_agg(h.c::float4 ORDER BY h.c DESC, h.piece COLLATE \"C\") AS contributions, \
             array_agg(h.in_text ORDER BY h.c DESC, h.piece COLLATE \"C\") AS in_text \
@@ -1438,7 +1594,7 @@ fn sparse_sql_within(anchor: &str) -> String {
      JOIN memories m ON m.tenant_id = $1 AND m.id = t.memory_id \
      LEFT JOIN document_passages d \
        ON d.tenant_id = $1 AND d.memory_id = t.memory_id AND d.ordinal = t.ordinal \
-     GROUP BY t.memory_id, t.ordinal, d.body_bytes, m.body_bytes, t.score \
+     GROUP BY t.memory_id, t.ordinal, d.body_bytes, m.body_bytes, t.score, t.more_passages \
      ORDER BY score DESC, id ASC, t.ordinal ASC"), 11)
         .replace("/*anchor*/", anchor)
 }
@@ -1520,10 +1676,11 @@ const POSTINGS_HEALTH: &str = "WITH v AS ( \
                 oml_search_state(m.status, m.is_tip, m.retirement, m.kind) AS state \
          FROM memories m WHERE m.tenant_id = $1), \
      want AS (SELECT * FROM v WHERE state IS NOT NULL AND search_len > 0), \
-     served AS (SELECT v.workspace_id, v.mk, count(*)::int8 AS rows, sum(u.search_len)::int8 AS len \
+     served AS (SELECT v.workspace_id, v.mk, count(DISTINCT v.id)::int8 AS rows, \
+                       count(*)::int8 AS units, sum(u.search_len)::int8 AS len \
                 FROM v CROSS JOIN LATERAL oml_search_units($1, v.id, v.kind, v.search_vector, v.search_len) u \
                 WHERE v.state = 1 GROUP BY v.workspace_id, v.mk), \
-     kept AS (SELECT workspace_id, memory_kind AS mk, rows::int8 AS rows, total_len AS len \
+     kept AS (SELECT workspace_id, memory_kind AS mk, rows::int8 AS rows, units, total_len AS len \
               FROM search_workspace_rows WHERE tenant_id = $1 AND kind = 1), \
      start AS MATERIALIZED (SELECT ((random() - 0.5) * 1.8e19)::int8 AS s), \
      sampled AS (SELECT * FROM ( \
@@ -1551,10 +1708,11 @@ const POSTINGS_HEALTH: &str = "WITH v AS ( \
             SELECT 1 FROM search_postings p WHERE p.tenant_id = $1 AND p.memory_id = w.id \
                                           AND p.state = 1))::int8 AS served_behind, \
        (SELECT count(*) FROM served s FULL JOIN kept k USING (workspace_id, mk) \
-         WHERE s.rows IS DISTINCT FROM k.rows OR s.len IS DISTINCT FROM k.len)::int8 \
+         WHERE s.rows IS DISTINCT FROM k.rows OR s.len IS DISTINCT FROM k.len \
+            OR s.units IS DISTINCT FROM k.units)::int8 \
          AS workspace_drift, \
        ((SELECT count(*) FROM sampled c WHERE c.rows <> ( \
-            SELECT count(DISTINCT (p.memory_id, p.ordinal)) FROM search_postings p \
+            SELECT count(DISTINCT p.memory_id) FROM search_postings p \
              WHERE p.tenant_id = $1 AND p.kind = 1 AND p.token_id = c.token_id \
                AND p.workspace_id = c.workspace_id AND p.state = 1 \
                AND p.memory_kind = c.memory_kind)) \
@@ -1675,14 +1833,23 @@ impl PruneLimits {
 /// scans the scope (ADR-0034 d13; ADR-0049 d12). `$6` the query, `$7` `k`,
 /// `$8` the request's now, the anchor's binds from `$9`.
 fn trigram_sql(anchor: &str) -> String {
+    let branch = |u: &Units| {
+        format!(
+            "SELECT m.id, {ordinal} AS ordinal, {bytes} AS body_bytes, \
+                    word_similarity($6, oml_search_text({text})) AS score, '{{}}'::text[] AS matched \
+             FROM {from} \
+             WHERE {SEARCH_SCOPE}{anchor} AND {only} AND $6 <% oml_search_text({text})",
+            ordinal = u.ordinal,
+            bytes = u.bytes,
+            text = u.text,
+            from = u.from,
+            only = u.only,
+        )
+    };
     with_now(
         &format!(
-            "SELECT m.id, {UNIT_ORDINAL} AS ordinal, {UNIT_BYTES} AS body_bytes, \
-                word_similarity($6, oml_search_text({UNIT_TEXT})) AS score \
-         FROM memories m {UNIT_JOIN} \
-         WHERE {SEARCH_SCOPE}{anchor} AND $6 <% oml_search_text({UNIT_TEXT}) \
-         ORDER BY score DESC, m.id ASC, ordinal ASC \
-         LIMIT $7"
+            "{} ORDER BY score DESC, id ASC, ordinal ASC LIMIT $7",
+            one_per_version(&branch(&WHOLE_UNITS), &branch(&PASSAGE_UNITS))
         ),
         8,
     )
@@ -2652,8 +2819,17 @@ fn unit_ordinal(row: &PgRow) -> i32 {
     row.try_get::<i32, _>("ordinal").unwrap_or(-1)
 }
 
+/// A search unit's count of its version's other matching passages from a
+/// row's `more_passages`: 0 when the statement selects none.
+fn unit_more_passages(row: &PgRow) -> u32 {
+    row.try_get::<i64, _>("more_passages")
+        .ok()
+        .and_then(|n| u32::try_from(n).ok())
+        .unwrap_or(0)
+}
+
 /// A recall candidate from a row of `id`, `body_bytes` and `score`, and
-/// `matched` and `ordinal` when the statement selects them.
+/// `matched`, `ordinal` and `more_passages` when the statement selects them.
 fn candidate_from_row(row: &PgRow) -> Result<Candidate, StoreError> {
     let matched: Option<Vec<String>> = row.try_get("matched").ok();
     Ok(Candidate {
@@ -2663,6 +2839,7 @@ fn candidate_from_row(row: &PgRow) -> Result<Candidate, StoreError> {
         score: row.try_get("score").map_err(backend)?,
         matched: matched.unwrap_or_default(),
         tokens: Vec::new(),
+        more_passages: unit_more_passages(row),
     })
 }
 
@@ -2697,6 +2874,7 @@ fn sparse_candidate_from_row(row: &PgRow) -> Result<Candidate, StoreError> {
         score: row.try_get("score").map_err(backend)?,
         matched,
         tokens,
+        more_passages: unit_more_passages(row),
     })
 }
 
@@ -5841,8 +6019,8 @@ impl PgStore {
         Ok(appended)
     }
 
-    /// `keyword-all`: the v0.5.0 statements, [`RECALL_FTS`] and
-    /// [`RECALL_OWN_HELD`], unchanged, their lists merged under the total
+    /// `keyword-all`: the v0.5.0 statements, [`recall_fts_sql`] and
+    /// [`recall_own_held_sql`], one candidate per version, their lists merged under the total
     /// order of hits and cut to `k`, as the core merged them before
     /// (ADR-0049 d7). Every term matched, so `matched` is the terms.
     async fn keyword_all(
@@ -5855,7 +6033,7 @@ impl PgStore {
         anchor: &AnchorRead,
     ) -> Result<Vec<Candidate>, StoreError> {
         let k = i64::try_from(query.k).unwrap_or(i64::MAX);
-        let fts = RECALL_FTS.replace("/*anchor*/", &anchor.row("m", 6));
+        let fts = recall_fts_sql().replace("/*anchor*/", &anchor.row("m", 6));
         let mut rows = anchor
             .bind(
                 sqlx::query(&fts)
@@ -5869,7 +6047,7 @@ impl PgStore {
             .await
             .map_err(backend)?;
         if let Some(own) = &scope.own_held {
-            let held = RECALL_OWN_HELD.replace("/*anchor*/", &anchor.row("m", 7));
+            let held = recall_own_held_sql().replace("/*anchor*/", &anchor.row("m", 7));
             rows.extend(
                 anchor
                     .bind(
@@ -5894,6 +6072,7 @@ impl PgStore {
             c.matched = terms.to_vec();
         }
         hit_order(&mut candidates, |c| (c.score, c.memory_id));
+        let mut candidates = oml_app::search::one_unit_per_version(candidates);
         candidates.truncate(query.k);
         Ok(candidates)
     }
@@ -6251,7 +6430,7 @@ impl PgStore {
         // nodes, and the own held rows read by the author index; under a
         // reference set, its served versions' counts alone (ADR-0072 d4.2).
         let counted_nodes = scope.reference.unwrap_or(scope.nodes);
-        let counted: Vec<(Option<i64>, i64, i64)> = sqlx::query_as(POSTINGS_COUNTS)
+        let counted: Vec<(Option<i64>, i64, i64, i64)> = sqlx::query_as(POSTINGS_COUNTS)
             .bind(scope.tenant_id)
             .bind(counted_nodes)
             .bind(&memory_kinds)
@@ -6259,15 +6438,19 @@ impl PgStore {
             .fetch_all(&mut **tx)
             .await
             .map_err(backend)?;
+        // N and every df count versions; the mean length is the units'
+        // (ADR-0081 d4; the review's reading R6 amended).
         let mut rows = 0_u64;
+        let mut units = 0_u64;
         let mut total_len = 0_u64;
         let mut df: BTreeMap<i64, u64> = tokens.iter().map(|t| (*t, 0)).collect();
-        for (token, n, len) in counted {
+        for (token, n, len, unit_count) in counted {
             let n = u64::try_from(n).map_err(backend)?;
             match token {
                 None => {
                     rows = n;
                     total_len = u64::try_from(len).map_err(backend)?;
+                    units = u64::try_from(unit_count).map_err(backend)?;
                 }
                 Some(token) => *df.entry(token).or_default() += n,
             }
@@ -6283,8 +6466,11 @@ impl PgStore {
             .fetch_all(&mut **tx)
             .await
             .map_err(backend)?;
+        // A document states no valid time, so an expired version is one
+        // unit (ADR-0081 d1).
         if !expired.is_empty() {
             rows = rows.saturating_sub(expired.len() as u64);
+            units = units.saturating_sub(expired.len() as u64);
             total_len = total_len.saturating_sub(
                 expired
                     .iter()
@@ -6321,8 +6507,12 @@ impl PgStore {
             };
         // Under a reference set the own held rows are scored and never
         // counted: R holds served rows alone (ADR-0072 d7).
+        let mut held_ids: Vec<Uuid> = held.iter().map(|(id, _)| *id).collect();
+        held_ids.sort_unstable();
+        held_ids.dedup();
         if scope.reference.is_none() {
-            rows += held.len() as u64;
+            rows += held_ids.len() as u64;
+            units += held.len() as u64;
             total_len += held
                 .iter()
                 .map(|(_, len)| u64::try_from(*len).unwrap_or(0))
@@ -6331,10 +6521,6 @@ impl PgStore {
         if rows == 0 {
             return Ok(empty(terms));
         }
-        // One row per unit: a document's passages share its id.
-        let mut held_ids: Vec<Uuid> = held.iter().map(|(id, _)| *id).collect();
-        held_ids.sort_unstable();
-        held_ids.dedup();
         if !held_ids.is_empty() && scope.reference.is_none() {
             let held_counted: Vec<(i64, i64)> = sqlx::query_as(POSTINGS_OWN_HELD_DF)
                 .bind(scope.tenant_id)
@@ -6435,7 +6621,10 @@ impl PgStore {
             }
         }
         #[allow(clippy::cast_precision_loss, reason = "counts far below 2^52")]
-        let (n, avgdl) = (rows as f64, (total_len as f64 / rows as f64).max(1.0));
+        let (n, avgdl) = (
+            rows as f64,
+            (total_len as f64 / units.max(1) as f64).max(1.0),
+        );
         let sql = bm25_postings_sql_within(&scope.anchor.posting("p.memory_id", 16));
         let candidates = scope
             .anchor

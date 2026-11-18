@@ -18,16 +18,20 @@
 --
 -- Numbered 0059, reserved for this change in docs/NUMBERS.md.
 --
--- What it costs a live database: document_passages is empty (nothing wrote
--- it before this change), so its new NOT NULL columns cost a catalog
--- change. search_postings gains a column with a constant default, which
--- rewrites nothing; its memory_kind check is replaced, which reads every
--- posting once to validate it; and search_postings_served is rebuilt to
--- carry the ordinal, an index build over every partition's served postings
--- under the parent's lock. The fill then refills each tenant's postings
--- and counts, as 0021's did, so a document version written before this
--- change is one whole-version unit until the lead cuts its passages at
--- startup. A lock is waited for at most 5 s.
+-- What it costs a live database (ADR-0081 R14): no lock this file takes
+-- blocks a read of memories or search_postings for longer than a catalog
+-- change. document_passages is empty (nothing wrote it before this change),
+-- so its new NOT NULL columns cost a catalog change. search_postings gains
+-- a column with a constant default, which rewrites nothing, and its
+-- memory_kind check is replaced NOT VALID, which reads no posting; 0060
+-- validates it. search_workspace_rows, one row per tenant, workspace and
+-- kind, gains its units count, set from its rows. The fold's, the refill's
+-- and the vocabulary's functions are replaced in place and their triggers
+-- kept. Nothing is refilled here: 0060 rebuilds the served index to carry
+-- the ordinal, partition by partition, and refills the tenants that hold a
+-- document row, each committed alone, so a document version written before
+-- this change is one whole-version unit until then, and until the lead
+-- cuts its passages at startup. A lock is waited for at most 5 s.
 
 SET LOCAL lock_timeout = '5s';
 
@@ -91,15 +95,16 @@ CREATE OR REPLACE FUNCTION oml_search_memory_kind(kind text) RETURNS smallint
     LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
     RETURN CASE kind WHEN 'memory' THEN 1 WHEN 'derived_fact' THEN 2 WHEN 'document' THEN 3 END;
 
+-- The widened check is added NOT VALID, so no posting is read under this
+-- transaction's lock; 0060 validates it under SHARE UPDATE EXCLUSIVE.
 ALTER TABLE search_postings DROP CONSTRAINT search_postings_memory_kind;
--- lint:allow constraint the check only widens (1, 2) to (1, 2, 3), every posting already holds 1 or 2, and a NOT VALID check validated in a second, no-transaction migration would leave postings unchecked between the two for no gain
 ALTER TABLE search_postings
-    ADD CONSTRAINT search_postings_memory_kind CHECK (memory_kind IN (1, 2, 3));
+    ADD CONSTRAINT search_postings_memory_kind CHECK (memory_kind IN (1, 2, 3)) NOT VALID;
 
 ------------------------------------------------------------------------------
 -- search_postings.ordinal — the unit a posting belongs to: -1 the whole
--- version, else the passage's ordinal. The served index carries it, so a
--- recall still reads its postings by an index-only scan.
+-- version, else the passage's ordinal. 0060 rebuilds the served index to
+-- carry it, so a recall still reads its postings by an index-only scan.
 ------------------------------------------------------------------------------
 ALTER TABLE search_postings ADD COLUMN ordinal integer NOT NULL DEFAULT -1;
 
@@ -107,24 +112,21 @@ COMMENT ON COLUMN search_postings.ordinal IS
     'The search unit: -1 the whole version, else the document passage''s ordinal (ADR-0081 d4). '
     'Owning page: docs/data/postgres-schema.md.';
 
--- The parent's index ON ONLY, each partition's built on its own and
--- attached, as 0026 builds memories' (a partition the lead creates later
--- takes it through LIKE ... INCLUDING ALL).
-DROP INDEX search_postings_served;
-CREATE INDEX search_postings_served ON ONLY search_postings (kind, token_id, workspace_id)
-    INCLUDE (memory_kind, memory_id, ordinal, weight, doc_len, tenant_id) WHERE state = 1;
-DO $$
-DECLARE
-    p text;
-BEGIN
-    FOR p IN SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
-              WHERE i.inhparent = 'search_postings'::regclass ORDER BY c.relname LOOP
-        EXECUTE format('CREATE INDEX %I ON %I (kind, token_id, workspace_id) '
-                       'INCLUDE (memory_kind, memory_id, ordinal, weight, doc_len, tenant_id) '
-                       'WHERE state = 1', p || '_served', p);
-        EXECUTE format('ALTER INDEX search_postings_served ATTACH PARTITION %I', p || '_served');
-    END LOOP;
-END $$;
+------------------------------------------------------------------------------
+-- search_workspace_rows.units — the search units of the served versions a
+-- row counts (ADR-0081 d4; the review's reading R6 amended): `rows` counts
+-- versions, which BM25's N and every document frequency count, and `units`
+-- the units whose lengths `total_len` sums, so the mean length stays per
+-- unit. A version of any kind but `document` is one unit, so every row
+-- written before this change has as many units as rows.
+------------------------------------------------------------------------------
+ALTER TABLE search_workspace_rows ADD COLUMN units bigint NOT NULL DEFAULT 0;
+UPDATE search_workspace_rows SET units = rows;
+
+COMMENT ON COLUMN search_workspace_rows.units IS
+    'The search units of the counted versions, whose lengths total_len sums: a document '
+    'version''s passages, one for any other version (ADR-0081 d4, R6 amended). '
+    'Owning page: docs/data/postgres-schema.md.';
 
 ------------------------------------------------------------------------------
 -- oml_search_units — a version's search units: a document version's
@@ -145,13 +147,103 @@ CREATE FUNCTION oml_search_units(t uuid, id uuid, kind text, sv tsvector, len in
 $$;
 
 ------------------------------------------------------------------------------
--- oml_search_postings_fold — 0032's fold with every count and posting taken
--- per unit: a document version's postings are its passages', each carrying
--- its ordinal, and its counts add or take back one unit per passage. A
+-- oml_search_count — 0021's count, which also keeps `units`: one version
+-- of one unit, its lexemes `sv` and length `len`, added (`delta` 1) or
+-- taken back (-1). Every caller but the fold below counts such a version.
+------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION oml_search_count(t uuid, wa uuid, mk smallint, sv tsvector, len integer,
+                                            delta integer) RETURNS void
+    LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
+BEGIN
+    PERFORM oml_search_count_version(
+        t, wa, mk, ARRAY(SELECT DISTINCT oml_token_id(l) FROM unnest(tsvector_to_array(sv)) l),
+        len, 1, delta);
+END
+$$;
+
+------------------------------------------------------------------------------
+-- oml_search_count_version — one version's counts (ADR-0081 d4; the
+-- review's reading R6 amended): its distinct tokens `ids` over all its
+-- units each add or take back one row, so a document adds at most 1 to a
+-- token's document frequency however many passages hold it; the version
+-- adds one to `rows`, its `n_units` to `units` and their summed length `len`
+-- to `total_len`.
+------------------------------------------------------------------------------
+CREATE FUNCTION oml_search_count_version(t uuid, wa uuid, mk smallint, ids bigint[], len bigint,
+                                         n_units integer, delta integer) RETURNS void
+    LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
+BEGIN
+    IF delta > 0 THEN
+        INSERT INTO search_term_rows (tenant_id, workspace_id, kind, memory_kind, token_id, rows)
+        SELECT t, wa, 1, mk, x.id, 1 FROM unnest(ids) x(id)
+         ORDER BY x.id
+        ON CONFLICT (tenant_id, workspace_id, kind, memory_kind, token_id)
+        DO UPDATE SET rows = search_term_rows.rows + 1;
+        INSERT INTO search_workspace_rows (tenant_id, workspace_id, kind, memory_kind, rows,
+                                           total_len, units)
+        VALUES (t, wa, 1, mk, 1, len, n_units)
+        ON CONFLICT (tenant_id, workspace_id, kind, memory_kind)
+        DO UPDATE SET rows = search_workspace_rows.rows + 1,
+                      total_len = search_workspace_rows.total_len + EXCLUDED.total_len,
+                      units = search_workspace_rows.units + EXCLUDED.units;
+    ELSE
+        PERFORM 1 FROM search_term_rows c
+         WHERE c.tenant_id = t AND c.workspace_id = wa AND c.kind = 1 AND c.memory_kind = mk
+           AND c.token_id = ANY (ids)
+         ORDER BY c.token_id
+           FOR UPDATE;
+        UPDATE search_term_rows c SET rows = c.rows - 1
+         WHERE c.tenant_id = t AND c.workspace_id = wa AND c.kind = 1 AND c.memory_kind = mk
+           AND c.token_id = ANY (ids) AND c.rows > 0;
+        DELETE FROM search_term_rows c
+         WHERE c.tenant_id = t AND c.workspace_id = wa AND c.kind = 1 AND c.memory_kind = mk
+           AND c.token_id = ANY (ids) AND c.rows = 0;
+        UPDATE search_workspace_rows c
+           SET rows = c.rows - 1, total_len = c.total_len - len, units = c.units - n_units
+         WHERE c.tenant_id = t AND c.workspace_id = wa AND c.kind = 1 AND c.memory_kind = mk
+           AND c.rows > 0;
+        DELETE FROM search_workspace_rows c
+         WHERE c.tenant_id = t AND c.workspace_id = wa AND c.kind = 1 AND c.memory_kind = mk
+           AND c.rows = 0;
+    END IF;
+END
+$$;
+REVOKE EXECUTE ON FUNCTION oml_search_count_version(uuid, uuid, smallint, bigint[], bigint,
+                                                    integer, integer) FROM PUBLIC;
+
+------------------------------------------------------------------------------
+-- oml_search_count_units — counts version `id` of kind `kind` through its
+-- units: its tokens across them once, their count and their lengths.
+------------------------------------------------------------------------------
+CREATE FUNCTION oml_search_count_units(t uuid, wa uuid, id uuid, kind text, sv tsvector,
+                                       len integer, delta integer) RETURNS void
+    LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
+DECLARE
+    n integer;
+    total bigint;
+    ids bigint[];
+BEGIN
+    SELECT count(*), COALESCE(sum(u.search_len), 0) INTO n, total
+      FROM oml_search_units(t, id, kind, sv, len) u;
+    ids := ARRAY(SELECT DISTINCT oml_token_id(l)
+                   FROM oml_search_units(t, id, kind, sv, len) u
+                  CROSS JOIN LATERAL unnest(tsvector_to_array(u.search_vector)) l);
+    PERFORM oml_search_count_version(t, wa, oml_search_memory_kind(kind), ids, total, n, delta);
+END
+$$;
+REVOKE EXECUTE ON FUNCTION oml_search_count_units(uuid, uuid, uuid, text, tsvector, integer,
+                                                  integer) FROM PUBLIC;
+
+------------------------------------------------------------------------------
+-- oml_search_postings_fold — 0032's fold with every posting taken per unit
+-- and every count per version: a document version's postings are its
+-- passages', each carrying its ordinal, and its counts add or take back
+-- one row, its tokens across its passages once, and its units. A
 -- version's passages are written before its row (oml-pg insert_memory), so
 -- the insert's fold finds them; they never change after. An erased or
 -- deleted version's passages go after its counts are taken back, with the
--- body they were cut from (ADR-0081 d3).
+-- body they were cut from (ADR-0081 d3). The trigger is 0032's, which
+-- fires on status, so an erasure reaches the passages' delete.
 ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION oml_search_postings_fold() RETURNS trigger
     LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
@@ -178,12 +270,8 @@ BEGIN
     END IF;
     IF old_state IS NOT NULL AND (new_state IS NULL OR moved) THEN
         IF old_state = 1 THEN
-            PERFORM oml_search_count(OLD.tenant_id, OLD.workspace_id,
-                                     oml_search_memory_kind(OLD.kind), u.search_vector,
-                                     u.search_len, -1)
-               FROM oml_search_units(OLD.tenant_id, OLD.id, OLD.kind, OLD.search_vector,
-                                     OLD.search_len) u
-              ORDER BY u.ordinal;
+            PERFORM oml_search_count_units(OLD.tenant_id, OLD.workspace_id, OLD.id, OLD.kind,
+                                           OLD.search_vector, OLD.search_len, -1);
         END IF;
         DELETE FROM search_postings p WHERE p.tenant_id = OLD.tenant_id AND p.memory_id = OLD.id;
         DELETE FROM search_sparse_queue q WHERE q.tenant_id = OLD.tenant_id AND q.memory_id = OLD.id;
@@ -217,38 +305,23 @@ BEGIN
         UPDATE search_postings p SET state = new_state
          WHERE p.tenant_id = NEW.tenant_id AND p.memory_id = NEW.id;
         IF old_state = 1 THEN
-            PERFORM oml_search_count(OLD.tenant_id, OLD.workspace_id,
-                                     oml_search_memory_kind(OLD.kind), u.search_vector,
-                                     u.search_len, -1)
-               FROM oml_search_units(OLD.tenant_id, OLD.id, OLD.kind, OLD.search_vector,
-                                     OLD.search_len) u
-              ORDER BY u.ordinal;
+            PERFORM oml_search_count_units(OLD.tenant_id, OLD.workspace_id, OLD.id, OLD.kind,
+                                           OLD.search_vector, OLD.search_len, -1);
         END IF;
     END IF;
     IF new_state = 1 THEN
-        PERFORM oml_search_count(NEW.tenant_id, NEW.workspace_id, oml_search_memory_kind(NEW.kind),
-                                 u.search_vector, u.search_len, 1)
-           FROM oml_search_units(NEW.tenant_id, NEW.id, NEW.kind, NEW.search_vector,
-                                 NEW.search_len) u
-          ORDER BY u.ordinal;
+        PERFORM oml_search_count_units(NEW.tenant_id, NEW.workspace_id, NEW.id, NEW.kind,
+                                       NEW.search_vector, NEW.search_len, 1);
     END IF;
     RETURN NULL;
 END
 $$;
 
--- The trigger fires on status, so an erasure reaches the passages' delete.
--- Its column list is 0032's; it is replaced only to keep its definition in
--- one file with the function it runs.
-DROP TRIGGER memories_search_postings ON memories;
-CREATE TRIGGER memories_search_postings
-    AFTER INSERT OR UPDATE OF status, is_tip, retirement, claim, search_text, search_vector,
-          workspace_id, kind OR DELETE
-    ON memories FOR EACH ROW EXECUTE FUNCTION oml_search_postings_fold();
-
 ------------------------------------------------------------------------------
--- oml_search_postings_refill — 0022's refill with the kind 1 postings and
--- the counts taken per unit: a token's row count is the units holding it,
--- and a workspace's rows and length are its served units'. Kind 2 is
+-- oml_search_postings_refill — 0022's refill with the kind 1 postings taken
+-- per unit and the counts per version: a token's row count is the versions
+-- holding it in any unit, and a workspace's rows, units and length are its
+-- served versions', their units' and those units' lengths. Kind 2 is
 -- refilled as 0022 refills it; the sparse encoder writes a document's
 -- passages' kind 2 postings itself.
 ------------------------------------------------------------------------------
@@ -295,14 +368,14 @@ BEGIN
                         WHERE p.tenant_id = t AND p.memory_id = m.id AND p.kind = 2)
     ON CONFLICT (tenant_id, memory_id) DO NOTHING;
     INSERT INTO search_term_rows (tenant_id, workspace_id, kind, memory_kind, token_id, rows)
-    SELECT p.tenant_id, p.workspace_id, 1, p.memory_kind, p.token_id,
-           count(DISTINCT (p.memory_id, p.ordinal))
+    SELECT p.tenant_id, p.workspace_id, 1, p.memory_kind, p.token_id, count(DISTINCT p.memory_id)
       FROM search_postings p
      WHERE p.tenant_id = t AND p.kind = 1 AND p.state = 1
      GROUP BY p.tenant_id, p.workspace_id, p.memory_kind, p.token_id;
-    INSERT INTO search_workspace_rows (tenant_id, workspace_id, kind, memory_kind, rows, total_len)
-    SELECT m.tenant_id, m.workspace_id, 1, oml_search_memory_kind(m.kind), count(*),
-           sum(u.search_len)
+    INSERT INTO search_workspace_rows (tenant_id, workspace_id, kind, memory_kind, rows,
+                                       total_len, units)
+    SELECT m.tenant_id, m.workspace_id, 1, oml_search_memory_kind(m.kind),
+           count(DISTINCT m.id), sum(u.search_len), count(*)
       FROM memories m
      CROSS JOIN LATERAL oml_search_units(m.tenant_id, m.id, m.kind, m.search_vector,
                                          m.search_len) u
@@ -348,37 +421,17 @@ BEGIN
 END
 $$;
 
--- The serving role reads a version's units inside the fold it runs.
+-- The serving role reads a version's units and counts them inside the
+-- fold it runs.
 DO $$
 BEGIN
     EXECUTE format('GRANT EXECUTE ON FUNCTION '
                    'oml_search_units(uuid, uuid, text, tsvector, integer) TO %I',
                    current_setting('oml.serving_role'));
+    EXECUTE format('GRANT EXECUTE ON FUNCTION '
+                   'oml_search_count_version(uuid, uuid, smallint, bigint[], bigint, integer, '
+                   'integer) TO %I', current_setting('oml.serving_role'));
+    EXECUTE format('GRANT EXECUTE ON FUNCTION '
+                   'oml_search_count_units(uuid, uuid, uuid, text, tsvector, integer, integer) '
+                   'TO %I', current_setting('oml.serving_role'));
 END $$;
-
--- The fill of every existing tenant, under each tenant's row security, the
--- tenants enumerated under 0003's startup policy as 0021 enumerates them:
--- the document versions written before this change take postings and
--- counts as whole-version units, and their words join the vocabulary.
-DO $$
-DECLARE
-    t uuid;
-BEGIN
-    PERFORM set_config('oml.startup_check', 'on', true);
-    FOR t IN SELECT id FROM tenants ORDER BY id LOOP
-        PERFORM set_config('oml.tenant_id', t::text, true);
-        PERFORM oml_search_postings_refill(t);
-        INSERT INTO search_vocabulary (tenant_id, workspace_id, word, rows)
-        SELECT m.tenant_id, m.workspace_id, w, count(*)
-          FROM memories m
-         CROSS JOIN LATERAL unnest(oml_search_words(coalesce(m.search_text, m.claim))) w
-         WHERE m.tenant_id = t AND m.status = 'promoted' AND m.is_tip AND NOT m.retirement
-           AND m.kind = 'document'
-         GROUP BY 1, 2, 3
-        ON CONFLICT (tenant_id, workspace_id, word)
-        DO UPDATE SET rows = search_vocabulary.rows + EXCLUDED.rows;
-    END LOOP;
-    PERFORM set_config('oml.tenant_id', '', true);
-    PERFORM set_config('oml.startup_check', '', true);
-END
-$$;

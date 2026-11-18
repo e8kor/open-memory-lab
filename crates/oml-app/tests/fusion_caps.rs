@@ -16,6 +16,7 @@ fn list(ids: std::ops::Range<u128>) -> Retrieved {
                 score: 1000.0 - i as f32,
                 matched: vec!["word".to_owned()],
                 tokens: Vec::new(),
+                more_passages: 0,
             })
             .collect(),
         ..Retrieved::default()

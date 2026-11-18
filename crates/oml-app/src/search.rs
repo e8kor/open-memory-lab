@@ -854,6 +854,34 @@ pub struct Candidate {
     /// The learned sparse tokens that scored it, largest first; empty for
     /// every other retriever (ADR-0052 d17).
     pub tokens: Vec<MatchedToken>,
+    /// For a document's best passage, the count of its other passages the
+    /// retriever's statement matched before its own cut (ADR-0081 d4; the
+    /// review's reading R3 amended); 0 for every other candidate.
+    pub more_passages: u32,
+}
+
+/// One candidate per version (ADR-0081 d4; the review's reading R3
+/// amended): of `candidates`, in the total order of hits, each version's
+/// first unit stays where it is, its best by score and then ordinal, and
+/// counts the others it drops in `more_passages`, so a retriever's `k`
+/// counts versions, never passages. A list with no passage is returned as
+/// it came. Pure: equal input gives equal output.
+#[must_use]
+pub fn one_unit_per_version(candidates: Vec<Candidate>) -> Vec<Candidate> {
+    if candidates.iter().all(|c| c.ordinal < 0) {
+        return candidates;
+    }
+    let mut seen: BTreeMap<Uuid, usize> = BTreeMap::new();
+    let mut kept: Vec<Candidate> = Vec::with_capacity(candidates.len());
+    for c in candidates {
+        if let Some(&at) = seen.get(&c.memory_id) {
+            kept[at].more_passages = kept[at].more_passages.saturating_add(1);
+        } else {
+            seen.insert(c.memory_id, kept.len());
+            kept.push(c);
+        }
+    }
+    kept
 }
 
 /// A fused candidate: its fused score, the terms it matched across the
@@ -875,9 +903,10 @@ pub struct Fused {
     /// Its rank in the first stage's list, from 1, for a candidate the
     /// reranker scored (`matched.rank_before`; ADR-0053 d7).
     pub rank_before: Option<u32>,
-    /// For a document's best passage, the count of its other passages in
-    /// the fused list before the `k` cut ([`collapse_passages`]); 0
-    /// otherwise.
+    /// For a document's best passage, a lower bound on the count of its
+    /// other passages that matched: the largest any list counted, or the
+    /// other passages fused beside it, whichever is more
+    /// ([`collapse_passages`]); 0 otherwise.
     pub more_passages: u32,
 }
 
@@ -947,6 +976,7 @@ pub fn fuse(lists: &[(RetrieverKind, Retrieved)], fusion: Fusion) -> Vec<Fused> 
                     rank_before: None,
                     more_passages: 0,
                 });
+            entry.more_passages = entry.more_passages.max(c.more_passages);
             entry.score += contribution;
             for term in &c.matched {
                 if !entry.matched.contains(term) {
@@ -967,24 +997,30 @@ pub fn fuse(lists: &[(RetrieverKind, Retrieved)], fusion: Fusion) -> Vec<Fused> 
     fused
 }
 
-/// One hit per version (ADR-0081 d4; the build's reading R3): of a
-/// document's passages in `fused`, which is in the total order of hits, the
-/// first, its best by score and then ordinal, stays where it is and counts
-/// the others it drops in `more_passages`, a lower bound bounded by each
-/// list's depth. A list with no passage, every version one unit, is
-/// returned as it came. Pure: equal input gives equal output.
+/// One hit per version (ADR-0081 d4; the review's reading R3 amended):
+/// each list holds one unit per version already ([`one_unit_per_version`]),
+/// so `fused` holds a document's passages once per list that chose a
+/// different best. Of them, in the total order of hits, the first, its best
+/// by score and then ordinal, stays where it is; its `more_passages` is the
+/// larger of the lists' counts and the other passages fused beside it, a
+/// lower bound bounded by each list's depth. A list with no passage, every
+/// version one unit, is returned as it came. Pure: equal input gives equal
+/// output.
 #[must_use]
 pub fn collapse_passages(fused: Vec<Fused>) -> Vec<Fused> {
     if fused.iter().all(|f| f.ordinal < 0) {
         return fused;
     }
-    let mut seen: BTreeMap<Uuid, usize> = BTreeMap::new();
+    let mut seen: BTreeMap<Uuid, (usize, u32)> = BTreeMap::new();
     let mut kept: Vec<Fused> = Vec::with_capacity(fused.len());
     for f in fused {
-        if let Some(&at) = seen.get(&f.memory_id) {
-            kept[at].more_passages = kept[at].more_passages.saturating_add(1);
+        if let Some(&(at, beside)) = seen.get(&f.memory_id) {
+            let beside = beside.saturating_add(1);
+            seen.insert(f.memory_id, (at, beside));
+            let more = kept[at].more_passages.max(f.more_passages).max(beside);
+            kept[at].more_passages = more;
         } else {
-            seen.insert(f.memory_id, kept.len());
+            seen.insert(f.memory_id, (kept.len(), 0));
             kept.push(f);
         }
     }
@@ -1128,6 +1164,7 @@ mod tests {
             score,
             matched: matched.iter().map(|s| (*s).to_owned()).collect(),
             tokens: Vec::new(),
+            more_passages: 0,
         }
     }
 
@@ -1403,6 +1440,46 @@ mod tests {
             .map(|f| (f.memory_id.as_u128(), f.ordinal, f.more_passages))
             .collect();
         assert_eq!(got, vec![(7, 2, 2), (5, -1, 0)]);
+    }
+
+    #[test]
+    fn a_retrievers_list_keeps_one_unit_per_version_and_counts_the_passages_it_drops() {
+        let passage = |id: u128, ordinal: i32, score: f32| {
+            let mut c = cand(id, score, &["a"]);
+            c.ordinal = ordinal;
+            c
+        };
+        let out = one_unit_per_version(vec![
+            passage(7, 2, 3.0),
+            cand(5, 2.5, &["a"]),
+            passage(7, 0, 2.0),
+            passage(7, 1, 2.0),
+        ]);
+        let got: Vec<(u128, i32, u32)> = out
+            .iter()
+            .map(|c| (c.memory_id.as_u128(), c.ordinal, c.more_passages))
+            .collect();
+        assert_eq!(got, vec![(7, 2, 2), (5, -1, 0)]);
+    }
+
+    #[test]
+    fn a_fused_document_keeps_the_largest_count_any_list_gave() {
+        let passage = |id: u128, ordinal: i32, score: f32, more: u32| {
+            let mut c = cand(id, score, &["a"]);
+            c.ordinal = ordinal;
+            c.more_passages = more;
+            c
+        };
+        let fused = fuse(
+            &[
+                (RetrieverKind::Bm25, list(vec![passage(7, 2, 3.0, 5)])),
+                (RetrieverKind::KeywordAny, list(vec![passage(7, 4, 1.0, 2)])),
+            ],
+            Fusion::Rrf { k: 60 },
+        );
+        let out = collapse_passages(fused);
+        assert_eq!(out.len(), 1, "one hit for the document");
+        assert_eq!(out[0].more_passages, 5);
     }
 
     #[test]

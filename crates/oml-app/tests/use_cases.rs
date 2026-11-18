@@ -16198,6 +16198,74 @@ async fn recall_serves_one_hit_per_document_its_best_passage() {
 }
 
 #[tokio::test]
+async fn a_recall_of_k_10_answers_10_hits_when_one_document_has_30_matching_passages() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana-reviewer", crew).await;
+    let mut body = String::from("# Wombat manual\n\nHow the wombat is kept.\n\n");
+    for n in 1..=30 {
+        body.push_str(&format!(
+            "## Part {n}\n\nThe wombat step {n} is written down.\n\n"
+        ));
+    }
+    let doc = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &kind_req("w0", MemoryKind::Document, &body, crew),
+    )
+    .await;
+    for n in 0..20 {
+        promoted(
+            &app,
+            &writer.value,
+            &reviewer.value,
+            &submit_into(
+                &format!("w{}", n + 1),
+                &format!("A wombat note numbered {n} for keeper {}.", n * 7 + 3),
+                crew,
+            ),
+        )
+        .await;
+    }
+    let recall = app
+        .recall(&writer.value, &recall_req("wombat"))
+        .await
+        .expect("recall");
+    let mut ids: Vec<Uuid> = recall
+        .hits
+        .iter()
+        .map(|h| h.served.memory.memory_id)
+        .collect();
+    assert_eq!(ids.len(), 10, "k = 10 answers 10 hits");
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), 10, "one hit per version");
+    let wide = app
+        .recall(
+            &writer.value,
+            &RecallRequest {
+                k: 50,
+                ..recall_req("wombat")
+            },
+        )
+        .await
+        .expect("recall");
+    assert_eq!(wide.hits.len(), 21, "20 memories and the document");
+    let hit = wide
+        .hits
+        .iter()
+        .find(|h| h.served.memory.memory_id == doc)
+        .expect("the document");
+    assert_eq!(
+        hit.more_passages, 30,
+        "its intro and 29 other parts say wombat"
+    );
+}
+
+#[tokio::test]
 async fn a_section_query_on_a_300_line_document_returns_that_passage_with_its_fragment_and_lines() {
     let app = app();
     let (boot, crew) = tenant(&app).await;

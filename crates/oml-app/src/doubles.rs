@@ -146,10 +146,13 @@ fn keyword_ranked<'a>(
                 score,
                 matched,
                 tokens: Vec::new(),
+                more_passages: 0,
             })
         })
         .collect();
     hit_order(&mut candidates, |c| (c.score, c.memory_id));
+    // `k` counts versions: a document keeps its best passage (ADR-0081 d4).
+    let mut candidates = crate::search::one_unit_per_version(candidates);
     candidates.truncate(query.k);
     Retrieved {
         terms,
@@ -231,10 +234,16 @@ fn bm25_over_reference<'a>(
     query: RetrievalQuery<'_>,
 ) -> Retrieved {
     let terms: Vec<String> = words(query.query).into_iter().collect();
-    // Every statistic is taken over the reference set's search units: a
-    // document counts once per passage (ADR-0081 d4).
+    // N and each word's document frequency count versions, a document once
+    // however many of its passages hold the word; the mean length is the
+    // search units' (ADR-0081 d4; the review's reading R6 amended).
+    let versions = reference.len() as u64;
+    let held_by: Vec<BTreeSet<String>> = reference
+        .iter()
+        .map(|m| units(m).iter().flat_map(|u| words(&u.text)).collect())
+        .collect();
     let reference: Vec<Unit<'_>> = reference.iter().copied().flat_map(units).collect();
-    let n = reference.len() as u64;
+    let n = versions;
     #[allow(clippy::cast_precision_loss, reason = "counts far below 2^52")]
     let avgdl = if reference.is_empty() {
         1.0
@@ -248,12 +257,7 @@ fn bm25_over_reference<'a>(
     };
     let df: Vec<u64> = terms
         .iter()
-        .map(|t| {
-            reference
-                .iter()
-                .filter(|u| words(&u.text).contains(t))
-                .count() as u64
-        })
+        .map(|t| held_by.iter().filter(|w| w.contains(t)).count() as u64)
         .collect();
     let mut candidates: Vec<Candidate> = rows
         .flat_map(units)
@@ -293,10 +297,13 @@ fn bm25_over_reference<'a>(
                 score,
                 matched,
                 tokens: Vec::new(),
+                more_passages: 0,
             })
         })
         .collect();
     hit_order(&mut candidates, |c| (c.score, c.memory_id));
+    // `k` counts versions: a document keeps its best passage (ADR-0081 d4).
+    let mut candidates = crate::search::one_unit_per_version(candidates);
     candidates.truncate(query.k);
     Retrieved {
         terms,
@@ -2846,6 +2853,7 @@ impl Retriever for MemStore {
                         score,
                         matched: Vec::new(),
                         tokens: Vec::new(),
+                        more_passages: 0,
                     })
                 })
                 .collect();

@@ -13762,6 +13762,225 @@ pub async fn a_document_is_searched_by_its_passages_and_both_bm25_lists_agree<S:
     assert!(seen_doc, "the document's passages are candidates");
 }
 
+/// `k` counts versions, never passages (ADR-0081 d4; the review's reading
+/// R3 amended): every retriever keeps one candidate per version before its
+/// own cut, so a document whose 30 passages hold the word, beside 20
+/// memories that hold it, takes one of the 10 places `k` = 10 gives.
+pub async fn a_document_takes_one_place_of_k_however_many_of_its_passages_match<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(424);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let other = Uuid::from_u128(0xE5);
+    let mut body = String::from("# Wombat manual\n\nHow the wombat is kept.\n\n");
+    for n in 1..=30 {
+        body.push_str(&format!(
+            "## Part {n}\n\nThe wombat step {n} is written down.\n\n"
+        ));
+    }
+    let doc = Uuid::from_u128(0xF41);
+    hold_and_promote(
+        &mut rig,
+        store,
+        MemoryRecord {
+            kind: MemoryKind::Document,
+            claim_key: "doc/wombat-manual".to_owned(),
+            kind_fields: Some(Box::new(oml_app::types::KindFields::Document {
+                title: Some("Wombat manual".to_owned()),
+            })),
+            format: Box::new(oml_app::types::FormatFields {
+                media_type: "text/markdown".to_owned(),
+                ..Default::default()
+            }),
+            ..held_memory(tenant, wa, doc, "rita", other, &body)
+        },
+    )
+    .await;
+    for n in 0..20_u128 {
+        let text = format!("a wombat note numbered {n} for the keepers");
+        hold_and_promote(
+            &mut rig,
+            store,
+            held_memory(tenant, wa, Uuid::from_u128(0xF50 + n), "rita", other, &text),
+        )
+        .await;
+    }
+    let scope = CandidateScope {
+        reference: None,
+        anchor: oml_app::types::AnchorFilter::default(),
+        kinds: HIT_KINDS.to_vec(),
+        ..scope_of(wa, None)
+    };
+    let served = store.retrievers();
+    for kind in [
+        RetrieverKind::KeywordAll,
+        RetrieverKind::KeywordAny,
+        RetrieverKind::Bm25,
+        RetrieverKind::Bm25Postings,
+        RetrieverKind::Trigram,
+    ] {
+        if !served.contains(&kind) {
+            continue;
+        }
+        for (mode, k) in [
+            (MatchMode::Any, 10),
+            (MatchMode::All, 10),
+            (MatchMode::Any, 40),
+        ] {
+            // Trigram similarity has no `match: all`.
+            if kind == RetrieverKind::Trigram && mode == MatchMode::All {
+                continue;
+            }
+            let list = store
+                .retrieve(
+                    tenant,
+                    kind,
+                    &scope,
+                    RetrievalQuery {
+                        query: "wombat",
+                        match_mode: mode,
+                        k,
+                        sparse: &[],
+                        window: None,
+                        within: &[],
+                    },
+                )
+                .await
+                .expect("retrieve");
+            let mut ids: Vec<Uuid> = list.candidates.iter().map(|c| c.memory_id).collect();
+            let found = ids.len();
+            ids.sort_unstable();
+            ids.dedup();
+            assert_eq!(
+                ids.len(),
+                found,
+                "{kind:?} {mode:?} k {k}: one candidate per version"
+            );
+            assert_eq!(
+                found,
+                k.min(21),
+                "{kind:?} {mode:?} k {k}: k versions, 21 in all"
+            );
+            if k == 40 {
+                let d = list
+                    .candidates
+                    .iter()
+                    .find(|c| c.memory_id == doc)
+                    .expect("the document's best passage");
+                assert!(d.ordinal >= 0, "{kind:?}: a passage");
+            }
+        }
+    }
+}
+
+/// A document adds at most one to a word's document frequency and one to
+/// the row count (ADR-0081 d4; the review's reading R6 amended): df and N
+/// count versions, the mean length stays per unit, so a document repeating
+/// a word in 4,000 passages leaves a memory's score for that word within
+/// one document's weight, never flattened to nothing.
+pub async fn a_document_repeating_a_word_in_4000_passages_moves_a_memorys_idf_by_one_version<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let served = store.retrievers();
+    let kinds: Vec<RetrieverKind> = [RetrieverKind::Bm25, RetrieverKind::Bm25Postings]
+        .into_iter()
+        .filter(|k| served.contains(k))
+        .collect();
+    if kinds.is_empty() {
+        return;
+    }
+    let mut rig = ChainRig::new(425);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let other = Uuid::from_u128(0xE5);
+    let note = Uuid::from_u128(0xF61);
+    for (id, body) in [
+        (0xF61_u128, "the kangaroo pen is cleaned daily"),
+        (0xF62, "the kangaroo keeper starts at noon"),
+        (0xF63, "the wombat burrow is checked weekly"),
+        (0xF64, "the emu fence is mended monthly"),
+        (0xF65, "the koala tree is pruned yearly"),
+    ] {
+        hold_and_promote(
+            &mut rig,
+            store,
+            held_memory(tenant, wa, Uuid::from_u128(id), "rita", other, body),
+        )
+        .await;
+    }
+    let scope = CandidateScope {
+        reference: None,
+        anchor: oml_app::types::AnchorFilter::default(),
+        kinds: HIT_KINDS.to_vec(),
+        ..scope_of(wa, None)
+    };
+    let score = |kind: RetrieverKind| {
+        let scope = scope.clone();
+        async move {
+            store
+                .retrieve(
+                    tenant,
+                    kind,
+                    &scope,
+                    RetrievalQuery {
+                        query: "kangaroo",
+                        match_mode: MatchMode::Any,
+                        k: 10,
+                        sparse: &[],
+                        window: None,
+                        within: &[],
+                    },
+                )
+                .await
+                .expect("retrieve")
+                .candidates
+                .into_iter()
+                .find(|c| c.memory_id == note)
+                .expect("the note")
+                .score
+        }
+    };
+    let mut before = Vec::new();
+    for &kind in &kinds {
+        before.push(score(kind).await);
+    }
+    let mut body = String::from("# Kangaroo log\n\nThe log of the kangaroo.\n\n");
+    for n in 0..4000 {
+        body.push_str(&format!("## Day {n}\n\nThe kangaroo ate {n}.\n\n"));
+    }
+    hold_and_promote(
+        &mut rig,
+        store,
+        MemoryRecord {
+            kind: MemoryKind::Document,
+            claim_key: "doc/kangaroo-log".to_owned(),
+            kind_fields: Some(Box::new(oml_app::types::KindFields::Document {
+                title: Some("Kangaroo log".to_owned()),
+            })),
+            format: Box::new(oml_app::types::FormatFields {
+                media_type: "text/markdown".to_owned(),
+                ..Default::default()
+            }),
+            ..held_memory(tenant, wa, Uuid::from_u128(0xF66), "rita", other, &body)
+        },
+    )
+    .await;
+    for (&kind, was) in kinds.iter().zip(before) {
+        let now = score(kind).await;
+        // df 2 of 5 becomes 3 of 6, never 4,002 of 4,005: the idf goes
+        // from ln 2.4 to ln 2, about 0.79 of what it was.
+        assert!(
+            now > 0.5 * was,
+            "{kind:?}: the note scored {was} and scores {now} beside the document"
+        );
+    }
+}
+
 /// An erased or a demoted document's passages are never recalled: an
 /// erasure takes its passages and their postings with the body, and a
 /// demotion takes its passages out of every served list (ADR-0081 d3, d4;
@@ -14644,6 +14863,11 @@ where
     bm25_counts_an_inflected_form_once_as_it_counts_the_exact_word(&new_store().await).await;
     a_document_is_searched_by_its_passages_and_both_bm25_lists_agree(&new_store().await).await;
     an_erased_or_demoted_documents_passages_are_never_recalled(&new_store().await).await;
+    a_document_takes_one_place_of_k_however_many_of_its_passages_match(&new_store().await).await;
+    a_document_repeating_a_word_in_4000_passages_moves_a_memorys_idf_by_one_version(
+        &new_store().await,
+    )
+    .await;
     trigram_finds_a_misspelled_words_memory(&new_store().await).await;
     did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the_scope(&new_store().await)
         .await;

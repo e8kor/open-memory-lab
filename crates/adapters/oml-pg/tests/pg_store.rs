@@ -764,7 +764,8 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                 .await
                 .expect("tenant");
             let mut old: Vec<(Uuid, f32)> = Vec::new();
-            for row in sqlx::query(oml_pg::RECALL_FTS)
+            let (fts, held) = (oml_pg::recall_fts_sql(), oml_pg::recall_own_held_sql());
+            for row in sqlx::query(&fts)
                 .bind(rig.tenant_id)
                 .bind(vec![wa])
                 .bind(query)
@@ -775,7 +776,7 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                 .expect("v0.5.0 statement")
                 .iter()
                 .chain(
-                    sqlx::query(oml_pg::RECALL_OWN_HELD)
+                    sqlx::query(&held)
                         .bind(rig.tenant_id)
                         .bind(vec![own])
                         .bind(vec![wa])
@@ -4474,14 +4475,15 @@ async fn the_adapters_fts_read_scans_its_tenants_partition_alone() {
     let readable = Uuid::from_u128(0xB210);
     let author = Uuid::from_u128(0xD210);
     let mut conn = store.pool().acquire().await.expect("serving connection");
+    let (fts, held) = (oml_pg::recall_fts_sql(), oml_pg::recall_own_held_sql());
     for (statement, types, args) in [
         (
-            oml_pg::RECALL_FTS,
+            fts.as_str(),
             "uuid, uuid[], text, text[], bigint",
             format!("'{a}', '{{{}}}', 'runbook', '{{memory}}', 10", readable),
         ),
         (
-            oml_pg::RECALL_OWN_HELD,
+            held.as_str(),
             "uuid, uuid[], uuid[], text, text[], bigint",
             format!(
                 "'{a}', '{{{}}}', '{{{}}}', 'runbook', '{{memory}}', 10",
@@ -6384,8 +6386,8 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 59,
-        "every migration through 0059_document_passages_search"
+        applied, 60,
+        "every migration through 0060_document_passages_served_index"
     );
     drop(conn);
     drop_dbs(&created).await;
@@ -7841,8 +7843,8 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 59,
-        "every migration through 0059_document_passages_search"
+        applied, 60,
+        "every migration through 0060_document_passages_served_index"
     );
     drop(conn);
 
@@ -8873,8 +8875,8 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 59,
-        "every migration through 0059_document_passages_search"
+        applied, 60,
+        "every migration through 0060_document_passages_served_index"
     );
     drop(conn);
 
@@ -13124,5 +13126,258 @@ async fn the_queue_counts_held_instructions_and_the_person_reviewers_that_may_ap
         counts(&rows),
         BTreeMap::from([(crew, (2, 1, 0)), (team, (1, 1, 1)), (bots, (1, 1, 0))])
     );
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// Documents served by passage through the use cases (ADR-0081 d3, d4)
+// ---------------------------------------------------------------------------
+
+/// The pipelines a document recall is checked under: the lead's default
+/// and every scan beside it.
+const DOCUMENT_PIPELINES: [&str; 5] = [
+    "bm25-postings",
+    "keyword-any",
+    "keyword-all",
+    "bm25",
+    "bm25-trigram",
+];
+
+/// A recall of `query` under `pipeline` cut at `k`, text included.
+fn doc_recall(query: &str, pipeline: &str, k: usize) -> oml_app::types::RecallRequest {
+    oml_app::types::RecallRequest {
+        sources: None,
+        timings: false,
+        anchor: oml_app::types::AnchorFilter::default(),
+        query: query.to_owned(),
+        k,
+        workspace: None,
+        kinds: Vec::new(),
+        include_text: true,
+        include_unreviewed: Some(false),
+        max_tokens: None,
+        search: Some(pipeline.to_owned()),
+        match_mode: oml_app::search::MatchMode::Any,
+        include_expired: false,
+        now: None,
+        as_of: None,
+    }
+}
+
+/// A tenant with a crew node, a writer and a reviewer on it, over the
+/// serving login: (app, writer, reviewer, crew).
+async fn document_rig(store: &PgStore, tenant: &str) -> (PgApp, String, String, Uuid) {
+    use oml_app::search::Pipeline;
+    let app = app_over_pg(store).with_search(
+        oml_app::search::SearchConfig::new(
+            &[
+                Pipeline::Bm25Postings,
+                Pipeline::KeywordAny,
+                Pipeline::KeywordAll,
+                Pipeline::Bm25,
+                Pipeline::Bm25Trigram,
+            ],
+            Pipeline::Bm25Postings,
+        )
+        .expect("a configuration"),
+    );
+    let boot = bootstrap_pg(&app, tenant).await;
+    let admin = boot.admin_key.value.clone();
+    let crew = workspace_pg(&app, &admin, "crew", boot.root_workspace_id).await;
+    let writer = writer_pg(&app, &admin, crew).await;
+    let reviewer = reviewer_pg(&app, &admin, "docs-reviewer", "dana/reviewer", crew)
+        .await
+        .value;
+    (app, writer, reviewer, crew)
+}
+
+/// `body` written as `kind` by `writer` and approved by `reviewer`; its id.
+async fn promoted_pg(
+    app: &PgApp,
+    writer: &str,
+    reviewer: &str,
+    idem: &str,
+    kind: oml_app::domain::MemoryKind,
+    body: &str,
+) -> Uuid {
+    let id = app
+        .submit_memory(writer, &kind_submit(idem, kind, body, None, None))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    app.post_verdict(reviewer, id, oml_app::types::Verdict::Approve, None)
+        .await
+        .expect("approve");
+    id
+}
+
+#[tokio::test]
+async fn recall_serves_one_hit_per_document_its_best_passage_on_postgres() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let (app, writer, reviewer, _) = document_rig(&store, "docs-best").await;
+    let body = "# Deploy guide\n\nWhat the guide covers.\n\n## Install\n\n\
+                Run the zebra installer with quokka flags.\n\n## Rollback\n\n\
+                Undo the zebra install.\n";
+    let doc = promoted_pg(&app, &writer, &reviewer, "g1", MemoryKind::Document, body).await;
+    let note = promoted_pg(
+        &app,
+        &writer,
+        &reviewer,
+        "g2",
+        MemoryKind::Memory,
+        "The zebra fleet runs quokka.",
+    )
+    .await;
+    for pipeline in DOCUMENT_PIPELINES {
+        let recall = app
+            .recall(&writer, &doc_recall("zebra quokka", pipeline, 10))
+            .await
+            .expect("recall");
+        let ids: Vec<Uuid> = recall
+            .hits
+            .iter()
+            .map(|h| h.served.memory.memory_id)
+            .collect();
+        assert!(ids.contains(&note), "{pipeline}: {ids:?}");
+        if pipeline == "keyword-all" {
+            // Every word in one passage: Install alone.
+            assert_eq!(ids.iter().filter(|id| **id == doc).count(), 1, "{pipeline}");
+            continue;
+        }
+        assert_eq!(
+            ids.iter().filter(|id| **id == doc).count(),
+            1,
+            "{pipeline}: one hit for the document: {ids:?}"
+        );
+        let hit = recall
+            .hits
+            .iter()
+            .find(|h| h.served.memory.memory_id == doc)
+            .expect("the document's hit");
+        let passage = hit.passage.as_ref().expect("a passage");
+        assert_eq!(passage.fragment, "install", "{pipeline}");
+        assert_eq!((passage.start_line, passage.end_line), (5, 7), "{pipeline}");
+        assert_eq!(passage.heading_path, vec!["Deploy guide", "Install"]);
+        assert_eq!(
+            hit.served.memory.body,
+            "## Install\n\nRun the zebra installer with quokka flags."
+        );
+        assert_eq!(
+            hit.served.memory.body_bytes,
+            hit.served.memory.body.len() as u64
+        );
+        assert_eq!(hit.more_passages, 1, "{pipeline}: Rollback also says zebra");
+        assert!(
+            hit.uri
+                .as_deref()
+                .is_some_and(|u| u.ends_with("/doc/deploy-guide?passage=install")),
+            "{pipeline}: {:?}",
+            hit.uri
+        );
+    }
+    drop_dbs(&created).await;
+}
+
+#[tokio::test]
+async fn a_section_query_on_a_300_line_document_returns_that_passage_on_postgres() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let (app, writer, reviewer, _) = document_rig(&store, "docs-section").await;
+    let mut body = String::from("# Operations manual\n");
+    for n in 1..=30 {
+        body.push_str(&format!("## Section {n}\n\n"));
+        for line in 1..=8 {
+            if n == 17 && line == 4 {
+                body.push_str("Feed the wombat before the night shift.\n");
+            } else {
+                body.push_str(&format!("Routine step {line} of section {n}.\n"));
+            }
+        }
+    }
+    let doc = promoted_pg(&app, &writer, &reviewer, "m1", MemoryKind::Document, &body).await;
+    for pipeline in DOCUMENT_PIPELINES {
+        let recall = app
+            .recall(&writer, &doc_recall("wombat", pipeline, 10))
+            .await
+            .expect("recall");
+        assert_eq!(recall.hits.len(), 1, "{pipeline}");
+        let hit = &recall.hits[0];
+        assert_eq!(hit.served.memory.memory_id, doc);
+        let passage = hit.passage.as_ref().expect("a passage");
+        assert_eq!(passage.fragment, "section-17", "{pipeline}");
+        assert_eq!((passage.start_line, passage.end_line), (162, 171));
+        assert!(hit.served.memory.body.starts_with("## Section 17\n"));
+        assert_eq!(hit.more_passages, 0, "{pipeline}");
+    }
+    drop_dbs(&created).await;
+}
+
+#[tokio::test]
+async fn a_recall_of_k_10_answers_10_hits_beside_a_document_of_30_matching_passages_on_postgres() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let (app, writer, reviewer, _) = document_rig(&store, "docs-k").await;
+    let mut body = String::from("# Wombat manual\n\nHow the wombat is kept.\n\n");
+    for n in 1..=30 {
+        body.push_str(&format!(
+            "## Part {n}\n\nThe wombat step {n} is written down.\n\n"
+        ));
+    }
+    let doc = promoted_pg(&app, &writer, &reviewer, "w0", MemoryKind::Document, &body).await;
+    for n in 0..20 {
+        promoted_pg(
+            &app,
+            &writer,
+            &reviewer,
+            &format!("w{}", n + 1),
+            MemoryKind::Memory,
+            &format!("A wombat note numbered {n} for keeper {}.", n * 7 + 3),
+        )
+        .await;
+    }
+    for pipeline in DOCUMENT_PIPELINES {
+        let recall = app
+            .recall(&writer, &doc_recall("wombat", pipeline, 10))
+            .await
+            .expect("recall");
+        let mut ids: Vec<Uuid> = recall
+            .hits
+            .iter()
+            .map(|h| h.served.memory.memory_id)
+            .collect();
+        assert_eq!(ids.len(), 10, "{pipeline}: k = 10 answers 10 hits");
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 10, "{pipeline}: one hit per version");
+        let wide = app
+            .recall(&writer, &doc_recall("wombat", pipeline, 50))
+            .await
+            .expect("recall");
+        assert_eq!(
+            wide.hits.len(),
+            21,
+            "{pipeline}: 20 memories and the document"
+        );
+        let hit = wide
+            .hits
+            .iter()
+            .find(|h| h.served.memory.memory_id == doc)
+            .expect("the document");
+        assert_eq!(
+            hit.more_passages, 30,
+            "{pipeline}: its intro and 29 parts say wombat"
+        );
+    }
     drop_dbs(&created).await;
 }
