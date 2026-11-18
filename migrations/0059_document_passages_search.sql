@@ -118,10 +118,23 @@ COMMENT ON COLUMN search_postings.ordinal IS
 -- versions, which BM25's N and every document frequency count, and `units`
 -- the units whose lengths `total_len` sums, so the mean length stays per
 -- unit. A version of any kind but `document` is one unit, so every row
--- written before this change has as many units as rows.
+-- written before this change has as many units as rows. The table is under
+-- row security, so the rows are set tenant by tenant under each tenant's
+-- own, the tenants enumerated under 0003's startup policy, as 0021's fill.
 ------------------------------------------------------------------------------
 ALTER TABLE search_workspace_rows ADD COLUMN units bigint NOT NULL DEFAULT 0;
-UPDATE search_workspace_rows SET units = rows;
+DO $$
+DECLARE
+    t uuid;
+BEGIN
+    PERFORM set_config('oml.startup_check', 'on', true);
+    FOR t IN SELECT id FROM tenants ORDER BY id LOOP
+        PERFORM set_config('oml.tenant_id', t::text, true);
+        UPDATE search_workspace_rows c SET units = c.rows WHERE c.tenant_id = t;
+    END LOOP;
+    PERFORM set_config('oml.tenant_id', '', true);
+    PERFORM set_config('oml.startup_check', '', true);
+END $$;
 
 COMMENT ON COLUMN search_workspace_rows.units IS
     'The search units of the counted versions, whose lengths total_len sums: a document '

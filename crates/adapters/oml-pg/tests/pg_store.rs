@@ -4525,10 +4525,12 @@ async fn the_adapters_fts_read_scans_its_tenants_partition_alone() {
             let mut relations = std::collections::BTreeSet::new();
             plan_relations(&plan, &mut relations);
             // A document's passages are read from their one table by its
-            // key, tenant first, gated by the row's kind (ADR-0081 d4).
+            // key, tenant first, gated by the row's kind (ADR-0081 d4); a
+            // custom plan for kinds without `document` prunes that branch.
+            relations.remove("document_passages");
             assert_eq!(
                 relations.into_iter().collect::<Vec<_>>(),
-                vec!["document_passages".to_owned(), partition_of(a)],
+                vec![partition_of(a)],
                 "{mode}: {plan}"
             );
         }
@@ -8056,7 +8058,7 @@ async fn similar_keys_computed_in_sql_equal_the_cores() {
 type Postings = (
     BTreeMap<Uuid, (i16, i64)>,
     BTreeMap<(Uuid, i16, i64), i32>,
-    BTreeMap<(Uuid, i16), (i32, i64)>,
+    BTreeMap<(Uuid, i16), (i32, i64, i64)>,
 );
 
 async fn postings_of(store: &PgStore, tenant: Uuid) -> Postings {
@@ -8092,8 +8094,8 @@ async fn postings_of(store: &PgStore, tenant: Uuid) -> Postings {
     .fetch_all(&mut *tx)
     .await
     .expect("term rows");
-    let areas: Vec<(Uuid, i16, i32, i64)> = sqlx::query_as(
-        "SELECT workspace_id, memory_kind, rows, total_len FROM search_workspace_rows \
+    let areas: Vec<(Uuid, i16, i32, i64, i64)> = sqlx::query_as(
+        "SELECT workspace_id, memory_kind, rows, total_len, units FROM search_workspace_rows \
           WHERE tenant_id = $1 AND kind = 1",
     )
     .bind(tenant)
@@ -8112,7 +8114,7 @@ async fn postings_of(store: &PgStore, tenant: Uuid) -> Postings {
             .collect(),
         areas
             .into_iter()
-            .map(|(w, k, n, l)| ((w, k), (n, l)))
+            .map(|(w, k, n, l, u)| ((w, k), (n, l, u)))
             .collect(),
     )
 }
@@ -8124,7 +8126,7 @@ async fn counts_from_postings(
     tenant: Uuid,
 ) -> (
     BTreeMap<(Uuid, i16, i64), i32>,
-    BTreeMap<(Uuid, i16), (i32, i64)>,
+    BTreeMap<(Uuid, i16), (i32, i64, i64)>,
 ) {
     let mut owner = owner_conn(store).await;
     let mut tx = owner.begin().await.expect("begin");
@@ -8142,9 +8144,9 @@ async fn counts_from_postings(
     .fetch_all(&mut *tx)
     .await
     .expect("terms");
-    let areas: Vec<(Uuid, i16, i32, i64)> = sqlx::query_as(
+    let areas: Vec<(Uuid, i16, i32, i64, i64)> = sqlx::query_as(
         "SELECT m.workspace_id, oml_search_memory_kind(m.kind), count(DISTINCT m.id)::int4, \
-                sum(u.search_len)::int8 \
+                sum(u.search_len)::int8, count(*)::int8 \
            FROM memories m \
           CROSS JOIN LATERAL oml_search_units(m.tenant_id, m.id, m.kind, m.search_vector, \
                                               m.search_len) u \
@@ -8165,7 +8167,7 @@ async fn counts_from_postings(
             .collect(),
         areas
             .into_iter()
-            .map(|(w, k, n, l)| ((w, k), (n, l)))
+            .map(|(w, k, n, l, u)| ((w, k), (n, l, u)))
             .collect(),
     )
 }
