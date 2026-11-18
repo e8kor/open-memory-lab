@@ -343,7 +343,7 @@ Decided, not built.
     - **No date on Rejected or Withdrawn (d3).** The own listing serves its author no instant of
       the rejection or the withdrawal, so Submitted says "Rejected." or "Withdrawn." without a date
       until the author's own read serves that instant, never naming the reviewer (ADR-0077 d2);
-      a follow-up issue on milestone Later tracks it. Rejected: the version's `created_at`, which
+      #487 tracks it. Rejected: the version's `created_at`, which
       dates the write, not the decision.
     - **"Served as" (d3).** An approved skill's sentence names the command its name is published
       as, `/mcp__oml__<name>`, derived in the console from the row's skill name; since a nearer
