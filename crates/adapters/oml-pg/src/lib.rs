@@ -756,8 +756,8 @@ pub const RECALL_FTS: &str = "SELECT m.id, COALESCE(d.ordinal, -1) AS ordinal, \
             ts_rank(to_tsvector('simple', COALESCE(d.search_text, m.search_text, m.claim)), \
                     plainto_tsquery('simple', $3), 0) AS score \
      FROM memories m \
-     LEFT JOIN document_passages d \
-       ON m.kind = 'document' AND d.tenant_id = $1 AND d.memory_id = m.id \
+     LEFT JOIN LATERAL (SELECT d.ordinal, d.body_bytes, d.search_text FROM document_passages d \
+       WHERE m.kind = 'document' AND d.tenant_id = $1 AND d.memory_id = m.id OFFSET 0) d ON true \
      WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
        AND NOT m.retirement AND m.kind = ANY($4::text[]) \
        AND m.workspace_id = ANY($2::uuid[]) /*anchor*/ \
@@ -776,8 +776,8 @@ pub const RECALL_OWN_HELD: &str = "SELECT m.id, COALESCE(d.ordinal, -1) AS ordin
             ts_rank(to_tsvector('simple', COALESCE(d.search_text, m.search_text, m.claim)), \
                     plainto_tsquery('simple', $4), 0) AS score \
      FROM memories m \
-     LEFT JOIN document_passages d \
-       ON m.kind = 'document' AND d.tenant_id = $1 AND d.memory_id = m.id \
+     LEFT JOIN LATERAL (SELECT d.ordinal, d.body_bytes, d.search_text FROM document_passages d \
+       WHERE m.kind = 'document' AND d.tenant_id = $1 AND d.memory_id = m.id OFFSET 0) d ON true \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
        AND (m.author_key_id = ANY($2::uuid[]) \
          OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, '') || '/' || m.workspace_id::text, 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
@@ -984,9 +984,13 @@ fn scope_at(sql: &str, at: Option<&EventTime>) -> String {
 /// other row, and a document version with no passage, is one unit with no
 /// passage joined, so it reads its own columns as before. The `UNIT_*`
 /// expressions read a unit's ordinal (-1 the whole version), served bytes,
-/// lexemes, length and text.
-const UNIT_JOIN: &str = "LEFT JOIN document_passages d \
-       ON m.kind = 'document' AND d.tenant_id = $1 AND d.memory_id = m.id";
+/// lexemes, length and text. The join is a lateral subquery kept apart by
+/// `OFFSET 0`, so `m.kind = 'document'` gates it row by row and a row of
+/// any other kind never probes the passages' index: a scan over a scope
+/// with no document reads what it read before.
+const UNIT_JOIN: &str = "LEFT JOIN LATERAL (SELECT d.ordinal, d.body_bytes, d.search_vector, \
+            d.search_len, d.search_text FROM document_passages d \
+       WHERE m.kind = 'document' AND d.tenant_id = $1 AND d.memory_id = m.id OFFSET 0) d ON true";
 const UNIT_ORDINAL: &str = "COALESCE(d.ordinal, -1)";
 const UNIT_BYTES: &str = "COALESCE(d.body_bytes, m.body_bytes)";
 const UNIT_VECTOR: &str = "COALESCE(d.search_vector, m.search_vector)";
