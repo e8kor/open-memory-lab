@@ -2048,6 +2048,40 @@ fn sync_document_reports_a_path_outside_the_key_grammar_unreadable() {
     assert_eq!(keys, ["doc/docs/guide"]);
 }
 
+/// ADR-0081 d3 and the build's reading R4: a file that cuts past the
+/// 4,096 passages a document holds is reported unreadable by a dry run,
+/// naming the count and the cap, and a run writes nothing for it, where
+/// the server would refuse it with `too_many_passages`.
+#[test]
+fn sync_document_dry_run_reports_a_file_past_the_passage_cap_unreadable() {
+    let fake = Fake::new();
+    let big = "## h\nx\n".repeat(oml_passage::MAX_PASSAGES + 1);
+    let files = [("docs/big.md", big.as_str()), ("docs/guide.md", GUIDE_V1)];
+    let dry = Options {
+        dry_run: true,
+        ..opts()
+    };
+    let report = run(&fake, &loaded(&files, Kind::Document, &rev(1)), &dry);
+    assert_eq!(report.exit, 1, "{}", report.json);
+    assert!(fake.writes().is_empty());
+    let unreadable = report.json["unreadable"].as_array().unwrap();
+    assert_eq!(unreadable.len(), 1, "{}", report.json);
+    assert_eq!(unreadable[0]["path"], "docs/big.md");
+    let why = unreadable[0]["why"].as_str().unwrap();
+    assert!(
+        why.contains("4097 passages") && why.contains("4096"),
+        "{why}"
+    );
+    let wet = run(&fake, &loaded(&files, Kind::Document, &rev(1)), &opts());
+    assert_eq!(wet.exit, 1);
+    let keys: Vec<String> = fake
+        .writes()
+        .iter()
+        .map(|(_, b)| b["claim_key"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(keys, ["doc/docs/guide"]);
+}
+
 /// ADR-0081 d7, R5 amended 2026-11-18: the refusal is taken per loaded
 /// path, by the live claims anchored at that path. Two paths loaded two
 /// ways in two single-file runs stay apart, and a run over the whole

@@ -4,6 +4,8 @@
 //! whole file with no fragment and hashed `oml-md/1` over the whole file.
 //! The server cuts its passages by the rule `oml-passage` holds, so a
 //! passage hit and a `headings` claim of one section name one fragment.
+//! A file the rule cuts past the passage cap is unreadable, as the server
+//! would refuse it.
 
 use super::adapter::{Adapter, Extraction, doc_key_of, item, utf8};
 
@@ -60,6 +62,22 @@ impl Adapter for DocumentAdapter {
             return Err(format!(
                 "{path} maps to the key {key}, outside a document key's grammar: segments of 1 \
                  to 64 characters, at most 128 in all (ADR-0081 d2)"
+            ));
+        }
+        // A file past the passage cap is refused by the server
+        // (`too_many_passages`), so a dry run reports it and a run writes
+        // nothing for it (ADR-0081 d3).
+        let cut = if format == "text/markdown" {
+            oml_passage::Format::Markdown
+        } else {
+            oml_passage::Format::Plain
+        };
+        if let Err(e) = oml_passage::passages(&doc, cut) {
+            return Err(format!(
+                "{path} cuts into {} passages, past the {} a document holds; the server \
+                 refuses it (too_many_passages), so split the file (ADR-0081 d3)",
+                e.count,
+                oml_passage::MAX_PASSAGES
             ));
         }
         let last = doc.split('\n').count();
