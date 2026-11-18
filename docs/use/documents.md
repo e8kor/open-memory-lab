@@ -39,7 +39,13 @@ short hit. The hit also carries:
   `start_line`, `end_line` and `heading_path`;
 - `more_passages`: how many of the document's other passages were among the candidates, a lower
   bound;
-- `uri`: `oml://workspace/<workspace>/doc/<path>?passage=<fragment>`.
+- `uri`: `oml://workspace/<workspace>/doc/<path>?passage=<fragment>`. The fragment is the
+  heading's slug when that is plain `a-z`, `0-9`, `-` and `_`; a heading in another script, an
+  emoji or punctuation alone is named by its lines, `L<n>-L<m>`, so every URI can be read back.
+
+`k` counts documents, not passages: a document whose 30 passages match takes one of the `k`
+places. A document adds at most one to a word's document frequency, so a long document that
+repeats a word does not make that word worthless for the memories beside it.
 
 A recall without `kinds` includes documents; `kinds: ["memory", "derived_fact"]` leaves them out,
 and `kinds: ["document"]` asks for documents alone.
@@ -49,9 +55,20 @@ and `kinds: ["document"]` asks for documents alone.
 The MCP server lists the documents at the key's default workspace in `resources/list`, newest
 first, 50 a page, before the offered skills. Each entry names the document's URI, title, format and
 size, and says where it lives and who approved it. `resources/read` on a document's URI answers its
-text byte for byte; with `?passage=<fragment>` it answers that passage's lines. Provenance travels
+text byte for byte; with `?passage=<fragment>` or `?passage=L<n>-L<m>` it answers that passage's
+lines. A retired document is neither listed nor read. Provenance travels
 in `_meta.oml`, never inside the text. A URI the key cannot read answers `-32002` "Resource not
 found", as a URI that names nothing does.
+
+## Held documents
+
+A document waits for review like any other claim. While it is held, the keys allowed to see a held row (its author's, and
+the keys an in-progress workspace admits) find it in recall and in `resources/list`, marked
+"Unreviewed", at a URI that names its version, `?version=<n>`. Once a document is approved, an edit
+of it is held beside the approved version: `resources/list` keeps one entry, the approved version,
+and names the held edit and its `?version=<n>` URI in the description. The bare URI reads the
+approved version; `?version=<n>` reads the edit for a key allowed to see it, and answers
+`-32002` for any other.
 
 ## Loading files with oml sync
 
@@ -63,5 +80,5 @@ a path the workspace already holds through another adapter, naming both, until
 ## oml doctor
 
 `oml doctor` warns when the server predates documents, when a path of the clone is loaded both as
-a document and by another adapter, and when a document's file now cuts into more than 4,096
+a document and by another adapter, when a document version has no passages yet, and when a document's file now cuts into more than 4,096
 passages, so its next version would be refused.

@@ -10,7 +10,7 @@ answers: why a document is a kind and not a memory with a markdown format; which
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, every default as
 drafted · proposed the same day, tracking #374 · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d4, 2026-11-15) · d2 amended 2026-11-18 (the long-title cut and the one slug rule, #405) · [the build's readings of 2026-11-18](#the-builds-readings-of-2026-11-18), proposed for the operator's batch; [the review's readings of 2026-11-18](#the-reviews-readings-of-2026-11-18-pr-475), decided by the coordinator, for the operator's batch
 
-**Release:** planned for v0.7.4
+**Release:** built in v0.8.0 (#405, #406)
 
 **Twin parts** (ADR-0090 d18, PR #388): a document is a `memories` row, so its body and search
 text are parts and its fold is the journal's; its passages are derived, cut again by the same rule
@@ -57,7 +57,7 @@ What exists today:
   resources" ([code.claude.com/docs/en/mcp](https://code.claude.com/docs/en/mcp), fetched
   2026-11-14), so the model can read a document without a person naming it.
 
-Decided, not built.
+Decided 2026-11-14; built in v0.8.0 (#405, #406), with the readings below. Not built: d6's escaping of hidden characters in a read's text content, which serves the stored bytes unescaped; d9's files.
 
 ## Decision
 
@@ -99,7 +99,8 @@ Decided, not built.
   `start_line` and `end_line` (1-based, inclusive), `heading_path` (the headings above it), and a
   `fragment`: the heading's slug as ADR-0057 d7's `headings` adapter computes it when the passage is
   a whole section, else `L<n>-L<m>` (ADR-0057 d21). Front matter and HTML comments are skipped as
-  the `headings` adapter skips them. The rule lives in one leaf crate with no I/O that the server
+  the `headings` adapter skips them: a heading inside one opens no passage, and a comment's lines
+  inside a passage's span are served with it, since a passage is served as its source lines. The rule lives in one leaf crate with no I/O that the server
   and `oml-cli` both link, so sync's spans and the server's passages are the same bytes. A version
   holds at most 4,096 passages, chosen, not measured (1 MiB of 40-line blocks of 6 bytes a line
   would exceed it; such a body is refused, `request.validation`, `details.field: body`,
@@ -164,7 +165,7 @@ Decided, not built.
       provenance and data framing travel in `_meta` and the list's `description`, never inside the
       text, so the bytes stay the signed source (ADR-0074 d12 keeps the JSON text byte for byte for
       the same reason); hidden characters are escaped in the text content as ADR-0074 d12 escapes
-      them for a model. A missing, unreadable, held-and-not-served or malformed URI answers one
+      them for a model (not built in v0.8.0: the text is served unescaped). A missing, unreadable, held-and-not-served or malformed URI answers one
       error, `-32002` "Resource not found" with `data: {uri}`, so a read never discloses a row the
       key cannot read; a URI whose segment holds a `%` or a reserved character is `-32602`,
       `details.field: uri`, as proposed ADR-0036 d5 has it. Reads are logged as recall is
@@ -316,6 +317,12 @@ confirms or changes it, and names the reading or decision it amends.
   and the partitions are known only at run time, so each partition's build is a plain `CREATE
   INDEX` under that partition's `SHARE` lock, as 0041 builds its index: reads never wait, and a
   tenant's writes wait for its own partition's build alone.
+- **R15 (d3), 2026-11-18, for the operator's batch.** The cut reads markdown in linear time and
+  bounds what it keeps: a heading's text is read to 200 characters, as a title is (d1), so a
+  heading path entry and a passage's search text never carry more of one line; and a document
+  with more than 16,384 headings, four for each passage it may hold, is refused as
+  `too_many_passages` like one past 4,096 passages. Rejected: no heading bound, under which half a
+  million empty headings are read and kept to cut no passage.
 
 ## Consequences
 
