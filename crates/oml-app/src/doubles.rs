@@ -3570,6 +3570,8 @@ impl JournalStore for MemStore {
                 let mut m = m.clone();
                 if !bodies {
                     m.body = String::new();
+                    // The search text carries a titled version's body.
+                    m.format.search_text = None;
                 }
                 m
             })
