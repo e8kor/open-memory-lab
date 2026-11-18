@@ -32,7 +32,8 @@
 //! d5; ADR-0021 d5; ADR-0012). `similar` holds the near-copy check's words,
 //! keys, guard and exact relation (ADR-0050 d1, d17); `valid_time` holds a
 //! version's declared valid time, expiry and the query's date window under
-//! rule `oml-when/1` (ADR-0059).
+//! rule `oml-when/1` (ADR-0059). `upload` holds the upload session's part size,
+//! limits, states, expiry and refusals (ADR-0004 d3, as amended 2026-11-17).
 
 #![forbid(unsafe_code)]
 
@@ -46,8 +47,10 @@ pub mod chain;
 pub mod claim_edges;
 pub mod claim_kinds;
 pub mod envelope;
+pub mod export;
 pub mod federation;
 pub mod guardrail;
+pub mod import;
 pub mod in_progress;
 pub mod jcs;
 pub mod keys;
@@ -59,6 +62,7 @@ pub mod origin;
 pub mod signup;
 pub mod similar;
 pub mod skills;
+pub mod upload;
 pub mod usage;
 pub mod valid_time;
 pub mod vocab;

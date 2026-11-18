@@ -1263,6 +1263,7 @@ async fn the_serving_role_sees_nothing_of_another_tenant_in_a_tenant_tables_pg_s
                 event_types::SUBMISSION_REMEMBER,
                 json!({ "artifact_id": memory.memory_id.to_string() }),
                 MetadataFold::MemoryHeld {
+                    imported: None,
                     memory,
                     enqueue: false,
                     findings: Box::default(),
@@ -2649,6 +2650,7 @@ async fn the_served_tip_index_refuses_a_second_tip() {
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": memory.memory_id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory,
                 enqueue: false,
                 findings: Box::default(),
@@ -2988,11 +2990,13 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // 0020 adds search_default and 0023 telemetry_query_text_since,
             // null for every tenant they find
             // (ADR-0049 d4); 0040 the federation policy, off with its
-            // defaults (ADR-0072 d5).
+            // defaults (ADR-0072 d5); 0054 the export policy, own_root on
+            // every existing row (ADR-0084 d10).
             (true, "tenants") => {
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'search_default' \
                   - 'telemetry_query_text_since' - 'federation_enabled' \
-                  - 'federation_default_sources' - 'federation_max_sources') \
+                  - 'federation_default_sources' - 'federation_max_sources' \
+                  - 'export_policy') \
                  || jsonb_build_object('name', t.prior_name)"
             }
             // Before 0017 a workspace's status is the one every build served,
@@ -3042,9 +3046,10 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // (ADR-0056 d1, d4); 0044 adds the approval, null on every row
             // never promoted (ADR-0077 d6); 0048 adds a skill's, a document's
             // and a test case's fields, null on every existing row (ADR-0080
-            // d1; ADR-0081 d1; ADR-0086 d1); 0058 adds the end a ratified
-            // supersession replaced, false and null on every existing row
-            // (ADR-0089 d16).
+            // d1; ADR-0081 d1; ADR-0086 d1); 0055 adds the import provenance,
+            // null on every version not imported (ADR-0084 d4); 0058 adds the
+            // end a ratified supersession replaced, false and null on every
+            // existing row (ADR-0089 d16).
             (true, "memories") => {
                 "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
                  - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
@@ -3055,6 +3060,7 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'origin_kind' - 'scanned_under' - 'format' - 'title' - 'search_text' - 'search_text_by' \
                  - 'approver_used_by' - 'approver_same_user' - 'approved_at' \
                  - 'skill_name' - 'skill_description' - 'document_title' - 'test_shape' \
+                 - 'import_provenance' \
                  - 'valid_until_ratified' - 'valid_until_before' - 'valid_until_before_us'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
@@ -3888,6 +3894,7 @@ async fn hold(
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": memory.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory: held_memory(rig.tenant_id, workspace, memory, "wanda", author, "held"),
             enqueue,
             findings: Box::default(),
@@ -4648,6 +4655,7 @@ async fn the_widening_statement_names_its_tenant_and_touches_no_other_tenants_ro
                 event_types::SUBMISSION_REMEMBER,
                 json!({ "artifact_id": memory.memory_id.to_string() }),
                 MetadataFold::MemoryHeld {
+                    imported: None,
                     memory: memory.clone(),
                     enqueue: false,
                     findings: Box::default(),
@@ -6383,7 +6391,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
         applied, 58,
-        "every migration through 0056_serving_role_destroys_erased_keys"
+        "every migration through 0058, the highest version"
     );
     drop(conn);
     drop_dbs(&created).await;
@@ -7840,7 +7848,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
         applied, 58,
-        "every migration through 0056_serving_role_destroys_erased_keys"
+        "every migration through 0058, the highest version"
     );
     drop(conn);
 
@@ -8725,7 +8733,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
         applied, 58,
-        "every migration through 0056_serving_role_destroys_erased_keys"
+        "every migration through 0058, the highest version"
     );
     drop(conn);
 
@@ -10071,6 +10079,42 @@ async fn user_root_writes_pass_the_suite() {
     drop_dbs(&created).await;
 }
 
+/// Upload sessions on PostgreSQL as the serving role, exactly as the double
+/// passes them (ADR-0004 d3, as amended 2026-11-17).
+#[tokio::test]
+async fn upload_sessions_pass_the_suite() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    oml_port_contracts::uploads::run_upload_suite(|| fresh_store(&created)).await;
+    drop_dbs(&created).await;
+}
+
+/// Workspace imports on PostgreSQL as the serving role, exactly as the
+/// double passes them (ADR-0084 d6-d11, R11, I4).
+#[tokio::test]
+async fn imports_pass_the_suite() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    oml_port_contracts::imports::run_import_suite(|| fresh_store(&created)).await;
+    drop_dbs(&created).await;
+}
+
+/// Workspace export on PostgreSQL as the serving role, exactly as the double
+/// passes it (ADR-0084 d2, d10; #425).
+#[tokio::test]
+async fn workspace_export_passes_the_suite() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    oml_port_contracts::exports::run_export_suite(|| fresh_store(&created)).await;
+    drop_dbs(&created).await;
+}
+
 /// An erased version is served at no instant, and no earlier version stands
 /// in for it: the tip probe reads promoted versions in every state but
 /// demoted (ADR-0059 d15, d20, d21, d22). The erasure fold takes a whole
@@ -10297,14 +10341,17 @@ async fn migration_0042_applies_beside_an_open_write_and_read_of_idempotency_wit
         .execute(&mut *read)
         .await
         .expect("an open read");
-    tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        store.migrate(&owner_url(&db)),
-    )
-    .await
-    .expect("0042 waits on neither the write nor the read")
-    .expect("0042 applies");
-    // 0042 and every later migration apply; 0042 is the one asserted.
+    // 0042 alone applies under the open write and read: a later migration
+    // that alters tenants, as 0054 does, waits for the write's key lock by
+    // design, so it is not part of what this law asserts.
+    let m42 = MIGRATOR
+        .iter()
+        .find(|m| m.version == 42)
+        .expect("migration 0042");
+    tokio::time::timeout(std::time::Duration::from_secs(3), conn.apply(m42))
+        .await
+        .expect("0042 waits on neither the write nor the read")
+        .expect("0042 applies");
     let applied: bool = sqlx::query_scalar(
         "SELECT coalesce(bool_or(version = 42), false) FROM _sqlx_migrations WHERE success",
     )
@@ -10525,6 +10572,7 @@ async fn the_migration_marks_every_existing_version_scanned_under_oml_scan_1() {
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: MemoryRecord {
                     scan_finding: (n == 0).then(|| {
                         "injection.override: ignore-instructions at /body line 1".to_owned()
@@ -10587,6 +10635,7 @@ async fn migration_0043_lists_each_finding_a_stored_scan_finding_names_as_an_adm
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": flagged.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: MemoryRecord {
                     scan_finding: Some(stored.to_owned()),
                     scanned_under: Some("oml-scan/1.1".to_owned()),
@@ -10604,6 +10653,7 @@ async fn migration_0043_lists_each_finding_a_stored_scan_finding_names_as_an_adm
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": clean.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory: MemoryRecord {
                 claim_key: "clean".to_owned(),
                 scanned_under: Some("oml-scan/1.1".to_owned()),
@@ -10717,6 +10767,7 @@ async fn a_recording_rescan_after_migration_0043_lists_each_migrated_finding_onc
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: MemoryRecord {
                     claim_key: format!("c-{}", id.simple()),
                     scan_finding: Some(text.to_owned()),
@@ -10941,6 +10992,7 @@ async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_re
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: MemoryRecord {
                     claim_key: format!("c-{}", id.simple()),
                     scan_finding: Some(text.to_owned()),
@@ -11259,6 +11311,7 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": memory.memory_id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: memory.clone(),
                 enqueue: true,
                 findings: Box::default(),
@@ -11378,6 +11431,7 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": more.memory_id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: more.clone(),
                 enqueue: true,
                 findings: Box::default(),
@@ -11401,6 +11455,7 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": more.memory_id.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory: more.clone(),
             enqueue: true,
             findings: Box::default(),
@@ -11557,6 +11612,7 @@ async fn a_tenant_keys_first_version_commits_without_touching_the_meters() {
     let write = |memory: MemoryRecord| {
         let payload = json!({ "artifact_id": memory.memory_id.to_string() });
         let fold = MetadataFold::MemoryHeld {
+            imported: None,
             memory,
             enqueue: true,
             findings: Box::default(),
@@ -11672,6 +11728,7 @@ async fn a_counter_never_goes_below_zero_and_a_fold_on_a_drifted_one_still_commi
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": memory.memory_id.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory: memory.clone(),
             enqueue: true,
             findings: Box::default(),
@@ -11788,6 +11845,7 @@ async fn writers_that_skip_the_pre_check_are_held_by_the_commits_own_ceiling() {
                             event_types::SUBMISSION_REMEMBER,
                             json!({ "artifact_id": memory.memory_id.to_string() }),
                             MetadataFold::MemoryHeld {
+                                imported: None,
                                 memory: memory.clone(),
                                 enqueue: true,
                                 findings: Box::default(),

@@ -5,7 +5,8 @@
 # own process, oml-web, behind a path router on one origin (ADR-0070 d4).
 #
 # Deliberately absent from the PoC, all specified in docs/operations/deployment.md:
-#   - minio            — the PoC has no attachments, so no object store yet; when it
+#   - minio            — upload sessions keep their parts in a local directory
+#                        (storage.url, the oml-objects volume); when minio
 #                        joins it uses the SAME pinned tag the Helm chart pins
 #                        (the If-None-Match conditional-put pin, declared once).
 #   - oml-bootstrap    — the one-shot migration/keyring/enrollment ceremony; the
@@ -67,10 +68,14 @@ services:
       OML_KMS__KEYRING_PATH: /var/lib/oml/keyring/signing.key
       # oml-web's client identity (ADR-0070 d2): the same value on both.
       OML_WEB__CLIENT_SECRET: ${OML_WEB_CLIENT_SECRET:-oml_dev_only_web_client_secret_0000}
+      # Upload sessions' encrypted parts, on the volume below, which the image
+      # creates owned by its oml user (ADR-0004 d3).
+      OML_STORAGE__URL: /var/lib/oml/objects
     volumes:
       # kms-file software keyring: oml-server is the only service that mounts it
       # (deployment.md — custody separation between containers).
       - oml-keyring:/var/lib/oml/keyring
+      - oml-objects:/var/lib/oml/objects
 
   # The web console, its own process over the lead's HTTP API (ADR-0070 d4),
   # from the same image under its own entrypoint.
@@ -132,3 +137,4 @@ configs:
 volumes:
   oml-pgdata:
   oml-keyring:
+  oml-objects:

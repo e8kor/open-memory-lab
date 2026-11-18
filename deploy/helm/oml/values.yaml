@@ -41,6 +41,24 @@ keyring:
   # Empty: the cluster's default StorageClass.
   storageClassName: ""
 
+# Where upload sessions keep their encrypted parts (storage.url; ADR-0004
+# d3). By default an emptyDir of at most sizeLimit: the kubelet evicts the
+# lead past it, and a replaced pod loses the parts in flight, which their
+# sessions then name as upload.incomplete to be sent again. Empty sizeLimit
+# lifts the cap, and then only the node's disk bounds the parts.
+objects:
+  sizeLimit: 8Gi
+  # A ReadWriteOnce claim instead, so a restart or an upgrade keeps the
+  # parts in flight. The claim is deleted with the release: it holds only
+  # ciphertext whose keys the database keeps.
+  persistence:
+    enabled: false
+    # The name of a claim that already exists, instead of a new one.
+    existingClaim: ""
+    size: 8Gi
+    # Empty: the cluster's default StorageClass.
+    storageClassName: ""
+
 # The web console, oml-web: its own process over the lead's HTTP API, a
 # second Deployment from the same image under the entrypoint
 # /usr/local/bin/oml-web (ADR-0070 d4). It reaches the lead at the lead's

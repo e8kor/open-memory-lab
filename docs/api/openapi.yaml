@@ -78,6 +78,8 @@ tags:
   - name: search
   - name: usage
   - name: account
+  - name: uploads
+  - name: imports
   - name: health
 
 paths:
@@ -885,6 +887,40 @@ paths:
                 required: [accept_federated]
                 properties:
                   accept_federated: { type: boolean }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/workspaces/{workspace}/exports:
+    post:
+      tags: [workspaces]
+      operationId: exportWorkspace
+      summary: A person exports a workspace's subtree as a signed bundle encrypted to named age recipients (ADR-0084).
+      description: 'Requires: a key used_by person that is not an admin key and carries no profile, with reader effective access on every node of the subtree. Any other key is refused before any lookup with access.verb_ceiling, details.reason export_person_only. No recipient, or one that is not an age X25519 public key, is bundle.unencrypted, checked before anything is read. The answer is the bundle, format oml-bundle/1, as a binary age file (docs/data/bundle-format.md). history mode carries every version ever promoted and the exporter''s own held, rejected, demoted and withdrawn versions, never another key''s; an erased version travels as a marker. mode release, release and since are refused request.validation, details.reason releases_unbuilt, until releases are built; history is the default in a user root and must be named elsewhere. The tenant''s export policy (own_root by default) refuses with export.disabled; a subtree node the key cannot read refuses the whole export with export.not_readable. Journals workspace.exported with the manifest digest, the counts and the recipients'' fingerprints, and counts the bytes on the exports meter. Each call exports again under a new salt, so it takes no Idempotency-Key. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/WorkspaceId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              mode: history
+              recipients: [age1c7uc8xfckg2ntq76m2tsazw6xqsm9awvg8v4f4g57xqgcvs3e5pq9963un]
+            schema: { $ref: '#/components/schemas/ExportRequest' }
+      responses:
+        '200':
+          description: The encrypted bundle.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+            OML-Manifest-Digest:
+              description: The sha256 digest of the bundle's manifest.json, as workspace.exported journals it.
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -3254,6 +3290,217 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/uploads:
+    post:
+      tags: [uploads]
+      operationId: openUpload
+      summary: Open a resumable upload session for bytes of a declared size and SHA-256.
+      description: 'Requires: a writer key; any other role is access.verb_ceiling (ADR-0004 d3, as amended 2026-11-17). purpose is import, the one purpose built; size is 1 byte to uploads.max_bytes (1 GiB by default), or 413 upload.too_large; sha256 is the plaintext''s SHA-256 as 64 lowercase hex digits. A key holding 4 sessions that are open, or completed and unbound, is upload.session_limit; a tenant whose open and unbound sessions would declare more than uploads.tenant_max_bytes (4 GiB by default) is upload.tenant_limit; an object store that fails is 503 upload.storage_failed. The session takes parts of 8 MiB, the last the remainder, and expires 24 hours after its opening or its last part and never later than 72 hours after it opened. Only this key is ever served it. Nothing is journalled, and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              purpose: import
+              size: 18874368
+              sha256: 9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b
+            schema: { $ref: '#/components/schemas/UploadOpenRequest' }
+      responses:
+        '201':
+          description: The open session.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadSession' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '503': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/uploads/{upload_id}:
+    get:
+      tags: [uploads]
+      operationId: getUpload
+      summary: Read an upload session's state, the parts received and missing, and its expiry.
+      description: 'Requires: the key that opened the session; any other key, and an id no session has, answers access.not_found (ADR-0004 d3, as amended 2026-11-17). A session past its expiry that no sweep has reached yet reads expired. The session''s key is never answered. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: upload_id, in: path, required: true, schema: { type: string }, description: 'The session id POST /v2/uploads answered.' }
+      responses:
+        '200':
+          description: The session.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadSession' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+    delete:
+      tags: [uploads]
+      operationId: abandonUpload
+      summary: Abandon an upload session, shredding its key and removing its parts.
+      description: 'Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17). An open, completed or failed session is abandoned: its key is nulled, then its parts are removed. One already abandoned or expired answers the same; a bound one belongs to the verb that bound it and is upload.session_invalid. Nothing is journalled. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: upload_id, in: path, required: true, schema: { type: string }, description: 'The session id POST /v2/uploads answered.' }
+      responses:
+        '204':
+          description: Abandoned.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/uploads/{upload_id}/parts/{part}:
+    put:
+      tags: [uploads]
+      operationId: putUploadPart
+      summary: Store one part of an open session; sending a part again replaces it.
+      description: 'Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17). part counts from 1; outside 1 to the part count is 422 upload.part_number. Every part is 8,388,608 bytes but the last, which is the remainder; another length is 422 upload.part_size. A session that is not open is upload.session_invalid with details.state, and one past its expiry 410 upload.expired. The part is stored as XChaCha20-Poly1305 ciphertext under the session''s own key, and the session''s expiry moves to 24 hours on, never past 72 hours after it opened. A part is addressed by its number, so no Idempotency-Key is taken: a retry after an interruption sends the parts GET /v2/uploads/{upload_id} names missing. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: upload_id, in: path, required: true, schema: { type: string }, description: 'The session id POST /v2/uploads answered.' }
+        - { name: part, in: path, required: true, schema: { type: integer, minimum: 1 }, description: 'The part number, from 1.' }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: The session with the part received.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadSession' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/uploads/{upload_id}/complete:
+    post:
+      tags: [uploads]
+      operationId: completeUpload
+      summary: Read the parts in order and check their SHA-256 against the declared one.
+      description: 'Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17). Parts missing are upload.incomplete with details.missing, the first 100. A digest that differs fails the session, nulls its key, removes its parts and answers 422 upload.digest_mismatch. A match completes it: it is unbound until a verb such as an import binds it, and expires 24 hours after completion. A session that is not open is upload.session_invalid; past its expiry, 410 upload.expired. Nothing is journalled. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: upload_id, in: path, required: true, schema: { type: string }, description: 'The session id POST /v2/uploads answered.' }
+      responses:
+        '200':
+          description: The completed session.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadSession' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/imports:
+    post:
+      tags: [imports]
+      operationId: importBundle
+      summary: Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
+      description: 'Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason import_person_only (ADR-0084 d11). upload_id is a completed upload session of purpose import that this key opened (ADR-0004 d3), holding the decrypted bundle; another key''s is access.not_found, one in another state upload.session_invalid, one past its expiry 410 upload.expired. target is a development workspace in progress the key writes, or a bare name this key may create, which the import creates in progress; any other target is 409 import.target_not_in_progress, and a taken name name.taken (ADR-0084 d6, d9). The bundle is verified before anything is written, each check under its own bundle.* code (d7). expect_key is the source key''s fingerprint, 64 hex digits; the first import from a source requires it (request.validation, details.field /expect_key, details.reason first_import) and pins it, and a later bundle under another key, or with none named, is 409 import.source_key_changed (R11). A bundle older than the last imported from its source is 409 import.bundle_older unless allow_older (d8). A plan that does not fit the account''s meters is 429 import.over_quota and writes nothing. dry_run answers the plan and binds nothing. Otherwise the upload binds once, each claim key is written as the plan says, held by this key with the source''s origin kind and its import_provenance, under the idempotency key import:<target>:<source server>:<source tenant>:<artifact>:<version>, so the same bundle again writes nothing; a version the target''s scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the target carries is proposed by this key where its verb ceiling allows, which a writer key''s does not; every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as edge:<src>:<dst>. One import or dry run per tenant runs at a time, and two in the server; another is 409 import.busy, retryable. A dry run answers 200 with the plan. Otherwise the upload binds, the source key is pinned, and the answer is 202 with the import running; the run goes on after the answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals workspace.imported, listing each version it wrote, and the upload''s key is nulled when it ends; an import running for more than an hour that the server is not running ends failed at the next sweep. No Idempotency-Key is taken: the upload binds once. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              upload_id: 0b8f0c3e-6a51-4d55-9e1f-8d3a4c2b7e10
+              target: payments-dev
+              dry_run: false
+              expect_key: b600306cfa76723fdec395e53a9b3d9fdb78b1e2d7a23c32fcbcd2dc6d0c4092
+            schema: { $ref: '#/components/schemas/ImportRequest' }
+      responses:
+        '200':
+          description: The plan of a dry run.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportAnswer' }
+        '202':
+          description: The import began; its row is running, and GET /v2/imports/{id} answers its end.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportStatus' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/imports/{import_id}:
+    get:
+      tags: [imports]
+      operationId: getImport
+      summary: An import's state, position, counts and refusals.
+      description: 'Requires: the key that ran the import; any other key, and an id no import has, answers access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no request, so one read running stopped when the server did, and position is the versions it recorded. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: import_id, in: path, required: true, schema: { type: string }, description: 'The id POST /v2/imports answered.' }
+      responses:
+        '200':
+          description: The import.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportStatus' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/admin/usage:
     get:
       tags: [admin]
@@ -3731,6 +3978,39 @@ components:
         - vocab.inactive_curie
         - upload.session_invalid
         - upload.digest_mismatch
+        - upload.expired
+        - upload.too_large
+        - upload.part_size
+        - upload.part_number
+        - upload.incomplete
+        - upload.session_limit
+        - upload.tenant_limit
+        - upload.storage_failed
+        - bundle.format_unknown
+        - bundle.layout
+        - bundle.path_unsafe
+        - bundle.too_large
+        - bundle.line_too_long
+        - bundle.depth
+        - bundle.duplicate
+        - bundle.unreferenced_body
+        - bundle.malformed
+        - bundle.digest_mismatch
+        - bundle.signature_invalid
+        - bundle.signature_unexpected
+        - bundle.unencrypted
+        - bundle.decrypt_failed
+        - bundle.io
+        - import.target_not_in_progress
+        - import.over_quota
+        - import.bundle_older
+        - import.since_mismatch
+        - import.source_key_changed
+        - import.busy
+        - export.disabled
+        - export.not_readable
+        - export.busy
+        - export.too_large
         - memory.not_held
         - lifecycle.erased
         - name.taken
@@ -3741,6 +4021,22 @@ components:
         - settings.invalid
         - system.internal
         - system.unavailable
+
+    ExportRequest:
+      type: object
+      additionalProperties: false
+      required: [recipients]
+      properties:
+        mode:
+          type: string
+          enum: [history, release]
+          description: history is the default in a user root; release is refused until releases are built.
+        recipients:
+          type: array
+          items: { type: string, description: 'An age X25519 public key, age1...' }
+          description: At least one; the bundle is encrypted to each.
+        release: { type: string, description: A release label; refused until releases are built. }
+        since: { type: string, description: A base release label; refused until releases are built. }
 
     ErrorEnvelope:
       type: object
@@ -5025,6 +5321,154 @@ components:
       required: [user]
       properties:
         user: { type: string, description: "The user the key acts for in the console, by name (ADR-0085 d16)." }
+
+    UploadOpenRequest:
+      type: object
+      additionalProperties: false
+      required: [purpose, size, sha256]
+      description: "An upload session to open (ADR-0004 d3, as amended 2026-11-17)."
+      properties:
+        purpose: { type: string, enum: [import] }
+        size: { type: integer, minimum: 1, description: 'The plaintext''s size in bytes, at most uploads.max_bytes.' }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: 'The plaintext''s SHA-256, 64 lowercase hex digits.' }
+
+    UploadSession:
+      type: object
+      additionalProperties: false
+      required: [upload_id, purpose, size, sha256, part_size, parts, received, missing, state, created_at, expires_at, completed_at]
+      description: "An upload session as the key that opened it reads it; its key is never answered (ADR-0004 d3, as amended 2026-11-17)."
+      properties:
+        upload_id: { type: string }
+        purpose: { type: string, enum: [import] }
+        size: { type: integer }
+        sha256: { type: string }
+        part_size: { type: integer, description: 'Always 8388608.' }
+        parts: { type: integer }
+        received: { type: array, items: { type: integer } }
+        missing: { type: array, items: { type: integer } }
+        state: { type: string, enum: [open, completed, bound, failed, expired, abandoned] }
+        created_at: { type: string }
+        expires_at: { type: [string, 'null'], description: 'Null once bound: a bound upload ends with the verb that bound it.' }
+        completed_at: { type: [string, 'null'] }
+
+    ImportRequest:
+      type: object
+      additionalProperties: false
+      required: [upload_id, target]
+      description: "An import of a completed upload (ADR-0084 d15, I4)."
+      properties:
+        upload_id: { type: string }
+        target: { type: string, description: 'An in-progress workspace by id or name, or a bare name the import creates in progress.' }
+        dry_run: { type: boolean, default: false }
+        allow_older: { type: boolean, default: false }
+        expect_key: { type: [string, 'null'], pattern: '^[0-9a-fA-F]{64}$', description: 'The source key''s fingerprint; required on the first import from a source (R11).' }
+        expect_tenant: { type: [string, 'null'], description: 'The source tenant id the bundle must name (R13).' }
+
+    ImportAnswer:
+      type: object
+      additionalProperties: false
+      description: "A dry run's plan."
+      required: [plan]
+      properties:
+        plan: { $ref: '#/components/schemas/ImportPlan' }
+
+    ImportStatus:
+      type: object
+      additionalProperties: false
+      required: [import]
+      properties:
+        import: { $ref: '#/components/schemas/Import' }
+
+    ImportPlan:
+      type: object
+      additionalProperties: false
+      required: [source, exported_at, manifest_digest, target_workspace_id, authenticated, signer_fingerprint, allow_older, counts, keys, erasure_markers, edges]
+      description: "What an import would write (ADR-0084 d8, R10)."
+      properties:
+        source:
+          type: object
+          additionalProperties: false
+          required: [server_id, tenant_id, tenant_name]
+          properties:
+            server_id: { type: string }
+            tenant_id: { type: string }
+            tenant_name: { type: string }
+        exported_at: { type: string }
+        manifest_digest: { type: string }
+        target_workspace_id: { type: [string, 'null'], description: 'Null for a new name the import would create.' }
+        authenticated: { type: boolean, description: 'The signature was checked against expect_key; otherwise it proves integrity only (d5).' }
+        signer_fingerprint: { type: string }
+        allow_older: { type: boolean }
+        counts: { type: object, additionalProperties: { type: integer } }
+        keys:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [claim_key, outcome, source, expected_version]
+            properties:
+              claim_key: { type: string }
+              outcome: { type: string, enum: [new, changed, removed, unchanged, equivalent, conflict] }
+              source:
+                oneOf:
+                  - type: object
+                    additionalProperties: false
+                    required: [artifact_id, version]
+                    properties:
+                      artifact_id: { type: string }
+                      version: { type: integer }
+                  - { type: 'null' }
+              expected_version: { type: [integer, 'null'] }
+        erasure_markers: { type: integer, description: 'Markers for versions already imported (d13).' }
+        edges:
+          type: object
+          additionalProperties: false
+          required: [proposed, reported]
+          properties:
+            proposed: { type: integer }
+            reported: { type: integer }
+
+    Import:
+      type: object
+      additionalProperties: false
+      required: [import_id, state, target_workspace_id, upload_id, source, manifest_digest, signer_fingerprint, authenticated, allow_older, position, counts, refusals, created_at, ended_at]
+      description: "One import as its importing key reads it (ADR-0084 d11, d15)."
+      properties:
+        import_id: { type: string }
+        state: { type: string, enum: [running, done, failed] }
+        target_workspace_id: { type: string }
+        upload_id: { type: string }
+        source:
+          type: object
+          additionalProperties: false
+          required: [server_id, tenant_id]
+          properties:
+            server_id: { type: string }
+            tenant_id: { type: string }
+        manifest_digest: { type: string }
+        signer_fingerprint: { type: string }
+        authenticated: { type: boolean }
+        allow_older: { type: boolean }
+        position: { type: integer, description: 'The versions the import recorded.' }
+        counts: { type: object, additionalProperties: { type: integer }, description: 'By outcome (new, changed, removed, unchanged, equivalent, conflict, refused), and edges_proposed, edges_reported and erasure_markers.' }
+        refusals:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [claim_key, source, code]
+            properties:
+              claim_key: { type: string }
+              source:
+                type: object
+                additionalProperties: false
+                required: [artifact_id, version]
+                properties:
+                  artifact_id: { type: string }
+                  version: { type: integer }
+              code: { type: string }
+        created_at: { type: string }
+        ended_at: { type: [string, 'null'] }
 
     KeyLink:
       type: object

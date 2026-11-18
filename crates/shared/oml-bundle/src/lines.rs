@@ -77,6 +77,11 @@ pub struct VersionLine {
     pub skill: Option<Value>,
     pub document: Option<Value>,
     pub test: Option<Value>,
+    /// A guardrail's `{severity, rule}` (ADR-0037 d1, d2): required on a
+    /// guardrail version that is not a retirement, absent on every other
+    /// (ADR-0084 reading I20).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guardrail: Option<Value>,
     pub derives_from: Vec<String>,
     /// ADR-0063 d1's origin, verbatim as signed.
     pub origin: Value,

@@ -10,7 +10,7 @@ answers: what a workspace export carries and what it never carries; the bundle's
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its four questions decided at their
 recommendations and every other default as drafted · proposed the same day · the "unless its source server is
 pinned" of its file name is ADR-0088, which is deferred · the format built as the crate `oml-bundle`, with its readings and the
-operator's R1 decision of 2026-11-17 recorded at the end of this record; the routes and commands of d15 are not built
+operator's R1 decision of 2026-11-17 and the integration readings I1–I9 recorded at the end of this record; of d15, `history`-mode export (the route and `oml workspaces export`) is built (#425), and the import (`POST /v2/imports`, `GET /v2/imports/{id}`, `oml workspaces import`, the `imports` doctor line) is built (#426); the rest is not built
 
 **Release:** not scheduled; after ADR-0085, whose release manifest `release` mode exports. A
 trusted source server, the "unless" of the title, is the deferred ADR-0088.
@@ -504,3 +504,130 @@ the code follows it.
 - **Order of the work (the operator, 2026-11-17).** Resumable upload sessions, #451 (ADR-0004
   d3), come before import, #426. The import route takes the decrypted tar through such a session,
   not in one request body.
+
+### Integration readings of 2026-11-17 (#425, #426)
+
+The coordinator decided these while export and import were built.
+
+- **I1 — An agent or admin key exporting is refused `access.verb_ceiling`.** The refusal's
+  `details.reason` is `export_person_only`, naming d10's rule. *Rejected:* a separate code
+  `export.agent_key`, which would duplicate the ceiling every other verb uses.
+- **I2 — Policy `off` is refused `export.disabled` (403).** It is a new code with a row on the
+  errors page. A person exporting outside their own root under `own_root`, with no allowance in
+  force, is refused the same code with `details.reason: own_root`.
+- **I3 — `mode: release` and `since` are refused `request.validation`,** with `details.reason:
+  releases_unbuilt`, until releases (#414) are built. On a user root they stay refused under d2
+  after that, with `details.reason: user_root_history_only`. *Rejected:* leaving the fields out of
+  the contract until then, which would change it twice.
+- **I4 — Import staging is the bound upload session's own key (ADR-0004 d3).** The decrypted
+  bundle reaches the server only as the parts of one upload session, encrypted under that
+  session's `part_key`. The import binds the session; when the import ends or is abandoned the key
+  is nulled, which is d11's shred. The class "import staging" of ADR-0005 is that same row, so the
+  inventory names it once, as "upload staging". *Rejected:* drawing a second key for the import
+  and re-encrypting the staged bytes, which would hold the plaintext twice.
+
+### Export readings of 2026-11-18 (#425)
+
+The coordinator confirmed these while history-mode export was built.
+
+- **I5 — The source server id is the journal key's fingerprint.** `manifest.source.server_id` is the
+  lowercase hex SHA-256 of the deployment's journal public key (ADR-0073 d1), the value
+  `--expect-key` names. No other server identity exists. A key rotation therefore makes the server
+  read as a new source, which overlaps R11: a rotation already fails closed against an existing
+  ledger, and the remedy is the same, an import into a new target workspace. *Rejected:* a new
+  `server.id` setting, one more value an operator must set and keep unique; the public URL, which
+  changes when the host does.
+- **I6 — The exporter's own versions are those of the person's own keys.** Held, rejected,
+  demoted and withdrawn versions travel when a key of the exporting person's own key set wrote them
+  (the set a session key reads its own rows by, ADR-0045 d16). A linked key acting for another
+  person is not in it. A signed event travels only for a version the exporting key itself wrote
+  (R12). *Rejected:* the exporting key alone, which would leave a person's console writes out of
+  their own export.
+- **I7 — `same_user` is what the source journal recorded, never recomputed.** A version's
+  `author.same_user` is its promotion's mark; a verdict's `reviewer.same_user` is the same mark on
+  the approving verdict that promoted the version. Without a mark either is `false`. `approved_at`
+  is set on that approving verdict only.
+- **I8 — Only ratified edges travel, and only when both ends are exported.** A brief edge's ends
+  are its artifact and its workspace, which must lie in the exported subtree. A pending proposal
+  is another key's unratified act and stays.
+- **I9 — The admin routes for the policy and allowances come later.** The tenant's policy is the
+  default, `own_root`, until `PUT /v2/tenant/export-policy` and the allowance route are built; the
+  migration adds the column, the allowance table and the `exports` meter, and the doctor names the
+  policy.
+
+### Fix readings of 2026-11-18 (the review of bulk B; for the operator's batch)
+
+Two independent reviews of the bulk B head `634c8e90` asked for revision. The coordinator decided
+these on 2026-11-18, and the code follows them. Each is marked **[operator batch]**: it stands
+until the operator confirms or reverses it with the other decisions of the batch.
+
+- **I10 — An import runs after its request answers. [operator batch]** `POST /v2/imports`, not
+  a dry run, verifies the bundle, plans it, binds the upload and starts the run in a task that
+  does not depend on the request; it answers `202 {import}` with the row `running`. A dry run
+  still answers `200 {plan}` at once. The CLI polls `GET /v2/imports/{id}` until the import ends.
+  *Rejected:* the inline run, which ties an import of up to `uploads.max_bytes` to one HTTP
+  request and loses it when a proxy or the client gives up.
+- **I11 — An import interrupted for an hour is ended. [operator batch]** At the lead's start and
+  in every upload sweep, an import `running` for more than one hour that this process is not
+  running ends `failed`, its bound upload's key is nulled in the same transaction and its objects
+  are removed by the sweep (d11's shred). What it wrote stays held. The doctor's
+  `imports_stopped` warning counts only such imports. A bound upload whose key is still set more
+  than 24 hours after it was bound is the doctor warning `upload_staging_stale` (d11). A store
+  failure while shredding is logged, never swallowed. The list of imports this process runs is the
+  process's own: it holds while one lead serves the database, as ADR-0072 d12's counters do.
+- **I12 — The source key is pinned when the import begins (R11). [operator batch]** The
+  transaction that binds the upload and inserts the import row also inserts the ledger's pin,
+  `INSERT … ON CONFLICT DO NOTHING`, and compares: a pin naming another key refuses
+  `import.source_key_changed` and writes nothing. A pin written for an import that never ended
+  carries an empty `exported_at`, so it bounds no later bundle's age. The `workspace.imported` fold
+  moves the ledger's export instant and release and never its `signer_fingerprint`. So two
+  concurrent first imports pin one key, and a failed first import still pins the key it named.
+- **I13 — Imports and exports are bounded in memory. [operator batch]** One import or dry run
+  per tenant at a time, and at most two across the process; over either limit is
+  `import.busy` (409, retryable). One export per tenant at a time, refused `export.busy` (409,
+  retryable), and a bundle larger than `uploads.max_bytes` is `export.too_large` (413). The parts
+  are not streamed into the reader: the verified bundle holds every body in memory, so a streamed
+  read saves only the tar's copy, and the bound above is what holds the peak. The export's
+  whole-chain walk and in-memory build, and the per-day limits of d15 that are not built, are
+  bottleneck rows on the limits page. Exports are bounded at two in the process too, and an export
+  whose stored body bytes already pass the cap is refused before a body is read; the bounds are the
+  process's own and hold while one lead serves the database (ADR-0072 d12).
+- **I14 — An imported version's provenance is part of its write. [operator batch]** The
+  `import_versions` row and `import_provenance` are written in the submit's or supersession's own
+  transaction, as a field of its fold, so no version an import wrote lacks them.
+  `workspace.imported` lists the imported version ids, so the journal rebuilds the ledger of what
+  each import wrote. The doctor warns when a version carries an import's idempotency key and no
+  provenance.
+- **I15 — A conflict that is a removal writes a retirement (d8). [operator batch]** Where the
+  source removed a key and the target's tip moved, the import writes a held retirement marked
+  `conflict`, not a superseding text.
+- **I16 — A new target is created in progress in one commit (amending ADR-0030 d1).
+  [operator batch]** See ADR-0030's note of 2026-11-18. A retry against a `standard`, empty
+  workspace that the importing key created sets the mode then.
+- **I17 — Verdicts on erased versions do not travel (R1, d2). [operator batch]** A verdict is
+  exported only for a version exported whole; `oml-bundle`'s reader refuses a verdict that names an
+  erasure marker or a version the bundle does not carry, `bundle.malformed`. A version's
+  `derives_from` keeps only the ids the bundle carries.
+- **I18 — A crew key never exports (d10, I1). [operator batch]** The export rule excludes a key
+  that belongs to a crew, as it excludes an agent key: `access.verb_ceiling`, `details.reason:
+  export_person_only`.
+- **I6 as written (replacing the build's reading of 2026-11-18). [operator batch]** For any key
+  acting for a person, the own set is that person's key set: the person's web keys, the person's
+  own agent keys, and the key itself; not the calling key's own set alone. A bearer person key
+  exports its person's console writes.
+- **I19 — Every export is metered. [operator batch]** An export by a key with no account root is
+  counted on the tenant's `exports` meter, so no export goes uncounted.
+- **I20 — A guardrail travels with its severity and rule (d1). [operator batch]** The
+  `oml-bundle/1` version line gains an optional `guardrail: {severity, rule}` object, as `skill`,
+  `document` and `test` carry theirs. Export writes it for every guardrail version that is not a
+  retirement; the reader refuses a guardrail line without it, or another line with it, as
+  `bundle.malformed`, and checks the severity is known and the rule, when given, parses as
+  `oml-gr/1` and is one the severity admits; import passes both to submit, whose caps and scan
+  run again. An imported guardrail lands held and is served inside the in-progress target
+  unreviewed with `effect_inside: ask` (ADR-0080 d10, d16). The format is unreleased, so no
+  reader of an earlier form exists. *Rejected:* leaving guardrails out of bundles, which an
+  import refused by name and a person could not tell from a scan veto.
+- **I6, a linked key (2026-11-18, the re-verify of bulk B). [operator batch]** A tenant key linked to
+  a person (ADR-0085 d16) owns itself alone in an export: the own set widens to a person's keys only
+  for a user key or a session key of that person, never through `linked_user`, so a linked key
+  exports none of the person's other keys' held, rejected or withdrawn rows (R3).

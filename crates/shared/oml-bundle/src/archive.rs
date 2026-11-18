@@ -497,6 +497,43 @@ fn is_digest(text: &str) -> Option<&str> {
 /// The record checks a writer and a reader share: closed shapes the types
 /// cannot say, duplicates, references and unreferenced bodies (d1–d4, d7,
 /// d13, R1, R5, R7).
+/// Why a version line's `guardrail` breaks ADR-0037's rules, or `None`
+/// (ADR-0084 reading I20): a guardrail that is not a retirement carries
+/// `{severity, rule}`, its severity a known word and its rule, when given,
+/// an `oml-gr/1` rule the severity admits; every other line carries none.
+fn guardrail_defect(v: &crate::VersionLine) -> Option<&'static str> {
+    let needs = v.kind == "guardrail" && !v.retirement;
+    let Some(fields) = &v.guardrail else {
+        return needs.then_some("guardrail_fields_missing");
+    };
+    if !needs {
+        return Some("guardrail_fields_unexpected");
+    }
+    let Some(object) = fields.as_object() else {
+        return Some("guardrail is not an object");
+    };
+    if object.keys().any(|k| k != "severity" && k != "rule") {
+        return Some("guardrail carries a member other than severity and rule");
+    }
+    let Some(severity) = object
+        .get("severity")
+        .and_then(serde_json::Value::as_str)
+        .and_then(oml_guardrail::Severity::parse)
+    else {
+        return Some("guardrail severity is not a known severity");
+    };
+    match object.get("rule") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(rule) => match oml_guardrail::Rule::parse(rule) {
+            Err(_) => Some("guardrail rule does not parse as oml-gr/1"),
+            Ok(rule) if !severity.admits(rule.effect()) => {
+                Some("guardrail rule's effect is stricter than its severity admits")
+            }
+            Ok(_) => None,
+        },
+    }
+}
+
 fn check_records(c: &BundleContents) -> Result<(), BundleError> {
     let versions_file = LINE_FILES[1];
     let mut ids = BTreeSet::new();
@@ -527,6 +564,11 @@ fn check_records(c: &BundleContents) -> Result<(), BundleError> {
         if is_digest(&v.plaintext_digest).is_none() {
             return bad("plaintext_digest is not sha256: and 64 hex");
         }
+        // I20: a guardrail carries its severity and rule under submit's
+        // rules; no other version carries them.
+        if let Some(reason) = guardrail_defect(v) {
+            return bad(reason);
+        }
         match (&v.text, &v.body) {
             (Some(text), None) if text.len() > INLINE_TEXT_MAX => {
                 return bad("text_over_inline_limit");
@@ -555,6 +597,21 @@ fn check_records(c: &BundleContents) -> Result<(), BundleError> {
             }
             used_events.insert(event_id.as_str());
         }
+    }
+    // I17: a verdict names a version the bundle carries whole, never an
+    // erasure marker.
+    let carried: BTreeMap<(&str, u64), bool> = c
+        .versions
+        .iter()
+        .map(|e| (e.id(), matches!(e, VersionEntry::Version(_))))
+        .collect();
+    for (i, verdict) in c.verdicts.iter().enumerate() {
+        let reason = match carried.get(&(verdict.artifact_id.as_str(), verdict.version)) {
+            Some(true) => continue,
+            Some(false) => "verdict_on_erased_version",
+            None => "verdict_on_absent_version",
+        };
+        return Err(BundleError::malformed(LINE_FILES[2], i + 1, reason));
     }
     if let Some(unused) = events.difference(&used_events).next() {
         return Err(BundleError::malformed(
@@ -726,4 +783,51 @@ fn check_events(c: &BundleContents) -> Result<(), BundleError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod guardrail_line_tests {
+    use super::guardrail_defect;
+
+    fn line(kind: &str, guardrail: serde_json::Value) -> crate::VersionLine {
+        let mut v = serde_json::json!({
+            "artifact_id": "a", "version": 1, "claim_key": "k", "workspace": "w",
+            "kind": kind, "format": null, "title": null, "state": "promoted",
+            "retirement": false, "replaces": null, "simulation_id": null,
+            "text": "Never force-push.", "body": null,
+            "plaintext_digest": format!("sha256:{}", "0".repeat(64)),
+            "anchor": null, "valid_from": null, "valid_until": null,
+            "skill": null, "document": null, "test": null, "derives_from": [],
+            "origin": {"kind": "doc"}, "attachments": [],
+            "author": {"used_by": "person", "same_user": false, "pseudonym": "p"},
+            "created_at": "2026-11-01T10:00:00.000000Z", "promoted_at": null,
+            "source_event": null
+        });
+        if !guardrail.is_null() {
+            v["guardrail"] = guardrail;
+        }
+        serde_json::from_value(v).expect("a version line")
+    }
+
+    #[test]
+    fn a_guardrail_line_without_its_severity_and_rule_is_refused_by_name() {
+        assert_eq!(
+            guardrail_defect(&line("guardrail", serde_json::Value::Null)),
+            Some("guardrail_fields_missing")
+        );
+        assert_eq!(
+            guardrail_defect(&line("memory", serde_json::json!({"severity": "should"}))),
+            Some("guardrail_fields_unexpected")
+        );
+        assert!(
+            guardrail_defect(&line("guardrail", serde_json::json!({"severity": "loud"}))).is_some()
+        );
+        assert_eq!(
+            guardrail_defect(&line(
+                "guardrail",
+                serde_json::json!({"severity": "should", "rule": null})
+            )),
+            None
+        );
+    }
 }

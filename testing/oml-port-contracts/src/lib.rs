@@ -11,7 +11,10 @@
 #![forbid(unsafe_code)]
 
 pub mod as_of;
+pub mod exports;
 pub mod federation;
+pub mod imports;
+pub mod uploads;
 pub mod user_roots;
 
 use core::future::{Future, poll_fn};
@@ -564,6 +567,7 @@ pub async fn hold<S: JournalStore>(
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": memory.memory_id.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory,
             enqueue: true,
             findings: Box::default(),
@@ -671,6 +675,7 @@ pub async fn a_withdrawn_version_leaves_every_review_queue_and_is_kept<S: Journa
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": id.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory,
             enqueue: true,
             findings: Box::default(),
@@ -1021,6 +1026,7 @@ pub async fn journal_memory_fold_and_lookup<S: JournalStore>(store: &S) {
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": memory_id.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory,
             enqueue: true,
             findings: Box::default(),
@@ -1967,6 +1973,7 @@ pub async fn a_versions_findings_list_reads_back_in_order_under_its_event_seq<S:
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": flagged.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: MemoryRecord {
                     scan_finding: Some(
                         "injection.override: ignore-instructions at /body line 3".to_owned(),
@@ -1985,6 +1992,7 @@ pub async fn a_versions_findings_list_reads_back_in_order_under_its_event_seq<S:
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": clean.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory: MemoryRecord {
                 claim_key: "clean".to_owned(),
                 ..held_memory(rig.tenant_id, wa, clean, "wanda", key, "clean")
@@ -2062,6 +2070,7 @@ pub async fn a_recording_rescan_adds_only_the_findings_a_held_versions_list_lack
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": held_id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: MemoryRecord {
                     scan_finding: summary.clone(),
                     ..held_memory(rig.tenant_id, wa, held_id, "wanda", key, "held")
@@ -2079,6 +2088,7 @@ pub async fn a_recording_rescan_adds_only_the_findings_a_held_versions_list_lack
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": unlisted.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory: MemoryRecord {
                 claim_key: "unlisted".to_owned(),
                 scan_finding: summary.clone(),
@@ -2210,6 +2220,7 @@ pub async fn a_placeless_finding_stands_for_one_place_of_its_rule<S: JournalStor
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": id.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory: MemoryRecord {
                 scan_finding: Some("injection.override: ignore-instructions".to_owned()),
                 ..held_memory(rig.tenant_id, wa, id, "wanda", key, "placeless")
@@ -2357,6 +2368,7 @@ pub async fn the_review_queue_serves_no_row_its_own_person_wrote_outside_their_r
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory,
                 enqueue: true,
                 findings: Box::default(),
@@ -2542,6 +2554,7 @@ pub async fn journal_review_lane_laws<S: JournalStore>(store: &S) {
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory,
                 enqueue,
                 findings: Box::default(),
@@ -2657,6 +2670,7 @@ pub async fn journal_review_lane_starves_no_author_laws<S: JournalStore>(store: 
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory,
                 enqueue: true,
                 findings: Box::default(),
@@ -2706,6 +2720,7 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: held_memory(rig.tenant_id, workspace, id, author, key, "body"),
                 enqueue: true,
                 findings: Box::default(),
@@ -2835,6 +2850,7 @@ pub async fn journal_review_held_laws<S: JournalStore>(store: &S) {
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory,
                 enqueue: true,
                 findings: Box::default(),
@@ -3332,6 +3348,7 @@ pub async fn a_second_record_under_one_idempotency_scope_commits_nothing<S: Jour
         ..winner.clone()
     };
     let held = |memory: &MemoryRecord| MetadataFold::MemoryHeld {
+        imported: None,
         memory: memory.clone(),
         enqueue: true,
         findings: Box::default(),
@@ -9175,6 +9192,7 @@ pub async fn a_commit_past_its_ceiling_writes_nothing_and_the_usage_read_is_the_
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": memory(n, body).memory_id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: memory(n, body),
                 enqueue: true,
                 findings: Box::default(),
@@ -9193,6 +9211,7 @@ pub async fn a_commit_past_its_ceiling_writes_nothing_and_the_usage_read_is_the_
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": third.memory_id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: third.clone(),
                 enqueue: true,
                 findings: Box::default(),
@@ -9236,6 +9255,7 @@ pub async fn a_commit_past_its_ceiling_writes_nothing_and_the_usage_read_is_the_
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": third.memory_id.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory: third,
             enqueue: true,
             findings: Box::default(),
@@ -9252,6 +9272,7 @@ pub async fn a_commit_past_its_ceiling_writes_nothing_and_the_usage_read_is_the_
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": long.memory_id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: long,
                 enqueue: true,
                 findings: Box::default(),
@@ -9327,6 +9348,7 @@ pub async fn a_versions_write_is_counted_on_the_day_its_row_was_stored<S: Journa
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": memory.memory_id.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory,
             enqueue: true,
             findings: Box::default(),
@@ -9437,6 +9459,7 @@ pub async fn a_claim_captured_under_a_released_key_counts_on_the_account_that_st
                 event_types::SUBMISSION_REMEMBER,
                 json!({ "artifact_id": memory.memory_id.to_string() }),
                 MetadataFold::MemoryHeld {
+                    imported: None,
                     memory: memory.clone(),
                     enqueue: true,
                     findings: Box::default(),
@@ -9523,6 +9546,7 @@ pub async fn a_commit_under_a_recorded_idempotency_key_moves_no_meter_and_is_ref
         },
     };
     let held = |memory: MemoryRecord| MetadataFold::MemoryHeld {
+        imported: None,
         memory,
         enqueue: true,
         findings: Box::default(),

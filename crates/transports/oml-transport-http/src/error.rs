@@ -461,6 +461,123 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "after_seq {after_seq} is beyond head_seq {head_seq}: pass back a next_after_seq this tail served"
         )),
         AppError::NotFound => ApiError::not_found(),
+        AppError::Upload(refusal) => upload_error(&refusal),
+        AppError::Bundle(refusal) => bundle_error(&refusal),
+        AppError::ImportTargetNotInProgress { workspace_id } => ApiError::new(
+            StatusCode::CONFLICT,
+            "import.target_not_in_progress",
+            "An import lands in a development workspace in progress, or a new name it creates in progress, and every version it writes is held (ADR-0084 d6).",
+            "the import target is not a development workspace in progress",
+        )
+        .with_details(json!({ "workspace_id": workspace_id.to_string() })),
+        AppError::ImportPersonOnly { role, used_by } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "R1: the surface an agent can call never imports; a person's writer key imports (ADR-0084 d11).",
+            format!(
+                "an import needs a writer key used by a person, and this is a {} key used by {}",
+                role.as_str(),
+                used_by.as_str()
+            ),
+        )
+        .with_details(json!({
+            "verb": "import",
+            "role": role.as_str(),
+            "used_by": used_by.as_str(),
+            "reason": "import_person_only",
+        })),
+        AppError::ImportExpectKeyRequired => ApiError::validation(
+            "a first import from a source names the source key's fingerprint in expect_key, which the target then pins (ADR-0084 R11)",
+        )
+        .with_details(json!({ "field": "/expect_key", "reason": "first_import" })),
+        AppError::ImportOverQuota(reached) => ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "import.over_quota",
+            "An import's whole plan fits the target account's meters, or nothing is written (ADR-0084 d7).",
+            format!(
+                "the import does not fit the {} quota of {}",
+                reached.quota.as_str(),
+                reached.limit
+            ),
+        )
+        .with_details(json!({
+            "quota": reached.quota.as_str(),
+            "limit": reached.limit,
+            "used": reached.used,
+        })),
+        AppError::ImportBusy => ApiError::new(
+            StatusCode::CONFLICT,
+            "import.busy",
+            "An import holds its bundle in memory, so a tenant runs one import or dry run at a time and the server a bounded number (ADR-0084 I13).",
+            "an import or dry run of this tenant's is running, or the server runs its bound of them; retry when it ends",
+        )
+        .retryable(),
+        AppError::ExportBusy => ApiError::new(
+            StatusCode::CONFLICT,
+            "export.busy",
+            "An export builds its bundle in memory, so a tenant runs one export at a time (ADR-0084 I13).",
+            "an export of this tenant's is running; retry when it ends",
+        )
+        .retryable(),
+        AppError::ExportTooLarge { max_bytes } => ApiError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "export.too_large",
+            "A bundle is at most uploads.max_bytes, the most an import on any server of this build takes (ADR-0084 I13).",
+            format!("the bundle would be larger than {max_bytes} bytes; export a smaller subtree"),
+        )
+        .with_details(json!({ "max_bytes": max_bytes })),
+        AppError::ExportPersonOnly { role, used_by } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "A workspace export is a person's act: no agent, admin or service key exports (ADR-0084 d10).",
+            format!(
+                "exporting a workspace needs a key used by a person, and this is a {} key used by {}",
+                role.as_str(),
+                used_by.as_str()
+            ),
+        )
+        .with_details(json!({
+            "reason": "export_person_only",
+            "role": role.as_str(),
+            "used_by": used_by.as_str(),
+        })),
+        AppError::ExportDisabled { reason } => {
+            let error = ApiError::new(
+                StatusCode::FORBIDDEN,
+                "export.disabled",
+                "The tenant's export policy decides what may leave the server (ADR-0084 d10).",
+                match reason {
+                    Some(_) => "the tenant's export policy is own_root, this workspace lies outside the exporter's own root, and no admin allowance is in force",
+                    None => "the tenant's export policy is off",
+                },
+            );
+            match reason {
+                Some(reason) => error.with_details(json!({ "reason": reason })),
+                None => error.with_details(json!({ "reason": "off" })),
+            }
+        }
+        AppError::ExportNotReadable => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "export.not_readable",
+            "An export carries a whole subtree, so a node the exporter cannot read refuses all of it (ADR-0084 d10).",
+            "a workspace of the subtree is not readable by this key",
+        ),
+        AppError::BundleUnencrypted { detail } => ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bundle.unencrypted",
+            "A bundle is always encrypted to at least one named age recipient (ADR-0084 d5).",
+            detail,
+        )
+        .with_details(json!({ "field": "/recipients" })),
+        AppError::ExportModeRefused { field, reason } => ApiError::validation(format!(
+            "{field} cannot be taken: {}",
+            if reason == "releases_unbuilt" {
+                "releases are not built, so an export is history mode only"
+            } else {
+                reason
+            }
+        ))
+        .with_details(json!({ "field": format!("/{field}"), "reason": reason })),
         AppError::LineageUnknown(id) => ApiError::not_found().with_details(json!({
             // derives_from targets fail closed as absence, like CURIE
             // citations (errors.md vocab.unknown_curie rationale).
@@ -1619,6 +1736,141 @@ mod claim_edge_tests {
                 assert!(!wire.retryable, "{label}: a refusal is not retryable");
                 assert_eq!(wire.details, details, "{label}");
             }
+        }
+    }
+}
+
+/// The ten upload refusals (ADR-0004 d3, as amended 2026-11-17): each its
+/// own code, status and rule; nothing is journalled for any of them.
+#[must_use]
+pub fn upload_error(refusal: &oml_app::domain::upload::UploadRefusal) -> ApiError {
+    use oml_app::domain::upload::UploadRefusal as R;
+    const RULE: &str = "An upload is the opening key's alone, verified at completion and never journalled (ADR-0004 d3).";
+    let status = match refusal {
+        R::SessionInvalid { .. }
+        | R::Incomplete { .. }
+        | R::SessionLimit { .. }
+        | R::TenantLimit { .. } => StatusCode::CONFLICT,
+        R::DigestMismatch | R::PartSize { .. } | R::PartNumber { .. } => {
+            StatusCode::UNPROCESSABLE_ENTITY
+        }
+        R::Expired => StatusCode::GONE,
+        R::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+        R::StorageFailed => StatusCode::SERVICE_UNAVAILABLE,
+    };
+    let details = match refusal {
+        R::SessionInvalid { state } => Some(json!({ "state": state.as_str() })),
+        R::TooLarge { max_bytes } | R::TenantLimit { max_bytes } => {
+            Some(json!({ "max_bytes": max_bytes }))
+        }
+        R::PartSize { expected, got } => Some(json!({ "expected": expected, "got": got })),
+        R::PartNumber { parts } => Some(json!({ "parts": parts })),
+        R::Incomplete { missing } => Some(json!({ "missing": missing })),
+        R::SessionLimit { limit } => Some(json!({ "limit": limit })),
+        R::DigestMismatch | R::Expired | R::StorageFailed => None,
+    };
+    let error = ApiError::new(status, refusal.code(), RULE, refusal.to_string());
+    let error = match details {
+        Some(details) => error.with_details(details),
+        None => error,
+    };
+    if matches!(refusal, R::StorageFailed) {
+        error.retry_after(1)
+    } else {
+        error
+    }
+}
+
+/// A bundle or plan refusal under its own code (ADR-0084 d7, d8, R6, R11,
+/// R16): `bundle.too_large` is 413, the plan's three `import.*` refusals
+/// are 409, and every other bundle code is 422. The message names a file,
+/// line or field, never content.
+#[must_use]
+pub fn bundle_error(refusal: &oml_app::bundle::BundleError) -> ApiError {
+    const RULE: &str = "An import verifies the whole bundle before it writes, and each check refuses under its own code (ADR-0084 d7).";
+    let code = refusal.code();
+    let status = match code {
+        "bundle.too_large" => StatusCode::PAYLOAD_TOO_LARGE,
+        // The export's code, a request the caller fixes (errors.md).
+        "bundle.unencrypted" => StatusCode::BAD_REQUEST,
+        "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" => {
+            StatusCode::CONFLICT
+        }
+        _ => StatusCode::UNPROCESSABLE_ENTITY,
+    };
+    ApiError::new(status, code, RULE, refusal.to_string())
+}
+
+#[cfg(test)]
+mod bundle_refusals {
+    use super::*;
+    use oml_app::bundle::BundleError as B;
+
+    /// Every refusal of ADR-0084 d7, d8 and R11 reaches the import route
+    /// under its own code, with the status errors.md gives it.
+    #[test]
+    fn every_bundle_and_plan_refusal_reaches_the_import_route_under_its_code() {
+        let s = || "x".to_owned();
+        let cases = [
+            (B::FormatUnknown { found: s() }, 422),
+            (B::Layout { detail: s() }, 422),
+            (
+                B::PathUnsafe {
+                    path: s(),
+                    detail: s(),
+                },
+                422,
+            ),
+            (B::TooLarge { detail: s() }, 413),
+            (B::LineTooLong { file: s(), line: 1 }, 422),
+            (B::Depth { file: s(), line: 1 }, 422),
+            (B::Duplicate { detail: s() }, 422),
+            (B::UnreferencedBody { path: s() }, 422),
+            (
+                B::Malformed {
+                    file: s(),
+                    line: 1,
+                    reason: s(),
+                },
+                422,
+            ),
+            (B::DigestMismatch { detail: s() }, 422),
+            (B::SignatureInvalid { detail: s() }, 422),
+            (
+                B::SignatureUnexpected {
+                    found: s(),
+                    expected: s(),
+                },
+                422,
+            ),
+            (B::Unencrypted { detail: s() }, 400),
+            (B::DecryptFailed { detail: s() }, 422),
+            (
+                B::BundleOlder {
+                    exported_at: s(),
+                    ledger_at: s(),
+                },
+                409,
+            ),
+            (B::SinceMismatch { detail: s() }, 409),
+            (B::SourceKeyChanged { detail: s() }, 409),
+            (B::Io { detail: s() }, 422),
+        ];
+        let mut codes = std::collections::BTreeSet::new();
+        for (refusal, status) in cases {
+            let code = refusal.code();
+            let error = map_app_error(AppError::Bundle(refusal), ErrorContext::Write);
+            assert_eq!(error.code, code);
+            assert_eq!(error.status.as_u16(), status, "{code}");
+            codes.insert(code);
+        }
+        assert_eq!(codes.len(), 18, "each refusal has its own code");
+        let errors_md = include_str!("../../../../docs/api/errors.md");
+        for code in &codes {
+            assert!(
+                errors_md.contains(&format!("| `{code}` |")),
+                "{code} has a row on errors.md"
+            );
         }
     }
 }

@@ -125,7 +125,15 @@ export class LifecycleError extends ApiError {
 export class LimitError extends ApiError {
   override name = "LimitError";
 }
-/** `export`: evidence export jobs. */
+/** `bundle`: a workspace bundle that cannot be written or read (ADR-0084). */
+export class BundleError extends ApiError {
+  override name = "BundleError";
+}
+/** `import`: a bundle import the target or its ledger refuses (ADR-0084; named as the Python SDK names it). */
+export class WorkspaceImportError extends ApiError {
+  override name = "WorkspaceImportError";
+}
+/** `export`: workspace exports the policy or the key's reads refuse. */
 export class ExportError extends ApiError {
   override name = "ExportError";
 }
@@ -154,6 +162,8 @@ export const FAMILIES: Readonly<Record<string, typeof ApiError>> = Object.freeze
   memory: MemoryStateError,
   lifecycle: LifecycleError,
   limit: LimitError,
+  bundle: BundleError,
+  import: WorkspaceImportError,
   export: ExportError,
   settings: SettingsError,
   system: ServerError,

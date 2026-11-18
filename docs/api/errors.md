@@ -71,7 +71,7 @@ A key's role, grants and denials decide these. Reads fail closed as absence.
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `access.verb_ceiling` | 403 | The key's role never calls this verb, whatever its grants. Examples: an agent key calling an admin verb, an admin key posting a verdict or calling recall (it reads memory text only through the journaled [admin read](../architecture/roles-and-keys.md#the-admin-read)), a `used_by: service` key reviewing, any web-page request carrying an `Authorization` header. `details.reason` `session_key_only`: a person's own act (listing their keys, ending their session, the export, the deletion request) sent by any key but their web session key, an agent's key naming them included. `details.reason` `session_capacity`: a key operation sent as a person's session key of another capacity than the one it serves, such as `POST /v2/keys` as `<user>-admin`. `details.reason` `session_key_denied`: `POST /v2/keys`, `POST /v2/keys/{key}/connect-codes` or `POST /v2/keys/{key}/denials` sent as a person's session key that carries a denial, on any workspace; such a key issues no key, mints no connect code and cuts off no key, and still ends its session. `details.reason` `federation_is_person_only`: a workspace's federation field set by a key other than a person's reviewer key or an admin key. |
+| `access.verb_ceiling` | 403 | The key's role never calls this verb, whatever its grants. Examples: an agent key calling an admin verb, an admin key posting a verdict or calling recall (it reads memory text only through the journaled [admin read](../architecture/roles-and-keys.md#the-admin-read)), a `used_by: service` key reviewing, any web-page request carrying an `Authorization` header. `details.reason` `session_key_only`: a person's own act (listing their keys, ending their session, the export, the deletion request) sent by any key but their web session key, an agent's key naming them included. `details.reason` `session_capacity`: a key operation sent as a person's session key of another capacity than the one it serves, such as `POST /v2/keys` as `<user>-admin`. `details.reason` `session_key_denied`: `POST /v2/keys`, `POST /v2/keys/{key}/connect-codes` or `POST /v2/keys/{key}/denials` sent as a person's session key that carries a denial, on any workspace; such a key issues no key, mints no connect code and cuts off no key, and still ends its session. `details.reason` `federation_is_person_only`: a workspace's federation field set by a key other than a person's reviewer key or an admin key. `details.reason` `export_person_only`: a workspace export sent by an agent, admin or service key; only a key used by a person exports ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d10). |
 | `access.grant_refused` | 403 | The key can read the workspace, but its effective access does not confer the verb's role there. `details`: `workspace_id`, `needed_role`. |
 | `access.not_found` | 404 | The thing does not exist, or is outside the key's read scope. The two cases look the same. Also answers a name that resolves to nothing the key may see. |
 | `access.author_only` | 403 | A writer key tried to supersede a version it did not author, or a key tried to withdraw a version it did not author that it can read: only the author key, or a session key of the author's person, withdraws one. |
@@ -171,14 +171,49 @@ Refusals from vocabulary workspaces and their terms.
 | `vocab.unknown_curie` | 422 | A cited term does not exist or is not readable by the key. |
 | `vocab.inactive_curie` | 422 | A cited term is deprecated. `details.successors` and `details.relation` name the replacement. |
 
-## `upload` — attachment sessions
+## `upload` — upload sessions
 
-Reserved. This build serves no attachment uploads.
+The routes under `/v2/uploads` ([ADR-0004](../adr/ADR-0004-bodies-and-attachments.md) d3, as amended 2026-11-17). Nothing is journalled for any of them, and each is counted by code on the `uploads` line of `oml doctor`. A session another key opened answers `access.not_found`.
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `upload.session_invalid` | 409 | Reserved. |
-| `upload.digest_mismatch` | 422 | Reserved. |
+| `upload.session_invalid` | 409 | The session's state does not allow the act: a part or a completion on a session that is not open, or an abandonment of a bound one. `details.state` names the state. |
+| `upload.digest_mismatch` | 422 | The completed parts' SHA-256 is not the one the session declared. The session fails, its key is nulled and its parts are removed; open another. |
+| `upload.expired` | 410 | The session is past its expiry: 24 hours after its last part, 72 hours after it opened, or 24 hours after an unbound completion. Open another. |
+| `upload.too_large` | 413 | The declared size is over `uploads.max_bytes`. `details.max_bytes`. |
+| `upload.part_size` | 422 | A part's length is not 8,388,608 bytes, or the remainder for the last part. `details.expected`, `details.got`. |
+| `upload.part_number` | 422 | The part number is outside 1 to the session's part count. `details.parts`. |
+| `upload.incomplete` | 409 | A completion with parts missing. `details.missing` lists the first 100; send them and complete again. |
+| `upload.session_limit` | 409 | The key holds 4 sessions that are open, or completed and unbound. `details.limit`. Complete and use one, abandon one, or wait for one to expire. |
+| `upload.tenant_limit` | 409 | The tenant's open and unbound sessions would declare more than `uploads.tenant_max_bytes`. `details.max_bytes`. |
+| `upload.storage_failed` | 503 | The object store at `storage.url` failed a read or a write, or the server has none; nothing changed state. Retryable, with `Retry-After`. |
+
+## `bundle` and `import` — workspace imports
+
+`POST /v2/imports` ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d6-d11, R6, R11, R16). The server verifies the whole bundle before it writes, and `oml workspaces import` runs the same `bundle.*` checks before it uploads. No refusal journals anything, and each is counted by code on the `imports` line of `oml doctor`. A message names a file, line or field, never content. A first import from a source without `expect_key` is `request.validation` with `details.field` `/expect_key` and `details.reason` `first_import`; a key other than a person's writer key is `access.verb_ceiling` with `details.reason` `import_person_only`.
+
+| Code | HTTP | Fires when |
+|---|---|---|
+| `bundle.format_unknown` | 422 | The manifest names a format other than `oml-bundle/1`. |
+| `bundle.layout` | 422 | An entry outside the fixed layout, out of order, or missing. |
+| `bundle.path_unsafe` | 422 | An entry path with `..`, an absolute path, a symlink or a hard link. |
+| `bundle.too_large` | 413 | The unpacked size, the entry count or one entry is over its limit; the server's total is `uploads.max_bytes`. |
+| `bundle.line_too_long` | 422 | A line over 2 MiB. |
+| `bundle.depth` | 422 | JSON nested deeper than 32. |
+| `bundle.duplicate` | 422 | A duplicate artifact id and version, or a duplicate body. |
+| `bundle.unreferenced_body` | 422 | A body no line references. |
+| `bundle.malformed` | 422 | A line that does not parse or breaks the closed schema; the message names the file, line and field. |
+| `bundle.digest_mismatch` | 422 | A file, body or version whose digest is not the one stated. |
+| `bundle.signature_invalid` | 422 | The manifest or a source event does not verify, or the manifest names a tenant other than `expect_tenant`. |
+| `bundle.signature_unexpected` | 422 | The manifest verifies under a key other than `expect_key`. |
+| `bundle.decrypt_failed` | 422 | The CLI's identity is not a recipient, or the ciphertext does not authenticate. The server never sees one. |
+| `bundle.io` | 422 | The bundle could not be read. |
+| `import.target_not_in_progress` | 409 | The target is not a development workspace in progress, nor a new name the import creates in progress. `details.workspace_id`. |
+| `import.over_quota` | 429 | The whole plan does not fit the account's meters; nothing is written. `details: {quota, limit, used}`. |
+| `import.bundle_older` | 409 | The bundle is older than the last one imported from its source into this target, and `allow_older` is not set. |
+| `import.since_mismatch` | 409 | An incremental bundle's base is not the release last imported from its source. |
+| `import.source_key_changed` | 409 | The target pins another key for this source, or the bundle names no `expect_key` over an existing pin. Import into a new workspace if the source rotated its key. |
+| `import.busy` | 409 | The tenant runs an import or a dry run already, or the server runs two. Nothing is read or written. Retryable. |
 
 ## `memory` — a version's own state
 
@@ -199,12 +234,24 @@ Reserved. This build serves no attachment uploads.
 | `limit.rate` | 429 | Unused OAuth client registrations passed 10,000, or a read's `feedback` would pass 1,000 labels in a UTC day. A key past its requests per minute is `limit.rate` with `details: {quota: "requests_per_minute", limit}`, whether the rate is its account's quota or the key's own ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) d4); sign-ups from one client address past the hour's limit are `limit.rate` too ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d5, d9). Retryable, with `Retry-After`. |
 | `limit.quota` | 429 | A person of the sign-up tenant is past a quota of memories, keys or connections, with `details: {quota, limit, used}`. Nothing is journaled, and an admin raises the limit on `/web/admin/users` ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d5). Any account on a quota profile past `memories`, `text_bytes`, `writes_per_month`, `keys` or `connections` is refused by the write's own commit, so two writers at the limit never both pass ([ADR-0071](../adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d3, d5). |
 
-## `export` and `settings`
-
-Reserved. This build serves neither an evidence export nor a settings apply.
+## `bundle` — workspace bundles
 
 | Code | HTTP | Fires when |
 |---|---|---|
+| `bundle.unencrypted` | 400 | An export names no recipient, or a recipient that is not an age X25519 public key (`age1…`). It is checked before anything is read. `details.field` is `/recipients`. A bundle is always encrypted ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d5). |
+
+The reader's other `bundle.*` codes are the [bundle format](../data/bundle-format.md#refusals)'s; the CLI names them when it verifies a bundle.
+
+## `export` and `settings`
+
+This build serves a workspace export in `history` mode and no settings apply. An export refused for `mode`, `release` or `since` is `request.validation` with `details.reason` `releases_unbuilt` until releases are built.
+
+| Code | HTTP | Fires when |
+|---|---|---|
+| `export.disabled` | 403 | The tenant's export policy refuses the export. `details.reason` `off`: the policy is `off`. `details.reason` `own_root`: the policy is `own_root` (the default), the workspace lies outside the exporter's own root, and no admin allowance is in force ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d10). |
+| `export.not_readable` | 403 | A workspace of the exported subtree is one the exporting key cannot read. The whole export is refused; a workspace the key cannot read at all is `access.not_found`. |
+| `export.busy` | 409 | The tenant runs an export already. Nothing is read. Retryable. |
+| `export.too_large` | 413 | The bundle would be larger than `uploads.max_bytes`, the most an import takes. Nothing is journalled or metered. `details.max_bytes`. Export a smaller subtree. |
 | `export.not_ready` | 409 | Reserved. |
 | `settings.retired_key` | 422 | Reserved. |
 | `settings.invalid` | 422 | Reserved. |
@@ -222,17 +269,17 @@ Review unavailability is not an API error. When no reviewer can approve, writes 
 
 | HTTP | Codes |
 |---|---|
-| 400 | `oauth.client_invalid`, `oauth.redirect_refused`, `oauth.pkce_required`, `oauth.resource_mismatch`, `oauth.authorization_expired`, `oauth.connect_code_invalid`, `oauth.authorization_code_invalid`, `oauth.refresh_invalid`, `request.validation`, `request.idempotency_key_required` |
+| 400 | `bundle.unencrypted`, `oauth.client_invalid`, `oauth.redirect_refused`, `oauth.pkce_required`, `oauth.resource_mismatch`, `oauth.authorization_expired`, `oauth.connect_code_invalid`, `oauth.authorization_code_invalid`, `oauth.refresh_invalid`, `request.validation`, `request.idempotency_key_required` |
 | 401 | `auth.missing`, `auth.invalid` |
-| 403 | `oauth.origin_refused`, `oauth.attach_refused`, `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.person_required`, `review.ratifier_is_proposer`, `simulation.audience_refused` |
+| 403 | `oauth.origin_refused`, `oauth.attach_refused`, `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.person_required`, `review.ratifier_is_proposer`, `simulation.audience_refused`, `export.disabled`, `export.not_readable` |
 | 404 | `access.not_found` |
-| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `submission.user_root_refused`, `name.taken`, `workspace.frozen`, `workspace.transition_refused`, `workspace.in_progress_refused`, `workspace.held_remaining`, `workspace.admin_key_under_root`, `review.serve_invalid`, `memory.not_held`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `export.not_ready` |
-| 410 | `lifecycle.erased` |
-| 413 | `request.payload_too_large` |
+| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `submission.user_root_refused`, `name.taken`, `workspace.frozen`, `workspace.transition_refused`, `workspace.in_progress_refused`, `workspace.held_remaining`, `workspace.admin_key_under_root`, `review.serve_invalid`, `memory.not_held`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `upload.incomplete`, `upload.session_limit`, `upload.tenant_limit`, `export.not_ready`, `import.target_not_in_progress`, `import.bundle_older`, `import.since_mismatch`, `import.source_key_changed`, `import.busy`, `export.busy` |
+| 410 | `lifecycle.erased`, `upload.expired` |
+| 413 | `request.payload_too_large`, `upload.too_large`, `bundle.too_large`, `export.too_large` |
 | 415 | `request.unsupported_media` |
-| 422 | `oauth.connect_refused`, `request.workspace_unresolved`, `submission.scan_veto`, `submission.format_invalid`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
-| 429 | `limit.rate`, `limit.quota` |
+| 422 | `oauth.connect_refused`, `request.workspace_unresolved`, `submission.scan_veto`, `submission.format_invalid`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `upload.part_size`, `upload.part_number`, `settings.retired_key`, `settings.invalid`, `bundle.format_unknown`, `bundle.layout`, `bundle.path_unsafe`, `bundle.line_too_long`, `bundle.depth`, `bundle.duplicate`, `bundle.unreferenced_body`, `bundle.malformed`, `bundle.digest_mismatch`, `bundle.signature_invalid`, `bundle.signature_unexpected`, `bundle.decrypt_failed`, `bundle.io` |
+| 429 | `limit.rate`, `limit.quota`, `import.over_quota` |
 | 500 | `system.internal` |
-| 503 | `system.unavailable` |
+| 503 | `system.unavailable`, `upload.storage_failed` |
 
 `oauth.client_invalid` is also a 401, at `POST /oauth/token`, for a request that sent an `Authorization` header.

@@ -604,11 +604,69 @@ enum WorkspacesCommand {
         #[command(subcommand)]
         command: WorkspaceCrewCommand,
     },
+    /// Export a workspace's subtree as a signed bundle encrypted to named age
+    /// recipients, written to a new owner-only file. A person's key only;
+    /// journals workspace.exported.
+    Export {
+        /// Workspace id or name.
+        workspace: String,
+        /// An age X25519 public key (`age1…`) to encrypt to; repeat for more.
+        /// At least one: a bundle is never written unencrypted.
+        #[arg(long = "recipient", value_name = "AGE")]
+        recipients: Vec<String>,
+        /// The new file to write; an existing file is never overwritten.
+        #[arg(long)]
+        out: PathBuf,
+        /// History mode: every version ever promoted and the key's own drafts.
+        /// The default in a person's own root.
+        #[arg(long, conflicts_with_all = ["release", "since"])]
+        history: bool,
+        /// Release mode, one published release (refused until releases are built).
+        #[arg(long)]
+        release: Option<String>,
+        /// The difference since a base release (refused until releases are built).
+        #[arg(long)]
+        since: Option<String>,
+    },
     /// Move through development, protected and frozen; each step needs
     /// proposal and ratification by different keys.
     Status {
         #[command(subcommand)]
         command: WorkspaceStatusCommand,
+    },
+    /// Import an encrypted bundle into an in-progress workspace, or a new
+    /// name created in progress. The bundle is decrypted here, twice, and
+    /// verified before upload; nothing decrypted is written to disk. Every
+    /// version lands held by this key. A writer key used by a person only.
+    Import {
+        /// The encrypted bundle (`.oml-bundle`).
+        file: std::path::PathBuf,
+        /// Target workspace, by id or name; an absent name is created.
+        #[arg(long)]
+        into: String,
+        /// A file holding the age identity the bundle is encrypted to.
+        #[arg(long)]
+        identity: std::path::PathBuf,
+        /// The source key's fingerprint, checked out of band; required on
+        /// the first import from a source, which pins it. A target name
+        /// that does not exist yet is refused without it before anything is
+        /// uploaded; for an existing target only the server knows whether it
+        /// pins this source, so the import request answers.
+        #[arg(long)]
+        expect_key: Option<String>,
+        /// The source tenant id the bundle must name.
+        #[arg(long)]
+        expect_tenant: Option<String>,
+        /// Print the plan and write nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Admit a bundle older than the last one imported from its source.
+        #[arg(long)]
+        allow_older: bool,
+        /// A completed upload of this bundle, as a dry run names it, imported
+        /// without sending the bundle again.
+        #[arg(long)]
+        upload: Option<String>,
     },
 }
 
@@ -1883,6 +1941,33 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: WorkspacesCommand::Status { command },
         } => run_workspace_status(cli, &stored, command),
 
+        Command::Workspaces {
+            command:
+                WorkspacesCommand::Import {
+                    file,
+                    into,
+                    identity,
+                    expect_key,
+                    expect_tenant,
+                    dry_run,
+                    allow_older,
+                    upload,
+                },
+        } => run_workspaces_import(
+            cli,
+            &stored,
+            &ImportArgs {
+                file,
+                into,
+                identity,
+                expect_key: expect_key.as_deref(),
+                expect_tenant: expect_tenant.as_deref(),
+                dry_run: *dry_run,
+                allow_older: *allow_older,
+                upload: upload.as_deref(),
+            },
+        ),
+
         Command::Edges { command } => run_edges(cli, &stored, command),
 
         Command::Workspaces {
@@ -1999,6 +2084,59 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                         field(&response, "name")
                     );
                 }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Workspaces {
+            command:
+                WorkspacesCommand::Export {
+                    workspace,
+                    recipients,
+                    out,
+                    history,
+                    release,
+                    since,
+                },
+        } => {
+            // A bundle is never written unencrypted (ADR-0084 d5): refused
+            // here before anything is sent or created.
+            if recipients.is_empty() {
+                return Err(CliError::local(
+                    "bundle.unencrypted: name at least one --recipient <age1…>; a bundle is never \
+                     written unencrypted; nothing was sent",
+                ));
+            }
+            let client = resolve(cli, &stored)?;
+            let path = format!("/v2/workspaces/{}/exports", segment(workspace)?);
+            let mut body = json!({ "recipients": recipients });
+            if *history {
+                body["mode"] = json!("history");
+            }
+            if let Some(release) = release {
+                body["mode"] = json!("release");
+                body["release"] = json!(release);
+            }
+            if let Some(since) = since {
+                body["since"] = json!(since);
+            }
+            let (bytes, digest) = oml_cli::export::download(&client, &path, &body, out)?;
+            if cli.json {
+                print_json(&json!({
+                    "out": out.display().to_string(),
+                    "bytes": bytes,
+                    "manifest_digest": digest,
+                }));
+            } else {
+                println!(
+                    "wrote {} ({bytes} bytes, owner-only), manifest {}",
+                    out.display(),
+                    digest.as_deref().unwrap_or("unknown"),
+                );
+                println!(
+                    "the file is outside every server's erasure: whoever holds it and a \
+                     recipient's identity reads it"
+                );
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -2958,6 +3096,221 @@ fn run_events(cli: &Cli, stored: &Credentials, args: &EventsArgs) -> Result<Exit
         );
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The arguments of `oml workspaces import`.
+struct ImportArgs<'a> {
+    file: &'a std::path::Path,
+    into: &'a str,
+    identity: &'a std::path::Path,
+    expect_key: Option<&'a str>,
+    expect_tenant: Option<&'a str>,
+    dry_run: bool,
+    allow_older: bool,
+    upload: Option<&'a str>,
+}
+
+/// `oml workspaces import` (ADR-0084 d5, d7, d15, I10): pass 1 decrypts and
+/// verifies the bundle here; pass 2 decrypts it again into the parts of one
+/// upload session, unless `--upload` names a dry run's completed one; then
+/// `POST /v2/imports` plans the import, or starts it and the CLI reads its
+/// state until it ends. A session this run opened is abandoned on every
+/// failure before the import takes it. No decrypted byte is written to
+/// disk, and the identity is never printed and is zeroed after use.
+fn run_workspaces_import(
+    cli: &Cli,
+    stored: &Credentials,
+    args: &ImportArgs<'_>,
+) -> Result<ExitCode, CliError> {
+    use oml_cli::import::{LONG_TIMEOUT, POLL_EVERY, identity_of, refusal_hint, verify_pass};
+    use zeroize::Zeroizing;
+    #[cfg(unix)]
+    if let Ok(meta) = std::fs::metadata(args.identity) {
+        use std::os::unix::fs::PermissionsExt as _;
+        if let Some(warning) = oml_cli::import::identity_mode_warning(meta.permissions().mode()) {
+            eprintln!("{warning}");
+        }
+    }
+    let identity_text = Zeroizing::new(
+        std::fs::read_to_string(args.identity)
+            .map_err(|e| CliError::local(format!("reading the identity file: {}", e.kind())))?,
+    );
+    let identity = Zeroizing::new(identity_of(&identity_text)?);
+    drop(identity_text);
+    let open = || {
+        std::fs::File::open(args.file)
+            .map(std::io::BufReader::new)
+            .map_err(|e| CliError::local(format!("opening the bundle: {}", e.kind())))
+    };
+    let options = oml_bundle::VerifyOptions {
+        expect_key: args.expect_key.map(str::to_owned),
+        expect_tenant: args.expect_tenant.map(str::to_owned),
+        ..oml_bundle::VerifyOptions::default()
+    };
+    // Pass 1: the CLI side of d7, before anything is sent.
+    let verified =
+        verify_pass(open()?, &identity, &options).map_err(|e| CliError::local(e.to_string()))?;
+    let client = resolve(cli, stored)?;
+    // R11: a target that does not exist yet holds no ledger, so this is a
+    // first import, which pins the source's key and needs --expect-key.
+    // An existing target may or may not hold one for this source, which only
+    // the server reads, so it answers there.
+    if args.expect_key.is_none()
+        && !args.dry_run
+        && let Err(CliError::Refused { status: 404, .. }) =
+            client.get(&format!("/v2/workspaces/{}", segment(args.into)?))
+    {
+        return Err(CliError::local(format!(
+            "{} does not exist yet, or this key cannot read it, so this is a first import from this source, which pins its key: check the source's key fingerprint out of band, then run again with --expect-key {} if it matches; nothing was uploaded",
+            args.into, verified.signer_fingerprint
+        )));
+    }
+    let slow = client.lasting(LONG_TIMEOUT);
+    let (upload_id, opened) = match args.upload {
+        Some(id) => (id.to_owned(), false),
+        None => {
+            let (_, session) = client.post(
+                "/v2/uploads",
+                &json!({ "purpose": "import", "size": verified.size, "sha256": verified.sha256 }),
+                &CallOpts {
+                    auth: true,
+                    idempotency: false,
+                },
+            )?;
+            let id = field(&session, "upload_id").to_owned();
+            if let Err(e) = send_import_upload(&slow, &id, &identity, &open, &verified) {
+                abandon_upload(&client, &id);
+                return Err(e);
+            }
+            (id, true)
+        }
+    };
+    drop(identity);
+    let answer = slow.post(
+        "/v2/imports",
+        &json!({
+            "upload_id": upload_id,
+            "target": args.into,
+            "dry_run": args.dry_run,
+            "allow_older": args.allow_older,
+            "expect_key": args.expect_key,
+            "expect_tenant": args.expect_tenant,
+        }),
+        &CallOpts {
+            auth: true,
+            idempotency: false,
+        },
+    );
+    if let Err(CliError::Refused {
+        ref code,
+        ref envelope,
+        ..
+    }) = answer
+        && let Some(hint) = refusal_hint(
+            code,
+            envelope["error"]["details"]["field"].as_str(),
+            &verified.signer_fingerprint,
+        )
+    {
+        eprintln!("{hint}");
+    }
+    let mut response = match answer {
+        Ok((_, response)) => response,
+        Err(e) => {
+            if opened {
+                abandon_upload(&client, &upload_id);
+            }
+            return Err(e);
+        }
+    };
+    if response.get("plan").is_none() {
+        // I10: the import runs after its request answered; read it until it
+        // ends.
+        while response["import"]["state"] == "running" {
+            std::thread::sleep(POLL_EVERY);
+            let id = segment(field(&response["import"], "import_id"))?;
+            response = client.get(&format!("/v2/imports/{id}"))?.1;
+        }
+    }
+    let failed = response["import"]["state"] == "failed";
+    if cli.json {
+        print_json(&response);
+    } else if let Some(plan) = response.get("plan") {
+        println!(
+            "plan (nothing written): {} from {} exported {}; signature {}",
+            plan["counts"],
+            plan["source"]["tenant_name"].as_str().unwrap_or(""),
+            plan["exported_at"].as_str().unwrap_or(""),
+            if plan["authenticated"].as_bool() == Some(true) {
+                "authenticated against --expect-key"
+            } else {
+                "intact, not authenticated"
+            },
+        );
+        println!(
+            "upload {upload_id} kept: run again with --upload {upload_id} to import it without sending it again"
+        );
+    } else {
+        let import = &response["import"];
+        println!(
+            "import {} {}: {} held for review; {} refused",
+            field(import, "import_id"),
+            field(import, "state"),
+            import["counts"],
+            import["refusals"].as_array().map_or(0, Vec::len),
+        );
+    }
+    Ok(if failed {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+/// Pass 2 into the session `upload_id`, then its completion: decrypts
+/// again and sends each part as it is read, and refuses a bundle that
+/// changed since pass 1.
+fn send_import_upload<R: std::io::Read>(
+    slow: &Client,
+    upload_id: &str,
+    identity: &str,
+    open: &dyn Fn() -> Result<R, CliError>,
+    verified: &oml_cli::import::Verified,
+) -> Result<(), CliError> {
+    use oml_cli::import::{PART_SIZE, upload_pass};
+    let parts_path = format!("/v2/uploads/{}/parts", segment(upload_id)?);
+    let (size, sha256) = upload_pass(open()?, identity, PART_SIZE, &mut |n, bytes| {
+        slow.put_bytes(&format!("{parts_path}/{n}"), bytes)
+            .map(|_| ())
+    })?;
+    if (size, sha256.as_str()) != (verified.size, verified.sha256.as_str()) {
+        return Err(CliError::local(
+            "the bundle changed between the two passes; nothing was imported",
+        ));
+    }
+    slow.post(
+        &format!("/v2/uploads/{}/complete", segment(upload_id)?),
+        &json!({}),
+        &CallOpts {
+            auth: true,
+            idempotency: false,
+        },
+    )?;
+    Ok(())
+}
+
+/// Abandons the upload session this run opened (`DELETE /v2/uploads/{id}`),
+/// so a failed import leaves no staged parts behind until the sweep. A
+/// refused or unreachable abandon is named, never fatal: the sweep ends the
+/// session at its expiry.
+fn abandon_upload(client: &Client, upload_id: &str) {
+    let abandoned = segment(upload_id).and_then(|id| client.delete(&format!("/v2/uploads/{id}")));
+    let why = match abandoned {
+        Ok(_) => return,
+        Err(CliError::Refused { code, .. }) => code,
+        Err(CliError::Local(m) | CliError::Unanswered(m)) => m,
+    };
+    eprintln!("the upload session {upload_id} was not abandoned ({why}); it expires on its own");
 }
 
 /// `oml workspaces status`: propose, ratify and the pending list over the
@@ -5608,6 +5961,11 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let key_limits_warn = key_limits.iter().any(|line| line.starts_with("warn"));
     let handlers = handlers_doctor(scrape.as_ref());
     let handlers_warn = handlers.iter().any(|line| line.starts_with("warn"));
+    let uploads = uploads_doctor(scrape.as_ref());
+    let uploads_warn = uploads.iter().any(|line| line.starts_with("warn"));
+    let imports = imports_doctor(scrape.as_ref());
+    let imports_warn = imports.iter().any(|line| line.starts_with("warn"));
+    let exports = exports_doctor(scrape.as_ref());
     // The sync failures of ADR-0057 d17 that the clone alone answers; the
     // stale count and the waiting edges are the sources lines'.
     let sync = oml_cli::sync::doctor::lines(
@@ -5660,6 +6018,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || review_warn
         || telemetry_warn
         || handlers_warn
+        || uploads_warn
+        || imports_warn
         || scan_warn
         || approvals_warn
         || withdrawals_warn
@@ -5722,6 +6082,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "telemetry": telemetry,
             "journal": journal,
             "handlers": handlers,
+            "uploads": uploads,
+            "imports": imports,
+            "exports": exports,
             "scan": scan,
             "usage": usage,
             "key_limits": key_limits,
@@ -5858,6 +6221,15 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &handlers {
             println!("handlers    : {line}");
+        }
+        for line in &uploads {
+            println!("uploads     : {line}");
+        }
+        for line in &imports {
+            println!("imports     : {line}");
+        }
+        for line in &exports {
+            println!("exports     : {line}");
         }
         for line in &scan {
             println!("scan        : {line}");
@@ -6141,6 +6513,197 @@ fn handlers_doctor(scrape: Option<&Scrape>) -> Vec<String> {
         lines.push(format!(
             "warn idempotency_unsettled: {n} claimed act(s) (web console acts and key issues) since start left their Idempotency-Key claimed and unrecorded (the lead's log names each under event idempotency_unsettled with the act); a resubmission of that form answers 409 idempotency.in_progress and acts nothing, so nothing is repeated, and a fresh form acts under a fresh key. Look for Postgres errors at those times; operations/runbooks.md (a form answers idempotency.in_progress) lists the claims held and how old each is"
         ));
+    }
+    lines
+}
+
+/// The `exports` section (ADR-0084 d10, d15; reading I9): the tenant's
+/// export policy, which is `own_root` while no route sets another, and the
+/// bundles served since start, from the metrics listener.
+fn exports_doctor(scrape: Option<&Scrape>) -> Vec<String> {
+    let policy = "export_policy: own_root, the default: a person exports only inside their own \
+                  root, in history mode; no route sets another policy in this build"
+        .to_owned();
+    match scrape {
+        Some(scrape) if scrape.0.contains("oml_exports") => {
+            let mut lines = vec![
+                policy,
+                format!(
+                    "{} bundle(s) served since start, each journalled as workspace.exported",
+                    scrape.sum("oml_exports_total", &[])
+                ),
+            ];
+            // ADR-0084 I13: export.busy and export.too_large, and every other
+            // refusal of the route, by code.
+            let mut refused: Vec<(String, u64)> = scrape
+                .samples("oml_export_refusals_total", &[])
+                .filter_map(|(set, n)| {
+                    set.split(',')
+                        .find_map(|pair| pair.strip_prefix("code=\"")?.strip_suffix('"'))
+                        .map(|code| (code.to_owned(), n))
+                })
+                .collect();
+            refused.sort();
+            if !refused.is_empty() {
+                let list = refused
+                    .iter()
+                    .map(|(code, n)| format!("{code} {n}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(format!("export_refusals since start: {list}"));
+            }
+            lines
+        }
+        Some(_) => vec![
+            policy,
+            "off (this server serves no workspace export)".to_owned(),
+        ],
+        None => vec![
+            policy,
+            "bundles served: not read; set OML_METRICS_URL to the lead's metrics listener"
+                .to_owned(),
+        ],
+    }
+}
+
+/// The `uploads` doctor lines (ADR-0004 d3, as amended 2026-11-17; #451),
+/// from the metrics listener alone: the sessions by state and the bytes
+/// stored at the last sweep; a warn for sessions whose key is shredded and
+/// whose objects remain, for failed sweeps, and for the refusals by code
+/// that say something is wrong (a digest mismatch, a failing store, a
+/// limit reached). Nothing from a server before uploads.
+fn uploads_doctor(scrape: Option<&Scrape>) -> Vec<String> {
+    let Some(scrape) = scrape else {
+        return vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()];
+    };
+    if !scrape.0.contains("oml_upload_sessions") {
+        return vec!["off (this server keeps no upload sessions)".to_owned()];
+    }
+    let state = |s: &str| scrape.sum("oml_upload_sessions", &[("state", s)]);
+    let mut lines = vec![format!(
+        "{} open, {} completed and unbound, {} bound, {} expired, {} abandoned, {} failed; {} bytes declared unbound, {} bytes stored",
+        state("open"),
+        state("completed"),
+        state("bound"),
+        state("expired"),
+        state("abandoned"),
+        state("failed"),
+        scrape.sum("oml_upload_unbound_bytes", &[]),
+        scrape.sum("oml_upload_stored_bytes", &[]),
+    )];
+    for (set, n) in scrape.samples("oml_upload_store_unavailable", &[]) {
+        if let (1.., Some(kind)) = (
+            n,
+            set.strip_prefix("reason=\"")
+                .and_then(|r| r.strip_suffix('"')),
+        ) {
+            lines.push(format!(
+                "warn upload_store_unavailable: object store unavailable: {kind}; the lead serves every other route, every upload answers upload.storage_failed until storage.url names a directory the lead can write, and the next sweep tries it again; the lead's log names the path under event upload_store_unavailable (docs/operations/upgrades.md)"
+            ));
+        }
+    }
+    if let n @ 1.. = scrape.sum("oml_upload_unswept", &[]) {
+        lines.push(format!(
+            "warn upload_unswept: {n} upload session(s) have their key shredded and their objects still at storage.url; the ciphertext opens under no key, and each sweep tries the removal again: check storage.url's directory is writable by the lead (event upload_sweep_failed names the reason)"
+        ));
+    }
+    if let n @ 1.. = scrape.sum("oml_upload_staging_stale", &[]) {
+        lines.push(format!(
+            "warn upload_staging_stale: {n} bound upload(s) still hold their staging key 24 hours after binding; an import's end shreds it and the next sweep shreds any whose import ended (event import_shred_failed names the reason) (ADR-0004 d3, ADR-0084 I11)"
+        ));
+    }
+    if let n @ 1.. = scrape.sum("oml_upload_sweep_failures_total", &[]) {
+        lines.push(format!(
+            "warn upload_sweep_failed: {n} upload sweep step(s) failed since start; the lead's log names each under event upload_sweep_failed, and the next sweep retries"
+        ));
+    }
+    let mut refused = Vec::new();
+    for (set, n) in scrape.samples("oml_upload_refusals_total", &[]) {
+        if let Some(code) = set
+            .split(',')
+            .find_map(|pair| pair.strip_prefix("code=\"")?.strip_suffix('"'))
+        {
+            refused.push((code.to_owned(), n));
+        }
+    }
+    refused.sort();
+    if !refused.is_empty() {
+        let list = refused
+            .iter()
+            .map(|(code, n)| format!("{code} {n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let alarming = refused.iter().any(|(code, _)| {
+            matches!(
+                code.as_str(),
+                "upload.digest_mismatch" | "upload.storage_failed" | "upload.tenant_limit"
+            )
+        });
+        lines.push(if alarming {
+            format!(
+                "warn upload_refusals since start: {list}; a digest mismatch is bytes changed on the way, a storage failure is storage.url failing, and the tenant limit is uploads.tenant_max_bytes reached (docs/api/errors.md, upload)"
+            )
+        } else {
+            format!("upload_refusals since start: {list}")
+        });
+    }
+    lines
+}
+
+/// The `imports` doctor lines (ADR-0084 d15; #426), from the metrics
+/// listener alone: the imports by state at the last sweep; a warn for
+/// imports stopped while running, whose position `GET /v2/imports/{id}`
+/// answers; the verification refusals by code; and the imports that used
+/// `allow_older`. Nothing from a server before imports.
+fn imports_doctor(scrape: Option<&Scrape>) -> Vec<String> {
+    let Some(scrape) = scrape else {
+        return vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()];
+    };
+    if !scrape.0.contains("oml_imports") {
+        return vec!["off (this server runs no imports)".to_owned()];
+    }
+    let state = |s: &str| scrape.sum("oml_imports", &[("state", s)]);
+    let stopped = scrape.sum("oml_imports_stopped", &[]);
+    let mut lines = vec![format!(
+        "{} done, {} failed, {} running, {stopped} stopped",
+        state("done"),
+        state("failed"),
+        state("running"),
+    )];
+    // ADR-0084 I11: only a run past the hour that no process runs is
+    // stopped; the next sweep ends it failed and shreds its upload.
+    if stopped > 0 {
+        lines.push(format!(
+            "warn imports_stopped: {stopped} import(s) running for more than an hour that the lead is not running (it restarted mid-import); the next upload sweep ends each failed and shreds its upload's key, what each wrote stays held, GET /v2/imports/{{id}} names its position, and importing the same bundle again writes only what is missing"
+        ));
+    }
+    if let n @ 1.. = scrape.sum("oml_imports_unprovenanced", &[]) {
+        lines.push(format!(
+            "warn imports_unprovenanced: {n} version(s) carry an import's idempotency key and no import_provenance; this build records both in one commit, so report it as a defect with the versions' ids (ADR-0084 I14)"
+        ));
+    }
+    if let n @ 1.. = scrape.sum("oml_imports_allow_older", &[]) {
+        lines.push(format!(
+            "allow_older: {n} import(s) admitted a bundle older than the target's ledger (workspace.imported names each with allow_older: true)"
+        ));
+    }
+    let mut refused = Vec::new();
+    for (set, n) in scrape.samples("oml_import_refusals_total", &[]) {
+        if let Some(code) = set
+            .split(',')
+            .find_map(|pair| pair.strip_prefix("code=\"")?.strip_suffix('"'))
+        {
+            refused.push((code.to_owned(), n));
+        }
+    }
+    refused.sort();
+    if !refused.is_empty() {
+        let list = refused
+            .iter()
+            .map(|(code, n)| format!("{code} {n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("import_refusals since start: {list}"));
     }
     lines
 }
@@ -7542,6 +8105,104 @@ mod tests {
     }
 
     #[test]
+    fn the_exports_doctor_names_export_refusals_by_code() {
+        let lines = exports_doctor(Some(&Scrape(
+            "oml_exports_total 3\n\
+             oml_export_refusals_total{code=\"export.too_large\"} 1\n\
+             oml_export_refusals_total{code=\"export.busy\"} 2\n"
+                .to_owned(),
+        )));
+        assert_eq!(
+            lines.get(2).map(String::as_str),
+            Some("export_refusals since start: export.busy 2, export.too_large 1"),
+            "{lines:?}"
+        );
+        let quiet = exports_doctor(Some(&Scrape("oml_exports_total 3\n".to_owned())));
+        assert_eq!(quiet.len(), 2, "no line without a refusal");
+    }
+
+    #[test]
+    fn the_exports_doctor_names_the_tenant_export_policy_and_counts_bundles_served() {
+        let lines = exports_doctor(Some(&Scrape("oml_exports_total 3\n".to_owned())));
+        assert!(lines[0].starts_with("export_policy: own_root"), "{lines:?}");
+        assert_eq!(
+            lines[1],
+            "3 bundle(s) served since start, each journalled as workspace.exported"
+        );
+        assert!(
+            exports_doctor(None)[1].starts_with("bundles served: not read"),
+            "named when the listener is not read"
+        );
+    }
+
+    #[test]
+    fn the_uploads_doctor_warns_that_the_object_store_is_unavailable_and_names_the_reason() {
+        let down = Scrape(
+            "oml_upload_sessions{state=\"open\"} 0\n\
+             oml_upload_store_unavailable{reason=\"permission_denied\"} 1\n"
+                .to_owned(),
+        );
+        let lines = uploads_doctor(Some(&down));
+        assert_eq!(
+            lines[1],
+            "warn upload_store_unavailable: object store unavailable: permission_denied; the lead serves every other route, every upload answers upload.storage_failed until storage.url names a directory the lead can write, and the next sweep tries it again; the lead's log names the path under event upload_store_unavailable (docs/operations/upgrades.md)",
+            "{lines:?}"
+        );
+        let up = Scrape("oml_upload_sessions{state=\"open\"} 0\n".to_owned());
+        assert_eq!(
+            uploads_doctor(Some(&up)).len(),
+            1,
+            "no warn while the store opens"
+        );
+    }
+
+    #[test]
+    fn the_uploads_doctor_counts_sessions_and_warns_on_unswept_objects_and_alarming_refusals() {
+        assert_eq!(
+            uploads_doctor(Some(&Scrape("oml_http_requests 1\n".to_owned()))),
+            vec!["off (this server keeps no upload sessions)".to_owned()]
+        );
+        let quiet = Scrape(
+            "oml_upload_sessions{state=\"open\"} 2\n\
+             oml_upload_sessions{state=\"completed\"} 1\n\
+             oml_upload_unbound_bytes 300\n\
+             oml_upload_stored_bytes 512\n\
+             oml_upload_unswept 0\n\
+             oml_upload_sweep_failures_total 0\n\
+             oml_upload_refusals_total{code=\"upload.incomplete\"} 3\n"
+                .to_owned(),
+        );
+        assert_eq!(
+            uploads_doctor(Some(&quiet)),
+            vec![
+                "2 open, 1 completed and unbound, 0 bound, 0 expired, 0 abandoned, 0 failed; 300 bytes declared unbound, 512 bytes stored".to_owned(),
+                "upload_refusals since start: upload.incomplete 3".to_owned(),
+            ]
+        );
+        let loud = Scrape(
+            "oml_upload_sessions{state=\"expired\"} 1\n\
+             oml_upload_unswept 1\n\
+             oml_upload_sweep_failures_total 2\n\
+             oml_upload_refusals_total{code=\"upload.digest_mismatch\"} 1\n"
+                .to_owned(),
+        );
+        let lines = uploads_doctor(Some(&loud));
+        assert!(lines[1].starts_with("warn upload_unswept: 1 "), "{lines:?}");
+        assert!(
+            lines[2].starts_with("warn upload_sweep_failed: 2 "),
+            "{lines:?}"
+        );
+        assert!(
+            lines[3].starts_with("warn upload_refusals since start: upload.digest_mismatch 1;"),
+            "{lines:?}"
+        );
+        assert_eq!(
+            uploads_doctor(None),
+            vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()]
+        );
+    }
+
+    #[test]
     fn the_lifecycle_doctor_warns_of_stranded_held_successors_and_erased_versions_with_a_live_key()
     {
         let some = json!({
@@ -7638,6 +8299,92 @@ mod tests {
                 "approval_unmatched: 0".to_owned(),
                 "warn instruction_approvals: the server's instructions_without_person_approval is \"x\", not a count".to_owned(),
             ]
+        );
+    }
+
+    #[test]
+    fn the_imports_doctor_warns_only_on_imports_running_past_the_hour_and_on_unprovenanced_versions()
+     {
+        // A run under an hour is running, not stopped (ADR-0084 I11).
+        let live = Scrape(
+            "oml_imports{state=\"running\"} 1\n\
+             oml_imports_stopped 0\n\
+             oml_imports_unprovenanced 0\n"
+                .to_owned(),
+        );
+        assert_eq!(
+            imports_doctor(Some(&live)),
+            vec!["0 done, 0 failed, 1 running, 0 stopped".to_owned()]
+        );
+        let stopped = Scrape(
+            "oml_imports{state=\"running\"} 2\n\
+             oml_imports_stopped 1\n\
+             oml_imports_unprovenanced 3\n"
+                .to_owned(),
+        );
+        let lines = imports_doctor(Some(&stopped));
+        assert!(
+            lines[1].starts_with("warn imports_stopped: 1 "),
+            "{lines:?}"
+        );
+        assert!(
+            lines[2].starts_with("warn imports_unprovenanced: 3 "),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn the_uploads_doctor_warns_on_staging_keys_still_set_a_day_after_binding() {
+        let stale = Scrape(
+            "oml_upload_sessions{state=\"bound\"} 1\n\
+             oml_upload_staging_stale 1\n"
+                .to_owned(),
+        );
+        let lines = uploads_doctor(Some(&stale));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("warn upload_staging_stale: 1 ")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn the_imports_doctor_counts_imports_and_warns_on_stopped_ones() {
+        assert_eq!(
+            imports_doctor(Some(&Scrape("oml_http_requests 1\n".to_owned()))),
+            vec!["off (this server runs no imports)".to_owned()]
+        );
+        let quiet = Scrape(
+            "oml_imports{state=\"done\"} 3\n\
+             oml_imports{state=\"running\"} 0\n\
+             oml_imports_allow_older 0\n"
+                .to_owned(),
+        );
+        assert_eq!(
+            imports_doctor(Some(&quiet)),
+            vec!["3 done, 0 failed, 0 running, 0 stopped".to_owned()]
+        );
+        let loud = Scrape(
+            "oml_imports{state=\"running\"} 1\n\
+             oml_imports_stopped 1\n\
+             oml_imports_allow_older 2\n\
+             oml_import_refusals_total{code=\"bundle.digest_mismatch\"} 1\n"
+                .to_owned(),
+        );
+        let lines = imports_doctor(Some(&loud));
+        assert!(
+            lines[1].starts_with("warn imports_stopped: 1 "),
+            "{lines:?}"
+        );
+        assert!(lines[2].starts_with("allow_older: 2 "), "{lines:?}");
+        assert_eq!(
+            lines[3], "import_refusals since start: bundle.digest_mismatch 1",
+            "{lines:?}"
+        );
+        assert_eq!(
+            imports_doctor(None),
+            vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()]
         );
     }
 

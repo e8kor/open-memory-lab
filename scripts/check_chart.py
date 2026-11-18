@@ -40,6 +40,13 @@ Run by .github/workflows/ci.yml (job chart). Renders deploy/helm/oml with
   the directory of the Dockerfile's OML_KMS__KEYRING_PATH; with
   keyring.existingClaim no claim is rendered and the pod mounts the named one
   (d3);
+- the lead's storage URL (its OML_STORAGE__URL, else the Dockerfile's) is a
+  directory strictly below an emptyDir or claim mounted in the pod: the lead's
+  root filesystem is read-only, and a mount's own root belongs to root, which
+  the lead never chmods, so it creates its own directory below it; the
+  emptyDir sets a sizeLimit by default, and with objects.persistence.enabled
+  the pod mounts a ReadWriteOnce objects claim the chart renders (ADR-0004
+  d3, notes of 2026-11-18);
 - OML_POSTGRES__URL comes from a secretKeyRef, and no env value is a
   postgres:// URL (d6);
 - OML_POSTGRES__OWNER_URL, the owner login the lead migrates under, comes
@@ -121,7 +128,7 @@ def main() -> int:
             errors.append(f"Chart.yaml {field} {chart.get(field)!r} != workspace version {workspace}")
     app_version = str(chart.get("appVersion"))
 
-    listen_port, keyring_dir = dockerfile_facts(errors)
+    listen_port, keyring_dir, storage_dir = dockerfile_facts(errors)
 
     values = yaml.safe_load((CHART / "values.yaml").read_text()) or {}
     if values.get("resources"):
@@ -141,7 +148,7 @@ def main() -> int:
     for label, docs in renders.items():
         if docs is None:
             continue
-        check_lead(errors, label, docs, listen_port, keyring_dir, args.image_user)
+        check_lead(errors, label, docs, listen_port, keyring_dir, storage_dir, args.image_user)
         check_web(errors, label, docs, args.image_user)
         image = lead_deployment(errors, label, docs)
         if image is not None and label == "default values":
@@ -170,6 +177,26 @@ def main() -> int:
     if options is not None:
         check_options(errors, options, app_version)
 
+    # The objects claim instead of the emptyDir (ADR-0004 d3, note of
+    # 2026-11-18): rendered ReadWriteOnce and mounted where the parts go.
+    kept = render(errors, "--set", "objects.persistence.enabled=true")
+    if kept is not None:
+        check_lead(errors, "objects.persistence", kept, listen_port, keyring_dir, storage_dir, args.image_user)
+        claim = next(
+            (d for d in of_kind(kept, "PersistentVolumeClaim") if d["metadata"]["name"].endswith("-objects")), None
+        )
+        if claim is None:
+            errors.append("objects.persistence: no objects claim is rendered")
+        elif claim.get("spec", {}).get("accessModes") != ["ReadWriteOnce"]:
+            errors.append("objects.persistence: the objects claim's access modes are not [ReadWriteOnce]")
+    defaults_lead = None if renders["default values"] is None else lead_deployment(errors, "default values", renders["default values"])
+    if defaults_lead is not None:
+        objects = next(
+            (v for v in defaults_lead["spec"]["template"]["spec"].get("volumes", []) if v.get("name") == "objects"), {}
+        )
+        if not (objects.get("emptyDir") or {}).get("sizeLimit"):
+            errors.append("default values: the objects emptyDir sets no sizeLimit (ADR-0004 d3, note of 2026-11-18)")
+
     # The host override the install notes print replaces the whole hosts list,
     # so it must carry its path or the Ingress routes nothing.
     hosted = render(errors, *INGRESS_HOST_FLAGS)
@@ -188,20 +215,24 @@ def main() -> int:
     return report(errors)
 
 
-def dockerfile_facts(errors: list[str]) -> tuple[int | None, str | None]:
-    """The final stage's listen port and keyring directory, from its ENV lines."""
+def dockerfile_facts(errors: list[str]) -> tuple[int | None, str | None, str | None]:
+    """The final stage's listen port, keyring directory and object directory, from its ENV lines."""
     text = DOCKERFILE.read_text().replace("\\\n", " ")
     final = text.split("\nFROM ")[-1]
     env = " ".join(line[4:] for line in final.splitlines() if line.startswith("ENV "))
     listen = re.search(r"\bOML_SERVER__LISTEN=\S*:(\d+)\b", env)
     keyring = re.search(r"\bOML_KMS__KEYRING_PATH=(\S+)", env)
+    storage = re.search(r"\bOML_STORAGE__URL=(/\S+)", env)
     if not listen:
         errors.append("Dockerfile: the final stage sets no OML_SERVER__LISTEN with a port")
     if not keyring:
         errors.append("Dockerfile: the final stage sets no OML_KMS__KEYRING_PATH")
+    if not storage:
+        errors.append("Dockerfile: the final stage sets no OML_STORAGE__URL to an absolute directory (ADR-0004 d3)")
     return (
         int(listen.group(1)) if listen else None,
         posixpath.dirname(keyring.group(1)) if keyring else None,
+        storage.group(1) if storage else None,
     )
 
 
@@ -211,6 +242,7 @@ def check_lead(
     docs: list[dict],
     listen_port: int | None,
     keyring_dir: str | None,
+    storage_dir: str | None,
     image_user: str | None,
 ) -> None:
     deployment = lead_deployment(errors, label, docs)
@@ -308,9 +340,29 @@ def check_lead(
 
     mounts = {m.get("name"): m.get("mountPath") for m in lead.get("volumeMounts", [])}
     volumes = {v.get("name"): v for v in pod.get("volumes", [])}
-    keyring = [n for n, v in volumes.items() if "persistentVolumeClaim" in v]
+    storage_env = next((e for e in lead.get("env", []) if e.get("name") == "OML_STORAGE__URL"), None)
+    storage_url = (storage_env or {}).get("value") or storage_dir
+    if storage_url is not None:
+        holders = [
+            (name, path)
+            for name, path in mounts.items()
+            if path
+            and storage_url.startswith(path.rstrip("/") + "/")
+            and ("emptyDir" in volumes.get(name, {}) or "persistentVolumeClaim" in volumes.get(name, {}))
+        ]
+        if not holders:
+            errors.append(
+                f"{label}: the storage URL {storage_url} is not a directory below an emptyDir or claim the pod mounts; "
+                "the lead's root filesystem is read-only, and a mount's root belongs to root, which the lead never chmods, "
+                "so every upload would answer upload.storage_failed (ADR-0004 d3)"
+            )
+    keyring = [
+        n
+        for n, v in volumes.items()
+        if "persistentVolumeClaim" in v and (keyring_dir is None or mounts.get(n) == keyring_dir)
+    ]
     if len(keyring) != 1:
-        errors.append(f"{label}: the pod mounts {len(keyring)} volume claims, not the one keyring claim (ADR-0033 d3)")
+        errors.append(f"{label}: the pod mounts {len(keyring)} keyring claims, not the one keyring claim (ADR-0033 d3)")
         return
     if keyring_dir is not None and mounts.get(keyring[0]) != keyring_dir:
         errors.append(

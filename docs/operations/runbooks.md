@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-14
-answers: "the steps to take for each operational alert: a failed fork check, no available reviewer, a stalled review queue, a lagging lake, repeated lead takeovers, repeated 429 answers, a usage counter that drifts from its rows and key compromise"
+answers: "the steps to take for each operational alert: a failed fork check, no available reviewer, a stalled review queue, a lagging lake, repeated lead takeovers, repeated 429 answers, a usage counter that drifts from its rows, an upload store that cannot be written or lost parts, and key compromise"
 ---
 
 # Operational alerts
@@ -127,6 +127,19 @@ Use this when clients get `limit.rate` (429) repeatedly. This build has two caps
    ```bash
    oml deny set <key> universe
    ```
+
+## Uploads answer storage_failed or a part goes missing
+
+Use this when `oml doctor` warns `upload_store_unavailable`, or clients get `upload.storage_failed` (503) or an unexpected `upload.incomplete` (409).
+
+1. Read the reason the lead logged at start.
+
+   ```bash
+   journalctl -u oml-server -o cat | jq -c 'select(.event=="upload_store_unavailable") | .reason'
+   ```
+
+2. Set `storage.url` to an absolute directory the server's user can write, or one it can create below a directory it can write, and restart. The server never changes the mode of a directory it does not own, and refuses one that others can write or that it cannot write itself.
+3. When `complete` answers `upload.incomplete` for parts the client already sent, the store lost them, for example when a pod with an emptyDir was replaced: the client sends the named parts again with `PUT /v2/uploads/{id}/parts/{n}` and completes again. `GET /v2/uploads/{id}` lists the same parts as missing.
 
 ## A form answers idempotency.in_progress
 

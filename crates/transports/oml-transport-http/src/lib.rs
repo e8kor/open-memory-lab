@@ -20,7 +20,9 @@
 
 mod console;
 pub mod error;
+mod exports;
 mod federation;
+mod imports;
 pub mod mcp;
 mod metering;
 pub mod oauth;
@@ -29,6 +31,7 @@ mod search;
 pub mod session;
 pub mod time;
 pub mod traffic;
+mod uploads;
 mod usage;
 pub mod web;
 
@@ -135,6 +138,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/workspaces/{workspace}/crew"),
     ("POST", "/v2/workspaces/{workspace}/mode"),
     ("POST", "/v2/workspaces/{workspace}/federation"),
+    ("POST", "/v2/workspaces/{workspace}/exports"),
     ("POST", "/v2/workspaces/{workspace}/transitions"),
     (
         "POST",
@@ -163,6 +167,13 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v2/admin/accounts/{account}/usage"),
     ("PUT", "/v2/admin/accounts/{account}/profile"),
     ("DELETE", "/v2/admin/accounts/{account}/profile"),
+    ("POST", "/v2/uploads"),
+    ("PUT", "/v2/uploads/{upload_id}/parts/{part}"),
+    ("GET", "/v2/uploads/{upload_id}"),
+    ("POST", "/v2/uploads/{upload_id}/complete"),
+    ("DELETE", "/v2/uploads/{upload_id}"),
+    ("POST", "/v2/imports"),
+    ("GET", "/v2/imports/{import_id}"),
     ("GET", "/v2/admin/usage"),
     ("GET", "/v2/admin/usage/drift"),
     ("GET", "/v2/search"),
@@ -387,6 +398,7 @@ where
             ("POST", "/v2/workspaces/{workspace}/federation") => {
                 post(Self::set_workspace_federation)
             }
+            ("POST", "/v2/workspaces/{workspace}/exports") => post(Self::export_workspace_route),
             ("POST", "/v2/workspaces/{workspace}/transitions") => post(Self::propose_transition),
             ("POST", "/v2/workspaces/{workspace}/transitions/{transition_id}/ratify") => {
                 post(Self::ratify_transition)
@@ -417,6 +429,18 @@ where
             ("DELETE", "/v2/admin/accounts/{account}/profile") => {
                 delete(Self::clear_account_profile_route)
             }
+            ("POST", "/v2/uploads") => post(Self::open_upload_route),
+            // One part and a little over: the default body limit is 2 MB
+            // (ADR-0004 d3, as amended 2026-11-17).
+            ("PUT", "/v2/uploads/{upload_id}/parts/{part}") => put(Self::put_upload_part_route)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    uploads::PART_BODY_LIMIT,
+                )),
+            ("GET", "/v2/uploads/{upload_id}") => get(Self::upload_status_route),
+            ("POST", "/v2/uploads/{upload_id}/complete") => post(Self::complete_upload_route),
+            ("DELETE", "/v2/uploads/{upload_id}") => delete(Self::abandon_upload_route),
+            ("POST", "/v2/imports") => post(Self::import_route),
+            ("GET", "/v2/imports/{import_id}") => get(Self::import_status_route),
             ("GET", "/v2/admin/usage") => get(Self::admin_usage_route),
             ("GET", "/v2/admin/usage/drift") => get(Self::admin_usage_drift_route),
             ("GET", "/v2/search") => get(Self::search_settings),
