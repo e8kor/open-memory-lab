@@ -780,12 +780,42 @@ fn old_git_script(real: &Path) -> String {
 /// and returns the directory.
 #[cfg(unix)]
 fn install_git(test: &str, script: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let bin = scratch(&format!("{test}-bin"));
-    let file = bin.join("git");
-    std::fs::write(&file, script).unwrap();
-    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_script(&bin.join("git"), script);
     bin
+}
+
+/// Writes an executable script, synced and closed before anything runs it.
+#[cfg(unix)]
+fn write_script(path: &Path, script: &str) {
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt;
+    let mut file = std::fs::File::create(path).unwrap();
+    file.write_all(script.as_bytes()).unwrap();
+    file.sync_all().unwrap();
+    drop(file);
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// `command`'s output, tried again for a moment while the script it runs
+/// is "Text file busy": a test thread that forks while another writes a
+/// script holds the write descriptor in its child until that child execs,
+/// and an exec of the script in that window fails with ETXTBSY.
+#[cfg(unix)]
+fn output_of_script(command: &mut Command) -> std::process::Output {
+    let mut tries = 0;
+    loop {
+        tries += 1;
+        match command.output() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < 20 => {}
+            Ok(out)
+                if out.status.code() == Some(126)
+                    && String::from_utf8_lossy(&out.stderr).contains("Text file busy")
+                    && tries < 20 => {}
+            other => return other.unwrap(),
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }
 
 /// A `git` ahead of the real one on PATH that refuses what git before 2.30
@@ -889,12 +919,7 @@ fn the_stand_in_for_an_old_git_refuses_what_git_before_2_30_does_not_know() {
         ),
     ];
     for (args, code, words) in cases {
-        let out = Command::new(bin.join("git"))
-            .arg("-C")
-            .arg(&dir)
-            .args(args)
-            .output()
-            .unwrap();
+        let out = output_of_script(Command::new(bin.join("git")).arg("-C").arg(&dir).args(args));
         assert_eq!(out.status.code(), Some(code), "{args:?}");
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(err.contains(words), "{args:?}: {err}");
@@ -906,24 +931,20 @@ fn the_stand_in_for_an_old_git_refuses_what_git_before_2_30_does_not_know() {
 #[cfg(unix)]
 #[test]
 fn the_stand_in_for_an_old_git_runs_a_real_git_whose_path_needs_quoting() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = docs_clone("old-git-quoted");
     let odd = scratch("old-git-quoted-real").join("it's a dir");
     std::fs::create_dir_all(&odd).unwrap();
     let real = odd.join("git");
-    std::fs::write(
+    write_script(
         &real,
-        format!("#!/bin/sh\nexec {} \"$@\"\n", sh_quoted(&real_git())),
-    )
-    .unwrap();
-    std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o755)).unwrap();
+        &format!("#!/bin/sh\nexec {} \"$@\"\n", sh_quoted(&real_git())),
+    );
     let bin = install_git("old-git-quoted", &old_git_script(&real));
-    let out = Command::new(bin.join("git"))
-        .arg("-C")
-        .arg(&dir)
-        .args(["rev-parse", "--verify", "HEAD"])
-        .output()
-        .unwrap();
+    let out = output_of_script(Command::new(bin.join("git")).arg("-C").arg(&dir).args([
+        "rev-parse",
+        "--verify",
+        "HEAD",
+    ]));
     assert!(
         out.status.success(),
         "{}",
