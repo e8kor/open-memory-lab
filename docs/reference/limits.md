@@ -45,6 +45,7 @@ From the maintainers' own runs on one 8-vCPU host with PostgreSQL:
 - Review throughput.
 - Per-tenant write ceiling under the chain lock.
 - Lake writer lag under sustained load ([run the lake writer](../operations/lake.md)).
+- The admin queue read's person-reviewer count (`GET /v2/review/queue`, #435): one pass over the tenant's held rows, one over its person's reviewer keys with their grants and denials, then a match per workspace and key, so it grows with workspaces holding rows times those keys.
 
 ## Not verified against a live client
 

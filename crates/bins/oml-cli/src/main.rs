@@ -5456,6 +5456,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     // The rescan window an admin key reads: `None` for any other key, and
     // the reason where an admin's read failed.
     let mut rescan_read: Option<Result<Value, String>> = None;
+    let mut queue_read: Option<Result<Value, String>> = None;
     let mut default_node: Option<Value> = None;
     // The user whose root holds a tenant writer key's default workspace
     // (ADR-0044 d16).
@@ -5572,6 +5573,14 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                         .map(|(_, v)| v)
                         .map_err(unread_reason),
                 );
+                // The held instructions no person can approve, per
+                // workspace (ADR-0080 d16; #435).
+                queue_read = Some(
+                    client
+                        .get("/v2/review/queue")
+                        .map(|(_, v)| v)
+                        .map_err(unread_reason),
+                );
                 // The usage counters against their rows (ADR-0071 d3, d5).
                 usage_drift = Some(
                     client
@@ -5613,7 +5622,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut scan = scan_doctor(ready.as_ref(), scrape.as_ref());
     scan.extend(scan_backlog_doctor(rescan_read.as_ref()));
     let scan_warn = scan.iter().any(|line| line.starts_with("warn"));
-    let approvals = approval_doctor(rescan_read.as_ref());
+    let mut approvals = approval_doctor(rescan_read.as_ref());
+    approvals.extend(instructions_unreviewable_doctor(queue_read.as_ref()));
     let approvals_warn = approvals.iter().any(|line| line.starts_with("warn"));
     let withdrawals = withdrawn_queue_doctor(rescan_read.as_ref());
     let withdrawals_fail = withdrawals.iter().any(|line| line.starts_with("fail"));
@@ -6299,21 +6309,79 @@ fn approval_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
         Some(Err(reason)) => return vec![format!("warn approval_unmatched: not read ({reason})")],
         Some(Ok(report)) => report,
     };
-    let Some(count) = report.get("promoted_unapproved") else {
-        return Vec::new();
-    };
+    let mut lines = Vec::new();
+    if let Some(count) = report.get("promoted_unapproved") {
+        lines.push(unmatched_line(count));
+    }
+    // The steering and guardrails in force on a non-person approval (ADR-0080
+    // d16; #436): nothing at zero, nothing from a server before the count.
+    if let Some(count) = report.get("instructions_without_person_approval") {
+        match count.as_u64() {
+            Some(0) => {}
+            Some(n) => lines.push(format!(
+                "warn instruction_approvals: {n} instruction (steering, guardrail or skill) version(s) in force were approved by a key that is not a person's; a person can review each again by superseding it (ADR-0080 d16)"
+            )),
+            None => lines.push(format!(
+                "warn instruction_approvals: the server's instructions_without_person_approval is {count}, not a count"
+            )),
+        }
+    }
+    lines
+}
+
+/// The `approval_unmatched` line for the server's `promoted_unapproved`.
+fn unmatched_line(count: &Value) -> String {
     let Some(unmatched) = count.as_u64() else {
-        return vec![format!(
+        return format!(
             "warn approval_unmatched: the server's promoted_unapproved is {count}, not a count"
-        )];
+        );
     };
-    vec![if unmatched > 0 {
+    if unmatched > 0 {
         format!(
             "warn approval_unmatched: {unmatched} served version(s) carry no approval, because migration 0044 found no verdict for their promotion in the journal; recall serves them with approver and approved_at null, and no command lists which they are; to clear one, supersede it with oml write --replaces, and it is no longer counted once a reviewer approves the successor; or leave it"
         )
     } else {
         "approval_unmatched: 0".to_owned()
-    }]
+    }
+}
+
+/// The unreviewable-instruction line (ADR-0080 d16; #435), from the admin's
+/// queue read: one warn per workspace holding steering or guardrail versions
+/// that no live person's reviewer key reads with reviewer, and nothing for a
+/// workspace someone can approve in. Counts by path only. A server before the
+/// counts names neither, and its items are skipped; a count that is no
+/// unsigned integer is named, never read as zero.
+fn instructions_unreviewable_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
+    let queue = match read {
+        None => {
+            return vec!["instructions_unreviewable: not read; an admin key reads it".to_owned()];
+        }
+        Some(Err(reason)) => {
+            return vec![format!(
+                "warn instructions_unreviewable: not read ({reason})"
+            )];
+        }
+        Some(Ok(queue)) => queue,
+    };
+    let mut lines = Vec::new();
+    for item in queue["items"].as_array().into_iter().flatten() {
+        let path = item["path"].as_str().unwrap_or("?");
+        let (Some(held), Some(people)) =
+            (item.get("held_instructions"), item.get("person_reviewers"))
+        else {
+            continue;
+        };
+        match (held.as_u64(), people.as_u64()) {
+            (Some(0), Some(_)) | (Some(_), Some(1..)) => {}
+            (Some(held), Some(0)) => lines.push(format!(
+                "warn instructions_unreviewable: {path} holds {held} instruction (steering, guardrail or skill) version(s) and no person's reviewer key reads it; issue a reviewer key with --used-by person and a reviewer grant there, or approve in the console (review.person_required, instruction_needs_person)"
+            )),
+            _ => lines.push(format!(
+                "warn instructions_unreviewable: the server's counts for {path} are {held} and {people}, not counts"
+            )),
+        }
+    }
+    lines
 }
 
 /// Doctor's `memory.withdrawn_in_queue` (ADR-0083 d13), from the same
@@ -7476,6 +7544,70 @@ mod tests {
         assert_eq!(
             withdrawn_queue_doctor(Some(&Ok(odd))),
             vec!["warn memory.withdrawn_in_queue: the server's withdrawn_in_queue is \"many\", not a count".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_approval_doctor_names_instructions_approved_by_a_key_that_is_not_a_persons() {
+        let report = json!({
+            "promoted_unapproved": 0, "instructions_without_person_approval": 2,
+        });
+        assert_eq!(
+            approval_doctor(Some(&Ok(report))),
+            vec![
+                "approval_unmatched: 0".to_owned(),
+                "warn instruction_approvals: 2 instruction (steering, guardrail or skill) version(s) in force were approved by a key that is not a person's; a person can review each again by superseding it (ADR-0080 d16)".to_owned(),
+            ]
+        );
+        // Nothing at zero, nothing from a server before the count, and an
+        // odd value is named, never read as zero.
+        let zero = json!({ "promoted_unapproved": 0, "instructions_without_person_approval": 0 });
+        assert_eq!(
+            approval_doctor(Some(&Ok(zero))),
+            vec!["approval_unmatched: 0".to_owned()]
+        );
+        let odd = json!({ "promoted_unapproved": 0, "instructions_without_person_approval": "x" });
+        assert_eq!(
+            approval_doctor(Some(&Ok(odd))),
+            vec![
+                "approval_unmatched: 0".to_owned(),
+                "warn instruction_approvals: the server's instructions_without_person_approval is \"x\", not a count".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_crews_workspace_with_held_steering_and_no_person_reviewer_is_named_by_doctor() {
+        let queue = json!({ "items": [
+            { "path": "universe.crew", "held": 4, "held_instructions": 2, "person_reviewers": 0 },
+            { "path": "universe.team", "held": 3, "held_instructions": 1, "person_reviewers": 2 },
+            { "path": "universe.notes", "held": 5, "held_instructions": 0, "person_reviewers": 0 },
+            // A server before the counts names neither, and says nothing.
+            { "path": "universe.old", "held": 1 },
+        ]});
+        assert_eq!(
+            instructions_unreviewable_doctor(Some(&Ok(queue))),
+            vec!["warn instructions_unreviewable: universe.crew holds 2 instruction (steering, guardrail or skill) version(s) and no person's reviewer key reads it; issue a reviewer key with --used-by person and a reviewer grant there, or approve in the console (review.person_required, instruction_needs_person)".to_owned()]
+        );
+        // Every workspace has a person who can approve: no line.
+        let clean = json!({ "items": [
+            { "path": "universe.team", "held": 3, "held_instructions": 1, "person_reviewers": 1 },
+        ]});
+        assert!(instructions_unreviewable_doctor(Some(&Ok(clean))).is_empty());
+        assert_eq!(
+            instructions_unreviewable_doctor(None),
+            vec!["instructions_unreviewable: not read; an admin key reads it".to_owned()]
+        );
+        assert_eq!(
+            instructions_unreviewable_doctor(Some(&Err("503 unavailable".to_owned()))),
+            vec!["warn instructions_unreviewable: not read (503 unavailable)".to_owned()]
+        );
+        let odd = json!({ "items": [
+            { "path": "universe.crew", "held": 1, "held_instructions": "many", "person_reviewers": 0 },
+        ]});
+        assert_eq!(
+            instructions_unreviewable_doctor(Some(&Ok(odd))),
+            vec!["warn instructions_unreviewable: the server's counts for universe.crew are \"many\" and 0, not counts".to_owned()]
         );
     }
 

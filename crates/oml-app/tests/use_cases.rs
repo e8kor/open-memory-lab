@@ -16968,9 +16968,15 @@ async fn held_steering_follows_the_promoted_rows_prefixed_unreviewed() {
     let ask = |key: String| {
         let app = &app;
         async move {
-            app.recall(&key, &recall_at("canary", crew))
-                .await
-                .expect("recall")
+            app.recall(
+                &key,
+                &RecallRequest {
+                    include_unreviewed: None,
+                    ..recall_at("canary", crew)
+                },
+            )
+            .await
+            .expect("recall")
         }
     };
     assert_eq!(
@@ -17357,4 +17363,359 @@ async fn the_skill_set_pages_by_fifty_with_one_digest() {
     );
     assert_eq!(second.next_cursor, None);
     assert_eq!(first.set_digest, second.set_digest);
+}
+
+/// Held guardrails never push the approved rules over the cap: the cap
+/// counts approved rules alone, held versions are capped apart at fifty and
+/// dropped first, and the approved rule keeps its line (ADR-0080 d10).
+#[tokio::test]
+async fn held_guardrails_never_hide_an_approved_rule_over_the_cap() {
+    let app = app();
+    let (boot, crew, _team, writer, reviewer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    put_in_progress(&app, &reviewer.value, crew).await;
+    let rail = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &guardrail_req("g0", Severity::Never, "Never push to main.", crew),
+    )
+    .await;
+    for i in 1..=52 {
+        app.submit_memory(
+            &writer.value,
+            &guardrail_req(
+                &format!("g{i}"),
+                Severity::Should,
+                &format!("Prefer plan {i}."),
+                crew,
+            ),
+        )
+        .await
+        .expect("a held guardrail");
+    }
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let set = guardrail_set(&app, &reader.value).await;
+    assert!(!set.over_cap, "52 held versions are not an over-cap set");
+    assert!(served_guardrail_ids(&set).contains(&rail));
+    assert_eq!(
+        set.guardrails.iter().filter(|g| g.unreviewed).count(),
+        50,
+        "held versions are capped apart"
+    );
+}
+
+/// `include_unreviewed: false` narrows the steering list to promoted rows
+/// inside an in-progress root too (ADR-0030 d4).
+#[tokio::test]
+async fn include_unreviewed_false_leaves_held_steering_out_inside_an_in_progress_root() {
+    let app = app();
+    let (boot, crew, _team, writer, reviewer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    put_in_progress(&app, &reviewer.value, crew).await;
+    let held = app
+        .submit_memory(
+            &writer.value,
+            &submit_kind("s1", MemoryKind::Steering, "prefer the blue pool", crew),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let ask = |include: Option<bool>| {
+        let (app, key) = (&app, reader.value.clone());
+        async move {
+            app.recall(
+                &key,
+                &RecallRequest {
+                    include_unreviewed: include,
+                    ..recall_at("blue", crew)
+                },
+            )
+            .await
+            .expect("recall")
+        }
+    };
+    assert_eq!(steering_ids(&ask(None).await), vec![held]);
+    assert!(steering_ids(&ask(Some(false)).await).is_empty());
+}
+
+/// Absent, `include_unreviewed` adds the key's own held rows on the nodes
+/// inside an in-progress subtree alone; outside it they need an explicit
+/// `true` (ADR-0030 d4; ADR-0080 d16).
+#[tokio::test]
+async fn the_default_adds_the_keys_own_held_rows_inside_in_progress_nodes_alone() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dev = workspace(&app, admin, "dev", crew).await;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
+    put_in_progress(&app, &reviewer.value, dev).await;
+    let outside_steering = app
+        .submit_memory(
+            &writer.value,
+            &submit_kind("s1", MemoryKind::Steering, "canary steering outside", crew),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let outside_memory = held(
+        &app,
+        &writer.value,
+        &submit_into("m1", "canary fact outside", crew),
+    )
+    .await;
+    let inside_memory = held(
+        &app,
+        &writer.value,
+        &submit_into("m2", "canary fact inside", dev),
+    )
+    .await;
+    let ask = |include: Option<bool>| {
+        let (app, key) = (&app, writer.value.clone());
+        async move {
+            app.recall(
+                &key,
+                &RecallRequest {
+                    include_unreviewed: include,
+                    ..recall_at("canary", crew)
+                },
+            )
+            .await
+            .expect("recall")
+        }
+    };
+    let by_default = ask(None).await;
+    assert_eq!(hit_ids_of(&by_default), vec![inside_memory]);
+    assert!(steering_ids(&by_default).is_empty());
+    let explicit = ask(Some(true)).await;
+    let mut hits = hit_ids_of(&explicit);
+    hits.sort();
+    let mut want = vec![inside_memory, outside_memory];
+    want.sort();
+    assert_eq!(hits, want);
+    assert_eq!(steering_ids(&explicit), vec![outside_steering]);
+}
+
+// --- #435: the queue names held instructions no person can approve -------
+
+/// The admin's queue row for `node`, read through `GET /v2/review/queue`'s
+/// use case.
+async fn queue_row(app: &TestApp, admin: &str, node: Uuid) -> Option<oml_app::app::QueueRow> {
+    let caller = app.caller(Bearer::Key(admin)).await.expect("the admin");
+    app.review_queue(&caller)
+        .await
+        .expect("the queue")
+        .into_iter()
+        .find(|r| r.depth.workspace_id == node)
+}
+
+#[tokio::test]
+async fn the_queue_counts_held_instructions_and_the_person_reviewers_that_may_approve_them() {
+    let app = app();
+    // `dana` is a person's reviewer key on `crew`, covering `crew.team`.
+    let (boot, crew, team, writer, _dana) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let bots = workspace(&app, admin, "bots", boot.root_workspace_id).await;
+    let bot_writer = issue(&app, admin, Role::Writer, "bot-writer", bots).await;
+    agent_reviewer(&app, admin, "bot-reviewer", bots).await;
+    for (writer, req) in [
+        (
+            &writer,
+            submit_into("m1", "The quote is valid for 30 days.", crew),
+        ),
+        (
+            &writer,
+            submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", crew),
+        ),
+        (
+            &writer,
+            guardrail_req("g1", Severity::Never, "Never push to main.", team),
+        ),
+        (
+            &bot_writer,
+            submit_kind("s2", MemoryKind::Steering, "Answer in English.", bots),
+        ),
+    ] {
+        app.submit_memory(&writer.value, &req)
+            .await
+            .expect("submit");
+    }
+
+    let row = queue_row(&app, admin, crew).await.expect("crew holds rows");
+    assert_eq!(
+        (
+            row.depth.held,
+            row.depth.held_instructions,
+            row.person_reviewers
+        ),
+        (2, 1, 1)
+    );
+    // `dana`'s grant on the ancestor covers the subtree.
+    let row = queue_row(&app, admin, team)
+        .await
+        .expect("team holds a row");
+    assert_eq!(
+        (
+            row.depth.held,
+            row.depth.held_instructions,
+            row.person_reviewers
+        ),
+        (1, 1, 1)
+    );
+    // An agent's reviewer key judges knowledge, never an instruction.
+    let row = queue_row(&app, admin, bots)
+        .await
+        .expect("bots holds a row");
+    assert_eq!(
+        (
+            row.depth.held,
+            row.depth.held_instructions,
+            row.person_reviewers
+        ),
+        (1, 1, 0)
+    );
+}
+
+#[tokio::test]
+async fn a_denied_or_revoked_person_key_is_not_counted_as_a_reviewer() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew, team, writer, dana) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let erin = issue(&app, admin, Role::Reviewer, "erin", team).await;
+    app.submit_memory(
+        &writer.value,
+        &submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", team),
+    )
+    .await
+    .expect("submit");
+    let counted =
+        |row: Option<oml_app::app::QueueRow>| row.expect("team holds a row").person_reviewers;
+    assert_eq!(counted(queue_row(&app, admin, team).await), 2);
+
+    // A denial on the ancestor masks `dana` on the whole subtree.
+    app.deny_key(admin, dana.key_id.into(), crew.into())
+        .await
+        .expect("deny dana");
+    assert_eq!(counted(queue_row(&app, admin, team).await), 1);
+
+    // A revoked key approves nothing.
+    revoke_key(&store, boot.tenant_id, erin.key_id).await;
+    assert_eq!(counted(queue_row(&app, admin, team).await), 0);
+}
+
+/// A person's key whose expiry has come approves nothing, so the queue stops
+/// counting it on the server's clock, as every lookup reads an expiry
+/// (ADR-0079 d2; ADR-0080 d16; #435).
+#[tokio::test]
+async fn an_expired_person_key_is_not_counted_as_a_reviewer() {
+    let clock = FixedClock::new();
+    let app = App::new(
+        MemStore::new(),
+        MemSigner::new(TEST_SEED),
+        clock.clone(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    );
+    let (boot, _crew, team, writer, _dana) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    app.issue_key(
+        admin,
+        &IssueKeyRequest {
+            expiry: Some(at("2026-10-29T13:00:00.000000Z")),
+            ..issue_req(Role::Reviewer, "erin", vec![grant(team, Role::Reviewer)])
+        },
+    )
+    .await
+    .expect("issue erin, expiring in an hour");
+    app.submit_memory(
+        &writer.value,
+        &submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", team),
+    )
+    .await
+    .expect("submit");
+    let counted =
+        |row: Option<oml_app::app::QueueRow>| row.expect("team holds a row").person_reviewers;
+    assert_eq!(counted(queue_row(&app, admin, team).await), 2);
+
+    clock.advance(2 * 3_600);
+    assert_eq!(
+        counted(queue_row(&app, admin, team).await),
+        1,
+        "erin's expiry has come; dana's key does not expire"
+    );
+}
+
+// --- #436: instructions in force on an approval that was not a person's ---
+
+/// A steering version in force whose approval is not a person's is counted,
+/// as one migration 0044 could not match is; superseding it with the same
+/// text under a person's approval takes the tip, and the count falls to zero
+/// (ADR-0080 d16; #436).
+#[tokio::test]
+async fn a_steering_version_superseded_under_a_persons_approval_leaves_the_count() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew, _team, writer, dana) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let count = || async {
+        app.rescan(admin.as_str(), 0, 1)
+            .await
+            .expect("the backlog")
+            .instructions_without_person_approval
+    };
+    let steering = promoted(
+        &app,
+        &writer.value,
+        &dana.value,
+        &submit_kind("s1", MemoryKind::Steering, "Quote in USD/t.", crew),
+    )
+    .await;
+    assert_eq!(count().await, 0, "a person approved it");
+    // As a version promoted before #391 on no person's verdict reads.
+    store.forget_approval(boot.tenant_id, steering);
+    assert_eq!(count().await, 1);
+
+    let successor = app
+        .supersede(
+            &writer.value,
+            &supersede_req("s1-again", steering, "Quote in USD/t."),
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    assert_eq!(count().await, 1, "a held successor does not take the tip");
+    app.post_verdict(&dana.value, successor, Verdict::Approve, None)
+        .await
+        .expect("a person approves the successor");
+    assert_eq!(count().await, 0);
+}
+
+/// A held guardrail served as a line is not also listed as held and not in
+/// force: inside an in-progress root it appears once, as the unreviewed
+/// line (ADR-0080 d10).
+#[tokio::test]
+async fn a_served_held_guardrail_is_not_also_listed_as_held_and_not_in_force() {
+    let app = app();
+    let (boot, crew, _team, _writer, reviewer) = guardrail_tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "wanda-agent", crew).await;
+    put_in_progress(&app, &reviewer.value, crew).await;
+    let held = app
+        .submit_memory(
+            &writer.value,
+            &guardrail_req("g1", Severity::Never, "Never push to main.", crew),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let set = guardrail_set_own(&app, &writer.value, true).await;
+    assert_eq!(served_guardrail_ids(&set), vec![held]);
+    assert!(set.guardrails[0].unreviewed);
+    assert!(set.own_held.is_empty(), "{:?}", set.own_held);
 }

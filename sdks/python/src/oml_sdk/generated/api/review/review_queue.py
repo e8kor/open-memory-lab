@@ -73,8 +73,13 @@ def sync_detailed(
     """The review queue's depth and oldest held row per workspace, tenant-wide; no content.
 
      Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending
-    ADR-0026 d15). One item per workspace holding a held row: its id, path, held count and the oldest
-    held row's time, by path. No memory id, text or author. Journals nothing. Since v0.6.4.
+    ADR-0026 d15). One item per workspace holding a held row: its id, path, held count, the held
+    instruction-class versions among them (held_instructions), the live person's reviewer keys whose
+    grants and denials confer reviewer there (person_reviewers: reviewer keys used_by person with no
+    crew and no profile, not revoked or expired, the only keys that approve an instruction; ADR-0080
+    d16, #435; a key whose person wrote the held instructions is counted though outside that person's
+    own root it cannot approve them) and the oldest held row's time, by path. No memory id, text, author
+    or key. Journals nothing. Since v0.6.4; the two counts since v0.8.2.
 
     Args:
         x_request_id (str | Unset):
@@ -112,8 +117,13 @@ def sync(
     """The review queue's depth and oldest held row per workspace, tenant-wide; no content.
 
      Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending
-    ADR-0026 d15). One item per workspace holding a held row: its id, path, held count and the oldest
-    held row's time, by path. No memory id, text or author. Journals nothing. Since v0.6.4.
+    ADR-0026 d15). One item per workspace holding a held row: its id, path, held count, the held
+    instruction-class versions among them (held_instructions), the live person's reviewer keys whose
+    grants and denials confer reviewer there (person_reviewers: reviewer keys used_by person with no
+    crew and no profile, not revoked or expired, the only keys that approve an instruction; ADR-0080
+    d16, #435; a key whose person wrote the held instructions is counted though outside that person's
+    own root it cannot approve them) and the oldest held row's time, by path. No memory id, text, author
+    or key. Journals nothing. Since v0.6.4; the two counts since v0.8.2.
 
     Args:
         x_request_id (str | Unset):
@@ -146,8 +156,13 @@ async def asyncio_detailed(
     """The review queue's depth and oldest held row per workspace, tenant-wide; no content.
 
      Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending
-    ADR-0026 d15). One item per workspace holding a held row: its id, path, held count and the oldest
-    held row's time, by path. No memory id, text or author. Journals nothing. Since v0.6.4.
+    ADR-0026 d15). One item per workspace holding a held row: its id, path, held count, the held
+    instruction-class versions among them (held_instructions), the live person's reviewer keys whose
+    grants and denials confer reviewer there (person_reviewers: reviewer keys used_by person with no
+    crew and no profile, not revoked or expired, the only keys that approve an instruction; ADR-0080
+    d16, #435; a key whose person wrote the held instructions is counted though outside that person's
+    own root it cannot approve them) and the oldest held row's time, by path. No memory id, text, author
+    or key. Journals nothing. Since v0.6.4; the two counts since v0.8.2.
 
     Args:
         x_request_id (str | Unset):
@@ -183,8 +198,13 @@ async def asyncio(
     """The review queue's depth and oldest held row per workspace, tenant-wide; no content.
 
      Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending
-    ADR-0026 d15). One item per workspace holding a held row: its id, path, held count and the oldest
-    held row's time, by path. No memory id, text or author. Journals nothing. Since v0.6.4.
+    ADR-0026 d15). One item per workspace holding a held row: its id, path, held count, the held
+    instruction-class versions among them (held_instructions), the live person's reviewer keys whose
+    grants and denials confer reviewer there (person_reviewers: reviewer keys used_by person with no
+    crew and no profile, not revoked or expired, the only keys that approve an instruction; ADR-0080
+    d16, #435; a key whose person wrote the held instructions is counted though outside that person's
+    own root it cannot approve them) and the oldest held row's time, by path. No memory id, text, author
+    or key. Journals nothing. Since v0.6.4; the two counts since v0.8.2.
 
     Args:
         x_request_id (str | Unset):

@@ -549,6 +549,10 @@ fn served_unreviewed(m: &MemoryRecord, current: Option<&str>) -> bool {
 /// that find them, beside the steering budget that cuts the list.
 const HELD_STEERING_MAX: usize = 50;
 
+/// The most held guardrail versions the guardrail read serves beside the
+/// promoted rules, dropped before any promoted rule is (ADR-0080 d10).
+const HELD_GUARDRAILS_MAX: usize = 50;
+
 /// How an issuance runs once its issuer is known (ADR-0045 d6, d16).
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Issuance<'a> {
@@ -6938,8 +6942,11 @@ where
         // The served node set holds the scope's in-progress subtree and
         // every one below it; where it holds one, `include_unreviewed`
         // defaults to true and admits every author's held rows on the nodes
-        // inside, beside the key's own on every served node (ADR-0030 d2,
-        // d3, d4, as ADR-0080 d16 amends them).
+        // inside. The key's own held rows come from those nodes alone unless
+        // the request asks `include_unreviewed: true`, which adds them on
+        // every served node (ADR-0030 d2, d3, d4, as ADR-0080 d16 amends
+        // them).
+        let own_everywhere = req.include_unreviewed == Some(true);
         let ServedNodes {
             nodes: readable,
             inside,
@@ -6951,6 +6958,7 @@ where
                 &scope_ancestry,
                 &applicable,
                 include_unreviewed,
+                own_everywhere,
                 req,
             )
             .await?,
@@ -7012,6 +7020,11 @@ where
         };
         let readable = within(&readable);
         let inside = within(&inside);
+        let own_nodes = if own_everywhere {
+            readable.clone()
+        } else {
+            inside.clone()
+        };
         // The candidate scope is the core's, never an adapter's: the
         // readable hit nodes, the kinds, and the own held rows only when
         // asked — the own key set is the calling key alone until rotation is
@@ -7027,7 +7040,7 @@ where
                 author_key_ids: caller.own_key_ids(),
                 // The key's own held rows on every served node, and every
                 // author's on the nodes inside (ADR-0030 d3; ADR-0080 d16).
-                nodes: readable.clone(),
+                nodes: own_nodes.clone(),
                 any_author_nodes: inside.clone(),
                 current_scanner: self.scanner.version().map(str::to_owned),
             }),
@@ -7108,7 +7121,7 @@ where
                 MemoryStatus::Held => {
                     include_unreviewed
                         && recorded(m)
-                        && ((own.contains(&m.author_key_id) && readable.contains(&m.workspace_id))
+                        && ((own.contains(&m.author_key_id) && own_nodes.contains(&m.workspace_id))
                             || (served_unreviewed(m, self.scanner.version())
                                 && inside.contains(&m.workspace_id)))
                 }
@@ -7394,9 +7407,11 @@ where
     /// `promoted_at` and `artifact_id`, never by a query; rows of one
     /// `claim_key` with different severities each name the others in
     /// `conflict`; over [`SET_CAP`] the set is served whole with
-    /// `over_cap`. Held guardrails are never served as rules: the caller's
-    /// own held ones in the same chain are listed by `claim_key` and version
-    /// alone, at most [`OWN_HELD_MAX_LINES`] (d3). Each served row carries
+    /// `over_cap`. A held guardrail is served as a line of its own, marked
+    /// unreviewed and asking, to its author key under `include_own_held` and
+    /// inside an in-progress root (ADR-0080 d10); the caller's own held ones
+    /// in the same chain that are not served are listed by `claim_key` and
+    /// version alone, at most [`OWN_HELD_MAX_LINES`] (d3). Each served row carries
     /// its approving verdicts' `used_by` and `at`, never a reviewer's key
     /// name (d5); they are read from the journal, one pass over the tenant's
     /// chain per read whose cost is unmeasured. The result names the served
@@ -7483,18 +7498,18 @@ where
                 }
                 MemoryStatus::Held => {
                     let own = m.author_key_id == key.key_id;
-                    if own {
-                        own_held.push(OwnHeldGuardrail {
+                    let served = reads
+                        && served_unreviewed(&m, self.scanner.version())
+                        && ((own && req.include_own_held) || inside.contains(&m.workspace_id));
+                    // A version served as a line is not also listed as held
+                    // and not in force.
+                    match m.guardrail.clone() {
+                        Some(fields) if served => in_force.push((depth, *fields, m)),
+                        _ if own => own_held.push(OwnHeldGuardrail {
                             claim_key: m.claim_key.clone(),
                             version: m.version,
-                        });
-                    }
-                    if reads
-                        && served_unreviewed(&m, self.scanner.version())
-                        && ((own && req.include_own_held) || inside.contains(&m.workspace_id))
-                        && let Some(fields) = m.guardrail.clone()
-                    {
-                        in_force.push((depth, *fields, m));
+                        }),
+                        _ => {}
                     }
                 }
                 _ => {}
@@ -7512,6 +7527,16 @@ where
         // depth, so it never takes a promoted rule's place (ADR-0080 d10).
         in_force.sort_by_key(|(depth, fields, m)| {
             (fields.severity, *depth, m.status == MemoryStatus::Held)
+        });
+        // Held versions are capped on their own, as held steering is, and
+        // dropped before any promoted rule is (ADR-0080 d10).
+        let mut held_seen = 0;
+        in_force.retain(|(_, _, m)| {
+            if m.status != MemoryStatus::Held {
+                return true;
+            }
+            held_seen += 1;
+            held_seen <= HELD_GUARDRAILS_MAX
         });
         // A conflict is between promoted rules; a held version adds a line
         // and names none, nor is it named.
@@ -7548,7 +7573,14 @@ where
             .iter()
             .map(|(_, _, m)| (m.memory_id, m.version))
             .collect();
-        let over_cap = in_force.len() > SET_CAP;
+        // The cap counts the promoted rules alone; held versions are listed
+        // beside them and capped on their own, so they never hide an
+        // approved rule (ADR-0080 d10).
+        let over_cap = in_force
+            .iter()
+            .filter(|(_, _, m)| m.status != MemoryStatus::Held)
+            .count()
+            > SET_CAP;
         let guardrails = in_force
             .into_iter()
             .zip(conflict)
@@ -7851,6 +7883,7 @@ where
         scope_ancestry: &[WorkspaceRecord],
         applicable: &[Uuid],
         include_unreviewed: bool,
+        own_everywhere: bool,
         req: &RecallRequest,
     ) -> Result<Vec<MemoryRecord>, AppError> {
         if req.as_of.is_some() {
@@ -7877,7 +7910,8 @@ where
         };
         let current = self.scanner.version().map(str::to_owned);
         let mut rows = Vec::new();
-        if !inside.is_empty() {
+        // `include_unreviewed: false` narrows to promoted rows (ADR-0030 d4).
+        if include_unreviewed && !inside.is_empty() {
             rows.extend(
                 self.journal
                     .list_memories(
@@ -7893,13 +7927,16 @@ where
                     .await?,
             );
         }
-        if include_unreviewed {
+        // The key's own held steering outside an in-progress subtree needs
+        // the request's own `true`; the calling key alone, never another key
+        // of its person (ADR-0080 d14).
+        if include_unreviewed && own_everywhere {
             rows.extend(
                 self.journal
                     .list_memories(
                         tenant_id,
                         &filter(ListingScope::Own {
-                            key_ids: caller.own_key_ids(),
+                            key_ids: vec![caller.key.key_id],
                             masked: Vec::new(),
                         }),
                         None,

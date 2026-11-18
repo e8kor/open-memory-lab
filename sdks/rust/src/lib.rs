@@ -215,7 +215,15 @@ pub struct ServedGuardrail {
     pub text: String,
     #[serde(default)]
     pub rule: Option<Value>,
-    pub promoted_at: String,
+    /// `None` on a held version served as unreviewed (ADR-0080 d10).
+    #[serde(default)]
+    pub promoted_at: Option<String>,
+    /// True for a held version served beside the promoted rules.
+    #[serde(default)]
+    pub unreviewed: bool,
+    /// What a hook does inside: `ask` for a held version (ADR-0080 d10).
+    #[serde(default)]
+    pub effect_inside: Option<String>,
     #[serde(default)]
     pub verdicts: Vec<GuardrailVerdict>,
     #[serde(default)]

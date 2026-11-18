@@ -28,7 +28,8 @@ class GuardrailSet:
                 key.issued; no request changes it, and any other value is request.validation, details.field /guardrail_scope
                 (ADR-0037 d4; since v0.5.1).
             set_digest (str): Opaque; a client only compares it.
-            over_cap (bool): More than twelve apply; the set is still served whole.
+            over_cap (bool): More than twelve approved rules apply, held versions not counted; the set is still served
+                whole.
             guardrails (list[ServedGuardrail]): Ordered by severity, depth from the root, promoted_at and artifact_id, a
                 held version after the promoted rows of its severity and depth; never by a query.
             own_held (list[GuardrailSetOwnHeldItem]): The caller's own held guardrails in the chain, by key and version,

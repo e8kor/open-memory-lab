@@ -105,3 +105,23 @@ fn the_admin_read_carries_its_holder_its_promotion_and_its_scan_finding() {
             .is_some_and(|f| f.starts_with("injection"))
     );
 }
+
+#[test]
+fn a_held_guardrail_decodes_with_no_promotion_and_its_unreviewed_mark() {
+    let held: oml_sdk::ServedGuardrail = serde_json::from_value(json!({
+        "claim_key": "no-force-push", "version": 2, "workspace_path": "universe.alice",
+        "severity": "never", "text": "Never force-push.", "promoted_at": null,
+        "unreviewed": true, "effect_inside": "ask", "verdicts": []
+    }))
+    .expect("a held guardrail");
+    assert_eq!(held.promoted_at, None);
+    assert!(held.unreviewed);
+    assert_eq!(held.effect_inside.as_deref(), Some("ask"));
+    let promoted: oml_sdk::ServedGuardrail = serde_json::from_value(json!({
+        "claim_key": "k", "version": 1, "severity": "must", "text": "t",
+        "promoted_at": "2026-11-09T10:11:12Z"
+    }))
+    .expect("a promoted guardrail");
+    assert!(!promoted.unreviewed);
+    assert_eq!(promoted.effect_inside, None);
+}

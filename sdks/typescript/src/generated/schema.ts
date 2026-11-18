@@ -565,7 +565,7 @@ export interface paths {
         };
         /**
          * The review queue's depth and oldest held row per workspace, tenant-wide; no content.
-         * @description Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending ADR-0026 d15). One item per workspace holding a held row: its id, path, held count and the oldest held row's time, by path. No memory id, text or author. Journals nothing. Since v0.6.4.
+         * @description Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending ADR-0026 d15). One item per workspace holding a held row: its id, path, held count, the held instruction-class versions among them (held_instructions), the live person's reviewer keys whose grants and denials confer reviewer there (person_reviewers: reviewer keys used_by person with no crew and no profile, not revoked or expired, the only keys that approve an instruction; ADR-0080 d16, #435; a key whose person wrote the held instructions is counted though outside that person's own root it cannot approve them) and the oldest held row's time, by path. No memory id, text, author or key. Journals nothing. Since v0.6.4; the two counts since v0.8.2.
          */
         get: operations["reviewQueue"];
         put?: never;
@@ -1871,7 +1871,7 @@ export interface components {
             anchor_repo?: components["schemas"]["AnchorRepo"];
             anchor_path_prefix?: components["schemas"]["AnchorPathPrefix"];
             origin_kinds?: components["schemas"]["OriginKinds"];
-            /** @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held and unreviewed true; they count against k and max_tokens. Inside a workspace a person put in progress, and in every such workspace below the scope, every author's held memories join too, and absent means true when the served workspaces hold one; absent means false everywhere else (ADR-0030 d3, d4; ADR-0080 d16). The steering list carries held steering after the promoted rows, marked unreviewed: the key's own when this is true, and every author's on a workspace in progress up the scope's chain (ADR-0080 d10, d14). Rules: docs/architecture/retrieval.md. */
+            /** @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held and unreviewed true; they count against k and max_tokens. Inside a workspace a person put in progress, and in every such workspace below the scope, every author's held memories join too, and absent means true when the served workspaces hold one; absent means false everywhere else (ADR-0030 d3, d4; ADR-0080 d16). False narrows every list to promoted rows. The steering list carries held steering after the promoted rows, marked unreviewed: the calling key's own when this is true, and, unless this is false, every author's on a workspace in progress up the scope's chain (ADR-0080 d10, d14). Rules: docs/architecture/retrieval.md. */
             include_unreviewed?: boolean;
             /**
              * Format: int64
@@ -2303,7 +2303,7 @@ export interface components {
              * @enum {string}
              */
             verdict: "refuse" | "hold" | "annotate";
-            /** @description The rule set it was found under, oml-scan/1.2. */
+            /** @description The rule set it was found under, oml-scan/1.3. */
             rule_set: string | null;
             /** @description /body, /title, or /body/ and a decoded view's path; null on a finding migrated from the single stored finding. */
             field: string | null;
@@ -2902,7 +2902,7 @@ export interface components {
             guardrail_scope: components["schemas"]["GuardrailScope"];
             /** @description Opaque; a client only compares it. */
             set_digest: string;
-            /** @description More than twelve apply; the set is still served whole. */
+            /** @description More than twelve approved rules apply, held versions not counted; the set is still served whole. */
             over_cap: boolean;
             /** @description Ordered by severity, depth from the root, promoted_at and artifact_id, a held version after the promoted rows of its severity and depth; never by a query. */
             guardrails: components["schemas"]["ServedGuardrail"][];
@@ -3438,6 +3438,8 @@ export interface components {
             findings_unlisted?: number;
             /** @description After this call, served versions (promoted tips) with no approval: their approved_at is null because migration 0044's fill could not match the verdict their promotion names. A version a ratified successor replaced is not counted. Doctor's approval_unmatched (ADR-0077 d6). A count, never a list. */
             promoted_unapproved?: number;
+            /** @description After this call, served instruction-class versions (promoted steering, guardrail and skill tips, retirements aside) whose approving key was not a person's reviewer key, or that carry no approval: approved before an instruction became a person's to approve. A person reviews one again by superseding it; the replaced version is then no tip and not counted. Read off the row's approver_used_by, so a person's key that had a crew is not counted. Doctor's instruction_approvals (ADR-0080 d16, #436). Since v0.8.2. */
+            instructions_without_person_approval?: number;
         };
         /** @description The build that answered (http-api.md "Health"). Times are UTC, YYYY-MM-DDTHH:MM:SSZ; a field nothing could supply is the string unknown. */
         Build: {
@@ -5397,6 +5399,8 @@ export interface operations {
                      *           "workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *           "path": "universe.alice",
                      *           "held": 3,
+                     *           "held_instructions": 1,
+                     *           "person_reviewers": 1,
                      *           "oldest_at": "2026-11-09T08:12:44.000000Z"
                      *         }
                      *       ]
@@ -5408,6 +5412,10 @@ export interface operations {
                             workspace_id: string;
                             path: string;
                             held: number;
+                            /** @description The held steering, guardrail and other instruction-class versions among held; only a person's reviewer key approves one (ADR-0080 d16). */
+                            held_instructions: number;
+                            /** @description The live person's reviewer keys whose effective access confers reviewer on the workspace. A count, never a key. It overcounts: a key whose person also wrote the held instructions is counted, though outside that person's own root it cannot approve them (review.author_in_lineage, same_person; ADR-0082 d7), so a non-zero count does not prove that someone can approve each one. */
+                            person_reviewers: number;
                             /** Format: date-time */
                             oldest_at: string;
                         }[];
@@ -7882,7 +7890,7 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "scanner_version": "oml-scan/1.2",
+                     *       "scanner_version": "oml-scan/1.3",
                      *       "scanned": 2,
                      *       "findings": [
                      *         {
