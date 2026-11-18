@@ -93,8 +93,13 @@ pub mod event_types {
     /// list when there are none, never the text (ADR-0065 d13, d15;
     /// ADR-0074 d28).
     pub const SCAN_FINDINGS_RECORDED: &str = "scan.findings_recorded";
-    /// Crypto-shredding erasure (vector 3 of chain-format.md).
+    /// Crypto-shredding erasure (vector 3 of chain-format.md); since
+    /// ADR-0089 d16 it names every version of one claim.
     pub const LIFECYCLE_ERASE: &str = "lifecycle.erase";
+    /// A promoted version stops being served and the latest earlier
+    /// promoted, non-demoted version of its claim is the tip again, or none
+    /// is (ADR-0089 d16; ADR-0009 d5).
+    pub const LIFECYCLE_DEMOTE: &str = "lifecycle.demote";
     /// Deployment signing-key rotation, first event the new key signs.
     pub const SYSTEM_SIGNING_KEY_ROTATED: &str = "system.signing_key_rotated";
     /// The names of a chain's rows that predate names, and the crew records

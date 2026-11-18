@@ -47,6 +47,8 @@ fn report_json(r: &RescanReport) -> Value {
         "promoted_unapproved": r.promoted_unapproved,
         "withdrawn_in_queue": r.withdrawn_in_queue,
         "instructions_without_person_approval": r.instructions_without_person_approval,
+        "held_successors_stranded": r.held_successors_stranded,
+        "erased_keys_live": r.erased_keys_live,
     })
 }
 

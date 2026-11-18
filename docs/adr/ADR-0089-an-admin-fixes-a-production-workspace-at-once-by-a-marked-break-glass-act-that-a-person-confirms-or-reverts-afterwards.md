@@ -9,7 +9,8 @@ answers: which acts an admin key may take on a workspace's content, on which tar
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its five questions decided at their
 recommendations and every other default as drafted, and its amendment of ADR-0001 d5 accepted with
-it · proposed the same day
+it · proposed the same day · amended 2026-11-17 by the operator (d16: demote's targets, the
+fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version)
 
 **Release:** not scheduled; with ADR-0085, whose releases a fix overlays
 
@@ -266,6 +267,81 @@ Decided, not built.
     - `oml_admin_fixes_unconfirmed`;
     - `oml_admin_fix_oldest_unconfirmed_seconds`;
     - `oml_admin_reads_total`.
+
+- **d16 — Readings the build takes, decided 2026-11-17.** The operator decided c3 and c4 of the
+  v0.8.3 plan and accepted c1 and c12 as recommended, before the code.
+  - **Demote targets any promoted version (the operator, 2026-11-17: "Any approved version").**
+    - An admin may demote the served tip, or an earlier promoted version that a later version
+      superseded and that is no longer served.
+    - Demoting the served tip serves again the latest earlier version of the claim that is
+      promoted and not demoted; with none, the claim is served by no version.
+    - Demoting a version that is not served moves no tip. It changes that version's state to
+      `demoted`, its history (the `lifecycle.demote` event and the state every read reports), and
+      the as-of reads.
+    - **As-of reads skip a demoted version (the operator, 2026-11-17).** A demoted version is
+      served by no read at any instant, and for the instants it was the tip an as-of read serves
+      the latest earlier promoted, non-demoted version instead; the journal still records what
+      was actually served. The tip-at probe counts only promoted, non-demoted versions, so
+      today's tip is still the greatest of them and the probe's short cut stays sound
+      (ADR-0059 d22, which states the probe's cost).
+    - A held version cannot be demoted (`admin.fix_target_not_promoted`): the author withdraws
+      it (ADR-0083 d13) or a reviewer rejects it. A rejected, withdrawn or erased version cannot
+      be demoted either.
+    - The cost: an as-of read no longer reports what was served at that instant when a version
+      served then was later demoted; the journal still does, and the version keeps its bytes
+      (R4). A demotion of a superseded version is an act on history a reader of today's tip never
+      sees, and the doctor's fix lines count it like any other fix.
+  - **One surface (accepted 2026-11-17, recommended in the plan).** Demote and erase are reached
+    only as fix acts through `POST /v2/admin/fixes` (d15), never as routes of their own. The
+    designed `POST /v2/memories/{id}/demote` and `/erase` leave `openapi-designed.yaml`. An unmarked,
+    unqueued demotion or erasure would be the "unmarked fixes" alternative this record rejects.
+  - **Erase takes a claim (the operator, 2026-11-17: "All its versions").** An erase names one
+    version and erases every version of its `claim_key` in its workspace, held, rejected,
+    withdrawn and demoted ones included, since a supersession's text overlaps its predecessor's.
+    The mechanism, while PostgreSQL holds bodies in clear, is ADR-0005's amendment of 2026-11-17.
+  - **A fix's events (accepted 2026-11-17).** Each fix journals `admin.fix` and, in the same
+    transaction, the lifecycle event it causes: `lifecycle.demote` (naming the version, and the
+    version it served again as `restored_artifact_id`, or null), `lifecycle.erase` (naming every
+    erased version), or an edit's or retirement's supersession and promotion. `admin.fix` names
+    those events' ids, so the PostgreSQL fold and the lake writer read the lifecycle events they
+    already read.
+  - **Notes of 2026-11-18, the coordinator's readings for the operator's batch (#454, #455).**
+    Each is built as stated unless it says otherwise; the operator confirms, widens or reverses it.
+    - **A replaced version gets back the end it had before the supersession.** A ratified
+      supersession whose successor declares a start ends the version it replaces there
+      (ADR-0059 d4). Demoting that successor gives the replaced version, while it is still
+      approved, the end it had before the ratification, an open end staying open, whether the
+      successor was the tip or a version below it: recall does not hide a restored tip as
+      expired, and an as-of read in the demoted version's tenure serves the version below it.
+      `lifecycle.demote` names that version and its end (`reopened_artifact_id`,
+      `restored_valid_until`), so a rebuild reads them.
+      Each store keeps that earlier end when a ratification replaces it: PostgreSQL in
+      `memories.valid_until_ratified` and `valid_until_before` (migration 0058). A version a
+      ratification ended before 0058 keeps the end it has when restored. The law
+      `a_demotion_restores_the_end_the_version_had_before_its_supersession` and
+      `demoting_a_version_below_the_tip_restores_the_end_its_ratification_gave_the_version_it_replaced`
+      hold it over both stores, today and at instants before the demotion.
+    - **A retirement and a vocabulary term are not demoted.** A demotion of a retirement version
+      or of a `term`, `term_mapping` or `vocab_release` version is refused, naming
+      `lifecycle.demote_kind_unsupported`, and journals nothing: returning a retired claim to
+      service and taking a term out of a published vocabulary each need a reading of their own.
+      The operator may widen this later.
+    - **The author's read of a demoted version.** Its author keeps reading the version by id and
+      in their own listing, marked `demoted`; no other read serves it (admission.md).
+    - **Not built: a claim key whose every approved version is demoted.** The reading is that
+      `demoted` does not count as live, as `erased` does not, so the key can be written again.
+      It is not built in this change: `memories_claim_version` keeps a demoted version's ordinal,
+      so a fresh claim cannot start at version 1, and the usage meter (ADR-0071 d2,
+      `oml_chain_live` and `oml_chain_account`, migration 0045) counts a chain with a demoted
+      version as live and finds its account by its version 1. Freeing the key needs the
+      operator to choose where the fresh claim's ordinals start and how the meter counts it.
+    - **Held successors of a demoted tip.** A version held as the successor of a tip that is
+      later demoted can never be approved, since its target is no longer the served tip. `oml
+      doctor` counts held versions whose target is no longer their claim's promoted tip
+      (`memory.held_successor_stranded`), so an admin sees them; the author withdraws them or a
+      reviewer rejects them. A held first version is not counted: it replaces nothing and stays
+      approvable. The doctor also counts erased versions whose data key is still live
+      (`lake.erased_key_live`).
 
 ## Consequences
 

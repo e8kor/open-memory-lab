@@ -25,9 +25,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use deltalake::arrow::array::Array as _;
 use oml_app::App;
 use oml_app::domain::name::Name;
-use oml_app::domain::{Envelope, EventTime, MemoryKind, Role, event_types, sign};
+use oml_app::domain::{MemoryKind, Role};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
-use oml_app::ports::{CommitRequest, JournalStore as _, MetadataFold, OutboxRow};
 use oml_app::types::{BootstrapRequest, GrantRequest, IssueKeyRequest, SubmitRequest, Verdict};
 use oml_lake::crypto::{Kek, Keyring};
 use oml_lake::table::{BRONZE_EVENTS, GOLD_LINEAGE, LAKE_BATCHES, RECALL_DAILY, SILVER_CLAIMS};
@@ -35,7 +34,6 @@ use oml_lake::{Lake, Prefix};
 use oml_lakewriter::source::{Lease, Source};
 use oml_lakewriter::{RotateError, Settings, Writer, load_bench, rotate_kek};
 use oml_pg::PgStore;
-use serde_json::json;
 use sqlx::postgres::PgConnection;
 use sqlx::{Connection as _, Executor as _};
 use uuid::Uuid;
@@ -175,6 +173,33 @@ fn keyring() -> Keyring {
 /// promoted memories whose bodies carry `canary` and their index; every
 /// third derives from the first. Returns (tenant, promoted ids).
 async fn tenant(app: &TestApp, name: &str, canary: &str, n: usize) -> (Uuid, Vec<Uuid>) {
+    let (t, ids, _) = tenant_admin(app, name, canary, n).await;
+    (t, ids)
+}
+
+/// [`tenant`], with its admin key's value: the key the fix acts take.
+async fn tenant_admin(
+    app: &TestApp,
+    name: &str,
+    canary: &str,
+    n: usize,
+) -> (Uuid, Vec<Uuid>, String) {
+    let c = tenant_crew(app, name, canary, n).await;
+    (c.tenant, c.ids, c.admin)
+}
+
+/// A tenant built by [`tenant_crew`]: its id, its `n` promoted versions,
+/// and the values of its admin, writer and reviewer keys.
+struct Crew {
+    tenant: Uuid,
+    ids: Vec<Uuid>,
+    admin: String,
+    writer: String,
+    reviewer: String,
+}
+
+/// [`tenant_admin`], with the writer's and the reviewer's key values too.
+async fn tenant_crew(app: &TestApp, name: &str, canary: &str, n: usize) -> Crew {
     let boot = app
         .bootstrap_tenant(&BootstrapRequest {
             tenant_name: Name::parse(name).expect("name"),
@@ -265,45 +290,19 @@ async fn tenant(app: &TestApp, name: &str, canary: &str, n: usize) -> (Uuid, Vec
             .expect("approve");
         ids.push(id);
     }
-    (boot.tenant_id, ids)
+    Crew {
+        tenant: boot.tenant_id,
+        ids,
+        admin: admin.clone(),
+        writer: writer.value.clone(),
+        reviewer: reviewer.value.clone(),
+    }
 }
 
-/// Journals `lifecycle.erase` of `artifact` (erase has no use case yet,
-/// ADR-0052 d7; the lake honours the event when it is journalled).
-async fn erase(store: &PgStore, tenant: Uuid, artifact: Uuid) {
-    let head = store
-        .chain_head(tenant)
-        .await
-        .expect("head")
-        .expect("a chain");
-    let event_id = Uuid::new_v4();
-    let envelope = Envelope {
-        tenant_id: tenant,
-        seq: head.seq + 1,
-        event_id,
-        event_type: event_types::LIFECYCLE_ERASE.to_owned(),
-        prev_hash: head.hash,
-        principal: "oml-server".to_owned(),
-        api_key_id: None,
-        at: EventTime::parse("2026-11-05T00:00:00.000000Z").expect("time"),
-        payload: json!({ "artifact_id": artifact.to_string() }),
-    };
-    let event = sign(envelope, &oml_port_contracts::test_signing_key()).expect("sign");
-    store
-        .commit(CommitRequest {
-            event: event.clone(),
-            fold: MetadataFold::AdminRead,
-            outbox: OutboxRow {
-                event_id,
-                topic: event.envelope.event_type.clone(),
-                payload: json!({}),
-            },
-            idempotency: None,
-            ceiling: None,
-            written: None,
-        })
-        .await
-        .expect("erase commits");
+/// Erases the claim of `artifact` through the admin's fix primitive, which
+/// journals `lifecycle.erase` naming every version of it (ADR-0089 d16).
+async fn erase(app: &TestApp, admin: &str, artifact: Uuid) {
+    app.erase_claim(admin, artifact).await.expect("erase");
 }
 
 async fn count(lake: &Lake, sql: &str) -> i64 {
@@ -551,7 +550,7 @@ async fn an_erased_body_opens_in_no_lake_version_its_text_is_in_no_lake_file_and
         return;
     };
     let canary = "erase-canary-7f3a";
-    let (t, ids) = tenant(&w.app, "acme", canary, 3).await;
+    let (t, ids, admin) = tenant_admin(&w.app, "acme", canary, 3).await;
     let mut writer = w.writer().await;
     writer.catch_up().await.expect("drain");
     let lake = w.lake();
@@ -565,7 +564,7 @@ async fn an_erased_body_opens_in_no_lake_version_its_text_is_in_no_lake_file_and
         Some(format!("{canary} number 0").as_bytes())
     );
 
-    erase(&w.store, t, ids[0]).await;
+    erase(&w.app, &admin, ids[0]).await;
     writer.catch_up().await.expect("drain the erase");
     assert_eq!(
         count(&lake, &format!("SELECT count(*) FROM claims WHERE artifact_id = '{}' AND state = 'erased' AND body_ciphertext IS NULL", ids[0])).await,
@@ -627,6 +626,229 @@ async fn an_erased_body_opens_in_no_lake_version_its_text_is_in_no_lake_file_and
         replay.iter().all(|b| b.rows.values().all(|n| *n == 0)),
         "{replay:?}"
     );
+    w.drop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_demoted_version_reaches_silver_as_demoted_and_keeps_its_sealed_body() {
+    let Some(w) = World::new("demote").await else {
+        return;
+    };
+    let canary = "demote-canary-2b9e";
+    let (t, ids, admin) = tenant_admin(&w.app, "acme", canary, 2).await;
+    let mut writer = w.writer().await;
+    writer.catch_up().await.expect("drain");
+    let lake = w.lake();
+    w.app
+        .demote_version(admin.as_str(), ids[0])
+        .await
+        .expect("demote");
+    writer.catch_up().await.expect("drain the demotion");
+    assert_eq!(
+        count(&lake, &format!("SELECT count(*) FROM claims WHERE artifact_id = '{}' AND state = 'demoted' AND body_ciphertext IS NOT NULL", ids[0])).await,
+        1,
+        "R4: the demoted version keeps its sealed body"
+    );
+    let sealed_body = sealed(&lake, ids[0]).await.expect("sealed");
+    assert_eq!(
+        writer
+            .open_body(t, ids[0], &sealed_body)
+            .await
+            .expect("read")
+            .as_deref(),
+        Some(format!("{canary} number 0").as_bytes())
+    );
+    w.drop().await;
+}
+
+/// A successor of `target`, version `expected + 1`, by the crew's writer,
+/// left held; approved by its reviewer when `approve` is set.
+async fn successor(
+    app: &TestApp,
+    c: &Crew,
+    target: Uuid,
+    expected: u32,
+    body: &str,
+    approve: bool,
+) -> Uuid {
+    let id = app
+        .supersede(
+            c.writer.as_str(),
+            &oml_app::types::SupersedeRequest {
+                idempotency_key: format!("succ-{target}-{expected}"),
+                on_similar: Default::default(),
+                target_id: target,
+                body: body.to_owned(),
+                kind: None,
+                retirement: false,
+                derives_from: Vec::new(),
+                reason: None,
+                workspace: None,
+                refuse_vocabulary_target: false,
+                severity: None,
+                rule: None,
+                kind_fields: None,
+                valid_from: None,
+                valid_until: None,
+                anchor: None,
+                format: None,
+                title: None,
+                origin: None,
+                expected_version: expected,
+            },
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    if approve {
+        app.post_verdict(c.reviewer.as_str(), id, Verdict::Approve, None)
+            .await
+            .expect("approve");
+    }
+    id
+}
+
+/// Each silver row of `ids`: (artifact, state, retracted_at is null,
+/// ciphertext is null), by artifact.
+async fn silver_rows(lake: &Lake, ids: &[Uuid]) -> Vec<(String, String, bool, bool)> {
+    let list = ids
+        .iter()
+        .map(|i| format!("'{i}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let batches = oml_lake::query::run(
+        lake,
+        &format!(
+            "SELECT artifact_id, state, retracted_at IS NULL, body_ciphertext IS NULL \
+               FROM claims WHERE artifact_id IN ({list}) ORDER BY artifact_id"
+        ),
+    )
+    .await
+    .expect("query");
+    let mut out = Vec::new();
+    for b in &batches {
+        let text = |i: usize| {
+            let col = deltalake::arrow::compute::cast(
+                b.column(i),
+                &deltalake::arrow::datatypes::DataType::Utf8,
+            )
+            .expect("cast");
+            col.as_any()
+                .downcast_ref::<deltalake::arrow::array::StringArray>()
+                .expect("text")
+                .clone()
+        };
+        let flag = |i: usize| {
+            b.column(i)
+                .as_any()
+                .downcast_ref::<deltalake::arrow::array::BooleanArray>()
+                .expect("a flag")
+                .clone()
+        };
+        let (a, st, r, c) = (text(0), text(1), flag(2), flag(3));
+        for row in 0..b.num_rows() {
+            out.push((
+                a.value(row).to_owned(),
+                st.value(row).to_owned(),
+                r.value(row),
+                c.value(row),
+            ));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Over a claim of three versions, `v1` promoted and replaced, `v2` the tip
+/// and `v3` held: demoting `v2` returns `v1` to silver as `promoted`, not
+/// retracted; erasing the claim then writes every version's key destroyed,
+/// dead-letters nothing, and leaves `v1` and `v2` in silver `erased` with no
+/// ciphertext (ADR-0089 d16; ADR-0005 d2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_demotion_returns_the_restored_version_to_silver_and_an_erasure_then_erases_every_version()
+ {
+    let Some(w) = World::new("demerase").await else {
+        return;
+    };
+    let canary = "demerase-canary-41c7";
+    let c = tenant_crew(&w.app, "acme", canary, 1).await;
+    let (t, v1) = (c.tenant, c.ids[0]);
+    let v2 = successor(&w.app, &c, v1, 1, &format!("{canary} revised"), true).await;
+    let v3 = successor(&w.app, &c, v2, 2, &format!("{canary} held"), false).await;
+    let mut writer = w.writer().await;
+    writer.catch_up().await.expect("drain");
+    let lake = w.lake();
+    w.app
+        .demote_version(c.admin.as_str(), v2)
+        .await
+        .expect("demote the tip");
+    writer.catch_up().await.expect("drain the demotion");
+    let rows = silver_rows(&lake, &[v1, v2]).await;
+    let row = |id: Uuid| {
+        rows.iter()
+            .find(|r| r.0 == id.to_string())
+            .cloned()
+            .unwrap_or_else(|| panic!("a silver row of {id}: {rows:?}"))
+    };
+    assert_eq!(
+        row(v1),
+        (v1.to_string(), "promoted".to_owned(), true, false),
+        "v1 is the tip again, not retracted"
+    );
+    assert_eq!(
+        row(v2),
+        (v2.to_string(), "demoted".to_owned(), false, false)
+    );
+
+    w.app
+        .erase_claim(c.admin.as_str(), v1)
+        .await
+        .expect("erase the claim");
+    writer.catch_up().await.expect("drain the erasure");
+    let mut o = w.owner().await;
+    let mut tx = o.begin().await.expect("tx");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(t.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("t");
+    let skipped: Vec<String> =
+        sqlx::query_scalar("SELECT reason FROM lake_dead_letter WHERE tenant_id = $1")
+            .bind(t)
+            .fetch_all(&mut *tx)
+            .await
+            .expect("dead letters");
+    assert!(skipped.is_empty(), "nothing skipped: {skipped:?}");
+    for id in [v1, v2, v3] {
+        let live: Option<bool> = sqlx::query_scalar(
+            "SELECT wrapped_dek IS NOT NULL OR destroyed_at IS NULL FROM artifact_keys \
+              WHERE tenant_id = $1 AND artifact_id = $2",
+        )
+        .bind(t)
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await
+        .expect("key row");
+        assert_eq!(live, Some(false), "{id}'s key is destroyed");
+    }
+    tx.rollback().await.expect("rollback");
+    let rows = silver_rows(&lake, &[v1, v2, v3]).await;
+    assert_eq!(
+        rows.iter()
+            .map(|r| (r.0.clone(), r.1.clone(), r.3))
+            .collect::<Vec<_>>(),
+        {
+            let mut want = vec![
+                (v1.to_string(), "erased".to_owned(), true),
+                (v2.to_string(), "erased".to_owned(), true),
+            ];
+            want.sort();
+            want
+        },
+        "v1 and v2 erased with no ciphertext; v3, never promoted, has no silver row"
+    );
+    assert!(files_holding(&lake, canary.as_bytes()).is_empty());
     w.drop().await;
 }
 
@@ -904,7 +1126,7 @@ async fn a_rotated_kek_keeps_every_body_readable_and_an_erased_body_unreadable()
         return;
     };
     let canary = "rotate-canary-5c1d";
-    let (t, ids) = tenant(&w.app, "acme", canary, 4).await;
+    let (t, ids, admin) = tenant_admin(&w.app, "acme", canary, 4).await;
     let path = w.lake_dir.with_extension("kek");
     keyring().write_atomic(&path).expect("kek file");
     let old_id = kek().id().to_owned();
@@ -915,7 +1137,7 @@ async fn a_rotated_kek_keeps_every_body_readable_and_an_erased_body_unreadable()
     for id in &ids {
         before.push(sealed(&lake, *id).await.expect("sealed"));
     }
-    erase(&w.store, t, ids[0]).await;
+    erase(&w.app, &admin, ids[0]).await;
     writer.catch_up().await.expect("drain the erase");
 
     // A writer holding the lease is a writer holding the old KEK in memory:

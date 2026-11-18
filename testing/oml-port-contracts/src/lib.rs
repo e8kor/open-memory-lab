@@ -2113,6 +2113,8 @@ pub async fn a_recording_rescan_adds_only_the_findings_a_held_versions_list_lack
             promoted_unapproved: 0,
             withdrawn_in_queue: 0,
             instructions_without_person_approval: 0,
+            held_successors_stranded: 0,
+            erased_keys_live: 0,
         }
     );
     let again = finding(
@@ -5345,6 +5347,180 @@ pub async fn promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its
         Some(v2.memory_id),
         "the claim's one served tip"
     );
+}
+
+/// Commits `lifecycle.demote` of `memory_id`, restoring `restored`, through
+/// the rig.
+async fn demote<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    memory_id: Uuid,
+    restored: Option<Uuid>,
+) -> Result<CommitReceipt, StoreError> {
+    rig.commit(
+        store,
+        event_types::LIFECYCLE_DEMOTE,
+        json!({
+            "artifact_id": memory_id.to_string(),
+            "restored_artifact_id": restored.map(|r| r.to_string()),
+        }),
+        MetadataFold::MemoryDemoted {
+            memory_id,
+            restored,
+        },
+        None,
+    )
+    .await
+}
+
+/// Commits `lifecycle.erase` of `memory_ids` through the rig.
+async fn erase<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    memory_ids: Vec<Uuid>,
+) -> Result<CommitReceipt, StoreError> {
+    rig.commit(
+        store,
+        event_types::LIFECYCLE_ERASE,
+        json!({
+            "artifact_ids": memory_ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        }),
+        MetadataFold::ClaimErased { memory_ids },
+        None,
+    )
+    .await
+}
+
+/// The compare-and-set of a demotion and an erasure (ADR-0089 d16): a fold
+/// committed on what the claim held when it was read, after the claim moved,
+/// is refused with `TipMoved` and journals nothing. A demotion naming as
+/// restored a version that is not the greatest promoted one below the tip, or
+/// one that is already the tip, or a version that is no longer promoted, and
+/// an erasure that leaves out a version held since, each commit nothing.
+pub async fn a_stale_demotion_or_erasure_commits_nothing<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(26);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB28);
+    let v1 = held_memory(
+        rig.tenant_id,
+        wa,
+        Uuid::from_u128(0xC31),
+        "wanda",
+        Uuid::from_u128(0xD26),
+        "v1",
+    );
+    let successor = |id: u128, version: u32, replaces: Uuid| MemoryRecord {
+        memory_id: Uuid::from_u128(id),
+        version,
+        replaces: Some(replaces),
+        body: format!("v{version}"),
+        body_digest: oml_app::domain::sha256_digest_string(format!("v{version}").as_bytes()),
+        body_bytes: 2,
+        ..v1.clone()
+    };
+    let v2 = successor(0xC32, 2, v1.memory_id);
+    let v3 = successor(0xC33, 3, v2.memory_id);
+    hold(&mut rig, store, v1.clone()).await.expect("hold v1");
+    promote(&mut rig, store, v1.memory_id)
+        .await
+        .expect("promote v1");
+    hold(&mut rig, store, v2.clone()).await.expect("hold v2");
+    supersede_tip(&mut rig, store, v2.memory_id, v1.memory_id)
+        .await
+        .expect("ratify v2");
+    hold(&mut rig, store, v3.clone()).await.expect("hold v3");
+    supersede_tip(&mut rig, store, v3.memory_id, v2.memory_id)
+        .await
+        .expect("ratify v3");
+    let tenant = rig.tenant_id;
+    let read = |id| async move {
+        store
+            .memory(tenant, id)
+            .await
+            .expect("memory")
+            .expect("the row exists")
+    };
+    let refused = |r: Result<CommitReceipt, StoreError>, what: &str| {
+        assert!(
+            matches!(r, Err(StoreError::TipMoved { .. })),
+            "{what}: {r:?}"
+        );
+    };
+
+    // Read when v1 was the greatest promoted version below v3; v2 has been
+    // promoted since.
+    let head = store.chain_head(tenant).await.expect("head");
+    refused(
+        demote(&mut rig, store, v3.memory_id, Some(v1.memory_id)).await,
+        "a demotion restoring a version below the greatest one",
+    );
+    // `restored` is the tip already.
+    refused(
+        demote(&mut rig, store, v2.memory_id, Some(v3.memory_id)).await,
+        "a demotion restoring the tip",
+    );
+    // Read when v3 had no promoted version below it.
+    refused(
+        demote(&mut rig, store, v3.memory_id, None).await,
+        "a demotion of the tip restoring nothing over a promoted version",
+    );
+    assert_eq!(
+        store.chain_head(tenant).await.expect("head"),
+        head,
+        "a lost compare-and-set journals nothing"
+    );
+    for (id, tip) in [
+        (v1.memory_id, false),
+        (v2.memory_id, false),
+        (v3.memory_id, true),
+    ] {
+        let m = read(id).await;
+        assert_eq!(m.status, MemoryStatus::Promoted, "{id} stays promoted");
+        assert_eq!(m.is_tip, tip, "{id} keeps its tip");
+    }
+
+    // The fresh demotion commits; replayed, it finds v3 no longer promoted.
+    demote(&mut rig, store, v3.memory_id, Some(v2.memory_id))
+        .await
+        .expect("demote v3, restoring v2");
+    let head = store.chain_head(tenant).await.expect("head");
+    refused(
+        demote(&mut rig, store, v3.memory_id, Some(v2.memory_id)).await,
+        "a demotion of a version already demoted",
+    );
+    assert_eq!(store.chain_head(tenant).await.expect("head"), head);
+    assert!(read(v2.memory_id).await.is_tip);
+
+    // An erasure read before v4 was held leaves v4 out.
+    let v4 = successor(0xC34, 4, v2.memory_id);
+    hold(&mut rig, store, v4.clone()).await.expect("hold v4");
+    let head = store.chain_head(tenant).await.expect("head");
+    refused(
+        erase(
+            &mut rig,
+            store,
+            vec![v1.memory_id, v2.memory_id, v3.memory_id],
+        )
+        .await,
+        "an erasure missing a version held since it was read",
+    );
+    assert_eq!(
+        store.chain_head(tenant).await.expect("head"),
+        head,
+        "a lost compare-and-set journals nothing"
+    );
+    for id in [v1.memory_id, v2.memory_id, v3.memory_id, v4.memory_id] {
+        let m = read(id).await;
+        assert_ne!(m.status, MemoryStatus::Erased, "{id} is not erased");
+        assert!(!m.body.is_empty(), "{id} keeps its body");
+    }
+    erase(
+        &mut rig,
+        store,
+        vec![v1.memory_id, v2.memory_id, v3.memory_id, v4.memory_id],
+    )
+    .await
+    .expect("the erasure naming every version commits");
 }
 
 /// The compare-and-set of ratification: a successor takes the tip only
@@ -9385,6 +9561,10 @@ where
     // rather than the largest law's state inline, and an unoptimized test
     // build stays inside a test thread's default stack.
     Box::pin(journal_commit_and_head(&new_store().await)).await;
+    Box::pin(a_stale_demotion_or_erasure_commits_nothing(
+        &new_store().await,
+    ))
+    .await;
     Box::pin(
         a_commit_past_its_ceiling_writes_nothing_and_the_usage_read_is_the_rows(&new_store().await),
     )

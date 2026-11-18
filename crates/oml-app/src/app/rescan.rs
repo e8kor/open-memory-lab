@@ -83,6 +83,13 @@ pub struct RescanReport {
     /// is not a person's, or by none: doctor's `instruction_approvals`
     /// (ADR-0080 d16; #436). A superseded version is not counted.
     pub instructions_without_person_approval: u64,
+    /// After this call, held versions no verdict can approve, their target
+    /// no longer the claim's promoted tip: doctor's
+    /// `memory.held_successor_stranded` (ADR-0089 d16).
+    pub held_successors_stranded: u64,
+    /// After this call, erased versions whose data key is still live:
+    /// doctor's `lake.erased_key_live` (ADR-0005 d2).
+    pub erased_keys_live: u64,
 }
 
 /// A finding as a version's `scan_finding` carries it, as admission's
@@ -357,6 +364,8 @@ where
             promoted_unapproved: backlog.promoted_unapproved,
             withdrawn_in_queue: backlog.withdrawn_in_queue,
             instructions_without_person_approval: backlog.instructions_without_person_approval,
+            held_successors_stranded: backlog.held_successors_stranded,
+            erased_keys_live: backlog.erased_keys_live,
         })
     }
 }

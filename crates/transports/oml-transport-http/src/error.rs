@@ -677,6 +677,8 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         .with_details(json!({ "field": format!("/{field}") })),
         AppError::KindField(refusal) => ApiError::validation(refusal.reason)
             .with_details(json!({ "field": refusal.field })),
+        e @ AppError::DemoteKindUnsupported { .. } => ApiError::validation(e.to_string())
+            .with_details(json!({ "reason": "lifecycle.demote_kind_unsupported" })),
         AppError::KeyLinkRefused { reason } => {
             // ADR-0085 d16: the refusal names the member at fault, as a
             // limit's refusal does (ADR-0079 d5).

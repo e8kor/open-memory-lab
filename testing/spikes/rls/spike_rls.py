@@ -370,6 +370,13 @@ def seed_after_migrations(conn: psycopg.Connection, t: Tenant) -> None:
         conn.execute("UPDATE memories SET kind = 'steering' WHERE id = %s", [t.m3])
         journal_row(conn, t, 9, "submission.remember", {"artifact_id": str(t.m4)}, t.writer)
         conn.execute("UPDATE journal_chain_head SET seq = 9 WHERE tenant_id = %s", [t.id])
+        # One live data key per tenant, as the lake writer stores it (0031); its wrapped bytes
+        # carry the tenant's marker.
+        seed_insert(
+            conn, "INSERT INTO artifact_keys (tenant_id, artifact_id, wrapped_dek, kek_id) "
+            "VALUES (%s, %s, %s, 'spike-kek')",
+            [t.id, t.m1, f"{t.marker}-wrapped".encode()],
+        )
         claim = f"{t.marker} runbook drain upgrade verify undrain, revised"
         seed_insert(
             conn, "INSERT INTO memories (id, tenant_id, workspace_id, claim, claim_digest, status, "
@@ -448,6 +455,22 @@ def sqlstate_rolled_back(conn: psycopg.Connection, statement: str | sql.Composab
         with conn.transaction():
             set_tenant(conn, tenant)
             conn.execute(statement)
+            raise _Rollback
+    except _Rollback:
+        return None
+    except psycopg.Error as e:
+        return e.sqlstate
+
+
+def copy_sqlstate(conn: psycopg.Connection, statement: str, tenant: uuid.UUID | None = None) -> str | None:
+    """Run a COPY ... TO STDOUT, with the tenant set, in a transaction that always rolls back,
+    reading what it sends; its SQLSTATE, or None when it succeeds."""
+    try:
+        with conn.transaction():
+            set_tenant(conn, tenant)
+            with conn.cursor().copy(statement) as copy:
+                for _ in copy:
+                    pass
             raise _Rollback
     except _Rollback:
         return None
@@ -599,6 +622,24 @@ S3_2_MECHANISM_CLAUSE = ("ADR-0007 d2 (no BYPASSRLS role), through the role spli
                          "(commitments C6; C3 for the journal re-grant): the PostgreSQL mechanism the split relies on")
 
 
+KEYS = "artifact_keys"
+# 0056: the serving role destroys a version's data key in the erase transaction and reads none
+# of it; these are its only column privileges on any table it may not SELECT.
+KEYS_COLUMN_GRANTS = {(KEYS, "SELECT"): ["artifact_id", "destroyed_at", "tenant_id"],
+                      (KEYS, "UPDATE"): ["destroyed_at", "wrapped_dek"]}
+KEYS_REFUSED = [
+    f"SELECT wrapped_dek FROM {KEYS}",
+    f"SELECT kek_id FROM {KEYS}",
+    f"SELECT created_at FROM {KEYS}",
+    f"SELECT {KEYS} FROM {KEYS}",
+    f"SELECT artifact_id FROM {KEYS} WHERE wrapped_dek IS NOT NULL",
+    f"UPDATE {KEYS} SET wrapped_dek = NULL, destroyed_at = now() WHERE destroyed_at IS NULL RETURNING wrapped_dek",
+    f"UPDATE {KEYS} SET wrapped_dek = wrapped_dek",
+    f"COPY {KEYS} (wrapped_dek) TO STDOUT",
+]
+KEYS_DESTROY = f"UPDATE {KEYS} SET wrapped_dek = NULL, destroyed_at = now() WHERE destroyed_at IS NULL"
+
+
 def s3_2_roles() -> Scenario:
     return Scenario(
         "S3.2 (OML's roles)", "the roles an OML deployment uses are split from the owner, and none holds BYPASSRLS",
@@ -682,11 +723,43 @@ def s3_2(admin_db_ci: str, owner_ci: str, service_ci: str, owner: str, service: 
             s.check(got == "42501", f"as the service role set to tenant A, with the journal grants the migrations make, "
                                     f"{statement} is refused with {got} (expected 42501)")
         refused = unreadable_tables(conn) + [SQLX_MIGRATIONS]
+        # artifact_keys is the one refused table with a column grant (0056), so a column-free
+        # SELECT 1 reads it; every other refused table refuses even that.
         reads = {t: sqlstate_rolled_back(conn, sql.SQL("SELECT 1 FROM {} LIMIT 1").format(sql.Identifier(t)), a.id)
-                 for t in refused}
+                 for t in refused if t != KEYS}
         s.check(all(v == "42501" for v in reads.values()),
-                f"as the service role, a SELECT on each table its migrations grant it no SELECT on is refused "
-                f"with 42501: {reads}")
+                f"as the service role, a SELECT 1 on each table its migrations grant it no SELECT on, "
+                f"{KEYS} aside, is refused with 42501: {reads}")
+        columns = {(t, p): sorted(r[0] for r in conn.execute(
+            "SELECT a.attname FROM pg_attribute a WHERE a.attrelid = %s::regclass AND a.attnum > 0 "
+            "AND NOT a.attisdropped AND has_column_privilege(current_user, a.attrelid, a.attnum, %s) "
+            "ORDER BY 1", [t, p]).fetchall())
+                   for t in refused for p in ("SELECT", "UPDATE")}
+        columns.update({(KEYS, p): sorted(r[0] for r in conn.execute(
+            "SELECT a.attname FROM pg_attribute a WHERE a.attrelid = %s::regclass AND a.attnum > 0 "
+            "AND NOT a.attisdropped AND has_column_privilege(current_user, a.attrelid, a.attnum, %s) "
+            "ORDER BY 1", [KEYS, p]).fetchall()) for p in ("INSERT", "REFERENCES")})
+        held_columns = {k: v for k, v in columns.items() if v}
+        s.check(held_columns == KEYS_COLUMN_GRANTS,
+                f"over every column of every refused table (pg_attribute), the service role's SELECT and "
+                f"UPDATE, and its INSERT and REFERENCES on {KEYS}, are exactly {KEYS_COLUMN_GRANTS}: "
+                f"{held_columns}")
+        keys_held = conn.execute(
+            "SELECT array_agg(p) FILTER (WHERE has_table_privilege(current_user, %s, p)) FROM unnest(ARRAY["
+            "'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p",
+            [KEYS]).fetchone()[0]
+        s.check(not keys_held, f"the service role holds no table-wide privilege on {KEYS}: no SELECT, INSERT, "
+                               f"UPDATE, DELETE, TRUNCATE, REFERENCES or TRIGGER (held: {keys_held or 'none'})")
+        key_reads = {statement: (copy_sqlstate(conn, statement, a.id) if statement.startswith("COPY")
+                                 else sqlstate_rolled_back(conn, statement, a.id))
+                     for statement in KEYS_REFUSED}
+        s.check(all(v == "42501" for v in key_reads.values()),
+                f"as the service role set to tenant A, each read of a wrapped key, its KEK id or its "
+                f"creation time on {KEYS} is refused with 42501: {key_reads}")
+        destroy = sqlstate_rolled_back(conn, KEYS_DESTROY, a.id)
+        s.control(destroy is None,
+                  f"control: as the service role set to tenant A, the erase's destruction, {KEYS_DESTROY}, "
+                  f"runs ({destroy or 'no error'}) and rolls back, so the refusals come from the column grants")
         held = conn.execute(
             "SELECT array_agg(p) FILTER (WHERE has_table_privilege(current_user, %s, p)) FROM unnest(ARRAY["
             "'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p",
@@ -724,6 +797,11 @@ def s3_2(admin_db_ci: str, owner_ci: str, service_ci: str, owner: str, service: 
                   f"afterwards FORCE and ENABLE are {'set' if intact[0] else 'NOT set'}, spike_open "
                   f"{'is absent' if not intact[1] else 'EXISTS'} and tenant_isolation "
                   f"{'is present' if intact[2] == 1 else 'IS GONE'}")
+        with tenant_tx(conn, a.id):
+            wrapped = conn.execute(f"SELECT wrapped_dek FROM {KEYS} WHERE wrapped_dek IS NOT NULL").fetchall()
+        s.control(len(wrapped) == 1 and wrapped[0][0] is not None,
+                  f"control: as the owner set to tenant A, SELECT wrapped_dek on {KEYS} reads "
+                  f"{len(wrapped)} wrapped key(s), so the service role's refusals hide a row that is there")
         upd = sqlstate_rolled_back(conn, "UPDATE journal SET principal = principal", a.id)
         s.observations.append(
             f"as the owner set to tenant A, UPDATE journal raises {upd}: the guard trigger is the fence that binds the owner "

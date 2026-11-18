@@ -209,7 +209,15 @@ SELECT json_build_object(
                        'grantee', CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(x.grantee) END,
                        'privilege', x.privilege_type,
                        'grantable', x.is_grantable) ORDER BY 1), '[]'::json)
-              FROM aclexplode(rel.relacl) x) AS grants
+              FROM aclexplode(rel.relacl) x) AS grants,
+           (SELECT coalesce(json_agg(json_build_object(
+                       'column', a.attname,
+                       'grantee', CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(x.grantee) END,
+                       'privilege', x.privilege_type,
+                       'grantable', x.is_grantable) ORDER BY 1), '[]'::json)
+              FROM pg_attribute a, aclexplode(a.attacl) x
+             WHERE a.attrelid = rel.oid AND a.attnum > 0 AND NOT a.attisdropped
+               AND a.attacl IS NOT NULL) AS column_grants
       FROM rel JOIN pg_class pc ON pc.oid = rel.oid
   ) r),
   'extensions', (SELECT coalesce(json_agg(extname ORDER BY extname), '[]'::json)
@@ -284,7 +292,7 @@ def relabel(raw: dict, labels: dict[str, str]) -> dict:
 
     for rel in raw["relations"]:
         rel["owner"] = label(rel["owner"])
-        for g in rel["grants"]:
+        for g in rel["grants"] + rel.get("column_grants", []):
             g["grantee"] = label(g["grantee"])
         for p in rel["policies"]:
             p["roles"] = [label(r) for r in p["roles"] or []]
@@ -318,12 +326,18 @@ def code(text: str) -> str:
 
 
 def privileges(rel: dict, role: str) -> str:
+    """The role's privileges on the relation: each table-wide one, then each it holds on some
+    columns only (attacl), written with those columns, in privilege order."""
     if rel["owner"] == role:
         return "owns"
     held = {g["privilege"] for g in rel["grants"] if g["grantee"] == role}
-    if not held:
-        return ""
-    return ", ".join(sorted(held, key=lambda p: (PRIVILEGE_ORDER.index(p) if p in PRIVILEGE_ORDER else 99, p)))
+    columns: dict[str, set[str]] = {}
+    for g in rel.get("column_grants", []):
+        if g["grantee"] == role and g["privilege"] not in held:
+            columns.setdefault(g["privilege"], set()).add(g["column"])
+    shown = {p: p for p in held} | {p: f"{p} ({', '.join(sorted(c))})" for p, c in columns.items()}
+    order = sorted(shown, key=lambda p: (PRIVILEGE_ORDER.index(p) if p in PRIVILEGE_ORDER else 99, p))
+    return ", ".join(shown[p] for p in order)
 
 
 def tables(snap: dict) -> list[dict]:
