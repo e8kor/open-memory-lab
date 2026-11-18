@@ -491,6 +491,9 @@ decision it reads.
   run, with a local skill write it only reads, and names one that does not ask. That line, the
   skills kept on disk, a second page and a shadowing skill are informational; a server that does
   not serve `GET /v1/skills` is a warning.
+- **R14 (d15).** The plugin's version is the workspace version (`scripts/check_plugin.py`), so
+  the plugin's version bump for the local-skill rule is the v0.8.0 release bump, not a change of
+  its own.
 
 ## Consequences
 
