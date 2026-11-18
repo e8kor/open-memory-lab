@@ -1021,10 +1021,13 @@ struct Units {
     text: &'static str,
 }
 
-/// Every row of a kind but `document`: one unit, its own columns.
+/// Every row but a document version with passages: one unit, its own
+/// columns, a document version not cut yet among them. The `OR` reads the
+/// row's kind first, so a row of any other kind never probes the passages.
 const WHOLE_UNITS: Units = Units {
     from: "memories m",
-    only: "m.kind <> 'document'",
+    only: "(m.kind <> 'document' OR NOT EXISTS (SELECT 1 FROM document_passages d0 \
+            WHERE d0.tenant_id = $1 AND d0.memory_id = m.id))",
     ordinal: "-1",
     bytes: "m.body_bytes",
     vector: "m.search_vector",
@@ -1032,17 +1035,17 @@ const WHOLE_UNITS: Units = Units {
     text: "COALESCE(m.search_text, m.claim)",
 };
 
-/// A document version's passages, each its own unit; a document version
-/// with no passage is one unit, its own columns.
+/// A document version's passages, each its own unit, read from the
+/// passages and joined to their version by its key, so a scope with no
+/// document reads nothing here.
 const PASSAGE_UNITS: Units = Units {
-    from: "memories m LEFT JOIN document_passages d \
-           ON d.tenant_id = $1 AND d.memory_id = m.id",
-    only: "m.kind = 'document'",
-    ordinal: "COALESCE(d.ordinal, -1)",
-    bytes: "COALESCE(d.body_bytes, m.body_bytes)",
-    vector: "COALESCE(d.search_vector, m.search_vector)",
-    len: "COALESCE(d.search_len, m.search_len)",
-    text: "COALESCE(d.search_text, m.search_text, m.claim)",
+    from: "document_passages d JOIN memories m ON m.tenant_id = $1 AND m.id = d.memory_id",
+    only: "d.tenant_id = $1 AND m.kind = 'document'",
+    ordinal: "d.ordinal",
+    bytes: "d.body_bytes",
+    vector: "d.search_vector",
+    len: "d.search_len",
+    text: "d.search_text",
 };
 
 /// One candidate per version (ADR-0081 d4; the review's reading R3
@@ -1107,8 +1110,7 @@ fn keyword_any_sql(anchor: &str) -> String {
         format!(
             "SELECT m.id, {ordinal} AS ordinal, {bytes} AS body_bytes, \
                     ts_rank(to_tsvector('simple', {text}), q.tq, 0) AS score, \
-                    ARRAY(SELECT t FROM unnest(q.terms) t \
-                          WHERE t = ANY(tsvector_to_array(to_tsvector('simple', {text}))) ORDER BY t) AS matched \
+                    NULL::text[] AS matched \
              FROM {from} CROSS JOIN q \
              WHERE {SEARCH_SCOPE}{anchor} AND {only} \
                AND to_tsvector('simple', {text}) @@ q.tq \
@@ -1120,13 +1122,23 @@ fn keyword_any_sql(anchor: &str) -> String {
             only = u.only,
         )
     };
+    // The terms each kept unit holds are read after the cut, by its key,
+    // so no row outside the k is tokenized twice: the sort over the two
+    // branches' union cannot postpone them as one statement's sort does.
     with_now(
         &format!(
             "WITH q AS (SELECT NULLIF(replace(plainto_tsquery('simple', $6)::text, ' & ', ' | '), '')::tsquery AS tq, \
-                    tsvector_to_array(to_tsvector('simple', $6)) AS terms) \
-             {} \
-             ORDER BY score DESC, id ASC, ordinal ASC \
-             LIMIT $7",
+                    tsvector_to_array(to_tsvector('simple', $6)) AS terms), \
+             top AS ({} ORDER BY score DESC, id ASC, ordinal ASC LIMIT $7) \
+             SELECT top.id, top.ordinal, top.body_bytes, top.score, top.more_passages, \
+                    ARRAY(SELECT t FROM unnest(q.terms) t \
+                          WHERE t = ANY(tsvector_to_array(to_tsvector('simple', \
+                                COALESCE(d.search_text, m.search_text, m.claim)))) ORDER BY t) AS matched \
+             FROM top CROSS JOIN q \
+             JOIN memories m ON m.tenant_id = $1 AND m.id = top.id \
+             LEFT JOIN document_passages d \
+               ON d.tenant_id = $1 AND d.memory_id = top.id AND d.ordinal = top.ordinal \
+             ORDER BY top.score DESC, top.id ASC, top.ordinal ASC",
             one_per_version(&branch(&WHOLE_UNITS), &branch(&PASSAGE_UNITS))
         ),
         9,
@@ -1175,8 +1187,9 @@ fn bm25_stats(scope: &str) -> String {
     )
 }
 
-/// Each scanned unit's query forms with their frequencies, over `scope`.
-fn bm25_unit_forms(scope: &str) -> String {
+/// Each scanned unit's query forms with their frequencies, over `scope`:
+/// the whole versions' and the passages', as two relations.
+fn bm25_unit_forms(scope: &str) -> (String, String) {
     let branch = |u: &Units| {
         format!(
             "SELECT m.id, {ordinal} AS ordinal, {bytes} AS body_bytes, \
@@ -1193,22 +1206,20 @@ fn bm25_unit_forms(scope: &str) -> String {
             only = u.only,
         )
     };
-    format!(
-        "{} UNION ALL {}",
-        branch(&WHOLE_UNITS),
-        branch(&PASSAGE_UNITS)
-    )
+    (branch(&WHOLE_UNITS), branch(&PASSAGE_UNITS))
 }
 
-/// Each form's document frequency from `units`, a relation of the
-/// [`bm25_unit_forms`] columns: a version counts once however many of its
-/// units hold the form (the review's reading R6 amended).
-fn bm25_df(units: &str) -> String {
+/// Each form's document frequency from `whole` and `passages`, relations
+/// of the [`bm25_unit_forms`] columns: a whole version counts once, and a
+/// document once however many of its passages hold the form (the review's
+/// reading R6 amended), so the whole versions are counted in one pass as
+/// before passages.
+fn bm25_df(whole: &str, passages: &str) -> String {
     format!(
         "df AS (SELECT lexeme, sum(n)::float8 AS df FROM ( \
-                  SELECT lexeme, count(*) AS n FROM {units} WHERE ordinal < 0 GROUP BY lexeme \
+                  SELECT lexeme, count(*) AS n FROM {whole} GROUP BY lexeme \
                   UNION ALL \
-                  SELECT lexeme, count(DISTINCT id) FROM {units} WHERE ordinal >= 0 GROUP BY lexeme) f \
+                  SELECT lexeme, count(DISTINCT id) FROM {passages} GROUP BY lexeme) f \
                 GROUP BY lexeme)"
     )
 }
@@ -1272,18 +1283,20 @@ fn bm25_sql_within(anchor: &str) -> String {
          q AS (SELECT string_agg(DISTINCT '''' || replace(replace(f, '\\', '\\\\'), '''', '''''') || '''', ' | ')::tsquery AS tq, \
                       array_agg(DISTINCT f) AS fa FROM forms), \
          {stats}, \
-         tf AS MATERIALIZED ({units}), \
+         tf_w AS MATERIALIZED ({whole}), \
+         tf_d AS MATERIALIZED ({passages}), \
          {df}, \
          per AS (SELECT tf.id, tf.ordinal, tf.body_bytes, forms.w, \
                         max(ln(1 + (s.n - df.df + 0.5) / (df.df + 0.5)) \
                             * tf.tf * 2.2 / (tf.tf + 1.2 * (0.25 + 0.75 * tf.dl / s.avgdl))) AS c \
-                 FROM tf JOIN df USING (lexeme) JOIN forms ON forms.f = tf.lexeme CROSS JOIN stats s \
+                 FROM (SELECT * FROM tf_w UNION ALL SELECT * FROM tf_d) tf JOIN df USING (lexeme) JOIN forms ON forms.f = tf.lexeme CROSS JOIN stats s \
                  {within} \
                  GROUP BY tf.id, tf.ordinal, tf.body_bytes, forms.w), \
          {tail}",
             stats = bm25_stats(SEARCH_SCOPE),
-            units = bm25_unit_forms(SEARCH_SCOPE),
-            df = bm25_df("tf"),
+            whole = bm25_unit_forms(SEARCH_SCOPE).0,
+            passages = bm25_unit_forms(SEARCH_SCOPE).1,
+            df = bm25_df("tf_w", "tf_d"),
             tail = bm25_tail(),
         ),
         9,
@@ -1327,20 +1340,24 @@ pub fn bm25_reference_sql_within(anchor: &str) -> String {
          q AS (SELECT string_agg(DISTINCT '''' || replace(replace(f, '\\', '\\\\'), '''', '''''') || '''', ' | ')::tsquery AS tq, \
                       array_agg(DISTINCT f) AS fa FROM forms), \
          {stats}, \
-         reference AS ({reference}), \
+         reference_w AS ({reference_w}), \
+         reference_d AS ({reference_d}), \
          {df}, \
-         tf AS MATERIALIZED ({units}), \
+         tf_w AS MATERIALIZED ({whole}), \
+         tf_d AS MATERIALIZED ({passages}), \
          per AS (SELECT tf.id, tf.ordinal, tf.body_bytes, forms.w, \
                         max(ln(1 + (s.n - df.df + 0.5) / (df.df + 0.5)) \
                             * tf.tf * 2.2 / (tf.tf + 1.2 * (0.25 + 0.75 * tf.dl / s.avgdl))) AS c \
-                 FROM tf JOIN df USING (lexeme) JOIN forms ON forms.f = tf.lexeme CROSS JOIN stats s \
+                 FROM (SELECT * FROM tf_w UNION ALL SELECT * FROM tf_d) tf JOIN df USING (lexeme) JOIN forms ON forms.f = tf.lexeme CROSS JOIN stats s \
                  {within} \
                  GROUP BY tf.id, tf.ordinal, tf.body_bytes, forms.w), \
          {tail}",
             stats = bm25_stats(REFERENCE_SCOPE),
-            reference = bm25_unit_forms(REFERENCE_SCOPE),
-            df = bm25_df("reference"),
-            units = bm25_unit_forms(SEARCH_SCOPE),
+            reference_w = bm25_unit_forms(REFERENCE_SCOPE).0,
+            reference_d = bm25_unit_forms(REFERENCE_SCOPE).1,
+            df = bm25_df("reference_w", "reference_d"),
+            whole = bm25_unit_forms(SEARCH_SCOPE).0,
+            passages = bm25_unit_forms(SEARCH_SCOPE).1,
             tail = bm25_tail(),
         ),
         9,
