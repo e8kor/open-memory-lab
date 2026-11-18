@@ -2430,8 +2430,9 @@ fn document_doctor(client: &Client) -> Vec<String> {
                     .cloned(),
             );
         }
-        if let Ok(text) = std::fs::read_to_string(git.root().join(path)) {
-            files.push((path.to_owned(), text));
+        if let Some(text) = oml_cli::documents::read_document_file(git.root(), path) {
+            let format = doc["format"].as_str().unwrap_or("text/plain").to_owned();
+            files.push((path.to_owned(), text, format));
         }
     }
     lines.extend(oml_cli::documents::mixed_lines(&anchored));

@@ -40,10 +40,19 @@ pub fn server_lines(answer: &Result<Value, CliError>) -> Vec<String> {
 /// file, from the listing items `main` read for this clone's repository.
 /// Each line names the path and both kinds of key, so the person knows
 /// which `oml sync --change-adapter` run settles it.
+///
+/// Only live claims count, held or promoted and no retirement, and of the
+/// other kinds only those under the document's own key, `doc/<stem>/`,
+/// which the `headings` and `lines` adapters write for that file (the
+/// review's finding S9 of 2026-11-18).
 #[must_use]
 pub fn mixed_lines(items: &[Value]) -> Vec<String> {
+    let live = |item: &&Value| {
+        matches!(item["state"].as_str(), Some("held" | "promoted"))
+            && item["retirement"] != Value::Bool(true)
+    };
     let mut by_path: BTreeMap<&str, (Vec<&str>, Vec<&str>)> = BTreeMap::new();
-    for item in items {
+    for item in items.iter().filter(live) {
         let (Some(path), Some(key)) = (item["anchor"]["path"].as_str(), item["claim_key"].as_str())
         else {
             continue;
@@ -54,6 +63,9 @@ pub fn mixed_lines(items: &[Value]) -> Vec<String> {
         } else {
             entry.1.push(key);
         }
+    }
+    for (docs, others) in by_path.values_mut() {
+        others.retain(|key| docs.iter().any(|d| key.starts_with(&format!("{d}/"))));
     }
     by_path
         .into_iter()
@@ -69,15 +81,16 @@ pub fn mixed_lines(items: &[Value]) -> Vec<String> {
 }
 
 /// The documents of this clone whose file cuts past the passage cap: each
-/// `(path, text)` read from the clone for a `document` claim anchored in
-/// it, cut by the server's own rule. The server refuses that file's next
+/// `(path, text, format)` read from the clone for a `document` claim
+/// anchored in it, cut by the server's own rule under the claim's format,
+/// never the file's extension (S9). The server refuses that file's next
 /// version with `too_many_passages`.
 #[must_use]
-pub fn cap_lines(files: &[(String, String)]) -> Vec<String> {
+pub fn cap_lines(files: &[(String, String, String)]) -> Vec<String> {
     files
         .iter()
-        .filter_map(|(path, text)| {
-            let format = if path.ends_with(".md") {
+        .filter_map(|(path, text, media_type)| {
+            let format = if media_type == "text/markdown" {
                 oml_passage::Format::Markdown
             } else {
                 oml_passage::Format::Plain
@@ -91,6 +104,24 @@ pub fn cap_lines(files: &[(String, String)]) -> Vec<String> {
             })
         })
         .collect()
+}
+
+/// The most bytes of a document file doctor reads: a document's body cap
+/// (ADR-0081 d1).
+pub const DOCUMENT_FILE_MAX: u64 = 1024 * 1024;
+
+/// A document file of this clone as doctor reads it, `path` under `root`:
+/// `None` unless it is a regular file, never a symlink, of at most
+/// [`DOCUMENT_FILE_MAX`] bytes (S9), so doctor never follows a link out of
+/// the clone or reads a file the server would refuse whole.
+#[must_use]
+pub fn read_document_file(root: &std::path::Path, path: &str) -> Option<String> {
+    let full = root.join(path);
+    let meta = std::fs::symlink_metadata(&full).ok()?;
+    if !meta.file_type().is_file() || meta.len() > DOCUMENT_FILE_MAX {
+        return None;
+    }
+    std::fs::read_to_string(full).ok()
 }
 
 #[cfg(test)]
@@ -117,9 +148,12 @@ mod tests {
     #[test]
     fn doctor_names_a_path_loaded_as_a_document_and_by_another_adapter() {
         let items = vec![
-            json!({"kind": "document", "claim_key": "doc/docs/guide", "anchor": {"path": "docs/guide.md"}}),
-            json!({"kind": "memory", "claim_key": "doc/docs/guide/install", "anchor": {"path": "docs/guide.md"}}),
-            json!({"kind": "memory", "claim_key": "doc/docs/guide/intro/a", "anchor": {"path": "docs/guide/intro.md"}}),
+            json!({"kind": "document", "claim_key": "doc/docs/guide", "state": "promoted",
+                   "anchor": {"path": "docs/guide.md"}}),
+            json!({"kind": "memory", "claim_key": "doc/docs/guide/install", "state": "promoted",
+                   "anchor": {"path": "docs/guide.md"}}),
+            json!({"kind": "memory", "claim_key": "doc/docs/guide/intro/a", "state": "promoted",
+                   "anchor": {"path": "docs/guide/intro.md"}}),
         ];
         assert_eq!(
             mixed_lines(&items),
@@ -130,11 +164,84 @@ mod tests {
     }
 
     #[test]
+    fn doctor_counts_only_live_claims_under_the_documents_own_key() {
+        let items = vec![
+            json!({"kind": "document", "claim_key": "doc/docs/guide", "state": "promoted",
+                   "anchor": {"path": "docs/guide.md"}}),
+            // Retired, rejected, or outside doc/docs/guide/: none mixes.
+            json!({"kind": "memory", "claim_key": "doc/docs/guide/old", "state": "promoted",
+                   "retirement": true, "anchor": {"path": "docs/guide.md"}}),
+            json!({"kind": "memory", "claim_key": "doc/docs/guide/no", "state": "rejected",
+                   "anchor": {"path": "docs/guide.md"}}),
+            json!({"kind": "memory", "claim_key": "notes/guide-review", "state": "promoted",
+                   "anchor": {"path": "docs/guide.md"}}),
+        ];
+        assert!(mixed_lines(&items).is_empty(), "{:?}", mixed_lines(&items));
+        let retired_doc = vec![
+            json!({"kind": "document", "claim_key": "doc/docs/guide", "state": "promoted",
+                   "retirement": true, "anchor": {"path": "docs/guide.md"}}),
+            json!({"kind": "memory", "claim_key": "doc/docs/guide/install", "state": "held",
+                   "anchor": {"path": "docs/guide.md"}}),
+        ];
+        assert!(
+            mixed_lines(&retired_doc).is_empty(),
+            "a retired document mixes nothing"
+        );
+    }
+
+    #[test]
+    fn doctor_cuts_a_document_file_by_its_claims_format_not_its_extension() {
+        let headings = "## h\nx\n".repeat(oml_passage::MAX_PASSAGES + 1);
+        // Stored as plain text: one passage-run of lines, not 4,097 sections.
+        assert!(
+            cap_lines(&[(
+                "docs/notes.md".to_owned(),
+                headings.clone(),
+                "text/plain".to_owned()
+            )])
+            .is_empty()
+        );
+        // Stored as markdown under a .txt name: cut at its headings.
+        assert_eq!(
+            cap_lines(&[(
+                "docs/notes.txt".to_owned(),
+                headings,
+                "text/markdown".to_owned()
+            )])
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn doctor_reads_a_document_file_only_when_it_is_a_regular_file_of_at_most_1_mib() {
+        let dir = std::env::temp_dir().join(format!("oml-doc-doctor-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(dir.join("small.md"), "# T\n\nbody\n").expect("write");
+        std::fs::write(dir.join("big.md"), "a".repeat(1024 * 1024 + 1)).expect("write");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.join("small.md"), dir.join("link.md")).expect("link");
+        assert_eq!(
+            read_document_file(&dir, "small.md").as_deref(),
+            Some("# T\n\nbody\n")
+        );
+        assert_eq!(read_document_file(&dir, "big.md"), None, "past 1 MiB");
+        #[cfg(unix)]
+        assert_eq!(read_document_file(&dir, "link.md"), None, "a symlink");
+        assert_eq!(read_document_file(&dir, "missing.md"), None);
+        std::fs::remove_dir_all(&dir).expect("clean");
+    }
+
+    #[test]
     fn doctor_names_a_document_file_past_the_passage_cap() {
         let long = "a\n\n".repeat(oml_passage::MAX_PASSAGES * oml_passage::BLOCK_LINES);
         let lines = cap_lines(&[
-            ("docs/long.txt".to_owned(), long),
-            ("docs/short.md".to_owned(), "# T\n\nbody\n".to_owned()),
+            ("docs/long.txt".to_owned(), long, "text/plain".to_owned()),
+            (
+                "docs/short.md".to_owned(),
+                "# T\n\nbody\n".to_owned(),
+                "text/markdown".to_owned(),
+            ),
         ]);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].starts_with("warn documents: docs/long.txt cuts into "));
