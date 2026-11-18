@@ -407,7 +407,13 @@ pub struct SearchConfig {
     default: Pipeline,
     rerank: RerankPolicy,
     timings: bool,
+    /// `catalog.count_cap`: the count above which a catalog count reads
+    /// "at least" (ADR-0092 d6, d11 answer 6).
+    catalog_count_cap: u64,
 }
+
+/// `catalog.count_cap`'s shipped value (ADR-0092 d11 answer 6).
+pub const CATALOG_COUNT_CAP_DEFAULT: u64 = 10_000;
 
 /// How a reranking pipeline uses the reranker (configuration.md
 /// `search.rerank.*`; ADR-0053 d4, d6): how many of the first stage's
@@ -514,6 +520,7 @@ impl SearchConfig {
             default,
             rerank: RerankPolicy::default(),
             timings: false,
+            catalog_count_cap: CATALOG_COUNT_CAP_DEFAULT,
         })
     }
 
@@ -537,6 +544,21 @@ impl SearchConfig {
     #[must_use]
     pub fn with_timings(self, timings: bool) -> Self {
         Self { timings, ..self }
+    }
+
+    /// The deployment's `catalog.count_cap` (ADR-0092 d6).
+    #[must_use]
+    pub fn with_catalog_count_cap(self, catalog_count_cap: u64) -> Self {
+        Self {
+            catalog_count_cap,
+            ..self
+        }
+    }
+
+    /// The count above which a catalog count reads "at least".
+    #[must_use]
+    pub fn catalog_count_cap(&self) -> u64 {
+        self.catalog_count_cap
     }
 
     /// Whether a recall may ask for its per-stage `timings` block. The
@@ -653,6 +675,7 @@ impl Default for SearchConfig {
             default: Pipeline::KeywordAny,
             rerank: RerankPolicy::default(),
             timings: false,
+            catalog_count_cap: CATALOG_COUNT_CAP_DEFAULT,
         }
     }
 }

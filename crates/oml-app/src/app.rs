@@ -144,6 +144,7 @@ use crate::types::{
     BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX,
     HeldFilter, HeldItem, HeldListingRequest, HeldPage, ReviewLane, VersionFinding,
 };
+use crate::types::{CatalogMark, KindCount};
 use crate::types::{ServedSkill, SkillBody, SkillRead, SkillRequest, SkillSet};
 use oml_domain::skills::{SKILL_PAGE, SkillCandidate, offer, skill_uri};
 
@@ -5362,12 +5363,17 @@ where
             .as_deref()
             .map(|cursor| ListingCursor::resume(cursor, key.key_id, &now))
             .transpose()?;
+        let scoped_node = match &scope {
+            ListingScope::Tips { .. } => Some(()),
+            ListingScope::Own { .. } => None,
+        };
         let filter = ListingFilter {
             scope,
             subtree,
             state: req.state,
-            kind: req.kind,
+            kinds: req.kinds.clone(),
             claim_key: req.claim_key.clone(),
+            prefix: req.prefix.clone(),
             since: req.since.clone(),
             until: req.until.clone(),
             anchor: req.anchor.clone(),
@@ -5435,11 +5441,134 @@ where
                             && served_unreviewed(&m, self.scanner.version())))
                 }
             };
-            if admitted {
+            // The kinds and the prefix re-checked, as the scope is (R3).
+            let filtered = (filter.kinds.is_empty() || filter.kinds.contains(&m.kind))
+                && filter
+                    .prefix
+                    .as_ref()
+                    .is_none_or(|p| m.claim_key.as_bytes().starts_with(p.as_bytes()));
+            if admitted && filtered {
                 items.push(self.served(&caller, m).await?);
             }
         }
-        Ok(MemoryPage { items, next_cursor })
+        // The catalog's counts, on a scoped read's first page only, capped;
+        // over exactly the rows the page's predicate admits, every filter
+        // but `kinds` applied (ADR-0092 d6).
+        let cap = self.search.catalog_count_cap();
+        let counts = match (req.counts, scoped_node, &req.cursor) {
+            (true, Some(()), None) => Some(
+                self.journal
+                    .count_memories(tenant_id, &filter, &MemoryKind::ALL, cap)
+                    .await?
+                    .into_iter()
+                    .map(|(kind, n)| {
+                        (
+                            kind,
+                            if n > cap {
+                                KindCount::AtLeast(cap)
+                            } else {
+                                KindCount::Exact(n)
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        };
+        // Whether each instruction or steering item applies at the scope
+        // node, read only when the page holds one (ADR-0092 d6).
+        let marks = if scoped_node.is_some() {
+            self.catalog_marks(&caller, req.workspace.as_ref(), &items)
+                .await?
+        } else {
+            BTreeMap::new()
+        };
+        Ok(MemoryPage {
+            items,
+            next_cursor,
+            counts,
+            marks,
+        })
+    }
+
+    /// Per skill, guardrail and steering item of a catalog page, whether it
+    /// applies at the read's scope node (ADR-0092 d6): a skill's offered
+    /// command there, a guardrail's `in_force` under the key's
+    /// `guardrail_scope`, a steering row's place in the steering list
+    /// there. The sets are read only for the kinds the page holds.
+    async fn catalog_marks(
+        &self,
+        caller: &Caller,
+        workspace: Option<&Reference>,
+        items: &[ServedMemory],
+    ) -> Result<BTreeMap<Uuid, CatalogMark>, AppError> {
+        let has = |k: MemoryKind| items.iter().any(|i| i.memory.kind == k);
+        let mut marks = BTreeMap::new();
+        if !has(MemoryKind::Skill) && !has(MemoryKind::Guardrail) && !has(MemoryKind::Steering) {
+            return Ok(marks);
+        }
+        let key = &caller.key;
+        let scope = self.target_workspace(key, workspace).await?;
+        let chain = self
+            .journal
+            .workspace_ancestry(key.tenant_id, scope)
+            .await?
+            .unwrap_or_default();
+        if has(MemoryKind::Skill) || has(MemoryKind::Guardrail) {
+            let offered = self
+                .recall_instructions(caller, workspace, &chain, false, true, None)
+                .await?;
+            let applies: BTreeSet<Uuid> = offered.ids.iter().map(|(id, _)| *id).collect();
+            for item in items {
+                let id = item.memory.memory_id;
+                match item.memory.kind {
+                    MemoryKind::Skill => {
+                        marks.insert(
+                            id,
+                            CatalogMark::Skill {
+                                prompt: offered.skills.get(&id).map(|s| s.prompt.clone()),
+                            },
+                        );
+                    }
+                    MemoryKind::Guardrail => {
+                        marks.insert(
+                            id,
+                            CatalogMark::Guardrail {
+                                in_force: applies.contains(&id),
+                            },
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if has(MemoryKind::Steering) {
+            let ids: Vec<Uuid> = chain.iter().map(|w| w.workspace_id).collect();
+            let applicable: Vec<Uuid> = (0..ids.len())
+                .rev()
+                .filter(|&i| caller.effective(&ids[i..]).contains(&Role::Reader))
+                .map(|i| ids[i])
+                .collect();
+            let in_force: BTreeSet<Uuid> = self
+                .journal
+                .steering_in_force(key.tenant_id, &applicable)
+                .await?
+                .into_iter()
+                .filter(|m| m.is_tip && !m.retirement && m.status == MemoryStatus::Promoted)
+                .map(|m| m.memory_id)
+                .collect();
+            for item in items {
+                if item.memory.kind == MemoryKind::Steering {
+                    marks.insert(
+                        item.memory.memory_id,
+                        CatalogMark::Steering {
+                            applies_here: in_force.contains(&item.memory.memory_id),
+                        },
+                    );
+                }
+            }
+        }
+        Ok(marks)
     }
 
     /// The rows of a stored `similar` list the caller can still read: a
@@ -8214,8 +8343,9 @@ where
             scope,
             subtree: Some(applicable.to_vec()),
             state: Some(MemoryStatus::Held),
-            kind: Some(MemoryKind::Steering),
+            kinds: vec![MemoryKind::Steering],
             claim_key: None,
+            prefix: None,
             since: None,
             until: None,
             anchor: crate::types::AnchorFilter::default(),

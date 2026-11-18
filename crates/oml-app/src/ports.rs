@@ -1499,6 +1499,18 @@ pub trait JournalStore: Retriever + Send + Sync {
         limit: usize,
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
 
+    /// The catalog's counts (ADR-0092 d6, d9): for each of `kinds`, how many
+    /// rows the filter admits under every predicate but its kinds, counted
+    /// to at most `cap + 1`, so a count above `cap` reads as "at least" and
+    /// costs no more than its cap. One statement for every kind.
+    fn count_memories(
+        &self,
+        tenant_id: Uuid,
+        filter: &ListingFilter,
+        kinds: &[MemoryKind],
+        cap: u64,
+    ) -> impl Future<Output = Result<Vec<(MemoryKind, u64)>, StoreError>> + Send;
+
     /// The greatest version of `claim_key` in the workspace in any state, and
     /// whether a held, promoted or demoted version holds it: a capture's
     /// pre-`BEGIN` read (audit-and-lineage.md supersession chains; ADR-0025

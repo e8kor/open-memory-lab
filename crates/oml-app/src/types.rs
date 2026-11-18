@@ -2495,8 +2495,11 @@ pub struct ListingFilter {
     /// subtree; `None` narrows nothing.
     pub subtree: Option<Vec<Uuid>>,
     pub state: Option<MemoryStatus>,
-    pub kind: Option<MemoryKind>,
+    /// The kinds a row may be; empty narrows nothing (ADR-0092 d6).
+    pub kinds: Vec<MemoryKind>,
     pub claim_key: Option<String>,
+    /// A `claim_key` prefix, read as a byte range (ADR-0092 d6, d9).
+    pub prefix: Option<String>,
     /// `created_at` at or after this instant.
     pub since: Option<EventTime>,
     /// `created_at` before this instant.
@@ -2635,8 +2638,15 @@ pub struct ListRequest {
     /// `None` lists every workspace the key wrote in.
     pub workspace: Option<Reference>,
     pub state: Option<MemoryStatus>,
-    pub kind: Option<MemoryKind>,
+    /// `kinds`: the kinds listed; empty lists every kind (ADR-0092 d6).
+    pub kinds: Vec<MemoryKind>,
     pub claim_key: Option<String>,
+    /// `prefix`: only claim keys starting with these bytes (ADR-0092 d6).
+    pub prefix: Option<String>,
+    /// Whether the answer carries the catalog's counts, served on a scoped
+    /// read's first page only and capped at `catalog.count_cap` (ADR-0092
+    /// d6).
+    pub counts: bool,
     pub since: Option<EventTime>,
     pub until: Option<EventTime>,
     /// The page size, which the transport bounds by `api.page_limit_max`.
@@ -2663,6 +2673,33 @@ pub struct ListRequest {
 pub struct MemoryPage {
     pub items: Vec<ServedMemory>,
     pub next_cursor: Option<String>,
+    /// The catalog's counts on a scoped read's first page: per kind, the
+    /// rows every filter but `kinds` admits, `Exact` up to the cap and
+    /// `AtLeast` above it (ADR-0092 d6); `None` when not asked.
+    pub counts: Option<Vec<(MemoryKind, KindCount)>>,
+    /// Per item, what says whether it applies at the read's scope node: a
+    /// skill's offered command, a guardrail's `in_force`, a steering row's
+    /// `applies_here` (ADR-0092 d6); absent for an item of another kind.
+    pub marks: std::collections::BTreeMap<Uuid, CatalogMark>,
+}
+
+/// A catalog count (ADR-0092 d6, d11 answer 6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KindCount {
+    Exact(u64),
+    AtLeast(u64),
+}
+
+/// Whether a catalog item applies at the read's scope node (ADR-0092 d6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CatalogMark {
+    /// A skill: the command `prompts/list` offers it under at the scope
+    /// node, `None` when it is not offered there.
+    Skill { prompt: Option<String> },
+    /// A guardrail: whether it binds at the scope node.
+    Guardrail { in_force: bool },
+    /// A steering row: whether it is in the steering list there.
+    Steering { applies_here: bool },
 }
 
 /// One page of the tenant's crew records in name order, and the cursor of

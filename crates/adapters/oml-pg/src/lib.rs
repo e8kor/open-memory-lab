@@ -2676,6 +2676,126 @@ fn sparse_candidate_from_row(row: &PgRow) -> Result<Candidate, StoreError> {
     })
 }
 
+/// The listing's predicate on `m` after `m.tenant_id = <tenant>`: the
+/// scope, then every filter; `every_kind` leaves the kinds filter out, as
+/// the catalog's counts do (ADR-0092 d6).
+fn push_listing_predicate(
+    sql: &mut QueryBuilder<'_, Postgres>,
+    filter: &ListingFilter,
+    every_kind: bool,
+) {
+    // The scope is the store's own predicate: the own key set off the
+    // masked nodes (memories_author serves it), or promoted tips on the
+    // node set alone — an empty array matches nothing (R3; ADR-0025 d1,
+    // d13).
+    match &filter.scope {
+        ListingScope::Own { key_ids, masked } => {
+            sql.push(" AND m.author_key_id = ANY(")
+                .push_bind(key_ids.clone())
+                .push("::uuid[]) AND NOT (m.workspace_id = ANY(")
+                .push_bind(masked.clone())
+                .push("::uuid[]))");
+        }
+        ListingScope::Tips {
+            nodes,
+            held,
+            current_scanner,
+        } => {
+            // Inside an in-progress scope the held versions of every
+            // author on the nodes join the tips (ADR-0030 d3).
+            // At an instant, the tips then and the held rows recorded
+            // by it (ADR-0059 d15, d19).
+            match &filter.as_of {
+                None => sql.push(" AND ((m.status = 'promoted' AND m.is_tip)"),
+                Some(at) => sql.push(format!(" AND (({})", tip_at_sql(&instant_literal(at)))),
+            };
+            if !held.is_empty() {
+                // A version the scan held stays its author's (ADR-0065
+                // d5, amended 2026-11-10); any kind else (ADR-0080 d16).
+                sql.push(" OR (");
+                if let Some(at) = &filter.as_of {
+                    sql.push("m.created_at <= (")
+                        .push_bind(at.as_str().to_owned())
+                        .push(")::timestamptz AND ");
+                }
+                sql.push(
+                    "m.status = 'held' AND NOT m.retirement \
+                     AND m.scan_finding IS NULL \
+                     AND m.workspace_id = ANY(",
+                )
+                .push_bind(held.clone())
+                .push("::uuid[]) AND m.scanned_under IS NOT DISTINCT FROM ")
+                .push_bind(current_scanner.clone())
+                .push("::text)");
+            }
+            sql.push(") AND m.workspace_id = ANY(")
+                .push_bind(nodes.clone())
+                .push("::uuid[])");
+        }
+    }
+    if let Some(subtree) = &filter.subtree {
+        sql.push(" AND m.workspace_id = ANY(")
+            .push_bind(subtree.clone())
+            .push("::uuid[])");
+    }
+    if let Some(state) = filter.state {
+        sql.push(" AND m.status = ").push_bind(state.as_str());
+    }
+    if !filter.kinds.is_empty() && !every_kind {
+        sql.push(" AND m.kind = ANY(")
+            .push_bind(filter.kinds.iter().map(|k| k.as_str()).collect::<Vec<_>>())
+            .push("::text[])");
+    }
+    // A claim key prefix as a byte range, never LIKE, so row security
+    // never evaluates a pattern before its policy (ADR-0092 d9).
+    if let Some(prefix) = &filter.prefix {
+        sql.push(" AND m.claim_key COLLATE \"C\" >= ")
+            .push_bind(prefix.clone());
+        if let Some(upper) = prefix_upper(prefix) {
+            sql.push(" AND m.claim_key COLLATE \"C\" < ")
+                .push_bind(upper);
+        }
+    }
+    if let Some(claim_key) = &filter.claim_key {
+        sql.push(" AND m.claim_key = ").push_bind(claim_key.clone());
+    }
+    // The origin filters, read by `memories_anchor` (ADR-0057 d4).
+    if let Some(repo) = &filter.anchor.repo {
+        sql.push(" AND m.anchor_repo = ").push_bind(repo.clone());
+    }
+    // The prefix as a range on the leakproof `text_pattern_ops`
+    // operators, so the index serves it under row security.
+    if let Some(prefix) = &filter.anchor.path_prefix {
+        sql.push(" AND m.anchor_path ~>=~ ")
+            .push_bind(prefix.clone());
+        if let Some(upper) = prefix_upper(prefix) {
+            sql.push(" AND m.anchor_path ~<~ ").push_bind(upper);
+        }
+    }
+    // The kind filter (ADR-0063 d3): a row without a kind never passes.
+    if !filter.anchor.origin_kinds.is_empty() {
+        sql.push(" AND m.origin_kind = ANY(")
+            .push_bind(origin_kind_strings(&filter.anchor.origin_kinds))
+            .push("::text[])");
+    }
+    if let Some(author) = filter.author {
+        sql.push(" AND m.author_key_id = ").push_bind(author);
+    }
+    if let Some(tip) = filter.tip {
+        sql.push(" AND m.is_tip = ").push_bind(tip);
+    }
+    if let Some(since) = &filter.since {
+        sql.push(" AND m.created_at >= (")
+            .push_bind(since.as_str().to_owned())
+            .push(")::timestamptz");
+    }
+    if let Some(until) = &filter.until {
+        sql.push(" AND m.created_at < (")
+            .push_bind(until.as_str().to_owned())
+            .push(")::timestamptz");
+    }
+}
+
 /// The kinds of `kinds` a recall serves as hits by their node: steering
 /// never is, whatever the filter names, and the instruction kinds are
 /// candidates by id alone (ADR-0092 d2, d3).
@@ -9278,104 +9398,7 @@ impl JournalStore for PgStore {
             "SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = "
         ));
         sql.push_bind(tenant_id);
-        // The scope is the store's own predicate: the own key set off the
-        // masked nodes (memories_author serves it), or promoted tips on the
-        // node set alone — an empty array matches nothing (R3; ADR-0025 d1,
-        // d13).
-        match &filter.scope {
-            ListingScope::Own { key_ids, masked } => {
-                sql.push(" AND m.author_key_id = ANY(")
-                    .push_bind(key_ids.clone())
-                    .push("::uuid[]) AND NOT (m.workspace_id = ANY(")
-                    .push_bind(masked.clone())
-                    .push("::uuid[]))");
-            }
-            ListingScope::Tips {
-                nodes,
-                held,
-                current_scanner,
-            } => {
-                // Inside an in-progress scope the held versions of every
-                // author on the nodes join the tips (ADR-0030 d3).
-                // At an instant, the tips then and the held rows recorded
-                // by it (ADR-0059 d15, d19).
-                match &filter.as_of {
-                    None => sql.push(" AND ((m.status = 'promoted' AND m.is_tip)"),
-                    Some(at) => sql.push(format!(" AND (({})", tip_at_sql(&instant_literal(at)))),
-                };
-                if !held.is_empty() {
-                    // A version the scan held stays its author's (ADR-0065
-                    // d5, amended 2026-11-10); any kind else (ADR-0080 d16).
-                    sql.push(" OR (");
-                    if let Some(at) = &filter.as_of {
-                        sql.push("m.created_at <= (")
-                            .push_bind(at.as_str().to_owned())
-                            .push(")::timestamptz AND ");
-                    }
-                    sql.push(
-                        "m.status = 'held' AND NOT m.retirement \
-                         AND m.scan_finding IS NULL \
-                         AND m.workspace_id = ANY(",
-                    )
-                    .push_bind(held.clone())
-                    .push("::uuid[]) AND m.scanned_under IS NOT DISTINCT FROM ")
-                    .push_bind(current_scanner.clone())
-                    .push("::text)");
-                }
-                sql.push(") AND m.workspace_id = ANY(")
-                    .push_bind(nodes.clone())
-                    .push("::uuid[])");
-            }
-        }
-        if let Some(subtree) = &filter.subtree {
-            sql.push(" AND m.workspace_id = ANY(")
-                .push_bind(subtree.clone())
-                .push("::uuid[])");
-        }
-        if let Some(state) = filter.state {
-            sql.push(" AND m.status = ").push_bind(state.as_str());
-        }
-        if let Some(kind) = filter.kind {
-            sql.push(" AND m.kind = ").push_bind(kind.as_str());
-        }
-        if let Some(claim_key) = &filter.claim_key {
-            sql.push(" AND m.claim_key = ").push_bind(claim_key.clone());
-        }
-        // The origin filters, read by `memories_anchor` (ADR-0057 d4).
-        if let Some(repo) = &filter.anchor.repo {
-            sql.push(" AND m.anchor_repo = ").push_bind(repo.clone());
-        }
-        // The prefix as a range on the leakproof `text_pattern_ops`
-        // operators, so the index serves it under row security.
-        if let Some(prefix) = &filter.anchor.path_prefix {
-            sql.push(" AND m.anchor_path ~>=~ ")
-                .push_bind(prefix.clone());
-            if let Some(upper) = prefix_upper(prefix) {
-                sql.push(" AND m.anchor_path ~<~ ").push_bind(upper);
-            }
-        }
-        // The kind filter (ADR-0063 d3): a row without a kind never passes.
-        if !filter.anchor.origin_kinds.is_empty() {
-            sql.push(" AND m.origin_kind = ANY(")
-                .push_bind(origin_kind_strings(&filter.anchor.origin_kinds))
-                .push("::text[])");
-        }
-        if let Some(author) = filter.author {
-            sql.push(" AND m.author_key_id = ").push_bind(author);
-        }
-        if let Some(tip) = filter.tip {
-            sql.push(" AND m.is_tip = ").push_bind(tip);
-        }
-        if let Some(since) = &filter.since {
-            sql.push(" AND m.created_at >= (")
-                .push_bind(since.as_str().to_owned())
-                .push(")::timestamptz");
-        }
-        if let Some(until) = &filter.until {
-            sql.push(" AND m.created_at < (")
-                .push_bind(until.as_str().to_owned())
-                .push(")::timestamptz");
-        }
+        push_listing_predicate(&mut sql, filter, false);
         // Keyset: strictly after the position in the listing's order.
         if let Some(after) = after {
             sql.push(" AND (m.created_at, m.id) < ((")
@@ -9391,6 +9414,46 @@ impl JournalStore for PgStore {
         let rows = sql.build().fetch_all(&mut *tx).await.map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         rows.iter().map(memory_from_row).collect()
+    }
+
+    async fn count_memories(
+        &self,
+        tenant_id: Uuid,
+        filter: &ListingFilter,
+        kinds: &[MemoryKind],
+        cap: u64,
+    ) -> Result<Vec<(MemoryKind, u64)>, StoreError> {
+        // Per kind, at most `cap + 1` admitted rows read by the catalog
+        // index, so a count costs no more than its cap (ADR-0092 d6, d9).
+        let mut sql = QueryBuilder::<Postgres>::new("SELECT k.kind, c.n FROM unnest(");
+        sql.push_bind(kinds.iter().map(|k| k.as_str()).collect::<Vec<_>>())
+            .push(
+                "::text[]) AS k(kind) CROSS JOIN LATERAL (SELECT count(*)::int8 AS n FROM \
+                 (SELECT 1 FROM memories m WHERE m.tenant_id = ",
+            )
+            .push_bind(tenant_id);
+        push_listing_predicate(&mut sql, filter, true);
+        sql.push(" AND m.kind = k.kind LIMIT ")
+            .push_bind(i64::try_from(cap.saturating_add(1)).unwrap_or(i64::MAX))
+            .push(") x) c");
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows: Vec<(String, i64)> = sql
+            .build_query_as()
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.into_iter()
+            .map(|(kind, n)| {
+                Ok((
+                    MemoryKind::parse(&kind).ok_or_else(|| {
+                        StoreError::Backend(format!("an unknown kind {kind:?} was counted"))
+                    })?,
+                    u64::try_from(n).map_err(backend)?,
+                ))
+            })
+            .collect()
     }
 
     async fn claim_key_state(

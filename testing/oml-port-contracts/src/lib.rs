@@ -6038,7 +6038,8 @@ fn listing(scope: ListingScope) -> ListingFilter {
         scope,
         subtree: None,
         state: None,
-        kind: None,
+        kinds: Vec::new(),
+        prefix: None,
         claim_key: None,
         since: None,
         until: None,
@@ -6169,7 +6170,8 @@ pub async fn an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_no
     assert_eq!(
         list(ListingFilter {
             anchor: oml_app::types::AnchorFilter::default(),
-            kind: Some(MemoryKind::Steering),
+            kinds: vec![MemoryKind::Steering],
+            prefix: None,
             ..own(Vec::new())
         })
         .await,
@@ -6286,6 +6288,121 @@ pub async fn a_tips_listing_holds_only_the_promoted_tips_on_its_nodes<S: Journal
         .await
         .is_empty(),
         "no filter reaches a held row through the tips scope"
+    );
+}
+
+/// The catalog's filters and counts (ADR-0092 d6, d9): `kinds` narrows the
+/// page to those kinds; `prefix` lists the claim keys starting with its
+/// bytes and no other; and the counts are each kind's rows under every
+/// filter but `kinds`, over exactly the rows the page's scope admits,
+/// counted to at most the cap plus one.
+pub async fn the_catalog_lists_by_kinds_and_prefix_and_counts_each_kind_under_every_other_filter<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(63);
+    rig.seed_chain(store, 0).await;
+    let (wa, elsewhere) = (Uuid::from_u128(0xB63), Uuid::from_u128(0xB64));
+    let author = Uuid::from_u128(0xD63);
+    let row = |n: u128, node: Uuid, kind: MemoryKind, key: &str, second: u8| MemoryRecord {
+        kind,
+        claim_key: key.to_owned(),
+        ..listed_row(63, n, node, author, second)
+    };
+    let rows = [
+        row(0xC61, wa, MemoryKind::Memory, "notes/a", 1),
+        row(0xC62, wa, MemoryKind::Memory, "notes/b", 2),
+        row(0xC63, wa, MemoryKind::DerivedFact, "notes/c", 3),
+        row(0xC64, wa, MemoryKind::Test, "skill/x-test", 4),
+        // Byte neighbours of the prefix `notes/`: `notes.` sorts before
+        // it and `notes0` after it, so neither is listed under it.
+        row(0xC65, wa, MemoryKind::Memory, "notes.", 5),
+        row(0xC66, wa, MemoryKind::Memory, "notes0", 6),
+        row(0xC67, elsewhere, MemoryKind::Memory, "notes/z", 7),
+    ];
+    for m in &rows {
+        hold(&mut rig, store, m.clone()).await.expect("hold");
+        promote(&mut rig, store, m.memory_id)
+            .await
+            .expect("promote");
+    }
+    let held = row(0xC68, wa, MemoryKind::Memory, "notes/held", 8);
+    hold(&mut rig, store, held).await.expect("hold");
+    let tips = ListingFilter {
+        ..listing(ListingScope::Tips {
+            nodes: vec![wa],
+            held: Vec::new(),
+            current_scanner: None,
+        })
+    };
+    let list = |filter: ListingFilter| async move {
+        page_ids(
+            &store
+                .list_memories(rig_tenant(63), &filter, None, 50)
+                .await
+                .expect("list"),
+        )
+    };
+    let id = |n: u128| Uuid::from_u128(n);
+    assert_eq!(
+        list(ListingFilter {
+            kinds: vec![MemoryKind::DerivedFact, MemoryKind::Test],
+            ..tips.clone()
+        })
+        .await,
+        vec![id(0xC64), id(0xC63)],
+        "kinds narrows the page to those kinds"
+    );
+    assert_eq!(
+        list(ListingFilter {
+            prefix: Some("notes/".to_owned()),
+            ..tips.clone()
+        })
+        .await,
+        vec![id(0xC63), id(0xC62), id(0xC61)],
+        "a prefix is a byte range on the claim key"
+    );
+    let count = |filter: ListingFilter, cap: u64| async move {
+        store
+            .count_memories(
+                rig_tenant(63),
+                &filter,
+                &[
+                    MemoryKind::Memory,
+                    MemoryKind::DerivedFact,
+                    MemoryKind::Test,
+                    MemoryKind::Skill,
+                ],
+                cap,
+            )
+            .await
+            .expect("count")
+    };
+    let narrowed = ListingFilter {
+        kinds: vec![MemoryKind::Test],
+        prefix: Some("notes/".to_owned()),
+        ..tips.clone()
+    };
+    assert_eq!(
+        count(narrowed.clone(), 100).await,
+        vec![
+            (MemoryKind::Memory, 2),
+            (MemoryKind::DerivedFact, 1),
+            (MemoryKind::Test, 0),
+            (MemoryKind::Skill, 0),
+        ],
+        "every filter but kinds: the prefix narrows, the kinds do not, the held row and the other node are not counted"
+    );
+    assert_eq!(
+        count(narrowed, 1).await,
+        vec![
+            (MemoryKind::Memory, 2),
+            (MemoryKind::DerivedFact, 1),
+            (MemoryKind::Test, 0),
+            (MemoryKind::Skill, 0),
+        ],
+        "a count stops at the cap plus one"
     );
 }
 
@@ -9946,6 +10063,12 @@ where
     Box::pin(a_tips_listing_holds_only_the_promoted_tips_on_its_nodes(
         &new_store().await,
     ))
+    .await;
+    Box::pin(
+        the_catalog_lists_by_kinds_and_prefix_and_counts_each_kind_under_every_other_filter(
+            &new_store().await,
+        ),
+    )
     .await;
     Box::pin(
         a_listing_pages_newest_first_and_resumes_strictly_after_its_position(&new_store().await),

@@ -4406,8 +4406,14 @@ impl JournalStore for MemStore {
                     .is_none_or(|nodes| nodes.contains(&m.workspace_id))
             })
             .filter(|m| filter.state.is_none_or(|s| m.status == s))
-            .filter(|m| filter.kind.is_none_or(|k| m.kind == k))
+            .filter(|m| filter.kinds.is_empty() || filter.kinds.contains(&m.kind))
             .filter(|m| filter.claim_key.as_ref().is_none_or(|c| &m.claim_key == c))
+            .filter(|m| {
+                filter
+                    .prefix
+                    .as_ref()
+                    .is_none_or(|p| m.claim_key.as_bytes().starts_with(p.as_bytes()))
+            })
             .filter(|m| filter.anchor.admits_row(m.anchor.as_deref(), m.origin_kind))
             .filter(|m| filter.author.is_none_or(|a| m.author_key_id == a))
             .filter(|m| filter.tip.is_none_or(|t| m.is_tip == t))
@@ -4433,6 +4439,29 @@ impl JournalStore for MemStore {
         rows.sort_by_key(|m| std::cmp::Reverse(position(m)));
         rows.truncate(limit);
         Ok(rows)
+    }
+
+    async fn count_memories(
+        &self,
+        tenant_id: Uuid,
+        filter: &ListingFilter,
+        kinds: &[MemoryKind],
+        cap: u64,
+    ) -> Result<Vec<(MemoryKind, u64)>, StoreError> {
+        let every = ListingFilter {
+            kinds: Vec::new(),
+            ..filter.clone()
+        };
+        let rows = self
+            .list_memories(tenant_id, &every, None, usize::MAX)
+            .await?;
+        Ok(kinds
+            .iter()
+            .map(|k| {
+                let n = rows.iter().filter(|m| m.kind == *k).count() as u64;
+                (*k, n.min(cap.saturating_add(1)))
+            })
+            .collect())
     }
 
     async fn claim_key_state(

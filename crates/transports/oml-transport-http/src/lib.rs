@@ -795,19 +795,31 @@ where
             }
             return Self::list_with_own_inner(st, params, &acting, include_text).await;
         }
-        let req = list_request(params)?;
+        let mut req = list_request(params)?;
+        // The scoped read is the catalog: counts on its first page (ADR-0092
+        // d6). `include_text` sent wins over the caller's default.
+        req.counts = !req.own;
+        let include_text = params
+            .iter()
+            .find(|(n, _)| n == "include_text")
+            .map_or(include_text, |(_, v)| v == "true");
         let page = st
             .app
             .list_memories(acting.bearer(), &req)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
-            StatusCode::OK,
-            &json!({
-                "items": page.items.iter().map(|m| memory_json(m, include_text)).collect::<Vec<_>>(),
-                "next_cursor": page.next_cursor,
-            }),
-        ))
+        let mut body = json!({
+            "items": page
+                .items
+                .iter()
+                .map(|m| catalog_item_json(m, include_text, page.marks.get(&m.memory.memory_id)))
+                .collect::<Vec<_>>(),
+            "next_cursor": page.next_cursor,
+        });
+        if let (Some(counts), Some(obj)) = (&page.counts, body.as_object_mut()) {
+            obj.insert("counts".to_owned(), counts_json(counts));
+        }
+        Ok(json_response(StatusCode::OK, &body))
     }
 
     /// `GET /v1/memories` with `with_own=true` or `author`: the scoped
@@ -4815,8 +4827,10 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
         own: false,
         workspace: None,
         state: None,
-        kind: None,
+        kinds: Vec::new(),
         claim_key: None,
+        prefix: None,
+        counts: false,
         since: None,
         until: None,
         limit: PAGE_LIMIT_DEFAULT,
@@ -4837,6 +4851,20 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
             origin_kinds
                 .get_or_insert_with(Vec::new)
                 .extend(value.split(',').map(ToOwned::to_owned));
+            continue;
+        }
+        // kinds too, comma-separated or repeated; every kind, each named
+        // once in the filter (ADR-0092 d6).
+        if name == "kinds" {
+            for kind in value.split(',') {
+                let kind = MemoryKind::parse(kind).ok_or_else(|| {
+                    ApiError::validation(format!("kinds names an unknown kind {kind:?}"))
+                        .with_details(json!({ "field": "kinds" }))
+                })?;
+                if !req.kinds.contains(&kind) {
+                    req.kinds.push(kind);
+                }
+            }
             continue;
         }
         if !seen.insert(name.as_str()) {
@@ -4864,7 +4892,24 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
             "workarea_id" => return Err(ApiError::renamed("workarea_id", "workspace")),
             "claim_key" => req.claim_key = Some(value.clone()),
             "state" => req.state = Some(parse_state(value)?),
-            "kind" => req.kind = Some(parse_kind(value)?),
+            // The single kind became the kinds filter (ADR-0092 d6).
+            "kind" => return Err(ApiError::renamed("kind", "kinds")),
+            "prefix" => {
+                if value.is_empty() {
+                    return Err(
+                        ApiError::validation("prefix is a non-empty claim key prefix")
+                            .with_details(json!({ "field": "prefix" })),
+                    );
+                }
+                req.prefix = Some(value.clone());
+            }
+            // Whether each entry carries its text; parsed here and read by
+            // the handler (ADR-0092 d6).
+            "include_text" if value == "true" || value == "false" => {}
+            "include_text" => {
+                return Err(ApiError::validation("include_text must be true or false")
+                    .with_details(json!({ "field": "include_text" })));
+            }
             "since" => req.since = Some(date_time()?),
             "until" => req.until = Some(date_time()?),
             "as_of" => req.as_of = parse_as_of(Some(value), "as_of")?,
@@ -5222,6 +5267,101 @@ pub fn source_checked_json(check: &SourceCheck) -> Value {
             "fragment": fragment,
         })),
     })
+}
+
+/// The longest preview a catalog entry of a kind without a description
+/// carries, in characters (ADR-0092 d11 answer 7).
+const PREVIEW_CHARS: usize = 160;
+
+/// The catalog's `counts` (ADR-0092 d6): each kind's number, or
+/// `{"at_least": cap}` above the cap.
+fn counts_json(counts: &[(MemoryKind, oml_app::types::KindCount)]) -> Value {
+    Value::Object(
+        counts
+            .iter()
+            .map(|(kind, count)| {
+                (
+                    kind.as_str().to_owned(),
+                    match count {
+                        oml_app::types::KindCount::Exact(n) => json!(n),
+                        oml_app::types::KindCount::AtLeast(n) => json!({ "at_least": n }),
+                    },
+                )
+            })
+            .collect(),
+    )
+}
+
+/// A catalog entry (ADR-0092 d6): [`memory_json`], with `text` only under
+/// `include_text`, and the projection of its kind: `needs_person` on a
+/// held instruction; a skill's `name`, `description`, `uri` and `prompt`
+/// (null when the scope does not offer it); a guardrail's `in_force`; a
+/// document's `title`, `uri` and `size`; a steering row's `applies_here`;
+/// and for a memory or a derived fact a description the server cut, at
+/// most 160 characters, marked `preview: true`.
+pub fn catalog_item_json(
+    served: &ServedMemory,
+    include_text: bool,
+    mark: Option<&oml_app::types::CatalogMark>,
+) -> Value {
+    use oml_app::types::CatalogMark;
+    let mut value = memory_json(served, include_text);
+    let m = &served.memory;
+    let Some(obj) = value.as_object_mut() else {
+        return value;
+    };
+    obj.insert("needs_person".to_owned(), json!(served.needs_person()));
+    // The workspace's own name, the last segment of its path, which a
+    // resource URI carries (ADR-0080 d7; ADR-0081 d6).
+    let workspace_name = served
+        .workspace_path
+        .as_deref()
+        .and_then(|p| p.rsplit('.').next())
+        .unwrap_or_default();
+    match (m.kind, m.kind_fields.as_deref(), mark) {
+        (MemoryKind::Skill, Some(KindFields::Skill { name, description }), _) => {
+            obj.insert("name".to_owned(), json!(name));
+            obj.insert("description".to_owned(), json!(description));
+            obj.insert(
+                "uri".to_owned(),
+                json!(oml_app::domain::skills::skill_uri(workspace_name, name)),
+            );
+            let prompt = match mark {
+                Some(CatalogMark::Skill { prompt }) => prompt.clone(),
+                _ => None,
+            };
+            obj.insert("prompt".to_owned(), json!(prompt));
+        }
+        (MemoryKind::Guardrail, _, Some(CatalogMark::Guardrail { in_force })) => {
+            obj.insert("in_force".to_owned(), json!(in_force));
+        }
+        (MemoryKind::Steering, _, Some(CatalogMark::Steering { applies_here })) => {
+            obj.insert("applies_here".to_owned(), json!(applies_here));
+        }
+        (MemoryKind::Document, fields, _) => {
+            let title = match fields {
+                Some(KindFields::Document { title: Some(t) }) => Some(t.clone()),
+                _ => m.format.title.clone(),
+            };
+            obj.insert("title".to_owned(), json!(title));
+            let path = m.claim_key.strip_prefix("doc/").unwrap_or(&m.claim_key);
+            obj.insert(
+                "uri".to_owned(),
+                json!(format!("oml://workspace/{workspace_name}/doc/{path}")),
+            );
+            obj.insert("size".to_owned(), json!(m.body_bytes));
+        }
+        (MemoryKind::Memory | MemoryKind::DerivedFact, _, _) => {
+            let mut preview: String = m.body.chars().take(PREVIEW_CHARS).collect();
+            if m.body.chars().count() > PREVIEW_CHARS {
+                preview = preview.trim_end().to_owned();
+            }
+            obj.insert("description".to_owned(), json!(preview));
+            obj.insert("preview".to_owned(), json!(true));
+        }
+        _ => {}
+    }
+    value
 }
 
 /// A recall hit's claim item (ADR-0092 d3): [`memory_json`], and for an
