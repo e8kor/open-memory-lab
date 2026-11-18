@@ -490,7 +490,9 @@ pub fn export(
     Ok(true)
 }
 
-#[cfg(test)]
+// The cases are written with POSIX absolute paths, which Windows does not
+// read as absolute.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
