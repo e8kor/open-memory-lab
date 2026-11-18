@@ -170,7 +170,7 @@ One memory with its text (decrypted on the serving path) and attachment descript
 
 Propose a replacement version, or with retirement true propose retiring the claim; a new attributed submission, held like any write.
 
-Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a reviewer through edit-as-proposal.
+Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a person's session web key on one any key of its person authored, read as same_user reads it, a reviewer through edit-as-proposal.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|

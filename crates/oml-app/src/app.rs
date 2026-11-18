@@ -8983,8 +8983,15 @@ where
                 .await?;
         } else {
             // Step 3: own is the target version's authoring key, never the
-            // claim's first version (roles-and-keys.md#own).
-            if target.author_key_id != key.key_id {
+            // claim's first version (roles-and-keys.md#own); for a person's
+            // session key, any key of its person, read the one way
+            // `same_user` reads it (ADR-0082 d2, d8 item 2).
+            let own = target.author_key_id == key.key_id
+                || (key.credential == Credential::Session
+                    && self
+                        .same_person(key.tenant_id, target.author_key_id, key)
+                        .await?);
+            if !own {
                 return Err(AppError::AuthorOnly);
             }
             self.require_access(&caller, target.workspace_id, Role::Writer, "supersede")

@@ -95,9 +95,10 @@ def sync_detailed(
     submission, held like any write.
 
      Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility
-    and refusal order) — a writer on a target version it authored, a reviewer through edit-as-proposal.
-    A target that is a ratified retirement in a user's root takes a successor, which would put the claim
-    back in service, from that user's keys alone: any other key that reads the target is 409
+    and refusal order) — a writer on a target version it authored, a person's session web key on one any
+    key of its person authored, read as same_user reads it (ADR-0082 d2), a reviewer through edit-as-
+    proposal. A target that is a ratified retirement in a user's root takes a successor, which would put
+    the claim back in service, from that user's keys alone: any other key that reads the target is 409
     submission.user_root_refused, answered after step 2 of that rule and ahead of access.author_only and
     access.grant_refused; every other successor there is under the supersede rule (ADR-0044 d16). The
     target must be the current served tip: submission.tip_conflict, with details.current_tip when the
@@ -169,9 +170,10 @@ def sync(
     submission, held like any write.
 
      Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility
-    and refusal order) — a writer on a target version it authored, a reviewer through edit-as-proposal.
-    A target that is a ratified retirement in a user's root takes a successor, which would put the claim
-    back in service, from that user's keys alone: any other key that reads the target is 409
+    and refusal order) — a writer on a target version it authored, a person's session web key on one any
+    key of its person authored, read as same_user reads it (ADR-0082 d2), a reviewer through edit-as-
+    proposal. A target that is a ratified retirement in a user's root takes a successor, which would put
+    the claim back in service, from that user's keys alone: any other key that reads the target is 409
     submission.user_root_refused, answered after step 2 of that rule and ahead of access.author_only and
     access.grant_refused; every other successor there is under the supersede rule (ADR-0044 d16). The
     target must be the current served tip: submission.tip_conflict, with details.current_tip when the
@@ -238,9 +240,10 @@ async def asyncio_detailed(
     submission, held like any write.
 
      Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility
-    and refusal order) — a writer on a target version it authored, a reviewer through edit-as-proposal.
-    A target that is a ratified retirement in a user's root takes a successor, which would put the claim
-    back in service, from that user's keys alone: any other key that reads the target is 409
+    and refusal order) — a writer on a target version it authored, a person's session web key on one any
+    key of its person authored, read as same_user reads it (ADR-0082 d2), a reviewer through edit-as-
+    proposal. A target that is a ratified retirement in a user's root takes a successor, which would put
+    the claim back in service, from that user's keys alone: any other key that reads the target is 409
     submission.user_root_refused, answered after step 2 of that rule and ahead of access.author_only and
     access.grant_refused; every other successor there is under the supersede rule (ADR-0044 d16). The
     target must be the current served tip: submission.tip_conflict, with details.current_tip when the
@@ -310,9 +313,10 @@ async def asyncio(
     submission, held like any write.
 
      Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility
-    and refusal order) — a writer on a target version it authored, a reviewer through edit-as-proposal.
-    A target that is a ratified retirement in a user's root takes a successor, which would put the claim
-    back in service, from that user's keys alone: any other key that reads the target is 409
+    and refusal order) — a writer on a target version it authored, a person's session web key on one any
+    key of its person authored, read as same_user reads it (ADR-0082 d2), a reviewer through edit-as-
+    proposal. A target that is a ratified retirement in a user's root takes a successor, which would put
+    the claim back in service, from that user's keys alone: any other key that reads the target is 409
     submission.user_root_refused, answered after step 2 of that rule and ahead of access.author_only and
     access.grant_refused; every other successor there is under the supersede rule (ADR-0044 d16). The
     target must be the current served tip: submission.tip_conflict, with details.current_tip when the
