@@ -257,7 +257,11 @@ impl Marks {
         let mut next_bracket = vec![None; n + 1];
         let mut gt = vec![None; n + 1];
         for j in (0..n).rev() {
-            next_bracket[j] = if chars[j] == ']' { Some(j) } else { next_bracket[j + 1] };
+            next_bracket[j] = if chars[j] == ']' {
+                Some(j)
+            } else {
+                next_bracket[j + 1]
+            };
             gt[j] = if chars[j] == '>' { Some(j) } else { gt[j + 1] };
         }
         let mut runs: std::collections::HashMap<usize, Vec<usize>> =

@@ -60,7 +60,11 @@ fn half_a_million_empty_headings_are_cut_in_linear_time() {
     within_budget("empty headings", move || {
         // Past MAX_HEADINGS the cut stops and refuses the document.
         let err = passages(&doc, Format::Markdown).unwrap_err();
-        assert_eq!(err.count, oml_passage::MAX_HEADINGS + 1, "refused past the headings bound");
+        assert_eq!(
+            err.count,
+            oml_passage::MAX_HEADINGS + 1,
+            "refused past the headings bound"
+        );
     });
 }
 
