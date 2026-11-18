@@ -3,7 +3,7 @@
 //! d6–d11, d14). Every call goes through [`SyncApi`], so a run is tested
 //! against a fake.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -364,6 +364,7 @@ pub fn execute(
         ..ListQuery::default()
     })?;
     let (kind, namespaces) = resolve_adapter(loaded, opts, &ctx, &own, &served)?;
+    refuse_mixed_paths(loaded, kind, opts, &ctx, &own, &served)?;
     ctx.namespaces = namespaces;
     guard_rev(loaded, opts, &ctx, &own, &served)?;
     guard_exclude(opts, &ctx, &own, &served)?;
@@ -466,9 +467,16 @@ pub fn execute(
 }
 
 /// The adapters whose claims this workspace holds under the source, by
-/// their keys' namespaces (ADR-0057 d7).
-fn recorded_adapters(ctx: &Context, own: &[Listed], served: &[Listed]) -> BTreeSet<Kind> {
-    own.iter()
+/// their keys' namespaces and, for `document`, their kind (ADR-0057 d7;
+/// ADR-0081 d7), each with the keys of its live claims.
+fn recorded_claims(
+    ctx: &Context,
+    own: &[Listed],
+    served: &[Listed],
+) -> BTreeMap<Kind, BTreeSet<String>> {
+    let mut out: BTreeMap<Kind, BTreeSet<String>> = BTreeMap::new();
+    for v in own
+        .iter()
         .chain(served)
         .filter(|v| v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str()))
         .filter(|v| {
@@ -477,12 +485,83 @@ fn recorded_adapters(ctx: &Context, own: &[Listed], served: &[Listed]) -> BTreeS
                     && a.path.as_deref().is_some_and(|p| ctx.scope.contains(p))
             })
         })
-        .filter_map(|v| Kind::of_key(&v.claim_key))
+    {
         // The rust adapter's namespace is its own: another adapter's run
         // never answers for it, and it never answers for another's
         // (ADR-0061 d10).
-        .filter(|k| *k != Kind::Rust)
-        .collect()
+        if let Some(k) = v.adapter().filter(|k| *k != Kind::Rust) {
+            let entry = out.entry(k).or_default();
+            if matches!(v.state.as_str(), "held" | "promoted") && !v.retirement {
+                entry.insert(v.claim_key.clone());
+            }
+        }
+    }
+    out
+}
+
+/// One path is loaded one way (ADR-0081 d7, the review's reading R5
+/// amended 2026-11-18): each loaded path is refused when the workspace holds
+/// live claims anchored at it written the other way, a `document` claim for
+/// a run of another adapter, or another adapter's claims for a `document`
+/// run, naming the path, both adapters and the keys the run would leave.
+/// `--change-adapter` takes the switch instead.
+fn refuse_mixed_paths(
+    loaded: &Loaded,
+    kind: Kind,
+    opts: &Options,
+    ctx: &Context,
+    own: &[Listed],
+    served: &[Listed],
+) -> Result<(), CliError> {
+    if kind == Kind::Rust || (opts.change_adapter && !opts.check) {
+        return Ok(());
+    }
+    let mut mixed: Vec<String> = Vec::new();
+    let mut other: BTreeSet<&'static str> = BTreeSet::new();
+    for path in loaded.paths() {
+        let at: BTreeSet<(Kind, &str)> = own
+            .iter()
+            .chain(served)
+            .filter(|v| v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str()))
+            .filter(|v| matches!(v.state.as_str(), "held" | "promoted") && !v.retirement)
+            .filter(|v| {
+                v.anchor.as_ref().is_some_and(|a| {
+                    a.repo.as_deref() == Some(ctx.repo.as_str())
+                        && a.path.as_deref() == Some(path.as_str())
+                })
+            })
+            .filter_map(|v| {
+                v.adapter()
+                    .filter(|k| *k != Kind::Rust)
+                    .map(|k| (k, v.claim_key.as_str()))
+            })
+            .filter(|(k, _)| (*k == Kind::Document) != (kind == Kind::Document))
+            .collect();
+        if !at.is_empty() {
+            other.extend(at.iter().map(|(k, _)| k.name()));
+            let keys: Vec<&str> = at.iter().map(|(_, key)| *key).collect();
+            mixed.push(format!("{path} ({})", keys.join(", ")));
+        }
+    }
+    if mixed.is_empty() {
+        return Ok(());
+    }
+    Err(CliError::local(format!(
+        "{} {} loaded by the {} adapter; loading {} with {} would leave those claims beside its \
+         own, and one path is loaded one way. To switch to {} and retire them, pass \
+         --change-adapter",
+        mixed.join("; "),
+        if mixed.len() == 1 { "is" } else { "are" },
+        other.into_iter().collect::<Vec<_>>().join(", "),
+        if mixed.len() == 1 { "it" } else { "them" },
+        kind.name(),
+        kind.name()
+    )))
+}
+
+/// The adapters whose claims this workspace holds under the source.
+fn recorded_adapters(ctx: &Context, own: &[Listed], served: &[Listed]) -> BTreeSet<Kind> {
+    recorded_claims(ctx, own, served).into_keys().collect()
 }
 
 /// The adapter of this run and the namespaces it answers for. The adapter
@@ -512,6 +591,14 @@ fn resolve_adapter(
             let mut all: Vec<Kind> = recorded.iter().copied().collect();
             all.push(k);
             Ok((k, all))
+        }
+        // Documents sit beside one other adapter's claims in a source,
+        // refused path by path ([`refuse_mixed_paths`]; ADR-0081 d7, R5
+        // amended).
+        Some(k)
+            if k == Kind::Document || recorded.iter().all(|r| *r == Kind::Document || *r == k) =>
+        {
+            Ok((k, vec![k]))
         }
         Some(k) => Err(CliError::local(format!(
             "this source uses the {} adapter; to switch to {} and retire its existing claims, \
@@ -549,13 +636,11 @@ fn guard_exclude(
     if opts.change_exclude || ctx.exclude.is_empty() {
         return Ok(());
     }
-    let ours = |k: &str| Kind::of_key(k).is_some_and(|k| ctx.namespaces.contains(&k));
+    let ours = |v: &Listed| v.adapter().is_some_and(|k| ctx.namespaces.contains(&k));
     let hidden: BTreeSet<String> = own
         .iter()
         .chain(served)
-        .filter(|v| {
-            v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str()) && ours(&v.claim_key)
-        })
+        .filter(|v| v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str()) && ours(v))
         .filter_map(|v| v.anchor.as_ref())
         .filter(|a| a.repo.as_deref() == Some(ctx.repo.as_str()))
         .filter_map(|a| a.path.clone())
@@ -589,12 +674,12 @@ fn guard_rev(
         return Ok(());
     }
     let git = Git::at(root).map_err(CliError::Local)?;
-    let ours = |k: &str| Kind::of_key(k).is_some_and(|k| ctx.namespaces.contains(&k));
+    let ours = |v: &Listed| v.adapter().is_some_and(|k| ctx.namespaces.contains(&k));
     let revs: BTreeSet<String> = own
         .iter()
         .chain(served)
         .filter(|v| v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str()))
-        .filter(|v| ours(&v.claim_key))
+        .filter(|v| ours(v))
         .filter(|v| {
             v.anchor
                 .as_ref()

@@ -485,15 +485,16 @@ async fn oml_write_refuses_kind_guardrail_and_a_guardrail_target() {
     );
 }
 
-/// `oml_write` refuses the document and test kinds naming `kind`, and
-/// admits a skill only with its `skill` object, naming `/skill` without one
-/// (ADR-0080 d1, d3; #405, #419).
+/// `oml_write` refuses the test kind naming `kind`, a document with no
+/// claim key, title or level-1 heading to key it by naming `/claim_key`
+/// (ADR-0081 d2), and admits a skill only with its `skill` object, naming
+/// `/skill` without one (ADR-0080 d1, d3; #405, #419).
 #[tokio::test]
-async fn oml_write_refuses_the_document_and_test_kinds_and_a_skill_without_its_object() {
+async fn oml_write_refuses_the_test_kind_a_document_it_cannot_key_and_a_skill_without_its_object() {
     let router = doubles_router();
     let t = tenant(&router).await;
     for (kind, field) in [
-        ("document", "/kind"),
+        ("document", "/claim_key"),
         ("test", "/kind"),
         ("skill", "/skill"),
     ] {

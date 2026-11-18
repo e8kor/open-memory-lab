@@ -64,6 +64,8 @@ fn settings_json(settings: &SearchSettings) -> Value {
                 "similar_partition": h.similar_partition,
                 "similar_unfilled": h.similar_unfilled,
                 "similar_drift": h.similar_drift,
+                // Document versions with no passage cut (ADR-0081 d4).
+                "documents_uncut": h.documents_uncut,
             }),
         );
     }

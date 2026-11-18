@@ -113,6 +113,9 @@ pub struct Entry {
     pub writes_this_run: bool,
     #[serde(skip)]
     pub text: Option<String>,
+    /// A `document` claim's format; `None` for a memory (ADR-0081 d7).
+    #[serde(skip)]
+    pub format: Option<&'static str>,
     #[serde(skip)]
     pub path: String,
 }
@@ -129,8 +132,17 @@ impl Entry {
             Outcome::New => {
                 body["claim_key"] = json!(self.claim_key);
                 body["workspace"] = json!(workspace);
+                if let Some(format) = self.format {
+                    body["kind"] = json!("document");
+                    body["format"] = json!(format);
+                }
             }
-            Outcome::Changed => body["expected_version"] = json!(self.expected_version),
+            Outcome::Changed => {
+                body["expected_version"] = json!(self.expected_version);
+                if let Some(format) = self.format {
+                    body["format"] = json!(format);
+                }
+            }
             Outcome::Removed => {
                 body["expected_version"] = json!(self.expected_version);
                 body["retirement"] = json!(true);
@@ -243,8 +255,9 @@ pub(crate) struct Claim {
     pub(crate) key: String,
     pub(crate) tip: Option<Listed>,
     pub(crate) held: bool,
-    /// Promoted versions older than the tip: (version, anchor hash).
-    older: Vec<(u64, String)>,
+    /// Promoted versions older than the tip: (version, anchor hash, text
+    /// digest).
+    older: Vec<(u64, String, String)>,
     /// The greatest version among held and promoted (d19).
     pub(crate) latest_live: u64,
     /// The latest version in any state, for a claim with no tip.
@@ -264,7 +277,13 @@ impl Claim {
         let older = versions
             .iter()
             .filter(|v| v.state == "promoted" && v.version < tip_version)
-            .filter_map(|v| Some((v.version, v.anchor.as_ref()?.hash.clone()?)))
+            .filter_map(|v| {
+                Some((
+                    v.version,
+                    v.anchor.as_ref()?.hash.clone()?,
+                    v.plaintext_digest.clone(),
+                ))
+            })
             .collect();
         let latest_live = versions
             .iter()
@@ -380,14 +399,10 @@ impl Plan {
 #[must_use]
 pub fn diff(ctx: &Context, items: &[SourceItem], own: &[Listed], served: &[Listed]) -> Plan {
     let in_workspace = |v: &&Listed| v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str());
-    let ours = |key: &str| Kind::of_key(key).is_some_and(|k| ctx.namespaces.contains(&k));
+    let ours = |v: &Listed| v.adapter().is_some_and(|k| ctx.namespaces.contains(&k));
     let mut by_key: BTreeMap<String, Vec<Listed>> = BTreeMap::new();
     let own_ids: HashSet<&str> = own.iter().map(|v| v.artifact_id.as_str()).collect();
-    for v in own
-        .iter()
-        .filter(in_workspace)
-        .filter(|v| ours(&v.claim_key))
-    {
+    for v in own.iter().filter(in_workspace).filter(|v| ours(v)) {
         by_key
             .entry(v.claim_key.clone())
             .or_default()
@@ -414,7 +429,7 @@ pub fn diff(ctx: &Context, items: &[SourceItem], own: &[Listed], served: &[Liste
         if own_ids.contains(v.artifact_id.as_str()) || by_key.contains_key(&v.claim_key) {
             continue;
         }
-        if !ours(&v.claim_key) {
+        if !ours(v) {
             // Another memory anchored into the source: never this sync's
             // to compare, retire or mark (ADR-0057 d4, UC-SM-01).
             if ctx.check {
@@ -604,6 +619,7 @@ fn bare(outcome: Outcome, key: &str, path: &str) -> Entry {
         note: None,
         writes_this_run: false,
         text: None,
+        format: None,
         path: path.to_owned(),
     }
 }
@@ -645,6 +661,7 @@ fn new_entry(ctx: &Context, si: &SourceItem, digest: &str, version: u64) -> Entr
             short(&si.item.hash)
         )),
         text: Some(si.item.text.clone()),
+        format: si.item.format,
         ..bare(Outcome::New, &si.item.claim_key, &si.path)
     }
 }
@@ -718,6 +735,7 @@ fn decide(ctx: &Context, claim: &Claim, si: &SourceItem, digest: &str) -> Entry 
         .then(|| check(ctx, tip, key, "changed", Some(&si.item.hash), None)),
         note,
         text: Some(si.item.text.clone()),
+        format: si.item.format,
         ..bare(Outcome::Changed, key, &si.path)
     };
     if tip.retirement {
@@ -792,7 +810,16 @@ fn decide(ctx: &Context, claim: &Claim, si: &SourceItem, digest: &str) -> Entry 
             ..bare(Outcome::Moved, key, &si.path)
         };
     }
-    if let Some((version, _)) = claim.older.iter().rev().find(|(_, h)| *h == si.item.hash) {
+    // A document is served byte for byte, so its older version matches only
+    // when its text digest does too: a whitespace-only edit is a change
+    // (ADR-0081 d7, R13).
+    let document = si.item.format.is_some();
+    if let Some((version, ..)) = claim
+        .older
+        .iter()
+        .rev()
+        .find(|(_, h, d)| *h == si.item.hash && (!document || d.as_str() == digest))
+    {
         if !ctx.allow_rollback {
             return Entry {
                 replaces: Some(tip.artifact_id.clone()),

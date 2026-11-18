@@ -6,6 +6,7 @@ pub mod adr;
 pub mod anchor;
 pub mod api;
 pub mod doctor;
+pub mod document;
 pub mod hash;
 pub mod headings;
 pub mod lines;

@@ -68,7 +68,7 @@ What exists today (2026-11-15, `main` at a5eb6876):
   are summaries without text unless `include_text` asks, which today combines only with
   `with_own` or `author`; MCP's listing mode answers claim items with their text (ADR-0039 d4).
   Neither answers counts.
-- **Not built:** passages (ADR-0081 d3, d4), `GET /v1/skills`, the MCP `prompts` beyond
+- **Built in v0.8.0:** passages (ADR-0081 d3, d4, #405). **Not built:** `GET /v1/skills`, the MCP `prompts` beyond
   `guardrails` and the `resources` capability (ADR-0080 d5 to d11, ADR-0081 d6), releases and
   bindings (ADR-0085).
 

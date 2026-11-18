@@ -1,0 +1,19 @@
+[package]
+name = "oml-passage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The passage rule: markdown headings to slugs and sections, 40-line blocks, no I/O (ADR-0081 d2, d3; ADR-0057 d7, d21)."
+
+[dependencies]
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
+
+[lib]
+name = "oml_passage"
+path = "src/lib.rs"

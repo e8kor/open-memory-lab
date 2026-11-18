@@ -714,6 +714,27 @@ where
         finish(&rid, result)
     }
 
+    /// The scoped listing of kind `document` behind MCP's `resources/list`
+    /// and `resources/read` (ADR-0081 d6): `params` as `GET /v1/memories`
+    /// takes them, `kind` set here, the rows as the app serves them, so a
+    /// resource's size is its body's bytes and no text crosses the ring
+    /// as JSON.
+    pub(crate) async fn documents_inner(
+        st: &Self,
+        params: &[(String, String)],
+        headers: &HeaderMap,
+        connection: Option<&Caller>,
+    ) -> Result<oml_app::types::MemoryPage, ApiError> {
+        let acting = acting(headers, connection)?;
+        let mut params = params.to_vec();
+        params.push(("kind".to_owned(), "document".to_owned()));
+        let req = list_request(&params)?;
+        st.app
+            .list_memories(acting.bearer(), &req)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))
+    }
+
     /// `GET /v1/memories`: the own-work listing with `own=true`, else the
     /// scoped listing, as memory summaries without text, newest first
     /// (http-api.md search; ADR-0025 d13). The query's `workspace` is the
@@ -1085,6 +1106,25 @@ where
                 // scope's or another team's (ADR-0072 d8).
                 if let (Some(via), Some(obj)) = (hit.source, value.as_object_mut()) {
                     obj.insert("via".to_owned(), Value::from(via.as_str()));
+                }
+                // A document's hit names the passage it serves, how many
+                // of its other passages matched, and the passage's URI
+                // (ADR-0081 d4, d6).
+                if let (Some(p), Some(obj)) = (&hit.passage, value.as_object_mut()) {
+                    obj.insert(
+                        "passage".to_owned(),
+                        json!({
+                            "fragment": p.fragment,
+                            "ordinal": p.ordinal,
+                            "start_line": p.start_line,
+                            "end_line": p.end_line,
+                            "heading_path": p.heading_path,
+                        }),
+                    );
+                    obj.insert("more_passages".to_owned(), Value::from(hit.more_passages));
+                    if let Some(uri) = &hit.uri {
+                        obj.insert("uri".to_owned(), Value::from(uri.as_str()));
+                    }
                 }
                 value
             })
@@ -5283,10 +5323,11 @@ fn parse_guardrail_scope(scope: Option<&str>) -> Result<Option<GuardrailScope>, 
         .transpose()
 }
 
-/// The recall `kinds` filter: absent is no filter, and a sent one names at
-/// least one of `memory` and `derived_fact`, the only kinds it filters —
-/// steering is never ranked and the vocabulary kinds are no filter value
-/// (openapi.yaml `RecallRequest.kinds`; ADR-0021 d9, ADR-0025 d16).
+/// The recall `kinds` filter: absent is no filter, every hit kind, and a
+/// sent one names at least one of `memory`, `derived_fact` and `document`,
+/// the kinds it filters — steering is never ranked and the vocabulary
+/// kinds are no filter value (openapi.yaml `RecallRequest.kinds`; ADR-0021
+/// d9, ADR-0025 d16; ADR-0081 d4).
 fn parse_hit_kinds(kinds: Option<&[String]>) -> Result<Vec<MemoryKind>, ApiError> {
     let Some(kinds) = kinds else {
         return Ok(Vec::new());
@@ -5299,7 +5340,9 @@ fn parse_hit_kinds(kinds: Option<&[String]>) -> Result<Vec<MemoryKind>, ApiError
     kinds
         .iter()
         .map(|name| match MemoryKind::parse(name) {
-            Some(kind @ (MemoryKind::Memory | MemoryKind::DerivedFact)) => Ok(kind),
+            Some(kind @ (MemoryKind::Memory | MemoryKind::DerivedFact | MemoryKind::Document)) => {
+                Ok(kind)
+            }
             // Recall never serves a guardrail; the filter that names one is
             // refused, never answered empty, and points at the one read
             // that serves the set (proposed ADR-0037 d5, d18 Q7).
@@ -5308,7 +5351,7 @@ fn parse_hit_kinds(kinds: Option<&[String]>) -> Result<Vec<MemoryKind>, ApiError
             )
             .with_details(json!({ "field": "/kinds" }))),
             _ => Err(ApiError::validation(format!(
-                "kinds names memory or derived_fact, not {name:?}"
+                "kinds names memory, derived_fact or document, not {name:?}"
             ))),
         })
         .collect()

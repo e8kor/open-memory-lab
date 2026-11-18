@@ -4398,6 +4398,10 @@ async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_so
             "/v1/memories",
             // The offered skills, for the skill lines (ADR-0080).
             "/v1/skills",
+            // The document lines: the server's resource templates, then
+            // this clone's document claims (ADR-0081 Consequences).
+            "/mcp",
+            "/v1/memories",
             // Whether the server serves the builder's preview (ADR-0082).
             "/v1/memories/preview",
             "/v2/workspaces/w1",

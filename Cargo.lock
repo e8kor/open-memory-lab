@@ -4162,6 +4162,7 @@ dependencies = [
  "ed25519-dalek",
  "oml-bundle",
  "oml-domain",
+ "oml-passage",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4203,6 +4204,7 @@ dependencies = [
  "oml-delta-log",
  "oml-former-names",
  "oml-guardrail",
+ "oml-passage",
  "oml-pg",
  "oml-scan",
  "oml-server-lead",
@@ -4242,6 +4244,7 @@ dependencies = [
  "hex",
  "oml-former-names",
  "oml-guardrail",
+ "oml-passage",
  "oml-scan",
  "oml-web-credential",
  "proptest",
@@ -4342,6 +4345,13 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "oml-passage"
+version = "0.7.3"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

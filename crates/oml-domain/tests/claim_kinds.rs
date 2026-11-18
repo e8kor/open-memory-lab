@@ -108,6 +108,40 @@ fn a_document_key_outside_the_grammar_is_refused_naming_claim_key() {
     }
 }
 
+/// ADR-0081 d1, R12 of 2026-11-18: a sent title holding a hidden
+/// character is refused, as a skill's name and description are.
+#[test]
+fn a_sent_document_title_holding_a_hidden_character_is_refused() {
+    for title in [
+        "Deploy\u{202E}guide",
+        "Deploy\u{200B}guide",
+        "Deploy\u{2066}guide",
+        "Deploy\u{0007}guide",
+        "Deploy\u{0085}guide",
+        "Deploy\u{FEFF}guide",
+    ] {
+        let err = check_document_title(title).unwrap_err();
+        assert_eq!(err.field, "/document/title", "{title:?}");
+    }
+    assert!(check_document_title("Deploy guide").is_ok());
+}
+
+/// ADR-0081 d1, R12 of 2026-11-18: a derived title is the first level-1
+/// heading as the passage rule reads it, its markdown read as plain text,
+/// never one inside a fence, an HTML comment or front matter, with hidden
+/// characters stripped.
+#[test]
+fn a_derived_title_skips_fences_comments_and_front_matter_and_strips_hidden_characters() {
+    let body = "---\ntitle: x\n# Not the front matter\n---\n\n```\n# Not the fence\n```\n\n\
+                <!--\n# Not the comment\n-->\n\n# **Real** [title](https://x)\u{200B}\u{202E}\n\nText.\n";
+    assert_eq!(markdown_title(body).as_deref(), Some("Real title"));
+    assert_eq!(
+        markdown_title("#\u{200B}\n\nText.\n"),
+        None,
+        "nothing visible"
+    );
+}
+
 #[test]
 fn a_documents_title_is_its_first_level_1_heading_and_its_key_follows_the_title() {
     assert_eq!(
@@ -235,6 +269,17 @@ fn a_documents_key_follows_the_heading_slug_rule_and_a_long_title_ends_in_its_di
             "{title}"
         );
     }
+}
+
+#[test]
+fn a_documents_key_and_a_passages_fragment_are_one_slug_rule() {
+    // ADR-0081 d2, amended 2026-11-18: a link reads by its text, as the
+    // passage cut and `oml sync`'s headings adapter read it.
+    assert_eq!(document_key_from_title("[Guide](https://x.y)"), "doc/guide");
+    assert_eq!(
+        document_key_from_title("The `oml` *CLI*"),
+        format!("doc/{}", oml_passage::slug("The `oml` *CLI*"))
+    );
 }
 
 #[test]

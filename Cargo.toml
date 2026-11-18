@@ -7,6 +7,7 @@ members = [
     "crates/shared/oml-web-credential",
     "crates/shared/oml-former-names",
     "crates/shared/oml-bundle",
+    "crates/shared/oml-passage",
     "sdks/rust",
     "crates/clients/oml-web",
     "crates/oml-guardrail",
@@ -41,6 +42,9 @@ oml-former-names = { path = "crates/shared/oml-former-names" }
 # The workspace bundle format `oml-bundle/1` (ADR-0084): a leaf the server and
 # the CLI both link, so export, the CLI's pre-check and import verify alike.
 oml-bundle = { path = "crates/shared/oml-bundle" }
+# The passage rule (ADR-0081 d3): a leaf with no I/O the server and the CLI
+# both link, so sync's spans and the server's passages are the same lines.
+oml-passage = { path = "crates/shared/oml-passage" }
 oml-sdk = { path = "sdks/rust" }
 oml-web = { path = "crates/clients/oml-web" }
 oml-app = { path = "crates/oml-app" }

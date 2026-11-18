@@ -170,6 +170,8 @@ branch that reserved later renumbers.
 | migration | 0053 | `bulk/v082-b` |  | upload sessions (ADR-0004 d3, #451) | reserved |
 | migration | 0054 | `bulk/v082-b` |  | workspace export policy and allowances (ADR-0084 d10, #425) | reserved |
 | migration | 0055 | `bulk/v082-b` |  | workspace imports and the import ledger (ADR-0084 d6-d11, #426) | reserved |
-| migration | 0056 | `bulk/v083-1` |  | the serving role destroys a version's data key when it erases it | reserved |
-| migration | 0057 | `bulk/v083-1` |  | a destroyed data key stays destroyed and a live one is re-keyed only with its KEK | reserved |
-| migration | 0058 | `bulk/v083-1` |  | a demotion restores the end a version had before its supersession | reserved |
+| migration | 0056 | `main` |  | serving role destroys erased keys | used |
+| migration | 0057 | `main` |  | artifact keys guard | used |
+| migration | 0058 | `main` |  | valid until before supersession | used |
+| migration | 0059 | `bulk/v080-c` |  | document passages as search units (ADR-0081 d3, d4, #405) | reserved |
+| migration | 0060 | `bulk/v080-c` |  | document passages: the served index rebuilt partition by partition and the kind check validated (ADR-0081 R14, #405) | reserved |

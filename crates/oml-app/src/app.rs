@@ -127,13 +127,13 @@ use crate::types::{
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, CreatedWorkspace,
     Credential, CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DenialRecord,
     EdgeRatification, ExchangeForm, FormatFields, GrantRecord, GuardrailFields, GuardrailRequest,
-    GuardrailSet, GuardrailVerdict, HIT_KINDS, IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess,
-    KeyDetail, KeyRecord, KindFields, ListRequest, ListingFilter, ListingPosition, ListingScope,
-    LiveConnectCode, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
-    OAuthClientRecord, OnSimilar, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge,
-    ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm,
-    RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail, ServedMemory, SimilarItem,
-    SourceCheck, SourceCheckReceipt, SourceCheckRequest, StateClause, SubmitOutcome, SubmitReceipt,
+    GuardrailSet, GuardrailVerdict, HIT_KINDS, HitPassage, IssueKeyRequest, IssuedKey,
+    IssuedTokens, KeyAccess, KeyDetail, KeyRecord, KindFields, ListRequest, ListingFilter,
+    ListingPosition, ListingScope, LiveConnectCode, MemoryPage, MemoryRecord, MintedToken,
+    NamedRef, NamingRefusal, OAuthClientRecord, OnSimilar, OwnHeldGuardrail, PROVIDER_TENANT,
+    ProposeBriefEdge, ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts,
+    RefreshForm, RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail, ServedMemory,
+    SimilarItem, SourceCheck, SourceCheckReceipt, SourceCheckRequest, StateClause, SubmitOutcome, SubmitReceipt,
     SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage,
     TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode,
     TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
@@ -150,7 +150,8 @@ use oml_domain::skills::{SKILL_PAGE, SkillCandidate, offer, skill_uri};
 use crate::search::{
     Access, CandidateScope, DID_YOU_MEAN_BELOW, Fused, Fusion, MatchMode, OwnHeldScope, Pipeline,
     RetrievalQuery, RetrieverKind, SearchConfig, Stage, TIME_DEPTH, Timings, apply_floor,
-    fuse_capped, order_time_list, pipeline_access, pruned_words, query_terms, rerank_order,
+    collapse_passages, fuse_capped, order_time_list, pipeline_access, pruned_words, query_terms,
+    rerank_order,
 };
 use oml_domain::valid_time::{ValidTime, Window, parse_now, parse_window, ratified_end};
 
@@ -549,6 +550,16 @@ pub(crate) fn version_finding(
         event_seq: None,
         migrated_from: None,
     }
+}
+
+/// The passage `ordinal` of a document version, cut again by the one rule
+/// (ADR-0081 d3, d4); `None` for a whole-version unit, ordinal -1, or an
+/// ordinal the body no longer cuts.
+fn passage_unit(m: &MemoryRecord, ordinal: i32) -> Option<crate::types::PassageUnit> {
+    let ordinal = usize::try_from(ordinal).ok()?;
+    m.passage_units()
+        .into_iter()
+        .find(|u| u.passage.ordinal == ordinal)
 }
 
 /// Whether a held version may be served unreviewed inside an in-progress
@@ -1084,6 +1095,15 @@ fn kind_fields(
                     "a document is text/markdown or text/plain",
                 ));
             }
+            // The passage rule cuts at capture; a text past the cap is
+            // refused before anything is written (ADR-0081 d3).
+            let cut = if media_type == "text/markdown" {
+                oml_passage::Format::Markdown
+            } else {
+                oml_passage::Format::Plain
+            };
+            oml_passage::passages(body, cut)
+                .map_err(|e| AppError::TooManyPassages { count: e.count })?;
             let sent_title = match sent {
                 Some(KindFields::Document { title: Some(t) }) => {
                     ck::check_document_title(t).map_err(field)?;
@@ -7352,9 +7372,17 @@ where
                 .into_iter()
                 .filter(|c| rows.contains_key(&c.memory_id))
                 .collect();
+            // A document's candidate is scored on its passage's search text
+            // (ADR-0081 d4).
             let passages: Vec<String> = head
                 .iter()
-                .filter_map(|c| rows.get(&c.memory_id).map(|m| m.searched().to_owned()))
+                .filter_map(|c| {
+                    rows.get(&c.memory_id)
+                        .map(|m| match passage_unit(m, c.ordinal) {
+                            Some(unit) => unit.search_text,
+                            None => m.searched().to_owned(),
+                        })
+                })
                 .collect();
             let scored = reranker.score(query.clone(), passages).await;
             lap = timings.lap(Stage::Rerank, lap);
@@ -7525,8 +7553,45 @@ where
             if admits(&m) {
                 served_ids.push(m.memory_id);
                 let home = m.workspace_id;
+                // A document's hit is its best passage: its text, bytes
+                // and place (ADR-0081 d4).
+                let unit = passage_unit(&m, candidate.ordinal);
+                let mut served = self.served_in(caller, m, &mut ancestries).await?;
+                let passage = unit.map(|unit| {
+                    let text =
+                        oml_passage::passage_text(&served.memory.body, &unit.passage).to_owned();
+                    served.memory.body = text;
+                    served.memory.body_bytes = unit.body_bytes;
+                    HitPassage {
+                        fragment: unit.passage.fragment,
+                        ordinal: unit.passage.ordinal,
+                        start_line: unit.passage.start_line,
+                        end_line: unit.passage.end_line,
+                        heading_path: unit.passage.heading_path,
+                    }
+                });
+                // A held version's hit names its version, which a read
+                // honours for a reader allowed to see it (R10); the
+                // fragment is URI text (R11).
+                let uri = passage.as_ref().and_then(|p| {
+                    let name = served.workspace_path.as_deref()?.rsplit('.').next()?;
+                    let held = served.memory.status == oml_domain::MemoryStatus::Held;
+                    Some(oml_domain::skills::document_uri(
+                        name,
+                        &served.memory.claim_key,
+                        Some(&oml_passage::uri_fragment(
+                            &p.fragment,
+                            p.start_line,
+                            p.end_line,
+                        )),
+                        held.then_some(u64::from(served.memory.version)),
+                    ))
+                });
                 hits.push(RecallHit {
-                    served: self.served_in(caller, m, &mut ancestries).await?,
+                    served,
+                    passage,
+                    uri,
+                    more_passages: candidate.more_passages,
                     score: candidate.score,
                     matched: candidate.matched.clone(),
                     via: candidate.via.clone(),
@@ -8389,7 +8454,8 @@ where
             let access = pipeline_access(&lists);
             let pruned = pruned_words(&lists);
             let started = std::time::Instant::now();
-            let fused = fuse_capped(lists, pipeline.fusion(), depth);
+            // A document contributes its best passage once (ADR-0081 d4).
+            let fused = collapse_passages(fuse_capped(lists, pipeline.fusion(), depth));
             timings.lap(Stage::Fuse, started);
             let run = PipelineRun {
                 fused,

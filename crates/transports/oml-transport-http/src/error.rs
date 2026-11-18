@@ -693,6 +693,10 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::ActingKeyNotLinked => ApiError::auth_invalid("acting_key_not_linked"),
         AppError::SkillBodyTooLarge => ApiError::payload_too_large("a skill body past 32,768 bytes")
             .with_details(json!({ "field": "/body" })),
+        AppError::TooManyPassages { count } => ApiError::validation(format!(
+            "a document holds at most 4,096 passages; this one would hold {count}"
+        ))
+            .with_details(json!({ "field": "/body", "reason": "too_many_passages" })),
         AppError::ValidTime(err) => ApiError::validation(err.to_string())
             .with_details(json!({ "field": err.field() })),
         AppError::AsOfInvalid { field, reason } => {

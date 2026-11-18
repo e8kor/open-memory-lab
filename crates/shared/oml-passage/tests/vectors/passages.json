@@ -1,0 +1,232 @@
+[
+ {
+  "name": "headings one to four with a preamble, an empty title and a repeated heading",
+  "format": "markdown",
+  "text": "---\ntitle: x\n---\nIntro line.\n\n# Guide\n## Install\nRun it.\n\n### Linux\nApt.\n##### Deep\nStill linux.\n## Install\nAgain.\n<!-- a comment -->\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 4,
+    "end_line": 4,
+    "heading_path": [],
+    "fragment": "L4-L4"
+   },
+   {
+    "ordinal": 1,
+    "start_line": 7,
+    "end_line": 8,
+    "heading_path": [
+     "Guide",
+     "Install"
+    ],
+    "fragment": "install"
+   },
+   {
+    "ordinal": 2,
+    "start_line": 10,
+    "end_line": 13,
+    "heading_path": [
+     "Guide",
+     "Install",
+     "Linux"
+    ],
+    "fragment": "linux"
+   },
+   {
+    "ordinal": 3,
+    "start_line": 14,
+    "end_line": 16,
+    "heading_path": [
+     "Guide",
+     "Install"
+    ],
+    "fragment": "install-1"
+   }
+  ]
+ },
+ {
+  "name": "a link in a heading slugs by its text",
+  "format": "markdown",
+  "text": "# [Guide](https://x.y)\n\nBody `code` here.\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 1,
+    "end_line": 3,
+    "heading_path": [
+     "Guide"
+    ],
+    "fragment": "guide"
+   }
+  ]
+ },
+ {
+  "name": "a heading inside a fence is text",
+  "format": "markdown",
+  "text": "## Shell\n```sh\n# not a heading\n```\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 1,
+    "end_line": 4,
+    "heading_path": [
+     "Shell"
+    ],
+    "fragment": "shell"
+   }
+  ]
+ },
+ {
+  "name": "plain text is one passage",
+  "format": "plain",
+  "text": "\nfirst\n# not a heading\n\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 2,
+    "end_line": 3,
+    "heading_path": [],
+    "fragment": "L2-L3"
+   }
+  ]
+ },
+ {
+  "name": "a section over forty lines is cut at blank lines",
+  "format": "markdown",
+  "text": "## Long\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\n\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\n\nline 21\nline 22\nline 23\nline 24\nline 25\nline 26\nline 27\nline 28\nline 29\n\nline 31\nline 32\nline 33\nline 34\nline 35\nline 36\nline 37\nline 38\nline 39\n\nline 41\nline 42\nline 43\nline 44\nline 45\nline 46\nline 47\nline 48\nline 49\n\nline 51\nline 52\nline 53\nline 54\nline 55\nline 56\nline 57\nline 58\nline 59\n\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 1,
+    "end_line": 40,
+    "heading_path": [
+     "Long"
+    ],
+    "fragment": "L1-L40"
+   },
+   {
+    "ordinal": 1,
+    "start_line": 42,
+    "end_line": 60,
+    "heading_path": [
+     "Long"
+    ],
+    "fragment": "L42-L60"
+   }
+  ]
+ },
+ {
+  "name": "CRLF line ends read as LF",
+  "format": "markdown",
+  "text": "# T\r\nIntro.\r\n## A\r\nBody a.\r\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 1,
+    "end_line": 2,
+    "heading_path": [
+     "T"
+    ],
+    "fragment": "t"
+   },
+   {
+    "ordinal": 1,
+    "start_line": 3,
+    "end_line": 4,
+    "heading_path": [
+     "T",
+     "A"
+    ],
+    "fragment": "a"
+   }
+  ]
+ },
+ {
+  "name": "a byte order mark before a heading leaves the first line text",
+  "format": "markdown",
+  "text": "\ufeff# Title\nBody.\n## Next\nMore.\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 1,
+    "end_line": 2,
+    "heading_path": [],
+    "fragment": "L1-L2"
+   },
+   {
+    "ordinal": 1,
+    "start_line": 3,
+    "end_line": 4,
+    "heading_path": [
+     "Next"
+    ],
+    "fragment": "next"
+   }
+  ]
+ },
+ {
+  "name": "a tab after the hashes opens a heading",
+  "format": "markdown",
+  "text": "# Doc\n\n##\tTab heading\nBody.\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 3,
+    "end_line": 4,
+    "heading_path": [
+     "Doc",
+     "Tab heading"
+    ],
+    "fragment": "tab-heading"
+   }
+  ]
+ },
+ {
+  "name": "a setext underline is text",
+  "format": "markdown",
+  "text": "## Part\n\nSub\n---\nBody.\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 1,
+    "end_line": 5,
+    "heading_path": [
+     "Part"
+    ],
+    "fragment": "part"
+   }
+  ]
+ },
+ {
+  "name": "a heading inside an HTML comment is no heading",
+  "format": "markdown",
+  "text": "## Shown\nText.\n<!--\n## Hidden\n-->\nMore.\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 1,
+    "end_line": 6,
+    "heading_path": [
+     "Shown"
+    ],
+    "fragment": "shown"
+   }
+  ]
+ },
+ {
+  "name": "an unclosed fence runs to the end and hides the headings in it",
+  "format": "markdown",
+  "text": "## Code\n```\nx\n## After\ny\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 1,
+    "end_line": 5,
+    "heading_path": [
+     "Code"
+    ],
+    "fragment": "code"
+   }
+  ]
+ }
+]

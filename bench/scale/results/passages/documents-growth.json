@@ -1,0 +1,29 @@
+{
+ "before": {
+  "passages": 0,
+  "postings": 5309,
+  "postings_kind1_by_memory_kind": {
+   "1": 5309
+  },
+  "term_rows": 1992,
+  "postings_bytes": 1679360,
+  "passage_bytes": 16384
+ },
+ "after": {
+  "passages": 129,
+  "postings": 21987,
+  "postings_kind1_by_memory_kind": {
+   "3": 16678,
+   "1": 5309
+  },
+  "term_rows": 5334,
+  "postings_bytes": 7815168,
+  "passage_bytes": 548864
+ },
+ "load": {
+  "documents_written": 19,
+  "approved": 19,
+  "bytes": 142552
+ },
+ "how": "recall eval load (200 memories), then 19 markdown files from docs/ written as documents and approved; counts read as the superuser"
+}
