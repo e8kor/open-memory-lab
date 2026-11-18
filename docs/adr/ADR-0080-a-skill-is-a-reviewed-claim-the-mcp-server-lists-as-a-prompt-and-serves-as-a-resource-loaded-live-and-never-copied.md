@@ -537,8 +537,9 @@ decision it reads.
   2026-11-18).
 - **R21 (d10; ADR-0089 d16).** A held successor of a demoted skill, where no promoted version
   of its claim is left below it, holds no approved version, so it may take the bare `<name>`,
-  marked unreviewed, as d10's held version 1 does. `oml doctor` is to name such a skill; that
-  line is not built yet and is left for a follow-up.
+  marked unreviewed, as d10's held version 1 does. `oml doctor`'s existing
+  `memory.held_successor_stranded` line counts it among the held versions whose target is no
+  longer their claim's promoted tip; a skill-specific line that names the skill is not built.
 
 ## Consequences
 
