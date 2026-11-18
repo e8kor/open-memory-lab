@@ -12556,8 +12556,9 @@ async fn an_erase_leaves_no_clear_body_in_the_live_row_its_passages_queue_teleme
     owner_exec(
         &store,
         tenant,
-        "INSERT INTO document_passages (tenant_id, memory_id, ordinal, start_line, end_line, fragment) \
-         VALUES ($1, $2, 0, 1, 1, 'The canary drains and settles first.')",
+        "INSERT INTO document_passages (tenant_id, memory_id, ordinal, start_line, end_line, \
+                fragment, body_bytes, search_text) \
+         VALUES ($1, $2, 0, 1, 1, 'L1-L1', 36, 'The canary drains and settles first.')",
         v2,
     )
     .await;
