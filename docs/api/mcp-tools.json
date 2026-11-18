@@ -257,7 +257,7 @@
           },
           "include_unreviewed": {
             "type": "boolean",
-            "description": "Recall. True: the calling key's own held rows that match (kind memory or derived_fact, never steering or retirement versions) join the hits, ranked in the same order and flagged state held and unreviewed true; they count against k and max_tokens. Inside a workspace a person put in progress, other agents' held memories join too and absent means true; elsewhere absent means false."
+            "description": "Recall. True: the calling key's own held rows that match (of the kinds asked, never steering or retirement versions; a held skill or guardrail only as one the scope offers or applies) join the hits, ranked in the same order and flagged state held and unreviewed true; they count against k and max_tokens. Inside a workspace a person put in progress, other agents' held memories join too and absent means true; elsewhere absent means false."
           },
           "max_tokens": {
             "type": "integer",

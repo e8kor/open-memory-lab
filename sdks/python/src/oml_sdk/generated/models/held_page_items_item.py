@@ -67,11 +67,11 @@ class HeldPageItemsItem:
             always null on a held version (ADR-0057 d5).
         source_checked (None | SourceChecked): The version's latest source check, or null; always null on a held version
             (ADR-0057 d5).
-        held_since (datetime.datetime): When the row entered the review queue.
-        same_user (bool): Whether the calling key and the authoring key name one user (ADR-0055 d7).
         needs_person (bool): true for an instruction-class version (steering, guardrail), or a successor of another kind
             that replaces one: only a person's reviewer key approves it, and any other key is refused review.person_required
             (ADR-0080 d3, d16). Since v0.8.0.
+        held_since (datetime.datetime): When the row entered the review queue.
+        same_user (bool): Whether the calling key and the authoring key name one user (ADR-0055 d7).
         needs_person_reason (None | str): instruction_needs_person when needs_person is true; null when it is false
             (ADR-0080 d16). Since v0.8.0.
         severity (MemorySummarySeverity | Unset): On kind guardrail alone, except a retirement version (ADR-0037 d2).
@@ -125,7 +125,20 @@ class HeldPageItemsItem:
             approving ends nothing (ADR-0059 d4).
         text (str | Unset): The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7).
             Absent from a recall item sent with include_text false, and from a listing item unless include_text is true
-            (ADR-0070 d5).
+            (ADR-0070 d5). A skill hit's text is its description, never its body (ADR-0092 d3).
+        name (str | Unset): A skill's name, on a skill hit and a skill's catalog entry (ADR-0092 d3, d6).
+        description (str | Unset): A skill's description; on a memory or derived fact's catalog entry, a cut of its text
+            of at most 160 characters, marked preview (ADR-0092 d6, d11 answer 7).
+        preview (bool | Unset): true when description is the server's cut of the text (ADR-0092 d6).
+        uri (str | Unset): A skill's or a document's resource, oml://workspace/<workspace>/skill/<name> or …/doc/<path>
+            (ADR-0080 d7; ADR-0081 d6; ADR-0092 d3, d6).
+        prompt (None | str | Unset): The command prompts/list offers a skill under at the read's scope node; null on a
+            catalog entry the scope does not offer (ADR-0092 d3, d6).
+        in_force (bool | Unset): A guardrail: whether it binds at the read's scope node; true on every guardrail hit,
+            since only an applicable one is a hit (ADR-0092 d3, d6).
+        applies_here (bool | Unset): A steering catalog entry: whether it is in the steering list at the read's scope
+            node (ADR-0092 d6).
+        size (int | Unset): A document catalog entry's body bytes (ADR-0092 d6).
     """
 
     artifact_id: str
@@ -145,9 +158,9 @@ class HeldPageItemsItem:
     anchor: Anchor | None
     stale: None | Stale
     source_checked: None | SourceChecked
+    needs_person: bool
     held_since: datetime.datetime
     same_user: bool
-    needs_person: bool
     needs_person_reason: None | str
     retirement: bool = False
     severity: MemorySummarySeverity | Unset = UNSET
@@ -176,6 +189,14 @@ class HeldPageItemsItem:
     search_text: str | Unset = UNSET
     replaces_valid_until: str | Unset = UNSET
     text: str | Unset = UNSET
+    name: str | Unset = UNSET
+    description: str | Unset = UNSET
+    preview: bool | Unset = UNSET
+    uri: str | Unset = UNSET
+    prompt: None | str | Unset = UNSET
+    in_force: bool | Unset = UNSET
+    applies_here: bool | Unset = UNSET
+    size: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -247,11 +268,11 @@ class HeldPageItemsItem:
         else:
             source_checked = self.source_checked
 
+        needs_person = self.needs_person
+
         held_since = self.held_since.isoformat()
 
         same_user = self.same_user
-
-        needs_person = self.needs_person
 
         needs_person_reason: None | str
         needs_person_reason = self.needs_person_reason
@@ -376,6 +397,26 @@ class HeldPageItemsItem:
 
         text = self.text
 
+        name = self.name
+
+        description = self.description
+
+        preview = self.preview
+
+        uri = self.uri
+
+        prompt: None | str | Unset
+        if isinstance(self.prompt, Unset):
+            prompt = UNSET
+        else:
+            prompt = self.prompt
+
+        in_force = self.in_force
+
+        applies_here = self.applies_here
+
+        size = self.size
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -398,9 +439,9 @@ class HeldPageItemsItem:
                 "anchor": anchor,
                 "stale": stale,
                 "source_checked": source_checked,
+                "needs_person": needs_person,
                 "held_since": held_since,
                 "same_user": same_user,
-                "needs_person": needs_person,
                 "needs_person_reason": needs_person_reason,
             }
         )
@@ -456,6 +497,22 @@ class HeldPageItemsItem:
             field_dict["replaces_valid_until"] = replaces_valid_until
         if text is not UNSET:
             field_dict["text"] = text
+        if name is not UNSET:
+            field_dict["name"] = name
+        if description is not UNSET:
+            field_dict["description"] = description
+        if preview is not UNSET:
+            field_dict["preview"] = preview
+        if uri is not UNSET:
+            field_dict["uri"] = uri
+        if prompt is not UNSET:
+            field_dict["prompt"] = prompt
+        if in_force is not UNSET:
+            field_dict["in_force"] = in_force
+        if applies_here is not UNSET:
+            field_dict["applies_here"] = applies_here
+        if size is not UNSET:
+            field_dict["size"] = size
 
         return field_dict
 
@@ -597,11 +654,11 @@ class HeldPageItemsItem:
 
         source_checked = _parse_source_checked(d.pop("source_checked"))
 
+        needs_person = d.pop("needs_person")
+
         held_since = datetime.datetime.fromisoformat(d.pop("held_since"))
 
         same_user = d.pop("same_user")
-
-        needs_person = d.pop("needs_person")
 
         def _parse_needs_person_reason(data: object) -> None | str:
             if data is None:
@@ -795,6 +852,29 @@ class HeldPageItemsItem:
 
         text = d.pop("text", UNSET)
 
+        name = d.pop("name", UNSET)
+
+        description = d.pop("description", UNSET)
+
+        preview = d.pop("preview", UNSET)
+
+        uri = d.pop("uri", UNSET)
+
+        def _parse_prompt(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        prompt = _parse_prompt(d.pop("prompt", UNSET))
+
+        in_force = d.pop("in_force", UNSET)
+
+        applies_here = d.pop("applies_here", UNSET)
+
+        size = d.pop("size", UNSET)
+
         held_page_items_item = cls(
             artifact_id=artifact_id,
             claim_key=claim_key,
@@ -814,9 +894,9 @@ class HeldPageItemsItem:
             anchor=anchor,
             stale=stale,
             source_checked=source_checked,
+            needs_person=needs_person,
             held_since=held_since,
             same_user=same_user,
-            needs_person=needs_person,
             needs_person_reason=needs_person_reason,
             severity=severity,
             rule=rule,
@@ -844,6 +924,14 @@ class HeldPageItemsItem:
             search_text=search_text,
             replaces_valid_until=replaces_valid_until,
             text=text,
+            name=name,
+            description=description,
+            preview=preview,
+            uri=uri,
+            prompt=prompt,
+            in_force=in_force,
+            applies_here=applies_here,
+            size=size,
         )
 
         held_page_items_item.additional_properties = d
