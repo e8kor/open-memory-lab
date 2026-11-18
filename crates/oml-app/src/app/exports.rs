@@ -221,6 +221,11 @@ where
             export_mode(req, true)?;
         }
         let tenant_id = key.tenant_id;
+        // I13: one export per tenant builds its bundle at a time.
+        let _busy = self
+            .exports_busy
+            .try_enter(tenant_id)
+            .ok_or(AppError::ExportBusy)?;
         let workspace_id = self.resolve(&key, NamedKind::Workspace, &workspace).await?;
         self.observer.workspace(workspace_id);
         self.require_access(&caller, workspace_id, Role::Reader, VERB)

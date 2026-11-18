@@ -3947,8 +3947,11 @@ components:
         - import.bundle_older
         - import.since_mismatch
         - import.source_key_changed
+        - import.busy
         - export.disabled
         - export.not_readable
+        - export.busy
+        - export.too_large
         - memory.not_held
         - lifecycle.erased
         - name.taken

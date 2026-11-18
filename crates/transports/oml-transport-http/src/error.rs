@@ -505,6 +505,27 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "limit": reached.limit,
             "used": reached.used,
         })),
+        AppError::ImportBusy => ApiError::new(
+            StatusCode::CONFLICT,
+            "import.busy",
+            "An import holds its bundle in memory, so a tenant runs one import or dry run at a time and the server a bounded number (ADR-0084 I13).",
+            "an import or dry run of this tenant's is running, or the server runs its bound of them; retry when it ends",
+        )
+        .retryable(),
+        AppError::ExportBusy => ApiError::new(
+            StatusCode::CONFLICT,
+            "export.busy",
+            "An export builds its bundle in memory, so a tenant runs one export at a time (ADR-0084 I13).",
+            "an export of this tenant's is running; retry when it ends",
+        )
+        .retryable(),
+        AppError::ExportTooLarge { max_bytes } => ApiError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "export.too_large",
+            "A bundle is at most uploads.max_bytes, the most an import on any server of this build takes (ADR-0084 I13).",
+            format!("the bundle would be larger than {max_bytes} bytes; export a smaller subtree"),
+        )
+        .with_details(json!({ "max_bytes": max_bytes })),
         AppError::ExportPersonOnly { role, used_by } => ApiError::new(
             StatusCode::FORBIDDEN,
             "access.verb_ceiling",

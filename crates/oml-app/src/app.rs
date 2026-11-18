@@ -6,6 +6,7 @@
 //! (ADR-0025 d1).
 
 mod auth;
+pub mod busy;
 mod emails;
 mod exports;
 mod federation;
@@ -288,6 +289,11 @@ pub struct App<J, S, C, I, Sc> {
     /// amended 2026-11-17); no store until the composition gives one, and
     /// then every upload answers `upload.storage_failed`.
     uploads: uploads::UploadConfig,
+    /// One import or dry run per tenant and two in the process (ADR-0084
+    /// I13).
+    imports_busy: busy::BusyGate,
+    /// One export per tenant (ADR-0084 I13).
+    exports_busy: busy::BusyGate,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -1729,6 +1735,8 @@ where
             widen: widen::WidenSignals::default(),
             profiles: Arc::new(crate::types::QuotaProfiles::default()),
             uploads: uploads::UploadConfig::default(),
+            imports_busy: busy::BusyGate::new(busy::IMPORTS_AT_ONCE),
+            exports_busy: busy::BusyGate::new(usize::MAX),
         }
     }
 

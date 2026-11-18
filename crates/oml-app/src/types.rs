@@ -3474,6 +3474,18 @@ pub enum AppError {
     /// written (`import.over_quota`; ADR-0084 d7).
     #[error("the import does not fit the {} quota of {} (ADR-0084 d7)", .0.quota.as_str(), .0.limit)]
     ImportOverQuota(oml_domain::signup::QuotaReached),
+    /// The tenant runs an import or dry run already, or the process runs
+    /// its bound of them (`import.busy`, 409, retryable; ADR-0084 I13).
+    #[error("an import or dry run of this tenant's is running, or the server runs its bound of them (ADR-0084 I13, import.busy)")]
+    ImportBusy,
+    /// The tenant runs an export already (`export.busy`, 409, retryable;
+    /// ADR-0084 I13).
+    #[error("an export of this tenant's is running (ADR-0084 I13, export.busy)")]
+    ExportBusy,
+    /// The bundle would be larger than `uploads.max_bytes`
+    /// (`export.too_large`, 413; ADR-0084 I13).
+    #[error("the bundle would be larger than {max_bytes} bytes (ADR-0084 I13, export.too_large)")]
+    ExportTooLarge { max_bytes: u64 },
     /// `OML-Acting-Key` names a key the session may not act as (ADR-0085
     /// d16, amended 2026-11-17; `auth.invalid`, `acting_key_not_linked`).
     #[error("the acting key is not a live key linked to this session's user")]

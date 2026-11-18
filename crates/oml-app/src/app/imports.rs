@@ -109,6 +109,12 @@ where
                 used_by: key.used_by,
             });
         }
+        // I13: one import or dry run per tenant, and a bounded number in
+        // the process, hold a bundle in memory at a time.
+        let _busy = self
+            .imports_busy
+            .try_enter(key.tenant_id)
+            .ok_or(AppError::ImportBusy)?;
         let session = self.import_upload(&caller, req.upload_id).await?;
         let target = self.import_target(&caller, &req.target).await?;
 
