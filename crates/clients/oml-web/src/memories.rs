@@ -815,7 +815,7 @@ fn held_table(queue: &oml_sdk::ReviewQueue, roots: &Roots) -> (String, u64) {
     let mut rows: Vec<&oml_sdk::QueueItem> = queue.items.iter().collect();
     rows.sort_by(|a, b| a.oldest_at.cmp(&b.oldest_at));
     let mut out = String::from(
-        r#"<h2>Held per workspace</h2><table><caption class="desc">Oldest first</caption><tr><th scope="col">Workspace</th><th scope="col" class="num">Held</th><th scope="col">Oldest since</th></tr>"#,
+        r#"<h2>Held per workspace</h2><p class="desc">Oldest first; each workspace filters the rows below.</p><table><tr><th scope="col">Workspace</th><th scope="col" class="num">Held</th><th scope="col">Oldest since</th></tr>"#,
     );
     if rows.is_empty() {
         out.push_str(r#"<tr><td colspan="3" class="dim">Nothing is held in the tenant.</td></tr>"#);
