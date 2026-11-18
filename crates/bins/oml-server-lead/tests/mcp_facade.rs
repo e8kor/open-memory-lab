@@ -1016,7 +1016,14 @@ const REVISED: &str =
 async fn ratified(router: &Router, writer: &str, reviewer: &str) -> String {
     remember_all(router, writer, &[(CLAIM, "memory", QUOTE)]).await;
     approve_as(router, reviewer, "v1").await;
-    let work = call_tool(router, writer, 90, "oml_read", json!({"own": true, "claim_key": CLAIM})).await;
+    let work = call_tool(
+        router,
+        writer,
+        90,
+        "oml_read",
+        json!({"own": true, "claim_key": CLAIM}),
+    )
+    .await;
     let items = work["structuredContent"]["items"]
         .as_array()
         .expect("items");
@@ -1370,7 +1377,14 @@ async fn a_replayed_oml_write_supersession_is_an_idempotent_replay() {
     let late = call_tool(&router, &writer, 3, "oml_write", args.clone()).await;
     assert_eq!(late["isError"], false, "{late}");
     assert_eq!(late["structuredContent"], expected);
-    let work = call_tool(&router, &writer, 4, "oml_read", json!({"own": true, "claim_key": CLAIM})).await;
+    let work = call_tool(
+        &router,
+        &writer,
+        4,
+        "oml_read",
+        json!({"own": true, "claim_key": CLAIM}),
+    )
+    .await;
     assert_eq!(
         work["structuredContent"]["items"]
             .as_array()
@@ -2540,7 +2554,14 @@ async fn oml_read_listing_pages_with_a_client_held_cursor() {
     written.reverse();
 
     // The first page, newest first, and a cursor the client holds.
-    let first = call_tool(&router, &writer, 4, "oml_read", json!({"own": true, "limit": 2})).await;
+    let first = call_tool(
+        &router,
+        &writer,
+        4,
+        "oml_read",
+        json!({"own": true, "limit": 2}),
+    )
+    .await;
     assert_eq!(first["isError"], false, "{first}");
     let page = &first["structuredContent"];
     let items = page["items"].as_array().expect("items");
@@ -2644,7 +2665,14 @@ async fn oml_read_listing_pages_with_a_client_held_cursor() {
     let theirs = call_tool(&router, &reader, 7, "oml_read", json!({"own": true})).await;
     assert_eq!(theirs["isError"], false, "{theirs}");
     assert_eq!(theirs["structuredContent"]["items"], json!([]));
-    let foreign = call_tool(&router, &reader, 8, "oml_read", json!({"own": true, "cursor": cursor})).await;
+    let foreign = call_tool(
+        &router,
+        &reader,
+        8,
+        "oml_read",
+        json!({"own": true, "cursor": cursor}),
+    )
+    .await;
     assert_eq!(foreign["isError"], true, "{foreign}");
     assert_eq!(
         foreign["structuredContent"]["error"]["code"],
@@ -2675,9 +2703,23 @@ async fn oml_read_listing_limit_is_at_most_200_as_on_the_ring() {
     assert_eq!(limit["minimum"], 1, "{limit}");
     assert_eq!(limit["maximum"], 200, "{limit}");
 
-    let at_bound = call_tool(&router, &writer, 2, "oml_read", json!({"own": true, "limit": 200})).await;
+    let at_bound = call_tool(
+        &router,
+        &writer,
+        2,
+        "oml_read",
+        json!({"own": true, "limit": 200}),
+    )
+    .await;
     assert_eq!(at_bound["isError"], false, "{at_bound}");
-    let refused = call_tool(&router, &writer, 3, "oml_read", json!({"own": true, "limit": 201})).await;
+    let refused = call_tool(
+        &router,
+        &writer,
+        3,
+        "oml_read",
+        json!({"own": true, "limit": 201}),
+    )
+    .await;
     assert_eq!(refused["isError"], true, "{refused}");
     assert_eq!(
         refused["structuredContent"]["error"]["code"], "request.validation",
@@ -3320,7 +3362,14 @@ async fn a_read_argument_outside_its_mode_is_refused_naming_it() {
     }
 
     // A field no mode declares is outside the schema, as on every tool.
-    let undeclared = call_tool(&router, &agent, 13, "oml_read", json!({"own": true, "scope": "x"})).await;
+    let undeclared = call_tool(
+        &router,
+        &agent,
+        13,
+        "oml_read",
+        json!({"own": true, "scope": "x"}),
+    )
+    .await;
     assert!(outside_the_input_schema(&undeclared), "{undeclared}");
 
     drop_db(&db).await;
@@ -3380,7 +3429,13 @@ async fn oml_read_with_no_mode_argument_lists_the_keys_own_work() {
     let page = read(&router, &writer, 4, json!({"own": true, "limit": 1})).await;
     assert_eq!(item_ids(&page), std::slice::from_ref(&second), "{page}");
     let cursor = page["next_cursor"].as_str().expect("a next page");
-    let next = read(&router, &writer, 5, json!({"own": true, "limit": 1, "cursor": cursor})).await;
+    let next = read(
+        &router,
+        &writer,
+        5,
+        json!({"own": true, "limit": 1, "cursor": cursor}),
+    )
+    .await;
     assert_eq!(item_ids(&next), std::slice::from_ref(&first), "{next}");
     for (id, args) in [
         (6, json!({"own": true, "kinds": ["steering"]})),
@@ -3460,7 +3515,13 @@ async fn oml_read_until_leaves_out_a_version_written_at_its_instant_and_since_ta
         std::slice::from_ref(&stored),
         "since includes its instant: {since}"
     );
-    let both = read(&router, &writer, 4, json!({"own": true, "since": at, "until": at})).await;
+    let both = read(
+        &router,
+        &writer,
+        4,
+        json!({"own": true, "since": at, "until": at}),
+    )
+    .await;
     assert_eq!(both["items"], json!([]), "{both}");
 
     drop_db(&db).await;
@@ -3521,7 +3582,13 @@ async fn oml_read_state_tells_an_agent_whether_its_write_was_approved() {
     // Before any verdict both writes are held, and none is approved.
     let held = read(&router, &writer, 1, json!({"own": true, "state": "held"})).await;
     assert_eq!(item_ids(&held), [second.clone(), first.clone()], "{held}");
-    let promoted = read(&router, &writer, 2, json!({"own": true, "state": "promoted"})).await;
+    let promoted = read(
+        &router,
+        &writer,
+        2,
+        json!({"own": true, "state": "promoted"}),
+    )
+    .await;
     assert_eq!(promoted["items"], json!([]), "{promoted}");
 
     // One approved and one rejected: the state filter over the key's own
@@ -3636,7 +3703,11 @@ async fn every_oml_read_mode_returns_claim_items_with_text_under_mode() {
     assert_eq!(own["items"][0]["text"], QUOTE);
     let catalog = read(&router, &reader, 4, json!({})).await;
     assert_eq!(fields(&catalog), ["counts", "items", "mode", "next_cursor"]);
-    assert_eq!(item_ids(&catalog), std::slice::from_ref(&stored), "{catalog}");
+    assert_eq!(
+        item_ids(&catalog),
+        std::slice::from_ref(&stored),
+        "{catalog}"
+    );
     assert_eq!(catalog["counts"]["memory"], 1, "{catalog}");
     assert!(catalog["items"][0].get("text").is_none(), "{catalog}");
     assert_eq!(catalog["items"][0]["preview"], true, "{catalog}");
