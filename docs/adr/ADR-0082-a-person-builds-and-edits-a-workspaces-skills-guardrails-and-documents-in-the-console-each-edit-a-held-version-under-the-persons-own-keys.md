@@ -288,6 +288,21 @@ Decided, not built.
       list; Memories as "every kind but skill, guardrail and document", which a cockpit listing
       every kind would contradict.
 
+- **d11 — Three more readings the build took, 2026-11-18** (proposed for the operator's batch;
+  confirmed by the operator's coordinator the same day, #409).
+    - **Preview's `shadows` (d5).** A list of `{workspace, relation}`, `relation` being `shadows`
+      for a promoted skill of the same name on an ancestor the key reads, and `shadowed_by` for one
+      on a descendant it reads; a skill the key cannot read is never named. Rejected: bare paths,
+      which cannot say which way the shadow falls.
+    - **Preview's `set_after` (d5).** `{size, cap}`: the guardrails in force under the caller's
+      `guardrail_scope` after the version, one more for a new rule, the same for an edit of a rule
+      in force, one fewer for a retirement, beside ADR-0037 d7's `SET_CAP`. Rejected: a bare
+      number, which leaves the form without the cap it draws.
+    - **The verbs a session reviewer key lists (d2, d10).** `remember` joins its effective verbs
+      where it holds reviewer and reader, so the verbs it lists are the verbs it may use; the
+      verbs table of [roles and keys](../architecture/roles-and-keys.md) says so. Rejected: leaving
+      it out, which lists less than the key may do.
+
 ## Consequences
 
 - `oml-web` gains `workspace.rs` with d1's routes, the forms, the diff and the preview's
