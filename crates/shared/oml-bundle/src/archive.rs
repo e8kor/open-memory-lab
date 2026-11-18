@@ -556,6 +556,21 @@ fn check_records(c: &BundleContents) -> Result<(), BundleError> {
             used_events.insert(event_id.as_str());
         }
     }
+    // I17: a verdict names a version the bundle carries whole, never an
+    // erasure marker.
+    let carried: BTreeMap<(&str, u64), bool> = c
+        .versions
+        .iter()
+        .map(|e| (e.id(), matches!(e, VersionEntry::Version(_))))
+        .collect();
+    for (i, verdict) in c.verdicts.iter().enumerate() {
+        let reason = match carried.get(&(verdict.artifact_id.as_str(), verdict.version)) {
+            Some(true) => continue,
+            Some(false) => "verdict_on_erased_version",
+            None => "verdict_on_absent_version",
+        };
+        return Err(BundleError::malformed(LINE_FILES[2], i + 1, reason));
+    }
     if let Some(unused) = events.difference(&used_events).next() {
         return Err(BundleError::malformed(
             LINE_FILES[3],

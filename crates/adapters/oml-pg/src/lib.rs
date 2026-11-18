@@ -3699,8 +3699,20 @@ async fn apply_fold(
             .map_err(backend)?;
         }
         MetadataFold::WorkspaceExported { user_root, bytes } => {
-            // The export's bytes on its account's day, in the export's own
-            // transaction (ADR-0084 d10; ADR-0071 d2, d3).
+            // The export's bytes on the tenant's day, every export's, and on
+            // its account's day, in the export's own transaction (ADR-0084
+            // d10, I19; ADR-0071 d2, d3).
+            sqlx::query(
+                "INSERT INTO tenant_activity (tenant_id, day, exports) \
+                 VALUES ($1, ($2)::date, $3) ON CONFLICT (tenant_id, day) \
+                 DO UPDATE SET exports = tenant_activity.exports + EXCLUDED.exports",
+            )
+            .bind(tenant_id)
+            .bind(oml_app::domain::usage::day_of(at))
+            .bind(i64::try_from(bytes).map_err(backend)?)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
             if let Some(root) = user_root {
                 sqlx::query(
                     "INSERT INTO account_meters (tenant_id, user_root) VALUES ($1, $2) \
@@ -5568,15 +5580,19 @@ impl PgStore {
         .execute(&mut *tx)
         .await
         .map_err(backend)?;
-        sqlx::query(
-            "DELETE FROM account_activity WHERE tenant_id = $1 AND day < ($2)::date - $3::int",
-        )
-        .bind(tenant_id)
-        .bind(today)
-        .bind(i32::try_from(oml_app::domain::usage::ACTIVITY_RETENTION_DAYS).map_err(backend)?)
-        .execute(&mut *tx)
-        .await
-        .map_err(backend)?;
+        for table in ["account_activity", "tenant_activity"] {
+            sqlx::query(&format!(
+                "DELETE FROM {table} WHERE tenant_id = $1 AND day < ($2)::date - $3::int"
+            ))
+            .bind(tenant_id)
+            .bind(today)
+            .bind(
+                i32::try_from(oml_app::domain::usage::ACTIVITY_RETENTION_DAYS).map_err(backend)?,
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        }
         tx.commit().await.map_err(backend)?;
         Ok(appended)
     }
@@ -7630,6 +7646,28 @@ impl JournalStore for PgStore {
         )
         .bind(tenant_id)
         .bind(user_root)
+        .bind(month.first_day())
+        .bind(month.next().first_day())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        u64::try_from(bytes).map_err(backend)
+    }
+
+    async fn tenant_exported_bytes(
+        &self,
+        tenant_id: Uuid,
+        at: &EventTime,
+    ) -> Result<u64, StoreError> {
+        let month = Month::of(at);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let bytes: i64 = sqlx::query_scalar(
+            "SELECT coalesce(sum(exports), 0)::bigint FROM tenant_activity \
+              WHERE tenant_id = $1 AND day >= ($2)::date AND day < ($3)::date",
+        )
+        .bind(tenant_id)
         .bind(month.first_day())
         .bind(month.next().first_day())
         .fetch_one(&mut *tx)

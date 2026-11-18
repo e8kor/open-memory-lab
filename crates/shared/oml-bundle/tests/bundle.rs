@@ -686,3 +686,32 @@ fn an_entry_whose_header_overstates_its_size_is_refused_as_layout() {
     tar[..512].copy_from_slice(header.as_bytes());
     assert_eq!(code(read(&tar)), "bundle.layout");
 }
+
+#[test]
+fn a_verdict_naming_an_erasure_marker_is_refused_as_malformed_by_the_reader() {
+    malformed_reason(
+        &edit_line(
+            "verdicts.jsonl",
+            "\"artifact_id\":\"art-1\"",
+            "\"artifact_id\":\"art-4\"",
+        ),
+        "verdict_on_erased_version",
+    );
+}
+
+#[test]
+fn a_verdict_naming_a_version_the_bundle_does_not_carry_is_refused_as_malformed() {
+    malformed_reason(
+        &edit_line(
+            "verdicts.jsonl",
+            "\"artifact_id\":\"art-1\"",
+            "\"artifact_id\":\"art-9\"",
+        ),
+        "verdict_on_absent_version",
+    );
+    let mut c = contents();
+    c.verdicts[0].version = 2;
+    let err = write_bundle(&c, &test_key(), Vec::new()).expect_err("refused");
+    assert_eq!(err.code(), "bundle.malformed");
+    assert!(err.to_string().contains("verdict_on_absent_version"), "{err}");
+}

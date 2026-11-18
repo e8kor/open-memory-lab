@@ -23,7 +23,7 @@ use oml_domain::{MemoryStatus, Role, SignedEnvelope, event_types};
 
 use super::{App, Caller};
 use crate::ports::{
-    Clock, ConnectionStore, IdGen, JournalStore, MetadataFold, Scanner, Signer, StoreError,
+    Clock, ConnectionStore, IdGen, MetadataFold, Scanner, Signer, StoreError, WebStore,
 };
 use crate::types::{
     AppError, Bearer, ClaimEdgeSelection, KeyRecord, MemoryRecord, WorkspaceRecord,
@@ -184,7 +184,7 @@ struct JournalFacts {
 
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
 where
-    J: JournalStore + ConnectionStore,
+    J: WebStore + ConnectionStore,
     S: Signer,
     C: Clock,
     I: IdGen,
@@ -208,7 +208,12 @@ where
         const VERB: &str = "export";
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = caller.key.clone();
-        if !may_export(key.role, key.used_by, key.profile.is_some()) {
+        if !may_export(
+            key.role,
+            key.used_by,
+            key.profile.is_some(),
+            key.crew_id.is_some(),
+        ) {
             return Err(AppError::ExportPersonOnly {
                 role: key.role,
                 used_by: key.used_by,
@@ -265,7 +270,8 @@ where
         }
         let paths = workspace_paths(&ancestry, &subtree, workspace_id);
         let nodes: Vec<Uuid> = subtree.iter().map(|w| w.workspace_id).collect();
-        let own_keys = caller.own_key_ids();
+        let user_root = self.person_root_of(&key).await?;
+        let own_keys = self.export_own_keys(&caller, user_root).await?;
         let rows = self
             .journal
             .export_versions(tenant_id, &nodes, &own_keys)
@@ -278,8 +284,15 @@ where
                 nodes.contains(&m.workspace_id)
                     && (m.status == MemoryStatus::Promoted
                         || (m.status == MemoryStatus::Erased && m.promoted_at.is_some())
-                        || caller.owns(m.author_key_id))
+                        || own_keys.contains(&m.author_key_id))
             })
+            .collect();
+        // I17: what the bundle carries whole; a version's lineage and the
+        // verdicts name nothing else.
+        let whole: BTreeSet<Uuid> = rows
+            .iter()
+            .filter(|m| m.status != MemoryStatus::Erased)
+            .map(|m| m.memory_id)
             .collect();
         let facts = self.export_journal_facts(tenant_id, &rows).await?;
         let edges = self.export_edges(&caller, &nodes, &rows, &paths).await?;
@@ -358,7 +371,12 @@ where
                 skill: object_member(payload, "skill"),
                 document: object_member(payload, "document"),
                 test: object_member(payload, "test"),
-                derives_from: m.derives_from.iter().map(ToString::to_string).collect(),
+                derives_from: m
+                    .derives_from
+                    .iter()
+                    .filter(|id| whole.contains(id))
+                    .map(ToString::to_string)
+                    .collect(),
                 origin: payload.get("origin").cloned().unwrap_or(Value::Null),
                 attachments: Vec::new(),
                 author: Author {
@@ -378,7 +396,13 @@ where
             })));
             counts.versions += 1;
         }
-        let by_id: BTreeMap<Uuid, &MemoryRecord> = rows.iter().map(|m| (m.memory_id, m)).collect();
+        // I17: a verdict travels only for a version exported whole, never
+        // for an erasure marker.
+        let by_id: BTreeMap<Uuid, &MemoryRecord> = rows
+            .iter()
+            .filter(|m| whole.contains(&m.memory_id))
+            .map(|m| (m.memory_id, m))
+            .collect();
         let mut verdicts = Vec::new();
         for event in &facts.verdicts {
             let e = &event.envelope;
@@ -477,6 +501,13 @@ where
         let manifest =
             oml_bundle::write_bundle_with(&contents, &public, &|b| self.signer.sign(b), &mut tar)
                 .map_err(|e| bundle_failure(&e))?;
+        // I13: the bundle an import could take, at most one upload, before
+        // anything is encrypted, journalled or metered.
+        if tar.len() as u64 > self.uploads.max_bytes {
+            return Err(AppError::ExportTooLarge {
+                max_bytes: self.uploads.max_bytes,
+            });
+        }
         let manifest_digest = sha256_digest(
             &serde_json::to_vec(&manifest)
                 .map_err(|e| AppError::Store(StoreError::Backend(format!("manifest: {e}"))))?,
@@ -517,7 +548,6 @@ where
                 "bytes": file.len(),
             }),
         )?;
-        let user_root = self.person_root_of(&key).await?;
         self.commit(
             event,
             MetadataFold::WorkspaceExported {
@@ -534,6 +564,30 @@ where
             recipients,
             signer_fingerprint: server_id,
         })
+    }
+
+    /// The exporter's own key set (ADR-0084 I6 as written): for a key acting
+    /// for a person, that person's keys, web and agent keys alike, and the
+    /// key itself; for a session key, also the set its session read
+    /// (ADR-0045 d16). A key acting for no person owns only itself.
+    async fn export_own_keys(
+        &self,
+        caller: &Caller,
+        user_root: Option<Uuid>,
+    ) -> Result<Vec<Uuid>, AppError> {
+        let mut own = caller.own_key_ids();
+        if let Some(root) = user_root {
+            for k in self
+                .journal
+                .web_user_keys(caller.key.tenant_id, root)
+                .await?
+            {
+                if !own.contains(&k.key_id) {
+                    own.push(k.key_id);
+                }
+            }
+        }
+        Ok(own)
     }
 
     /// A key's `used_by`, read once per export; a key the tenant no longer
@@ -701,4 +755,90 @@ fn workspace_paths(
         paths.insert(w.workspace_id, parts.join("."));
     }
     paths
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
+    use crate::types::{BootstrapRequest, GrantRequest, IssueKeyRequest};
+    use oml_domain::UsedBy;
+    use oml_domain::access::Covers;
+    use oml_domain::name::Name;
+
+    fn name(text: &str) -> Name {
+        Name::parse(text).expect("a fixture name")
+    }
+
+    #[tokio::test]
+    async fn a_second_export_of_one_tenant_while_one_runs_is_export_busy() {
+        let app = App::new(
+            MemStore::new(),
+            MemSigner::new([7; 32]),
+            FixedClock::new(),
+            SeqIdGen::new(),
+            MarkerScanner::default(),
+        );
+        let boot = app
+            .bootstrap_tenant(&BootstrapRequest {
+                tenant_name: name("acme"),
+                admin_key_name: name("root-admin"),
+                admin_principal: "acme-admin".to_owned(),
+            })
+            .await
+            .expect("bootstrap");
+        let person = app
+            .issue_key(
+                &boot.admin_key.value,
+                &IssueKeyRequest {
+                    profile: None,
+                    role: Role::Reader,
+                    name: name("alice-desk"),
+                    principal: "alice/desk".to_owned(),
+                    used_by: Some(UsedBy::Person),
+                    default_workspace: None,
+                    crew: None,
+                    grants: vec![GrantRequest {
+                        node: Reference::parse("alice").expect("a reference"),
+                        role: Role::Reader,
+                        deny: Vec::new(),
+                        covers: Covers::Subtree,
+                    }],
+                    user: Some(name("alice")),
+                    connect_code: false,
+                    guardrail_scope: None,
+                    expiry: None,
+                    requests_per_minute: None,
+                },
+            )
+            .await
+            .expect("a person's key");
+        let req = ExportRequest {
+            mode: Some("history".to_owned()),
+            recipients: vec![
+                "age1c7uc8xfckg2ntq76m2tsazw6xqsm9awvg8v4f4g57xqgcvs3e5pq9963un".to_owned(),
+            ],
+            release: None,
+            since: None,
+        };
+        // I13: the running export holds the tenant's place.
+        let running = app.exports_busy.try_enter(boot.tenant_id).expect("enters");
+        let err = app
+            .export_workspace(
+                person.value.as_str(),
+                Reference::parse("alice").expect("a reference"),
+                &req,
+            )
+            .await
+            .expect_err("one export per tenant");
+        assert!(matches!(err, AppError::ExportBusy), "{err:?}");
+        drop(running);
+        app.export_workspace(
+            person.value.as_str(),
+            Reference::parse("alice").expect("a reference"),
+            &req,
+        )
+        .await
+        .expect("the freed place admits the next export");
+    }
 }

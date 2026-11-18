@@ -325,6 +325,17 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn tenant_exported_bytes(
+        &self,
+        tenant_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed(
+            "tenant_exported_bytes",
+            self.inner.tenant_exported_bytes(tenant_id, at),
+        )
+    }
+
     fn user_usage(
         &self,
         tenant_id: Uuid,
